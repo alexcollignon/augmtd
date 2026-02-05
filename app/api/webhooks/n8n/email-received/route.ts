@@ -25,7 +25,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Create Supabase client
-    const supabase = createClient();
+    const supabase = await createClient();
 
     // Process each email
     const emailRecords = emails.map((email: any) => {
