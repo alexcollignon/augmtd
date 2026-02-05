@@ -3,7 +3,7 @@ databases:
   - name: n8n-db
     databaseName: n8n
     user: n8n
-    plan: starter
+    plan: free  # Free tier: 256MB storage, good for testing. Change to 'standard' ($7/mo) for production
 
 services:
   # n8n Web Service
