@@ -1,0 +1,73 @@
+databases:
+  # PostgreSQL Database for n8n
+  - name: n8n-db
+    databaseName: n8n
+    user: n8n
+    plan: starter
+
+services:
+  # n8n Web Service
+  - type: web
+    name: augmtd-n8n
+    env: docker
+    plan: starter
+    dockerfilePath: ./Dockerfile.n8n
+    dockerContext: ./
+    healthCheckPath: /healthz
+    envVars:
+      # Database connection (auto-populated from database)
+      - key: DB_TYPE
+        value: postgresdb
+      - key: DB_POSTGRESDB_HOST
+        fromDatabase:
+          name: n8n-db
+          property: host
+      - key: DB_POSTGRESDB_PORT
+        fromDatabase:
+          name: n8n-db
+          property: port
+      - key: DB_POSTGRESDB_DATABASE
+        fromDatabase:
+          name: n8n-db
+          property: database
+      - key: DB_POSTGRESDB_USER
+        fromDatabase:
+          name: n8n-db
+          property: user
+      - key: DB_POSTGRESDB_PASSWORD
+        fromDatabase:
+          name: n8n-db
+          property: password
+
+      # n8n Configuration
+      - key: N8N_PORT
+        value: 10000
+      - key: N8N_PROTOCOL
+        value: https
+      - key: WEBHOOK_URL
+        value: https://augmtd-n8n.onrender.com
+      - key: GENERIC_TIMEZONE
+        value: America/New_York
+
+      # Security
+      - key: N8N_BASIC_AUTH_ACTIVE
+        value: true
+      - key: N8N_BASIC_AUTH_USER
+        value: admin
+      - key: N8N_BASIC_AUTH_PASSWORD
+        generateValue: true
+
+      # Encryption key (auto-generated)
+      - key: N8N_ENCRYPTION_KEY
+        generateValue: true
+
+      # Execution mode
+      - key: EXECUTIONS_MODE
+        value: regular
+      - key: N8N_METRICS
+        value: false
+
+    disk:
+      name: n8n-data
+      mountPath: /home/node/.n8n
+      sizeGB: 10
