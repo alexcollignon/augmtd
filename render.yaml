@@ -13,7 +13,6 @@ services:
     plan: starter
     dockerfilePath: ./Dockerfile.n8n
     dockerContext: ./
-    healthCheckPath: /healthz
     envVars:
       # Database connection (auto-populated from database)
       - key: DB_TYPE
