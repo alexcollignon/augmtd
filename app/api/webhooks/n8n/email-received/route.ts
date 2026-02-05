@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
+import { createClient as createServerClient } from '@supabase/supabase-js';
 
 export async function POST(request: NextRequest) {
   try {
@@ -24,8 +24,17 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Create Supabase client
-    const supabase = await createClient();
+    // Create Supabase client with service role (bypasses RLS)
+    const supabase = createServerClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!,
+      {
+        auth: {
+          autoRefreshToken: false,
+          persistSession: false
+        }
+      }
+    );
 
     // Process each email
     const emailRecords = emails.map((email: any) => {
