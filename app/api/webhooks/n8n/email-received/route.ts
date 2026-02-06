@@ -48,7 +48,7 @@ export async function POST(request: NextRequest) {
         : [email.to?.text || ''];
 
       return {
-        user_id: userId || 'temp-user-id', // We'll fix this later
+        user_id: userId || null, // Nullable for testing, will link to real user later
         message_id: email.messageId || email.id,
         from_address: fromAddress,
         from_name: email.from?.value?.[0]?.name || '',
