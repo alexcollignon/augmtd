@@ -141,7 +141,7 @@ export async function GET(request: NextRequest) {
               received_at: storedEmail.received_at
             });
 
-            // Create inbox item
+            // Create inbox item with comprehensive preparation
             const { error: inboxError } = await supabase
               .from('inbox_items')
               .insert({
@@ -149,14 +149,27 @@ export async function GET(request: NextRequest) {
                 source: 'email',
                 source_id: storedEmail.id,
                 source_data: {
+                  // Email basics
                   email_id: storedEmail.id,
                   message_id: storedEmail.message_id,
                   from: storedEmail.from_address,
+                  from_name: storedEmail.from_name,
                   subject: storedEmail.subject,
-                  received_at: storedEmail.received_at
+                  received_at: storedEmail.received_at,
+
+                  // AI-prepared work
+                  summary: processed.summary,
+                  keyPoints: processed.keyPoints,
+                  urgency: processed.urgency,
+                  deadline: processed.deadline,
+                  actionItems: processed.actionItems,
+                  draftReply: processed.draftReply,
+                  calendarEvent: processed.calendarEvent,
+                  extractedData: processed.extractedData,
+                  followUpActions: processed.followUpActions
                 },
-                ai_suggestion_type: processed.suggestionType,
-                ai_suggestion_content: processed.suggestionContent,
+                ai_suggestion_type: processed.category,
+                ai_suggestion_content: processed.summary,
                 ai_suggestion_reasoning: processed.reasoning,
                 confidence_score: processed.confidenceScore,
                 priority: processed.priority,
