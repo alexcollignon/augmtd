@@ -2,7 +2,6 @@ import { createClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
-import InboxViewToggle from '@/components/inbox/inbox-view-toggle';
 import {
   EnvelopeIcon,
   SparklesIcon,
@@ -12,11 +11,7 @@ import {
   ClipboardDocumentListIcon
 } from '@heroicons/react/24/outline';
 
-export default async function InboxPage({
-  searchParams,
-}: {
-  searchParams: { view?: string };
-}) {
+export default async function InboxPage() {
   const supabase = await createClient();
 
   const {
@@ -27,8 +22,6 @@ export default async function InboxPage({
     redirect('/login');
   }
 
-  const view = searchParams.view || 'filtered';
-
   // Check if user has connected Gmail
   const { data: connection } = await supabase
     .from('connections')
@@ -38,27 +31,12 @@ export default async function InboxPage({
     .eq('status', 'active')
     .single();
 
-  // Fetch data based on view
-  let inboxItems: any[] | null = null;
-  let allEmails: any[] | null = null;
-
-  if (view === 'filtered') {
-    // Fetch AI-filtered inbox items
-    const { data } = await supabase
-      .from('inbox_items')
-      .select('*')
-      .eq('user_id', user.id)
-      .order('created_at', { ascending: false });
-    inboxItems = data;
-  } else {
-    // Fetch all emails
-    const { data } = await supabase
-      .from('emails')
-      .select('*')
-      .eq('user_id', user.id)
-      .order('received_at', { ascending: false });
-    allEmails = data;
-  }
+  // Fetch all inbox items (all emails are now processed and categorized)
+  const { data: inboxItems } = await supabase
+    .from('inbox_items')
+    .select('*')
+    .eq('user_id', user.id)
+    .order('created_at', { ascending: false });
 
   // Organize by category
   const pendingItems = inboxItems?.filter(item => item.status === 'pending') || [];
@@ -69,6 +47,10 @@ export default async function InboxPage({
   const questions = pendingItems.filter(item => item.ai_suggestion_type === 'question');
   const decisions = pendingItems.filter(item => item.ai_suggestion_type === 'decision');
   const information = pendingItems.filter(item => item.ai_suggestion_type === 'information');
+  const newsletters = pendingItems.filter(item => item.ai_suggestion_type === 'newsletter');
+  const promotional = pendingItems.filter(item => item.ai_suggestion_type === 'promotional');
+  const social = pendingItems.filter(item => item.ai_suggestion_type === 'social');
+  const other = pendingItems.filter(item => item.ai_suggestion_type === 'other');
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -113,16 +95,11 @@ export default async function InboxPage({
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Page Header */}
-        <div className="mb-6 flex items-center justify-between">
-          <div>
-            <h2 className="text-2xl font-semibold text-gray-900">Work Inbox</h2>
-            <p className="text-gray-600 mt-1">
-              {view === 'filtered'
-                ? 'Review AI-prepared work from your emails'
-                : 'View all your emails'}
-            </p>
-          </div>
-          {connection && <InboxViewToggle />}
+        <div className="mb-6">
+          <h2 className="text-2xl font-semibold text-gray-900">Work Inbox</h2>
+          <p className="text-gray-600 mt-1">
+            All your emails organized by category with AI-prepared work
+          </p>
         </div>
 
         {/* No Connection State */}
@@ -146,34 +123,21 @@ export default async function InboxPage({
           </div>
         )}
 
-        {/* Empty State - Filtered View */}
-        {connection && view === 'filtered' && (!inboxItems || inboxItems.length === 0) && (
+        {/* Empty State */}
+        {connection && (!inboxItems || inboxItems.length === 0) && (
           <div className="text-center py-12 bg-white rounded-lg border border-gray-200">
             <SparklesIcon className="w-12 h-12 mx-auto mb-4 text-gray-400" />
             <h3 className="text-lg font-medium text-gray-900 mb-2">
               All caught up!
             </h3>
             <p className="text-gray-600">
-              No items requiring action, questions, or decisions. Check "All Emails" to see everything.
+              No emails yet. We'll fetch and categorize them during the next sync.
             </p>
           </div>
         )}
 
-        {/* Empty State - All Emails View */}
-        {connection && view === 'all' && (!allEmails || allEmails.length === 0) && (
-          <div className="text-center py-12 bg-white rounded-lg border border-gray-200">
-            <InboxIcon className="w-12 h-12 mx-auto mb-4 text-gray-400" />
-            <h3 className="text-lg font-medium text-gray-900 mb-2">
-              No emails yet
-            </h3>
-            <p className="text-gray-600">
-              We'll fetch your emails during the next sync.
-            </p>
-          </div>
-        )}
-
-        {/* AI-Filtered Inbox Items */}
-        {connection && view === 'filtered' && inboxItems && inboxItems.length > 0 && (
+        {/* Inbox Items - Organized by Category */}
+        {connection && inboxItems && inboxItems.length > 0 && (
           <div className="space-y-6">
             {/* Action Required */}
             {actionRequired.length > 0 && (
@@ -239,6 +203,70 @@ export default async function InboxPage({
               </div>
             )}
 
+            {/* Newsletters */}
+            {newsletters.length > 0 && (
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-medium text-gray-600 uppercase tracking-wide">
+                    Newsletters ({newsletters.length})
+                  </h3>
+                </div>
+                <div className="bg-white rounded-lg border border-gray-200 divide-y divide-gray-200 opacity-75">
+                  {newsletters.map((item) => (
+                    <InboxItemCard key={item.id} item={item} />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Promotional */}
+            {promotional.length > 0 && (
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-medium text-gray-600 uppercase tracking-wide">
+                    Promotional ({promotional.length})
+                  </h3>
+                </div>
+                <div className="bg-white rounded-lg border border-gray-200 divide-y divide-gray-200 opacity-75">
+                  {promotional.map((item) => (
+                    <InboxItemCard key={item.id} item={item} />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Social */}
+            {social.length > 0 && (
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-medium text-gray-600 uppercase tracking-wide">
+                    Social ({social.length})
+                  </h3>
+                </div>
+                <div className="bg-white rounded-lg border border-gray-200 divide-y divide-gray-200 opacity-75">
+                  {social.map((item) => (
+                    <InboxItemCard key={item.id} item={item} />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Other */}
+            {other.length > 0 && (
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-medium text-gray-600 uppercase tracking-wide">
+                    Other ({other.length})
+                  </h3>
+                </div>
+                <div className="bg-white rounded-lg border border-gray-200 divide-y divide-gray-200 opacity-75">
+                  {other.map((item) => (
+                    <InboxItemCard key={item.id} item={item} />
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Reviewed Items */}
             {reviewedItems.length > 0 && (
               <div>
@@ -254,22 +282,6 @@ export default async function InboxPage({
                 </div>
               </div>
             )}
-          </div>
-        )}
-
-        {/* All Emails View */}
-        {connection && view === 'all' && allEmails && allEmails.length > 0 && (
-          <div>
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-medium text-gray-700 uppercase tracking-wide">
-                All Emails ({allEmails.length})
-              </h3>
-            </div>
-            <div className="bg-white rounded-lg border border-gray-200 divide-y divide-gray-200">
-              {allEmails.map((email) => (
-                <EmailCard key={email.id} email={email} />
-              ))}
-            </div>
           </div>
         )}
       </main>
@@ -352,42 +364,5 @@ function InboxItemCard({ item }: { item: any }) {
         </div>
       </div>
     </Link>
-  );
-}
-
-function EmailCard({ email }: { email: any }) {
-  return (
-    <div className="p-4 hover:bg-gray-50 transition-colors">
-      <div className="flex items-start justify-between">
-        <div className="flex-1 min-w-0">
-          {/* From */}
-          <div className="flex items-center space-x-2 mb-1">
-            <span className="font-medium text-gray-900">
-              {email.from_name || email.from_address}
-            </span>
-            <span className="text-xs text-gray-500">
-              {email.from_address}
-            </span>
-          </div>
-
-          {/* Subject */}
-          <h4 className="text-sm text-gray-900 font-medium mb-1">
-            {email.subject || '(No subject)'}
-          </h4>
-
-          {/* Body Preview */}
-          <p className="text-sm text-gray-600 line-clamp-2">
-            {email.body_preview || email.body?.substring(0, 150) + '...'}
-          </p>
-        </div>
-
-        {/* Date */}
-        <div className="ml-4 flex-shrink-0">
-          <span className="text-xs text-gray-500">
-            {new Date(email.received_at).toLocaleDateString()}
-          </span>
-        </div>
-      </div>
-    </div>
   );
 }

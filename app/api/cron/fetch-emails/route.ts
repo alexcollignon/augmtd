@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient as createServerClient } from '@supabase/supabase-js';
 import { fetchUnreadEmails, parseGmailMessage } from '@/lib/google/gmail';
-import { checkIfActionable, processEmail } from '@/lib/ai/email-processor';
+import { processEmail } from '@/lib/ai/email-processor';
 
 export const maxDuration = 300; // 5 minutes
 
@@ -54,7 +54,6 @@ export async function GET(request: NextRequest) {
     console.log(`Found ${connections.length} active Gmail connections`);
 
     let totalEmailsFetched = 0;
-    let totalActionable = 0;
     let totalInboxItems = 0;
     const errors: string[] = [];
 
@@ -111,26 +110,7 @@ export async function GET(request: NextRequest) {
 
             totalEmailsFetched++;
 
-            // AI Processing
-            const actionableCheck = await checkIfActionable({
-              id: storedEmail.id,
-              user_id: storedEmail.user_id,
-              message_id: storedEmail.message_id,
-              from_address: storedEmail.from_address,
-              from_name: storedEmail.from_name,
-              subject: storedEmail.subject,
-              body: storedEmail.body,
-              received_at: storedEmail.received_at
-            });
-
-            if (!actionableCheck.isActionable) {
-              console.log(`Email not actionable: ${parsed.subject}`);
-              continue;
-            }
-
-            totalActionable++;
-
-            // Full AI processing
+            // AI Processing - Process ALL emails (no pre-filter)
             const processed = await processEmail({
               id: storedEmail.id,
               user_id: storedEmail.user_id,
@@ -212,13 +192,12 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    console.log(`Cron job completed. Fetched: ${totalEmailsFetched}, Actionable: ${totalActionable}, Inbox items: ${totalInboxItems}`);
+    console.log(`Cron job completed. Fetched: ${totalEmailsFetched}, Inbox items: ${totalInboxItems}`);
 
     return NextResponse.json({
       success: true,
       processed: connections.length,
       emailsFetched: totalEmailsFetched,
-      actionable: totalActionable,
       inboxItemsCreated: totalInboxItems,
       errors: errors.length > 0 ? errors : undefined
     });

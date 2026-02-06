@@ -22,7 +22,7 @@ export interface ActionableResult {
 
 export interface ProcessedEmail {
   // Quick classification
-  category: string; // 'action_required' | 'question' | 'information' | 'decision'
+  category: string; // 'action_required' | 'question' | 'decision' | 'information' | 'newsletter' | 'promotional' | 'social' | 'other'
 
   // Summary and context
   summary: string;
@@ -146,10 +146,19 @@ ${email.body}
 
 PREPARE THE FOLLOWING:
 
-1. CATEGORY: action_required, question, information, or decision
+1. CATEGORY (choose ONE that best fits):
+   - action_required: Tasks that need to be completed
+   - question: Someone is asking you a question
+   - decision: Requires your approval/decision/input
+   - information: FYI only, no action needed
+   - newsletter: Subscribed newsletters, digests, updates
+   - promotional: Marketing, sales, ads, special offers
+   - social: Social media notifications, updates from platforms
+   - other: Anything else (receipts, confirmations, automated messages)
+
 2. SUMMARY: One sentence overview (max 100 chars)
 3. KEY POINTS: 2-4 bullet points of important information
-4. URGENCY: low, medium, high, or critical
+4. URGENCY: low, medium, high, or critical (only high/critical if truly time-sensitive)
 5. DEADLINE: Extract any deadlines (YYYY-MM-DD format, or null)
 
 6. ACTION ITEMS: List specific tasks with:
