@@ -86,21 +86,14 @@ export default function InboxPage() {
   const pendingItems = inboxItems.filter(item => item.status === 'pending');
   const reviewedItems = inboxItems.filter(item => item.status !== 'pending');
 
-  // High priority items with TODOs (action items)
+  // Items with prepared work ready for review (draft replies, calendar events)
   const preparedItems = pendingItems
     .filter(item => {
       const sd = item.source_data;
-      const hasActionItems = sd?.actionItems && sd.actionItems.length > 0;
-      const isHighPriority = item.priority >= 75 || sd?.urgency === 'high' || sd?.urgency === 'critical';
-      return hasActionItems && isHighPriority;
+      return sd?.draftReply || sd?.calendarEvent; // Has something READY for approval
     })
     .sort((a, b) => {
-      // Sort by urgency first (critical > high > medium > low)
-      const urgencyOrder = { critical: 0, high: 1, medium: 2, low: 3 };
-      const urgencyA = urgencyOrder[a.source_data?.urgency as keyof typeof urgencyOrder] ?? 2;
-      const urgencyB = urgencyOrder[b.source_data?.urgency as keyof typeof urgencyOrder] ?? 2;
-      if (urgencyA !== urgencyB) return urgencyA - urgencyB;
-      // Then by priority score
+      // Sort by priority score
       return (b.priority || 0) - (a.priority || 0);
     })
     .slice(0, 5); // Top 5
