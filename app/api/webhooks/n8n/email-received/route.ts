@@ -36,6 +36,9 @@ export async function POST(request: NextRequest) {
       }
     );
 
+    // Debug: Log first email structure
+    console.log('First email structure:', JSON.stringify(emails[0], null, 2));
+
     // Process each email
     const emailRecords = emails.map((email: any) => {
       // Extract email addresses
