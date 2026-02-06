@@ -70,16 +70,13 @@ export default function InboxDrawer({ item, isOpen, onClose }: InboxDrawerProps)
                     <div className="bg-white px-6 py-6 border-b border-gray-200">
                       <div className="flex items-start justify-between">
                         <div className="flex-1">
-                          <div className="flex items-center space-x-2 mb-2">
-                            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${urgencyColor}`}>
-                              {sourceData?.urgency || 'medium'}
-                            </span>
-                            {item.priority >= 75 && (
-                              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary-100 text-primary-700">
-                                High Priority
+                          {(sourceData?.urgency === 'high' || sourceData?.urgency === 'critical' || item.priority >= 75) && (
+                            <div className="mb-2">
+                              <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${urgencyColor}`}>
+                                {sourceData?.urgency === 'critical' ? 'Critical' : 'High Priority'}
                               </span>
-                            )}
-                          </div>
+                            </div>
+                          )}
                           <Dialog.Title className="text-xl font-semibold text-gray-900">
                             {sourceData?.subject || 'No subject'}
                           </Dialog.Title>

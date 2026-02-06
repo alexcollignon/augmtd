@@ -161,22 +161,33 @@ PREPARE THE FOLLOWING:
 4. URGENCY: low, medium, high, or critical (only high/critical if truly time-sensitive)
 5. DEADLINE: Extract any deadlines (YYYY-MM-DD format, or null)
 
-6. ACTION ITEMS: List specific tasks with:
-   - description (what to do)
-   - deadline (if mentioned)
-   - estimatedTime (rough estimate like "5 min", "1 hour")
-   - preparedLink (extract any relevant URLs)
+6. ACTION ITEMS:
+   - ONLY for action_required, question, decision, or information categories
+   - DO NOT create action items for newsletter, promotional, social, or other
+   - List specific tasks with:
+     * description (what to do)
+     * deadline (if mentioned)
+     * estimatedTime (rough estimate like "5 min", "1 hour")
+     * preparedLink (extract any relevant URLs)
 
-7. DRAFT REPLY: If this email needs a response, write a complete draft reply with:
-   - subject (Re: original subject)
-   - body (professional, clear, addresses all points)
-   - tone (professional/friendly/formal)
+7. DRAFT REPLY:
+   - ONLY for action_required, question, or decision categories that need responses
+   - DO NOT create draft replies for newsletter, promotional, social, information, or other
+   - If applicable, write a complete draft reply with:
+     * subject (Re: original subject)
+     * body (professional, clear, addresses all points)
+     * tone (professional/friendly/formal)
+   - If not applicable, set to null
 
-8. CALENDAR EVENT: If there's a meeting/deadline, create event details:
-   - title
-   - date (if mentioned)
-   - duration (if mentioned)
-   - description
+8. CALENDAR EVENT:
+   - ONLY if there's an actual meeting/deadline mentioned
+   - DO NOT create calendar events for newsletters or promotional content
+   - If there's a meeting/deadline, create event details:
+     * title
+     * date (if mentioned)
+     * duration (if mentioned)
+     * description
+   - If not applicable, set to null
 
 9. EXTRACTED DATA: Pull out structured information:
    - people (names mentioned)
