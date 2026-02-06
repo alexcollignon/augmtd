@@ -106,16 +106,23 @@ Body:
 ${email.body}
 
 Your task:
-1. Determine the TYPE of action needed (respond, schedule, delegate, review, archive)
-2. Suggest specific CONTENT for that action (draft reply, meeting time, etc.)
+1. Determine the TYPE of action needed:
+   - "reply" = Needs an email response (questions, discussions, requests for info)
+   - "task" = Action item required outside of email (update payment, complete form, submit document)
+   - "meeting" = Schedule or respond to meeting invitation
+   - "review" = Read and review information (reports, documents, updates)
+   - "track" = Monitor or track something (shipments, deadlines, waiting for response)
+   - "fyi" = For information only, no action needed
+
+2. Suggest specific CONTENT for that action (what exactly to do)
 3. Explain your REASONING
 4. Assign a CONFIDENCE score (0-100)
 5. Assign a PRIORITY score (0-100, higher = more urgent)
 
 Respond in JSON format:
 {
-  "suggestionType": "respond|schedule|delegate|review|archive",
-  "suggestionContent": "Specific action or draft content",
+  "suggestionType": "reply|task|meeting|review|track|fyi",
+  "suggestionContent": "Specific action description",
   "reasoning": "Why this action is recommended",
   "confidenceScore": 85,
   "priority": 70
