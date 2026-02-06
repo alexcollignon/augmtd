@@ -1,7 +1,7 @@
 {
   "functions": {
     "app/api/webhooks/n8n/email-received/route.ts": {
-      "maxDuration": 60,
+      "maxDuration": 300,
       "memory": 1024
     }
   },

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient as createServerClient } from '@supabase/supabase-js';
+import { checkIfActionable, processEmail } from '@/lib/ai/email-processor';
 
 export async function POST(request: NextRequest) {
   try {
@@ -87,23 +88,87 @@ export async function POST(request: NextRequest) {
 
     console.log(`Successfully stored ${data?.length || 0} emails`);
 
-    // TODO: Trigger AI processing for each email
-    // for (const email of data || []) {
-    //   await fetch(`${process.env.NEXT_PUBLIC_APP_URL}/api/agents/process`, {
-    //     method: 'POST',
-    //     headers: { 'Content-Type': 'application/json' },
-    //     body: JSON.stringify({
-    //       userId: email.user_id,
-    //       eventType: 'email',
-    //       eventData: email
-    //     })
-    //   });
-    // }
+    // AI Processing: Filter and process actionable emails
+    let actionableCount = 0;
+    let processedCount = 0;
+    const errors: string[] = [];
+
+    for (const email of data || []) {
+      try {
+        // Step 1: Lightweight check if email is actionable (GPT-4o-mini, ~$0.0001)
+        const actionableCheck = await checkIfActionable({
+          id: email.id,
+          user_id: email.user_id,
+          message_id: email.message_id,
+          from_address: email.from_address,
+          from_name: email.from_name,
+          subject: email.subject,
+          body: email.body,
+          received_at: email.received_at
+        });
+
+        if (!actionableCheck.isActionable) {
+          console.log(`Skipping non-actionable email: ${email.subject} - ${actionableCheck.reasoning}`);
+          continue;
+        }
+
+        actionableCount++;
+
+        // Step 2: Full AI processing for actionable emails (GPT-4o, ~$0.01)
+        const processed = await processEmail({
+          id: email.id,
+          user_id: email.user_id,
+          message_id: email.message_id,
+          from_address: email.from_address,
+          from_name: email.from_name,
+          subject: email.subject,
+          body: email.body,
+          received_at: email.received_at
+        });
+
+        // Step 3: Create inbox item
+        const { error: inboxError } = await supabase
+          .from('inbox_items')
+          .insert({
+            user_id: email.user_id,
+            source: 'email',
+            source_id: email.id,
+            source_data: {
+              email_id: email.id,
+              message_id: email.message_id,
+              from: email.from_address,
+              subject: email.subject,
+              received_at: email.received_at
+            },
+            ai_suggestion_type: processed.suggestionType,
+            ai_suggestion_content: processed.suggestionContent,
+            ai_suggestion_reasoning: processed.reasoning,
+            confidence_score: processed.confidenceScore,
+            priority: processed.priority,
+            status: 'pending',
+            needs_review: true
+          });
+
+        if (inboxError) {
+          console.error(`Error creating inbox item for email ${email.id}:`, inboxError);
+          errors.push(`Email ${email.subject}: ${inboxError.message}`);
+        } else {
+          processedCount++;
+          console.log(`Created inbox item for: ${email.subject} (${processed.suggestionType})`);
+        }
+      } catch (error) {
+        console.error(`Error processing email ${email.id}:`, error);
+        errors.push(`Email ${email.subject}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      }
+    }
 
     return NextResponse.json({
       success: true,
       message: `Processed ${emails.length} emails`,
-      stored: data?.length || 0
+      stored: data?.length || 0,
+      actionable: actionableCount,
+      inboxItemsCreated: processedCount,
+      errors: errors.length > 0 ? errors : undefined
     });
 
   } catch (error) {
