@@ -1,48 +1,98 @@
-import { createClient } from '@/lib/supabase/server';
-import { redirect } from 'next/navigation';
+'use client';
+
+import { useState, useEffect } from 'react';
+import { createClient } from '@/lib/supabase/client';
+import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
-import {
-  EnvelopeIcon,
-  SparklesIcon,
-  InboxIcon,
-  CheckCircleIcon,
-  CalendarIcon,
-  ClipboardDocumentListIcon
-} from '@heroicons/react/24/outline';
+import SimpleInboxCard from '@/components/inbox/simple-inbox-card';
+import InboxDrawer from '@/components/inbox/inbox-drawer';
+import { ChevronDownIcon, ChevronUpIcon, SparklesIcon } from '@heroicons/react/24/outline';
 
-export default async function InboxPage() {
-  const supabase = await createClient();
+export default function InboxPage() {
+  const router = useRouter();
+  const [user, setUser] = useState<any>(null);
+  const [connection, setConnection] = useState<any>(null);
+  const [inboxItems, setInboxItems] = useState<any[]>([]);
+  const [selectedItem, setSelectedItem] = useState<any>(null);
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [loading, setLoading] = useState(true);
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  // Collapsible states
+  const [showNewsletters, setShowNewsletters] = useState(false);
+  const [showPromotional, setShowPromotional] = useState(false);
+  const [showSocial, setShowSocial] = useState(false);
+  const [showOther, setShowOther] = useState(false);
 
-  if (!user) {
-    redirect('/login');
+  useEffect(() => {
+    async function loadData() {
+      const supabase = createClient();
+
+      const { data: { user: currentUser } } = await supabase.auth.getUser();
+      if (!currentUser) {
+        router.push('/login');
+        return;
+      }
+      setUser(currentUser);
+
+      // Check connection
+      const { data: conn } = await supabase
+        .from('connections')
+        .select('*')
+        .eq('user_id', currentUser.id)
+        .eq('provider', 'gmail')
+        .eq('status', 'active')
+        .single();
+      setConnection(conn);
+
+      // Fetch inbox items
+      const { data: items } = await supabase
+        .from('inbox_items')
+        .select('*')
+        .eq('user_id', currentUser.id)
+        .order('created_at', { ascending: false });
+      setInboxItems(items || []);
+
+      setLoading(false);
+    }
+
+    loadData();
+  }, [router]);
+
+  const handleItemClick = (item: any) => {
+    setSelectedItem(item);
+    setIsDrawerOpen(true);
+  };
+
+  const handleDrawerClose = () => {
+    setIsDrawerOpen(false);
+    // Refresh data after closing drawer (in case item was approved/rejected)
+    setTimeout(async () => {
+      const supabase = createClient();
+      const { data: items } = await supabase
+        .from('inbox_items')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false });
+      setInboxItems(items || []);
+    }, 300);
+  };
+
+  if (loading) {
+    return <div className="min-h-screen bg-gray-50 flex items-center justify-center">Loading...</div>;
   }
 
-  // Check if user has connected Gmail
-  const { data: connection } = await supabase
-    .from('connections')
-    .select('*')
-    .eq('user_id', user.id)
-    .eq('provider', 'gmail')
-    .eq('status', 'active')
-    .single();
+  // Organize items
+  const pendingItems = inboxItems.filter(item => item.status === 'pending');
+  const reviewedItems = inboxItems.filter(item => item.status !== 'pending');
 
-  // Fetch all inbox items (all emails are now processed and categorized)
-  const { data: inboxItems } = await supabase
-    .from('inbox_items')
-    .select('*')
-    .eq('user_id', user.id)
-    .order('created_at', { ascending: false });
+  // Items with prepared work (drafts or action items)
+  const preparedItems = pendingItems.filter(item => {
+    const sd = item.source_data;
+    return (sd?.draftReply || (sd?.actionItems && sd.actionItems.length > 0));
+  }).slice(0, 5); // Top 5
 
-  // Organize by category
-  const pendingItems = inboxItems?.filter(item => item.status === 'pending') || [];
-  const reviewedItems = inboxItems?.filter(item => item.status !== 'pending') || [];
-
-  // Group pending items by category
+  // Categorize pending items
   const actionRequired = pendingItems.filter(item => item.ai_suggestion_type === 'action_required');
   const questions = pendingItems.filter(item => item.ai_suggestion_type === 'question');
   const decisions = pendingItems.filter(item => item.ai_suggestion_type === 'decision');
@@ -79,7 +129,7 @@ export default async function InboxPage() {
               </div>
             </div>
             <div className="flex items-center space-x-4">
-              <span className="text-sm text-gray-600">{user.email}</span>
+              <span className="text-sm text-gray-600">{user?.email}</span>
               <form action="/auth/signout" method="post">
                 <button
                   type="submit"
@@ -93,12 +143,12 @@ export default async function InboxPage() {
         </div>
       </nav>
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <main className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Page Header */}
-        <div className="mb-6">
+        <div className="mb-8">
           <h2 className="text-2xl font-semibold text-gray-900">Work Inbox</h2>
           <p className="text-gray-600 mt-1">
-            All your emails organized by category with AI-prepared work
+            AI-prepared work from your emails
           </p>
         </div>
 
@@ -106,12 +156,12 @@ export default async function InboxPage() {
         {!connection && (
           <div className="text-center py-12 bg-white rounded-lg border-2 border-dashed border-gray-300">
             <div className="max-w-md mx-auto">
-              <EnvelopeIcon className="w-12 h-12 mx-auto mb-4 text-gray-400" />
+              <SparklesIcon className="w-12 h-12 mx-auto mb-4 text-gray-400" />
               <h3 className="text-lg font-medium text-gray-900 mb-2">
                 Connect Your Email
               </h3>
               <p className="text-gray-600 mb-6">
-                Connect your Gmail account to start receiving AI-prepared work in your inbox
+                Connect your Gmail account to start receiving AI-prepared work
               </p>
               <Link
                 href="/api/auth/gmail/connect"
@@ -124,7 +174,7 @@ export default async function InboxPage() {
         )}
 
         {/* Empty State */}
-        {connection && (!inboxItems || inboxItems.length === 0) && (
+        {connection && inboxItems.length === 0 && (
           <div className="text-center py-12 bg-white rounded-lg border border-gray-200">
             <SparklesIcon className="w-12 h-12 mx-auto mb-4 text-gray-400" />
             <h3 className="text-lg font-medium text-gray-900 mb-2">
@@ -136,233 +186,193 @@ export default async function InboxPage() {
           </div>
         )}
 
-        {/* Inbox Items - Organized by Category */}
-        {connection && inboxItems && inboxItems.length > 0 && (
-          <div className="space-y-6">
+        {/* Content */}
+        {connection && inboxItems.length > 0 && (
+          <div className="space-y-8">
+            {/* I Prepared These For You */}
+            {preparedItems.length > 0 && (
+              <div>
+                <div className="flex items-center space-x-2 mb-4">
+                  <SparklesIcon className="w-5 h-5 text-primary-600" />
+                  <h3 className="text-lg font-semibold text-gray-900">I prepared these for you</h3>
+                </div>
+                <div className="bg-white rounded-lg border border-gray-200 divide-y divide-gray-200 shadow-sm">
+                  {preparedItems.map((item) => (
+                    <SimpleInboxCard key={item.id} item={item} onClick={() => handleItemClick(item)} />
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Action Required */}
             {actionRequired.length > 0 && (
               <div>
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-sm font-medium text-gray-700 uppercase tracking-wide">
-                    Action Required ({actionRequired.length})
-                  </h3>
-                </div>
+                <h3 className="text-sm font-medium text-gray-700 uppercase tracking-wide mb-3">
+                  Action Required ({actionRequired.length})
+                </h3>
                 <div className="bg-white rounded-lg border border-gray-200 divide-y divide-gray-200">
                   {actionRequired.map((item) => (
-                    <InboxItemCard key={item.id} item={item} />
+                    <SimpleInboxCard key={item.id} item={item} onClick={() => handleItemClick(item)} />
                   ))}
                 </div>
               </div>
             )}
 
-            {/* Questions to Answer */}
+            {/* Questions */}
             {questions.length > 0 && (
               <div>
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-sm font-medium text-gray-700 uppercase tracking-wide">
-                    Questions to Answer ({questions.length})
-                  </h3>
-                </div>
+                <h3 className="text-sm font-medium text-gray-700 uppercase tracking-wide mb-3">
+                  Questions to Answer ({questions.length})
+                </h3>
                 <div className="bg-white rounded-lg border border-gray-200 divide-y divide-gray-200">
                   {questions.map((item) => (
-                    <InboxItemCard key={item.id} item={item} />
+                    <SimpleInboxCard key={item.id} item={item} onClick={() => handleItemClick(item)} />
                   ))}
                 </div>
               </div>
             )}
 
-            {/* Decisions Needed */}
+            {/* Decisions */}
             {decisions.length > 0 && (
               <div>
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-sm font-medium text-gray-700 uppercase tracking-wide">
-                    Decisions Needed ({decisions.length})
-                  </h3>
-                </div>
+                <h3 className="text-sm font-medium text-gray-700 uppercase tracking-wide mb-3">
+                  Decisions Needed ({decisions.length})
+                </h3>
                 <div className="bg-white rounded-lg border border-gray-200 divide-y divide-gray-200">
                   {decisions.map((item) => (
-                    <InboxItemCard key={item.id} item={item} />
+                    <SimpleInboxCard key={item.id} item={item} onClick={() => handleItemClick(item)} />
                   ))}
                 </div>
               </div>
             )}
 
-            {/* For Your Information */}
+            {/* Information */}
             {information.length > 0 && (
               <div>
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-sm font-medium text-gray-700 uppercase tracking-wide">
-                    For Your Information ({information.length})
-                  </h3>
-                </div>
+                <h3 className="text-sm font-medium text-gray-700 uppercase tracking-wide mb-3">
+                  For Your Information ({information.length})
+                </h3>
                 <div className="bg-white rounded-lg border border-gray-200 divide-y divide-gray-200">
                   {information.map((item) => (
-                    <InboxItemCard key={item.id} item={item} />
+                    <SimpleInboxCard key={item.id} item={item} onClick={() => handleItemClick(item)} />
                   ))}
                 </div>
               </div>
             )}
 
-            {/* Newsletters */}
+            {/* Newsletters - Collapsible */}
             {newsletters.length > 0 && (
               <div>
-                <div className="flex items-center justify-between mb-3">
+                <button
+                  onClick={() => setShowNewsletters(!showNewsletters)}
+                  className="w-full flex items-center justify-between mb-3 text-left"
+                >
                   <h3 className="text-sm font-medium text-gray-600 uppercase tracking-wide">
                     Newsletters ({newsletters.length})
                   </h3>
-                </div>
-                <div className="bg-white rounded-lg border border-gray-200 divide-y divide-gray-200 opacity-75">
-                  {newsletters.map((item) => (
-                    <InboxItemCard key={item.id} item={item} />
-                  ))}
-                </div>
+                  {showNewsletters ? (
+                    <ChevronUpIcon className="w-5 h-5 text-gray-400" />
+                  ) : (
+                    <ChevronDownIcon className="w-5 h-5 text-gray-400" />
+                  )}
+                </button>
+                {showNewsletters && (
+                  <div className="bg-white rounded-lg border border-gray-200 divide-y divide-gray-200 opacity-75">
+                    {newsletters.map((item) => (
+                      <SimpleInboxCard key={item.id} item={item} onClick={() => handleItemClick(item)} />
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
-            {/* Promotional */}
+            {/* Promotional - Collapsible */}
             {promotional.length > 0 && (
               <div>
-                <div className="flex items-center justify-between mb-3">
+                <button
+                  onClick={() => setShowPromotional(!showPromotional)}
+                  className="w-full flex items-center justify-between mb-3 text-left"
+                >
                   <h3 className="text-sm font-medium text-gray-600 uppercase tracking-wide">
                     Promotional ({promotional.length})
                   </h3>
-                </div>
-                <div className="bg-white rounded-lg border border-gray-200 divide-y divide-gray-200 opacity-75">
-                  {promotional.map((item) => (
-                    <InboxItemCard key={item.id} item={item} />
-                  ))}
-                </div>
+                  {showPromotional ? (
+                    <ChevronUpIcon className="w-5 h-5 text-gray-400" />
+                  ) : (
+                    <ChevronDownIcon className="w-5 h-5 text-gray-400" />
+                  )}
+                </button>
+                {showPromotional && (
+                  <div className="bg-white rounded-lg border border-gray-200 divide-y divide-gray-200 opacity-75">
+                    {promotional.map((item) => (
+                      <SimpleInboxCard key={item.id} item={item} onClick={() => handleItemClick(item)} />
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
-            {/* Social */}
+            {/* Social - Collapsible */}
             {social.length > 0 && (
               <div>
-                <div className="flex items-center justify-between mb-3">
+                <button
+                  onClick={() => setShowSocial(!showSocial)}
+                  className="w-full flex items-center justify-between mb-3 text-left"
+                >
                   <h3 className="text-sm font-medium text-gray-600 uppercase tracking-wide">
                     Social ({social.length})
                   </h3>
-                </div>
-                <div className="bg-white rounded-lg border border-gray-200 divide-y divide-gray-200 opacity-75">
-                  {social.map((item) => (
-                    <InboxItemCard key={item.id} item={item} />
-                  ))}
-                </div>
+                  {showSocial ? (
+                    <ChevronUpIcon className="w-5 h-5 text-gray-400" />
+                  ) : (
+                    <ChevronDownIcon className="w-5 h-5 text-gray-400" />
+                  )}
+                </button>
+                {showSocial && (
+                  <div className="bg-white rounded-lg border border-gray-200 divide-y divide-gray-200 opacity-75">
+                    {social.map((item) => (
+                      <SimpleInboxCard key={item.id} item={item} onClick={() => handleItemClick(item)} />
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
-            {/* Other */}
+            {/* Other - Collapsible */}
             {other.length > 0 && (
               <div>
-                <div className="flex items-center justify-between mb-3">
+                <button
+                  onClick={() => setShowOther(!showOther)}
+                  className="w-full flex items-center justify-between mb-3 text-left"
+                >
                   <h3 className="text-sm font-medium text-gray-600 uppercase tracking-wide">
                     Other ({other.length})
                   </h3>
-                </div>
-                <div className="bg-white rounded-lg border border-gray-200 divide-y divide-gray-200 opacity-75">
-                  {other.map((item) => (
-                    <InboxItemCard key={item.id} item={item} />
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Reviewed Items */}
-            {reviewedItems.length > 0 && (
-              <div>
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-sm font-medium text-gray-500 uppercase tracking-wide">
-                    Reviewed ({reviewedItems.length})
-                  </h3>
-                </div>
-                <div className="bg-white rounded-lg border border-gray-200 divide-y divide-gray-200 opacity-60">
-                  {reviewedItems.map((item) => (
-                    <InboxItemCard key={item.id} item={item} />
-                  ))}
-                </div>
+                  {showOther ? (
+                    <ChevronUpIcon className="w-5 h-5 text-gray-400" />
+                  ) : (
+                    <ChevronDownIcon className="w-5 h-5 text-gray-400" />
+                  )}
+                </button>
+                {showOther && (
+                  <div className="bg-white rounded-lg border border-gray-200 divide-y divide-gray-200 opacity-75">
+                    {other.map((item) => (
+                      <SimpleInboxCard key={item.id} item={item} onClick={() => handleItemClick(item)} />
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </div>
         )}
       </main>
+
+      {/* Drawer */}
+      <InboxDrawer
+        item={selectedItem}
+        isOpen={isDrawerOpen}
+        onClose={handleDrawerClose}
+      />
     </div>
-  );
-}
-
-function InboxItemCard({ item }: { item: any }) {
-  const sourceData = item.source_data;
-  const urgencyColors = {
-    low: 'text-gray-600 bg-gray-100',
-    medium: 'text-blue-700 bg-blue-100',
-    high: 'text-orange-700 bg-orange-100',
-    critical: 'text-red-700 bg-red-100'
-  };
-
-  const urgencyColor = urgencyColors[sourceData?.urgency as keyof typeof urgencyColors] || urgencyColors.medium;
-
-  return (
-    <Link href={`/inbox/${item.id}`} className="block hover:bg-gray-50 transition-colors">
-      <div className="p-4">
-        <div className="flex items-start justify-between">
-          <div className="flex-1 min-w-0">
-            {/* From */}
-            <div className="flex items-center space-x-2 mb-1">
-              <span className="font-medium text-gray-900">
-                {sourceData?.from_name || sourceData?.from || 'Unknown'}
-              </span>
-              <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${urgencyColor}`}>
-                {sourceData?.urgency || 'medium'}
-              </span>
-            </div>
-
-            {/* Subject */}
-            <h4 className="text-sm text-gray-900 font-medium mb-1 truncate">
-              {sourceData?.subject || 'No subject'}
-            </h4>
-
-            {/* Summary */}
-            <p className="text-sm text-gray-600 line-clamp-2 mb-2">
-              {sourceData?.summary || item.ai_suggestion_content}
-            </p>
-
-            {/* Action Items Preview */}
-            {sourceData?.actionItems && sourceData.actionItems.length > 0 && (
-              <div className="flex items-center space-x-3 text-xs text-gray-500">
-                <span className="flex items-center space-x-1">
-                  <ClipboardDocumentListIcon className="w-4 h-4" />
-                  <span>{sourceData.actionItems.length} action{sourceData.actionItems.length > 1 ? 's' : ''}</span>
-                </span>
-                {sourceData?.draftReply && (
-                  <span className="flex items-center space-x-1">
-                    <EnvelopeIcon className="w-4 h-4" />
-                    <span>Draft ready</span>
-                  </span>
-                )}
-                {sourceData?.calendarEvent && (
-                  <span className="flex items-center space-x-1">
-                    <CalendarIcon className="w-4 h-4" />
-                    <span>Event suggested</span>
-                  </span>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* Priority Badge */}
-          <div className="ml-4 flex-shrink-0">
-            <div className="flex flex-col items-end space-y-1">
-              <span className="text-xs text-gray-500">
-                {new Date(item.created_at).toLocaleDateString()}
-              </span>
-              {item.priority >= 75 && (
-                <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-primary-100 text-primary-700">
-                  High Priority
-                </span>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-    </Link>
   );
 }
