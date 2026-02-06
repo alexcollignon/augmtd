@@ -92,7 +92,7 @@ Respond in JSON format:
 
 /**
  * Full AI processing to generate inbox item suggestion
- * Uses GPT-4o for better reasoning (~$0.005-0.01 per email)
+ * Uses GPT-4o-mini for cost efficiency (~$0.0001-0.0002 per email)
  */
 export async function processEmail(email: EmailData): Promise<ProcessedEmail> {
   const prompt = `Analyze this email and suggest what action the recipient should take.
@@ -123,7 +123,7 @@ Respond in JSON format:
 
   try {
     const response = await openai.chat.completions.create({
-      model: 'gpt-4o',
+      model: 'gpt-4o-mini',
       messages: [
         {
           role: 'system',
