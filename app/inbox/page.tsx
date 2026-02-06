@@ -60,8 +60,15 @@ export default async function InboxPage({
     allEmails = data;
   }
 
+  // Organize by category
   const pendingItems = inboxItems?.filter(item => item.status === 'pending') || [];
   const reviewedItems = inboxItems?.filter(item => item.status !== 'pending') || [];
+
+  // Group pending items by category
+  const actionRequired = pendingItems.filter(item => item.ai_suggestion_type === 'action_required');
+  const questions = pendingItems.filter(item => item.ai_suggestion_type === 'question');
+  const decisions = pendingItems.filter(item => item.ai_suggestion_type === 'decision');
+  const information = pendingItems.filter(item => item.ai_suggestion_type === 'information');
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -147,7 +154,7 @@ export default async function InboxPage({
               All caught up!
             </h3>
             <p className="text-gray-600">
-              No actionable items found. Check "All Emails" to see everything.
+              No items requiring action, questions, or decisions. Check "All Emails" to see everything.
             </p>
           </div>
         )}
@@ -168,16 +175,64 @@ export default async function InboxPage({
         {/* AI-Filtered Inbox Items */}
         {connection && view === 'filtered' && inboxItems && inboxItems.length > 0 && (
           <div className="space-y-6">
-            {/* Pending Items */}
-            {pendingItems.length > 0 && (
+            {/* Action Required */}
+            {actionRequired.length > 0 && (
               <div>
                 <div className="flex items-center justify-between mb-3">
                   <h3 className="text-sm font-medium text-gray-700 uppercase tracking-wide">
-                    Pending Review ({pendingItems.length})
+                    Action Required ({actionRequired.length})
                   </h3>
                 </div>
                 <div className="bg-white rounded-lg border border-gray-200 divide-y divide-gray-200">
-                  {pendingItems.map((item) => (
+                  {actionRequired.map((item) => (
+                    <InboxItemCard key={item.id} item={item} />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Questions to Answer */}
+            {questions.length > 0 && (
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-medium text-gray-700 uppercase tracking-wide">
+                    Questions to Answer ({questions.length})
+                  </h3>
+                </div>
+                <div className="bg-white rounded-lg border border-gray-200 divide-y divide-gray-200">
+                  {questions.map((item) => (
+                    <InboxItemCard key={item.id} item={item} />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Decisions Needed */}
+            {decisions.length > 0 && (
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-medium text-gray-700 uppercase tracking-wide">
+                    Decisions Needed ({decisions.length})
+                  </h3>
+                </div>
+                <div className="bg-white rounded-lg border border-gray-200 divide-y divide-gray-200">
+                  {decisions.map((item) => (
+                    <InboxItemCard key={item.id} item={item} />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* For Your Information */}
+            {information.length > 0 && (
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-medium text-gray-700 uppercase tracking-wide">
+                    For Your Information ({information.length})
+                  </h3>
+                </div>
+                <div className="bg-white rounded-lg border border-gray-200 divide-y divide-gray-200">
+                  {information.map((item) => (
                     <InboxItemCard key={item.id} item={item} />
                   ))}
                 </div>
