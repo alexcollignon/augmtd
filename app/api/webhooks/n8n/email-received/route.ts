@@ -36,36 +36,36 @@ export async function POST(request: NextRequest) {
       }
     );
 
-    // Debug: Log first email structure
-    console.log('First email structure:', JSON.stringify(emails[0], null, 2));
-
     // Process each email
     const emailRecords = emails.map((email: any) => {
-      // Extract email addresses
-      const fromAddress = typeof email.from === 'string'
-        ? email.from
-        : email.from?.text || email.from?.value?.[0]?.address || '';
+      // n8n wraps data in a 'json' property, extract it
+      const emailData = email.json || email;
 
-      const toAddresses = Array.isArray(email.to?.value)
-        ? email.to.value.map((t: any) => t.address)
-        : [email.to?.text || ''];
+      // Extract email addresses
+      const fromAddress = typeof emailData.from === 'string'
+        ? emailData.from
+        : emailData.from?.text || emailData.from?.value?.[0]?.address || '';
+
+      const toAddresses = Array.isArray(emailData.to?.value)
+        ? emailData.to.value.map((t: any) => t.address)
+        : [emailData.to?.text || ''];
 
       return {
         user_id: userId || null, // Nullable for testing, will link to real user later
-        message_id: email.messageId || email.id,
+        message_id: emailData.messageId || emailData.id,
         from_address: fromAddress,
-        from_name: email.from?.value?.[0]?.name || '',
+        from_name: emailData.from?.value?.[0]?.name || '',
         to_addresses: toAddresses,
-        cc_addresses: email.cc?.value?.map((c: any) => c.address) || [],
-        subject: email.subject || '(no subject)',
-        body: email.text || email.textAsHtml || '',
-        html_body: email.html || null,
-        received_at: email.date ? new Date(email.date).toISOString() : new Date().toISOString(),
-        thread_id: email.threadId || null,
-        labels: email.labelIds || [],
+        cc_addresses: emailData.cc?.value?.map((c: any) => c.address) || [],
+        subject: emailData.subject || '(no subject)',
+        body: emailData.text || emailData.textAsHtml || '',
+        html_body: emailData.html || null,
+        received_at: emailData.date ? new Date(emailData.date).toISOString() : new Date().toISOString(),
+        thread_id: emailData.threadId || null,
+        labels: emailData.labelIds || [],
         metadata: {
-          sizeEstimate: email.sizeEstimate,
-          headers: email.headers,
+          sizeEstimate: emailData.sizeEstimate,
+          headers: emailData.headers,
           provider: provider || 'gmail'
         }
       };
