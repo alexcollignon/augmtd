@@ -1,7 +1,21 @@
 import { createClient } from '@/lib/supabase/server';
 import { redirect, notFound } from 'next/navigation';
 import Link from 'next/link';
+import Image from 'next/image';
 import InboxActions from '@/components/inbox/inbox-actions';
+import {
+  ClipboardDocumentListIcon,
+  EnvelopeIcon,
+  CalendarIcon,
+  ArrowPathIcon,
+  UserIcon,
+  BuildingOfficeIcon,
+  BanknotesIcon,
+  ClockIcon,
+  LinkIcon,
+  SparklesIcon,
+  ArrowLeftIcon
+} from '@heroicons/react/24/outline';
 
 export default async function InboxDetailPage({ params }: { params: { id: string } }) {
   const supabase = await createClient();
@@ -44,9 +58,19 @@ export default async function InboxDetailPage({ params }: { params: { id: string
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between h-16">
             <div className="flex items-center space-x-8">
-              <h1 className="text-2xl font-bold text-primary-600">AUGMTD</h1>
-              <Link href="/inbox" className="text-gray-600 hover:text-gray-900 text-sm">
-                ← Back to Inbox
+              <Link href="/" className="flex items-center space-x-2">
+                <Image
+                  src="/augmtd-logo.png"
+                  alt="AUGMTD"
+                  width={32}
+                  height={32}
+                  className="w-8 h-8"
+                />
+                <span className="text-xl font-bold text-gray-900">AUGMTD</span>
+              </Link>
+              <Link href="/inbox" className="flex items-center space-x-1 text-gray-600 hover:text-gray-900 text-sm">
+                <ArrowLeftIcon className="w-4 h-4" />
+                <span>Back to Inbox</span>
               </Link>
             </div>
             <div className="flex items-center space-x-4">
@@ -107,7 +131,10 @@ export default async function InboxDetailPage({ params }: { params: { id: string
           {sourceData?.deadline && (
             <div className="border-t border-gray-200 pt-4 mt-4">
               <h3 className="text-sm font-medium text-gray-700 mb-2">Deadline</h3>
-              <p className="text-gray-900">⏰ {sourceData.deadline}</p>
+              <div className="flex items-center space-x-2 text-gray-900">
+                <ClockIcon className="w-5 h-5 text-gray-400" />
+                <span>{sourceData.deadline}</span>
+              </div>
             </div>
           )}
         </div>
@@ -115,7 +142,10 @@ export default async function InboxDetailPage({ params }: { params: { id: string
         {/* Action Items */}
         {sourceData?.actionItems && sourceData.actionItems.length > 0 && (
           <div className="bg-white rounded-lg border border-gray-200 p-6 mb-6">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4">📋 Action Items</h2>
+            <div className="flex items-center space-x-2 mb-4">
+              <ClipboardDocumentListIcon className="w-5 h-5 text-gray-700" />
+              <h2 className="text-lg font-semibold text-gray-900">Action Items</h2>
+            </div>
             <div className="space-y-3">
               {sourceData.actionItems.map((action: any, index: number) => (
                 <div key={index} className="flex items-start space-x-3 p-3 bg-gray-50 rounded-lg">
@@ -123,12 +153,23 @@ export default async function InboxDetailPage({ params }: { params: { id: string
                   <div className="flex-1">
                     <p className="text-gray-900 font-medium">{action.description}</p>
                     <div className="flex items-center space-x-4 mt-1 text-xs text-gray-600">
-                      {action.deadline && <span>⏰ {action.deadline}</span>}
-                      {action.estimatedTime && <span>⏱️ {action.estimatedTime}</span>}
+                      {action.deadline && (
+                        <span className="flex items-center space-x-1">
+                          <ClockIcon className="w-3 h-3" />
+                          <span>{action.deadline}</span>
+                        </span>
+                      )}
+                      {action.estimatedTime && (
+                        <span className="flex items-center space-x-1">
+                          <ClockIcon className="w-3 h-3" />
+                          <span>{action.estimatedTime}</span>
+                        </span>
+                      )}
                     </div>
                     {action.preparedLink && (
-                      <a href={action.preparedLink} target="_blank" rel="noopener noreferrer" className="text-xs text-primary-600 hover:text-primary-700 mt-1 inline-block">
-                        🔗 Open link
+                      <a href={action.preparedLink} target="_blank" rel="noopener noreferrer" className="flex items-center space-x-1 text-xs text-primary-600 hover:text-primary-700 mt-1">
+                        <LinkIcon className="w-3 h-3" />
+                        <span>Open link</span>
                       </a>
                     )}
                   </div>
@@ -142,7 +183,10 @@ export default async function InboxDetailPage({ params }: { params: { id: string
         {sourceData?.draftReply && (
           <div className="bg-white rounded-lg border border-gray-200 p-6 mb-6">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-gray-900">✉️ Draft Reply</h2>
+              <div className="flex items-center space-x-2">
+                <EnvelopeIcon className="w-5 h-5 text-gray-700" />
+                <h2 className="text-lg font-semibold text-gray-900">Draft Reply</h2>
+              </div>
               <span className="text-xs text-gray-600">Tone: {sourceData.draftReply.tone}</span>
             </div>
             <div className="space-y-3">
@@ -165,7 +209,10 @@ export default async function InboxDetailPage({ params }: { params: { id: string
         {/* Calendar Event */}
         {sourceData?.calendarEvent && (
           <div className="bg-white rounded-lg border border-gray-200 p-6 mb-6">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4">📅 Suggested Calendar Event</h2>
+            <div className="flex items-center space-x-2 mb-4">
+              <CalendarIcon className="w-5 h-5 text-gray-700" />
+              <h2 className="text-lg font-semibold text-gray-900">Suggested Calendar Event</h2>
+            </div>
             <div className="space-y-2">
               <div>
                 <span className="text-sm font-medium text-gray-700">Title:</span>
@@ -194,15 +241,19 @@ export default async function InboxDetailPage({ params }: { params: { id: string
         {/* Extracted Data */}
         {sourceData?.extractedData && (
           <div className="bg-white rounded-lg border border-gray-200 p-6 mb-6">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4">🔍 Extracted Information</h2>
+            <div className="flex items-center space-x-2 mb-4">
+              <SparklesIcon className="w-5 h-5 text-gray-700" />
+              <h2 className="text-lg font-semibold text-gray-900">Extracted Information</h2>
+            </div>
             <div className="grid grid-cols-2 gap-4">
               {sourceData.extractedData.people && sourceData.extractedData.people.length > 0 && (
                 <div>
                   <h4 className="text-sm font-medium text-gray-700 mb-2">People</h4>
                   <div className="flex flex-wrap gap-2">
                     {sourceData.extractedData.people.map((person: string, index: number) => (
-                      <span key={index} className="inline-flex items-center px-2 py-1 rounded-md text-xs bg-blue-50 text-blue-700">
-                        👤 {person}
+                      <span key={index} className="inline-flex items-center space-x-1 px-2 py-1 rounded-md text-xs bg-blue-50 text-blue-700">
+                        <UserIcon className="w-3 h-3" />
+                        <span>{person}</span>
                       </span>
                     ))}
                   </div>
@@ -213,8 +264,9 @@ export default async function InboxDetailPage({ params }: { params: { id: string
                   <h4 className="text-sm font-medium text-gray-700 mb-2">Companies</h4>
                   <div className="flex flex-wrap gap-2">
                     {sourceData.extractedData.companies.map((company: string, index: number) => (
-                      <span key={index} className="inline-flex items-center px-2 py-1 rounded-md text-xs bg-green-50 text-green-700">
-                        🏢 {company}
+                      <span key={index} className="inline-flex items-center space-x-1 px-2 py-1 rounded-md text-xs bg-green-50 text-green-700">
+                        <BuildingOfficeIcon className="w-3 h-3" />
+                        <span>{company}</span>
                       </span>
                     ))}
                   </div>
@@ -225,8 +277,9 @@ export default async function InboxDetailPage({ params }: { params: { id: string
                   <h4 className="text-sm font-medium text-gray-700 mb-2">Amounts</h4>
                   <div className="flex flex-wrap gap-2">
                     {sourceData.extractedData.amounts.map((amount: string, index: number) => (
-                      <span key={index} className="inline-flex items-center px-2 py-1 rounded-md text-xs bg-purple-50 text-purple-700">
-                        💰 {amount}
+                      <span key={index} className="inline-flex items-center space-x-1 px-2 py-1 rounded-md text-xs bg-purple-50 text-purple-700">
+                        <BanknotesIcon className="w-3 h-3" />
+                        <span>{amount}</span>
                       </span>
                     ))}
                   </div>
@@ -237,8 +290,9 @@ export default async function InboxDetailPage({ params }: { params: { id: string
                   <h4 className="text-sm font-medium text-gray-700 mb-2">Important Dates</h4>
                   <div className="flex flex-wrap gap-2">
                     {sourceData.extractedData.dates.map((date: string, index: number) => (
-                      <span key={index} className="inline-flex items-center px-2 py-1 rounded-md text-xs bg-orange-50 text-orange-700">
-                        📅 {date}
+                      <span key={index} className="inline-flex items-center space-x-1 px-2 py-1 rounded-md text-xs bg-orange-50 text-orange-700">
+                        <CalendarIcon className="w-3 h-3" />
+                        <span>{date}</span>
                       </span>
                     ))}
                   </div>
@@ -249,8 +303,9 @@ export default async function InboxDetailPage({ params }: { params: { id: string
                   <h4 className="text-sm font-medium text-gray-700 mb-2">Links</h4>
                   <div className="space-y-1">
                     {sourceData.extractedData.links.map((link: string, index: number) => (
-                      <a key={index} href={link} target="_blank" rel="noopener noreferrer" className="block text-xs text-primary-600 hover:text-primary-700 truncate">
-                        🔗 {link}
+                      <a key={index} href={link} target="_blank" rel="noopener noreferrer" className="flex items-center space-x-1 text-xs text-primary-600 hover:text-primary-700 truncate">
+                        <LinkIcon className="w-3 h-3 flex-shrink-0" />
+                        <span>{link}</span>
                       </a>
                     ))}
                   </div>
@@ -263,7 +318,10 @@ export default async function InboxDetailPage({ params }: { params: { id: string
         {/* Follow-up Actions */}
         {sourceData?.followUpActions && sourceData.followUpActions.length > 0 && (
           <div className="bg-white rounded-lg border border-gray-200 p-6 mb-6">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4">🔄 Follow-up Actions</h2>
+            <div className="flex items-center space-x-2 mb-4">
+              <ArrowPathIcon className="w-5 h-5 text-gray-700" />
+              <h2 className="text-lg font-semibold text-gray-900">Follow-up Actions</h2>
+            </div>
             <ul className="space-y-2">
               {sourceData.followUpActions.map((action: string, index: number) => (
                 <li key={index} className="flex items-start">
@@ -278,7 +336,10 @@ export default async function InboxDetailPage({ params }: { params: { id: string
         {/* AI Reasoning */}
         {item.ai_suggestion_reasoning && (
           <div className="bg-gray-50 rounded-lg border border-gray-200 p-6 mb-6">
-            <h2 className="text-sm font-medium text-gray-700 mb-2">🤖 AI Analysis</h2>
+            <div className="flex items-center space-x-2 mb-2">
+              <SparklesIcon className="w-4 h-4 text-gray-700" />
+              <h2 className="text-sm font-medium text-gray-700">AI Analysis</h2>
+            </div>
             <p className="text-sm text-gray-600">{item.ai_suggestion_reasoning}</p>
             <div className="mt-3 flex items-center space-x-4 text-xs text-gray-500">
               <span>Confidence: {item.confidence_score}%</span>

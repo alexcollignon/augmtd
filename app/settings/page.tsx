@@ -1,7 +1,9 @@
 import { createClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
+import Image from 'next/image';
 import EmailSyncSettings from '@/components/settings/email-sync-settings';
+import { EnvelopeIcon } from '@heroicons/react/24/outline';
 
 export default async function SettingsPage() {
   const supabase = await createClient();
@@ -29,7 +31,16 @@ export default async function SettingsPage() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between h-16">
             <div className="flex items-center space-x-8">
-              <h1 className="text-2xl font-bold text-primary-600">AUGMTD</h1>
+              <Link href="/" className="flex items-center space-x-2">
+                <Image
+                  src="/augmtd-logo.png"
+                  alt="AUGMTD"
+                  width={32}
+                  height={32}
+                  className="w-8 h-8"
+                />
+                <span className="text-xl font-bold text-gray-900">AUGMTD</span>
+              </Link>
               <div className="flex space-x-4">
                 <Link href="/inbox" className="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md">
                   Inbox
@@ -88,7 +99,7 @@ export default async function SettingsPage() {
                 <div className="flex items-center space-x-3">
                   <div className="flex-shrink-0">
                     <div className="w-10 h-10 bg-white rounded-lg flex items-center justify-center">
-                      <span className="text-xl">📧</span>
+                      <EnvelopeIcon className="w-6 h-6 text-gray-600" />
                     </div>
                   </div>
                   <div>

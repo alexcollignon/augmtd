@@ -1,7 +1,16 @@
 import { createClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
+import Image from 'next/image';
 import InboxViewToggle from '@/components/inbox/inbox-view-toggle';
+import {
+  EnvelopeIcon,
+  SparklesIcon,
+  InboxIcon,
+  CheckCircleIcon,
+  CalendarIcon,
+  ClipboardDocumentListIcon
+} from '@heroicons/react/24/outline';
 
 export default async function InboxPage({
   searchParams,
@@ -61,7 +70,16 @@ export default async function InboxPage({
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between h-16">
             <div className="flex items-center space-x-8">
-              <h1 className="text-2xl font-bold text-primary-600">AUGMTD</h1>
+              <Link href="/" className="flex items-center space-x-2">
+                <Image
+                  src="/augmtd-logo.png"
+                  alt="AUGMTD"
+                  width={32}
+                  height={32}
+                  className="w-8 h-8"
+                />
+                <span className="text-xl font-bold text-gray-900">AUGMTD</span>
+              </Link>
               <div className="flex space-x-4">
                 <Link href="/inbox" className="text-gray-900 font-medium px-3 py-2 rounded-md bg-gray-100">
                   Inbox
@@ -104,7 +122,7 @@ export default async function InboxPage({
         {!connection && (
           <div className="text-center py-12 bg-white rounded-lg border-2 border-dashed border-gray-300">
             <div className="max-w-md mx-auto">
-              <div className="text-4xl mb-4">📧</div>
+              <EnvelopeIcon className="w-12 h-12 mx-auto mb-4 text-gray-400" />
               <h3 className="text-lg font-medium text-gray-900 mb-2">
                 Connect Your Email
               </h3>
@@ -124,7 +142,7 @@ export default async function InboxPage({
         {/* Empty State - Filtered View */}
         {connection && view === 'filtered' && (!inboxItems || inboxItems.length === 0) && (
           <div className="text-center py-12 bg-white rounded-lg border border-gray-200">
-            <div className="text-4xl mb-4">✨</div>
+            <SparklesIcon className="w-12 h-12 mx-auto mb-4 text-gray-400" />
             <h3 className="text-lg font-medium text-gray-900 mb-2">
               All caught up!
             </h3>
@@ -137,7 +155,7 @@ export default async function InboxPage({
         {/* Empty State - All Emails View */}
         {connection && view === 'all' && (!allEmails || allEmails.length === 0) && (
           <div className="text-center py-12 bg-white rounded-lg border border-gray-200">
-            <div className="text-4xl mb-4">📪</div>
+            <InboxIcon className="w-12 h-12 mx-auto mb-4 text-gray-400" />
             <h3 className="text-lg font-medium text-gray-900 mb-2">
               No emails yet
             </h3>
@@ -242,10 +260,23 @@ function InboxItemCard({ item }: { item: any }) {
 
             {/* Action Items Preview */}
             {sourceData?.actionItems && sourceData.actionItems.length > 0 && (
-              <div className="flex items-center space-x-2 text-xs text-gray-500">
-                <span>📋 {sourceData.actionItems.length} action{sourceData.actionItems.length > 1 ? 's' : ''}</span>
-                {sourceData?.draftReply && <span>• ✉️ Draft ready</span>}
-                {sourceData?.calendarEvent && <span>• 📅 Event suggested</span>}
+              <div className="flex items-center space-x-3 text-xs text-gray-500">
+                <span className="flex items-center space-x-1">
+                  <ClipboardDocumentListIcon className="w-4 h-4" />
+                  <span>{sourceData.actionItems.length} action{sourceData.actionItems.length > 1 ? 's' : ''}</span>
+                </span>
+                {sourceData?.draftReply && (
+                  <span className="flex items-center space-x-1">
+                    <EnvelopeIcon className="w-4 h-4" />
+                    <span>Draft ready</span>
+                  </span>
+                )}
+                {sourceData?.calendarEvent && (
+                  <span className="flex items-center space-x-1">
+                    <CalendarIcon className="w-4 h-4" />
+                    <span>Event suggested</span>
+                  </span>
+                )}
               </div>
             )}
           </div>

@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { CheckCircleIcon, PencilIcon, XMarkIcon } from '@heroicons/react/24/outline';
 
 interface InboxActionsProps {
   itemId: string;
@@ -100,35 +101,38 @@ export default function InboxActions({ itemId, status }: InboxActionsProps) {
           <button
             onClick={handleApprove}
             disabled={isApproving || isRejecting}
-            className={`px-6 py-3 bg-primary-600 text-white rounded-lg font-medium transition-colors ${
+            className={`flex items-center space-x-2 px-6 py-3 bg-primary-600 text-white rounded-lg font-medium transition-colors ${
               isApproving || isRejecting
                 ? 'opacity-50 cursor-not-allowed'
                 : 'hover:bg-primary-700'
             }`}
           >
-            {isApproving ? '⏳ Approving...' : '✓ Approve & Execute'}
+            <CheckCircleIcon className="w-5 h-5" />
+            <span>{isApproving ? 'Approving...' : 'Approve & Execute'}</span>
           </button>
           <button
             disabled={isApproving || isRejecting}
-            className={`px-6 py-3 border border-gray-300 text-gray-700 rounded-lg font-medium transition-colors ${
+            className={`flex items-center space-x-2 px-6 py-3 border border-gray-300 text-gray-700 rounded-lg font-medium transition-colors ${
               isApproving || isRejecting
                 ? 'opacity-50 cursor-not-allowed'
                 : 'hover:bg-gray-50'
             }`}
           >
-            ✎ Edit Draft
+            <PencilIcon className="w-5 h-5" />
+            <span>Edit Draft</span>
           </button>
         </div>
         <button
           onClick={handleReject}
           disabled={isApproving || isRejecting}
-          className={`px-6 py-3 border border-red-300 text-red-700 rounded-lg font-medium transition-colors ${
+          className={`flex items-center space-x-2 px-6 py-3 border border-red-300 text-red-700 rounded-lg font-medium transition-colors ${
             isApproving || isRejecting
               ? 'opacity-50 cursor-not-allowed'
               : 'hover:bg-red-50'
           }`}
         >
-          {isRejecting ? '⏳ Dismissing...' : '✕ Dismiss'}
+          <XMarkIcon className="w-5 h-5" />
+          <span>{isRejecting ? 'Dismissing...' : 'Dismiss'}</span>
         </button>
       </div>
       <p className="text-xs text-gray-500 mt-3">
