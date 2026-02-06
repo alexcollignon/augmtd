@@ -8,7 +8,9 @@ import {
   NewspaperIcon,
   MegaphoneIcon,
   UserGroupIcon,
-  DocumentIcon
+  DocumentIcon,
+  ClipboardDocumentListIcon,
+  CalendarIcon
 } from '@heroicons/react/24/outline';
 
 interface SimpleInboxCardProps {
@@ -97,13 +99,23 @@ export default function SimpleInboxCard({ item, onClick }: SimpleInboxCardProps)
         </p>
       </div>
 
-      {/* Metadata */}
+      {/* Metadata - Icons */}
       <div className="flex-shrink-0 flex items-center space-x-2">
         {sourceData?.draftReply && (
-          <span className="text-xs text-primary-600 font-medium">Draft ready</span>
+          <div className="flex items-center space-x-1 text-primary-600" title="Draft reply ready">
+            <EnvelopeIcon className="w-4 h-4" />
+          </div>
         )}
-        {sourceData?.actionItems && sourceData.actionItems.length > 0 && !sourceData?.draftReply && (
-          <span className="text-xs text-gray-500">{sourceData.actionItems.length} {sourceData.actionItems.length === 1 ? 'action' : 'actions'}</span>
+        {sourceData?.actionItems && sourceData.actionItems.length > 0 && (
+          <div className="flex items-center space-x-1 text-gray-600" title={`${sourceData.actionItems.length} action items`}>
+            <ClipboardDocumentListIcon className="w-4 h-4" />
+            <span className="text-xs">{sourceData.actionItems.length}</span>
+          </div>
+        )}
+        {sourceData?.calendarEvent && (
+          <div className="flex items-center space-x-1 text-gray-600" title="Calendar event suggested">
+            <CalendarIcon className="w-4 h-4" />
+          </div>
         )}
       </div>
     </button>
