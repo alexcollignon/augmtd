@@ -60,7 +60,7 @@ Respond in JSON format:
 
   try {
     const response = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
+      model: '-mini',
       messages: [
         {
           role: 'system',

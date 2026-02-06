@@ -1,7 +1,0 @@
-FROM n8nio/n8n:latest
-
-# Expose port 10000 (Render's default internal port)
-EXPOSE 10000
-
-# The n8n image already has the correct CMD and ENTRYPOINT configured
-# We don't need to override it - just use the defaults
