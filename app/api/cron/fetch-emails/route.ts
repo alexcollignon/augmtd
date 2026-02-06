@@ -71,7 +71,8 @@ export async function GET(request: NextRequest) {
 
         // Fetch unread emails
         const encryptedTokens = connection.metadata.tokens;
-        const messages = await fetchUnreadEmails(encryptedTokens, 10);
+        const maxEmails = connection.metadata.max_emails_per_sync || 10;
+        const messages = await fetchUnreadEmails(encryptedTokens, maxEmails);
 
         console.log(`Fetched ${messages.length} emails for user ${connection.user_id}`);
 

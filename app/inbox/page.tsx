@@ -1,8 +1,13 @@
 import { createClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
+import InboxViewToggle from '@/components/inbox/inbox-view-toggle';
 
-export default async function InboxPage() {
+export default async function InboxPage({
+  searchParams,
+}: {
+  searchParams: { view?: string };
+}) {
   const supabase = await createClient();
 
   const {
@@ -13,12 +18,7 @@ export default async function InboxPage() {
     redirect('/login');
   }
 
-  // Fetch inbox items
-  const { data: inboxItems, error } = await supabase
-    .from('inbox_items')
-    .select('*')
-    .eq('user_id', user.id)
-    .order('created_at', { ascending: false });
+  const view = searchParams.view || 'filtered';
 
   // Check if user has connected Gmail
   const { data: connection } = await supabase
@@ -28,6 +28,28 @@ export default async function InboxPage() {
     .eq('provider', 'gmail')
     .eq('status', 'active')
     .single();
+
+  // Fetch data based on view
+  let inboxItems: any[] | null = null;
+  let allEmails: any[] | null = null;
+
+  if (view === 'filtered') {
+    // Fetch AI-filtered inbox items
+    const { data } = await supabase
+      .from('inbox_items')
+      .select('*')
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false });
+    inboxItems = data;
+  } else {
+    // Fetch all emails
+    const { data } = await supabase
+      .from('emails')
+      .select('*')
+      .eq('user_id', user.id)
+      .order('received_at', { ascending: false });
+    allEmails = data;
+  }
 
   const pendingItems = inboxItems?.filter(item => item.status === 'pending') || [];
   const reviewedItems = inboxItems?.filter(item => item.status !== 'pending') || [];
@@ -66,11 +88,16 @@ export default async function InboxPage() {
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Page Header */}
-        <div className="mb-6">
-          <h2 className="text-2xl font-semibold text-gray-900">Work Inbox</h2>
-          <p className="text-gray-600 mt-1">
-            Review AI-prepared work from your emails
-          </p>
+        <div className="mb-6 flex items-center justify-between">
+          <div>
+            <h2 className="text-2xl font-semibold text-gray-900">Work Inbox</h2>
+            <p className="text-gray-600 mt-1">
+              {view === 'filtered'
+                ? 'Review AI-prepared work from your emails'
+                : 'View all your emails'}
+            </p>
+          </div>
+          {connection && <InboxViewToggle />}
         </div>
 
         {/* No Connection State */}
@@ -94,21 +121,34 @@ export default async function InboxPage() {
           </div>
         )}
 
-        {/* Empty State */}
-        {connection && (!inboxItems || inboxItems.length === 0) && (
+        {/* Empty State - Filtered View */}
+        {connection && view === 'filtered' && (!inboxItems || inboxItems.length === 0) && (
           <div className="text-center py-12 bg-white rounded-lg border border-gray-200">
             <div className="text-4xl mb-4">✨</div>
             <h3 className="text-lg font-medium text-gray-900 mb-2">
               All caught up!
             </h3>
             <p className="text-gray-600">
-              No items in your inbox yet. We'll notify you when new items arrive.
+              No actionable items found. Check "All Emails" to see everything.
             </p>
           </div>
         )}
 
-        {/* Inbox Items */}
-        {connection && inboxItems && inboxItems.length > 0 && (
+        {/* Empty State - All Emails View */}
+        {connection && view === 'all' && (!allEmails || allEmails.length === 0) && (
+          <div className="text-center py-12 bg-white rounded-lg border border-gray-200">
+            <div className="text-4xl mb-4">📪</div>
+            <h3 className="text-lg font-medium text-gray-900 mb-2">
+              No emails yet
+            </h3>
+            <p className="text-gray-600">
+              We'll fetch your emails during the next sync.
+            </p>
+          </div>
+        )}
+
+        {/* AI-Filtered Inbox Items */}
+        {connection && view === 'filtered' && inboxItems && inboxItems.length > 0 && (
           <div className="space-y-6">
             {/* Pending Items */}
             {pendingItems.length > 0 && (
@@ -141,6 +181,22 @@ export default async function InboxPage() {
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {/* All Emails View */}
+        {connection && view === 'all' && allEmails && allEmails.length > 0 && (
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-medium text-gray-700 uppercase tracking-wide">
+                All Emails ({allEmails.length})
+              </h3>
+            </div>
+            <div className="bg-white rounded-lg border border-gray-200 divide-y divide-gray-200">
+              {allEmails.map((email) => (
+                <EmailCard key={email.id} email={email} />
+              ))}
+            </div>
           </div>
         )}
       </main>
@@ -210,5 +266,42 @@ function InboxItemCard({ item }: { item: any }) {
         </div>
       </div>
     </Link>
+  );
+}
+
+function EmailCard({ email }: { email: any }) {
+  return (
+    <div className="p-4 hover:bg-gray-50 transition-colors">
+      <div className="flex items-start justify-between">
+        <div className="flex-1 min-w-0">
+          {/* From */}
+          <div className="flex items-center space-x-2 mb-1">
+            <span className="font-medium text-gray-900">
+              {email.from_name || email.from_address}
+            </span>
+            <span className="text-xs text-gray-500">
+              {email.from_address}
+            </span>
+          </div>
+
+          {/* Subject */}
+          <h4 className="text-sm text-gray-900 font-medium mb-1">
+            {email.subject || '(No subject)'}
+          </h4>
+
+          {/* Body Preview */}
+          <p className="text-sm text-gray-600 line-clamp-2">
+            {email.body_preview || email.body?.substring(0, 150) + '...'}
+          </p>
+        </div>
+
+        {/* Date */}
+        <div className="ml-4 flex-shrink-0">
+          <span className="text-xs text-gray-500">
+            {new Date(email.received_at).toLocaleDateString()}
+          </span>
+        </div>
+      </div>
+    </div>
   );
 }

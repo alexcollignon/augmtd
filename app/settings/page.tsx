@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
+import EmailSyncSettings from '@/components/settings/email-sync-settings';
 
 export default async function SettingsPage() {
   const supabase = await createClient();
@@ -116,6 +117,15 @@ export default async function SettingsPage() {
                     Last synced: {new Date(connection.last_sync).toLocaleString()}
                   </p>
                 )}
+              </div>
+
+              {/* Sync Settings */}
+              <div className="p-4 border border-gray-200 rounded-lg">
+                <h4 className="text-sm font-medium text-gray-900 mb-3">Sync Settings</h4>
+                <EmailSyncSettings
+                  connectionId={connection.id}
+                  currentMaxEmails={connection.metadata?.max_emails_per_sync || 10}
+                />
               </div>
 
               {/* Disconnect Button */}
