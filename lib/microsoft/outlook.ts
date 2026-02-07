@@ -51,12 +51,21 @@ export async function getGraphClient(encryptedTokens: string) {
   });
 }
 
-export async function fetchUnreadEmails(encryptedTokens: string, maxResults: number = 10) {
+export async function fetchUnreadEmails(
+  encryptedTokens: string,
+  maxResults: number = 10,
+  syncWindowDays: number = 7
+) {
   const client = await getGraphClient(encryptedTokens);
+
+  // Calculate date filter (7 days ago)
+  const dateFilter = new Date();
+  dateFilter.setDate(dateFilter.getDate() - syncWindowDays);
+  const dateString = dateFilter.toISOString();
 
   const messages = await client
     .api('/me/messages')
-    .filter('isRead eq false')
+    .filter(`receivedDateTime ge ${dateString}`)
     .top(maxResults)
     .select('id,subject,bodyPreview,body,from,receivedDateTime,internetMessageId')
     .orderby('receivedDateTime desc')

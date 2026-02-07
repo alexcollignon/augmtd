@@ -72,6 +72,15 @@ export async function GET(request: NextRequest) {
       return NextResponse.redirect(`${origin}/settings?error=storage_failed`);
     }
 
+    // Trigger initial sync in background (don't wait for it)
+    fetch(`${origin}/api/connections/sync`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Cookie': request.headers.get('Cookie') || '',
+      },
+    }).catch(err => console.error('Background sync failed:', err));
+
     // Success - redirect to inbox
     return NextResponse.redirect(`${origin}/inbox?success=gmail_connected`);
   } catch (error) {

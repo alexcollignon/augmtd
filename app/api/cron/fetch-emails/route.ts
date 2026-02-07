@@ -69,15 +69,16 @@ export async function GET(request: NextRequest) {
           .update({ sync_status: 'syncing' })
           .eq('id', connection.id);
 
-        // Fetch unread emails based on provider
+        // Fetch emails based on provider
         const encryptedTokens = connection.metadata.tokens;
         const maxEmails = connection.metadata.max_emails_per_sync || 10;
+        const syncWindowDays = connection.metadata.sync_window_days || 7;
 
         let messages: any[];
         if (connection.provider === 'gmail') {
-          messages = await fetchGmailEmails(encryptedTokens, maxEmails);
+          messages = await fetchGmailEmails(encryptedTokens, maxEmails, syncWindowDays);
         } else if (connection.provider === 'outlook') {
-          messages = await fetchOutlookEmails(encryptedTokens, maxEmails);
+          messages = await fetchOutlookEmails(encryptedTokens, maxEmails, syncWindowDays);
         } else {
           console.warn(`Unknown provider: ${connection.provider}`);
           continue;

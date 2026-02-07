@@ -29,13 +29,14 @@ export async function getGmailClient(encryptedTokens: string) {
 
 export async function fetchUnreadEmails(
   encryptedTokens: string,
-  maxResults: number = 10
+  maxResults: number = 10,
+  syncWindowDays: number = 7
 ): Promise<GmailMessage[]> {
   try {
     const gmail = await getGmailClient(encryptedTokens);
 
-    // Search for unread emails, excluding spam/promotions
-    const query = 'is:unread -category:promotions -category:social -category:forums -is:spam';
+    // Search for recent emails (read and unread), excluding spam/promotions
+    const query = `newer_than:${syncWindowDays}d -category:promotions -category:social -category:forums -is:spam`;
 
     const response = await gmail.users.messages.list({
       userId: 'me',
