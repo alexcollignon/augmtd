@@ -96,12 +96,11 @@ export async function POST(request: NextRequest) {
             continue;
           }
 
-            // Store email with connection reference
+            // Store email
             const { data: storedEmail, error: emailError } = await adminSupabase
               .from('emails')
               .insert({
                 user_id: user.id,
-                connection_id: connection.id,
                 ...parsed
               })
               .select()

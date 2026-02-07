@@ -63,7 +63,6 @@ export async function GET(request: NextRequest) {
         user_id: userId,
         provider: 'outlook',
         provider_account_id: profile.userPrincipalName || profile.mail,
-        account_email: profile.mail || profile.userPrincipalName,
         status: 'active',
         metadata: {
           email: profile.mail || profile.userPrincipalName,

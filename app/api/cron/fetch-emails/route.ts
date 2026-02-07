@@ -105,12 +105,11 @@ export async function GET(request: NextRequest) {
               continue;
             }
 
-            // Store email with connection reference
+            // Store email
             const { data: storedEmail, error: emailError } = await supabase
               .from('emails')
               .insert({
                 user_id: connection.user_id,
-                connection_id: connection.id,
                 ...parsed
               })
               .select()
