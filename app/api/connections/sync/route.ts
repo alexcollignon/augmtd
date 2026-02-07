@@ -173,33 +173,36 @@ export async function POST(request: NextRequest) {
           }
         }
 
-      // Update sync status to completed
-      await adminSupabase
-        .from('connections')
-        .update({
-          sync_status: 'completed',
-          last_sync: new Date().toISOString()
-        })
-        .eq('id', connection.id);
+        // Update sync status to completed
+        await adminSupabase
+          .from('connections')
+          .update({
+            sync_status: 'completed',
+            last_sync: new Date().toISOString()
+          })
+          .eq('id', connection.id);
 
-      console.log(`Manual sync completed. Fetched: ${emailsFetched}, Inbox items: ${inboxItemsCreated}`);
+      } catch (syncError) {
+        // Mark sync as failed
+        await adminSupabase
+          .from('connections')
+          .update({ sync_status: 'failed' })
+          .eq('id', connection.id);
 
-      return NextResponse.json({
-        success: true,
-        emailsFetched,
-        inboxItemsCreated,
-        errors: errors.length > 0 ? errors : undefined
-      });
-
-    } catch (syncError) {
-      // Mark sync as failed
-      await adminSupabase
-        .from('connections')
-        .update({ sync_status: 'failed' })
-        .eq('id', connection.id);
-
-      throw syncError;
+        console.error('Sync error for connection:', syncError);
+        errors.push(`Connection ${connection.id} failed: ${syncError instanceof Error ? syncError.message : 'Unknown'}`);
+      }
     }
+
+    // Return summary after processing all connections
+    console.log(`Manual sync completed. Fetched: ${totalEmailsFetched}, Inbox items: ${totalInboxItemsCreated}`);
+
+    return NextResponse.json({
+      success: true,
+      emailsFetched: totalEmailsFetched,
+      inboxItemsCreated: totalInboxItemsCreated,
+      errors: errors.length > 0 ? errors : undefined
+    });
 
   } catch (error) {
     console.error('Manual sync error:', error);
