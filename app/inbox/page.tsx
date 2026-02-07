@@ -8,7 +8,7 @@ import Image from 'next/image';
 import SimpleInboxCard from '@/components/inbox/simple-inbox-card';
 import InboxDrawer from '@/components/inbox/inbox-drawer';
 import OnboardingModal from '@/components/onboarding-modal';
-import { ChevronDownIcon, ChevronUpIcon, SparklesIcon } from '@heroicons/react/24/outline';
+import { ChevronDownIcon, ChevronUpIcon, SparklesIcon, Cog6ToothIcon } from '@heroicons/react/24/outline';
 
 export default function InboxPage() {
   const router = useRouter();
@@ -133,37 +133,37 @@ export default function InboxPage() {
   const otherEmails = pendingItems.filter(item => !preparedItemIds.has(item.id));
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-primary-50/30">
       {/* Header */}
-      <nav className="bg-white border-b border-gray-200">
+      <nav className="bg-white/80 backdrop-blur-md border-b border-gray-200/50 sticky top-0 z-40 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between h-16">
             <div className="flex items-center space-x-8">
-              <Link href="/" className="flex items-center space-x-2">
-                <Image
-                  src="/augmtd-logo.png"
-                  alt="AUGMTD"
-                  width={32}
-                  height={32}
-                  className="w-8 h-8"
-                />
-                <span className="text-xl font-bold text-gray-900">AUGMTD</span>
+              <Link href="/" className="flex items-center space-x-2.5 group">
+                <div className="relative">
+                  <Image
+                    src="/augmtd-logo.png"
+                    alt="AUGMTD"
+                    width={32}
+                    height={32}
+                    className="w-8 h-8 group-hover:scale-105 transition-transform duration-200"
+                  />
+                </div>
+                <span className="text-xl font-bold bg-gradient-to-r from-gray-900 to-primary-900 bg-clip-text text-transparent">AUGMTD</span>
               </Link>
-              <div className="flex space-x-4">
-                <Link href="/inbox" className="text-gray-900 font-medium px-3 py-2 rounded-md bg-gray-100">
-                  Inbox
-                </Link>
-                <Link href="/settings" className="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md">
-                  Settings
-                </Link>
-              </div>
+              <Link href="/inbox" className="text-gray-900 font-medium px-4 py-2 rounded-lg bg-gradient-to-br from-primary-50 to-purple-50 border border-primary-200/50 shadow-sm transition-all">
+                Inbox
+              </Link>
             </div>
             <div className="flex items-center space-x-4">
-              <span className="text-sm text-gray-600">{user?.email}</span>
+              <span className="text-sm text-gray-600 bg-gray-100 px-3 py-1.5 rounded-full">{user?.email}</span>
+              <Link href="/settings" className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-all border border-transparent" title="Settings">
+                <Cog6ToothIcon className="w-5 h-5" />
+              </Link>
               <form action="/auth/signout" method="post">
                 <button
                   type="submit"
-                  className="text-sm text-gray-600 hover:text-gray-900"
+                  className="text-sm text-gray-600 hover:text-gray-900 px-3 py-1.5 rounded-lg hover:bg-gray-100 transition-colors"
                 >
                   Sign Out
                 </button>
@@ -176,8 +176,8 @@ export default function InboxPage() {
       <main className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Page Header */}
         <div className="mb-8">
-          <h2 className="text-2xl font-semibold text-gray-900">Work Inbox</h2>
-          <p className="text-gray-600 mt-1">
+          <h2 className="text-3xl font-bold text-gray-900 mb-2">Work Inbox</h2>
+          <p className="text-gray-600">
             AI-prepared work from your emails
           </p>
         </div>
@@ -222,23 +222,27 @@ export default function InboxPage() {
             {/* I Prepared These For You */}
             {preparedItems.length > 0 ? (
               <div>
-                <div className="flex items-center space-x-2 mb-4">
-                  <SparklesIcon className="w-5 h-5 text-primary-600" />
+                <div className="flex items-center space-x-2.5 mb-4">
+                  <div className="p-2 bg-gradient-to-br from-primary-500 to-primary-600 rounded-lg shadow-sm">
+                    <SparklesIcon className="w-4 h-4 text-white" />
+                  </div>
                   <h3 className="text-lg font-semibold text-gray-900">I prepared these for you</h3>
                 </div>
-                <div className="bg-white rounded-lg border border-gray-200 divide-y divide-gray-200 shadow-sm">
+                <div className="bg-white rounded-2xl border border-gray-200/50 divide-y divide-gray-100 shadow-lg shadow-gray-200/50 overflow-hidden">
                   {preparedItems.map((item) => (
                     <SimpleInboxCard key={item.id} item={item} onClick={() => handleItemClick(item)} />
                   ))}
                 </div>
               </div>
             ) : pendingItems.length > 0 && (
-              <div className="bg-white rounded-lg border border-gray-200 p-8 text-center">
-                <SparklesIcon className="w-12 h-12 mx-auto mb-3 text-gray-300" />
-                <h3 className="text-lg font-medium text-gray-900 mb-2">
+              <div className="bg-gradient-to-br from-white to-gray-50 rounded-2xl border border-gray-200/50 p-12 text-center shadow-sm">
+                <div className="inline-flex p-3 bg-gradient-to-br from-primary-50 to-purple-50 rounded-2xl mb-4">
+                  <SparklesIcon className="w-8 h-8 text-primary-600" />
+                </div>
+                <h3 className="text-xl font-semibold text-gray-900 mb-2">
                   All caught up!
                 </h3>
-                <p className="text-gray-600 text-sm">
+                <p className="text-gray-600 text-sm max-w-md mx-auto">
                   No actionable emails right now. Your recent messages are below if you'd like to review them.
                 </p>
               </div>
@@ -249,9 +253,9 @@ export default function InboxPage() {
               <div>
                 <button
                   onClick={() => setShowOtherEmails(!showOtherEmails)}
-                  className="w-full flex items-center justify-between py-2 text-left group"
+                  className="w-full flex items-center justify-between py-3 px-4 text-left group rounded-xl hover:bg-gray-100/50 transition-colors"
                 >
-                  <h3 className="text-sm font-medium text-gray-600 uppercase tracking-wide group-hover:text-gray-900 transition-colors">
+                  <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide group-hover:text-gray-700 transition-colors">
                     Other emails ({otherEmails.length})
                   </h3>
                   {showOtherEmails ? (
@@ -261,7 +265,7 @@ export default function InboxPage() {
                   )}
                 </button>
                 {showOtherEmails && (
-                  <div className="mt-3 bg-white rounded-lg border border-gray-200 divide-y divide-gray-200 opacity-75">
+                  <div className="mt-3 bg-white/60 rounded-2xl border border-gray-200/50 divide-y divide-gray-100 backdrop-blur-sm">
                     {otherEmails.map((item) => (
                       <SimpleInboxCard key={item.id} item={item} onClick={() => handleItemClick(item)} />
                     ))}

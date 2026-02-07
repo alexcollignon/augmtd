@@ -49,27 +49,29 @@ export default function SignupPage() {
   };
 
   return (
-    <div className="flex items-center justify-center min-h-screen bg-gray-50">
-      <div className="w-full max-w-md p-8 bg-white rounded-lg shadow-lg">
+    <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-gray-50 via-white to-primary-50/30">
+      <div className="w-full max-w-md p-8 bg-white rounded-2xl border border-gray-200/50 shadow-2xl shadow-gray-200/50">
         <div className="text-center mb-8">
-          <div className="flex justify-center mb-4">
-            <Image
-              src="/augmtd-logo.png"
-              alt="AUGMTD"
-              width={64}
-              height={64}
-              className="w-16 h-16"
-            />
+          <div className="flex justify-center mb-6">
+            <div className="p-3 bg-gradient-to-br from-primary-500 to-primary-600 rounded-2xl shadow-lg">
+              <Image
+                src="/augmtd-logo.png"
+                alt="AUGMTD"
+                width={48}
+                height={48}
+                className="w-12 h-12"
+              />
+            </div>
           </div>
-          <h1 className="text-3xl font-bold text-gray-900">Get started</h1>
-          <p className="text-gray-600 mt-2">
+          <h1 className="text-3xl font-bold bg-gradient-to-r from-gray-900 to-primary-900 bg-clip-text text-transparent mb-2">Get started</h1>
+          <p className="text-gray-600">
             Create your AUGMTD account
           </p>
         </div>
 
-        <form onSubmit={handleSignup} className="space-y-4">
+        <form onSubmit={handleSignup} className="space-y-5">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
+            <label className="block text-sm font-semibold text-gray-700 mb-2">
               Email
             </label>
             <input
@@ -77,13 +79,13 @@ export default function SignupPage() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
-              className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+              className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-all"
               placeholder="you@example.com"
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
+            <label className="block text-sm font-semibold text-gray-700 mb-2">
               Password
             </label>
             <input
@@ -92,19 +94,20 @@ export default function SignupPage() {
               onChange={(e) => setPassword(e.target.value)}
               required
               minLength={6}
-              className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+              className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-all"
               placeholder="••••••••"
             />
-            <p className="text-xs text-gray-500 mt-1">
+            <p className="text-xs text-gray-500 mt-2 flex items-center">
+              <span className="mr-1">ℹ️</span>
               Must be at least 6 characters
             </p>
           </div>
 
           {message && (
-            <div className={`text-sm p-3 rounded ${
+            <div className={`text-sm p-4 rounded-xl border ${
               message.includes('Success')
-                ? 'bg-green-50 text-green-700'
-                : 'bg-red-50 text-red-700'
+                ? 'bg-gradient-to-br from-green-50 to-emerald-50 border-green-200 text-green-700'
+                : 'bg-gradient-to-br from-red-50 to-red-100 border-red-200 text-red-700'
             }`}>
               {message}
             </div>
@@ -113,7 +116,7 @@ export default function SignupPage() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-3 bg-primary-600 text-white rounded-md hover:bg-primary-700 disabled:opacity-50 font-medium transition-colors"
+            className="w-full py-3.5 bg-gradient-to-r from-primary-600 to-primary-700 text-white rounded-xl hover:from-primary-700 hover:to-primary-800 disabled:opacity-50 font-semibold transition-all duration-200 shadow-lg shadow-primary-500/30"
           >
             {loading ? 'Creating account...' : 'Sign Up'}
           </button>
@@ -122,7 +125,7 @@ export default function SignupPage() {
         <div className="mt-6 text-center">
           <p className="text-sm text-gray-600">
             Already have an account?{' '}
-            <Link href="/login" className="text-primary-600 hover:text-primary-700 font-medium">
+            <Link href="/login" className="text-primary-600 hover:text-primary-700 font-semibold">
               Sign in
             </Link>
           </p>

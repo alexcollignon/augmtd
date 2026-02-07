@@ -75,48 +75,48 @@ export default function SimpleInboxCard({ item, onClick }: SimpleInboxCardProps)
   return (
     <button
       onClick={onClick}
-      className="w-full text-left p-4 hover:bg-gray-50 transition-colors flex items-center space-x-3 group"
+      className="w-full text-left p-5 hover:bg-gradient-to-r hover:from-primary-50/50 hover:to-purple-50/50 transition-all duration-200 flex items-center space-x-4 group border-l-4 border-transparent hover:border-primary-500"
     >
       {/* Icon */}
       <div className="flex-shrink-0">
-        <div className="w-10 h-10 rounded-lg bg-primary-50 flex items-center justify-center group-hover:bg-primary-100 transition-colors">
-          <Icon className="w-5 h-5 text-primary-600" />
+        <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center shadow-sm group-hover:shadow-md group-hover:scale-105 transition-all duration-200">
+          <Icon className="w-5 h-5 text-white" />
         </div>
       </div>
 
       {/* Content */}
       <div className="flex-1 min-w-0">
-        <div className="flex items-center space-x-2 mb-0.5">
+        <div className="flex items-center space-x-2 mb-1">
           {showPriorityDot && (
-            <span className={`w-2 h-2 rounded-full ${priorityColor} flex-shrink-0`} />
+            <span className={`w-2 h-2 rounded-full ${priorityColor} flex-shrink-0 animate-pulse`} />
           )}
-          <p className="text-sm font-medium text-gray-900 truncate">
+          <p className="text-sm font-semibold text-gray-900 truncate">
             {actionText} {sourceData?.from_name || 'Unknown'}
           </p>
         </div>
-        <p className="text-sm text-gray-600 truncate">
+        <p className="text-sm text-gray-600 truncate leading-relaxed">
           {sourceData?.subject || 'No subject'}
         </p>
       </div>
 
       {/* Metadata - Icons with Labels */}
-      <div className="flex-shrink-0 flex items-center space-x-3">
+      <div className="flex-shrink-0 flex items-center space-x-4">
         {sourceData?.draftReply && (
-          <div className="flex items-center space-x-1.5 text-primary-600">
-            <EnvelopeIcon className="w-4 h-4" />
+          <div className="flex items-center space-x-1.5 px-2.5 py-1 rounded-full bg-primary-50 text-primary-700 group-hover:bg-primary-100 transition-colors">
+            <EnvelopeIcon className="w-3.5 h-3.5" />
             <span className="text-xs font-medium">Draft</span>
           </div>
         )}
         {sourceData?.actionItems && sourceData.actionItems.length > 0 && (
-          <div className="flex items-center space-x-1.5 text-gray-600">
-            <ClipboardDocumentListIcon className="w-4 h-4" />
-            <span className="text-xs">{sourceData.actionItems.length} {sourceData.actionItems.length === 1 ? 'action' : 'actions'}</span>
+          <div className="flex items-center space-x-1.5 px-2.5 py-1 rounded-full bg-gray-100 text-gray-700 group-hover:bg-gray-200 transition-colors">
+            <ClipboardDocumentListIcon className="w-3.5 h-3.5" />
+            <span className="text-xs font-medium">{sourceData.actionItems.length}</span>
           </div>
         )}
         {sourceData?.calendarEvent && (
-          <div className="flex items-center space-x-1.5 text-gray-600">
-            <CalendarIcon className="w-4 h-4" />
-            <span className="text-xs">Event</span>
+          <div className="flex items-center space-x-1.5 px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 group-hover:bg-blue-100 transition-colors">
+            <CalendarIcon className="w-3.5 h-3.5" />
+            <span className="text-xs font-medium">Event</span>
           </div>
         )}
       </div>

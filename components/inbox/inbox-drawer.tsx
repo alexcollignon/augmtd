@@ -65,28 +65,29 @@ export default function InboxDrawer({ item, isOpen, onClose }: InboxDrawerProps)
                 leaveTo="translate-x-full"
               >
                 <Dialog.Panel className="pointer-events-auto w-screen max-w-2xl">
-                  <div className="flex h-full flex-col overflow-y-scroll bg-white shadow-xl">
+                  <div className="flex h-full flex-col overflow-y-scroll bg-gradient-to-br from-white to-gray-50">
                     {/* Header */}
-                    <div className="bg-white px-6 py-6 border-b border-gray-200">
+                    <div className="bg-gradient-to-br from-white to-gray-50 px-6 py-6 border-b border-gray-200/50 backdrop-blur-sm sticky top-0 z-10">
                       <div className="flex items-start justify-between">
                         <div className="flex-1">
                           {(sourceData?.urgency === 'high' || sourceData?.urgency === 'critical' || item.priority >= 75) && (
-                            <div className="mb-2">
-                              <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${urgencyColor}`}>
-                                {sourceData?.urgency === 'critical' ? 'Critical' : 'High Priority'}
+                            <div className="mb-3">
+                              <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold shadow-sm ${urgencyColor}`}>
+                                {sourceData?.urgency === 'critical' ? '🔴 Critical' : '⚠️ High Priority'}
                               </span>
                             </div>
                           )}
-                          <Dialog.Title className="text-xl font-semibold text-gray-900">
+                          <Dialog.Title className="text-2xl font-bold text-gray-900 leading-tight">
                             {sourceData?.subject || 'No subject'}
                           </Dialog.Title>
-                          <p className="text-sm text-gray-600 mt-1">
-                            From: <span className="font-medium">{sourceData?.from_name || sourceData?.from}</span>
+                          <p className="text-sm text-gray-600 mt-2 flex items-center space-x-2">
+                            <span className="font-medium text-gray-500">From:</span>
+                            <span className="font-semibold text-gray-900">{sourceData?.from_name || sourceData?.from}</span>
                           </p>
                         </div>
                         <button
                           type="button"
-                          className="ml-4 rounded-md text-gray-400 hover:text-gray-500"
+                          className="ml-4 p-2 rounded-xl text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
                           onClick={onClose}
                         >
                           <XMarkIcon className="h-6 w-6" />
@@ -95,21 +96,24 @@ export default function InboxDrawer({ item, isOpen, onClose }: InboxDrawerProps)
 
                       {/* Summary */}
                       {sourceData?.summary && (
-                        <div className="mt-4 pt-4 border-t border-gray-200">
-                          <p className="text-gray-900">{sourceData.summary}</p>
+                        <div className="mt-4 pt-4 border-t border-gray-200/50">
+                          <p className="text-gray-900 leading-relaxed">{sourceData.summary}</p>
                         </div>
                       )}
                     </div>
 
                     {/* Content */}
-                    <div className="flex-1 px-6 py-6 space-y-6">
+                    <div className="flex-1 px-6 py-6 space-y-5">
                       {/* Key Points */}
                       {sourceData?.keyPoints && sourceData.keyPoints.length > 0 && (
-                        <div>
-                          <h3 className="text-sm font-medium text-gray-700 mb-2">Key Points</h3>
-                          <ul className="list-disc list-inside space-y-1">
+                        <div className="p-5 bg-white rounded-xl border border-gray-200/50 shadow-sm">
+                          <h3 className="text-sm font-semibold text-gray-700 mb-3 uppercase tracking-wide">Key Points</h3>
+                          <ul className="space-y-2.5">
                             {sourceData.keyPoints.map((point: string, index: number) => (
-                              <li key={index} className="text-gray-900">{point}</li>
+                              <li key={index} className="flex items-start space-x-2.5 text-gray-900">
+                                <span className="text-primary-600 font-bold mt-0.5">•</span>
+                                <span className="leading-relaxed">{point}</span>
+                              </li>
                             ))}
                           </ul>
                         </div>
@@ -117,37 +121,43 @@ export default function InboxDrawer({ item, isOpen, onClose }: InboxDrawerProps)
 
                       {/* Deadline */}
                       {sourceData?.deadline && (
-                        <div>
-                          <h3 className="text-sm font-medium text-gray-700 mb-2">Deadline</h3>
-                          <div className="flex items-center space-x-2 text-gray-900">
-                            <ClockIcon className="w-5 h-5 text-gray-400" />
-                            <span>{sourceData.deadline}</span>
+                        <div className="p-5 bg-gradient-to-br from-orange-50 to-red-50 rounded-xl border border-orange-200/50">
+                          <h3 className="text-sm font-semibold text-gray-700 mb-3 uppercase tracking-wide">Deadline</h3>
+                          <div className="flex items-center space-x-3">
+                            <div className="p-2 bg-white rounded-lg shadow-sm">
+                              <ClockIcon className="w-5 h-5 text-orange-600" />
+                            </div>
+                            <span className="font-semibold text-gray-900">{sourceData.deadline}</span>
                           </div>
                         </div>
                       )}
 
                       {/* Action Items */}
                       {sourceData?.actionItems && sourceData.actionItems.length > 0 && (
-                        <div className="bg-gray-50 rounded-lg p-4">
-                          <div className="flex items-center space-x-2 mb-3">
-                            <ClipboardDocumentListIcon className="w-5 h-5 text-gray-700" />
-                            <h3 className="text-sm font-medium text-gray-900">Action Items</h3>
+                        <div className="bg-gradient-to-br from-primary-50 to-purple-50 rounded-xl p-5 border border-primary-200/50">
+                          <div className="flex items-center space-x-2.5 mb-4">
+                            <div className="p-2 bg-gradient-to-br from-primary-500 to-primary-600 rounded-lg shadow-sm">
+                              <ClipboardDocumentListIcon className="w-4 h-4 text-white" />
+                            </div>
+                            <h3 className="text-sm font-semibold text-gray-900 uppercase tracking-wide">Action Items</h3>
                           </div>
-                          <div className="space-y-2">
+                          <div className="space-y-3">
                             {sourceData.actionItems.map((action: any, index: number) => (
-                              <div key={index} className="flex items-start space-x-2">
-                                <input type="checkbox" className="mt-1" />
+                              <div key={index} className="flex items-start space-x-3 p-3 bg-white rounded-lg border border-primary-100 shadow-sm">
+                                <input type="checkbox" className="mt-1.5 w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500" />
                                 <div className="flex-1">
-                                  <p className="text-sm text-gray-900">{action.description}</p>
+                                  <p className="text-sm text-gray-900 font-medium leading-relaxed">{action.description}</p>
                                   {(action.deadline || action.estimatedTime) && (
-                                    <div className="flex items-center space-x-3 mt-1 text-xs text-gray-600">
+                                    <div className="flex items-center space-x-3 mt-2 text-xs text-gray-600">
                                       {action.deadline && (
-                                        <span className="flex items-center space-x-1">
+                                        <span className="flex items-center space-x-1.5 px-2 py-1 bg-gray-50 rounded-md">
                                           <ClockIcon className="w-3 h-3" />
                                           <span>{action.deadline}</span>
                                         </span>
                                       )}
-                                      {action.estimatedTime && <span>{action.estimatedTime}</span>}
+                                      {action.estimatedTime && (
+                                        <span className="px-2 py-1 bg-gray-50 rounded-md">{action.estimatedTime}</span>
+                                      )}
                                     </div>
                                   )}
                                 </div>
@@ -159,26 +169,26 @@ export default function InboxDrawer({ item, isOpen, onClose }: InboxDrawerProps)
 
                       {/* Draft Reply */}
                       {sourceData?.draftReply && (
-                        <div className="bg-gray-50 rounded-lg p-4">
-                          <div className="flex items-center justify-between mb-3">
-                            <div className="flex items-center space-x-2">
-                              <EnvelopeIcon className="w-5 h-5 text-gray-700" />
-                              <h3 className="text-sm font-medium text-gray-900">Draft Reply</h3>
-                            </div>
-                            <span className="text-xs text-gray-600">Tone: {sourceData.draftReply.tone}</span>
-                          </div>
-                          <div className="space-y-3">
-                            <div>
-                              <p className="text-xs font-medium text-gray-700">Subject</p>
-                              <p className="text-sm text-gray-900 mt-1">{sourceData.draftReply.subject}</p>
-                            </div>
-                            <div>
-                              <p className="text-xs font-medium text-gray-700">Body</p>
-                              <div className="mt-1 p-3 bg-white rounded border border-gray-200">
-                                <pre className="whitespace-pre-wrap font-sans text-sm text-gray-900">
-                                  {sourceData.draftReply.body}
-                                </pre>
+                        <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl p-5 border border-blue-200/50">
+                          <div className="flex items-center justify-between mb-4">
+                            <div className="flex items-center space-x-2.5">
+                              <div className="p-2 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg shadow-sm">
+                                <EnvelopeIcon className="w-4 h-4 text-white" />
                               </div>
+                              <h3 className="text-sm font-semibold text-gray-900 uppercase tracking-wide">Draft Reply</h3>
+                            </div>
+                            <span className="text-xs font-medium text-gray-600 px-2.5 py-1 bg-white rounded-full border border-blue-200">Tone: {sourceData.draftReply.tone}</span>
+                          </div>
+                          <div className="space-y-4">
+                            <div className="p-4 bg-white rounded-lg border border-blue-100">
+                              <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">Subject</p>
+                              <p className="text-sm text-gray-900 font-medium">{sourceData.draftReply.subject}</p>
+                            </div>
+                            <div className="p-4 bg-white rounded-lg border border-blue-100">
+                              <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-3">Body</p>
+                              <pre className="whitespace-pre-wrap font-sans text-sm text-gray-900 leading-relaxed">
+                                {sourceData.draftReply.body}
+                              </pre>
                             </div>
                           </div>
                         </div>
@@ -186,26 +196,28 @@ export default function InboxDrawer({ item, isOpen, onClose }: InboxDrawerProps)
 
                       {/* Calendar Event */}
                       {sourceData?.calendarEvent && (
-                        <div className="bg-gray-50 rounded-lg p-4">
-                          <div className="flex items-center space-x-2 mb-3">
-                            <CalendarIcon className="w-5 h-5 text-gray-700" />
-                            <h3 className="text-sm font-medium text-gray-900">Suggested Calendar Event</h3>
+                        <div className="bg-gradient-to-br from-purple-50 to-pink-50 rounded-xl p-5 border border-purple-200/50">
+                          <div className="flex items-center space-x-2.5 mb-4">
+                            <div className="p-2 bg-gradient-to-br from-purple-500 to-pink-600 rounded-lg shadow-sm">
+                              <CalendarIcon className="w-4 h-4 text-white" />
+                            </div>
+                            <h3 className="text-sm font-semibold text-gray-900 uppercase tracking-wide">Suggested Calendar Event</h3>
                           </div>
-                          <div className="space-y-2 text-sm">
+                          <div className="space-y-3 p-4 bg-white rounded-lg border border-purple-100">
                             <div>
-                              <span className="font-medium text-gray-700">Title:</span>
-                              <span className="ml-2 text-gray-900">{sourceData.calendarEvent.title}</span>
+                              <span className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Title</span>
+                              <p className="mt-1 text-sm text-gray-900 font-medium">{sourceData.calendarEvent.title}</p>
                             </div>
                             {sourceData.calendarEvent.date && (
-                              <div>
-                                <span className="font-medium text-gray-700">Date:</span>
-                                <span className="ml-2 text-gray-900">{sourceData.calendarEvent.date}</span>
+                              <div className="pt-3 border-t border-gray-100">
+                                <span className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Date</span>
+                                <p className="mt-1 text-sm text-gray-900 font-medium">{sourceData.calendarEvent.date}</p>
                               </div>
                             )}
                             {sourceData.calendarEvent.duration && (
-                              <div>
-                                <span className="font-medium text-gray-700">Duration:</span>
-                                <span className="ml-2 text-gray-900">{sourceData.calendarEvent.duration}</span>
+                              <div className="pt-3 border-t border-gray-100">
+                                <span className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Duration</span>
+                                <p className="mt-1 text-sm text-gray-900 font-medium">{sourceData.calendarEvent.duration}</p>
                               </div>
                             )}
                           </div>
@@ -214,7 +226,7 @@ export default function InboxDrawer({ item, isOpen, onClose }: InboxDrawerProps)
                     </div>
 
                     {/* Footer - Actions */}
-                    <div className="border-t border-gray-200 px-6 py-4 bg-gray-50">
+                    <div className="border-t border-gray-200/50 px-6 py-5 bg-gradient-to-br from-white to-gray-50 backdrop-blur-sm sticky bottom-0">
                       <InboxActions itemId={item.id} status={item.status} />
                     </div>
                   </div>

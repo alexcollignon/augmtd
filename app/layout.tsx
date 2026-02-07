@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import NextTopLoader from 'nextjs-toploader';
 
 export const metadata: Metadata = {
   title: "AUGMTD - Your Personal Digital Twin",
@@ -13,7 +14,15 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        <NextTopLoader
+          color="#8B5CF6"
+          height={3}
+          showSpinner={false}
+          shadow="0 0 10px #8B5CF6,0 0 5px #8B5CF6"
+        />
+        {children}
+      </body>
     </html>
   );
 }
