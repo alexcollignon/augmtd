@@ -38,6 +38,11 @@ export interface EmailSignals {
   canBePrepared: boolean; // Can AI draft a response?
   needsExternalInput: boolean; // Blocked on someone else?
 
+  // MECHANICAL SIGNALS (auto-handleable)
+  isMechanicalConfirmation: boolean; // Email verification, signup confirmation, etc.
+  isNotification: boolean; // System notification, receipt, FYI update
+  hasOneObviousAction: boolean; // Single click, no judgment needed
+
   // URGENCY SIGNALS
   explicitDeadline: string | null; // YYYY-MM-DD
   impliedUrgency: 'immediate' | 'soon' | 'flexible';
@@ -139,9 +144,14 @@ CONTEXT SIGNALS:
 - isFollowUp: Is this a reminder/follow-up?
 
 COMPLEXITY SIGNALS:
-- requiresJudgment: Needs decision, approval, or choice?
-- canBePrepared: Can AI write a draft response?
+- requiresJudgment: Needs decision, approval, or choice with meaningful consequences?
+- canBePrepared: Can AI write a draft response that adds value?
 - needsExternalInput: Blocked on external dependency?
+
+MECHANICAL SIGNALS (for filtering):
+- isMechanicalConfirmation: Email verification, signup, password reset, account confirmation?
+- isNotification: Receipt, invoice, shipping update, system alert, FYI update?
+- hasOneObviousAction: Single obvious action with no judgment (click link, verify, confirm)?
 
 URGENCY SIGNALS:
 - explicitDeadline: Extract deadline (YYYY-MM-DD) or null
@@ -152,30 +162,53 @@ URGENCY SIGNALS:
 
 STEP 2: DETERMINE WORK STATE
 
+CRITICAL: Only surface work that requires HUMAN JUDGMENT. Be ruthlessly strict.
+
 Based on signals, classify into ONE work state:
 
-1. NO_WORK
-   - No question, no action request, no deadline
-   - Low authority sender (marketing, notifications)
-   - FYI only, confirmations, receipts, newsletters
-   → Action: Summarize or hide
+1. NO_WORK (DEFAULT - BE AGGRESSIVE)
+   ✓ Confirmations (email verification, signup confirmation, password reset)
+   ✓ Receipts, invoices, order confirmations
+   ✓ Notifications (system alerts, status updates, shipping updates)
+   ✓ Marketing (newsletters, promotions, announcements)
+   ✓ FYI updates (no response needed)
+   ✓ Automated alerts (monitoring, security, automated systems)
+   ✓ ONE obvious action with NO judgment needed (click to confirm, verify email)
+   ✓ Low authority sender + no meaningful obligation
+   → Action: Auto-handle silently or batch as "Handled for you"
 
 2. WAITING
-   - needsExternalInput = true
-   - isFollowUp but waiting for someone else
-   - Scheduled for later (not now)
+   - needsExternalInput = true (waiting for someone else to respond first)
+   - Scheduled for future (meeting is next week, not actionable now)
+   - Requires information you don't have yet
    → Action: Track and resurface when ready
 
 3. DECISION_REQUIRED
-   - requiresJudgment = true OR
-   - hasExplicitApprovalRequest = true
-   - Can't prepare without human decision
+   - requiresJudgment = true (approval with consequences, choice between options, strategic decision)
+   - Multiple valid approaches with tradeoffs
+   - Risk/reward assessment needed
+   - Cannot be handled without human input
    → Action: Prepare analysis with options, risks, recommendation
 
-4. WORK_PREPARED
-   - hasDirectQuestion OR hasRequestForAction
-   - canBePrepared = true
-   - Not waiting, not just FYI
+4. WORK_PREPARED (STRICT - RARE)
+   Must meet ALL of these:
+   ✓ Requires human judgment OR meaningful human touch (not mechanical)
+   ✓ Has meaningful consequences if done wrong
+   ✓ Can prepare a draft response that saves time
+   ✓ NOT a confirmation/notification/receipt
+   ✓ NOT a single obvious mechanical action
+
+   Examples that QUALIFY:
+   - Reply to client inquiry (requires context, tone, judgment)
+   - Schedule meeting with important contact (requires availability check, prioritization)
+   - Respond to colleague's question (requires domain knowledge)
+
+   Examples that DO NOT QUALIFY:
+   - "Confirm your email address" → NO_WORK
+   - "Update payment method" → NO_WORK (unless critical/urgent, then maybe DECISION_REQUIRED)
+   - "Your order has shipped" → NO_WORK
+   - "Please verify your account" → NO_WORK
+
    → Action: Prepare draft reply or next steps
 
 ---
@@ -233,6 +266,9 @@ OUTPUT FORMAT (JSON):
     "requiresJudgment": false,
     "canBePrepared": true,
     "needsExternalInput": false,
+    "isMechanicalConfirmation": false,
+    "isNotification": false,
+    "hasOneObviousAction": false,
     "explicitDeadline": null,
     "impliedUrgency": "soon",
     "isTimebound": true
@@ -281,14 +317,17 @@ OUTPUT FORMAT (JSON):
 
 CRITICAL RULES:
 1. Email is EVIDENCE. The WORK is what matters.
-2. If no obligation detected → NO_WORK
-3. If blocked on external input → WAITING
-4. If requires judgment → DECISION_REQUIRED
-5. Otherwise if actionable → WORK_PREPARED
-6. Be conservative: if uncertain, default to WORK_PREPARED with low confidence
-7. For NO_WORK: don't create drafts, action items, or calendar events
-8. Confidence = how certain you are about the signals + work state
-9. Priority = urgency + sender authority + deadline proximity
+2. DEFAULT TO NO_WORK. Most emails don't need the user's attention.
+3. If isMechanicalConfirmation = true → NO_WORK (confirmations are auto-handleable)
+4. If isNotification = true → NO_WORK (notifications don't need response)
+5. If hasOneObviousAction = true AND requiresJudgment = false → NO_WORK
+6. If blocked on external input → WAITING
+7. If requires meaningful judgment with consequences → DECISION_REQUIRED
+8. WORK_PREPARED is RARE. Only use when human judgment + meaningful preparation is needed.
+9. When uncertain, default to NO_WORK (not WORK_PREPARED). Better to hide than to spam.
+10. For NO_WORK: don't create drafts, action items, or calendar events
+11. Confidence = how certain you are about the signals + work state
+12. Priority = urgency + sender authority + deadline proximity + judgment complexity
 
 Respond ONLY with valid JSON matching the structure above.`;
 
@@ -332,6 +371,9 @@ Respond ONLY with valid JSON matching the structure above.`;
         requiresJudgment: false,
         canBePrepared: true,
         needsExternalInput: false,
+        isMechanicalConfirmation: false,
+        isNotification: false,
+        hasOneObviousAction: false,
         explicitDeadline: null,
         impliedUrgency: 'flexible',
         isTimebound: false

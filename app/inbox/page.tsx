@@ -148,7 +148,7 @@ export default function PreparedWorkPage() {
           <div className="mb-8">
             <h1 className="text-2xl font-bold text-gray-900 mb-1">Prepared Work</h1>
             <p className="text-sm text-gray-500">
-              Your next steps, ready for review
+              These are the only things that need your judgment right now.
             </p>
           </div>
 
@@ -201,13 +201,13 @@ export default function PreparedWorkPage() {
           {/* Content - 4 Work State Sections */}
           {connection && inboxItems.length > 0 && (
             <div className="space-y-8">
-              {/* 1. READY TO EXECUTE */}
+              {/* 1. WORK PREPARED */}
               {workPrepared.length > 0 && (
                 <section>
                   <div className="flex items-center space-x-2.5 mb-3">
                     <div className="w-2 h-2 rounded-full bg-green-500" />
                     <h2 className="text-sm font-semibold text-gray-900 uppercase tracking-wide">
-                      Ready to Execute ({workPrepared.length})
+                      Work Prepared ({workPrepared.length})
                     </h2>
                   </div>
                   <div className="bg-white rounded-xl border border-gray-200 divide-y divide-gray-100 overflow-hidden">
