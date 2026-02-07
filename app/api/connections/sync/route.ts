@@ -127,38 +127,49 @@ export async function POST(request: NextRequest) {
             received_at: storedEmail.received_at
           });
 
-          // Create inbox item
+          // Create inbox item with work-state model
           const { error: inboxError } = await adminSupabase
             .from('inbox_items')
             .insert({
               user_id: user.id,
               source: 'email',
               source_id: storedEmail.id,
+
+              // NEW: Work-state model
+              work_state: processed.workState,
+              work_title: processed.workTitle,
+              what_i_prepared: processed.whatIPrepared,
+              why_matters: processed.whyMatters,
+
+              // Source data (includes email + AI preparation)
               source_data: {
+                // Email basics
                 email_id: storedEmail.id,
                 message_id: storedEmail.message_id,
                 from: storedEmail.from_address,
                 from_name: storedEmail.from_name,
                 subject: storedEmail.subject,
                 received_at: storedEmail.received_at,
-                provider: connection.provider, // Add provider for badge display
+                provider: connection.provider,
+
+                // AI analysis
                 summary: processed.summary,
                 keyPoints: processed.keyPoints,
                 urgency: processed.urgency,
-                deadline: processed.deadline,
-                actionItems: processed.actionItems,
-                draftReply: processed.draftReply,
-                calendarEvent: processed.calendarEvent,
-                extractedData: processed.extractedData,
-                followUpActions: processed.followUpActions
+                signals: processed.signals,
+
+                // Prepared outputs (conditional on work state)
+                ...processed.preparedOutput
               },
-              ai_suggestion_type: processed.category,
+
+              // Legacy fields (for backward compatibility)
+              ai_suggestion_type: processed.workState,
               ai_suggestion_content: processed.summary,
               ai_suggestion_reasoning: processed.reasoning,
-              confidence_score: processed.confidenceScore,
+              confidence_score: processed.confidence,
               priority: processed.priority,
               status: 'pending',
-              needs_review: true
+              needs_review: processed.workState !== 'no_work'
             });
 
             if (inboxError) {
