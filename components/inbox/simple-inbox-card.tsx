@@ -99,22 +99,24 @@ export default function SimpleInboxCard({ item, onClick }: SimpleInboxCardProps)
         </p>
       </div>
 
-      {/* Metadata - Icons */}
-      <div className="flex-shrink-0 flex items-center space-x-2">
+      {/* Metadata - Icons with Labels */}
+      <div className="flex-shrink-0 flex items-center space-x-3">
         {sourceData?.draftReply && (
-          <div className="flex items-center space-x-1 text-primary-600" title="Draft reply ready">
+          <div className="flex items-center space-x-1.5 text-primary-600">
             <EnvelopeIcon className="w-4 h-4" />
+            <span className="text-xs font-medium">Draft</span>
           </div>
         )}
         {sourceData?.actionItems && sourceData.actionItems.length > 0 && (
-          <div className="flex items-center space-x-1 text-gray-600" title={`${sourceData.actionItems.length} action items`}>
+          <div className="flex items-center space-x-1.5 text-gray-600">
             <ClipboardDocumentListIcon className="w-4 h-4" />
-            <span className="text-xs">{sourceData.actionItems.length}</span>
+            <span className="text-xs">{sourceData.actionItems.length} {sourceData.actionItems.length === 1 ? 'action' : 'actions'}</span>
           </div>
         )}
         {sourceData?.calendarEvent && (
-          <div className="flex items-center space-x-1 text-gray-600" title="Calendar event suggested">
+          <div className="flex items-center space-x-1.5 text-gray-600">
             <CalendarIcon className="w-4 h-4" />
+            <span className="text-xs">Event</span>
           </div>
         )}
       </div>

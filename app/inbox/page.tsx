@@ -19,10 +19,7 @@ export default function InboxPage() {
   const [loading, setLoading] = useState(true);
 
   // Collapsible states
-  const [showNewsletters, setShowNewsletters] = useState(false);
-  const [showPromotional, setShowPromotional] = useState(false);
-  const [showSocial, setShowSocial] = useState(false);
-  const [showOther, setShowOther] = useState(false);
+  const [showOtherEmails, setShowOtherEmails] = useState(false);
 
   useEffect(() => {
     async function loadData() {
@@ -86,27 +83,23 @@ export default function InboxPage() {
   const pendingItems = inboxItems.filter(item => item.status === 'pending');
   const reviewedItems = inboxItems.filter(item => item.status !== 'pending');
 
-  // Items with prepared work ready for review (draft replies, calendar events)
+  // "I prepared these for you" - Items with ANY prepared work
   const preparedItems = pendingItems
     .filter(item => {
       const sd = item.source_data;
-      return sd?.draftReply || sd?.calendarEvent; // Has something READY for approval
+      return sd?.draftReply || sd?.calendarEvent || (sd?.actionItems && sd.actionItems.length > 0);
     })
     .sort((a, b) => {
       // Sort by priority score
       return (b.priority || 0) - (a.priority || 0);
     })
-    .slice(0, 5); // Top 5
+    .slice(0, 7); // Top 7
 
-  // Categorize pending items
-  const actionRequired = pendingItems.filter(item => item.ai_suggestion_type === 'action_required');
-  const questions = pendingItems.filter(item => item.ai_suggestion_type === 'question');
-  const decisions = pendingItems.filter(item => item.ai_suggestion_type === 'decision');
-  const information = pendingItems.filter(item => item.ai_suggestion_type === 'information');
-  const newsletters = pendingItems.filter(item => item.ai_suggestion_type === 'newsletter');
-  const promotional = pendingItems.filter(item => item.ai_suggestion_type === 'promotional');
-  const social = pendingItems.filter(item => item.ai_suggestion_type === 'social');
-  const other = pendingItems.filter(item => item.ai_suggestion_type === 'other');
+  // Get IDs of prepared items to exclude from "Other emails"
+  const preparedItemIds = new Set(preparedItems.map(item => item.id));
+
+  // Other emails (everything not in "I prepared these for you")
+  const otherEmails = pendingItems.filter(item => !preparedItemIds.has(item.id));
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -194,7 +187,7 @@ export default function InboxPage() {
 
         {/* Content */}
         {connection && inboxItems.length > 0 && (
-          <div className="space-y-8">
+          <div className="space-y-6">
             {/* I Prepared These For You */}
             {preparedItems.length > 0 && (
               <div>
@@ -210,81 +203,25 @@ export default function InboxPage() {
               </div>
             )}
 
-            {/* Action Required */}
-            {actionRequired.length > 0 && (
-              <div>
-                <h3 className="text-sm font-medium text-gray-700 uppercase tracking-wide mb-3">
-                  Action Required ({actionRequired.length})
-                </h3>
-                <div className="bg-white rounded-lg border border-gray-200 divide-y divide-gray-200">
-                  {actionRequired.map((item) => (
-                    <SimpleInboxCard key={item.id} item={item} onClick={() => handleItemClick(item)} />
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Questions */}
-            {questions.length > 0 && (
-              <div>
-                <h3 className="text-sm font-medium text-gray-700 uppercase tracking-wide mb-3">
-                  Questions to Answer ({questions.length})
-                </h3>
-                <div className="bg-white rounded-lg border border-gray-200 divide-y divide-gray-200">
-                  {questions.map((item) => (
-                    <SimpleInboxCard key={item.id} item={item} onClick={() => handleItemClick(item)} />
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Decisions */}
-            {decisions.length > 0 && (
-              <div>
-                <h3 className="text-sm font-medium text-gray-700 uppercase tracking-wide mb-3">
-                  Decisions Needed ({decisions.length})
-                </h3>
-                <div className="bg-white rounded-lg border border-gray-200 divide-y divide-gray-200">
-                  {decisions.map((item) => (
-                    <SimpleInboxCard key={item.id} item={item} onClick={() => handleItemClick(item)} />
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Information */}
-            {information.length > 0 && (
-              <div>
-                <h3 className="text-sm font-medium text-gray-700 uppercase tracking-wide mb-3">
-                  For Your Information ({information.length})
-                </h3>
-                <div className="bg-white rounded-lg border border-gray-200 divide-y divide-gray-200">
-                  {information.map((item) => (
-                    <SimpleInboxCard key={item.id} item={item} onClick={() => handleItemClick(item)} />
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Newsletters - Collapsible */}
-            {newsletters.length > 0 && (
+            {/* Other Emails - Collapsible */}
+            {otherEmails.length > 0 && (
               <div>
                 <button
-                  onClick={() => setShowNewsletters(!showNewsletters)}
-                  className="w-full flex items-center justify-between mb-3 text-left"
+                  onClick={() => setShowOtherEmails(!showOtherEmails)}
+                  className="w-full flex items-center justify-between py-2 text-left group"
                 >
-                  <h3 className="text-sm font-medium text-gray-600 uppercase tracking-wide">
-                    Newsletters ({newsletters.length})
+                  <h3 className="text-sm font-medium text-gray-600 uppercase tracking-wide group-hover:text-gray-900 transition-colors">
+                    Other emails ({otherEmails.length})
                   </h3>
-                  {showNewsletters ? (
-                    <ChevronUpIcon className="w-5 h-5 text-gray-400" />
+                  {showOtherEmails ? (
+                    <ChevronUpIcon className="w-5 h-5 text-gray-400 group-hover:text-gray-600 transition-colors" />
                   ) : (
-                    <ChevronDownIcon className="w-5 h-5 text-gray-400" />
+                    <ChevronDownIcon className="w-5 h-5 text-gray-400 group-hover:text-gray-600 transition-colors" />
                   )}
                 </button>
-                {showNewsletters && (
-                  <div className="bg-white rounded-lg border border-gray-200 divide-y divide-gray-200 opacity-75">
-                    {newsletters.map((item) => (
+                {showOtherEmails && (
+                  <div className="mt-3 bg-white rounded-lg border border-gray-200 divide-y divide-gray-200 opacity-75">
+                    {otherEmails.map((item) => (
                       <SimpleInboxCard key={item.id} item={item} onClick={() => handleItemClick(item)} />
                     ))}
                   </div>
@@ -292,81 +229,10 @@ export default function InboxPage() {
               </div>
             )}
 
-            {/* Promotional - Collapsible */}
-            {promotional.length > 0 && (
-              <div>
-                <button
-                  onClick={() => setShowPromotional(!showPromotional)}
-                  className="w-full flex items-center justify-between mb-3 text-left"
-                >
-                  <h3 className="text-sm font-medium text-gray-600 uppercase tracking-wide">
-                    Promotional ({promotional.length})
-                  </h3>
-                  {showPromotional ? (
-                    <ChevronUpIcon className="w-5 h-5 text-gray-400" />
-                  ) : (
-                    <ChevronDownIcon className="w-5 h-5 text-gray-400" />
-                  )}
-                </button>
-                {showPromotional && (
-                  <div className="bg-white rounded-lg border border-gray-200 divide-y divide-gray-200 opacity-75">
-                    {promotional.map((item) => (
-                      <SimpleInboxCard key={item.id} item={item} onClick={() => handleItemClick(item)} />
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Social - Collapsible */}
-            {social.length > 0 && (
-              <div>
-                <button
-                  onClick={() => setShowSocial(!showSocial)}
-                  className="w-full flex items-center justify-between mb-3 text-left"
-                >
-                  <h3 className="text-sm font-medium text-gray-600 uppercase tracking-wide">
-                    Social ({social.length})
-                  </h3>
-                  {showSocial ? (
-                    <ChevronUpIcon className="w-5 h-5 text-gray-400" />
-                  ) : (
-                    <ChevronDownIcon className="w-5 h-5 text-gray-400" />
-                  )}
-                </button>
-                {showSocial && (
-                  <div className="bg-white rounded-lg border border-gray-200 divide-y divide-gray-200 opacity-75">
-                    {social.map((item) => (
-                      <SimpleInboxCard key={item.id} item={item} onClick={() => handleItemClick(item)} />
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Other - Collapsible */}
-            {other.length > 0 && (
-              <div>
-                <button
-                  onClick={() => setShowOther(!showOther)}
-                  className="w-full flex items-center justify-between mb-3 text-left"
-                >
-                  <h3 className="text-sm font-medium text-gray-600 uppercase tracking-wide">
-                    Other ({other.length})
-                  </h3>
-                  {showOther ? (
-                    <ChevronUpIcon className="w-5 h-5 text-gray-400" />
-                  ) : (
-                    <ChevronDownIcon className="w-5 h-5 text-gray-400" />
-                  )}
-                </button>
-                {showOther && (
-                  <div className="bg-white rounded-lg border border-gray-200 divide-y divide-gray-200 opacity-75">
-                    {other.map((item) => (
-                      <SimpleInboxCard key={item.id} item={item} onClick={() => handleItemClick(item)} />
-                    ))}
-                  </div>
-                )}
+            {/* Show message if all items are in "I prepared" */}
+            {preparedItems.length > 0 && otherEmails.length === 0 && (
+              <div className="text-center py-8 text-gray-500 text-sm">
+                All your emails have prepared work ready for review
               </div>
             )}
           </div>
