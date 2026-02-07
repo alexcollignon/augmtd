@@ -17,13 +17,15 @@ export default async function SettingsPage() {
     redirect('/login');
   }
 
-  // Fetch Gmail connection
-  const { data: connection } = await supabase
+  // Fetch all email connections (Gmail + Outlook)
+  const { data: connections } = await supabase
     .from('connections')
     .select('*')
     .eq('user_id', user.id)
-    .eq('provider', 'gmail')
-    .single();
+    .in('provider', ['gmail', 'outlook']);
+
+  const gmailConnection = connections?.find(c => c.provider === 'gmail');
+  const outlookConnection = connections?.find(c => c.provider === 'outlook');
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-primary-50/30">
@@ -94,7 +96,7 @@ export default async function SettingsPage() {
         <div className="bg-white rounded-2xl border border-gray-200/50 p-6 mb-6 shadow-lg shadow-gray-200/50">
           <h3 className="text-lg font-semibold text-gray-900 mb-4">Email Connection</h3>
 
-          {connection && connection.status === 'active' ? (
+          {gmailConnection && gmailConnection.status === 'active' ? (
             <div className="space-y-4">
               <div className="flex items-center justify-between p-5 bg-gradient-to-br from-green-50 to-emerald-50 border border-green-200/50 rounded-xl shadow-sm">
                 <div className="flex items-center space-x-4">
@@ -111,9 +113,9 @@ export default async function SettingsPage() {
                   </div>
                   <div>
                     <p className="font-semibold text-gray-900">Gmail</p>
-                    <p className="text-sm text-gray-600 mt-0.5">{connection.account_email}</p>
+                    <p className="text-sm text-gray-600 mt-0.5">{gmailConnection.account_email}</p>
                     <p className="text-xs text-gray-500 mt-1">
-                      Connected {new Date(connection.connected_at).toLocaleDateString()}
+                      Connected {new Date(gmailConnection.connected_at).toLocaleDateString()}
                     </p>
                   </div>
                 </div>
@@ -128,11 +130,11 @@ export default async function SettingsPage() {
               <div className="p-5 bg-gradient-to-br from-gray-50 to-white rounded-xl border border-gray-200/50">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-sm font-semibold text-gray-700">Sync Status</span>
-                  <span className="text-xs font-medium text-gray-600 capitalize px-2.5 py-1 bg-white rounded-full border border-gray-200">{connection.sync_status || 'ready'}</span>
+                  <span className="text-xs font-medium text-gray-600 capitalize px-2.5 py-1 bg-white rounded-full border border-gray-200">{gmailConnection.sync_status || 'ready'}</span>
                 </div>
-                {connection.last_sync && (
+                {gmailConnection.last_sync && (
                   <p className="text-xs text-gray-500 mt-2">
-                    Last synced: {new Date(connection.last_sync).toLocaleString()}
+                    Last synced: {new Date(gmailConnection.last_sync).toLocaleString()}
                   </p>
                 )}
               </div>
@@ -150,8 +152,8 @@ export default async function SettingsPage() {
               <div className="p-5 bg-gradient-to-br from-gray-50 to-white rounded-xl border border-gray-200/50">
                 <h4 className="text-sm font-semibold text-gray-900 mb-3">Sync Settings</h4>
                 <EmailSyncSettings
-                  connectionId={connection.id}
-                  currentMaxEmails={connection.metadata?.max_emails_per_sync || 10}
+                  connectionId={gmailConnection.id}
+                  currentMaxEmails={gmailConnection.metadata?.max_emails_per_sync || 10}
                 />
               </div>
 

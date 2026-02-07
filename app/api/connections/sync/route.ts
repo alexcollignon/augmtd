@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createServerClient } from '@supabase/supabase-js';
-import { fetchUnreadEmails, parseGmailMessage } from '@/lib/google/gmail';
+import { fetchUnreadEmails as fetchGmailEmails, parseGmailMessage } from '@/lib/google/gmail';
+import { fetchUnreadEmails as fetchOutlookEmails, parseOutlookMessage } from '@/lib/microsoft/outlook';
 import { processEmail } from '@/lib/ai/email-processor';
 
 export const maxDuration = 300; // 5 minutes
@@ -30,44 +31,58 @@ export async function POST(request: NextRequest) {
       }
     );
 
-    // Get user's Gmail connection
-    const { data: connection, error: connectionError } = await adminSupabase
+    // Get user's email connections (Gmail or Outlook)
+    const { data: connections, error: connectionError } = await adminSupabase
       .from('connections')
       .select('*')
       .eq('user_id', user.id)
-      .eq('provider', 'gmail')
-      .eq('status', 'active')
-      .single();
+      .in('provider', ['gmail', 'outlook'])
+      .eq('status', 'active');
 
-    if (connectionError || !connection) {
+    if (connectionError || !connections || connections.length === 0) {
       return NextResponse.json(
-        { error: 'No active Gmail connection found' },
+        { error: 'No active email connections found' },
         { status: 404 }
       );
     }
 
-    // Update sync status
-    await adminSupabase
-      .from('connections')
-      .update({ sync_status: 'syncing' })
-      .eq('id', connection.id);
-
-    let emailsFetched = 0;
-    let inboxItemsCreated = 0;
+    let totalEmailsFetched = 0;
+    let totalInboxItemsCreated = 0;
     const errors: string[] = [];
 
-    try {
-      // Fetch unread emails
-      const encryptedTokens = connection.metadata.tokens;
-      const maxEmails = connection.metadata.max_emails_per_sync || 10;
-      const messages = await fetchUnreadEmails(encryptedTokens, maxEmails);
+    // Process each connection
+    for (const connection of connections) {
 
-      console.log(`Fetched ${messages.length} emails for user ${user.id}`);
+      // Update sync status
+      await adminSupabase
+        .from('connections')
+        .update({ sync_status: 'syncing' })
+        .eq('id', connection.id);
 
-      // Process each email
-      for (const message of messages) {
-        try {
-          const parsed = parseGmailMessage(message);
+      try {
+        // Fetch unread emails based on provider
+        const encryptedTokens = connection.metadata.tokens;
+        const maxEmails = connection.metadata.max_emails_per_sync || 10;
+
+        let messages: any[];
+        if (connection.provider === 'gmail') {
+          messages = await fetchGmailEmails(encryptedTokens, maxEmails);
+        } else if (connection.provider === 'outlook') {
+          messages = await fetchOutlookEmails(encryptedTokens, maxEmails);
+        } else {
+          console.warn(`Unknown provider: ${connection.provider}`);
+          continue;
+        }
+
+        console.log(`Fetched ${messages.length} ${connection.provider} emails for user ${user.id}`);
+
+        // Process each email
+        for (const message of messages) {
+          try {
+            // Parse based on provider
+            const parsed = connection.provider === 'gmail'
+              ? parseGmailMessage(message)
+              : parseOutlookMessage(message);
 
           // Check if email already exists
           const { data: existingEmail } = await adminSupabase
@@ -81,23 +96,24 @@ export async function POST(request: NextRequest) {
             continue;
           }
 
-          // Store email
-          const { data: storedEmail, error: emailError } = await adminSupabase
-            .from('emails')
-            .insert({
-              user_id: user.id,
-              ...parsed
-            })
-            .select()
-            .single();
+            // Store email with connection reference
+            const { data: storedEmail, error: emailError } = await adminSupabase
+              .from('emails')
+              .insert({
+                user_id: user.id,
+                connection_id: connection.id,
+                ...parsed
+              })
+              .select()
+              .single();
 
-          if (emailError) {
-            console.error('Error storing email:', emailError);
-            errors.push(`Failed to store email: ${emailError.message}`);
-            continue;
-          }
+            if (emailError) {
+              console.error('Error storing email:', emailError);
+              errors.push(`Failed to store email: ${emailError.message}`);
+              continue;
+            }
 
-          emailsFetched++;
+            totalEmailsFetched++;
 
           // AI Processing
           const processed = await processEmail({
@@ -144,17 +160,17 @@ export async function POST(request: NextRequest) {
               needs_review: true
             });
 
-          if (inboxError) {
-            console.error('Error creating inbox item:', inboxError);
-            errors.push(`Failed to create inbox item: ${inboxError.message}`);
-          } else {
-            inboxItemsCreated++;
+            if (inboxError) {
+              console.error('Error creating inbox item:', inboxError);
+              errors.push(`Failed to create inbox item: ${inboxError.message}`);
+            } else {
+              totalInboxItemsCreated++;
+            }
+          } catch (emailError) {
+            console.error('Error processing email:', emailError);
+            errors.push(`Email processing error: ${emailError instanceof Error ? emailError.message : 'Unknown'}`);
           }
-        } catch (emailError) {
-          console.error('Error processing email:', emailError);
-          errors.push(`Email processing error: ${emailError instanceof Error ? emailError.message : 'Unknown'}`);
         }
-      }
 
       // Update sync status to completed
       await adminSupabase

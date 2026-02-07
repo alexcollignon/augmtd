@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient as createServerClient } from '@supabase/supabase-js';
-import { fetchUnreadEmails, parseGmailMessage } from '@/lib/google/gmail';
+import { fetchUnreadEmails as fetchGmailEmails, parseGmailMessage } from '@/lib/google/gmail';
+import { fetchUnreadEmails as fetchOutlookEmails, parseOutlookMessage } from '@/lib/microsoft/outlook';
 import { processEmail } from '@/lib/ai/email-processor';
 
 export const maxDuration = 300; // 5 minutes
@@ -27,11 +28,11 @@ export async function GET(request: NextRequest) {
       }
     );
 
-    // Get all active Gmail connections
+    // Get all active email connections (Gmail + Outlook)
     const { data: connections, error: connectionsError } = await supabase
       .from('connections')
       .select('*')
-      .eq('provider', 'gmail')
+      .in('provider', ['gmail', 'outlook'])
       .eq('status', 'active');
 
     if (connectionsError) {
@@ -43,7 +44,7 @@ export async function GET(request: NextRequest) {
     }
 
     if (!connections || connections.length === 0) {
-      console.log('No active Gmail connections found');
+      console.log('No active email connections found');
       return NextResponse.json({
         success: true,
         message: 'No connections to process',
@@ -51,16 +52,16 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    console.log(`Found ${connections.length} active Gmail connections`);
+    console.log(`Found ${connections.length} active email connections`);
 
     let totalEmailsFetched = 0;
     let totalInboxItems = 0;
     const errors: string[] = [];
 
-    // Process each user's Gmail
+    // Process each connection (Gmail or Outlook)
     for (const connection of connections) {
       try {
-        console.log(`Fetching emails for user ${connection.user_id}...`);
+        console.log(`Fetching ${connection.provider} emails for user ${connection.user_id}...`);
 
         // Update sync status
         await supabase
@@ -68,17 +69,29 @@ export async function GET(request: NextRequest) {
           .update({ sync_status: 'syncing' })
           .eq('id', connection.id);
 
-        // Fetch unread emails
+        // Fetch unread emails based on provider
         const encryptedTokens = connection.metadata.tokens;
         const maxEmails = connection.metadata.max_emails_per_sync || 10;
-        const messages = await fetchUnreadEmails(encryptedTokens, maxEmails);
 
-        console.log(`Fetched ${messages.length} emails for user ${connection.user_id}`);
+        let messages: any[];
+        if (connection.provider === 'gmail') {
+          messages = await fetchGmailEmails(encryptedTokens, maxEmails);
+        } else if (connection.provider === 'outlook') {
+          messages = await fetchOutlookEmails(encryptedTokens, maxEmails);
+        } else {
+          console.warn(`Unknown provider: ${connection.provider}`);
+          continue;
+        }
+
+        console.log(`Fetched ${messages.length} ${connection.provider} emails for user ${connection.user_id}`);
 
         // Process each email
         for (const message of messages) {
           try {
-            const parsed = parseGmailMessage(message);
+            // Parse based on provider
+            const parsed = connection.provider === 'gmail'
+              ? parseGmailMessage(message)
+              : parseOutlookMessage(message);
 
             // Check if email already exists
             const { data: existingEmail } = await supabase
@@ -92,11 +105,12 @@ export async function GET(request: NextRequest) {
               continue;
             }
 
-            // Store email
+            // Store email with connection reference
             const { data: storedEmail, error: emailError } = await supabase
               .from('emails')
               .insert({
                 user_id: connection.user_id,
+                connection_id: connection.id,
                 ...parsed
               })
               .select()
