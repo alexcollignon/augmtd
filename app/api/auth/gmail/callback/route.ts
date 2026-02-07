@@ -77,9 +77,9 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Success - redirect to settings
+    // Success - redirect to inbox
     return NextResponse.redirect(
-      `${process.env.NEXT_PUBLIC_APP_URL}/settings?success=gmail_connected`
+      `${process.env.NEXT_PUBLIC_APP_URL}/inbox?success=gmail_connected`
     );
   } catch (error) {
     console.error('OAuth callback error:', error);

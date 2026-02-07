@@ -40,6 +40,13 @@ export default function InboxPage() {
         .eq('provider', 'gmail')
         .eq('status', 'active')
         .single();
+
+      // Redirect to onboarding if no Gmail connection
+      if (!conn) {
+        router.push('/onboarding');
+        return;
+      }
+
       setConnection(conn);
 
       // Fetch inbox items

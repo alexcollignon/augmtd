@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
 
-export default function LoginPage() {
+export default function SignupPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -14,34 +14,22 @@ export default function LoginPage() {
   const router = useRouter();
   const supabase = createClient();
 
-  const handleLogin = async (e: React.FormEvent) => {
+  const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setMessage('');
 
     try {
-      const { error } = await supabase.auth.signInWithPassword({
+      const { error } = await supabase.auth.signUp({
         email,
         password,
+        options: {
+          emailRedirectTo: `${window.location.origin}/auth/callback`,
+        },
       });
 
       if (error) throw error;
-
-      // Check if user has Gmail connection
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        const { data: connection } = await supabase
-          .from('connections')
-          .select('*')
-          .eq('user_id', user.id)
-          .eq('provider', 'gmail')
-          .eq('status', 'active')
-          .single();
-
-        // Redirect to onboarding if no connection, otherwise inbox
-        router.push(connection ? '/inbox' : '/onboarding');
-        router.refresh();
-      }
+      setMessage('Success! Check your email to confirm your account.');
     } catch (error: any) {
       setMessage(error.message);
     } finally {
@@ -49,7 +37,7 @@ export default function LoginPage() {
     }
   };
 
-  const handleGoogleLogin = async () => {
+  const handleGoogleSignup = async () => {
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
@@ -73,13 +61,13 @@ export default function LoginPage() {
               className="w-16 h-16"
             />
           </div>
-          <h1 className="text-3xl font-bold text-gray-900">Welcome back</h1>
+          <h1 className="text-3xl font-bold text-gray-900">Get started</h1>
           <p className="text-gray-600 mt-2">
-            Sign in to your account
+            Create your AUGMTD account
           </p>
         </div>
 
-        <form onSubmit={handleLogin} className="space-y-4">
+        <form onSubmit={handleSignup} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Email
@@ -103,13 +91,21 @@ export default function LoginPage() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
+              minLength={6}
               className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-primary-500 focus:border-transparent"
               placeholder="••••••••"
             />
+            <p className="text-xs text-gray-500 mt-1">
+              Must be at least 6 characters
+            </p>
           </div>
 
           {message && (
-            <div className="text-sm p-3 rounded bg-red-50 text-red-700">
+            <div className={`text-sm p-3 rounded ${
+              message.includes('Success')
+                ? 'bg-green-50 text-green-700'
+                : 'bg-red-50 text-red-700'
+            }`}>
               {message}
             </div>
           )}
@@ -119,15 +115,15 @@ export default function LoginPage() {
             disabled={loading}
             className="w-full py-3 bg-primary-600 text-white rounded-md hover:bg-primary-700 disabled:opacity-50 font-medium transition-colors"
           >
-            {loading ? 'Signing in...' : 'Sign In'}
+            {loading ? 'Creating account...' : 'Sign Up'}
           </button>
         </form>
 
         <div className="mt-6 text-center">
           <p className="text-sm text-gray-600">
-            Don't have an account?{' '}
-            <Link href="/signup" className="text-primary-600 hover:text-primary-700 font-medium">
-              Sign up
+            Already have an account?{' '}
+            <Link href="/login" className="text-primary-600 hover:text-primary-700 font-medium">
+              Sign in
             </Link>
           </p>
         </div>

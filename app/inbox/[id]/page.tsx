@@ -17,7 +17,8 @@ import {
   ArrowLeftIcon
 } from '@heroicons/react/24/outline';
 
-export default async function InboxDetailPage({ params }: { params: { id: string } }) {
+export default async function InboxDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
   const supabase = await createClient();
 
   const {
@@ -32,7 +33,7 @@ export default async function InboxDetailPage({ params }: { params: { id: string
   const { data: item, error } = await supabase
     .from('inbox_items')
     .select('*')
-    .eq('id', params.id)
+    .eq('id', id)
     .eq('user_id', user.id)
     .single();
 
