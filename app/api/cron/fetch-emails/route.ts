@@ -151,6 +151,7 @@ export async function GET(request: NextRequest) {
                   from_name: storedEmail.from_name,
                   subject: storedEmail.subject,
                   received_at: storedEmail.received_at,
+                  provider: connection.provider, // Add provider for badge display
 
                   // AI-prepared work
                   summary: processed.summary,

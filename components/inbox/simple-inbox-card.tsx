@@ -20,6 +20,26 @@ interface SimpleInboxCardProps {
 
 export default function SimpleInboxCard({ item, onClick }: SimpleInboxCardProps) {
   const sourceData = item.source_data;
+  const provider = sourceData?.provider || 'gmail'; // Default to gmail for backward compatibility
+
+  // Provider icon components
+  const GmailIcon = () => (
+    <svg viewBox="0 0 48 48" className="w-3.5 h-3.5">
+      <path fill="#4caf50" d="M45,16.2l-5,2.75l-5,4.75L35,40h7c1.657,0,3-1.343,3-3V16.2z"/>
+      <path fill="#1e88e5" d="M3,16.2l3.614,1.71L13,23.7V40H6c-1.657,0-3-1.343-3-3V16.2z"/>
+      <polygon fill="#e53935" points="35,11.2 24,19.45 13,11.2 12,17 13,23.7 24,31.95 35,23.7 36,17"/>
+      <path fill="#c62828" d="M3,12.298V16.2l10,7.5V11.2L9.876,8.859C9.132,8.301,8.228,8,7.298,8h0C4.924,8,3,9.924,3,12.298z"/>
+      <path fill="#fbc02d" d="M45,12.298V16.2l-10,7.5V11.2l3.124-2.341C38.868,8.301,39.772,8,40.702,8h0 C43.076,8,45,9.924,45,12.298z"/>
+    </svg>
+  );
+
+  const OutlookIcon = () => (
+    <svg viewBox="0 0 48 48" className="w-3.5 h-3.5">
+      <path fill="#0078D4" d="M24,4L4,12v24l20,8l20-8V12L24,4z M24,28l-12-6l12-6l12,6L24,28z"/>
+      <path fill="#50E6FF" d="M24,16l12,6v12l-12,6V28l-12-6v-6L24,16z"/>
+      <path fill="#0078D4" opacity="0.5" d="M12,22v12l12,6V28L12,22z"/>
+    </svg>
+  );
 
   // Get icon based on category
   const getIcon = (category: string) => {
@@ -101,6 +121,16 @@ export default function SimpleInboxCard({ item, onClick }: SimpleInboxCardProps)
 
       {/* Metadata - Icons with Labels */}
       <div className="flex-shrink-0 flex items-center space-x-4">
+        {/* Provider Badge */}
+        <div className={`flex items-center space-x-1.5 px-2.5 py-1 rounded-full ${
+          provider === 'outlook'
+            ? 'bg-blue-50 text-blue-700 group-hover:bg-blue-100'
+            : 'bg-green-50 text-green-700 group-hover:bg-green-100'
+        } transition-colors`}>
+          {provider === 'outlook' ? <OutlookIcon /> : <GmailIcon />}
+          <span className="text-xs font-medium capitalize">{provider}</span>
+        </div>
+
         {sourceData?.draftReply && (
           <div className="flex items-center space-x-1.5 px-2.5 py-1 rounded-full bg-primary-50 text-primary-700 group-hover:bg-primary-100 transition-colors">
             <EnvelopeIcon className="w-3.5 h-3.5" />

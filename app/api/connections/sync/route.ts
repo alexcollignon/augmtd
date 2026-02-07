@@ -141,6 +141,7 @@ export async function POST(request: NextRequest) {
                 from_name: storedEmail.from_name,
                 subject: storedEmail.subject,
                 received_at: storedEmail.received_at,
+                provider: connection.provider, // Add provider for badge display
                 summary: processed.summary,
                 keyPoints: processed.keyPoints,
                 urgency: processed.urgency,

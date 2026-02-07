@@ -94,7 +94,7 @@ export default async function SettingsPage() {
 
         {/* Gmail Connection Section */}
         <div className="bg-white rounded-2xl border border-gray-200/50 p-6 mb-6 shadow-lg shadow-gray-200/50">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">Email Connection</h3>
+          <h3 className="text-lg font-semibold text-gray-900 mb-4">Gmail Connection</h3>
 
           {gmailConnection && gmailConnection.status === 'active' ? (
             <div className="space-y-4">
@@ -206,6 +206,107 @@ export default async function SettingsPage() {
                   <li className="flex items-start">
                     <span className="text-blue-600 mr-2">•</span>
                     <span>Manage labels</span>
+                  </li>
+                </ul>
+                <p className="mt-4 text-xs text-gray-500 italic">
+                  Your credentials are stored securely and never shared with third parties.
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Outlook Connection Section */}
+        <div className="bg-white rounded-2xl border border-gray-200/50 p-6 mb-6 shadow-lg shadow-gray-200/50">
+          <h3 className="text-lg font-semibold text-gray-900 mb-4">Outlook Connection</h3>
+
+          {outlookConnection && outlookConnection.status === 'active' ? (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between p-5 bg-gradient-to-br from-blue-50 to-sky-50 border border-blue-200/50 rounded-xl shadow-sm">
+                <div className="flex items-center space-x-4">
+                  <div className="flex-shrink-0">
+                    <div className="w-12 h-12 bg-white rounded-xl flex items-center justify-center shadow-sm border border-gray-200">
+                      <svg viewBox="0 0 48 48" className="w-7 h-7">
+                        <path fill="#0078D4" d="M24,4L4,12v24l20,8l20-8V12L24,4z M24,28l-12-6l12-6l12,6L24,28z"/>
+                        <path fill="#50E6FF" d="M24,16l12,6v12l-12,6V28l-12-6v-6L24,16z"/>
+                        <path fill="#0078D4" opacity="0.5" d="M12,22v12l12,6V28L12,22z"/>
+                      </svg>
+                    </div>
+                  </div>
+                  <div>
+                    <p className="font-semibold text-gray-900">Outlook</p>
+                    <p className="text-sm text-gray-600 mt-0.5">{outlookConnection.account_email}</p>
+                    <p className="text-xs text-gray-500 mt-1">
+                      Connected {new Date(outlookConnection.connected_at).toLocaleDateString()}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-green-100 text-green-700 shadow-sm">
+                    ● Active
+                  </span>
+                </div>
+              </div>
+
+              {/* Sync Status */}
+              <div className="p-5 bg-gradient-to-br from-gray-50 to-white rounded-xl border border-gray-200/50">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-sm font-semibold text-gray-700">Sync Status</span>
+                  <span className="text-xs font-medium text-gray-600 capitalize px-2.5 py-1 bg-white rounded-full border border-gray-200">{outlookConnection.sync_status || 'ready'}</span>
+                </div>
+                {outlookConnection.last_sync && (
+                  <p className="text-xs text-gray-500 mt-2">
+                    Last synced: {new Date(outlookConnection.last_sync).toLocaleString()}
+                  </p>
+                )}
+              </div>
+
+              {/* Disconnect Button */}
+              <form action="/api/auth/outlook/disconnect" method="POST">
+                <button
+                  type="submit"
+                  className="w-full px-4 py-3 border-2 border-red-200 text-red-700 rounded-xl hover:bg-red-50 hover:border-red-300 font-semibold transition-all duration-200"
+                >
+                  Disconnect Outlook
+                </button>
+              </form>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="p-8 bg-gradient-to-br from-gray-50 to-white border border-gray-200/50 rounded-xl text-center">
+                <div className="inline-flex p-4 bg-white rounded-2xl mb-4 border border-gray-200 shadow-sm">
+                  <svg viewBox="0 0 48 48" className="w-10 h-10">
+                    <path fill="#0078D4" d="M24,4L4,12v24l20,8l20-8V12L24,4z M24,28l-12-6l12-6l12,6L24,28z"/>
+                    <path fill="#50E6FF" d="M24,16l12,6v12l-12,6V28l-12-6v-6L24,16z"/>
+                    <path fill="#0078D4" opacity="0.5" d="M12,22v12l12,6V28L12,22z"/>
+                  </svg>
+                </div>
+                <p className="text-gray-600 mb-6 font-medium">No Outlook account connected</p>
+                <Link
+                  href="/api/auth/outlook/connect"
+                  className="inline-flex items-center space-x-2 px-6 py-3 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-xl hover:from-blue-700 hover:to-blue-800 font-semibold transition-all duration-200 shadow-lg shadow-blue-500/30"
+                >
+                  <svg viewBox="0 0 48 48" className="w-5 h-5">
+                    <path fill="currentColor" d="M24,4L4,12v24l20,8l20-8V12L24,4z M24,28l-12-6l12-6l12,6L24,28z"/>
+                    <path fill="currentColor" opacity="0.7" d="M24,16l12,6v12l-12,6V28l-12-6v-6L24,16z"/>
+                  </svg>
+                  <span>Connect Outlook</span>
+                </Link>
+              </div>
+              <div className="p-5 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl border border-blue-200/50">
+                <p className="text-xs font-semibold text-gray-700 mb-3">Permissions required:</p>
+                <ul className="space-y-2 text-xs text-gray-600">
+                  <li className="flex items-start">
+                    <span className="text-blue-600 mr-2">•</span>
+                    <span>Read your emails</span>
+                  </li>
+                  <li className="flex items-start">
+                    <span className="text-blue-600 mr-2">•</span>
+                    <span>Send emails on your behalf</span>
+                  </li>
+                  <li className="flex items-start">
+                    <span className="text-blue-600 mr-2">•</span>
+                    <span>Access your profile information</span>
                   </li>
                 </ul>
                 <p className="mt-4 text-xs text-gray-500 italic">
