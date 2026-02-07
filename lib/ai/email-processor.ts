@@ -15,126 +15,100 @@ export interface EmailData {
   received_at: string;
 }
 
-export interface ActionableResult {
-  isActionable: boolean;
-  reasoning: string;
-}
-
-export interface ProcessedEmail {
-  // Quick classification
-  category: string; // 'action_required' | 'question' | 'decision' | 'information' | 'newsletter' | 'promotional' | 'social' | 'other'
-
-  // Summary and context
-  summary: string;
-  keyPoints: string[];
-  urgency: 'low' | 'medium' | 'high' | 'critical';
-  deadline?: string;
-
-  // Prepared work
-  actionItems: Array<{
-    description: string;
-    deadline?: string;
-    estimatedTime?: string;
-    preparedLink?: string;
-  }>;
-
-  draftReply?: {
-    subject: string;
-    body: string;
-    tone: string;
-  };
-
-  calendarEvent?: {
-    title: string;
-    date?: string;
-    duration?: string;
-    description: string;
-  };
-
-  extractedData?: {
-    people?: string[];
-    companies?: string[];
-    amounts?: string[];
-    dates?: string[];
-    links?: string[];
-  };
-
-  followUpActions?: string[];
-
-  // Metadata
-  reasoning: string;
-  confidenceScore: number;
-  priority: number;
-}
-
 /**
- * Lightweight AI check to determine if email requires action
- * Uses GPT-4o-mini for cost efficiency (~$0.0001 per email)
+ * Signals detected in the email that indicate obligations or work
  */
-export async function checkIfActionable(email: EmailData): Promise<ActionableResult> {
-  const prompt = `Analyze this email and determine if it requires action or response.
+export interface EmailSignals {
+  // OBLIGATION SIGNALS
+  hasDirectQuestion: boolean;
+  hasRequestForAction: boolean;
+  hasDeadlineMention: boolean;
+  hasMeetingReference: boolean;
+  hasAttachmentNeedingReview: boolean;
+  hasExplicitApprovalRequest: boolean;
 
-Email from: ${email.from_name} <${email.from_address}>
-Subject: ${email.subject}
-Body: ${email.body.substring(0, 1000)}
+  // CONTEXT SIGNALS
+  senderAuthority: 'high' | 'medium' | 'low'; // Boss, client, colleague, vendor, unknown
+  threadDepth: number; // Is this ongoing conversation?
+  hasPreviousCommitment: boolean; // Did you promise to do something?
+  isFollowUp: boolean; // Reminder about something?
 
-Classify as ACTIONABLE if:
-- Requires a response (questions, requests, meeting invites)
-- Contains important information that needs tracking
-- Is from a colleague/client and not automated
-- Contains deadlines or action items
+  // COMPLEXITY SIGNALS
+  requiresJudgment: boolean; // Approval, choice, risk assessment
+  canBePrepared: boolean; // Can AI draft a response?
+  needsExternalInput: boolean; // Blocked on someone else?
 
-Classify as NOT ACTIONABLE if:
-- Promotional/marketing content
-- Automated notifications (no-reply addresses)
-- Newsletters or digests
-- Social media updates
-- Spam or low-priority updates
-
-Respond in JSON format:
-{
-  "isActionable": true/false,
-  "reasoning": "Brief explanation (1 sentence)"
-}`;
-
-  try {
-    const response = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages: [
-        {
-          role: 'system',
-          content: 'You are an email triage assistant. Classify emails as actionable or not actionable.'
-        },
-        {
-          role: 'user',
-          content: prompt
-        }
-      ],
-      response_format: { type: 'json_object' },
-      temperature: 0.3,
-    });
-
-    const result = JSON.parse(response.choices[0].message.content || '{}');
-    return {
-      isActionable: result.isActionable || false,
-      reasoning: result.reasoning || 'Unable to determine'
-    };
-  } catch (error) {
-    console.error('Error checking if email is actionable:', error);
-    // Default to actionable if check fails (fail open)
-    return {
-      isActionable: true,
-      reasoning: 'Pre-filter check failed, defaulting to actionable'
-    };
-  }
+  // URGENCY SIGNALS
+  explicitDeadline: string | null; // YYYY-MM-DD
+  impliedUrgency: 'immediate' | 'soon' | 'flexible';
+  isTimebound: boolean; // Meeting invite, event
 }
 
 /**
- * Full AI processing to generate inbox item suggestion
- * Uses GPT-4o-mini for cost efficiency (~$0.0001-0.0002 per email)
+ * Work state - the core abstraction
+ */
+export type WorkState = 'work_prepared' | 'decision_required' | 'waiting' | 'no_work';
+
+/**
+ * Processed email with work-centric framing
+ */
+export interface ProcessedEmail {
+  // WORK STATE (core)
+  workState: WorkState;
+  workTitle: string; // "Reply to Tea Vrcic" (not "Email from Tea")
+  whatIPrepared: string; // "Draft to schedule exhibition call"
+  whyMatters: string; // "High-value opportunity at 4YFN26"
+
+  // DETECTED SIGNALS
+  signals: EmailSignals;
+
+  // PREPARED OUTPUT (conditional on work state)
+  preparedOutput: {
+    draft?: {
+      subject: string;
+      body: string;
+      tone: 'professional' | 'friendly' | 'formal';
+    };
+    analysis?: {
+      options: string[];
+      risks: string[];
+      recommendation: string;
+    };
+    nextSteps?: Array<{
+      description: string;
+      deadline?: string;
+      estimatedTime?: string;
+      preparedLink?: string;
+    }>;
+    calendarEvent?: {
+      title: string;
+      date?: string;
+      duration?: string;
+      description: string;
+    };
+    extractedData?: {
+      people?: string[];
+      companies?: string[];
+      amounts?: string[];
+      dates?: string[];
+      links?: string[];
+    };
+  };
+
+  // METADATA
+  summary: string; // One-line summary
+  keyPoints: string[]; // 2-4 bullet points
+  urgency: 'low' | 'medium' | 'high' | 'critical';
+  confidence: number; // 0-100
+  priority: number; // 0-100
+  reasoning: string; // Why we determined this work state
+}
+
+/**
+ * Main processing function - detects signals and determines work state
  */
 export async function processEmail(email: EmailData): Promise<ProcessedEmail> {
-  const prompt = `You are a work preparation AI for busy professionals. Analyze this email and prepare EVERYTHING the person needs to handle it efficiently.
+  const prompt = `You are a work preparation AI. Your job is to detect OBLIGATIONS and prepare WORK, not classify emails.
 
 Email Details:
 From: ${email.from_name} <${email.from_address}>
@@ -144,102 +118,179 @@ Received: ${new Date(email.received_at).toLocaleString()}
 Body:
 ${email.body}
 
-PREPARE THE FOLLOWING:
+---
 
-1. CATEGORY (choose ONE that best fits):
-   - action_required: Tasks that need to be completed
-   - question: Someone is asking you a question
-   - decision: Requires your approval/decision/input
-   - information: FYI only, no action needed
-   - newsletter: Subscribed newsletters, digests, updates
-   - promotional: Marketing, sales, ads, special offers
-   - social: Social media notifications, updates from platforms
-   - other: Anything else (receipts, confirmations, automated messages)
+STEP 1: DETECT SIGNALS
 
-2. SUMMARY: One sentence overview (max 100 chars)
-3. KEY POINTS: 2-4 bullet points of important information
-4. URGENCY: low, medium, high, or critical (only high/critical if truly time-sensitive)
-5. DEADLINE: Extract any deadlines (YYYY-MM-DD format, or null)
+Analyze the email and detect these signals:
 
-6. ACTION ITEMS:
-   - ONLY for action_required, question, decision, or information categories
-   - DO NOT create action items for newsletter, promotional, social, or other
-   - List specific tasks with:
-     * description (what to do)
-     * deadline (if mentioned)
-     * estimatedTime (rough estimate like "5 min", "1 hour")
-     * preparedLink (extract any relevant URLs)
+OBLIGATION SIGNALS:
+- hasDirectQuestion: Is there a direct question asked?
+- hasRequestForAction: Is there an explicit action request? ("please", "can you", "could you")
+- hasDeadlineMention: Is a deadline mentioned?
+- hasMeetingReference: Meeting invite or scheduling request?
+- hasAttachmentNeedingReview: Attachment that needs review?
+- hasExplicitApprovalRequest: Approval language? ("approve", "confirm", "authorize")
 
-7. DRAFT REPLY:
-   - ONLY for action_required, question, or decision categories that need responses
-   - DO NOT create draft replies for newsletter, promotional, social, information, or other
-   - If applicable, write a complete draft reply with:
-     * subject (Re: original subject)
-     * body (professional, clear, addresses all points)
-     * tone (professional/friendly/formal)
-   - If not applicable, set to null
+CONTEXT SIGNALS:
+- senderAuthority: high (boss/exec), medium (client/colleague), low (vendor/marketing)
+- threadDepth: 0 (new thread), 1-2 (short thread), 3+ (long thread)
+- hasPreviousCommitment: Did recipient promise something earlier?
+- isFollowUp: Is this a reminder/follow-up?
 
-8. CALENDAR EVENT:
-   - ONLY if there's an actual meeting/deadline mentioned
-   - DO NOT create calendar events for newsletters or promotional content
-   - If there's a meeting/deadline, create event details:
-     * title
-     * date (if mentioned)
-     * duration (if mentioned)
-     * description
-   - If not applicable, set to null
+COMPLEXITY SIGNALS:
+- requiresJudgment: Needs decision, approval, or choice?
+- canBePrepared: Can AI write a draft response?
+- needsExternalInput: Blocked on external dependency?
 
-9. EXTRACTED DATA: Pull out structured information:
-   - people (names mentioned)
-   - companies (organizations mentioned)
-   - amounts (money, quantities)
-   - dates (all dates mentioned)
-   - links (all URLs)
+URGENCY SIGNALS:
+- explicitDeadline: Extract deadline (YYYY-MM-DD) or null
+- impliedUrgency: immediate (ASAP, urgent), soon (this week), flexible (no rush)
+- isTimebound: Meeting or time-sensitive event?
 
-10. FOLLOW-UP ACTIONS: What happens after the main action? (e.g., "Confirm receipt", "Schedule follow-up")
+---
 
-11. REASONING: Why you classified/prepared it this way
-12. CONFIDENCE SCORE: 0-100 (how confident in your analysis)
-13. PRIORITY: 0-100 (how urgent/important)
+STEP 2: DETERMINE WORK STATE
 
-Respond in JSON format matching this structure. If a field doesn't apply, use null or empty array.
+Based on signals, classify into ONE work state:
+
+1. NO_WORK
+   - No question, no action request, no deadline
+   - Low authority sender (marketing, notifications)
+   - FYI only, confirmations, receipts, newsletters
+   → Action: Summarize or hide
+
+2. WAITING
+   - needsExternalInput = true
+   - isFollowUp but waiting for someone else
+   - Scheduled for later (not now)
+   → Action: Track and resurface when ready
+
+3. DECISION_REQUIRED
+   - requiresJudgment = true OR
+   - hasExplicitApprovalRequest = true
+   - Can't prepare without human decision
+   → Action: Prepare analysis with options, risks, recommendation
+
+4. WORK_PREPARED
+   - hasDirectQuestion OR hasRequestForAction
+   - canBePrepared = true
+   - Not waiting, not just FYI
+   → Action: Prepare draft reply or next steps
+
+---
+
+STEP 3: PREPARE THE WORK
+
+For WORK_PREPARED:
+- Draft a complete reply (subject, body, tone)
+- Extract next steps/action items
+- Prepare calendar event if meeting mentioned
+- Extract structured data (people, companies, amounts, dates, links)
+
+For DECISION_REQUIRED:
+- List options clearly
+- Identify risks
+- Provide recommendation (labeled as AI suggestion)
+
+For WAITING:
+- Explain what we're waiting for
+- When to resurface this
+
+For NO_WORK:
+- Just summarize briefly
+
+---
+
+STEP 4: FRAME AS WORK
+
+Create user-facing text:
+- workTitle: "Reply to [name]" or "Decide on [topic]" or "Review [topic]"
+- whatIPrepared: "Draft to schedule call" or "Analysis with 3 options" or "Summary and key points"
+- whyMatters: One sentence explaining context and importance
+
+---
+
+OUTPUT FORMAT (JSON):
+
 {
-  "category": "action_required",
-  "summary": "Brief one-line summary",
-  "keyPoints": ["Point 1", "Point 2"],
-  "urgency": "high",
-  "deadline": "2026-02-19",
-  "actionItems": [
-    {
-      "description": "Specific task",
-      "deadline": "2026-02-19",
-      "estimatedTime": "10 min",
-      "preparedLink": "https://example.com"
+  "workState": "work_prepared",
+  "workTitle": "Reply to Tea Vrcic",
+  "whatIPrepared": "Draft to schedule exhibition call",
+  "whyMatters": "High-value meeting opportunity at 4YFN26 - first contact from potential partner",
+
+  "signals": {
+    "hasDirectQuestion": true,
+    "hasRequestForAction": true,
+    "hasDeadlineMention": false,
+    "hasMeetingReference": true,
+    "hasAttachmentNeedingReview": false,
+    "hasExplicitApprovalRequest": false,
+    "senderAuthority": "medium",
+    "threadDepth": 0,
+    "hasPreviousCommitment": false,
+    "isFollowUp": false,
+    "requiresJudgment": false,
+    "canBePrepared": true,
+    "needsExternalInput": false,
+    "explicitDeadline": null,
+    "impliedUrgency": "soon",
+    "isTimebound": true
+  },
+
+  "preparedOutput": {
+    "draft": {
+      "subject": "Re: Response to your web enquiry...",
+      "body": "Dear Tea,\\n\\nThank you for reaching out...",
+      "tone": "professional"
+    },
+    "nextSteps": [
+      {
+        "description": "Send reply to schedule call",
+        "deadline": null,
+        "estimatedTime": "2 min",
+        "preparedLink": null
+      }
+    ],
+    "calendarEvent": {
+      "title": "Call with Tea Vrcic - 4YFN26 Exhibition",
+      "date": null,
+      "duration": "30 min",
+      "description": "Discuss exhibition opportunities"
+    },
+    "extractedData": {
+      "people": ["Tea Vrcic"],
+      "companies": ["4YFN26"],
+      "amounts": [],
+      "dates": [],
+      "links": ["https://..."]
     }
+  },
+
+  "summary": "Tea wants to discuss exhibiting at 4YFN26",
+  "keyPoints": [
+    "Exhibition opportunity at 4YFN26",
+    "First contact - high potential value",
+    "Needs scheduling confirmation"
   ],
-  "draftReply": {
-    "subject": "Re: ...",
-    "body": "Full draft email...",
-    "tone": "professional"
-  },
-  "calendarEvent": {
-    "title": "Event title",
-    "date": "2026-02-19",
-    "duration": "30 min",
-    "description": "Event details"
-  },
-  "extractedData": {
-    "people": ["John Doe"],
-    "companies": ["Acme Corp"],
-    "amounts": ["$100"],
-    "dates": ["Feb 19"],
-    "links": ["https://..."]
-  },
-  "followUpActions": ["Action 1", "Action 2"],
-  "reasoning": "Explanation of analysis",
-  "confidenceScore": 90,
-  "priority": 85
-}`;
+  "urgency": "medium",
+  "confidence": 85,
+  "priority": 70,
+  "reasoning": "Detected meeting request + can prepare draft = work_prepared state. High priority due to business opportunity signal."
+}
+
+CRITICAL RULES:
+1. Email is EVIDENCE. The WORK is what matters.
+2. If no obligation detected → NO_WORK
+3. If blocked on external input → WAITING
+4. If requires judgment → DECISION_REQUIRED
+5. Otherwise if actionable → WORK_PREPARED
+6. Be conservative: if uncertain, default to WORK_PREPARED with low confidence
+7. For NO_WORK: don't create drafts, action items, or calendar events
+8. Confidence = how certain you are about the signals + work state
+9. Priority = urgency + sender authority + deadline proximity
+
+Respond ONLY with valid JSON matching the structure above.`;
 
   try {
     const response = await openai.chat.completions.create({
@@ -247,7 +298,7 @@ Respond in JSON format matching this structure. If a field doesn't apply, use nu
       messages: [
         {
           role: 'system',
-          content: 'You are a personal AI assistant helping users manage their inbox. Provide thoughtful, context-aware suggestions.'
+          content: 'You are a work preparation assistant. Detect obligations in emails and prepare work, don\'t just classify them.'
         },
         {
           role: 'user',
@@ -255,28 +306,68 @@ Respond in JSON format matching this structure. If a field doesn't apply, use nu
         }
       ],
       response_format: { type: 'json_object' },
-      temperature: 0.5,
+      temperature: 0.4,
     });
 
     const result = JSON.parse(response.choices[0].message.content || '{}');
 
+    // Validate and return with defaults
     return {
-      category: result.category || 'information',
+      workState: result.workState || 'work_prepared',
+      workTitle: result.workTitle || `Review email from ${email.from_name}`,
+      whatIPrepared: result.whatIPrepared || 'Summary and analysis',
+      whyMatters: result.whyMatters || result.summary || 'Needs your attention',
+
+      signals: result.signals || {
+        hasDirectQuestion: false,
+        hasRequestForAction: false,
+        hasDeadlineMention: false,
+        hasMeetingReference: false,
+        hasAttachmentNeedingReview: false,
+        hasExplicitApprovalRequest: false,
+        senderAuthority: 'medium',
+        threadDepth: 0,
+        hasPreviousCommitment: false,
+        isFollowUp: false,
+        requiresJudgment: false,
+        canBePrepared: true,
+        needsExternalInput: false,
+        explicitDeadline: null,
+        impliedUrgency: 'flexible',
+        isTimebound: false
+      },
+
+      preparedOutput: result.preparedOutput || {},
+
       summary: result.summary || 'Email received',
       keyPoints: result.keyPoints || [],
       urgency: result.urgency || 'medium',
-      deadline: result.deadline || undefined,
-      actionItems: result.actionItems || [],
-      draftReply: result.draftReply || undefined,
-      calendarEvent: result.calendarEvent || undefined,
-      extractedData: result.extractedData || undefined,
-      followUpActions: result.followUpActions || [],
-      reasoning: result.reasoning || 'No specific reasoning provided',
-      confidenceScore: Math.min(100, Math.max(0, result.confidenceScore || 50)),
-      priority: Math.min(100, Math.max(0, result.priority || 50))
+      confidence: Math.min(100, Math.max(0, result.confidence || 50)),
+      priority: Math.min(100, Math.max(0, result.priority || 50)),
+      reasoning: result.reasoning || 'No specific reasoning provided'
     };
   } catch (error) {
     console.error('Error processing email with AI:', error);
     throw error;
+  }
+}
+
+/**
+ * Legacy function for backward compatibility - now just calls processEmail
+ * TODO: Remove after migration
+ */
+export async function checkIfActionable(email: EmailData): Promise<{ isActionable: boolean; reasoning: string }> {
+  try {
+    const processed = await processEmail(email);
+    return {
+      isActionable: processed.workState !== 'no_work',
+      reasoning: processed.reasoning
+    };
+  } catch (error) {
+    console.error('Error in checkIfActionable:', error);
+    return {
+      isActionable: true,
+      reasoning: 'Pre-filter check failed, defaulting to actionable'
+    };
   }
 }
