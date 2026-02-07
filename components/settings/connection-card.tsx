@@ -118,7 +118,13 @@ export default function ConnectionCard({ provider, connection, connectUrl, disco
           {connection.last_sync && (
             <div className="flex items-center space-x-1">
               <span className="font-medium">Last sync:</span>
-              <span>{new Date(connection.last_sync).toLocaleDateString()}</span>
+              <span suppressHydrationWarning>
+                {new Date(connection.last_sync).toLocaleDateString('en-US', {
+                  month: 'short',
+                  day: 'numeric',
+                  year: 'numeric'
+                })}
+              </span>
             </div>
           )}
         </div>
