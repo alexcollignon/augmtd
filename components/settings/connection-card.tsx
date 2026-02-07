@@ -39,9 +39,9 @@ export default function ConnectionCard({ provider, connection, connectUrl, disco
       color: 'blue',
       icon: (
         <svg viewBox="0 0 48 48" className="w-6 h-6">
-          <path fill="#0078D4" d="M24,4L4,12v24l20,8l20-8V12L24,4z M24,28l-12-6l12-6l12,6L24,28z"/>
-          <path fill="#50E6FF" d="M24,16l12,6v12l-12,6V28l-12-6v-6L24,16z"/>
-          <path fill="#0078D4" opacity="0.5" d="M12,22v12l12,6V28L12,22z"/>
+          <rect x="4" y="8" width="40" height="32" rx="2" fill="#0078D4"/>
+          <path d="M24 28 C18 28 14 24 14 20 C14 16 18 12 24 12 C30 12 34 16 34 20 C34 24 30 28 24 28 Z" fill="white"/>
+          <path d="M24 26 C20 26 17 23.5 17 20 C17 16.5 20 14 24 14 C28 14 31 16.5 31 20 C31 23.5 28 26 24 26 Z" fill="#0078D4"/>
         </svg>
       ),
       gradientFrom: 'from-blue-50',
