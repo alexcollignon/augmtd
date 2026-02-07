@@ -29,19 +29,9 @@ export default function LoginPage() {
 
       // Check if user has Gmail connection
       const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        const { data: connection } = await supabase
-          .from('connections')
-          .select('*')
-          .eq('user_id', user.id)
-          .eq('provider', 'gmail')
-          .eq('status', 'active')
-          .single();
-
-        // Redirect to onboarding if no connection, otherwise inbox
-        router.push(connection ? '/inbox' : '/onboarding');
-        router.refresh();
-      }
+      // Always redirect to inbox (onboarding modal will show if no connection)
+      router.push('/inbox');
+      router.refresh();
     } catch (error: any) {
       setMessage(error.message);
     } finally {

@@ -9,26 +9,8 @@ export async function GET(request: Request) {
   if (code) {
     const supabase = await createClient();
     await supabase.auth.exchangeCodeForSession(code);
-
-    // Check if user has Gmail connection
-    const { data: { user } } = await supabase.auth.getUser();
-
-    if (user) {
-      const { data: connection } = await supabase
-        .from('connections')
-        .select('*')
-        .eq('user_id', user.id)
-        .eq('provider', 'gmail')
-        .eq('status', 'active')
-        .single();
-
-      // Redirect to onboarding if no Gmail connection, otherwise inbox
-      if (!connection) {
-        return NextResponse.redirect(`${origin}/onboarding`);
-      }
-    }
   }
 
-  // Redirect to inbox after successful auth
+  // Always redirect to inbox (onboarding modal will show if no connection)
   return NextResponse.redirect(`${origin}/inbox`);
 }

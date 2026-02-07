@@ -5,6 +5,7 @@ import { google } from 'googleapis';
 
 export async function GET(request: NextRequest) {
   try {
+    const origin = request.nextUrl.origin;
     const searchParams = request.nextUrl.searchParams;
     const code = searchParams.get('code');
     const state = searchParams.get('state');
@@ -12,15 +13,11 @@ export async function GET(request: NextRequest) {
 
     // Handle user denial
     if (error) {
-      return NextResponse.redirect(
-        `${process.env.NEXT_PUBLIC_APP_URL}/settings?error=oauth_denied`
-      );
+      return NextResponse.redirect(`${origin}/settings?error=oauth_denied`);
     }
 
     if (!code || !state) {
-      return NextResponse.redirect(
-        `${process.env.NEXT_PUBLIC_APP_URL}/settings?error=invalid_callback`
-      );
+      return NextResponse.redirect(`${origin}/settings?error=invalid_callback`);
     }
 
     // Decode state to get user ID
@@ -72,19 +69,13 @@ export async function GET(request: NextRequest) {
 
     if (insertError) {
       console.error('Error storing connection:', insertError);
-      return NextResponse.redirect(
-        `${process.env.NEXT_PUBLIC_APP_URL}/settings?error=storage_failed`
-      );
+      return NextResponse.redirect(`${origin}/settings?error=storage_failed`);
     }
 
     // Success - redirect to inbox
-    return NextResponse.redirect(
-      `${process.env.NEXT_PUBLIC_APP_URL}/inbox?success=gmail_connected`
-    );
+    return NextResponse.redirect(`${origin}/inbox?success=gmail_connected`);
   } catch (error) {
     console.error('OAuth callback error:', error);
-    return NextResponse.redirect(
-      `${process.env.NEXT_PUBLIC_APP_URL}/settings?error=callback_failed`
-    );
+    return NextResponse.redirect(`${origin}/settings?error=callback_failed`);
   }
 }

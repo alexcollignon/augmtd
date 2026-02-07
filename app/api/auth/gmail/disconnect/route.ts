@@ -3,15 +3,14 @@ import { createClient } from '@/lib/supabase/server';
 
 export async function POST(request: NextRequest) {
   try {
+    const origin = request.nextUrl.origin;
+
     // Get authenticated user
     const supabase = await createClient();
     const { data: { user }, error: authError } = await supabase.auth.getUser();
 
     if (authError || !user) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      );
+      return NextResponse.redirect(`${origin}/settings?error=unauthorized`);
     }
 
     // Delete Gmail connection
@@ -23,21 +22,12 @@ export async function POST(request: NextRequest) {
 
     if (deleteError) {
       console.error('Error disconnecting Gmail:', deleteError);
-      return NextResponse.json(
-        { error: 'Failed to disconnect Gmail' },
-        { status: 500 }
-      );
+      return NextResponse.redirect(`${origin}/settings?error=disconnect_failed`);
     }
 
-    return NextResponse.json({
-      success: true,
-      message: 'Gmail disconnected successfully'
-    });
+    return NextResponse.redirect(`${origin}/settings?success=disconnected`);
   } catch (error) {
     console.error('Disconnect error:', error);
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
+    return NextResponse.redirect(`${request.nextUrl.origin}/settings?error=server_error`);
   }
 }

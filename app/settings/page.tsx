@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
 import EmailSyncSettings from '@/components/settings/email-sync-settings';
+import ManualSyncButton from '@/components/settings/manual-sync-button';
 import { EnvelopeIcon } from '@heroicons/react/24/outline';
 
 export default async function SettingsPage() {
@@ -128,6 +129,15 @@ export default async function SettingsPage() {
                     Last synced: {new Date(connection.last_sync).toLocaleString()}
                   </p>
                 )}
+              </div>
+
+              {/* Manual Sync */}
+              <div className="p-4 border border-gray-200 rounded-lg">
+                <h4 className="text-sm font-medium text-gray-900 mb-3">Manual Sync</h4>
+                <p className="text-xs text-gray-600 mb-3">
+                  Fetch and process new emails immediately instead of waiting for the scheduled sync.
+                </p>
+                <ManualSyncButton />
               </div>
 
               {/* Sync Settings */}

@@ -1,5 +1,6 @@
 {
-  "crons": [
+  "comment": "Cron disabled - using cron-job.org instead for unlimited free crons",
+  "_crons_disabled": [
     {
       "path": "/api/cron/fetch-emails",
       "schedule": "0 9 * * *"

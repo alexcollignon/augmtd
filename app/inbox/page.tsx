@@ -7,6 +7,7 @@ import Link from 'next/link';
 import Image from 'next/image';
 import SimpleInboxCard from '@/components/inbox/simple-inbox-card';
 import InboxDrawer from '@/components/inbox/inbox-drawer';
+import OnboardingModal from '@/components/onboarding-modal';
 import { ChevronDownIcon, ChevronUpIcon, SparklesIcon } from '@heroicons/react/24/outline';
 
 export default function InboxPage() {
@@ -16,15 +17,17 @@ export default function InboxPage() {
   const [inboxItems, setInboxItems] = useState<any[]>([]);
   const [selectedItem, setSelectedItem] = useState<any>(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
   const [loading, setLoading] = useState(true);
 
   // Collapsible states
   const [showOtherEmails, setShowOtherEmails] = useState(false);
 
   useEffect(() => {
-    async function loadData() {
-      const supabase = createClient();
+    const supabase = createClient();
+    let pollingInterval: NodeJS.Timeout;
 
+    async function loadData() {
       const { data: { user: currentUser } } = await supabase.auth.getUser();
       if (!currentUser) {
         router.push('/login');
@@ -41,26 +44,47 @@ export default function InboxPage() {
         .eq('status', 'active')
         .single();
 
-      // Redirect to onboarding if no Gmail connection
-      if (!conn) {
-        router.push('/onboarding');
-        return;
-      }
-
       setConnection(conn);
 
+      // Show onboarding modal if no Gmail connection
+      if (!conn) {
+        setIsOnboardingOpen(true);
+      }
+
       // Fetch inbox items
-      const { data: items } = await supabase
-        .from('inbox_items')
-        .select('*')
-        .eq('user_id', currentUser.id)
-        .order('created_at', { ascending: false });
-      setInboxItems(items || []);
+      await fetchInboxItems(currentUser.id);
 
       setLoading(false);
     }
 
+    async function fetchInboxItems(userId: string) {
+      const { data: items } = await supabase
+        .from('inbox_items')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
+
+      if (items) {
+        setInboxItems(items);
+      }
+    }
+
     loadData();
+
+    // Poll for new items every 10 seconds
+    pollingInterval = setInterval(async () => {
+      const { data: { user: currentUser } } = await supabase.auth.getUser();
+      if (currentUser) {
+        await fetchInboxItems(currentUser.id);
+      }
+    }, 10000);
+
+    // Cleanup polling on unmount
+    return () => {
+      if (pollingInterval) {
+        clearInterval(pollingInterval);
+      }
+    };
   }, [router]);
 
   const handleItemClick = (item: any) => {
@@ -196,7 +220,7 @@ export default function InboxPage() {
         {connection && inboxItems.length > 0 && (
           <div className="space-y-6">
             {/* I Prepared These For You */}
-            {preparedItems.length > 0 && (
+            {preparedItems.length > 0 ? (
               <div>
                 <div className="flex items-center space-x-2 mb-4">
                   <SparklesIcon className="w-5 h-5 text-primary-600" />
@@ -207,6 +231,16 @@ export default function InboxPage() {
                     <SimpleInboxCard key={item.id} item={item} onClick={() => handleItemClick(item)} />
                   ))}
                 </div>
+              </div>
+            ) : pendingItems.length > 0 && (
+              <div className="bg-white rounded-lg border border-gray-200 p-8 text-center">
+                <SparklesIcon className="w-12 h-12 mx-auto mb-3 text-gray-300" />
+                <h3 className="text-lg font-medium text-gray-900 mb-2">
+                  All caught up!
+                </h3>
+                <p className="text-gray-600 text-sm">
+                  No actionable emails right now. Your recent messages are below if you'd like to review them.
+                </p>
               </div>
             )}
 
@@ -251,6 +285,13 @@ export default function InboxPage() {
         item={selectedItem}
         isOpen={isDrawerOpen}
         onClose={handleDrawerClose}
+      />
+
+      {/* Onboarding Modal */}
+      <OnboardingModal
+        isOpen={isOnboardingOpen}
+        onClose={() => setIsOnboardingOpen(false)}
+        userEmail={user?.email}
       />
     </div>
   );
