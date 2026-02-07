@@ -42,13 +42,17 @@ export async function getTokenFromCode(code: string, redirectUri: string) {
   return tokenResponse;
 }
 
-export async function refreshAccessToken(refreshToken: string) {
+export async function acquireTokenSilent(account: any) {
   const msalClient = getMSALClient();
 
-  const tokenResponse = await msalClient.acquireTokenByRefreshToken({
-    refreshToken,
-    scopes: OUTLOOK_SCOPES,
-  });
-
-  return tokenResponse;
+  try {
+    const tokenResponse = await msalClient.acquireTokenSilent({
+      account,
+      scopes: OUTLOOK_SCOPES,
+    });
+    return tokenResponse;
+  } catch (error) {
+    console.error('Silent token acquisition failed:', error);
+    throw error;
+  }
 }

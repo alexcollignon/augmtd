@@ -1,5 +1,5 @@
 import { Client } from '@microsoft/microsoft-graph-client';
-import { refreshAccessToken } from './oauth';
+import { acquireTokenSilent } from './oauth';
 
 interface OutlookMessage {
   id: string;
@@ -24,16 +24,23 @@ export async function getGraphClient(encryptedTokens: string) {
   const tokensString = Buffer.from(encryptedTokens, 'base64').toString();
   const tokens = JSON.parse(tokensString);
 
-  // Refresh token if needed
   let accessToken = tokens.accessToken;
 
-  if (tokens.refreshToken) {
-    try {
-      const refreshedTokens = await refreshAccessToken(tokens.refreshToken);
-      accessToken = refreshedTokens.accessToken;
-    } catch (error) {
-      console.error('Error refreshing Outlook token:', error);
-      // Fall back to existing access token
+  // Try to refresh token if account info is available and token might be expired
+  if (tokens.account && tokens.expiresOn) {
+    const expiresOn = new Date(tokens.expiresOn);
+    const now = new Date();
+    const timeUntilExpiry = expiresOn.getTime() - now.getTime();
+
+    // Refresh if token expires in less than 5 minutes
+    if (timeUntilExpiry < 5 * 60 * 1000) {
+      try {
+        const refreshedTokens = await acquireTokenSilent(tokens.account);
+        accessToken = refreshedTokens.accessToken;
+      } catch (error) {
+        console.error('Error refreshing Outlook token:', error);
+        // Fall back to existing access token
+      }
     }
   }
 
