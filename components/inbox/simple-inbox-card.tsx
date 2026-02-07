@@ -56,7 +56,7 @@ export default function SimpleInboxCard({ item, onClick }: SimpleInboxCardProps)
   return (
     <button
       onClick={onClick}
-      className="w-full text-left px-5 py-4 hover:bg-gray-50 transition-colors flex items-start space-x-4 group border-l-2 border-transparent hover:border-gray-900 relative"
+      className="relative w-full text-left px-5 py-4 transition-colors flex items-start space-x-4 group border-l-2 border-transparent hover:border-gray-900 hover:bg-gray-50 isolate"
     >
       {/* Icon */}
       <div className="flex-shrink-0 pt-0.5">

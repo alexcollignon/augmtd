@@ -7,7 +7,7 @@ import {
   InboxIcon,
   Cog6ToothIcon,
   ArrowRightOnRectangleIcon,
-  SparklesIcon
+  UserCircleIcon
 } from '@heroicons/react/24/outline';
 
 interface SidebarNavProps {
@@ -17,9 +17,8 @@ interface SidebarNavProps {
 export default function SidebarNav({ userEmail }: SidebarNavProps) {
   const pathname = usePathname();
 
-  const navigation = [
+  const mainNavigation = [
     { name: 'Prepared Work', href: '/inbox', icon: InboxIcon },
-    { name: 'Settings', href: '/settings', icon: Cog6ToothIcon },
   ];
 
   return (
@@ -38,9 +37,9 @@ export default function SidebarNav({ userEmail }: SidebarNavProps) {
         </Link>
       </div>
 
-      {/* Navigation */}
+      {/* Main Navigation */}
       <nav className="flex-1 space-y-1 px-3 py-4">
-        {navigation.map((item) => {
+        {mainNavigation.map((item) => {
           const isActive = pathname === item.href;
           return (
             <Link
@@ -61,20 +60,36 @@ export default function SidebarNav({ userEmail }: SidebarNavProps) {
         })}
       </nav>
 
-      {/* User Section */}
-      <div className="border-t border-gray-200 p-4 space-y-2">
+      {/* Bottom Section - User + Settings + Sign Out */}
+      <div className="border-t border-gray-200 p-3 space-y-1">
+        {/* User Info */}
         {userEmail && (
-          <div className="flex items-center space-x-2 px-2 py-1.5 text-sm text-gray-600">
-            <div className="w-7 h-7 rounded-full bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center">
-              <SparklesIcon className="w-4 h-4 text-white" />
-            </div>
-            <span className="truncate text-xs">{userEmail}</span>
+          <div className="flex items-center space-x-2.5 px-3 py-2 text-xs text-gray-600">
+            <UserCircleIcon className="w-5 h-5 text-gray-400 flex-shrink-0" />
+            <span className="truncate">{userEmail}</span>
           </div>
         )}
+
+        {/* Settings */}
+        <Link
+          href="/settings"
+          className={`
+            flex items-center space-x-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all
+            ${pathname === '/settings'
+              ? 'bg-primary-50 text-primary-700'
+              : 'text-gray-700 hover:bg-gray-50 hover:text-gray-900'
+            }
+          `}
+        >
+          <Cog6ToothIcon className={`w-5 h-5 ${pathname === '/settings' ? 'text-primary-600' : 'text-gray-500'}`} />
+          <span>Settings</span>
+        </Link>
+
+        {/* Sign Out */}
         <form action="/auth/signout" method="post" className="w-full">
           <button
             type="submit"
-            className="flex items-center space-x-3 w-full px-3 py-2 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 hover:text-gray-900 transition-all"
+            className="flex items-center space-x-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 hover:text-gray-900 transition-all"
           >
             <ArrowRightOnRectangleIcon className="w-5 h-5 text-gray-500" />
             <span>Sign Out</span>
