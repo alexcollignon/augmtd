@@ -178,7 +178,7 @@ export async function GET(request: NextRequest) {
                 confidence_score: processed.confidence,
                 priority: processed.priority,
                 status: 'pending',
-                needs_review: processed.workState !== 'no_work'
+                needs_review: processed.workState === 'work_prepared' || processed.workState === 'decision_required' || processed.workState === 'waiting'
               });
 
             if (inboxError) {
