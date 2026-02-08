@@ -5,7 +5,9 @@ import {
   CheckCircleIcon,
   ExclamationCircleIcon,
   ClockIcon,
-  ChevronRightIcon
+  PaperAirplaneIcon,
+  CheckIcon,
+  EyeIcon
 } from '@heroicons/react/24/outline';
 
 interface SimpleInboxCardProps {
@@ -52,6 +54,78 @@ export default function SimpleInboxCard({ item, onClick }: SimpleInboxCardProps)
   // Get priority indicator
   const showPriorityDot = item.priority >= 75 || sourceData?.urgency === 'high' || sourceData?.urgency === 'critical';
   const priorityColor = sourceData?.urgency === 'critical' ? 'bg-red-500' : 'bg-orange-500';
+
+  // Get CTA based on work state and prepared output
+  const getCTA = () => {
+    const preparedOutput = sourceData?.draft || sourceData?.analysis || sourceData?.nextSteps;
+
+    switch (item.work_state) {
+      case 'work_prepared':
+        if (sourceData?.draft) {
+          return {
+            text: 'Send reply',
+            icon: PaperAirplaneIcon,
+            bgColor: 'bg-green-600 hover:bg-green-700',
+            textColor: 'text-white',
+            ringColor: 'ring-green-600'
+          };
+        }
+        if (sourceData?.calendarEvent) {
+          return {
+            text: 'Schedule',
+            icon: CheckIcon,
+            bgColor: 'bg-green-600 hover:bg-green-700',
+            textColor: 'text-white',
+            ringColor: 'ring-green-600'
+          };
+        }
+        return {
+          text: 'Review',
+          icon: CheckIcon,
+          bgColor: 'bg-green-600 hover:bg-green-700',
+          textColor: 'text-white',
+          ringColor: 'ring-green-600'
+        };
+
+      case 'decision_required':
+        if (sourceData?.analysis) {
+          return {
+            text: 'Review & decide',
+            icon: ExclamationCircleIcon,
+            bgColor: 'bg-orange-600 hover:bg-orange-700',
+            textColor: 'text-white',
+            ringColor: 'ring-orange-600'
+          };
+        }
+        return {
+          text: 'Decide',
+          icon: ExclamationCircleIcon,
+          bgColor: 'bg-orange-600 hover:bg-orange-700',
+          textColor: 'text-white',
+          ringColor: 'ring-orange-600'
+        };
+
+      case 'waiting':
+        return {
+          text: 'View',
+          icon: EyeIcon,
+          bgColor: 'bg-gray-200 hover:bg-gray-300',
+          textColor: 'text-gray-700',
+          ringColor: 'ring-gray-300'
+        };
+
+      default: // no_work
+        return {
+          text: 'View',
+          icon: EyeIcon,
+          bgColor: 'bg-gray-100 hover:bg-gray-200',
+          textColor: 'text-gray-600',
+          ringColor: 'ring-gray-200'
+        };
+    }
+  };
+
+  const cta = getCTA();
 
   return (
     <button
@@ -124,9 +198,16 @@ export default function SimpleInboxCard({ item, onClick }: SimpleInboxCardProps)
         </div>
       </div>
 
-      {/* Arrow */}
-      <div className="flex-shrink-0 pt-1 opacity-0 group-hover:opacity-100 transition-opacity">
-        <ChevronRightIcon className="w-4 h-4 text-gray-400" />
+      {/* CTA Button */}
+      <div className="flex-shrink-0 pt-0.5">
+        <div className={`
+          flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all
+          ${cta.bgColor} ${cta.textColor}
+          group-hover:scale-105 group-hover:shadow-sm
+        `}>
+          <cta.icon className="w-3.5 h-3.5" />
+          <span>{cta.text}</span>
+        </div>
       </div>
     </button>
   );

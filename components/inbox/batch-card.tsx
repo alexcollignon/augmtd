@@ -8,7 +8,8 @@ import {
   DocumentTextIcon,
   MegaphoneIcon,
   ChevronDownIcon,
-  ChevronUpIcon
+  ChevronUpIcon,
+  EyeIcon
 } from '@heroicons/react/24/outline';
 import { BatchedItem } from '@/lib/utils/batch-inbox-items';
 
