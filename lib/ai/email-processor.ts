@@ -33,14 +33,14 @@ export interface EmailSignals {
   hasPreviousCommitment: boolean; // Did you promise to do something?
   isFollowUp: boolean; // Reminder about something?
 
-  // ACTION DOMAIN (where does completion happen?)
-  actionDomain: 'email' | 'external' | 'decision'; // Can this be completed via email reply?
+  // EXECUTION TARGET (where does execution happen? NOT mental state)
+  executionTarget: 'email' | 'external' | 'none'; // Where is the action taken?
   hasActionLinks: boolean; // Contains clickable action links/buttons (verify, update, login)
   mentionsExternalSystem: boolean; // References website, portal, account settings, "go to", "visit"
 
   // COMPLEXITY SIGNALS
   requiresJudgment: boolean; // Approval, choice, risk assessment
-  canBePrepared: boolean; // Can AI draft a response that COMPLETES the task?
+  canBePreparedViaEmail: boolean; // Can AI draft EMAIL REPLY that COMPLETES the task?
   needsExternalInput: boolean; // Blocked on someone else?
 
   // MECHANICAL SIGNALS (auto-handleable)
@@ -156,26 +156,28 @@ CONTEXT SIGNALS:
 - hasPreviousCommitment: Did recipient promise something earlier?
 - isFollowUp: Is this a reminder/follow-up?
 
-ACTION DOMAIN (CRITICAL - determines if task can be done via email):
-Ask: "Can this task be COMPLETED by REPLYING to this email?"
+EXECUTION TARGET (where does execution happen? Domains are PLACES, not mental states):
+Ask: "WHERE is this task executed?"
 
-- actionDomain: Classify as 'email', 'external', or 'decision'
-  * email: Task completed by sending email reply (answer question, provide info, schedule via email)
-  * external: Task requires leaving email (click link, visit website, login to portal, update settings, fill form)
-  * decision: Task is cognitive only (approve with consequences, choose between options, assess tradeoffs)
+- executionTarget: Classify as 'email', 'external', or 'none'
+  * email: Execution = send email reply (answer question, provide info, schedule via email)
+  * external: Execution = leave email (click link, visit website, portal, update settings, fill form)
+  * none: Purely cognitive (no execution, just mental processing: approve, decide, assess)
 
 - hasActionLinks: Does email contain action buttons/links? ("Click here", "Verify now", "Update", "Login")
 - mentionsExternalSystem: Does it reference external systems? ("visit website", "go to portal", "login to", "update your account")
 
 COMPLEXITY SIGNALS:
 - requiresJudgment: Needs decision, approval, or choice with meaningful consequences?
-- canBePrepared: Can AI write a draft response that COMPLETES the task (not just acknowledges it)?
+- canBePreparedViaEmail: Can AI draft EMAIL REPLY that COMPLETES the task?
+  INVARIANT: If executionTarget !== 'email', then canBePreparedViaEmail = false
 - needsExternalInput: Blocked on external dependency (waiting for someone else)?
 
-MECHANICAL SIGNALS (for filtering):
+MECHANICAL SIGNALS (positive anchors for classification):
 - isMechanicalConfirmation: Email verification, signup, password reset, account confirmation?
 - isNotification: Receipt, invoice, shipping update, system alert, FYI update?
 - hasOneObviousAction: Single obvious action with no judgment (click link, verify, confirm)?
+  RULE: If hasOneObviousAction AND executionTarget='external' AND !requiresJudgment → ACTION_REQUIRED
 
 URGENCY SIGNALS:
 - explicitDeadline: Extract deadline (YYYY-MM-DD) or null
@@ -190,94 +192,103 @@ CRITICAL: Use ACTION DOMAIN to determine correct work state.
 
 Based on signals, classify into ONE work state:
 
-1. WORK_PREPARED (Level 1 - Action Required)
-   STRICT REQUIREMENT: actionDomain MUST be 'email'
+1. WORK_PREPARED (Judgment Now - Via Email)
+   STRICT: executionTarget MUST be 'email'
 
    Must meet ALL:
-   ✓ actionDomain = 'email' (task completed by REPLYING to email)
+   ✓ executionTarget = 'email' (completed by REPLYING)
+   ✓ canBePreparedViaEmail = true
    ✓ Requires human judgment or meaningful human touch
-   ✓ Draft reply would complete the task (not just acknowledge it)
    ✓ NOT a confirmation/notification/receipt
 
    Valid examples:
-   - "Can you send me the report?" → Reply with report completes task
-   - "When can we meet?" → Reply with times completes scheduling
-   - "What's your opinion on X?" → Reply with opinion completes task
+   - "Can you send report?" → executionTarget='email', draft completes task
+   - "When can we meet?" → executionTarget='email', reply schedules
+   - "What's your opinion?" → executionTarget='email', reply answers
 
-   INVALID examples (actionDomain = 'external'):
-   - "Update your payment method" → Can't update via email reply
-   - "Verify your email" → Must click link, not reply
-   - "Complete this form" → Must visit external system
+   INVALID:
+   - "Update payment" → executionTarget='external'
+   - "Verify email" → executionTarget='external'
 
    → Action: Prepare draft reply that COMPLETES the task
 
 2. ACTION_REQUIRED (Execution - Prevent Downside)
-   CRITICAL: This is NOT a decision. It's execution.
+   POSITIVE RULE: hasOneObviousAction + executionTarget='external' + !requiresJudgment
 
    Requirements:
-   ✓ actionDomain = 'external' (must leave email)
-   ✓ High consequences if ignored (service interruption, security risk, compliance)
-   ✓ Clear next step (no real choice - just do it)
-   ✓ Little to no reasoning required
-
-   The "decision" is fake - it's just: "Do the thing before it breaks"
+   ✓ executionTarget = 'external' (must leave email)
+   ✓ High consequences if ignored
+   ✓ Clear next step (no real choice)
+   ✓ hasOneObviousAction OR very clear path
 
    Examples:
-   - "Update payment method or service stops" → Clear: update payment
-   - "Reset credentials before lockout" → Clear: reset credentials
-   - "Complete compliance form by Friday" → Clear: complete form
-   - "Verify email to activate account" → Clear: verify
+   - "Update payment or service stops" → external + clear + high stakes
+   - "Reset credentials before lockout" → external + clear + urgent
+   - "Complete form by Friday" → external + clear + deadline
 
    NOT this state:
-   - "Choose payment provider A or B" → Multiple options = DECISION_REQUIRED
-   - "Decide whether to upgrade plan" → Real choice = DECISION_REQUIRED
+   - "Choose provider A or B" → requiresJudgment = true → DECISION_REQUIRED
 
-   → Action: Prepare link/instructions + deadline, no draft email
+   → Action: Prepare instructions + deadline, NO draft email
 
 3. DECISION_REQUIRED (Choice Under Uncertainty)
    CRITICAL: True decisions with multiple viable paths.
 
    Requirements:
-   ✓ Multiple reasonable options
-   ✓ Tradeoffs to weigh
-   ✓ Judgment adds value
+   ✓ requiresJudgment = true
+   ✓ Multiple reasonable options with tradeoffs
    ✓ Uncertainty about best path
+   ✓ executionTarget can be 'email', 'external', or 'none'
 
    Examples:
-   - "Approve $50k purchase" → Approve vs reject (consequences)
-   - "Choose vendor A or B" → Multiple valid options
-   - "Decide whether to proceed with partnership" → Strategic choice
-   - "Choose payment provider for expansion" → Tradeoffs (cost, features, risk)
+   - "Approve $50k purchase" → executionTarget='none', pure judgment
+   - "Choose vendor A or B" → executionTarget='none', strategic choice
+   - "Decide partnership approach" → executionTarget='none', options + risks
 
    NOT this state:
-   - "Update payment or lose service" → No real choice = ACTION_REQUIRED
-   - "Verify email" → Mechanical = NOTED
+   - "Update payment or lose service" → hasOneObviousAction = true → ACTION_REQUIRED
 
    → Action: Prepare analysis with options, risks, recommendation
 
-4. WAITING (Special - Blocked)
-   - needsExternalInput = true (waiting for someone else to respond first)
-   - Scheduled for future (meeting is next week, not actionable now)
-   - Requires information you don't have yet
-   → Action: Track and resurface when ready
-
-5. NOTED (Awareness Only)
-   No immediate action needed, just mental registration.
+4. WAITING (Blocked - No Downside Risk Right Now)
+   STRICT: Must NOT contain downside risk before new input arrives
 
    Requirements:
-   ✓ Low/no consequences if ignored
-   ✓ Informational only
-   ✓ No downside risk
+   ✓ needsExternalInput = true (waiting for someone else)
+   ✓ Scheduled for future (not actionable now)
+   ✓ No harm from ignoring until unblocked
+
+   CRITICAL: "If ignoring this could cause harm before new input arrives, it is NOT WAITING"
 
    Examples:
-   - "Your email has been confirmed" → Already happened, just FYI
-   - "Receipt for $49.99" → Past transaction, awareness
-   - "Your order shipped" → Status update, no action
-   - "Hiring pipeline update" → Informational
+   - Waiting for client to provide specs → Can't act yet, no risk
+   - Meeting scheduled for next week → Not actionable now
 
    NOT this state:
-   - "Update payment or service stops" → Has consequences = ACTION_REQUIRED
-   - "Choose vendor A or B" → Requires judgment = DECISION_REQUIRED
+   - "Waiting for approval, deadline tomorrow" → Has risk = ACTION_REQUIRED or DECISION_REQUIRED
+
+   → Action: Track and resurface when ready
+
+5. NOTED (Awareness Only - NO Consequences)
+   STRICT: If consequences exist, NOTED is INVALID
+
+   Requirements:
+   ✓ Zero/minimal consequences if ignored
+   ✓ Informational only
+   ✓ No downside risk
+   ✓ Already happened OR no action possible
+
+   Examples:
+   - "Email confirmed" → Already done, just FYI
+   - "Receipt for $49.99" → Past event, awareness
+   - "Order shipped" → Status update
+   - "Hiring update" → Informational
+
+   INVALID:
+   - "Update payment or service stops" → Consequences exist = ACTION_REQUIRED
+   - "Verify email to activate" → Consequences exist (can't use account) = ACTION_REQUIRED
+
+   RULE: "If consequences exist, NOTED is invalid"
 
    → Action: Surface in "Noted" section, no response needed
 
@@ -349,11 +360,11 @@ OUTPUT FORMAT (JSON):
     "threadDepth": 0,
     "hasPreviousCommitment": false,
     "isFollowUp": false,
-    "actionDomain": "email",
+    "executionTarget": "email",
     "hasActionLinks": false,
     "mentionsExternalSystem": false,
     "requiresJudgment": false,
-    "canBePrepared": true,
+    "canBePreparedViaEmail": true,
     "needsExternalInput": false,
     "isMechanicalConfirmation": false,
     "isNotification": false,
@@ -405,48 +416,50 @@ OUTPUT FORMAT (JSON):
 }
 
 CRITICAL RULES:
-1. ALWAYS determine actionDomain FIRST: Can this be completed by replying to the email?
-   - If YES → actionDomain = 'email'
-   - If NO, requires external system → actionDomain = 'external'
-   - If purely cognitive (approve, choose) → actionDomain = 'decision'
+1. ALWAYS determine executionTarget FIRST: WHERE is execution?
+   - If completed by email reply → executionTarget = 'email'
+   - If requires external system (website, portal, link) → executionTarget = 'external'
+   - If purely cognitive (no execution, just decision) → executionTarget = 'none'
 
-2. WORK_PREPARED rule: actionDomain MUST be 'email'
-   - Only if replying to email COMPLETES the task
-   - "Can you send report?" → email domain → WORK_PREPARED
-   - "Update payment" → external domain → NOT work_prepared
+   DOMAINS ARE PLACES. DECISIONS ARE MENTAL STATES.
 
-3. For actionDomain = 'external' + high consequences, ask:
-   "Are there multiple viable options with tradeoffs?"
-   - If YES → DECISION_REQUIRED (choice under uncertainty)
-   - If NO (clear next step) → ACTION_REQUIRED (execution)
+2. INVARIANT: If executionTarget !== 'email', then canBePreparedViaEmail = false
+   - Prevents hallucinated drafts for external actions
 
-   Examples:
-   - "Update payment or service stops" → No real choice → ACTION_REQUIRED
-   - "Choose vendor A or B" → Multiple options → DECISION_REQUIRED
+3. WORK_PREPARED rule: executionTarget MUST be 'email'
+   - Only if email reply COMPLETES the task
+   - "Can you send report?" → executionTarget='email' → WORK_PREPARED
+   - "Update payment" → executionTarget='external' → NOT work_prepared
 
-4. DECISION_REQUIRED = true decision-making:
-   - Multiple reasonable paths
-   - Tradeoffs to evaluate
-   - Judgment adds value
-   - NOT just "do the thing to prevent downside"
+4. POSITIVE RULE for ACTION_REQUIRED:
+   IF hasOneObviousAction = true
+   AND executionTarget = 'external'
+   AND requiresJudgment = false
+   → ACTION_REQUIRED
 
-5. ACTION_REQUIRED = execution to prevent downside:
-   - External action required
-   - High consequences
-   - Clear next step (no real choice)
-   - "Do it before it breaks"
+   This is a strong positive anchor. Use it.
 
-6. NOTED = awareness only:
-   - Low/no consequences
-   - Informational
-   - No downside risk
+5. For executionTarget = 'external' + high consequences:
+   "Multiple viable options with tradeoffs?"
+   - YES → DECISION_REQUIRED (choice)
+   - NO → ACTION_REQUIRED (execution)
 
-7. Other rules:
-   - If blocked on external input → WAITING
+6. WAITING must NOT have downside risk before unblocked:
+   "If ignoring causes harm before new input, NOT WAITING"
+
+7. NOTED must have ZERO consequences:
+   "If consequences exist, NOTED is invalid"
+
+8. Priority bands (enforce these):
+   - 80-100: Immediate downside or exec decision
+   - 50-79: Important but not urgent
+   - 20-49: Awareness / monitoring
+   - <20: Noise
+
+9. Other rules:
+   - Confidence = certainty about signals + work state (0-100)
    - If marketing/promotional → NOISE
    - When uncertain between NOTED/NOISE → NOTED
-   - Confidence = certainty about signals + work state
-   - Priority = urgency + sender authority + deadline + judgment
 
 Respond ONLY with valid JSON matching the structure above.`;
 
@@ -487,11 +500,11 @@ Respond ONLY with valid JSON matching the structure above.`;
         threadDepth: 0,
         hasPreviousCommitment: false,
         isFollowUp: false,
-        actionDomain: 'email',
+        executionTarget: 'email',
         hasActionLinks: false,
         mentionsExternalSystem: false,
         requiresJudgment: false,
-        canBePrepared: true,
+        canBePreparedViaEmail: true,
         needsExternalInput: false,
         isMechanicalConfirmation: false,
         isNotification: false,
@@ -525,8 +538,8 @@ export async function checkIfActionable(email: EmailData): Promise<{ isActionabl
     const processed = await processEmail(email);
     return {
       isActionable: processed.workState === 'work_prepared' ||
-                    processed.workState === 'decision_required' ||
-                    processed.workState === 'waiting',
+                    processed.workState === 'action_required' ||
+                    processed.workState === 'decision_required',
       reasoning: processed.reasoning
     };
   } catch (error) {
