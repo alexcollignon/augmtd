@@ -33,9 +33,14 @@ export interface EmailSignals {
   hasPreviousCommitment: boolean; // Did you promise to do something?
   isFollowUp: boolean; // Reminder about something?
 
+  // ACTION DOMAIN (where does completion happen?)
+  actionDomain: 'email' | 'external' | 'decision'; // Can this be completed via email reply?
+  hasActionLinks: boolean; // Contains clickable action links/buttons (verify, update, login)
+  mentionsExternalSystem: boolean; // References website, portal, account settings, "go to", "visit"
+
   // COMPLEXITY SIGNALS
   requiresJudgment: boolean; // Approval, choice, risk assessment
-  canBePrepared: boolean; // Can AI draft a response?
+  canBePrepared: boolean; // Can AI draft a response that COMPLETES the task?
   needsExternalInput: boolean; // Blocked on someone else?
 
   // MECHANICAL SIGNALS (auto-handleable)
@@ -149,10 +154,21 @@ CONTEXT SIGNALS:
 - hasPreviousCommitment: Did recipient promise something earlier?
 - isFollowUp: Is this a reminder/follow-up?
 
+ACTION DOMAIN (CRITICAL - determines if task can be done via email):
+Ask: "Can this task be COMPLETED by REPLYING to this email?"
+
+- actionDomain: Classify as 'email', 'external', or 'decision'
+  * email: Task completed by sending email reply (answer question, provide info, schedule via email)
+  * external: Task requires leaving email (click link, visit website, login to portal, update settings, fill form)
+  * decision: Task is cognitive only (approve with consequences, choose between options, assess tradeoffs)
+
+- hasActionLinks: Does email contain action buttons/links? ("Click here", "Verify now", "Update", "Login")
+- mentionsExternalSystem: Does it reference external systems? ("visit website", "go to portal", "login to", "update your account")
+
 COMPLEXITY SIGNALS:
 - requiresJudgment: Needs decision, approval, or choice with meaningful consequences?
-- canBePrepared: Can AI write a draft response that adds value?
-- needsExternalInput: Blocked on external dependency?
+- canBePrepared: Can AI write a draft response that COMPLETES the task (not just acknowledges it)?
+- needsExternalInput: Blocked on external dependency (waiting for someone else)?
 
 MECHANICAL SIGNALS (for filtering):
 - isMechanicalConfirmation: Email verification, signup, password reset, account confirmation?
@@ -168,30 +184,49 @@ URGENCY SIGNALS:
 
 STEP 2: DETERMINE WORK STATE
 
-CRITICAL: Classify by cognitive cost: Action, Awareness, or Noise.
+CRITICAL: Use ACTION DOMAIN to determine correct work state.
 
 Based on signals, classify into ONE work state:
 
 1. WORK_PREPARED (Level 1 - Action Required)
-   Must meet ALL of these:
-   ✓ Requires human judgment OR meaningful human touch (not mechanical)
-   ✓ Has meaningful consequences if done wrong
-   ✓ Can prepare a draft response that saves time
+   STRICT REQUIREMENT: actionDomain MUST be 'email'
+
+   Must meet ALL:
+   ✓ actionDomain = 'email' (task completed by REPLYING to email)
+   ✓ Requires human judgment or meaningful human touch
+   ✓ Draft reply would complete the task (not just acknowledge it)
    ✓ NOT a confirmation/notification/receipt
-   ✓ NOT a single obvious mechanical action
 
-   Examples:
-   - Reply to client inquiry (requires context, tone)
-   - Schedule meeting with important contact (requires prioritization)
-   - Respond to colleague's question (requires domain knowledge)
+   Valid examples:
+   - "Can you send me the report?" → Reply with report completes task
+   - "When can we meet?" → Reply with times completes scheduling
+   - "What's your opinion on X?" → Reply with opinion completes task
 
-   → Action: Prepare draft reply or next steps
+   INVALID examples (actionDomain = 'external'):
+   - "Update your payment method" → Can't update via email reply
+   - "Verify your email" → Must click link, not reply
+   - "Complete this form" → Must visit external system
+
+   → Action: Prepare draft reply that COMPLETES the task
 
 2. DECISION_REQUIRED (Level 1 - Action Required)
-   - requiresJudgment = true (approval with consequences, choice between options)
-   - Multiple valid approaches with tradeoffs
-   - Risk/reward assessment needed
-   - Cannot be handled without human input
+   Two paths to this state:
+
+   Path A - Pure decision:
+   - actionDomain = 'decision'
+   - Requires approval/choice with consequences
+   - Multiple options with tradeoffs
+
+   Path B - External action with urgency/judgment:
+   - actionDomain = 'external'
+   - High urgency OR significant consequences
+   - Requires deciding WHEN/HOW to act externally
+
+   Examples:
+   - "Approve this $50k purchase" → decision domain
+   - "Update payment or service stops tomorrow" → external + urgent
+   - "Choose between vendor A or B" → decision domain
+
    → Action: Prepare analysis with options, risks, recommendation
 
 3. WAITING (Special - Blocked)
@@ -201,19 +236,24 @@ Based on signals, classify into ONE work state:
    → Action: Track and resurface when ready
 
 4. NOTED (Level 2 - Awareness Required)
-   User should be AWARE but doesn't need to ACT or RESPOND:
-   ✓ Confirmations (email verification, signup, password reset)
-   ✓ Receipts, invoices, order confirmations
-   ✓ Status updates (shipping, hiring pipeline, system status)
-   ✓ FYI from humans (colleague updates, project status)
-   ✓ Notifications where awareness matters (payment processed, account updated)
-   ✓ Anything user should mentally register but not reply to
+   Two paths to this state:
+
+   Path A - Mechanical external actions:
+   - actionDomain = 'external'
+   - Low judgment needed (obvious what to do)
+   - Mechanical confirmations, verifications
+   - User just needs awareness, not decision-making
+
+   Path B - Pure notifications:
+   - isNotification = true
+   - Receipts, status updates, FYI updates
+   - No action needed at all
 
    Examples:
-   - "Your email has been confirmed" → NOTED (awareness: account is active)
-   - "Receipt for $49.99 — Canva" → NOTED (awareness: charge happened)
-   - "Your order has shipped" → NOTED (awareness: package coming)
-   - "Password reset successful" → NOTED (awareness: security event)
+   - "Confirm your email" → external + mechanical (just click link)
+   - "Update payment method" → external BUT low urgency (can do later)
+   - "Receipt for $49.99" → notification (already happened)
+   - "Your order shipped" → notification (awareness only)
 
    → Action: Surface in "Noted" section, no response needed
 
@@ -285,6 +325,9 @@ OUTPUT FORMAT (JSON):
     "threadDepth": 0,
     "hasPreviousCommitment": false,
     "isFollowUp": false,
+    "actionDomain": "email",
+    "hasActionLinks": false,
+    "mentionsExternalSystem": false,
     "requiresJudgment": false,
     "canBePrepared": true,
     "needsExternalInput": false,
@@ -338,19 +381,38 @@ OUTPUT FORMAT (JSON):
 }
 
 CRITICAL RULES:
-1. Think in COGNITIVE COST: Action, Awareness, or Noise
-2. Email is EVIDENCE. The WORK (or awareness) is what matters.
-3. If isMechanicalConfirmation = true → NOTED (user should be aware)
-4. If isNotification = true AND has value → NOTED (awareness matters)
-5. If marketing/promotional → NOISE (hide completely)
-6. If requires action/response → WORK_PREPARED or DECISION_REQUIRED
-7. If blocked on external input → WAITING
-8. WORK_PREPARED is RARE. Only when human judgment + meaningful preparation needed.
-9. When uncertain between NOTED and NOISE, default to NOTED (better to show than hide important awareness)
-10. For NOTED: don't create drafts or action items, just summarize for awareness
-11. For NOISE: don't create any output, will be hidden
-12. Confidence = how certain you are about the signals + work state
-13. Priority = urgency + sender authority + deadline proximity + judgment complexity
+1. ALWAYS determine actionDomain FIRST: Can this be completed by replying to the email?
+   - If YES → actionDomain = 'email'
+   - If NO, requires external system → actionDomain = 'external'
+   - If purely cognitive (approve, choose) → actionDomain = 'decision'
+
+2. WORK_PREPARED rule: actionDomain MUST be 'email'
+   - Only if replying to email COMPLETES the task
+   - If action is external (update website, click link), NOT work_prepared
+   - "Update payment method" = external, cannot be work_prepared
+   - "Can you send report?" = email, can be work_prepared
+
+3. DECISION_REQUIRED when:
+   - actionDomain = 'decision' (approval, choice with consequences)
+   - OR actionDomain = 'external' + high urgency/consequences
+
+4. NOTED when:
+   - actionDomain = 'external' + mechanical/low urgency
+   - OR isNotification = true (receipts, status updates)
+   - OR isMechanicalConfirmation = true
+
+5. NOISE when:
+   - Marketing/promotional content
+   - Social notifications
+   - No value to user awareness
+
+6. Other rules:
+   - If blocked on external input → WAITING
+   - When uncertain between NOTED/NOISE → NOTED (safer)
+   - For NOTED: no drafts, just awareness summary
+   - For NOISE: no output at all
+   - Confidence = certainty about signals + work state
+   - Priority = urgency + sender authority + deadline + judgment
 
 Respond ONLY with valid JSON matching the structure above.`;
 
@@ -391,6 +453,9 @@ Respond ONLY with valid JSON matching the structure above.`;
         threadDepth: 0,
         hasPreviousCommitment: false,
         isFollowUp: false,
+        actionDomain: 'email',
+        hasActionLinks: false,
+        mentionsExternalSystem: false,
         requiresJudgment: false,
         canBePrepared: true,
         needsExternalInput: false,
