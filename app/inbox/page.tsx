@@ -1,13 +1,15 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import SidebarNav from '@/components/sidebar-nav';
 import SimpleInboxCard from '@/components/inbox/simple-inbox-card';
+import BatchCard from '@/components/inbox/batch-card';
 import InboxDrawer from '@/components/inbox/inbox-drawer';
 import OnboardingModal from '@/components/onboarding-modal';
+import { batchInboxItems } from '@/lib/utils/batch-inbox-items';
 import {
   ChevronDownIcon,
   ChevronUpIcon,
@@ -135,6 +137,14 @@ export default function PreparedWorkPage() {
   const decisionsNeeded = inboxItems.filter(item => item.work_state === 'decision_required');
   const waiting = inboxItems.filter(item => item.work_state === 'waiting');
   const handled = inboxItems.filter(item => item.work_state === 'no_work');
+
+  // Batch NO_WORK items to reduce clutter
+  const { batches: handledBatches, unbatched: unbatchedHandled } = useMemo(
+    () => batchInboxItems(handled),
+    [handled]
+  );
+
+  const totalHandledCount = handled.length;
 
   return (
     <div className="flex h-screen bg-gray-50">
@@ -265,7 +275,7 @@ export default function PreparedWorkPage() {
               )}
 
               {/* 4. HANDLED AUTOMATICALLY - Collapsible */}
-              {handled.length > 0 && (
+              {totalHandledCount > 0 && (
                 <section>
                   <button
                     onClick={() => setShowHandled(!showHandled)}
@@ -274,7 +284,7 @@ export default function PreparedWorkPage() {
                     <div className="flex items-center space-x-2.5">
                       <div className="w-2 h-2 rounded-full bg-gray-300" />
                       <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide group-hover:text-gray-700 transition-colors">
-                        Handled Automatically ({handled.length})
+                        Handled Automatically ({totalHandledCount})
                       </h2>
                     </div>
                     {showHandled ? (
@@ -284,10 +294,27 @@ export default function PreparedWorkPage() {
                     )}
                   </button>
                   {showHandled && (
-                    <div className="bg-white rounded-xl border border-gray-200 divide-y divide-gray-100 overflow-hidden">
-                      {handled.map((item) => (
-                        <SimpleInboxCard key={item.id} item={item} onClick={() => handleItemClick(item)} />
+                    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                      {/* Batched items first */}
+                      {handledBatches.map((batch) => (
+                        <BatchCard
+                          key={batch.id}
+                          batch={batch}
+                          onClick={(itemId) => {
+                            const item = batch.items.find(i => i.id === itemId);
+                            if (item) handleItemClick(item);
+                          }}
+                        />
                       ))}
+
+                      {/* Unbatched items */}
+                      {unbatchedHandled.length > 0 && (
+                        <div className="divide-y divide-gray-100">
+                          {unbatchedHandled.map((item) => (
+                            <SimpleInboxCard key={item.id} item={item} onClick={() => handleItemClick(item)} />
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )}
                 </section>
@@ -305,7 +332,7 @@ export default function PreparedWorkPage() {
                   <p className="text-sm text-gray-600">
                     No actionable work right now.
                     {waiting.length > 0 && ` ${waiting.length} item${waiting.length > 1 ? 's' : ''} waiting on others.`}
-                    {handled.length > 0 && ` ${handled.length} item${handled.length > 1 ? 's' : ''} already handled.`}
+                    {totalHandledCount > 0 && ` ${totalHandledCount} item${totalHandledCount > 1 ? 's' : ''} auto-handled.`}
                   </p>
                 </div>
               )}
