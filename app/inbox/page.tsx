@@ -132,15 +132,20 @@ export default function PreparedWorkPage() {
     );
   }
 
-  // Group by work state
+  // Group by work state (cognitive cost levels)
   const workPrepared = inboxItems.filter(item => item.work_state === 'work_prepared');
   const decisionsNeeded = inboxItems.filter(item => item.work_state === 'decision_required');
   const waiting = inboxItems.filter(item => item.work_state === 'waiting');
-  const handled = inboxItems.filter(item => item.work_state === 'no_work');
 
-  // Batch NO_WORK items to reduce clutter
-  const { batches: handledBatches, unbatched: unbatchedHandled } = batchInboxItems(handled);
-  const totalHandledCount = handled.length;
+  // Level 2: Awareness required (noted)
+  const noted = inboxItems.filter(item => item.work_state === 'noted' || item.work_state === 'no_work');
+
+  // Level 3: Noise (hidden completely - don't show)
+  // const noise = inboxItems.filter(item => item.work_state === 'noise');
+
+  // Batch NOTED items to reduce clutter
+  const { batches: notedBatches, unbatched: unbatchedNoted } = batchInboxItems(noted);
+  const totalNotedCount = noted.length;
 
   return (
     <div className="flex h-screen bg-gray-50">
@@ -270,8 +275,8 @@ export default function PreparedWorkPage() {
                 </section>
               )}
 
-              {/* 4. HANDLED AUTOMATICALLY - Collapsible */}
-              {totalHandledCount > 0 && (
+              {/* 4. NOTED - Level 2: Awareness Required */}
+              {totalNotedCount > 0 && (
                 <section>
                   <button
                     onClick={() => setShowHandled(!showHandled)}
@@ -280,7 +285,7 @@ export default function PreparedWorkPage() {
                     <div className="flex items-center space-x-2.5">
                       <div className="w-2 h-2 rounded-full bg-gray-300" />
                       <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide group-hover:text-gray-700 transition-colors">
-                        Handled Automatically ({totalHandledCount})
+                        Noted ({totalNotedCount})
                       </h2>
                     </div>
                     {showHandled ? (
@@ -291,8 +296,15 @@ export default function PreparedWorkPage() {
                   </button>
                   {showHandled && (
                     <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                      {/* Info banner */}
+                      <div className="px-5 py-3 bg-gray-50 border-b border-gray-100">
+                        <p className="text-xs text-gray-600">
+                          These don't need a response, but you may want to be aware of them.
+                        </p>
+                      </div>
+
                       {/* Batched items first */}
-                      {handledBatches.map((batch) => (
+                      {notedBatches.map((batch) => (
                         <BatchCard
                           key={batch.id}
                           batch={batch}
@@ -304,9 +316,9 @@ export default function PreparedWorkPage() {
                       ))}
 
                       {/* Unbatched items */}
-                      {unbatchedHandled.length > 0 && (
+                      {unbatchedNoted.length > 0 && (
                         <div className="divide-y divide-gray-100">
-                          {unbatchedHandled.map((item) => (
+                          {unbatchedNoted.map((item) => (
                             <SimpleInboxCard key={item.id} item={item} onClick={() => handleItemClick(item)} />
                           ))}
                         </div>
@@ -326,9 +338,9 @@ export default function PreparedWorkPage() {
                     All caught up!
                   </h3>
                   <p className="text-sm text-gray-600">
-                    No actionable work right now.
+                    No action required right now.
                     {waiting.length > 0 && ` ${waiting.length} item${waiting.length > 1 ? 's' : ''} waiting on others.`}
-                    {totalHandledCount > 0 && ` ${totalHandledCount} item${totalHandledCount > 1 ? 's' : ''} auto-handled.`}
+                    {totalNotedCount > 0 && ` ${totalNotedCount} item${totalNotedCount > 1 ? 's' : ''} noted for awareness.`}
                   </p>
                 </div>
               )}

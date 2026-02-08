@@ -64,6 +64,7 @@ function categorizeBatch(items: InboxItem[]): BatchedItem['category'] {
 
 /**
  * Get human-readable summary for a batch
+ * Be factual - no claims of handling or action taken
  */
 function getBatchSummary(category: BatchedItem['category'], count: number, items: InboxItem[]): string {
   const senders = [...new Set(items.map(i => i.source_data?.from_name || 'Unknown'))];
@@ -71,15 +72,24 @@ function getBatchSummary(category: BatchedItem['category'], count: number, items
 
   switch (category) {
     case 'confirmations':
-      return `${count} account confirmation${count > 1 ? 's' : ''} handled`;
+      if (count === 1 && senders.length === 1) {
+        return `Account confirmation — ${senders[0]}`;
+      }
+      return `${count} account confirmation${count > 1 ? 's' : ''}`;
     case 'notifications':
+      if (count === 1 && senders.length === 1) {
+        return `Notification — ${senders[0]}`;
+      }
       return `${count} notification${count > 1 ? 's' : ''} from ${senderText}`;
     case 'receipts':
-      return `${count} receipt${count > 1 ? 's' : ''} and invoice${count > 1 ? 's' : ''}`;
+      if (count === 1 && senders.length === 1) {
+        return `Receipt — ${senders[0]}`;
+      }
+      return `${count} receipt${count > 1 ? 's' : ''}`;
     case 'marketing':
-      return `${count} newsletter${count > 1 ? 's' : ''} and update${count > 1 ? 's' : ''}`;
+      return `${count} newsletter${count > 1 ? 's' : ''}`;
     default:
-      return `${count} item${count > 1 ? 's' : ''} handled`;
+      return `${count} item${count > 1 ? 's' : ''}`;
   }
 }
 
@@ -120,7 +130,7 @@ function groupBySimilarity(items: InboxItem[]): InboxItem[][] {
  * Batch inbox items intelligently
  *
  * Rules:
- * - Only batch NO_WORK items
+ * - Only batch NOTED items (Level 2: Awareness)
  * - Group by category (confirmations, notifications, etc.)
  * - Require at least 2 items to create a batch
  * - Return batches + unbatched items
@@ -129,15 +139,15 @@ export function batchInboxItems(items: InboxItem[]): BatchingResult {
   const batches: BatchedItem[] = [];
   const unbatched: InboxItem[] = [];
 
-  // Separate NO_WORK items from others
-  const noWorkItems = items.filter(i => i.work_state === 'no_work');
-  const otherItems = items.filter(i => i.work_state !== 'no_work');
+  // Separate NOTED items from others (also include legacy 'no_work' for backward compatibility)
+  const notedItems = items.filter(i => i.work_state === 'noted' || i.work_state === 'no_work');
+  const otherItems = items.filter(i => i.work_state !== 'noted' && i.work_state !== 'no_work');
 
   // Don't batch other items - they should all be visible
   unbatched.push(...otherItems);
 
-  // Group NO_WORK items by similarity
-  const groups = groupBySimilarity(noWorkItems);
+  // Group NOTED items by similarity
+  const groups = groupBySimilarity(notedItems);
 
   for (const group of groups) {
     // Only create batch if we have 2+ items

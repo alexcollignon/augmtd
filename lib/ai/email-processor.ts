@@ -51,8 +51,14 @@ export interface EmailSignals {
 
 /**
  * Work state - the core abstraction
+ *
+ * Maps to three levels of cognitive cost:
+ * - Level 1 (Action): work_prepared, decision_required
+ * - Level 2 (Awareness): noted
+ * - Level 3 (Noise): noise (hidden completely)
+ * - Special: waiting (blocked on external)
  */
-export type WorkState = 'work_prepared' | 'decision_required' | 'waiting' | 'no_work';
+export type WorkState = 'work_prepared' | 'decision_required' | 'waiting' | 'noted' | 'noise';
 
 /**
  * Processed email with work-centric framing
@@ -162,35 +168,11 @@ URGENCY SIGNALS:
 
 STEP 2: DETERMINE WORK STATE
 
-CRITICAL: Only surface work that requires HUMAN JUDGMENT. Be ruthlessly strict.
+CRITICAL: Classify by cognitive cost: Action, Awareness, or Noise.
 
 Based on signals, classify into ONE work state:
 
-1. NO_WORK (DEFAULT - BE AGGRESSIVE)
-   ✓ Confirmations (email verification, signup confirmation, password reset)
-   ✓ Receipts, invoices, order confirmations
-   ✓ Notifications (system alerts, status updates, shipping updates)
-   ✓ Marketing (newsletters, promotions, announcements)
-   ✓ FYI updates (no response needed)
-   ✓ Automated alerts (monitoring, security, automated systems)
-   ✓ ONE obvious action with NO judgment needed (click to confirm, verify email)
-   ✓ Low authority sender + no meaningful obligation
-   → Action: Auto-handle silently or batch as "Handled for you"
-
-2. WAITING
-   - needsExternalInput = true (waiting for someone else to respond first)
-   - Scheduled for future (meeting is next week, not actionable now)
-   - Requires information you don't have yet
-   → Action: Track and resurface when ready
-
-3. DECISION_REQUIRED
-   - requiresJudgment = true (approval with consequences, choice between options, strategic decision)
-   - Multiple valid approaches with tradeoffs
-   - Risk/reward assessment needed
-   - Cannot be handled without human input
-   → Action: Prepare analysis with options, risks, recommendation
-
-4. WORK_PREPARED (STRICT - RARE)
+1. WORK_PREPARED (Level 1 - Action Required)
    Must meet ALL of these:
    ✓ Requires human judgment OR meaningful human touch (not mechanical)
    ✓ Has meaningful consequences if done wrong
@@ -198,18 +180,58 @@ Based on signals, classify into ONE work state:
    ✓ NOT a confirmation/notification/receipt
    ✓ NOT a single obvious mechanical action
 
-   Examples that QUALIFY:
-   - Reply to client inquiry (requires context, tone, judgment)
-   - Schedule meeting with important contact (requires availability check, prioritization)
+   Examples:
+   - Reply to client inquiry (requires context, tone)
+   - Schedule meeting with important contact (requires prioritization)
    - Respond to colleague's question (requires domain knowledge)
 
-   Examples that DO NOT QUALIFY:
-   - "Confirm your email address" → NO_WORK
-   - "Update payment method" → NO_WORK (unless critical/urgent, then maybe DECISION_REQUIRED)
-   - "Your order has shipped" → NO_WORK
-   - "Please verify your account" → NO_WORK
-
    → Action: Prepare draft reply or next steps
+
+2. DECISION_REQUIRED (Level 1 - Action Required)
+   - requiresJudgment = true (approval with consequences, choice between options)
+   - Multiple valid approaches with tradeoffs
+   - Risk/reward assessment needed
+   - Cannot be handled without human input
+   → Action: Prepare analysis with options, risks, recommendation
+
+3. WAITING (Special - Blocked)
+   - needsExternalInput = true (waiting for someone else to respond first)
+   - Scheduled for future (meeting is next week, not actionable now)
+   - Requires information you don't have yet
+   → Action: Track and resurface when ready
+
+4. NOTED (Level 2 - Awareness Required)
+   User should be AWARE but doesn't need to ACT or RESPOND:
+   ✓ Confirmations (email verification, signup, password reset)
+   ✓ Receipts, invoices, order confirmations
+   ✓ Status updates (shipping, hiring pipeline, system status)
+   ✓ FYI from humans (colleague updates, project status)
+   ✓ Notifications where awareness matters (payment processed, account updated)
+   ✓ Anything user should mentally register but not reply to
+
+   Examples:
+   - "Your email has been confirmed" → NOTED (awareness: account is active)
+   - "Receipt for $49.99 — Canva" → NOTED (awareness: charge happened)
+   - "Your order has shipped" → NOTED (awareness: package coming)
+   - "Password reset successful" → NOTED (awareness: security event)
+
+   → Action: Surface in "Noted" section, no response needed
+
+5. NOISE (Level 3 - Hidden Completely)
+   No awareness needed, pure noise:
+   ✓ Marketing emails (newsletters, promotions, sales)
+   ✓ Social notifications (LinkedIn, Twitter, Facebook)
+   ✓ Automated marketing (drip campaigns, onboarding sequences)
+   ✓ Spam or low-value bulk mail
+   ✓ Announcements from services you don't actively use
+
+   Examples:
+   - "Our weekly newsletter" → NOISE
+   - "50% off sale!" → NOISE
+   - "You have 3 new LinkedIn notifications" → NOISE
+   - "Tips for getting started with [tool]" → NOISE
+
+   → Action: Hide completely, don't show anywhere
 
 ---
 
@@ -316,18 +338,19 @@ OUTPUT FORMAT (JSON):
 }
 
 CRITICAL RULES:
-1. Email is EVIDENCE. The WORK is what matters.
-2. DEFAULT TO NO_WORK. Most emails don't need the user's attention.
-3. If isMechanicalConfirmation = true → NO_WORK (confirmations are auto-handleable)
-4. If isNotification = true → NO_WORK (notifications don't need response)
-5. If hasOneObviousAction = true AND requiresJudgment = false → NO_WORK
-6. If blocked on external input → WAITING
-7. If requires meaningful judgment with consequences → DECISION_REQUIRED
-8. WORK_PREPARED is RARE. Only use when human judgment + meaningful preparation is needed.
-9. When uncertain, default to NO_WORK (not WORK_PREPARED). Better to hide than to spam.
-10. For NO_WORK: don't create drafts, action items, or calendar events
-11. Confidence = how certain you are about the signals + work state
-12. Priority = urgency + sender authority + deadline proximity + judgment complexity
+1. Think in COGNITIVE COST: Action, Awareness, or Noise
+2. Email is EVIDENCE. The WORK (or awareness) is what matters.
+3. If isMechanicalConfirmation = true → NOTED (user should be aware)
+4. If isNotification = true AND has value → NOTED (awareness matters)
+5. If marketing/promotional → NOISE (hide completely)
+6. If requires action/response → WORK_PREPARED or DECISION_REQUIRED
+7. If blocked on external input → WAITING
+8. WORK_PREPARED is RARE. Only when human judgment + meaningful preparation needed.
+9. When uncertain between NOTED and NOISE, default to NOTED (better to show than hide important awareness)
+10. For NOTED: don't create drafts or action items, just summarize for awareness
+11. For NOISE: don't create any output, will be hidden
+12. Confidence = how certain you are about the signals + work state
+13. Priority = urgency + sender authority + deadline proximity + judgment complexity
 
 Respond ONLY with valid JSON matching the structure above.`;
 
@@ -352,10 +375,10 @@ Respond ONLY with valid JSON matching the structure above.`;
 
     // Validate and return with defaults
     return {
-      workState: result.workState || 'work_prepared',
-      workTitle: result.workTitle || `Review email from ${email.from_name}`,
-      whatIPrepared: result.whatIPrepared || 'Summary and analysis',
-      whyMatters: result.whyMatters || result.summary || 'Needs your attention',
+      workState: result.workState || 'noted',
+      workTitle: result.workTitle || `Email from ${email.from_name}`,
+      whatIPrepared: result.whatIPrepared || 'Summary for awareness',
+      whyMatters: result.whyMatters || result.summary || 'For your awareness',
 
       signals: result.signals || {
         hasDirectQuestion: false,

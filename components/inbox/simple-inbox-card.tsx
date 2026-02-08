@@ -67,7 +67,8 @@ export default function SimpleInboxCard({ item, onClick }: SimpleInboxCardProps)
             icon: PaperAirplaneIcon,
             bgColor: 'bg-green-600 hover:bg-green-700',
             textColor: 'text-white',
-            ringColor: 'ring-green-600'
+            ringColor: 'ring-green-600',
+            show: true
           };
         }
         if (sourceData?.calendarEvent) {
@@ -76,7 +77,8 @@ export default function SimpleInboxCard({ item, onClick }: SimpleInboxCardProps)
             icon: CheckIcon,
             bgColor: 'bg-green-600 hover:bg-green-700',
             textColor: 'text-white',
-            ringColor: 'ring-green-600'
+            ringColor: 'ring-green-600',
+            show: true
           };
         }
         return {
@@ -84,7 +86,8 @@ export default function SimpleInboxCard({ item, onClick }: SimpleInboxCardProps)
           icon: CheckIcon,
           bgColor: 'bg-green-600 hover:bg-green-700',
           textColor: 'text-white',
-          ringColor: 'ring-green-600'
+          ringColor: 'ring-green-600',
+          show: true
         };
 
       case 'decision_required':
@@ -94,7 +97,8 @@ export default function SimpleInboxCard({ item, onClick }: SimpleInboxCardProps)
             icon: ExclamationCircleIcon,
             bgColor: 'bg-orange-600 hover:bg-orange-700',
             textColor: 'text-white',
-            ringColor: 'ring-orange-600'
+            ringColor: 'ring-orange-600',
+            show: true
           };
         }
         return {
@@ -102,7 +106,8 @@ export default function SimpleInboxCard({ item, onClick }: SimpleInboxCardProps)
           icon: ExclamationCircleIcon,
           bgColor: 'bg-orange-600 hover:bg-orange-700',
           textColor: 'text-white',
-          ringColor: 'ring-orange-600'
+          ringColor: 'ring-orange-600',
+          show: true
         };
 
       case 'waiting':
@@ -111,16 +116,30 @@ export default function SimpleInboxCard({ item, onClick }: SimpleInboxCardProps)
           icon: EyeIcon,
           bgColor: 'bg-gray-200 hover:bg-gray-300',
           textColor: 'text-gray-700',
-          ringColor: 'ring-gray-300'
+          ringColor: 'ring-gray-300',
+          show: true
         };
 
-      default: // no_work
+      case 'noted':
+      case 'no_work':
+        // Level 2 (Awareness) - no CTA button, just clickable
+        return {
+          text: '',
+          icon: EyeIcon,
+          bgColor: '',
+          textColor: '',
+          ringColor: '',
+          show: false
+        };
+
+      default:
         return {
           text: 'View',
           icon: EyeIcon,
           bgColor: 'bg-gray-100 hover:bg-gray-200',
           textColor: 'text-gray-600',
-          ringColor: 'ring-gray-200'
+          ringColor: 'ring-gray-200',
+          show: true
         };
     }
   };
@@ -198,17 +217,19 @@ export default function SimpleInboxCard({ item, onClick }: SimpleInboxCardProps)
         </div>
       </div>
 
-      {/* CTA Button */}
-      <div className="flex-shrink-0 pt-0.5">
-        <div className={`
-          flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all
-          ${cta.bgColor} ${cta.textColor}
-          group-hover:scale-105 group-hover:shadow-sm
-        `}>
-          <cta.icon className="w-3.5 h-3.5" />
-          <span>{cta.text}</span>
+      {/* CTA Button - only for Level 1 (Action) items */}
+      {cta.show && (
+        <div className="flex-shrink-0 pt-0.5">
+          <div className={`
+            flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all
+            ${cta.bgColor} ${cta.textColor}
+            group-hover:scale-105 group-hover:shadow-sm
+          `}>
+            <cta.icon className="w-3.5 h-3.5" />
+            <span>{cta.text}</span>
+          </div>
         </div>
-      </div>
+      )}
     </button>
   );
 }

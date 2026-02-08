@@ -74,9 +74,6 @@ export default function BatchCard({ batch, onClick }: BatchCardProps) {
                 />
               </div>
             ))}
-
-            <span>•</span>
-            <span className="text-[10px] uppercase tracking-wide">Auto-handled</span>
           </div>
         </div>
 
