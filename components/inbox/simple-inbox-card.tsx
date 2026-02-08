@@ -7,7 +7,8 @@ import {
   ClockIcon,
   PaperAirplaneIcon,
   CheckIcon,
-  EyeIcon
+  EyeIcon,
+  BoltIcon
 } from '@heroicons/react/24/outline';
 
 interface SimpleInboxCardProps {
@@ -28,6 +29,12 @@ export default function SimpleInboxCard({ item, onClick }: SimpleInboxCardProps)
           color: 'text-green-600',
           bgColor: 'bg-green-50'
         };
+      case 'action_required':
+        return {
+          icon: BoltIcon,
+          color: 'text-red-600',
+          bgColor: 'bg-red-50'
+        };
       case 'decision_required':
         return {
           icon: ExclamationCircleIcon,
@@ -40,7 +47,7 @@ export default function SimpleInboxCard({ item, onClick }: SimpleInboxCardProps)
           color: 'text-gray-500',
           bgColor: 'bg-gray-50'
         };
-      default: // no_work
+      default: // no_work, noted
         return {
           icon: CheckCircleIcon,
           color: 'text-gray-400',
@@ -87,6 +94,16 @@ export default function SimpleInboxCard({ item, onClick }: SimpleInboxCardProps)
           bgColor: 'bg-green-600 hover:bg-green-700',
           textColor: 'text-white',
           ringColor: 'ring-green-600',
+          show: true
+        };
+
+      case 'action_required':
+        return {
+          text: 'Take action',
+          icon: BoltIcon,
+          bgColor: 'bg-red-600 hover:bg-red-700',
+          textColor: 'text-white',
+          ringColor: 'ring-red-600',
           show: true
         };
 

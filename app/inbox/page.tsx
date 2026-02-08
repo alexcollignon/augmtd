@@ -134,6 +134,7 @@ export default function PreparedWorkPage() {
 
   // Group by work state (cognitive cost levels)
   const workPrepared = inboxItems.filter(item => item.work_state === 'work_prepared');
+  const actionRequired = inboxItems.filter(item => item.work_state === 'action_required');
   const decisionsNeeded = inboxItems.filter(item => item.work_state === 'decision_required');
   const waiting = inboxItems.filter(item => item.work_state === 'waiting');
 
@@ -229,7 +230,24 @@ export default function PreparedWorkPage() {
                 </section>
               )}
 
-              {/* 2. DECISIONS NEEDED */}
+              {/* 2. ACTION REQUIRED */}
+              {actionRequired.length > 0 && (
+                <section>
+                  <div className="flex items-center space-x-2.5 mb-3">
+                    <div className="w-2 h-2 rounded-full bg-red-500" />
+                    <h2 className="text-sm font-semibold text-gray-900 uppercase tracking-wide">
+                      Action Required ({actionRequired.length})
+                    </h2>
+                  </div>
+                  <div className="bg-white rounded-xl border border-gray-200 divide-y divide-gray-100 overflow-hidden">
+                    {actionRequired.map((item) => (
+                      <SimpleInboxCard key={item.id} item={item} onClick={() => handleItemClick(item)} />
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              {/* 3. DECISIONS NEEDED */}
               {decisionsNeeded.length > 0 && (
                 <section>
                   <div className="flex items-center space-x-2.5 mb-3">
@@ -329,7 +347,7 @@ export default function PreparedWorkPage() {
               )}
 
               {/* All caught up message */}
-              {workPrepared.length === 0 && decisionsNeeded.length === 0 && (
+              {workPrepared.length === 0 && actionRequired.length === 0 && decisionsNeeded.length === 0 && (
                 <div className="text-center py-12 bg-white rounded-xl border border-gray-200">
                   <div className="w-12 h-12 mx-auto mb-4 rounded-full bg-green-50 flex items-center justify-center">
                     <CheckCircleIcon className="w-6 h-6 text-green-600" />
@@ -338,7 +356,7 @@ export default function PreparedWorkPage() {
                     All caught up!
                   </h3>
                   <p className="text-sm text-gray-600">
-                    No action required right now.
+                    Nothing needs your attention right now.
                     {waiting.length > 0 && ` ${waiting.length} item${waiting.length > 1 ? 's' : ''} waiting on others.`}
                     {totalNotedCount > 0 && ` ${totalNotedCount} item${totalNotedCount > 1 ? 's' : ''} noted for awareness.`}
                   </p>

@@ -57,13 +57,15 @@ export interface EmailSignals {
 /**
  * Work state - the core abstraction
  *
- * Maps to three levels of cognitive cost:
- * - Level 1 (Action): work_prepared, decision_required
- * - Level 2 (Awareness): noted
- * - Level 3 (Noise): noise (hidden completely)
- * - Special: waiting (blocked on external)
+ * Maps to cognitive load and action type:
+ * - WORK_PREPARED: Judgment now (reply, decide, approve - via email)
+ * - ACTION_REQUIRED: Execution (prevent downside, clear next step - external)
+ * - DECISION_REQUIRED: Choice under uncertainty (multiple options, tradeoffs)
+ * - WAITING: Blocked on external input
+ * - NOTED: Awareness only (no action needed)
+ * - NOISE: Hidden completely
  */
-export type WorkState = 'work_prepared' | 'decision_required' | 'waiting' | 'noted' | 'noise';
+export type WorkState = 'work_prepared' | 'action_required' | 'decision_required' | 'waiting' | 'noted' | 'noise';
 
 /**
  * Processed email with work-centric framing
@@ -209,55 +211,77 @@ Based on signals, classify into ONE work state:
 
    → Action: Prepare draft reply that COMPLETES the task
 
-2. DECISION_REQUIRED (Level 1 - Action Required)
-   Two paths to this state:
+2. ACTION_REQUIRED (Execution - Prevent Downside)
+   CRITICAL: This is NOT a decision. It's execution.
 
-   Path A - Pure decision:
-   - actionDomain = 'decision'
-   - Requires approval/choice with consequences
-   - Multiple options with tradeoffs
+   Requirements:
+   ✓ actionDomain = 'external' (must leave email)
+   ✓ High consequences if ignored (service interruption, security risk, compliance)
+   ✓ Clear next step (no real choice - just do it)
+   ✓ Little to no reasoning required
 
-   Path B - External action with urgency/judgment:
-   - actionDomain = 'external'
-   - High urgency OR significant consequences
-   - Requires deciding WHEN/HOW to act externally
+   The "decision" is fake - it's just: "Do the thing before it breaks"
 
    Examples:
-   - "Approve this $50k purchase" → decision domain
-   - "Update payment or service stops tomorrow" → external + urgent
-   - "Choose between vendor A or B" → decision domain
+   - "Update payment method or service stops" → Clear: update payment
+   - "Reset credentials before lockout" → Clear: reset credentials
+   - "Complete compliance form by Friday" → Clear: complete form
+   - "Verify email to activate account" → Clear: verify
+
+   NOT this state:
+   - "Choose payment provider A or B" → Multiple options = DECISION_REQUIRED
+   - "Decide whether to upgrade plan" → Real choice = DECISION_REQUIRED
+
+   → Action: Prepare link/instructions + deadline, no draft email
+
+3. DECISION_REQUIRED (Choice Under Uncertainty)
+   CRITICAL: True decisions with multiple viable paths.
+
+   Requirements:
+   ✓ Multiple reasonable options
+   ✓ Tradeoffs to weigh
+   ✓ Judgment adds value
+   ✓ Uncertainty about best path
+
+   Examples:
+   - "Approve $50k purchase" → Approve vs reject (consequences)
+   - "Choose vendor A or B" → Multiple valid options
+   - "Decide whether to proceed with partnership" → Strategic choice
+   - "Choose payment provider for expansion" → Tradeoffs (cost, features, risk)
+
+   NOT this state:
+   - "Update payment or lose service" → No real choice = ACTION_REQUIRED
+   - "Verify email" → Mechanical = NOTED
 
    → Action: Prepare analysis with options, risks, recommendation
 
-3. WAITING (Special - Blocked)
+4. WAITING (Special - Blocked)
    - needsExternalInput = true (waiting for someone else to respond first)
    - Scheduled for future (meeting is next week, not actionable now)
    - Requires information you don't have yet
    → Action: Track and resurface when ready
 
-4. NOTED (Level 2 - Awareness Required)
-   Two paths to this state:
+5. NOTED (Awareness Only)
+   No immediate action needed, just mental registration.
 
-   Path A - Mechanical external actions:
-   - actionDomain = 'external'
-   - Low judgment needed (obvious what to do)
-   - Mechanical confirmations, verifications
-   - User just needs awareness, not decision-making
-
-   Path B - Pure notifications:
-   - isNotification = true
-   - Receipts, status updates, FYI updates
-   - No action needed at all
+   Requirements:
+   ✓ Low/no consequences if ignored
+   ✓ Informational only
+   ✓ No downside risk
 
    Examples:
-   - "Confirm your email" → external + mechanical (just click link)
-   - "Update payment method" → external BUT low urgency (can do later)
-   - "Receipt for $49.99" → notification (already happened)
-   - "Your order shipped" → notification (awareness only)
+   - "Your email has been confirmed" → Already happened, just FYI
+   - "Receipt for $49.99" → Past transaction, awareness
+   - "Your order shipped" → Status update, no action
+   - "Hiring pipeline update" → Informational
+
+   NOT this state:
+   - "Update payment or service stops" → Has consequences = ACTION_REQUIRED
+   - "Choose vendor A or B" → Requires judgment = DECISION_REQUIRED
 
    → Action: Surface in "Noted" section, no response needed
 
-5. NOISE (Level 3 - Hidden Completely)
+6. NOISE (Hidden Completely)
    No awareness needed, pure noise:
    ✓ Marketing emails (newsletters, promotions, sales)
    ✓ Social notifications (LinkedIn, Twitter, Facebook)
@@ -388,29 +412,39 @@ CRITICAL RULES:
 
 2. WORK_PREPARED rule: actionDomain MUST be 'email'
    - Only if replying to email COMPLETES the task
-   - If action is external (update website, click link), NOT work_prepared
-   - "Update payment method" = external, cannot be work_prepared
-   - "Can you send report?" = email, can be work_prepared
+   - "Can you send report?" → email domain → WORK_PREPARED
+   - "Update payment" → external domain → NOT work_prepared
 
-3. DECISION_REQUIRED when:
-   - actionDomain = 'decision' (approval, choice with consequences)
-   - OR actionDomain = 'external' + high urgency/consequences
+3. For actionDomain = 'external' + high consequences, ask:
+   "Are there multiple viable options with tradeoffs?"
+   - If YES → DECISION_REQUIRED (choice under uncertainty)
+   - If NO (clear next step) → ACTION_REQUIRED (execution)
 
-4. NOTED when:
-   - actionDomain = 'external' + mechanical/low urgency
-   - OR isNotification = true (receipts, status updates)
-   - OR isMechanicalConfirmation = true
+   Examples:
+   - "Update payment or service stops" → No real choice → ACTION_REQUIRED
+   - "Choose vendor A or B" → Multiple options → DECISION_REQUIRED
 
-5. NOISE when:
-   - Marketing/promotional content
-   - Social notifications
-   - No value to user awareness
+4. DECISION_REQUIRED = true decision-making:
+   - Multiple reasonable paths
+   - Tradeoffs to evaluate
+   - Judgment adds value
+   - NOT just "do the thing to prevent downside"
 
-6. Other rules:
+5. ACTION_REQUIRED = execution to prevent downside:
+   - External action required
+   - High consequences
+   - Clear next step (no real choice)
+   - "Do it before it breaks"
+
+6. NOTED = awareness only:
+   - Low/no consequences
+   - Informational
+   - No downside risk
+
+7. Other rules:
    - If blocked on external input → WAITING
-   - When uncertain between NOTED/NOISE → NOTED (safer)
-   - For NOTED: no drafts, just awareness summary
-   - For NOISE: no output at all
+   - If marketing/promotional → NOISE
+   - When uncertain between NOTED/NOISE → NOTED
    - Confidence = certainty about signals + work state
    - Priority = urgency + sender authority + deadline + judgment
 
