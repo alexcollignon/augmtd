@@ -8,9 +8,17 @@ export async function GET(request: Request) {
 
   if (code) {
     const supabase = await createClient();
-    await supabase.auth.exchangeCodeForSession(code);
+    const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+
+    if (error) {
+      console.error('Auth callback error:', error);
+      // Redirect to login with error message
+      const loginUrl = new URL('/login', origin);
+      loginUrl.searchParams.set('error', 'auth_callback_failed');
+      return NextResponse.redirect(loginUrl);
+    }
   }
 
-  // Always redirect to inbox (onboarding modal will show if no connection)
+  // Redirect to inbox on success
   return NextResponse.redirect(`${origin}/inbox`);
 }
