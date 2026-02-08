@@ -50,13 +50,13 @@ export default function SignupPage() {
 
   return (
     <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-primary-50/30 via-white to-gray-50">
-      <div className="w-full max-w-md p-10 bg-white rounded-3xl border border-gray-100 shadow-xl">
+      <div className="w-full max-w-md p-10 bg-white rounded-lg border border-gray-100 shadow-xl">
         <div className="text-center mb-10">
           {/* Logo with better visibility */}
           <div className="flex justify-center mb-8">
             <div className="relative">
-              <div className="absolute inset-0 bg-gradient-to-br from-primary-500 to-primary-600 rounded-2xl blur-xl opacity-30"></div>
-              <div className="relative p-4 bg-white rounded-2xl shadow-lg ring-1 ring-gray-100">
+              <div className="absolute inset-0 bg-gradient-to-br from-primary-500 to-primary-600 rounded-lg blur-xl opacity-30"></div>
+              <div className="relative p-4 bg-white rounded-lg shadow-lg ring-1 ring-gray-100">
                 <Image
                   src="/augmtd-logo.png"
                   alt="AUGMTD"
@@ -87,7 +87,7 @@ export default function SignupPage() {
               onChange={(e) => setEmail(e.target.value)}
               required
               autoComplete="email"
-              className="w-full px-4 py-3.5 text-gray-900 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent focus:bg-white transition-all"
+              className="w-full px-4 py-3.5 text-gray-900 bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent focus:bg-white transition-all"
               placeholder="you@example.com"
             />
           </div>
@@ -104,7 +104,7 @@ export default function SignupPage() {
               required
               minLength={6}
               autoComplete="new-password"
-              className="w-full px-4 py-3.5 text-gray-900 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent focus:bg-white transition-all"
+              className="w-full px-4 py-3.5 text-gray-900 bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent focus:bg-white transition-all"
               placeholder="At least 6 characters"
             />
             <p className="text-xs text-gray-500 mt-2">
@@ -113,7 +113,7 @@ export default function SignupPage() {
           </div>
 
           {message && (
-            <div className={`p-4 rounded-xl border ${
+            <div className={`p-4 rounded-lg border ${
               message.includes('Success')
                 ? 'bg-green-50 border-green-100'
                 : 'bg-red-50 border-red-100'
@@ -127,7 +127,7 @@ export default function SignupPage() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-3.5 bg-gradient-to-r from-primary-600 to-primary-700 text-white text-base font-semibold rounded-xl hover:from-primary-700 hover:to-primary-800 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-lg shadow-primary-500/25 hover:shadow-xl hover:shadow-primary-500/30 hover:-translate-y-0.5 active:translate-y-0"
+            className="w-full py-3.5 bg-gradient-to-r from-primary-600 to-primary-700 text-white text-base font-semibold rounded-lg hover:from-primary-700 hover:to-primary-800 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-lg shadow-primary-500/25 hover:shadow-xl hover:shadow-primary-500/30 hover:-translate-y-0.5 active:translate-y-0"
           >
             {loading ? 'Creating account...' : 'Create account'}
           </button>
