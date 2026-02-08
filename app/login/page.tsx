@@ -11,6 +11,7 @@ function LoginForm() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
+  const [isSuccess, setIsSuccess] = useState(false);
   const router = useRouter();
   const searchParams = useSearchParams();
   const supabase = createClient();
@@ -113,15 +114,25 @@ function LoginForm() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
+              minLength={6}
               autoComplete="current-password"
               className="w-full px-4 py-3.5 text-gray-900 bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent focus:bg-white transition-all"
-              placeholder="Enter your password"
+              placeholder="At least 6 characters"
             />
+            <p className="text-xs text-gray-500 mt-2">
+              Must be at least 6 characters
+            </p>
           </div>
 
           {message && (
-            <div className="p-4 rounded-lg bg-red-50 border border-red-100">
-              <p className="text-sm text-red-600">{message}</p>
+            <div className={`p-4 rounded-lg border ${
+              isSuccess
+                ? 'bg-green-50 border-green-100'
+                : 'bg-red-50 border-red-100'
+            }`}>
+              <p className={`text-sm ${isSuccess ? 'text-green-600' : 'text-red-600'}`}>
+                {message}
+              </p>
             </div>
           )}
 
