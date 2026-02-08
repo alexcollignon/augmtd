@@ -130,7 +130,8 @@ function groupBySimilarity(items: InboxItem[]): InboxItem[][] {
  * Batch inbox items intelligently
  *
  * Rules:
- * - Only batch NOTED items (Level 2: Awareness)
+ * - Batch NOTED items (Level 2: Awareness)
+ * - Batch mechanical ACTION_REQUIRED items (low friction, repetitive)
  * - Group by category (confirmations, notifications, etc.)
  * - Require at least 2 items to create a batch
  * - Return batches + unbatched items
@@ -139,15 +140,25 @@ export function batchInboxItems(items: InboxItem[]): BatchingResult {
   const batches: BatchedItem[] = [];
   const unbatched: InboxItem[] = [];
 
-  // Separate NOTED items from others (also include legacy 'no_work' for backward compatibility)
+  // Separate batchable items from others
   const notedItems = items.filter(i => i.work_state === 'noted' || i.work_state === 'no_work');
-  const otherItems = items.filter(i => i.work_state !== 'noted' && i.work_state !== 'no_work');
+  const mechanicalActions = items.filter(i =>
+    i.work_state === 'action_required' &&
+    i.source_data?.signals?.isMechanicalConfirmation === true
+  );
+  const otherItems = items.filter(i =>
+    (i.work_state !== 'noted' && i.work_state !== 'no_work') &&
+    !(i.work_state === 'action_required' && i.source_data?.signals?.isMechanicalConfirmation === true)
+  );
 
   // Don't batch other items - they should all be visible
   unbatched.push(...otherItems);
 
-  // Group NOTED items by similarity
-  const groups = groupBySimilarity(notedItems);
+  // Combine NOTED and mechanical ACTION_REQUIRED for batching
+  const batchableItems = [...notedItems, ...mechanicalActions];
+
+  // Group batchable items by similarity
+  const groups = groupBySimilarity(batchableItems);
 
   for (const group of groups) {
     // Only create batch if we have 2+ items

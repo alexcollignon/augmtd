@@ -144,8 +144,10 @@ export default function PreparedWorkPage() {
   // Level 3: Noise (hidden completely - don't show)
   // const noise = inboxItems.filter(item => item.work_state === 'noise');
 
-  // Batch NOTED items to reduce clutter
+  // Batch mechanical ACTION_REQUIRED and NOTED items to reduce clutter
+  const { batches: actionBatches, unbatched: unbatchedActions } = batchInboxItems(actionRequired);
   const { batches: notedBatches, unbatched: unbatchedNoted } = batchInboxItems(noted);
+  const totalActionCount = actionRequired.length;
   const totalNotedCount = noted.length;
 
   return (
@@ -239,9 +241,26 @@ export default function PreparedWorkPage() {
                       Action Required ({actionRequired.length})
                     </h2>
                   </div>
-                  <div className="bg-white rounded-xl border border-gray-200 divide-y divide-gray-100 overflow-hidden">
-                    {actionRequired.map((item) => (
-                      <SimpleInboxCard key={item.id} item={item} onClick={() => handleItemClick(item)} />
+                  <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                    {/* Operational actions first (unbatched - high priority) */}
+                    {unbatchedActions.length > 0 && (
+                      <div className="divide-y divide-gray-100">
+                        {unbatchedActions.map((item) => (
+                          <SimpleInboxCard key={item.id} item={item} onClick={() => handleItemClick(item)} />
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Mechanical actions (batched - low friction) */}
+                    {actionBatches.map((batch) => (
+                      <BatchCard
+                        key={batch.id}
+                        batch={batch}
+                        onClick={(itemId) => {
+                          const item = batch.items.find(i => i.id === itemId);
+                          if (item) handleItemClick(item);
+                        }}
+                      />
                     ))}
                   </div>
                 </section>
