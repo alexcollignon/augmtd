@@ -43,7 +43,7 @@ export default function ConnectionCard({ provider, connection, connectUrl, disco
 
   if (!connection || connection.status !== 'active') {
     return (
-      <div className={`p-5 bg-gradient-to-br ${config.gradientFrom} ${config.gradientTo} border ${config.border} rounded-xl`}>
+      <div className={`p-5 bg-gradient-to-br ${config.gradientFrom} ${config.gradientTo} border ${config.border} rounded-lg`}>
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-3">
             <div className="flex-shrink-0 w-10 h-10 bg-white rounded-lg flex items-center justify-center shadow-sm border border-gray-200">
@@ -66,7 +66,7 @@ export default function ConnectionCard({ provider, connection, connectUrl, disco
   }
 
   return (
-    <div className="border border-gray-200/50 rounded-xl overflow-hidden">
+    <div className="border border-gray-200/50 rounded-lg overflow-hidden">
       {/* Main Card */}
       <div className={`p-5 bg-gradient-to-br ${config.gradientFrom} ${config.gradientTo} border-b ${config.border}`}>
         <div className="flex items-center justify-between">

@@ -115,7 +115,7 @@ export function InboxPageClient({
 
           {/* No Connection State */}
           {!connection && (
-            <div className="text-center py-16 bg-white rounded-xl border border-gray-200">
+            <div className="text-center py-16 bg-white rounded-lg border border-gray-200">
               <div className="max-w-md mx-auto">
                 <div className="w-12 h-12 mx-auto mb-4 rounded-full bg-gray-100 flex items-center justify-center">
                   <SparklesIcon className="w-6 h-6 text-gray-400" />
@@ -146,7 +146,7 @@ export function InboxPageClient({
 
           {/* Empty State */}
           {connection && inboxItems.length === 0 && (
-            <div className="text-center py-16 bg-white rounded-xl border border-gray-200">
+            <div className="text-center py-16 bg-white rounded-lg border border-gray-200">
               <div className="w-12 h-12 mx-auto mb-4 rounded-full bg-green-50 flex items-center justify-center">
                 <CheckCircleIcon className="w-6 h-6 text-green-600" />
               </div>
@@ -171,7 +171,7 @@ export function InboxPageClient({
                       Work Prepared ({workPrepared.length})
                     </h2>
                   </div>
-                  <div className="bg-white rounded-xl border border-gray-200 divide-y divide-gray-100 overflow-hidden">
+                  <div className="bg-white rounded-lg border border-gray-200 divide-y divide-gray-100 overflow-hidden">
                     {workPrepared.map((item) => (
                       <SimpleInboxCard key={item.id} item={item} onClick={() => handleItemClick(item)} />
                     ))}
@@ -188,7 +188,7 @@ export function InboxPageClient({
                       Action Required ({actionRequired.length})
                     </h2>
                   </div>
-                  <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                  <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
                     {/* Operational actions first (unbatched - high priority) */}
                     {unbatchedActions.length > 0 && (
                       <div className="divide-y divide-gray-100">
@@ -222,7 +222,7 @@ export function InboxPageClient({
                       Decisions Needed ({decisionsNeeded.length})
                     </h2>
                   </div>
-                  <div className="bg-white rounded-xl border border-gray-200 divide-y divide-gray-100 overflow-hidden">
+                  <div className="bg-white rounded-lg border border-gray-200 divide-y divide-gray-100 overflow-hidden">
                     {decisionsNeeded.map((item) => (
                       <SimpleInboxCard key={item.id} item={item} onClick={() => handleItemClick(item)} />
                     ))}
@@ -250,7 +250,7 @@ export function InboxPageClient({
                     )}
                   </button>
                   {showWaiting && (
-                    <div className="bg-white rounded-xl border border-gray-200 divide-y divide-gray-100 overflow-hidden">
+                    <div className="bg-white rounded-lg border border-gray-200 divide-y divide-gray-100 overflow-hidden">
                       {waiting.map((item) => (
                         <SimpleInboxCard key={item.id} item={item} onClick={() => handleItemClick(item)} />
                       ))}
@@ -279,7 +279,7 @@ export function InboxPageClient({
                     )}
                   </button>
                   {showHandled && (
-                    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                    <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
                       {/* Info banner */}
                       <div className="px-5 py-3 bg-gray-50 border-b border-gray-100">
                         <p className="text-xs text-gray-600">
@@ -314,7 +314,7 @@ export function InboxPageClient({
 
               {/* All caught up message */}
               {workPrepared.length === 0 && actionRequired.length === 0 && decisionsNeeded.length === 0 && (
-                <div className="text-center py-12 bg-white rounded-xl border border-gray-200">
+                <div className="text-center py-12 bg-white rounded-lg border border-gray-200">
                   <div className="w-12 h-12 mx-auto mb-4 rounded-full bg-green-50 flex items-center justify-center">
                     <CheckCircleIcon className="w-6 h-6 text-green-600" />
                   </div>

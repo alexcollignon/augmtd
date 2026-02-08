@@ -41,7 +41,7 @@ export default async function SettingsPage() {
           </div>
 
           {/* Account Section */}
-          <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
+          <div className="bg-white rounded-lg border border-gray-200 p-6 mb-6">
             <h3 className="text-base font-semibold text-gray-900 mb-4">Account</h3>
             <div className="space-y-3">
               <div className="p-4 bg-gray-50 rounded-lg">
@@ -56,7 +56,7 @@ export default async function SettingsPage() {
           </div>
 
           {/* Email Connections Section */}
-          <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
+          <div className="bg-white rounded-lg border border-gray-200 p-6 mb-6">
             <h3 className="text-base font-semibold text-gray-900 mb-4">Email Connections</h3>
             <div className="space-y-3">
               <ConnectionCard

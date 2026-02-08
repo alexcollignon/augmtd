@@ -147,7 +147,7 @@ export default function InboxDrawer({ item, isOpen, onClose }: InboxDrawerProps)
                         </div>
                         <button
                           type="button"
-                          className="ml-4 p-2 rounded-xl text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+                          className="ml-4 p-2 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
                           onClick={onClose}
                         >
                           <XMarkIcon className="h-6 w-6" />
@@ -159,7 +159,7 @@ export default function InboxDrawer({ item, isOpen, onClose }: InboxDrawerProps)
                     <div className="flex-1 px-6 py-6 space-y-5">
                       {/* Key Points */}
                       {sourceData?.keyPoints && sourceData.keyPoints.length > 0 && (
-                        <div className="p-5 bg-white rounded-xl border border-gray-200/50 shadow-sm">
+                        <div className="p-5 bg-white rounded-lg border border-gray-200/50 shadow-sm">
                           <h3 className="text-sm font-semibold text-gray-700 mb-3 uppercase tracking-wide">Key Points</h3>
                           <ul className="space-y-2.5">
                             {sourceData.keyPoints.map((point: string, index: number) => (
@@ -174,7 +174,7 @@ export default function InboxDrawer({ item, isOpen, onClose }: InboxDrawerProps)
 
                       {/* Draft Reply */}
                       {sourceData?.draft && (
-                        <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl p-5 border border-blue-200/50">
+                        <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-lg p-5 border border-blue-200/50">
                           <div className="flex items-center justify-between mb-4">
                             <div className="flex items-center space-x-2.5">
                               <div className="p-2 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg shadow-sm">
@@ -203,7 +203,7 @@ export default function InboxDrawer({ item, isOpen, onClose }: InboxDrawerProps)
 
                       {/* Next Steps / Action Items */}
                       {sourceData?.nextSteps && sourceData.nextSteps.length > 0 && (
-                        <div className="bg-gradient-to-br from-primary-50 to-purple-50 rounded-xl p-5 border border-primary-200/50">
+                        <div className="bg-gradient-to-br from-primary-50 to-purple-50 rounded-lg p-5 border border-primary-200/50">
                           <div className="flex items-center space-x-2.5 mb-4">
                             <div className="p-2 bg-gradient-to-br from-primary-500 to-primary-600 rounded-lg shadow-sm">
                               <ClipboardDocumentListIcon className="w-4 h-4 text-white" />
@@ -230,7 +230,7 @@ export default function InboxDrawer({ item, isOpen, onClose }: InboxDrawerProps)
 
                       {/* Decision Analysis (for decision_required) */}
                       {sourceData?.analysis && (
-                        <div className="bg-gradient-to-br from-orange-50 to-red-50 rounded-xl p-5 border border-orange-200/50">
+                        <div className="bg-gradient-to-br from-orange-50 to-red-50 rounded-lg p-5 border border-orange-200/50">
                           <div className="flex items-center space-x-2.5 mb-4">
                             <div className="p-2 bg-gradient-to-br from-orange-500 to-red-600 rounded-lg shadow-sm">
                               <ExclamationCircleIcon className="w-4 h-4 text-white" />
@@ -262,7 +262,7 @@ export default function InboxDrawer({ item, isOpen, onClose }: InboxDrawerProps)
 
                       {/* Calendar Event */}
                       {sourceData?.calendarEvent && (
-                        <div className="bg-gradient-to-br from-purple-50 to-pink-50 rounded-xl p-5 border border-purple-200/50">
+                        <div className="bg-gradient-to-br from-purple-50 to-pink-50 rounded-lg p-5 border border-purple-200/50">
                           <div className="flex items-center space-x-2.5 mb-4">
                             <div className="p-2 bg-gradient-to-br from-purple-500 to-pink-600 rounded-lg shadow-sm">
                               <CalendarIcon className="w-4 h-4 text-white" />
@@ -286,7 +286,7 @@ export default function InboxDrawer({ item, isOpen, onClose }: InboxDrawerProps)
 
                       {/* Extracted Data */}
                       {sourceData?.extractedData && Object.keys(sourceData.extractedData).some(key => sourceData.extractedData[key]?.length > 0) && (
-                        <div className="p-5 bg-white rounded-xl border border-gray-200/50 shadow-sm">
+                        <div className="p-5 bg-white rounded-lg border border-gray-200/50 shadow-sm">
                           <h3 className="text-sm font-semibold text-gray-700 mb-3 uppercase tracking-wide">Extracted Data</h3>
                           <div className="grid grid-cols-2 gap-3">
                             {sourceData.extractedData.people && sourceData.extractedData.people.length > 0 && (
@@ -337,7 +337,7 @@ export default function InboxDrawer({ item, isOpen, onClose }: InboxDrawerProps)
 
                       {/* AI Reasoning */}
                       {item.ai_suggestion_reasoning && (
-                        <div className="p-4 bg-gray-50 rounded-xl border border-gray-200">
+                        <div className="p-4 bg-gray-50 rounded-lg border border-gray-200">
                           <div className="flex items-start space-x-2">
                             <SparklesIcon className="w-4 h-4 text-gray-600 flex-shrink-0 mt-0.5" />
                             <div>
@@ -355,7 +355,7 @@ export default function InboxDrawer({ item, isOpen, onClose }: InboxDrawerProps)
                       <div className="border-t border-gray-200 pt-5">
                         <button
                           onClick={() => setShowEmail(!showEmail)}
-                          className="w-full flex items-center justify-between p-4 bg-gray-50 hover:bg-gray-100 rounded-xl transition-colors"
+                          className="w-full flex items-center justify-between p-4 bg-gray-50 hover:bg-gray-100 rounded-lg transition-colors"
                         >
                           <div className="flex items-center space-x-2">
                             <EnvelopeIcon className="w-4 h-4 text-gray-600" />
@@ -369,7 +369,7 @@ export default function InboxDrawer({ item, isOpen, onClose }: InboxDrawerProps)
                         </button>
 
                         {showEmail && (
-                          <div className="mt-3 p-5 bg-white rounded-xl border border-gray-200">
+                          <div className="mt-3 p-5 bg-white rounded-lg border border-gray-200">
                             <div className="space-y-3 text-sm">
                               <div>
                                 <span className="font-semibold text-gray-600">From:</span>
