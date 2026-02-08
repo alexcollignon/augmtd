@@ -425,14 +425,16 @@ export async function checkIfActionable(email: EmailData): Promise<{ isActionabl
   try {
     const processed = await processEmail(email);
     return {
-      isActionable: processed.workState !== 'no_work',
+      isActionable: processed.workState === 'work_prepared' ||
+                    processed.workState === 'decision_required' ||
+                    processed.workState === 'waiting',
       reasoning: processed.reasoning
     };
   } catch (error) {
     console.error('Error in checkIfActionable:', error);
     return {
-      isActionable: true,
-      reasoning: 'Pre-filter check failed, defaulting to actionable'
+      isActionable: false,
+      reasoning: 'Pre-filter check failed, defaulting to not actionable'
     };
   }
 }
