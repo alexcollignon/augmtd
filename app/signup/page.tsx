@@ -4,13 +4,13 @@ import { createClient } from '@/lib/supabase/client';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import Image from 'next/image';
 
 export default function SignupPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
+  const [isSuccess, setIsSuccess] = useState(false);
   const router = useRouter();
   const supabase = createClient();
 
@@ -18,6 +18,7 @@ export default function SignupPage() {
     e.preventDefault();
     setLoading(true);
     setMessage('');
+    setIsSuccess(false);
 
     try {
       const { error } = await supabase.auth.signUp({
@@ -29,6 +30,8 @@ export default function SignupPage() {
       });
 
       if (error) throw error;
+
+      setIsSuccess(true);
       setMessage('Success! Check your email to confirm your account.');
     } catch (error: any) {
       setMessage(error.message);
@@ -37,95 +40,87 @@ export default function SignupPage() {
     }
   };
 
-  const handleGoogleSignup = async () => {
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: {
-        redirectTo: `${window.location.origin}/auth/callback`,
-      },
-    });
-
-    if (error) setMessage(error.message);
-  };
-
   return (
-    <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-gray-50 via-white to-primary-50/30">
-      <div className="w-full max-w-md p-8 bg-white rounded-2xl border border-gray-200/50 shadow-2xl shadow-gray-200/50">
-        <div className="text-center mb-8">
-          <div className="flex justify-center mb-6">
-            <div className="p-3 bg-gradient-to-br from-primary-500 to-primary-600 rounded-2xl shadow-lg">
-              <Image
-                src="/augmtd-logo.png"
-                alt="AUGMTD"
-                width={48}
-                height={48}
-                className="w-12 h-12"
-              />
-            </div>
+    <div className="flex items-center justify-center min-h-screen bg-white">
+      <div className="w-full max-w-sm px-6">
+        {/* Logo & Title */}
+        <div className="text-center mb-12">
+          <div className="inline-flex items-center justify-center w-12 h-12 mb-6 rounded-xl bg-gray-900">
+            <span className="text-2xl font-bold text-white">A</span>
           </div>
-          <h1 className="text-3xl font-bold bg-gradient-to-r from-gray-900 to-primary-900 bg-clip-text text-transparent mb-2">Get started</h1>
-          <p className="text-gray-600">
-            Create your AUGMTD account
+          <h1 className="text-2xl font-semibold text-gray-900 mb-2">
+            Create account
+          </h1>
+          <p className="text-sm text-gray-500">
+            Get started with AUGMTD
           </p>
         </div>
 
+        {/* Message */}
+        {message && (
+          <div className={`mb-6 p-3 rounded-lg border ${
+            isSuccess
+              ? 'bg-green-50 border-green-100'
+              : 'bg-red-50 border-red-100'
+          }`}>
+            <p className={`text-sm ${isSuccess ? 'text-green-600' : 'text-red-600'}`}>
+              {message}
+            </p>
+          </div>
+        )}
+
+        {/* Form */}
         <form onSubmit={handleSignup} className="space-y-5">
           <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">
+            <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-1.5">
               Email
             </label>
             <input
+              id="email"
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
-              className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-all"
-              placeholder="you@example.com"
+              autoComplete="email"
+              className="w-full px-3.5 py-2.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent transition-all"
+              placeholder="name@company.com"
             />
           </div>
 
           <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">
+            <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-1.5">
               Password
             </label>
             <input
+              id="password"
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
               minLength={6}
-              className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-all"
-              placeholder="••••••••"
+              autoComplete="new-password"
+              className="w-full px-3.5 py-2.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent transition-all"
+              placeholder="At least 6 characters"
             />
-            <p className="text-xs text-gray-500 mt-2 flex items-center">
-              <span className="mr-1">ℹ️</span>
+            <p className="text-xs text-gray-500 mt-1.5">
               Must be at least 6 characters
             </p>
           </div>
 
-          {message && (
-            <div className={`text-sm p-4 rounded-xl border ${
-              message.includes('Success')
-                ? 'bg-gradient-to-br from-green-50 to-emerald-50 border-green-200 text-green-700'
-                : 'bg-gradient-to-br from-red-50 to-red-100 border-red-200 text-red-700'
-            }`}>
-              {message}
-            </div>
-          )}
-
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-3.5 bg-gradient-to-r from-primary-600 to-primary-700 text-white rounded-xl hover:from-primary-700 hover:to-primary-800 disabled:opacity-50 font-semibold transition-all duration-200 shadow-lg shadow-primary-500/30"
+            className="w-full py-2.5 bg-gray-900 text-white text-sm font-medium rounded-lg hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
-            {loading ? 'Creating account...' : 'Sign Up'}
+            {loading ? 'Creating account...' : 'Create account'}
           </button>
         </form>
 
-        <div className="mt-6 text-center">
-          <p className="text-sm text-gray-600">
+        {/* Footer */}
+        <div className="mt-8 text-center">
+          <p className="text-sm text-gray-500">
             Already have an account?{' '}
-            <Link href="/login" className="text-primary-600 hover:text-primary-700 font-semibold">
+            <Link href="/login" className="text-gray-900 font-medium hover:underline">
               Sign in
             </Link>
           </p>
