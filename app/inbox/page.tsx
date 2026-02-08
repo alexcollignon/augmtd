@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -139,11 +139,7 @@ export default function PreparedWorkPage() {
   const handled = inboxItems.filter(item => item.work_state === 'no_work');
 
   // Batch NO_WORK items to reduce clutter
-  const { batches: handledBatches, unbatched: unbatchedHandled } = useMemo(
-    () => batchInboxItems(handled),
-    [handled]
-  );
-
+  const { batches: handledBatches, unbatched: unbatchedHandled } = batchInboxItems(handled);
   const totalHandledCount = handled.length;
 
   return (
