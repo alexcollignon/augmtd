@@ -49,83 +49,94 @@ export default function SignupPage() {
   };
 
   return (
-    <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-gray-50 via-white to-primary-50/30">
-      <div className="w-full max-w-md p-8 bg-white rounded-2xl border border-gray-200/50 shadow-2xl shadow-gray-200/50">
-        <div className="text-center mb-8">
-          <div className="flex justify-center mb-6">
-            <div className="p-3 bg-gradient-to-br from-primary-500 to-primary-600 rounded-2xl shadow-lg">
-              <Image
-                src="/augmtd-logo.png"
-                alt="AUGMTD"
-                width={48}
-                height={48}
-                className="w-12 h-12"
-              />
+    <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-primary-50/30 via-white to-gray-50">
+      <div className="w-full max-w-md p-10 bg-white rounded-3xl border border-gray-100 shadow-xl">
+        <div className="text-center mb-10">
+          {/* Logo with better visibility */}
+          <div className="flex justify-center mb-8">
+            <div className="relative">
+              <div className="absolute inset-0 bg-gradient-to-br from-primary-500 to-primary-600 rounded-2xl blur-xl opacity-30"></div>
+              <div className="relative p-4 bg-white rounded-2xl shadow-lg ring-1 ring-gray-100">
+                <Image
+                  src="/augmtd-logo.png"
+                  alt="AUGMTD"
+                  width={56}
+                  height={56}
+                  className="w-14 h-14"
+                />
+              </div>
             </div>
           </div>
-          <h1 className="text-3xl font-bold bg-gradient-to-r from-gray-900 to-primary-900 bg-clip-text text-transparent mb-2">Get started</h1>
-          <p className="text-gray-600">
-            Create your AUGMTD account
+          <h1 className="text-3xl font-bold text-gray-900 mb-2">
+            Create account
+          </h1>
+          <p className="text-gray-500 text-base">
+            Get started with AUGMTD
           </p>
         </div>
 
         <form onSubmit={handleSignup} className="space-y-5">
           <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">
-              Email
+            <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
+              Email address
             </label>
             <input
+              id="email"
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
-              className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-all"
+              autoComplete="email"
+              className="w-full px-4 py-3.5 text-gray-900 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent focus:bg-white transition-all"
               placeholder="you@example.com"
             />
           </div>
 
           <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">
+            <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-2">
               Password
             </label>
             <input
+              id="password"
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
               minLength={6}
-              className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-all"
-              placeholder="••••••••"
+              autoComplete="new-password"
+              className="w-full px-4 py-3.5 text-gray-900 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent focus:bg-white transition-all"
+              placeholder="At least 6 characters"
             />
-            <p className="text-xs text-gray-500 mt-2 flex items-center">
-              <span className="mr-1">ℹ️</span>
+            <p className="text-xs text-gray-500 mt-2">
               Must be at least 6 characters
             </p>
           </div>
 
           {message && (
-            <div className={`text-sm p-4 rounded-xl border ${
+            <div className={`p-4 rounded-xl border ${
               message.includes('Success')
-                ? 'bg-gradient-to-br from-green-50 to-emerald-50 border-green-200 text-green-700'
-                : 'bg-gradient-to-br from-red-50 to-red-100 border-red-200 text-red-700'
+                ? 'bg-green-50 border-green-100'
+                : 'bg-red-50 border-red-100'
             }`}>
-              {message}
+              <p className={`text-sm ${message.includes('Success') ? 'text-green-600' : 'text-red-600'}`}>
+                {message}
+              </p>
             </div>
           )}
 
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-3.5 bg-gradient-to-r from-primary-600 to-primary-700 text-white rounded-xl hover:from-primary-700 hover:to-primary-800 disabled:opacity-50 font-semibold transition-all duration-200 shadow-lg shadow-primary-500/30"
+            className="w-full py-3.5 bg-gradient-to-r from-primary-600 to-primary-700 text-white text-base font-semibold rounded-xl hover:from-primary-700 hover:to-primary-800 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-lg shadow-primary-500/25 hover:shadow-xl hover:shadow-primary-500/30 hover:-translate-y-0.5 active:translate-y-0"
           >
-            {loading ? 'Creating account...' : 'Sign Up'}
+            {loading ? 'Creating account...' : 'Create account'}
           </button>
         </form>
 
-        <div className="mt-6 text-center">
-          <p className="text-sm text-gray-600">
+        <div className="mt-8 text-center">
+          <p className="text-sm text-gray-500">
             Already have an account?{' '}
-            <Link href="/login" className="text-primary-600 hover:text-primary-700 font-semibold">
+            <Link href="/login" className="text-primary-600 hover:text-primary-700 font-semibold transition-colors">
               Sign in
             </Link>
           </p>
