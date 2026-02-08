@@ -25,7 +25,7 @@ CHECK (work_state IN (
 -- Create index for filtering by cognitive cost level
 CREATE INDEX IF NOT EXISTS idx_inbox_cognitive_level
 ON inbox_items(user_id, work_state)
-WHERE work_state IN ('work_prepared', 'decision_required', 'noted');
+WHERE work_state IN ('work_prepared', 'action_required', 'decision_required', 'noted');
 
 COMMENT ON COLUMN inbox_items.work_state IS
 'Work states: work_prepared (judgment via email), action_required (execution to prevent downside), decision_required (choice under uncertainty), waiting (blocked), noted (awareness only), noise (hidden)';
