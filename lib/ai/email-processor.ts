@@ -174,7 +174,24 @@ COMPLEXITY SIGNALS:
 - needsExternalInput: Blocked on external dependency (waiting for someone else)?
 
 MECHANICAL SIGNALS (positive anchors for classification):
-- isMechanicalConfirmation: Email verification, signup, password reset, account confirmation?
+- isMechanicalConfirmation: CRITICAL for batching mechanical actions
+
+  Set to TRUE if email matches ANY of these patterns:
+  ✓ Subject contains: "confirm", "verify", "activate", "complete signup", "reset password"
+  ✓ Automated sender: "no-reply@", "noreply@", "auth@", "accounts@", "verify@"
+  ✓ Single-action pattern: "Click to verify", "Confirm your email", "Activate account"
+  ✓ Account setup: New account confirmation, email verification, password reset
+
+  Common examples that MUST be marked TRUE:
+  - "Confirm Your Signup" from Supabase → TRUE
+  - "Verify Your Email Address" from any service → TRUE
+  - "Reset Your Password" from any service → TRUE
+  - "Activate Your Account" from any service → TRUE
+  - "Complete Registration" from any service → TRUE
+
+  These are ACTION_REQUIRED (consequences exist) BUT mechanical (low friction, repetitive).
+  Setting this TRUE enables UI batching to reduce clutter.
+
 - isNotification: Receipt, invoice, shipping update, system alert, FYI update?
 - hasOneObviousAction: Single obvious action with no judgment (click link, verify, confirm)?
   RULE: If hasOneObviousAction AND executionTarget='external' AND !requiresJudgment → ACTION_REQUIRED
@@ -221,10 +238,19 @@ Based on signals, classify into ONE work state:
    ✓ Clear next step (no real choice)
    ✓ hasOneObviousAction OR very clear path
 
-   Examples:
-   - "Update payment or service stops" → external + clear + high stakes
-   - "Reset credentials before lockout" → external + clear + urgent
-   - "Complete form by Friday" → external + clear + deadline
+   Two subtypes (both are ACTION_REQUIRED):
+
+   A. MECHANICAL (set isMechanicalConfirmation=true):
+      - Email/signup confirmations → Will be BATCHED in UI
+      - Password resets → Will be BATCHED in UI
+      - Account verifications → Will be BATCHED in UI
+      Examples: "Confirm signup", "Verify email", "Reset password"
+
+   B. OPERATIONAL (set isMechanicalConfirmation=false):
+      - Payment updates → Will be shown INDIVIDUALLY
+      - Compliance forms → Will be shown INDIVIDUALLY
+      - Service issues → Will be shown INDIVIDUALLY
+      Examples: "Update payment method", "Complete tax form", "Fix billing"
 
    NOT this state:
    - "Choose provider A or B" → requiresJudgment = true → DECISION_REQUIRED
@@ -284,11 +310,17 @@ Based on signals, classify into ONE work state:
    - "Order shipped" → Status update
    - "Hiring update" → Informational
 
-   INVALID:
-   - "Update payment or service stops" → Consequences exist = ACTION_REQUIRED
-   - "Verify email to activate" → Consequences exist (can't use account) = ACTION_REQUIRED
+   INVALID (these are ACTION_REQUIRED, not NOTED):
+   - "Update payment or service stops" → Consequences exist = ACTION_REQUIRED (operational)
+   - "Verify email to activate" → Consequences exist (can't use account) = ACTION_REQUIRED (mechanical)
+   - "Confirm your signup" → Consequences exist (can't access account) = ACTION_REQUIRED (mechanical)
+   - "Reset password before lockout" → Consequences exist = ACTION_REQUIRED (mechanical)
 
    RULE: "If consequences exist, NOTED is invalid"
+
+   IMPORTANT: Don't confuse "low friction" with "no consequences"
+   - Clicking a confirmation link is LOW FRICTION but HAS CONSEQUENCES (can't use account)
+   - This makes it ACTION_REQUIRED (mechanical), not NOTED
 
    → Action: Surface in "Noted" section, no response needed
 
@@ -413,6 +445,61 @@ OUTPUT FORMAT (JSON):
   "confidence": 85,
   "priority": 70,
   "reasoning": "Detected meeting request + can prepare draft = work_prepared state. High priority due to business opportunity signal."
+}
+
+EXAMPLE 2 - Mechanical Confirmation (ACTION_REQUIRED):
+
+{
+  "workState": "action_required",
+  "workTitle": "Confirm Your Signup",
+  "whatIPrepared": "Instructions to confirm email address",
+  "whyMatters": "Required to activate your account and access features",
+
+  "signals": {
+    "hasDirectQuestion": false,
+    "hasRequestForAction": true,
+    "hasDeadlineMention": false,
+    "hasMeetingReference": false,
+    "hasAttachmentNeedingReview": false,
+    "hasExplicitApprovalRequest": false,
+    "senderAuthority": "none",
+    "threadDepth": 0,
+    "hasPreviousCommitment": false,
+    "isFollowUp": false,
+    "executionTarget": "external",
+    "hasActionLinks": true,
+    "mentionsExternalSystem": true,
+    "requiresJudgment": false,
+    "canBePreparedViaEmail": false,
+    "needsExternalInput": false,
+    "isMechanicalConfirmation": true,  // ← CRITICAL: Enables batching in UI
+    "isNotification": false,
+    "hasOneObviousAction": true,
+    "explicitDeadline": null,
+    "impliedUrgency": "flexible",
+    "isTimebound": false
+  },
+
+  "preparedOutput": {
+    "nextSteps": [
+      {
+        "description": "Click confirmation link in email to activate account",
+        "deadline": null,
+        "estimatedTime": "1 minute"
+      }
+    ]
+  },
+
+  "summary": "Automated account confirmation email",
+  "keyPoints": [
+    "Single click to verify email address",
+    "Required for account activation",
+    "Low friction mechanical action"
+  ],
+  "urgency": "low",
+  "confidence": 95,
+  "priority": 40,
+  "reasoning": "Mechanical confirmation: executionTarget='external' + hasOneObviousAction + isMechanicalConfirmation=true. Low priority (can be batched) but has consequences (ACTION_REQUIRED not NOTED)."
 }
 
 CRITICAL RULES:
