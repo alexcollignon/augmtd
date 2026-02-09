@@ -39,11 +39,13 @@ Instead of overwhelming you with a flat inbox, AUGMTD organizes work by **cognit
 - Read-only access (never sends emails without your approval)
 
 #### ✅ AI Email Processing
+- **Thread-aware draft generation** - AI sees full conversation history
 - **Signal-based classification** (not keyword matching)
 - **Cognitive cost analysis** - Execution vs Decision distinction
 - **Work state detection** - 6 states with specific rules
 - **Mechanical action batching** - Groups repetitive tasks (email confirmations)
 - **Priority banding** - 80-100 (urgent), 50-79 (important), 20-49 (awareness), <20 (noise)
+- **Smart context truncation** - Last 20 messages, 3000 chars per email
 
 #### ✅ Auth & Session Management
 - Server-side route protection
@@ -241,6 +243,24 @@ The email processor (`lib/ai/email-processor.ts`) uses a sophisticated signal-ba
 
 ## 📈 Recent Improvements
 
+### Thread Context for Drafts (Feb 2026)
+- ✅ AI now sees full email thread history when drafting replies
+- ✅ Smart truncation (3000 chars per email, last 20 messages)
+- ✅ Distinguishes user's sent emails vs received emails
+- ✅ Significantly improved draft quality and relevance
+
+### Activity Log Redesign (Feb 2026)
+- ✅ Server log-style compact rows (monospace, minimal)
+- ✅ Side drawer for full details (same animation as inbox)
+- ✅ Shows completed and dismissed items with full context
+- ✅ Trust surface for execution history
+
+### UX Consistency & Polish (Feb 2026)
+- ✅ Consistent page layouts (same width, spacing, typography)
+- ✅ Fixed drawer animations (smooth enter/exit transitions)
+- ✅ Removed annoying skeleton loaders
+- ✅ Minimalistic action buttons in inbox drawer
+
 ### Auth & Session Persistence (Feb 2026)
 - ✅ Middleware route protection
 - ✅ Server-side auth checks (no content flashing)
@@ -264,6 +284,14 @@ The email processor (`lib/ai/email-processor.ts`) uses a sophisticated signal-ba
 1. **Token encryption** - Currently using base64 (needs proper encryption)
 2. **Outlook token refresh** - Occasional `no_tokens_found` warnings (non-blocking)
 3. **Email batching** - Needs real-world testing with high volumes
+
+## 🎯 What's Next
+
+1. **Email thread batching** - Group thread messages into single inbox item
+2. **Include sent emails** - Show user's sent emails in thread context
+3. **Thread message count** - Display message count in inbox cards
+4. **Automatic syncing** - Implement hourly cron job for email sync
+5. **User Context Engine** - Learn from modifications and approvals over time
 
 ## 📝 Documentation
 

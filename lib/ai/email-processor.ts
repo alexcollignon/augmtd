@@ -13,6 +13,14 @@ export interface EmailData {
   subject: string;
   body: string;
   received_at: string;
+  thread_context?: Array<{
+    from_address: string;
+    from_name: string;
+    subject: string;
+    body: string;
+    received_at: string;
+    is_from_user?: boolean;
+  }>;
 }
 
 /**
@@ -123,18 +131,65 @@ export interface ProcessedEmail {
 }
 
 /**
+ * Helper function to truncate text safely
+ */
+function truncateText(text: string, maxLength: number): string {
+  if (text.length <= maxLength) return text;
+  return text.substring(0, maxLength) + '\n\n[... truncated for length ...]';
+}
+
+/**
+ * Helper function to format thread context
+ */
+function formatThreadContext(threadContext: EmailData['thread_context']): string {
+  if (!threadContext || threadContext.length === 0) {
+    return '';
+  }
+
+  // Take last 20 messages, sort chronologically (oldest first)
+  const recentMessages = threadContext
+    .slice(-20)
+    .sort((a, b) => new Date(a.received_at).getTime() - new Date(b.received_at).getTime());
+
+  const formatted = recentMessages.map((msg, index) => {
+    const isFromUser = msg.is_from_user || false;
+    const sender = isFromUser ? 'YOU' : `${msg.from_name} <${msg.from_address}>`;
+    const body = truncateText(msg.body, 3000);
+
+    return `[Message ${index + 1} - ${new Date(msg.received_at).toLocaleString()}]
+From: ${sender}
+Subject: ${msg.subject}
+
+${body}`;
+  }).join('\n\n---\n\n');
+
+  return `
+THREAD CONTEXT (${recentMessages.length} previous message${recentMessages.length > 1 ? 's' : ''}):
+This email is part of an ongoing conversation. Here's the thread history in chronological order:
+
+${formatted}
+
+---
+
+`;
+}
+
+/**
  * Main processing function - detects signals and determines work state
  */
 export async function processEmail(email: EmailData): Promise<ProcessedEmail> {
+  // Format thread context if available
+  const threadContextSection = formatThreadContext(email.thread_context);
+
   const prompt = `You are a work preparation AI. Your job is to detect OBLIGATIONS and prepare WORK, not classify emails.
 
-Email Details:
+${threadContextSection}CURRENT EMAIL (the one requiring your response):
 From: ${email.from_name} <${email.from_address}>
 Subject: ${email.subject}
 Received: ${new Date(email.received_at).toLocaleString()}
 
 Body:
-${email.body}
+${truncateText(email.body, 3000)}
 
 ---
 
@@ -346,6 +401,12 @@ STEP 3: PREPARE THE WORK
 
 For WORK_PREPARED:
 - Draft a complete reply (subject, body, tone)
+  IMPORTANT: If thread context is provided, USE IT to write contextual replies:
+  * Reference previous messages when relevant
+  * Don't repeat what was already said
+  * Build on previous commitments or statements
+  * Acknowledge prior exchanges if appropriate
+  * Understand the full conversation arc before drafting
 - Extract next steps/action items
 - Prepare calendar event if meeting mentioned
 - Extract structured data (people, companies, amounts, dates, links)

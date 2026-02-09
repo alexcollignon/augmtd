@@ -167,6 +167,16 @@ export async function POST(request: NextRequest) {
                 .eq('thread_id', storedEmail.thread_id || storedEmail.message_id)
                 .order('received_at', { ascending: true });
 
+              // Map thread emails and mark which are from user
+              const threadContext = threadEmails?.map(e => ({
+                from_address: e.from_address,
+                from_name: e.from_name,
+                subject: e.subject,
+                body: e.body,
+                received_at: e.received_at,
+                is_from_user: e.from_address === user.email
+              })) || [];
+
               // AI Processing with full thread context
               const processed = await processEmail({
                 id: storedEmail.id,
@@ -177,7 +187,7 @@ export async function POST(request: NextRequest) {
                 subject: storedEmail.subject,
                 body: storedEmail.body,
                 received_at: storedEmail.received_at,
-                thread_context: threadEmails || []
+                thread_context: threadContext
               });
 
               // Update existing inbox item
@@ -199,9 +209,11 @@ export async function POST(request: NextRequest) {
                     provider: connection.provider,
                     thread_history: threadEmails?.map(e => ({
                       from: e.from_address,
+                      from_name: e.from_name,
                       subject: e.subject,
                       received_at: e.received_at,
-                      snippet: e.body.substring(0, 150)
+                      snippet: e.body.substring(0, 150),
+                      is_from_user: e.from_address === user.email
                     })),
                     summary: processed.summary,
                     keyPoints: processed.keyPoints,
@@ -228,6 +240,24 @@ export async function POST(request: NextRequest) {
 
             console.log(`    → Creating new inbox item (new thread)\n`);
 
+          // Get all emails in this thread for context (even for new inbox items)
+          const { data: threadEmails } = await adminSupabase
+            .from('emails')
+            .select('*')
+            .eq('user_id', user.id)
+            .eq('thread_id', storedEmail.thread_id || storedEmail.message_id)
+            .order('received_at', { ascending: true });
+
+          // Map thread emails and mark which are from user
+          const threadContext = threadEmails?.map(e => ({
+            from_address: e.from_address,
+            from_name: e.from_name,
+            subject: e.subject,
+            body: e.body,
+            received_at: e.received_at,
+            is_from_user: e.from_address === user.email
+          })) || [];
+
           // AI Processing - Process INCOMING emails only
           const processed = await processEmail({
             id: storedEmail.id,
@@ -237,7 +267,8 @@ export async function POST(request: NextRequest) {
             from_name: storedEmail.from_name,
             subject: storedEmail.subject,
             body: storedEmail.body,
-            received_at: storedEmail.received_at
+            received_at: storedEmail.received_at,
+            thread_context: threadContext
           });
 
           // Create inbox item with work-state model
@@ -265,6 +296,16 @@ export async function POST(request: NextRequest) {
                 subject: storedEmail.subject,
                 received_at: storedEmail.received_at,
                 provider: connection.provider,
+
+                // Thread context
+                thread_history: threadEmails?.map(e => ({
+                  from: e.from_address,
+                  from_name: e.from_name,
+                  subject: e.subject,
+                  received_at: e.received_at,
+                  snippet: e.body.substring(0, 150),
+                  is_from_user: e.from_address === user.email
+                })),
 
                 // AI analysis
                 summary: processed.summary,
