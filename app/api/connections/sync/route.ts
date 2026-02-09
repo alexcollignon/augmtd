@@ -199,8 +199,7 @@ export async function POST(request: NextRequest) {
                   ai_suggestion_reasoning: processed.reasoning,
                   confidence_score: processed.confidence,
                   priority: processed.priority,
-                  needs_review: processed.workState === 'work_prepared' || processed.workState === 'decision_required' || processed.workState === 'waiting',
-                  updated_at: new Date().toISOString()
+                  needs_review: processed.workState === 'work_prepared' || processed.workState === 'decision_required' || processed.workState === 'waiting'
                 })
                 .eq('id', existingInboxItem.id);
 
