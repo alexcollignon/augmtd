@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import SidebarNav from '@/components/sidebar-nav';
 import SimpleInboxCard from '@/components/inbox/simple-inbox-card';
@@ -13,7 +14,8 @@ import {
   ChevronDownIcon,
   ChevronUpIcon,
   CheckCircleIcon,
-  SparklesIcon
+  SparklesIcon,
+  ArrowPathIcon
 } from '@heroicons/react/24/outline';
 
 interface InboxPageClientProps {
@@ -27,22 +29,36 @@ export function InboxPageClient({
   initialConnection,
   initialInboxItems
 }: InboxPageClientProps) {
+  const searchParams = useSearchParams();
   const [user] = useState(initialUser);
   const [connection, setConnection] = useState(initialConnection);
   const [inboxItems, setInboxItems] = useState(initialInboxItems);
   const [selectedItem, setSelectedItem] = useState<any>(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isOnboardingOpen, setIsOnboardingOpen] = useState(!initialConnection);
+  const [isSyncing, setIsSyncing] = useState(false);
 
   // Collapsible states
   const [showWaiting, setShowWaiting] = useState(false);
   const [showHandled, setShowHandled] = useState(false);
 
-  // Poll for new items every 10 seconds
+  // Check if we just connected (from OAuth callback)
+  const justConnected = searchParams?.get('success') === 'outlook_connected' ||
+                        searchParams?.get('success') === 'gmail_connected';
+
+  // Check sync status on mount if just connected
+  useEffect(() => {
+    if (justConnected && connection) {
+      setIsSyncing(true);
+    }
+  }, [justConnected, connection]);
+
+  // Poll for new items and check sync status
   useEffect(() => {
     const supabase = createClient();
 
-    async function fetchInboxItems() {
+    async function fetchData() {
+      // Fetch inbox items
       const { data: items } = await supabase
         .from('inbox_items')
         .select('*')
@@ -54,12 +70,36 @@ export function InboxPageClient({
       if (items) {
         setInboxItems(items);
       }
+
+      // Check connection sync status
+      if (connection) {
+        const { data: conn } = await supabase
+          .from('connections')
+          .select('sync_status')
+          .eq('id', connection.id)
+          .single();
+
+        if (conn) {
+          const isCurrentlySyncing = conn.sync_status === 'syncing';
+          setIsSyncing(isCurrentlySyncing);
+
+          // If was syncing and now completed, refresh to show new items
+          if (isSyncing && !isCurrentlySyncing) {
+            setInboxItems(items || []);
+          }
+        }
+      }
     }
 
-    const pollingInterval = setInterval(fetchInboxItems, 10000);
+    // Poll more frequently (every 2s) when syncing, otherwise every 10s
+    const pollInterval = isSyncing ? 2000 : 10000;
+    const pollingInterval = setInterval(fetchData, pollInterval);
+
+    // Fetch immediately on mount
+    fetchData();
 
     return () => clearInterval(pollingInterval);
-  }, [user.id]);
+  }, [user.id, connection, isSyncing]);
 
   const handleItemClick = (item: any) => {
     setSelectedItem(item);
@@ -112,6 +152,23 @@ export function InboxPageClient({
               These are the only things that need your attention right now.
             </p>
           </div>
+
+          {/* Syncing Banner */}
+          {isSyncing && (
+            <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+              <div className="flex items-center space-x-3">
+                <ArrowPathIcon className="w-5 h-5 text-blue-600 animate-spin flex-shrink-0" />
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-blue-900">
+                    Syncing your emails...
+                  </p>
+                  <p className="text-xs text-blue-700 mt-0.5">
+                    We're fetching and processing your emails. This usually takes 30-60 seconds.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* No Connection State */}
           {!connection && (
