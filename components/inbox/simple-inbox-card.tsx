@@ -220,6 +220,16 @@ export default function SimpleInboxCard({ item, onClick }: SimpleInboxCardProps)
             {sourceData?.from_name || 'Unknown'}
           </span>
 
+          {/* Thread message count */}
+          {sourceData?.thread_history && sourceData.thread_history.length > 1 && (
+            <>
+              <span>•</span>
+              <span className="text-[11px] font-medium text-gray-500">
+                {sourceData.thread_history.length} messages
+              </span>
+            </>
+          )}
+
           {/* Urgency if high */}
           {(sourceData?.urgency === 'high' || sourceData?.urgency === 'critical') && (
             <>

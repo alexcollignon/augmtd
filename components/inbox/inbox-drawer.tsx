@@ -30,6 +30,7 @@ interface InboxDrawerProps {
 
 export default function InboxDrawer({ item, isOpen, onClose }: InboxDrawerProps) {
   const [showEmail, setShowEmail] = useState(false);
+  const [showThreadHistory, setShowThreadHistory] = useState(false);
 
   if (!item) return null;
 
@@ -348,6 +349,56 @@ export default function InboxDrawer({ item, isOpen, onClose }: InboxDrawerProps)
                               )}
                             </div>
                           </div>
+                        </div>
+                      )}
+
+                      {/* Thread History - Expandable (only if multiple messages) */}
+                      {sourceData?.thread_history && sourceData.thread_history.length > 1 && (
+                        <div className="border-t border-gray-200 pt-5">
+                          <button
+                            onClick={() => setShowThreadHistory(!showThreadHistory)}
+                            className="w-full flex items-center justify-between p-4 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors"
+                          >
+                            <div className="flex items-center space-x-2">
+                              <EnvelopeIcon className="w-4 h-4 text-blue-600" />
+                              <span className="text-sm font-semibold text-blue-700">
+                                Thread History ({sourceData.thread_history.length} messages)
+                              </span>
+                            </div>
+                            {showThreadHistory ? (
+                              <ChevronUpIcon className="w-5 h-5 text-blue-500" />
+                            ) : (
+                              <ChevronDownIcon className="w-5 h-5 text-blue-500" />
+                            )}
+                          </button>
+
+                          {showThreadHistory && (
+                            <div className="mt-3 space-y-3">
+                              {sourceData.thread_history.map((msg: any, index: number) => (
+                                <div key={index} className="p-4 bg-white rounded-lg border border-gray-200">
+                                  <div className="space-y-2 text-sm">
+                                    <div className="flex items-start justify-between">
+                                      <div>
+                                        <span className="font-semibold text-gray-700">{msg.from}</span>
+                                        <div className="text-xs text-gray-500 mt-0.5">
+                                          {new Date(msg.received_at).toLocaleString()}
+                                        </div>
+                                      </div>
+                                      <span className="text-xs text-gray-400 bg-gray-100 px-2 py-1 rounded">
+                                        #{index + 1}
+                                      </span>
+                                    </div>
+                                    <div className="pt-2 border-t border-gray-100">
+                                      <div className="font-medium text-gray-900 mb-1">{msg.subject}</div>
+                                      <div className="text-gray-600 text-xs leading-relaxed">
+                                        {msg.snippet}...
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       )}
 
