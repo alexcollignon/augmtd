@@ -91,10 +91,16 @@ export function parseGmailMessage(message: GmailMessage) {
     extractBody(message.payload);
   }
 
+  // Extract email address from "Name <email@domain.com>" format
+  const fromHeader = getHeader('From');
+  const emailMatch = fromHeader.match(/<(.+?)>/);
+  const from_address = emailMatch ? emailMatch[1] : fromHeader;
+  const from_name = fromHeader.split('<')[0].trim().replace(/"/g, '') || from_address;
+
   return {
     message_id: getHeader('Message-ID'),
-    from_address: getHeader('From'),
-    from_name: getHeader('From').split('<')[0].trim().replace(/"/g, ''),
+    from_address,
+    from_name,
     to_addresses: [getHeader('To')],
     cc_addresses: getHeader('Cc') ? [getHeader('Cc')] : [],
     subject: getHeader('Subject') || '(no subject)',
