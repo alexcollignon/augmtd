@@ -57,15 +57,18 @@ export async function POST(
     }
 
     // Get the original email to get thread_id
+    // Use source_data.email_id if available, otherwise fall back to source_id
+    const emailId = sourceData.email_id || item.source_id;
+
     const { data: originalEmail, error: emailError } = await supabase
       .from('emails')
       .select('thread_id, provider')
-      .eq('id', sourceData.email_id)
+      .eq('id', emailId)
       .single();
 
     if (emailError || !originalEmail) {
       return NextResponse.json(
-        { error: 'Original email not found' },
+        { error: 'Original email not found', details: emailError?.message },
         { status: 404 }
       );
     }
