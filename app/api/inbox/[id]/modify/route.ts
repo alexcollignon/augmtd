@@ -107,9 +107,9 @@ export async function POST(
           `${process.env.NEXT_PUBLIC_APP_URL}/api/auth/gmail/callback`
         );
 
-        // Decode and set credentials
+        // Decode and set credentials (tokens stored in metadata.tokens)
         const tokens = JSON.parse(
-          Buffer.from(connection.encrypted_tokens, 'base64').toString()
+          Buffer.from(connection.metadata.tokens, 'base64').toString()
         );
         oauth2Client.setCredentials(tokens);
 
@@ -146,7 +146,7 @@ export async function POST(
       } else if (connection.provider === 'outlook') {
         // Outlook - Send via Microsoft Graph API
         const tokens = JSON.parse(
-          Buffer.from(connection.encrypted_tokens, 'base64').toString()
+          Buffer.from(connection.metadata.tokens, 'base64').toString()
         );
 
         const response = await fetch(
