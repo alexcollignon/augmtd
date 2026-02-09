@@ -35,9 +35,27 @@ export default function ManualSyncButton() {
       }, 5000);
 
     } catch (error) {
+      // Extract user-friendly error message from response
+      let errorText = 'Sync failed. Please try again.';
+
+      if (error instanceof Error) {
+        try {
+          // Try to parse error message as JSON response
+          const match = error.message.match(/\{.*\}/);
+          if (match) {
+            const errorData = JSON.parse(match[0]);
+            errorText = errorData.message || errorData.error || error.message;
+          } else {
+            errorText = error.message;
+          }
+        } catch {
+          errorText = error.message;
+        }
+      }
+
       setMessage({
         type: 'error',
-        text: error instanceof Error ? error.message : 'Sync failed'
+        text: errorText
       });
     } finally {
       setSyncing(false);

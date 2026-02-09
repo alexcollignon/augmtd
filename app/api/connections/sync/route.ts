@@ -39,9 +39,24 @@ export async function POST(request: NextRequest) {
       .in('provider', ['gmail', 'outlook'])
       .eq('status', 'active');
 
-    if (connectionError || !connections || connections.length === 0) {
+    if (connectionError) {
       return NextResponse.json(
-        { error: 'No active email connections found' },
+        {
+          error: 'Failed to fetch connections',
+          message: 'Unable to load your email connections. Please try again.',
+          action: 'retry'
+        },
+        { status: 500 }
+      );
+    }
+
+    if (!connections || connections.length === 0) {
+      return NextResponse.json(
+        {
+          error: 'No active email connections',
+          message: 'Connect Gmail or Outlook to start syncing emails.',
+          action: 'connect'
+        },
         { status: 404 }
       );
     }
@@ -300,7 +315,24 @@ export async function POST(request: NextRequest) {
           .eq('id', connection.id);
 
         console.error('Sync error for connection:', syncError);
-        errors.push(`Connection ${connection.id} failed: ${syncError instanceof Error ? syncError.message : 'Unknown'}`);
+
+        // Detect specific error types and provide actionable messages
+        const errorMessage = syncError instanceof Error ? syncError.message : 'Unknown';
+        let userFriendlyError = errorMessage;
+
+        if (errorMessage.includes('Invalid Credentials') || errorMessage.includes('401')) {
+          userFriendlyError = `${connection.provider === 'gmail' ? 'Gmail' : 'Outlook'} authentication expired. Please reconnect your account.`;
+        } else if (errorMessage.includes('ENOTFOUND') || errorMessage.includes('network')) {
+          userFriendlyError = `Network error while syncing ${connection.provider === 'gmail' ? 'Gmail' : 'Outlook'}. Check your internet connection and try again.`;
+        } else if (errorMessage.includes('429') || errorMessage.includes('rate limit')) {
+          userFriendlyError = `${connection.provider === 'gmail' ? 'Gmail' : 'Outlook'} rate limit reached. Please wait a few minutes and try again.`;
+        } else if (errorMessage.includes('quota')) {
+          userFriendlyError = `${connection.provider === 'gmail' ? 'Gmail' : 'Outlook'} API quota exceeded. Try again later.`;
+        } else {
+          userFriendlyError = `Failed to sync ${connection.provider === 'gmail' ? 'Gmail' : 'Outlook'}: ${errorMessage}`;
+        }
+
+        errors.push(userFriendlyError);
       }
     }
 
@@ -316,10 +348,29 @@ export async function POST(request: NextRequest) {
 
   } catch (error) {
     console.error('Manual sync error:', error);
+
+    // Provide specific error messages based on error type
+    const errorMessage = error instanceof Error ? error.message : 'Unknown';
+    let userMessage = 'Failed to sync emails. Please try again.';
+    let action = 'retry';
+
+    if (errorMessage.includes('Unauthorized') || errorMessage.includes('auth')) {
+      userMessage = 'Your session has expired. Please log in again.';
+      action = 'login';
+    } else if (errorMessage.includes('ENOTFOUND') || errorMessage.includes('network')) {
+      userMessage = 'Network error. Check your internet connection and try again.';
+      action = 'retry';
+    } else if (errorMessage.includes('timeout')) {
+      userMessage = 'Request timed out. The server took too long to respond.';
+      action = 'retry';
+    }
+
     return NextResponse.json(
       {
         error: 'Sync failed',
-        details: error instanceof Error ? error.message : 'Unknown'
+        message: userMessage,
+        details: errorMessage,
+        action
       },
       { status: 500 }
     );

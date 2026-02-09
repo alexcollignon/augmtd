@@ -301,10 +301,30 @@ export async function POST(
     });
   } catch (error) {
     console.error('Error modifying and sending email:', error);
+
+    // Provide specific error messages
+    const errorMessage = error instanceof Error ? error.message : 'Unknown';
+    let userMessage = 'Failed to send modified email. Please try again.';
+
+    if (errorMessage.includes('Invalid Credentials') || errorMessage.includes('401')) {
+      userMessage = 'Email account authentication expired. Please reconnect your account in Settings.';
+    } else if (errorMessage.includes('ENOTFOUND') || errorMessage.includes('network')) {
+      userMessage = 'Network error. Check your internet connection and try again.';
+    } else if (errorMessage.includes('timeout')) {
+      userMessage = 'Request timed out. Please try again.';
+    } else if (errorMessage.includes('ConversationId')) {
+      userMessage = 'Email configuration error. This email might need to be re-synced.';
+    } else if (errorMessage.includes('message ID')) {
+      userMessage = 'Could not find the original email to reply to. Try syncing your emails again.';
+    } else if (errorMessage.includes('subject') || errorMessage.includes('body')) {
+      userMessage = 'Email content is invalid. Please check your message and try again.';
+    }
+
     return NextResponse.json(
       {
         error: 'Failed to modify and send email',
-        details: error instanceof Error ? error.message : 'Unknown',
+        message: userMessage,
+        details: errorMessage,
       },
       { status: 500 }
     );

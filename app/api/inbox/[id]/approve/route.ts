@@ -269,10 +269,28 @@ export async function POST(
     });
   } catch (error) {
     console.error('Error approving item:', error);
+
+    // Provide specific error messages
+    const errorMessage = error instanceof Error ? error.message : 'Unknown';
+    let userMessage = 'Failed to approve and send email. Please try again.';
+
+    if (errorMessage.includes('Invalid Credentials') || errorMessage.includes('401')) {
+      userMessage = 'Email account authentication expired. Please reconnect your account in Settings.';
+    } else if (errorMessage.includes('ENOTFOUND') || errorMessage.includes('network')) {
+      userMessage = 'Network error. Check your internet connection and try again.';
+    } else if (errorMessage.includes('timeout')) {
+      userMessage = 'Request timed out. Please try again.';
+    } else if (errorMessage.includes('ConversationId')) {
+      userMessage = 'Email configuration error. This email might need to be re-synced.';
+    } else if (errorMessage.includes('message ID')) {
+      userMessage = 'Could not find the original email to reply to. Try syncing your emails again.';
+    }
+
     return NextResponse.json(
       {
         error: 'Failed to approve item',
-        details: error instanceof Error ? error.message : 'Unknown',
+        message: userMessage,
+        details: errorMessage,
       },
       { status: 500 }
     );
