@@ -133,12 +133,15 @@ export async function POST(
             Buffer.from(connection.metadata.tokens, 'base64').toString()
           );
 
+          // Outlook tokens use 'accessToken' (camelCase)
+          const accessToken = tokens.accessToken;
+
           const response = await fetch(
             `https://graph.microsoft.com/v1.0/me/messages/${originalEmail.thread_id}/reply`,
             {
               method: 'POST',
               headers: {
-                Authorization: `Bearer ${tokens.access_token}`,
+                Authorization: `Bearer ${accessToken}`,
                 'Content-Type': 'application/json',
               },
               body: JSON.stringify({
