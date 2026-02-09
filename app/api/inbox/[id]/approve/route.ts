@@ -41,65 +41,122 @@ export async function POST(
 
     // Send email if draft reply exists
     let emailSent = false;
-    if (sourceData?.draftReply) {
-      // Get user's Gmail connection
+    if (sourceData?.draft) {
+      // Get the original email to get thread_id
+      const { data: originalEmail, error: emailError } = await supabase
+        .from('emails')
+        .select('thread_id, provider')
+        .eq('id', sourceData.email_id)
+        .single();
+
+      if (emailError || !originalEmail) {
+        return NextResponse.json(
+          { error: 'Original email not found' },
+          { status: 404 }
+        );
+      }
+
+      // Get user's email connection (Gmail or Outlook)
       const { data: connection, error: connError } = await supabase
         .from('connections')
         .select('*')
         .eq('user_id', user.id)
-        .eq('provider', 'gmail')
+        .eq('provider', sourceData.provider || originalEmail.provider)
         .eq('status', 'active')
         .single();
 
       if (connError || !connection) {
         return NextResponse.json(
-          { error: 'Gmail connection not found' },
+          { error: `${sourceData.provider || originalEmail.provider} connection not found` },
           { status: 400 }
         );
       }
 
       try {
-        // Initialize OAuth2 client
-        const oauth2Client = new google.auth.OAuth2(
-          process.env.GOOGLE_CLIENT_ID,
-          process.env.GOOGLE_CLIENT_SECRET,
-          process.env.GOOGLE_REDIRECT_URI
-        );
+        if (connection.provider === 'gmail') {
+          // Gmail - Send via Gmail API
+          const oauth2Client = new google.auth.OAuth2(
+            process.env.GOOGLE_CLIENT_ID,
+            process.env.GOOGLE_CLIENT_SECRET,
+            `${process.env.NEXT_PUBLIC_APP_URL}/api/auth/gmail/callback`
+          );
 
-        // Decode and set credentials
-        const tokens = connection.metadata.tokens;
-        oauth2Client.setCredentials(tokens);
+          // Decode and set credentials
+          const tokens = JSON.parse(
+            Buffer.from(connection.encrypted_tokens, 'base64').toString()
+          );
+          oauth2Client.setCredentials(tokens);
 
-        // Initialize Gmail API
-        const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+          // Initialize Gmail API
+          const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
 
-        // Create email
-        const email = [
-          `To: ${sourceData.from}`,
-          `Subject: ${sourceData.draftReply.subject}`,
-          'Content-Type: text/plain; charset=utf-8',
-          'MIME-Version: 1.0',
-          '',
-          sourceData.draftReply.body,
-        ].join('\n');
+          // Create email in RFC 2822 format
+          const email = [
+            `To: ${sourceData.from}`,
+            `Subject: ${sourceData.draft.subject}`,
+            'Content-Type: text/plain; charset=utf-8',
+            'MIME-Version: 1.0',
+            '',
+            sourceData.draft.body,
+          ].join('\n');
 
-        // Encode email
-        const encodedEmail = Buffer.from(email)
-          .toString('base64')
-          .replace(/\+/g, '-')
-          .replace(/\//g, '_')
-          .replace(/=+$/, '');
+          // Encode email
+          const encodedEmail = Buffer.from(email)
+            .toString('base64')
+            .replace(/\+/g, '-')
+            .replace(/\//g, '_')
+            .replace(/=+$/, '');
 
-        // Send email
-        await gmail.users.messages.send({
-          userId: 'me',
-          requestBody: {
-            raw: encodedEmail,
-            threadId: sourceData.message_id, // Reply to the same thread
-          },
-        });
+          // Send email as reply in the thread
+          await gmail.users.messages.send({
+            userId: 'me',
+            requestBody: {
+              raw: encodedEmail,
+              threadId: originalEmail.thread_id, // Reply in the same thread
+            },
+          });
 
-        emailSent = true;
+          emailSent = true;
+        } else if (connection.provider === 'outlook') {
+          // Outlook - Send via Microsoft Graph API
+          const tokens = JSON.parse(
+            Buffer.from(connection.encrypted_tokens, 'base64').toString()
+          );
+
+          const response = await fetch(
+            `https://graph.microsoft.com/v1.0/me/messages/${originalEmail.thread_id}/reply`,
+            {
+              method: 'POST',
+              headers: {
+                Authorization: `Bearer ${tokens.access_token}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                message: {
+                  toRecipients: [
+                    {
+                      emailAddress: {
+                        address: sourceData.from,
+                      },
+                    },
+                  ],
+                  subject: sourceData.draft.subject,
+                  body: {
+                    contentType: 'Text',
+                    content: sourceData.draft.body,
+                  },
+                },
+              }),
+            }
+          );
+
+          if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error?.message || 'Failed to send via Outlook');
+          }
+
+          emailSent = true;
+        }
       } catch (emailError) {
         console.error('Error sending email:', emailError);
         return NextResponse.json(

@@ -397,7 +397,11 @@ export default function InboxDrawer({ item, isOpen, onClose }: InboxDrawerProps)
 
                     {/* Footer - Actions */}
                     <div className="border-t border-gray-200/50 px-6 py-5 bg-gradient-to-br from-white to-gray-50 backdrop-blur-sm sticky bottom-0">
-                      <InboxActions itemId={item.id} status={item.status} />
+                      <InboxActions
+                        itemId={item.id}
+                        status={item.status}
+                        draft={sourceData?.draft}
+                      />
                     </div>
                   </div>
                 </Dialog.Panel>
