@@ -89,5 +89,11 @@ export function parseOutlookMessage(message: OutlookMessage) {
     subject: message.subject || '(No subject)',
     body: bodyText || message.bodyPreview || '',
     received_at: new Date(message.receivedDateTime).toISOString(),
+    thread_id: message.id, // Outlook message ID for replies
+    metadata: {
+      provider: 'outlook',
+      outlook_id: message.id,
+      internet_message_id: message.internetMessageId,
+    },
   };
 }
