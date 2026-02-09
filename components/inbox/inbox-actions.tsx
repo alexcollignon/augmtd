@@ -167,7 +167,7 @@ export default function InboxActions({ itemId, status, draft, onClose }: InboxAc
           {isEditing && draft ? (
         <div className="space-y-4">
           <div>
-            <label htmlFor="subject" className="block text-sm font-medium text-gray-700 mb-2">
+            <label htmlFor="subject" className="block text-xs font-medium text-gray-500 mb-2">
               Subject
             </label>
             <input
@@ -175,11 +175,12 @@ export default function InboxActions({ itemId, status, draft, onClose }: InboxAc
               type="text"
               value={editedSubject}
               onChange={(e) => setEditedSubject(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+              className="w-full px-3 py-2.5 bg-white border border-gray-200 rounded-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-all"
+              placeholder="Email subject..."
             />
           </div>
           <div>
-            <label htmlFor="body" className="block text-sm font-medium text-gray-700 mb-2">
+            <label htmlFor="body" className="block text-xs font-medium text-gray-500 mb-2">
               Email Body
             </label>
             <textarea
@@ -187,7 +188,8 @@ export default function InboxActions({ itemId, status, draft, onClose }: InboxAc
               value={editedBody}
               onChange={(e) => setEditedBody(e.target.value)}
               rows={12}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent font-sans text-sm"
+              className="w-full px-3 py-2.5 bg-white border border-gray-200 rounded-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 font-sans text-sm leading-relaxed transition-all resize-none"
+              placeholder="Email body..."
             />
           </div>
           <div className="flex items-center justify-between pt-2">
@@ -236,7 +238,7 @@ export default function InboxActions({ itemId, status, draft, onClose }: InboxAc
                   }`}
                 >
                   <PencilIcon className="w-5 h-5" />
-                  <span>Edit Draft</span>
+                  <span>Make a change</span>
                 </button>
               )}
             </div>
