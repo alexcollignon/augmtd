@@ -62,29 +62,36 @@ export async function POST(
 
     const { data: originalEmail, error: emailError } = await supabase
       .from('emails')
-      .select('thread_id, provider')
+      .select('thread_id, metadata')
       .eq('id', emailId)
       .single();
 
     if (emailError || !originalEmail) {
       return NextResponse.json(
-        { error: 'Original email not found', details: emailError?.message },
+        {
+          error: 'Original email not found',
+          details: emailError?.message,
+          emailId,
+        },
         { status: 404 }
       );
     }
+
+    // Get provider from source_data or email metadata
+    const provider = sourceData.provider || originalEmail.metadata?.provider || 'gmail';
 
     // Get user's email connection
     const { data: connection, error: connError } = await supabase
       .from('connections')
       .select('*')
       .eq('user_id', user.id)
-      .eq('provider', sourceData.provider || originalEmail.provider)
+      .eq('provider', provider)
       .eq('status', 'active')
       .single();
 
     if (connError || !connection) {
       return NextResponse.json(
-        { error: `${sourceData.provider || originalEmail.provider} connection not found` },
+        { error: `${provider} connection not found` },
         { status: 400 }
       );
     }
