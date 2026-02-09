@@ -94,6 +94,10 @@ export async function GET(request: NextRequest) {
               ? parseGmailMessage(message)
               : parseOutlookMessage(message);
 
+            console.log(`\n--- Processing email: ${parsed.subject}`);
+            console.log(`    From: ${parsed.from_address}`);
+            console.log(`    Message ID: ${parsed.message_id}`);
+
             // Check if email already exists (check ALL emails, including sent ones for context)
             const { data: existingEmail } = await supabase
               .from('emails')

@@ -85,6 +85,9 @@ export async function POST(request: NextRequest) {
               ? parseGmailMessage(message)
               : parseOutlookMessage(message);
 
+            console.log(`\n--- Processing email: ${parsed.subject}`);
+            console.log(`    From: ${parsed.from_address}`);
+
           // Check if email already exists
           const { data: existingEmail } = await adminSupabase
             .from('emails')
@@ -93,7 +96,7 @@ export async function POST(request: NextRequest) {
             .single();
 
           if (existingEmail) {
-            console.log(`Email ${parsed.message_id} already exists, skipping...`);
+            console.log(`    ✓ Already exists, skipping`);
             continue;
           }
 
@@ -115,7 +118,22 @@ export async function POST(request: NextRequest) {
 
             totalEmailsFetched++;
 
-          // AI Processing
+            // Check if email is from the user (sent by them or by AUGMTD on their behalf)
+            // Store for context but don't create inbox item
+            const userEmail = connection.metadata?.email || connection.provider_account_id;
+            const isFromUser = storedEmail.from_address.toLowerCase() === userEmail?.toLowerCase();
+
+            console.log(`    User email: ${userEmail}`);
+            console.log(`    Is from user: ${isFromUser}`);
+
+            if (isFromUser) {
+              console.log(`    ✓ Stored for context but skipping inbox item (sent email)\n`);
+              continue; // Skip to next email (already stored for context)
+            }
+
+            console.log(`    → Creating inbox item (incoming email)\n`);
+
+          // AI Processing - Process INCOMING emails only
           const processed = await processEmail({
             id: storedEmail.id,
             user_id: storedEmail.user_id,
