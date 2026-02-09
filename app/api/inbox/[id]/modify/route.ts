@@ -201,8 +201,8 @@ export async function POST(
           }
         }
 
-        // Get Outlook message ID (thread_id or from metadata)
-        const outlookMessageId = originalEmail.thread_id || originalEmail.metadata?.outlook_id;
+        // Get Outlook message ID from metadata (NOT thread_id which is conversationId)
+        const outlookMessageId = originalEmail.metadata?.outlook_id;
 
         if (!outlookMessageId) {
           return NextResponse.json(
