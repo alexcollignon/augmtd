@@ -149,8 +149,57 @@ export async function POST(
           Buffer.from(connection.metadata.tokens, 'base64').toString()
         );
 
-        // Outlook tokens use 'accessToken' (camelCase)
-        const accessToken = tokens.accessToken;
+        let accessToken = tokens.accessToken;
+
+        // Check if token is expired and refresh if needed
+        const now = new Date();
+        const expiresOn = new Date(tokens.expiresOn);
+
+        if (expiresOn <= now) {
+          // Token expired, try to refresh using MSAL
+          const { getMSALClient } = await import('@/lib/microsoft/oauth');
+
+          try {
+            const msalClient = getMSALClient();
+            const tokenResponse = await msalClient.acquireTokenSilent({
+              account: tokens.account,
+              scopes: [
+                'https://graph.microsoft.com/Mail.Read',
+                'https://graph.microsoft.com/Mail.Send',
+                'https://graph.microsoft.com/User.Read',
+                'offline_access',
+              ],
+            });
+
+            accessToken = tokenResponse.accessToken;
+
+            // Update stored tokens
+            const updatedTokens = Buffer.from(JSON.stringify({
+              accessToken: tokenResponse.accessToken,
+              expiresOn: tokenResponse.expiresOn,
+              account: tokenResponse.account,
+            })).toString('base64');
+
+            await supabase
+              .from('connections')
+              .update({
+                metadata: {
+                  ...connection.metadata,
+                  tokens: updatedTokens,
+                },
+              })
+              .eq('id', connection.id);
+          } catch (refreshError) {
+            console.error('Token refresh failed:', refreshError);
+            return NextResponse.json(
+              {
+                error: 'Outlook token expired and refresh failed',
+                details: 'Please reconnect your Outlook account in settings',
+              },
+              { status: 401 }
+            );
+          }
+        }
 
         const response = await fetch(
           `https://graph.microsoft.com/v1.0/me/messages/${originalEmail.thread_id}/reply`,
