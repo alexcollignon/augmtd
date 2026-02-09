@@ -12,9 +12,10 @@ interface InboxActionsProps {
     body: string;
     tone?: string;
   };
+  onClose?: () => void;
 }
 
-export default function InboxActions({ itemId, status, draft }: InboxActionsProps) {
+export default function InboxActions({ itemId, status, draft, onClose }: InboxActionsProps) {
   const router = useRouter();
   const [isApproving, setIsApproving] = useState(false);
   const [isRejecting, setIsRejecting] = useState(false);
@@ -43,10 +44,12 @@ export default function InboxActions({ itemId, status, draft }: InboxActionsProp
       }
 
       setSuccess(data.message);
+
+      // Close drawer and refresh after brief success message display
       setTimeout(() => {
-        router.push('/inbox');
+        if (onClose) onClose();
         router.refresh();
-      }, 1500);
+      }, 800);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to approve item');
       setIsApproving(false);
@@ -73,10 +76,12 @@ export default function InboxActions({ itemId, status, draft }: InboxActionsProp
       }
 
       setSuccess('Item dismissed');
+
+      // Close drawer and refresh after brief success message display
       setTimeout(() => {
-        router.push('/inbox');
+        if (onClose) onClose();
         router.refresh();
-      }, 1000);
+      }, 600);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to reject item');
       setIsRejecting(false);
@@ -115,10 +120,12 @@ export default function InboxActions({ itemId, status, draft }: InboxActionsProp
       }
 
       setSuccess(data.message);
+
+      // Close drawer and refresh after brief success message display
       setTimeout(() => {
-        router.push('/inbox');
+        if (onClose) onClose();
         router.refresh();
-      }, 1500);
+      }, 800);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to send modified email');
       setIsSending(false);
@@ -144,13 +151,20 @@ export default function InboxActions({ itemId, status, draft }: InboxActionsProp
       )}
 
       {success && (
-        <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg text-green-700 text-sm">
-          {success}
+        <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
+          <div className="flex items-center space-x-2">
+            <CheckCircleIcon className="w-5 h-5 text-green-600" />
+            <p className="text-sm font-medium text-green-700">{success}</p>
+          </div>
+          <p className="text-xs text-green-600 mt-1">Closing...</p>
         </div>
       )}
 
-      {/* Edit Mode */}
-      {isEditing && draft ? (
+      {/* Hide actions when showing success */}
+      {!success && (
+        <>
+          {/* Edit Mode */}
+          {isEditing && draft ? (
         <div className="space-y-4">
           <div>
             <label htmlFor="subject" className="block text-sm font-medium text-gray-700 mb-2">
@@ -248,6 +262,8 @@ export default function InboxActions({ itemId, status, draft }: InboxActionsProp
             <p className="text-xs text-gray-500 mt-3">
               Approving will mark this item as complete (no email to send)
             </p>
+          )}
+        </>
           )}
         </>
       )}

@@ -401,6 +401,7 @@ export default function InboxDrawer({ item, isOpen, onClose }: InboxDrawerProps)
                         itemId={item.id}
                         status={item.status}
                         draft={sourceData?.draft}
+                        onClose={onClose}
                       />
                     </div>
                   </div>
