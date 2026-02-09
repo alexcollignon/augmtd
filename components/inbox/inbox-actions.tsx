@@ -213,31 +213,31 @@ export default function InboxActions({ itemId, status, draft, onClose }: InboxAc
       ) : (
         /* Normal Mode */
         <>
-          <div className="flex items-center justify-between">
-            <div className="flex space-x-3">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex gap-2 flex-1">
               <button
                 onClick={handleApprove}
                 disabled={isApproving || isRejecting}
-                className={`flex items-center space-x-2 px-6 py-3 bg-primary-600 text-white rounded-lg font-medium transition-colors ${
+                className={`flex items-center justify-center space-x-2 px-5 py-2.5 bg-primary-600 text-white text-sm rounded-lg font-medium transition-all ${
                   isApproving || isRejecting
                     ? 'opacity-50 cursor-not-allowed'
                     : 'hover:bg-primary-700'
                 }`}
               >
-                <CheckCircleIcon className="w-5 h-5" />
-                <span>{isApproving ? 'Approving...' : 'Approve & Execute'}</span>
+                <CheckCircleIcon className="w-4 h-4" />
+                <span>{isApproving ? 'Sending...' : 'Send'}</span>
               </button>
               {draft && (
                 <button
                   onClick={handleEditToggle}
                   disabled={isApproving || isRejecting}
-                  className={`flex items-center space-x-2 px-6 py-3 border border-gray-300 text-gray-700 rounded-lg font-medium transition-colors ${
+                  className={`flex items-center justify-center space-x-2 px-5 py-2.5 text-gray-700 text-sm rounded-lg font-medium transition-all ${
                     isApproving || isRejecting
                       ? 'opacity-50 cursor-not-allowed'
-                      : 'hover:bg-gray-50'
+                      : 'hover:bg-gray-100'
                   }`}
                 >
-                  <PencilIcon className="w-5 h-5" />
+                  <PencilIcon className="w-4 h-4" />
                   <span>Make a change</span>
                 </button>
               )}
@@ -245,26 +245,16 @@ export default function InboxActions({ itemId, status, draft, onClose }: InboxAc
             <button
               onClick={handleReject}
               disabled={isApproving || isRejecting}
-              className={`flex items-center space-x-2 px-6 py-3 border border-red-300 text-red-700 rounded-lg font-medium transition-colors ${
+              className={`flex items-center justify-center space-x-1.5 px-4 py-2.5 text-gray-500 text-sm rounded-lg font-medium transition-all ${
                 isApproving || isRejecting
                   ? 'opacity-50 cursor-not-allowed'
-                  : 'hover:bg-red-50'
+                  : 'hover:bg-gray-100 hover:text-red-600'
               }`}
             >
-              <XMarkIcon className="w-5 h-5" />
+              <XMarkIcon className="w-4 h-4" />
               <span>{isRejecting ? 'Dismissing...' : 'Dismiss'}</span>
             </button>
           </div>
-          {draft && (
-            <p className="text-xs text-gray-500 mt-3">
-              Approving will send the draft reply and mark action items as complete
-            </p>
-          )}
-          {!draft && (
-            <p className="text-xs text-gray-500 mt-3">
-              Approving will mark this item as complete (no email to send)
-            </p>
-          )}
         </>
           )}
         </>

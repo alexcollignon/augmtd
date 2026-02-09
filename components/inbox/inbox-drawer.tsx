@@ -157,16 +157,6 @@ export default function InboxDrawer({ item, isOpen, onClose }: InboxDrawerProps)
                       </div>
                     </div>
 
-                    {/* Actions - Primary Decision Surface */}
-                    <div className="px-6 pt-6 pb-4 border-b border-gray-200/50">
-                      <InboxActions
-                        itemId={item.id}
-                        status={item.status}
-                        draft={sourceData?.draft}
-                        onClose={onClose}
-                      />
-                    </div>
-
                     {/* Content - Prepared Work */}
                     <div className="flex-1 px-6 py-6 space-y-5">
                       {/* Key Points */}
@@ -186,49 +176,19 @@ export default function InboxDrawer({ item, isOpen, onClose }: InboxDrawerProps)
 
                       {/* Draft Reply */}
                       {sourceData?.draft && (
-                        <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-lg p-5 border border-blue-200/50">
-                          <div className="flex items-center justify-between mb-4">
-                            <div className="flex items-center space-x-2.5">
-                              <div className="p-2 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg shadow-sm">
-                                <EnvelopeIcon className="w-4 h-4 text-white" />
+                        <div className="space-y-5">
+                          <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-lg p-5 border border-blue-200/50">
+                            <div className="flex items-center justify-between mb-4">
+                              <div className="flex items-center space-x-2.5">
+                                <div className="p-2 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg shadow-sm">
+                                  <EnvelopeIcon className="w-4 h-4 text-white" />
+                                </div>
+                                <h3 className="text-sm font-semibold text-gray-900 uppercase tracking-wide">Draft Reply</h3>
                               </div>
-                              <h3 className="text-sm font-semibold text-gray-900 uppercase tracking-wide">Draft Reply</h3>
+                              <span className="text-xs font-medium text-gray-600 px-2.5 py-1 bg-white rounded-full border border-blue-200">
+                                {sourceData.draft.tone || 'professional'}
+                              </span>
                             </div>
-                            <span className="text-xs font-medium text-gray-600 px-2.5 py-1 bg-white rounded-full border border-blue-200">
-                              {sourceData.draft.tone || 'professional'}
-                            </span>
-                          </div>
-
-                          {/* Collapsed view - Show summary and preview */}
-                          {!showFullDraft && (
-                            <div className="space-y-3">
-                              {/* Subject preview */}
-                              <div className="p-3 bg-white/70 rounded-lg">
-                                <p className="text-xs font-medium text-gray-500 mb-1">Subject</p>
-                                <p className="text-sm text-gray-900 font-medium">{sourceData.draft.subject}</p>
-                              </div>
-
-                              {/* Body preview - first 2-3 lines */}
-                              <div className="p-3 bg-white/70 rounded-lg">
-                                <p className="text-xs font-medium text-gray-500 mb-2">Preview</p>
-                                <p className="text-sm text-gray-900 leading-relaxed line-clamp-3">
-                                  {sourceData.draft.body}
-                                </p>
-                              </div>
-
-                              {/* Expand button */}
-                              <button
-                                onClick={() => setShowFullDraft(true)}
-                                className="w-full text-xs font-medium text-blue-700 hover:text-blue-800 py-2 flex items-center justify-center space-x-1 hover:bg-blue-100/50 rounded-lg transition-colors"
-                              >
-                                <span>Show full draft</span>
-                                <ChevronDownIcon className="w-3 h-3" />
-                              </button>
-                            </div>
-                          )}
-
-                          {/* Expanded view - Show full email */}
-                          {showFullDraft && (
                             <div className="space-y-4">
                               <div className="p-4 bg-white rounded-lg border border-blue-100">
                                 <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">Subject</p>
@@ -240,17 +200,16 @@ export default function InboxDrawer({ item, isOpen, onClose }: InboxDrawerProps)
                                   {sourceData.draft.body}
                                 </pre>
                               </div>
-
-                              {/* Collapse button */}
-                              <button
-                                onClick={() => setShowFullDraft(false)}
-                                className="w-full text-xs font-medium text-blue-700 hover:text-blue-800 py-2 flex items-center justify-center space-x-1 hover:bg-blue-100/50 rounded-lg transition-colors"
-                              >
-                                <span>Show less</span>
-                                <ChevronUpIcon className="w-3 h-3" />
-                              </button>
                             </div>
-                          )}
+                          </div>
+
+                          {/* Actions - Below Draft */}
+                          <InboxActions
+                            itemId={item.id}
+                            status={item.status}
+                            draft={sourceData?.draft}
+                            onClose={onClose}
+                          />
                         </div>
                       )}
 
@@ -496,6 +455,18 @@ export default function InboxDrawer({ item, isOpen, onClose }: InboxDrawerProps)
                           </div>
                         )}
                       </div>
+
+                      {/* Actions - For items without drafts */}
+                      {!sourceData?.draft && (
+                        <div className="border-t border-gray-200 pt-5">
+                          <InboxActions
+                            itemId={item.id}
+                            status={item.status}
+                            draft={sourceData?.draft}
+                            onClose={onClose}
+                          />
+                        </div>
+                      )}
                     </div>
                   </div>
                 </Dialog.Panel>
