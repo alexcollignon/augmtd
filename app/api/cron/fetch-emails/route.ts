@@ -124,7 +124,17 @@ export async function GET(request: NextRequest) {
 
             totalEmailsFetched++;
 
-            // AI Processing - Process ALL emails (no pre-filter)
+            // Check if email is from the user (sent by them or by AUGMTD on their behalf)
+            // If so, store for context but don't create inbox item
+            const userEmail = connection.metadata?.email || connection.provider_account_id;
+            const isFromUser = storedEmail.from_address.toLowerCase() === userEmail?.toLowerCase();
+
+            if (isFromUser) {
+              console.log(`Skipping inbox item for sent email: ${parsed.subject}`);
+              continue; // Skip to next email (already stored for context)
+            }
+
+            // AI Processing - Process INCOMING emails only
             const processed = await processEmail({
               id: storedEmail.id,
               user_id: storedEmail.user_id,
@@ -136,7 +146,7 @@ export async function GET(request: NextRequest) {
               received_at: storedEmail.received_at
             });
 
-            // Create inbox item with work-state model
+            // Create inbox item with work-state model (for incoming emails only)
             const { error: inboxError } = await supabase
               .from('inbox_items')
               .insert({
