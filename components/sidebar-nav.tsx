@@ -20,7 +20,7 @@ export default function SidebarNav({ userEmail }: SidebarNavProps) {
 
   const mainNavigation = [
     { name: 'Prepared Work', href: '/inbox', icon: InboxIcon },
-    { name: 'Activity', href: '/activity', icon: ClockIcon },
+    { name: 'Activity Log', href: '/activity', icon: ClockIcon },
   ];
 
   return (

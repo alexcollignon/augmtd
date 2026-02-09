@@ -80,7 +80,7 @@ export default function ActivityItem({ item }: ActivityItemProps) {
           {/* Metadata row */}
           <div className="flex items-center space-x-3 text-xs text-gray-500">
             {/* Timestamp */}
-            <span>{formatTimestamp(item.updated_at || item.created_at)}</span>
+            <span>{formatTimestamp(item.reviewed_at || item.created_at)}</span>
 
             <span>•</span>
 

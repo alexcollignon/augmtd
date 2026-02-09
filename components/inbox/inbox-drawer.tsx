@@ -33,9 +33,7 @@ export default function InboxDrawer({ item, isOpen, onClose }: InboxDrawerProps)
   const [showThreadHistory, setShowThreadHistory] = useState(false);
   const [showFullDraft, setShowFullDraft] = useState(false);
 
-  if (!item) return null;
-
-  const sourceData = item.source_data;
+  const sourceData = item?.source_data;
 
   // Work state display
   const getWorkStateDisplay = (workState: string) => {
@@ -67,7 +65,7 @@ export default function InboxDrawer({ item, isOpen, onClose }: InboxDrawerProps)
     }
   };
 
-  const workStateDisplay = getWorkStateDisplay(item.work_state || 'work_prepared');
+  const workStateDisplay = item ? getWorkStateDisplay(item.work_state || 'work_prepared') : getWorkStateDisplay('work_prepared');
   const WorkStateIcon = workStateDisplay.icon;
 
   const urgencyColors = {
@@ -107,6 +105,7 @@ export default function InboxDrawer({ item, isOpen, onClose }: InboxDrawerProps)
                 leaveTo="translate-x-full"
               >
                 <Dialog.Panel className="pointer-events-auto w-screen max-w-2xl">
+                  {item && (
                   <div className="flex h-full flex-col overflow-y-scroll bg-gradient-to-br from-white to-gray-50">
                     {/* Header - WORK-CENTRIC */}
                     <div className="bg-gradient-to-br from-white to-gray-50 px-6 py-6 border-b border-gray-200/50 backdrop-blur-sm sticky top-0 z-10">
@@ -469,6 +468,7 @@ export default function InboxDrawer({ item, isOpen, onClose }: InboxDrawerProps)
                       )}
                     </div>
                   </div>
+                  )}
                 </Dialog.Panel>
               </Transition.Child>
             </div>
