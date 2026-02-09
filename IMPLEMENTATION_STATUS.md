@@ -1,7 +1,7 @@
 # AUGMTD Implementation Status
-**Version:** 2.0
-**Last Updated:** 2026-02-06
-**Current Phase:** Email MVP (80% Complete)
+**Version:** 3.0
+**Last Updated:** 2026-02-09
+**Current Phase:** MVP Complete - Ready for Beta Testing
 
 ---
 
@@ -13,7 +13,10 @@
 | OAuth & Integration | ✅ Complete | 100% |
 | Email Processing | ✅ Complete | 100% |
 | AI Work Preparation | ✅ Complete | 100% |
-| Inbox UI | ⚠️ Planned | 0% |
+| Cognitive Cost Framework | ✅ Complete | 100% |
+| Inbox UI | ✅ Complete | 100% |
+| Action Execution | ✅ Complete | 100% |
+| Auth & Session | ✅ Complete | 100% |
 | User Context Engine | ⚠️ Planned | 0% |
 | Learning Loop | ⚠️ Planned | 0% |
 
@@ -48,10 +51,12 @@
 - [x] Email storage in `emails` table
 
 **AI Processing:**
-- [x] Two-tier AI system:
-  - [x] Pre-filter (GPT-4o-mini): Determines if email is actionable
+- [x] Single-tier AI system (cost-optimized):
   - [x] Full processing (GPT-4o-mini): Comprehensive work preparation
 - [x] Cost optimization: ~$0.0003 per email total
+- [x] Signal-based classification (not keyword matching):
+  - [x] executionTarget, canBePreparedViaEmail, hasOneObviousAction
+  - [x] requiresJudgment, needsExternalInput, isMechanicalConfirmation
 - [x] Comprehensive output:
   - [x] Summary & key points
   - [x] Action items with deadlines & time estimates
@@ -63,74 +68,169 @@
   - [x] Priority scoring (0-100)
   - [x] Confidence scoring (0-100)
 
+**Cognitive Cost Framework:**
+- [x] 6 work states (work_prepared, action_required, decision_required, waiting, noted, noise)
+- [x] 3 cognitive levels (Action, Awareness, Noise)
+- [x] ACTION_REQUIRED subtypes:
+  - [x] Mechanical (batchable): Email confirmations, password resets
+  - [x] Operational (individual): Payments, compliance, service issues
+- [x] Signal-based work state detection with explicit rules
+- [x] Honest framing: "If consequences exist, NOTED is invalid"
+
+**Batching System:**
+- [x] Intelligent batching to reduce visual clutter
+- [x] Groups mechanical actions (confirmations, verifications)
+- [x] Groups low-stakes awareness items (NOTED)
+- [x] Shows operational actions individually
+- [x] Batch cards with expandable item lists
+
+**Inbox UI (Complete):**
+- [x] Main inbox page (`/inbox`) - Server component with auth
+- [x] Client component (`inbox-page-client.tsx`) - Interactive UI
+- [x] Work state sections (4 levels):
+  - [x] WORK_PREPARED (green) - Draft replies ready
+  - [x] ACTION_REQUIRED (red) - Execution tasks
+  - [x] DECISION_REQUIRED (orange) - Choices under uncertainty
+  - [x] WAITING (gray, collapsible) - Blocked items
+  - [x] NOTED (gray, collapsible) - Awareness only
+- [x] Inbox drawer (slide-over detail view):
+  - [x] Work-centric header (not email-centric)
+  - [x] Shows: work title, what prepared, why matters
+  - [x] Displays: draft, next steps, calendar events, extracted data
+  - [x] Expandable original email section
+- [x] Real-time polling (10 second intervals)
+- [x] Empty states (no connection, all caught up)
+- [x] Responsive design with consistent rounded-lg corners
+
+**Action Execution (Complete):**
+- [x] `/api/inbox/[id]/approve` - Send email as-is
+  - [x] Gmail support via Gmail API
+  - [x] Outlook support via Microsoft Graph API
+  - [x] Proper email threading (replies in same thread)
+  - [x] RFC 2822 email formatting
+- [x] `/api/inbox/[id]/modify` - Send modified email
+  - [x] Edit subject and body inline
+  - [x] Multi-provider support (Gmail + Outlook)
+  - [x] Track modifications for learning
+- [x] `/api/inbox/[id]/reject` - Dismiss items
+- [x] InboxActions component:
+  - [x] Approve, Edit, Dismiss buttons
+  - [x] Toggle edit mode with inline editor
+  - [x] Loading states during operations
+  - [x] Success/error notifications
+  - [x] Auto-redirect after actions
+- [x] Complete user flow: Review → Approve/Edit/Dismiss → Execute
+
+**Auth & Session Persistence:**
+- [x] Middleware route protection (server-side)
+- [x] No content flashing on protected routes
+- [x] Redirects:
+  - [x] Unauthenticated users → /login
+  - [x] Authenticated users from /login → /inbox
+  - [x] Root (/) → /login (middleware redirects authed users to /inbox)
+- [x] 7-day persistent sessions
+- [x] OAuth error handling with user feedback
+- [x] Server-side auth checks (no client-side race conditions)
+
+**UI/UX Polish:**
+- [x] Consistent design language (rounded-lg throughout)
+- [x] Angular logo → angular UI components
+- [x] Minimal shadows (shadow-xl, not shadow-2xl)
+- [x] Subtle borders (border-gray-100)
+- [x] Clean input focus states (gray-50 → white)
+- [x] Professional auth pages with logo visibility
+- [x] AUGMTD logo as favicon
+- [x] Identical login/signup page structure
+- [x] Gradient backgrounds with branding colors
+
 **Database:**
 - [x] `organizations` table
 - [x] `profiles` table (extends Supabase auth)
-- [x] `connections` table (OAuth tokens)
-- [x] `emails` table (source data)
-- [x] `inbox_items` table (AI suggestions)
+- [x] `connections` table (OAuth tokens, encrypted)
+- [x] `emails` table (source data with thread_id)
+- [x] `inbox_items` table (work states, prepared work, source_data JSONB)
 - [x] `user_context_profiles` table (schema only)
 - [x] `context_learning_events` table (schema only)
 - [x] `relationship_graph` table (schema only)
 - [x] `communication_embeddings` table (schema only)
 - [x] `audit_logs` table (schema only)
 
-**Files Created:**
+**Files Created/Updated:**
 ```
-app/api/auth/gmail/
-├── connect/route.ts       # OAuth initiation
-├── callback/route.ts      # OAuth callback
-└── disconnect/route.ts    # Disconnect
+app/
+├── api/
+│   ├── auth/
+│   │   ├── gmail/
+│   │   │   ├── connect/route.ts       ✅ OAuth initiation
+│   │   │   ├── callback/route.ts      ✅ OAuth callback
+│   │   │   └── disconnect/route.ts    ✅ Disconnect
+│   │   └── outlook/
+│   │       ├── connect/route.ts       ✅ OAuth initiation
+│   │       ├── callback/route.ts      ✅ OAuth callback
+│   │       └── disconnect/route.ts    ✅ Disconnect
+│   ├── cron/
+│   │   └── fetch-emails/route.ts      ✅ Main email sync logic
+│   └── inbox/
+│       └── [id]/
+│           ├── approve/route.ts       ✅ Send email as-is (Gmail + Outlook)
+│           ├── modify/route.ts        ✅ Send modified email
+│           └── reject/route.ts        ✅ Dismiss item
+├── inbox/
+│   ├── page.tsx                       ✅ Server component (auth + data)
+│   └── inbox-page-client.tsx          ✅ Client component (UI + polling)
+├── login/page.tsx                     ✅ Auth page (with Suspense)
+├── signup/page.tsx                    ✅ Auth page
+├── page.tsx                           ✅ Root redirect to /login
+└── icon.png                           ✅ Favicon (AUGMTD logo)
 
-app/api/cron/
-└── fetch-emails/route.ts  # Main email sync logic
+components/
+├── inbox/
+│   ├── inbox-drawer.tsx               ✅ Detail view slide-over
+│   ├── inbox-actions.tsx              ✅ Approve/Edit/Dismiss with edit mode
+│   ├── simple-inbox-card.tsx          ✅ Individual item card
+│   └── batch-card.tsx                 ✅ Batched items card
+├── sidebar-nav.tsx                    ✅ Navigation
+└── onboarding-modal.tsx               ✅ Email connection prompt
 
-lib/google/
-├── oauth.ts               # OAuth helpers
-└── gmail.ts               # Gmail API wrapper
+lib/
+├── ai/
+│   └── email-processor.ts             ✅ Signal-based AI classification
+├── google/
+│   ├── oauth.ts                       ✅ OAuth helpers
+│   └── gmail.ts                       ✅ Gmail API wrapper
+├── microsoft/
+│   ├── oauth.ts                       ✅ OAuth helpers
+│   └── outlook.ts                     ✅ Outlook API wrapper
+├── utils/
+│   └── batch-inbox-items.ts           ✅ Batching logic
+└── supabase/
+    ├── client.ts                      ✅ Client-side Supabase
+    ├── server.ts                      ✅ Server-side Supabase
+    └── middleware.ts                  ✅ Session management
 
-lib/ai/
-└── email-processor.ts     # AI processing logic
-
-lib/supabase/
-├── client.ts              # Client-side Supabase
-└── server.ts              # Server-side Supabase
+middleware.ts                          ✅ Route protection & redirects
+README.md                              ✅ Comprehensive documentation
 ```
 
 ---
 
 ## What's Next (Priority Order)
 
-### Phase 1B: Inbox UI (Week 1 - High Priority)
+### ✅ Phase 1B: Inbox UI + Action Execution (COMPLETE)
 
-**Goal:** Users can review and approve AI-prepared work
+**Status:** COMPLETE - Full MVP ready for beta testing
 
-**Tasks:**
-- [ ] Create `/app/inbox/page.tsx` - Main inbox list
-- [ ] Create `/app/inbox/[id]/page.tsx` - Detail view
-- [ ] Component: `InboxList` - Display pending items
-- [ ] Component: `InboxItem` - Individual item card
-- [ ] Component: `InboxDetail` - Full item view with all prepared materials
-- [ ] Actions:
-  - [ ] Approve (execute as-is)
-  - [ ] Edit draft (modify before execution)
-  - [ ] Reject (dismiss)
-- [ ] Execute action: Send email via Gmail API
-- [ ] Toast notifications for success/error
-- [ ] Loading states
+**Completed:**
+- ✅ Main inbox page with server-side auth
+- ✅ Client component with real-time polling
+- ✅ Inbox drawer with all prepared materials
+- ✅ Approve/Edit/Dismiss actions
+- ✅ Email sending via Gmail + Outlook APIs
+- ✅ Inline draft editing
+- ✅ Success/error notifications
+- ✅ Loading states and auto-redirects
 
-**API Routes Needed:**
-- [ ] `/api/inbox/[id]/approve` - Approve and execute
-- [ ] `/api/inbox/[id]/reject` - Reject item
-- [ ] `/api/inbox/[id]/modify` - Update with user changes
-- [ ] `/api/gmail/send` - Send email via Gmail API
-
-**Success Criteria:**
-- User can see pending inbox items
-- User can review all prepared materials
-- User can approve/reject with one click
-- Email gets sent when approved
-- UI is responsive and fast
+**Next Steps:** Beta testing with real users to validate UX and gather feedback for User Context Engine
 
 ---
 
@@ -365,18 +465,25 @@ augmtd/
 ## Testing Status
 
 ### Manual Testing Done
-- ✅ OAuth flow works
-- ✅ Email fetching works
-- ✅ AI processing works
+- ✅ OAuth flow (Gmail + Outlook)
+- ✅ Email fetching and sync
+- ✅ AI processing with cognitive cost framework
 - ✅ Inbox items created correctly
-- ✅ Multi-user isolation (RLS) works
+- ✅ Multi-user isolation (RLS)
+- ✅ Server-side route protection
+- ✅ Session persistence (7-day cookies)
+- ✅ Inbox UI rendering
+- ✅ Batching system (mechanical + noted items)
+- ✅ Build compilation (no TypeScript errors)
 
 ### Testing Needed
-- [ ] End-to-end user flow
-- [ ] Load testing (multiple users)
-- [ ] Error scenarios
-- [ ] OAuth token refresh
-- [ ] Cron job reliability
+- [ ] End-to-end user flow (full approval → send)
+- [ ] Email sending (Gmail API + Outlook API)
+- [ ] Draft editing and modification
+- [ ] Error scenarios (failed sends, OAuth refresh)
+- [ ] Load testing (multiple users, high volumes)
+- [ ] Cron job reliability over time
+- [ ] Mobile responsiveness
 
 ---
 
@@ -395,10 +502,12 @@ augmtd/
 - ⚠️ **TODO**: Implement pagination for inbox
 
 ### UX
-- ⚠️ **TODO**: Build all UI pages
-- ⚠️ **TODO**: Add loading states
-- ⚠️ **TODO**: Add error states
-- ⚠️ **TODO**: Mobile responsive design
+- ✅ **DONE**: All UI pages built
+- ✅ **DONE**: Loading states added
+- ✅ **DONE**: Error states added
+- ⚠️ **TODO**: Test mobile responsive design on real devices
+- ⚠️ **TODO**: Add keyboard shortcuts (j/k navigation, x to dismiss, etc.)
+- ⚠️ **TODO**: Toast notifications library (replace inline alerts)
 
 ### Features
 - ⚠️ **TODO**: Context learning engine
@@ -424,21 +533,39 @@ augmtd/
 
 ---
 
-## Next Sprint (Week 1)
+## Next Sprint (This Week)
 
-**Focus:** Get first beta user testing the full flow
+**Focus:** Beta testing + refinement before User Context Engine
 
 **Priority Tasks:**
-1. Build inbox UI (list + detail views)
-2. Implement approve/reject actions
-3. Add email sending via Gmail API
-4. Basic settings page
-5. User onboarding
+1. **Beta Testing** (Critical):
+   - [ ] Test full approve flow (review → approve → send email)
+   - [ ] Test edit flow (review → edit → send modified email)
+   - [ ] Test with real Gmail and Outlook accounts
+   - [ ] Verify email threading works correctly
+   - [ ] Test with high-volume inboxes (100+ emails)
 
-**Goal:** End of week = 1 beta user using the app daily
+2. **Bug Fixes & Polish**:
+   - [ ] Fix any issues found in beta testing
+   - [ ] Add toast notifications library (cleaner UX)
+   - [ ] Test mobile responsiveness
+   - [ ] Optimize database queries (add indexes if needed)
+
+3. **User Feedback**:
+   - [ ] Document pain points and feature requests
+   - [ ] Identify patterns in user modifications (for Context Engine)
+   - [ ] Track approval/rejection rates
+
+**Success Criteria:**
+- 1-3 beta users can complete full workflow without errors
+- Email sending works reliably for both providers
+- No major bugs or UX blockers
+- Clear direction for User Context Engine priorities
+
+**After Beta Testing:** Begin Phase 2 (User Context Engine) to learn from user actions
 
 ---
 
-**Document Version:** 2.0
-**Last Updated:** 2026-02-06
-**Next Review:** After Inbox UI completion
+**Document Version:** 3.0
+**Last Updated:** 2026-02-09
+**Next Review:** After beta testing phase
