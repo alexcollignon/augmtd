@@ -94,7 +94,7 @@ export async function GET(request: NextRequest) {
               ? parseGmailMessage(message)
               : parseOutlookMessage(message);
 
-            // Check if email already exists
+            // Check if email already exists (check ALL emails, including sent ones for context)
             const { data: existingEmail } = await supabase
               .from('emails')
               .select('id')
@@ -125,12 +125,17 @@ export async function GET(request: NextRequest) {
             totalEmailsFetched++;
 
             // Check if email is from the user (sent by them or by AUGMTD on their behalf)
-            // If so, store for context but don't create inbox item
+            // Store for context but don't create inbox item
             const userEmail = connection.metadata?.email || connection.provider_account_id;
             const isFromUser = storedEmail.from_address.toLowerCase() === userEmail?.toLowerCase();
 
+            console.log(`📧 Email: "${parsed.subject}"`);
+            console.log(`   From: ${storedEmail.from_address}`);
+            console.log(`   User: ${userEmail}`);
+            console.log(`   Is from user: ${isFromUser}`);
+
             if (isFromUser) {
-              console.log(`Skipping inbox item for sent email: ${parsed.subject}`);
+              console.log(`✓ Stored for context but skipping inbox item (sent email)`);
               continue; // Skip to next email (already stored for context)
             }
 
