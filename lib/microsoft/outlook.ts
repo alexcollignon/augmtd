@@ -3,6 +3,7 @@ import { acquireTokenSilent } from './oauth';
 
 interface OutlookMessage {
   id: string;
+  conversationId: string;
   subject: string;
   bodyPreview: string;
   body: {
@@ -67,7 +68,7 @@ export async function fetchUnreadEmails(
     .api('/me/messages')
     .filter(`receivedDateTime ge ${dateString}`)
     .top(maxResults)
-    .select('id,subject,bodyPreview,body,from,receivedDateTime,internetMessageId')
+    .select('id,conversationId,subject,bodyPreview,body,from,receivedDateTime,internetMessageId')
     .orderby('receivedDateTime desc')
     .get();
 
@@ -89,11 +90,12 @@ export function parseOutlookMessage(message: OutlookMessage) {
     subject: message.subject || '(No subject)',
     body: bodyText || message.bodyPreview || '',
     received_at: new Date(message.receivedDateTime).toISOString(),
-    thread_id: message.id, // Outlook message ID for replies
+    thread_id: message.conversationId, // Outlook conversation ID for threading
     metadata: {
       provider: 'outlook',
       outlook_id: message.id,
       internet_message_id: message.internetMessageId,
+      conversation_id: message.conversationId,
     },
   };
 }
