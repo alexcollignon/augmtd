@@ -5,6 +5,7 @@ import Image from 'next/image';
 import { usePathname } from 'next/navigation';
 import {
   InboxIcon,
+  ClockIcon,
   Cog6ToothIcon,
   ArrowRightOnRectangleIcon,
   UserCircleIcon
@@ -19,6 +20,7 @@ export default function SidebarNav({ userEmail }: SidebarNavProps) {
 
   const mainNavigation = [
     { name: 'Prepared Work', href: '/inbox', icon: InboxIcon },
+    { name: 'Activity', href: '/activity', icon: ClockIcon },
   ];
 
   return (
