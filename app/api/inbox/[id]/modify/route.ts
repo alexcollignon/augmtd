@@ -201,8 +201,21 @@ export async function POST(
           }
         }
 
+        // Get Outlook message ID (thread_id or from metadata)
+        const outlookMessageId = originalEmail.thread_id || originalEmail.metadata?.outlook_id;
+
+        if (!outlookMessageId) {
+          return NextResponse.json(
+            {
+              error: 'Outlook message ID not found',
+              details: 'This email was fetched before the Outlook integration was updated. Please trigger a manual email sync to re-fetch this email.',
+            },
+            { status: 400 }
+          );
+        }
+
         const response = await fetch(
-          `https://graph.microsoft.com/v1.0/me/messages/${originalEmail.thread_id}/reply`,
+          `https://graph.microsoft.com/v1.0/me/messages/${outlookMessageId}/reply`,
           {
             method: 'POST',
             headers: {
