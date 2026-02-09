@@ -131,7 +131,88 @@ export async function POST(request: NextRequest) {
               continue; // Skip to next email (already stored for context)
             }
 
-            console.log(`    → Creating inbox item (incoming email)\n`);
+            // Check if inbox item already exists for this thread
+            const { data: existingInboxItem } = await adminSupabase
+              .from('inbox_items')
+              .select('id, status')
+              .eq('user_id', user.id)
+              .eq('source', 'email')
+              .eq('source_data->>thread_id', storedEmail.thread_id || storedEmail.message_id)
+              .eq('status', 'pending')
+              .single();
+
+            if (existingInboxItem) {
+              console.log(`    ♻️  Updating existing inbox item for thread\n`);
+
+              // Get all emails in this thread for context
+              const { data: threadEmails } = await adminSupabase
+                .from('emails')
+                .select('*')
+                .eq('user_id', user.id)
+                .eq('thread_id', storedEmail.thread_id || storedEmail.message_id)
+                .order('received_at', { ascending: true });
+
+              // AI Processing with full thread context
+              const processed = await processEmail({
+                id: storedEmail.id,
+                user_id: storedEmail.user_id,
+                message_id: storedEmail.message_id,
+                from_address: storedEmail.from_address,
+                from_name: storedEmail.from_name,
+                subject: storedEmail.subject,
+                body: storedEmail.body,
+                received_at: storedEmail.received_at,
+                thread_context: threadEmails || []
+              });
+
+              // Update existing inbox item
+              const { error: updateError } = await adminSupabase
+                .from('inbox_items')
+                .update({
+                  work_state: processed.workState,
+                  work_title: processed.workTitle,
+                  what_i_prepared: processed.whatIPrepared,
+                  why_matters: processed.whyMatters,
+                  source_data: {
+                    email_id: storedEmail.id,
+                    message_id: storedEmail.message_id,
+                    thread_id: storedEmail.thread_id || storedEmail.message_id,
+                    from: storedEmail.from_address,
+                    from_name: storedEmail.from_name,
+                    subject: storedEmail.subject,
+                    received_at: storedEmail.received_at,
+                    provider: connection.provider,
+                    thread_history: threadEmails?.map(e => ({
+                      from: e.from_address,
+                      subject: e.subject,
+                      received_at: e.received_at,
+                      snippet: e.body.substring(0, 150)
+                    })),
+                    summary: processed.summary,
+                    keyPoints: processed.keyPoints,
+                    urgency: processed.urgency,
+                    signals: processed.signals,
+                    ...processed.preparedOutput
+                  },
+                  ai_suggestion_type: processed.workState,
+                  ai_suggestion_content: processed.summary,
+                  ai_suggestion_reasoning: processed.reasoning,
+                  confidence_score: processed.confidence,
+                  priority: processed.priority,
+                  needs_review: processed.workState === 'work_prepared' || processed.workState === 'decision_required' || processed.workState === 'waiting',
+                  updated_at: new Date().toISOString()
+                })
+                .eq('id', existingInboxItem.id);
+
+              if (updateError) {
+                console.error('Error updating inbox item:', updateError);
+                errors.push(`Failed to update inbox item: ${updateError.message}`);
+              }
+
+              continue; // Skip to next email
+            }
+
+            console.log(`    → Creating new inbox item (new thread)\n`);
 
           // AI Processing - Process INCOMING emails only
           const processed = await processEmail({
@@ -164,6 +245,7 @@ export async function POST(request: NextRequest) {
                 // Email basics
                 email_id: storedEmail.id,
                 message_id: storedEmail.message_id,
+                thread_id: storedEmail.thread_id || storedEmail.message_id,
                 from: storedEmail.from_address,
                 from_name: storedEmail.from_name,
                 subject: storedEmail.subject,
