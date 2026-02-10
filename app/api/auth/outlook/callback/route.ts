@@ -88,6 +88,13 @@ export async function GET(request: NextRequest) {
       try {
         console.log(`Starting initial Outlook sync for user ${userId}...`);
 
+        // Set sync status to syncing so UI can show loading state
+        await supabase
+          .from('connections')
+          .update({ sync_status: 'syncing' })
+          .eq('user_id', userId)
+          .eq('provider', 'outlook');
+
         // Token refresh callback
         const onTokenRefresh = async (newTokens: { accessToken: string; refreshToken: string; expiresOn: string }) => {
           const newEncryptedTokens = Buffer.from(JSON.stringify({

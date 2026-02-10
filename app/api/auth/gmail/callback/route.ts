@@ -80,6 +80,13 @@ export async function GET(request: NextRequest) {
       try {
         console.log(`Starting initial Gmail sync for user ${userId}...`);
 
+        // Set sync status to syncing so UI can show loading state
+        await supabase
+          .from('connections')
+          .update({ sync_status: 'syncing' })
+          .eq('user_id', userId)
+          .eq('provider', 'gmail');
+
         const messages = await fetchUnreadEmails(encryptedTokens, 10, 7);
         console.log(`Fetched ${messages.length} Gmail emails for initial sync`);
 
