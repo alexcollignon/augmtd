@@ -155,29 +155,29 @@ export async function POST(
         const now = new Date();
         const expiresOn = new Date(tokens.expiresOn);
 
-        if (expiresOn <= now) {
-          // Token expired, try to refresh using MSAL
-          const { getMSALClient } = await import('@/lib/microsoft/oauth');
+        if (expiresOn <= now || !tokens.refreshToken) {
+          // Token expired or missing refresh token, need to refresh
+          if (!tokens.refreshToken) {
+            return NextResponse.json(
+              {
+                error: 'Outlook connection outdated',
+                details: 'Please reconnect your Outlook account in settings to enable email sending',
+              },
+              { status: 401 }
+            );
+          }
 
           try {
-            const msalClient = getMSALClient();
-            const tokenResponse = await msalClient.acquireTokenSilent({
-              account: tokens.account,
-              scopes: [
-                'https://graph.microsoft.com/Mail.Read',
-                'https://graph.microsoft.com/Mail.Send',
-                'https://graph.microsoft.com/User.Read',
-                'offline_access',
-              ],
-            });
+            const { refreshAccessToken } = await import('@/lib/microsoft/oauth');
+            const refreshedTokens = await refreshAccessToken(tokens.refreshToken);
 
-            accessToken = tokenResponse.accessToken;
+            accessToken = refreshedTokens.accessToken;
 
             // Update stored tokens
             const updatedTokens = Buffer.from(JSON.stringify({
-              accessToken: tokenResponse.accessToken,
-              expiresOn: tokenResponse.expiresOn,
-              account: tokenResponse.account,
+              accessToken: refreshedTokens.accessToken,
+              refreshToken: refreshedTokens.refreshToken,
+              expiresOn: refreshedTokens.expiresOn,
             })).toString('base64');
 
             await supabase
@@ -189,6 +189,8 @@ export async function POST(
                 },
               })
               .eq('id', connection.id);
+
+            console.log('✓ Refreshed Outlook token for email sending');
           } catch (refreshError) {
             console.error('Token refresh failed:', refreshError);
             return NextResponse.json(
