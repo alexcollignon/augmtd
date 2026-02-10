@@ -42,6 +42,19 @@ export function InboxPageClient({
   const [showWaiting, setShowWaiting] = useState(false);
   const [showHandled, setShowHandled] = useState(false);
 
+  // Check if we just connected and trigger initial sync
+  useEffect(() => {
+    const justConnected = searchParams?.get('success') === 'outlook_connected' ||
+                          searchParams?.get('success') === 'gmail_connected';
+
+    if (justConnected && connection) {
+      // Trigger initial sync automatically
+      fetch('/api/connections/sync', {
+        method: 'POST',
+      }).catch(err => console.error('Failed to trigger initial sync:', err));
+    }
+  }, [searchParams, connection]);
+
   // Poll for new items and check sync status
   useEffect(() => {
     const supabase = createClient();
