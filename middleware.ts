@@ -37,7 +37,7 @@ export async function middleware(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   // Protected routes - require authentication
-  const protectedRoutes = ['/inbox', '/settings'];
+  const protectedRoutes = ['/inbox', '/settings', '/activity'];
   const isProtectedRoute = protectedRoutes.some(route =>
     pathname.startsWith(route)
   );
@@ -46,16 +46,57 @@ export async function middleware(request: NextRequest) {
   const authRoutes = ['/login', '/signup'];
   const isAuthRoute = authRoutes.includes(pathname);
 
+  // Check if we have auth cookies but no valid user (stale/invalid session)
+  const hasAuthCookies = request.cookies.getAll().some(cookie =>
+    cookie.name.startsWith('sb-') || cookie.name.includes('auth')
+  );
+
   // Redirect unauthenticated users away from protected routes
   if (isProtectedRoute && !user) {
     const loginUrl = new URL('/login', request.url);
-    return NextResponse.redirect(loginUrl);
+    const response = NextResponse.redirect(loginUrl);
+
+    // Clear stale auth cookies if present
+    if (hasAuthCookies) {
+      request.cookies.getAll().forEach(cookie => {
+        if (cookie.name.startsWith('sb-') || cookie.name.includes('auth-token')) {
+          response.cookies.delete(cookie.name);
+        }
+      });
+    }
+
+    return response;
   }
 
   // Redirect authenticated users away from auth routes
   if (isAuthRoute && user) {
     const inboxUrl = new URL('/inbox', request.url);
     return NextResponse.redirect(inboxUrl);
+  }
+
+  // Clear stale cookies on auth pages if no valid user
+  if (isAuthRoute && !user && hasAuthCookies) {
+    const response = NextResponse.next({
+      request,
+    });
+
+    request.cookies.getAll().forEach(cookie => {
+      if (cookie.name.startsWith('sb-') || cookie.name.includes('auth-token')) {
+        response.cookies.delete(cookie.name);
+      }
+    });
+
+    // Copy over any valid cookies from supabaseResponse
+    supabaseResponse.cookies.getAll().forEach(cookie => {
+      response.cookies.set(cookie.name, cookie.value, {
+        ...cookie,
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+      });
+    });
+
+    return response;
   }
 
   // Redirect authenticated users from root to inbox
