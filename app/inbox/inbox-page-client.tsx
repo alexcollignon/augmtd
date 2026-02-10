@@ -42,17 +42,6 @@ export function InboxPageClient({
   const [showWaiting, setShowWaiting] = useState(false);
   const [showHandled, setShowHandled] = useState(false);
 
-  // Check if we just connected (from OAuth callback)
-  const justConnected = searchParams?.get('success') === 'outlook_connected' ||
-                        searchParams?.get('success') === 'gmail_connected';
-
-  // Check sync status on mount if just connected
-  useEffect(() => {
-    if (justConnected && connection) {
-      setIsSyncing(true);
-    }
-  }, [justConnected, connection]);
-
   // Poll for new items and check sync status
   useEffect(() => {
     const supabase = createClient();
