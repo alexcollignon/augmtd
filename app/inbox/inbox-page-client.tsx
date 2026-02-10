@@ -48,10 +48,17 @@ export function InboxPageClient({
                           searchParams?.get('success') === 'gmail_connected';
 
     if (justConnected && connection) {
+      // Show loading state immediately (optimistic UI)
+      setIsSyncing(true);
+
       // Trigger initial sync automatically
       fetch('/api/connections/sync', {
         method: 'POST',
-      }).catch(err => console.error('Failed to trigger initial sync:', err));
+      }).catch(err => {
+        console.error('Failed to trigger initial sync:', err);
+        // Stop showing loading if sync failed to start
+        setIsSyncing(false);
+      });
     }
   }, [searchParams, connection]);
 
