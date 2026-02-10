@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
@@ -38,6 +38,9 @@ export function InboxPageClient({
   const [isOnboardingOpen, setIsOnboardingOpen] = useState(!initialConnection);
   const [isSyncing, setIsSyncing] = useState(false);
 
+  // Track when we've optimistically started a sync
+  const optimisticSyncTriggered = useRef(false);
+
   // Collapsible states
   const [showWaiting, setShowWaiting] = useState(false);
   const [showHandled, setShowHandled] = useState(false);
@@ -50,6 +53,7 @@ export function InboxPageClient({
     if (justConnected && connection) {
       // Show loading state immediately (optimistic UI)
       setIsSyncing(true);
+      optimisticSyncTriggered.current = true;
 
       // Trigger initial sync automatically
       fetch('/api/connections/sync', {
@@ -58,6 +62,7 @@ export function InboxPageClient({
         console.error('Failed to trigger initial sync:', err);
         // Stop showing loading if sync failed to start
         setIsSyncing(false);
+        optimisticSyncTriggered.current = false;
       });
     }
   }, [searchParams, connection]);
@@ -90,7 +95,20 @@ export function InboxPageClient({
 
         if (conn) {
           const isCurrentlySyncing = conn.sync_status === 'syncing';
-          setIsSyncing(isCurrentlySyncing);
+          const syncCompleted = conn.sync_status === 'completed' || conn.sync_status === 'failed';
+
+          // If we optimistically triggered a sync, only update state when we see actual progress
+          if (optimisticSyncTriggered.current) {
+            // Sync has actually started or completed - clear optimistic flag
+            if (isCurrentlySyncing || syncCompleted) {
+              optimisticSyncTriggered.current = false;
+              setIsSyncing(isCurrentlySyncing);
+            }
+            // Otherwise, keep showing optimistic loading state (ignore 'pending')
+          } else {
+            // Normal polling - update state based on database
+            setIsSyncing(isCurrentlySyncing);
+          }
 
           // If was syncing and now completed, refresh to show new items
           if (isSyncing && !isCurrentlySyncing) {
