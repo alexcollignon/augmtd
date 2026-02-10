@@ -78,7 +78,28 @@ export async function GET(request: NextRequest) {
         if (connection.provider === 'gmail') {
           messages = await fetchGmailEmails(encryptedTokens, maxEmails, syncWindowDays);
         } else if (connection.provider === 'outlook') {
-          messages = await fetchOutlookEmails(encryptedTokens, maxEmails, syncWindowDays);
+          // Token refresh callback - updates database when tokens are refreshed
+          const onTokenRefresh = async (newTokens: { accessToken: string; refreshToken: string; expiresOn: string }) => {
+            const newEncryptedTokens = Buffer.from(JSON.stringify({
+              accessToken: newTokens.accessToken,
+              refreshToken: newTokens.refreshToken,
+              expiresOn: newTokens.expiresOn,
+            })).toString('base64');
+
+            await supabase
+              .from('connections')
+              .update({
+                metadata: {
+                  ...connection.metadata,
+                  tokens: newEncryptedTokens
+                }
+              })
+              .eq('id', connection.id);
+
+            console.log(`✓ Updated refreshed tokens for connection ${connection.id}`);
+          };
+
+          messages = await fetchOutlookEmails(encryptedTokens, maxEmails, syncWindowDays, onTokenRefresh);
         } else {
           console.warn(`Unknown provider: ${connection.provider}`);
           continue;

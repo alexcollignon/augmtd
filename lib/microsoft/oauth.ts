@@ -30,29 +30,87 @@ export function getAuthUrl(redirectUri: string, state: string) {
   });
 }
 
+/**
+ * Exchange authorization code for tokens using direct HTTP request
+ * This bypasses MSAL's cache and gives us access to the refresh token
+ */
 export async function getTokenFromCode(code: string, redirectUri: string) {
-  const msalClient = getMSALClient();
+  const tokenEndpoint = 'https://login.microsoftonline.com/common/oauth2/v2.0/token';
 
-  const tokenResponse = await msalClient.acquireTokenByCode({
+  const params = new URLSearchParams({
+    client_id: process.env.MICROSOFT_CLIENT_ID!,
+    client_secret: process.env.MICROSOFT_CLIENT_SECRET!,
     code,
-    scopes: OUTLOOK_SCOPES,
-    redirectUri,
+    redirect_uri: redirectUri,
+    grant_type: 'authorization_code',
+    scope: OUTLOOK_SCOPES.join(' '),
   });
 
-  return tokenResponse;
-}
+  const response = await fetch(tokenEndpoint, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: params.toString(),
+  });
 
-export async function acquireTokenSilent(account: any) {
-  const msalClient = getMSALClient();
-
-  try {
-    const tokenResponse = await msalClient.acquireTokenSilent({
-      account,
-      scopes: OUTLOOK_SCOPES,
-    });
-    return tokenResponse;
-  } catch (error) {
-    console.error('Silent token acquisition failed:', error);
-    throw error;
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`Token exchange failed: ${error}`);
   }
+
+  const data = await response.json();
+
+  // Calculate expiration timestamp
+  const expiresOn = new Date();
+  expiresOn.setSeconds(expiresOn.getSeconds() + data.expires_in);
+
+  return {
+    accessToken: data.access_token,
+    refreshToken: data.refresh_token,
+    expiresOn: expiresOn.toISOString(),
+    idToken: data.id_token,
+  };
 }
+
+/**
+ * Refresh access token using refresh token
+ * This works in serverless environments without MSAL cache
+ */
+export async function refreshAccessToken(refreshToken: string) {
+  const tokenEndpoint = 'https://login.microsoftonline.com/common/oauth2/v2.0/token';
+
+  const params = new URLSearchParams({
+    client_id: process.env.MICROSOFT_CLIENT_ID!,
+    client_secret: process.env.MICROSOFT_CLIENT_SECRET!,
+    refresh_token: refreshToken,
+    grant_type: 'refresh_token',
+    scope: OUTLOOK_SCOPES.join(' '),
+  });
+
+  const response = await fetch(tokenEndpoint, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: params.toString(),
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`Token refresh failed: ${error}`);
+  }
+
+  const data = await response.json();
+
+  // Calculate expiration timestamp
+  const expiresOn = new Date();
+  expiresOn.setSeconds(expiresOn.getSeconds() + data.expires_in);
+
+  return {
+    accessToken: data.access_token,
+    refreshToken: data.refresh_token, // Microsoft returns a new refresh token
+    expiresOn: expiresOn.toISOString(),
+  };
+}
+

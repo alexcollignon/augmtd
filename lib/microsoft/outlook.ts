@@ -1,5 +1,5 @@
 import { Client } from '@microsoft/microsoft-graph-client';
-import { acquireTokenSilent } from './oauth';
+import { refreshAccessToken } from './oauth';
 
 interface OutlookMessage {
   id: string;
@@ -20,15 +20,22 @@ interface OutlookMessage {
   internetMessageId: string;
 }
 
-export async function getGraphClient(encryptedTokens: string) {
+interface TokenRefreshCallback {
+  (newTokens: { accessToken: string; refreshToken: string; expiresOn: string }): Promise<void>;
+}
+
+export async function getGraphClient(
+  encryptedTokens: string,
+  onTokenRefresh?: TokenRefreshCallback
+) {
   // Decrypt tokens (simple base64 for now)
   const tokensString = Buffer.from(encryptedTokens, 'base64').toString();
   const tokens = JSON.parse(tokensString);
 
   let accessToken = tokens.accessToken;
 
-  // Try to refresh token if account info is available and token might be expired
-  if (tokens.account && tokens.expiresOn) {
+  // Try to refresh token if refresh token is available and access token might be expired
+  if (tokens.refreshToken && tokens.expiresOn) {
     const expiresOn = new Date(tokens.expiresOn);
     const now = new Date();
     const timeUntilExpiry = expiresOn.getTime() - now.getTime();
@@ -36,11 +43,23 @@ export async function getGraphClient(encryptedTokens: string) {
     // Refresh if token expires in less than 5 minutes
     if (timeUntilExpiry < 5 * 60 * 1000) {
       try {
-        const refreshedTokens = await acquireTokenSilent(tokens.account);
+        console.log('Refreshing Outlook access token (expires soon)');
+        const refreshedTokens = await refreshAccessToken(tokens.refreshToken);
         accessToken = refreshedTokens.accessToken;
+
+        // Notify caller of new tokens so they can update the database
+        if (onTokenRefresh) {
+          await onTokenRefresh({
+            accessToken: refreshedTokens.accessToken,
+            refreshToken: refreshedTokens.refreshToken,
+            expiresOn: refreshedTokens.expiresOn,
+          });
+        }
+
+        console.log('✓ Outlook token refreshed successfully');
       } catch (error) {
         console.error('Error refreshing Outlook token:', error);
-        // Fall back to existing access token
+        // Fall back to existing access token (might be expired, will fail API call)
       }
     }
   }
@@ -55,9 +74,10 @@ export async function getGraphClient(encryptedTokens: string) {
 export async function fetchUnreadEmails(
   encryptedTokens: string,
   maxResults: number = 10,
-  syncWindowDays: number = 7
+  syncWindowDays: number = 7,
+  onTokenRefresh?: TokenRefreshCallback
 ) {
-  const client = await getGraphClient(encryptedTokens);
+  const client = await getGraphClient(encryptedTokens, onTokenRefresh);
 
   // Calculate date filter (7 days ago)
   const dateFilter = new Date();

@@ -50,11 +50,11 @@ export async function GET(request: NextRequest) {
     );
 
     // Encrypt tokens (simple base64 for now, use proper encryption in production)
-    // MSAL manages refresh tokens internally via cache, we store access token and account info
+    // Store both access token and refresh token for manual token refresh in serverless
     const encryptedTokens = Buffer.from(JSON.stringify({
       accessToken: tokenResponse.accessToken,
+      refreshToken: tokenResponse.refreshToken,
       expiresOn: tokenResponse.expiresOn,
-      account: tokenResponse.account, // Store account for silent token acquisition
     })).toString('base64');
 
     const { error: insertError } = await supabase
