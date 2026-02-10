@@ -47,10 +47,19 @@ export function InboxPageClient({
 
   // Check if we just connected and trigger initial sync
   useEffect(() => {
-    const justConnected = searchParams?.get('success') === 'outlook_connected' ||
-                          searchParams?.get('success') === 'gmail_connected';
+    const successParam = searchParams?.get('success');
+    const justConnected = successParam === 'outlook_connected' || successParam === 'gmail_connected';
+
+    console.log('[Inbox] Connection check:', {
+      successParam,
+      justConnected,
+      hasConnection: !!connection,
+      provider: connection?.provider
+    });
 
     if (justConnected && connection) {
+      console.log('[Inbox] Triggering optimistic sync for', connection.provider);
+
       // Show loading state immediately (optimistic UI)
       setIsSyncing(true);
       optimisticSyncTriggered.current = true;
@@ -58,6 +67,8 @@ export function InboxPageClient({
       // Trigger initial sync automatically
       fetch('/api/connections/sync', {
         method: 'POST',
+      }).then(() => {
+        console.log('[Inbox] Sync API called successfully');
       }).catch(err => {
         console.error('Failed to trigger initial sync:', err);
         // Stop showing loading if sync failed to start
