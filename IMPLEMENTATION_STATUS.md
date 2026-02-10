@@ -1,7 +1,7 @@
 # AUGMTD Implementation Status
-**Version:** 3.0
-**Last Updated:** 2026-02-09
-**Current Phase:** MVP Complete - Ready for Beta Testing
+**Version:** 3.1
+**Last Updated:** 2026-02-10
+**Current Phase:** MVP Complete - Production-Ready
 
 ---
 
@@ -466,12 +466,18 @@ augmtd/
 
 ### Manual Testing Done
 - ✅ OAuth flow (Gmail + Outlook)
-- ✅ Email fetching and sync
+- ✅ Email fetching and sync (local + production)
 - ✅ AI processing with cognitive cost framework
 - ✅ Inbox items created correctly
 - ✅ Multi-user isolation (RLS)
 - ✅ Server-side route protection
 - ✅ Session persistence (7-day cookies)
+- ✅ Stale cookie cleanup (redirect loop fix)
+- ✅ Outlook token refresh in production (serverless)
+- ✅ Thread deduplication and grouping
+- ✅ Provider switching (Gmail ↔ Outlook)
+- ✅ Initial sync in production (client-triggered)
+- ✅ Optimistic sync loading states
 - ✅ Inbox UI rendering
 - ✅ Batching system (mechanical + noted items)
 - ✅ Build compilation (no TypeScript errors)
@@ -484,6 +490,87 @@ augmtd/
 - [ ] Load testing (multiple users, high volumes)
 - [ ] Cron job reliability over time
 - [ ] Mobile responsiveness
+
+---
+
+## Recent Production Fixes (Feb 10, 2026)
+
+### ✅ Outlook Token Refresh for Serverless
+**Problem:** MSAL's `acquireTokenSilent()` relies on cache that doesn't persist in serverless
+**Solution:**
+- Implemented manual token refresh using direct OAuth HTTP requests
+- Store refresh token explicitly in database
+- Token refresh callback updates database automatically
+- Works reliably in Vercel serverless environment
+
+**Files Changed:**
+- `lib/microsoft/oauth.ts` - Added `refreshAccessToken()` function
+- `lib/microsoft/outlook.ts` - Uses manual refresh with callback
+- `app/api/connections/sync/route.ts` - Passes refresh callback
+- `app/api/cron/fetch-emails/route.ts` - Passes refresh callback
+- `app/api/inbox/[id]/approve/route.ts` - Uses manual refresh
+- `app/api/inbox/[id]/modify/route.ts` - Uses manual refresh
+
+### ✅ Reliable Initial Sync in Production
+**Problem:** Background promises in OAuth callbacks get killed when function returns in serverless
+**Solution:**
+- OAuth callbacks now just save connection and redirect
+- Client (inbox page) detects new connection via `?success` parameter
+- Automatically triggers sync via proper API call
+- Sync runs with full execution guarantees (not killed mid-process)
+
+**Files Changed:**
+- `app/api/auth/gmail/callback/route.ts` - Removed background sync
+- `app/api/auth/outlook/callback/route.ts` - Removed background sync
+- `app/inbox/inbox-page-client.tsx` - Added client-side sync trigger
+
+### ✅ Stale Cookie Cleanup
+**Problem:** Users with invalid/expired session cookies stuck in redirect loop
+**Solution:**
+- Middleware detects stale auth cookies (cookies exist but no valid user)
+- Clears bad cookies before redirecting to login
+- Also clears on login/signup pages so users can log in cleanly
+
+**Files Changed:**
+- `middleware.ts` - Added cookie cleanup logic for invalid sessions
+
+### ✅ Thread Deduplication & Grouping
+**Problem:** Multiple emails from same thread created separate inbox items
+**Solution:**
+- Check for existing pending inbox item by `thread_id`
+- Update existing item with new email context instead of creating duplicate
+- Thread context includes all emails (chronologically sorted)
+- Logged thread IDs for debugging
+
+**Files Changed:**
+- `app/api/connections/sync/route.ts` - Added thread_id checking and logging
+- Works correctly in production with proper thread grouping
+
+### ✅ Optimistic Sync UI
+**Problem:**
+- Outlook: Loading state appeared after 2-10 second delay
+- Gmail: Loading state flashed for split second then disappeared
+- Cause: Polling overwrote optimistic state before sync started
+
+**Solution:**
+- Set `isSyncing = true` immediately when connection detected
+- Track optimistic state with `optimisticSyncTriggered` ref
+- Polling ignores 'pending' status during optimistic mode
+- Only updates when sync actually starts or completes
+- Shows smooth, continuous loading until completion
+
+**Files Changed:**
+- `app/inbox/inbox-page-client.tsx` - Optimistic UI with state protection
+
+### ✅ Provider Switching Fix
+**Problem:** When switching providers (Gmail → Outlook), sync didn't trigger
+**Solution:**
+- Added `useEffect` to sync `connection` state with `initialConnection` prop
+- Connection state now updates when server sends new provider data
+- Sync triggers correctly for switched/reconnected providers
+
+**Files Changed:**
+- `app/inbox/inbox-page-client.tsx` - Added connection state sync
 
 ---
 
@@ -513,7 +600,7 @@ augmtd/
 - ⚠️ **TODO**: Context learning engine
 - ⚠️ **TODO**: Vector similarity search
 - ⚠️ **TODO**: Relationship graph
-- ⚠️ **TODO**: Microsoft Outlook support
+- ✅ **DONE**: Microsoft Outlook support
 
 ---
 

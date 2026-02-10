@@ -279,19 +279,28 @@ The email processor (`lib/ai/email-processor.ts`) uses a sophisticated signal-ba
 - ✅ Coherent login/signup pages
 - ✅ AUGMTD logo as favicon
 
+### Production & Serverless Fixes (Feb 10, 2026)
+- ✅ **Outlook token refresh** - Manual OAuth refresh (no MSAL cache dependency)
+- ✅ **Serverless-compatible sync** - Client-triggered sync instead of background promises
+- ✅ **Stale cookie cleanup** - Middleware clears invalid auth cookies (fixes redirect loops)
+- ✅ **Thread deduplication** - Properly groups emails by thread_id, updates existing items
+- ✅ **Optimistic sync UI** - Instant loading state when connecting integrations
+- ✅ **Provider switching** - Fixes sync when switching between Gmail/Outlook
+- ✅ **Thread logging** - Debug visibility for thread grouping logic
+
 ## 🚧 Known Issues
 
 1. **Token encryption** - Currently using base64 (needs proper encryption)
-2. **Outlook token refresh** - Occasional `no_tokens_found` warnings (non-blocking)
-3. **Email batching** - Needs real-world testing with high volumes
+2. **Email batching** - Needs real-world testing with high volumes
 
 ## 🎯 What's Next
 
-1. **Email thread batching** - Group thread messages into single inbox item
-2. **Include sent emails** - Show user's sent emails in thread context
+1. ~~**Email thread batching** - Group thread messages into single inbox item~~ ✅ **DONE**
+2. ~~**Include sent emails** - Show user's sent emails in thread context~~ ✅ **DONE**
 3. **Thread message count** - Display message count in inbox cards
-4. **Automatic syncing** - Implement hourly cron job for email sync
+4. **Automatic syncing** - Implement hourly/daily cron job for email sync
 5. **User Context Engine** - Learn from modifications and approvals over time
+6. **Proper token encryption** - Replace base64 with real encryption (AES-256)
 
 ## 📝 Documentation
 
