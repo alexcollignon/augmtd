@@ -45,6 +45,11 @@ export function InboxPageClient({
   const [showWaiting, setShowWaiting] = useState(false);
   const [showHandled, setShowHandled] = useState(false);
 
+  // Sync connection state when initial prop changes (e.g., switching providers)
+  useEffect(() => {
+    setConnection(initialConnection);
+  }, [initialConnection]);
+
   // Check if we just connected and trigger initial sync
   useEffect(() => {
     const successParam = searchParams?.get('success');
