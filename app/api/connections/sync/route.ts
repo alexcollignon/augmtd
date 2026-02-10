@@ -168,17 +168,20 @@ export async function POST(request: NextRequest) {
             }
 
             // Check if inbox item already exists for this thread
+            const threadIdToCheck = storedEmail.thread_id || storedEmail.message_id;
+            console.log(`    Thread ID: ${threadIdToCheck}`);
+
             const { data: existingInboxItem } = await adminSupabase
               .from('inbox_items')
               .select('id, status')
               .eq('user_id', user.id)
               .eq('source', 'email')
-              .eq('source_data->>thread_id', storedEmail.thread_id || storedEmail.message_id)
+              .eq('source_data->>thread_id', threadIdToCheck)
               .eq('status', 'pending')
               .single();
 
             if (existingInboxItem) {
-              console.log(`    ♻️  Updating existing inbox item for thread\n`);
+              console.log(`    ♻️  Updating existing inbox item ${existingInboxItem.id} for thread\n`);
 
               // Get all emails in this thread for context
               const { data: threadEmails } = await adminSupabase
