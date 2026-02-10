@@ -9,7 +9,7 @@ export function getOAuth2Client() {
 }
 
 export const GMAIL_SCOPES = [
-  'https://www.googleapis.com/auth/gmail.readonly',
+  'https://www.googleapis.com/auth/gmail.modify', // Read, send, and modify emails
   'https://www.googleapis.com/auth/userinfo.email',
   'https://www.googleapis.com/auth/userinfo.profile',
 ];
