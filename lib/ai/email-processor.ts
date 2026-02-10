@@ -81,7 +81,7 @@ export type WorkState = 'work_prepared' | 'action_required' | 'decision_required
 export interface ProcessedEmail {
   // WORK STATE (core)
   workState: WorkState;
-  workTitle: string; // "Reply to Tea Vrcic" (not "Email from Tea")
+  workTitle: string; // OUTCOME-CENTRIC: "Schedule exhibition call" (not "Reply to Tea" or "Email from Tea")
   whatIPrepared: string; // "Draft to schedule exhibition call"
   whyMatters: string; // "High-value opportunity at 4YFN26"
 
@@ -427,9 +427,15 @@ For NO_WORK:
 
 STEP 4: FRAME AS WORK
 
-Create user-facing text:
-- workTitle: "Reply to [name]" or "Decide on [topic]" or "Review [topic]"
-- whatIPrepared: "Draft to schedule call" or "Analysis with 3 options" or "Summary and key points"
+Create user-facing text (OUTCOME-CENTRIC, NOT EMAIL-CENTRIC):
+- workTitle: Focus on the OUTCOME/ACTION, not the email mechanics
+  GOOD: "Confirm Tuesday meeting" | "Review Q4 budget proposal" | "Decide on vendor selection"
+  BAD: "Reply to John" | "Respond to Sarah" | "Email back to client"
+  Pattern: [Verb] + [Object/Topic] (the actual work to be done)
+
+- whatIPrepared: What you actually prepared (draft/analysis/summary)
+  Examples: "Draft confirming Tuesday at 2pm" | "Analysis with 3 vendor options" | "Summary of key points"
+
 - whyMatters: One sentence explaining context and importance
 
 ---
@@ -438,9 +444,9 @@ OUTPUT FORMAT (JSON):
 
 {
   "workState": "work_prepared",
-  "workTitle": "Reply to Tea Vrcic",
-  "whatIPrepared": "Draft to schedule exhibition call",
-  "whyMatters": "High-value meeting opportunity at 4YFN26 - first contact from potential partner",
+  "workTitle": "Schedule exhibition call for 4YFN26",
+  "whatIPrepared": "Draft proposing call times",
+  "whyMatters": "High-value meeting opportunity - first contact from potential partner",
 
   "signals": {
     "hasDirectQuestion": true,
@@ -633,7 +639,7 @@ Respond ONLY with valid JSON matching the structure above.`;
     // Validate and return with defaults
     return {
       workState: result.workState || 'noted',
-      workTitle: result.workTitle || `Email from ${email.from_name}`,
+      workTitle: result.workTitle || email.subject || 'Review email',
       whatIPrepared: result.whatIPrepared || 'Summary for awareness',
       whyMatters: result.whyMatters || result.summary || 'For your awareness',
 

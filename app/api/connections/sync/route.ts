@@ -17,7 +17,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    console.log(`Manual sync triggered by user ${user.id}`);
+    // Get optional provider filter from request body
+    const body = await request.json().catch(() => ({}));
+    const providerFilter = body.provider; // 'gmail' | 'outlook' | undefined
+
+    console.log(`Manual sync triggered by user ${user.id}${providerFilter ? ` for ${providerFilter}` : ''}`);
 
     // Use service role to bypass RLS for operations
     const adminSupabase = createServerClient(
@@ -32,12 +36,20 @@ export async function POST(request: NextRequest) {
     );
 
     // Get user's email connections (Gmail or Outlook)
-    const { data: connections, error: connectionError } = await adminSupabase
+    // If provider is specified, filter to only that provider
+    let query = adminSupabase
       .from('connections')
       .select('*')
       .eq('user_id', user.id)
-      .in('provider', ['gmail', 'outlook'])
       .eq('status', 'active');
+
+    if (providerFilter) {
+      query = query.eq('provider', providerFilter);
+    } else {
+      query = query.in('provider', ['gmail', 'outlook']);
+    }
+
+    const { data: connections, error: connectionError } = await query;
 
     if (connectionError) {
       return NextResponse.json(

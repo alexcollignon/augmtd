@@ -101,35 +101,37 @@ export function InboxPageClient({
         setInboxItems(items);
       }
 
-      // Check connection sync status
-      if (connection) {
-        const { data: conn } = await supabase
-          .from('connections')
-          .select('sync_status')
-          .eq('id', connection.id)
-          .single();
+      // Check ALL connections sync status (Gmail + Outlook)
+      const { data: connections } = await supabase
+        .from('connections')
+        .select('sync_status, provider')
+        .eq('user_id', user.id)
+        .in('provider', ['gmail', 'outlook'])
+        .eq('status', 'active');
 
-        if (conn) {
-          const isCurrentlySyncing = conn.sync_status === 'syncing';
-          const syncCompleted = conn.sync_status === 'completed' || conn.sync_status === 'failed';
+      if (connections && connections.length > 0) {
+        // Check if ANY connection is currently syncing
+        const isCurrentlySyncing = connections.some(conn => conn.sync_status === 'syncing');
+        const allCompleted = connections.every(conn =>
+          conn.sync_status === 'completed' || conn.sync_status === 'failed'
+        );
 
-          // If we optimistically triggered a sync, only update state when we see actual progress
-          if (optimisticSyncTriggered.current) {
-            // Sync has actually started or completed - clear optimistic flag
-            if (isCurrentlySyncing || syncCompleted) {
-              optimisticSyncTriggered.current = false;
-              setIsSyncing(isCurrentlySyncing);
-            }
-            // Otherwise, keep showing optimistic loading state (ignore 'pending')
-          } else {
-            // Normal polling - update state based on database
+        // If we optimistically triggered a sync, only update state when we see actual progress
+        if (optimisticSyncTriggered.current) {
+          // Sync has actually started or completed - clear optimistic flag
+          if (isCurrentlySyncing || allCompleted) {
+            optimisticSyncTriggered.current = false;
             setIsSyncing(isCurrentlySyncing);
           }
+          // Otherwise, keep showing optimistic loading state (ignore 'pending')
+        } else {
+          // Normal polling - update state based on database
+          setIsSyncing(isCurrentlySyncing);
+        }
 
-          // If was syncing and now completed, refresh to show new items
-          if (isSyncing && !isCurrentlySyncing) {
-            setInboxItems(items || []);
-          }
+        // If was syncing and now completed, refresh to show new items
+        if (isSyncing && !isCurrentlySyncing) {
+          setInboxItems(items || []);
         }
       }
     }

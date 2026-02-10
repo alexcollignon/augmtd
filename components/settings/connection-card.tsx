@@ -1,10 +1,11 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Image from 'next/image';
 import { ChevronDownIcon, ChevronUpIcon } from '@heroicons/react/24/outline';
 import EmailSyncSettings from './email-sync-settings';
 import ManualSyncButton from './manual-sync-button';
+import { createClient } from '@/lib/supabase/client';
 
 interface ConnectionCardProps {
   provider: 'gmail' | 'outlook';
@@ -15,6 +16,27 @@ interface ConnectionCardProps {
 
 export default function ConnectionCard({ provider, connection, connectUrl, disconnectUrl }: ConnectionCardProps) {
   const [showDetails, setShowDetails] = useState(false);
+  const [syncStatus, setSyncStatus] = useState(connection?.sync_status || 'ready');
+  const supabase = createClient();
+
+  // Poll for sync status updates
+  useEffect(() => {
+    if (!connection) return;
+
+    const pollInterval = setInterval(async () => {
+      const { data } = await supabase
+        .from('connections')
+        .select('sync_status')
+        .eq('id', connection.id)
+        .single();
+
+      if (data && data.sync_status !== syncStatus) {
+        setSyncStatus(data.sync_status);
+      }
+    }, 2000); // Poll every 2 seconds
+
+    return () => clearInterval(pollInterval);
+  }, [connection, syncStatus, supabase]);
 
   const providerConfig = {
     gmail: {
@@ -100,7 +122,15 @@ export default function ConnectionCard({ provider, connection, connectUrl, disco
         <div className="mt-3 flex items-center space-x-4 text-xs text-gray-600">
           <div className="flex items-center space-x-1">
             <span className="font-medium">Status:</span>
-            <span className="capitalize">{connection.sync_status || 'ready'}</span>
+            <span className="capitalize flex items-center gap-1.5">
+              {syncStatus === 'syncing' && (
+                <svg className="animate-spin h-3 w-3 text-primary-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+              )}
+              {syncStatus || 'ready'}
+            </span>
           </div>
           {connection.last_sync && (
             <div className="flex items-center space-x-1">
@@ -126,7 +156,7 @@ export default function ConnectionCard({ provider, connection, connectUrl, disco
             <p className="text-xs text-gray-600 mb-3">
               Fetch and process new emails immediately
             </p>
-            <ManualSyncButton />
+            <ManualSyncButton provider={provider} connectionId={connection.id} />
           </div>
 
           {/* Sync Settings */}

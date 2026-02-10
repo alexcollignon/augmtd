@@ -1,11 +1,38 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { ArrowPathIcon } from '@heroicons/react/24/outline';
+import { createClient } from '@/lib/supabase/client';
 
-export default function ManualSyncButton() {
+interface ManualSyncButtonProps {
+  provider: 'gmail' | 'outlook';
+  connectionId: string;
+}
+
+export default function ManualSyncButton({ provider, connectionId }: ManualSyncButtonProps) {
   const [syncing, setSyncing] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const supabase = createClient();
+
+  // Poll connection status to detect when sync completes
+  useEffect(() => {
+    if (!syncing) return;
+
+    const pollInterval = setInterval(async () => {
+      const { data: connection } = await supabase
+        .from('connections')
+        .select('sync_status')
+        .eq('id', connectionId)
+        .single();
+
+      if (connection && connection.sync_status !== 'syncing') {
+        setSyncing(false);
+        clearInterval(pollInterval);
+      }
+    }, 2000); // Poll every 2 seconds
+
+    return () => clearInterval(pollInterval);
+  }, [syncing, connectionId, supabase]);
 
   const handleSync = async () => {
     setSyncing(true);
@@ -14,6 +41,10 @@ export default function ManualSyncButton() {
     try {
       const response = await fetch('/api/connections/sync', {
         method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ provider }),
       });
 
       const data = await response.json();
@@ -22,11 +53,12 @@ export default function ManualSyncButton() {
         throw new Error(data.error || 'Sync failed');
       }
 
+      const providerName = provider.charAt(0).toUpperCase() + provider.slice(1);
       setMessage({
         type: 'success',
         text: data.emailsFetched === 0
-          ? 'No new emails to sync'
-          : `Synced ${data.emailsFetched} new emails${data.inboxItemsCreated > 0 ? `, created ${data.inboxItemsCreated} inbox items` : ''}`
+          ? `${providerName}: No new emails to sync`
+          : `${providerName}: Synced ${data.emailsFetched} new emails${data.inboxItemsCreated > 0 ? `, created ${data.inboxItemsCreated} inbox items` : ''}`
       });
 
       // Clear message after 5 seconds
