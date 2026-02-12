@@ -21,6 +21,7 @@ import {
   LinkIcon
 } from '@heroicons/react/24/outline';
 import InboxActions from './inbox-actions';
+import RecipientContextDisplay from './recipient-context-display';
 
 interface InboxDrawerProps {
   item: any;
@@ -158,6 +159,20 @@ export default function InboxDrawer({ item, isOpen, onClose }: InboxDrawerProps)
 
                     {/* Content - Prepared Work */}
                     <div className="flex-1 px-6 py-6 space-y-5">
+                      {/* Recipient Context (NEW) */}
+                      {item.recipient_context && (
+                        <div className="p-5 bg-white rounded-lg border border-gray-200/50 shadow-sm">
+                          <h3 className="text-sm font-semibold text-gray-700 mb-4 uppercase tracking-wide flex items-center space-x-2">
+                            <UserIcon className="w-4 h-4" />
+                            <span>Your Role</span>
+                          </h3>
+                          <RecipientContextDisplay
+                            recipientContext={item.recipient_context}
+                            otherRecipients={item.recipient_context.otherRecipients}
+                          />
+                        </div>
+                      )}
+
                       {/* Key Points */}
                       {sourceData?.keyPoints && sourceData.keyPoints.length > 0 && (
                         <div className="p-5 bg-white rounded-lg border border-gray-200/50 shadow-sm">

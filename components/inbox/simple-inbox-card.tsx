@@ -19,6 +19,7 @@ interface SimpleInboxCardProps {
 export default function SimpleInboxCard({ item, onClick }: SimpleInboxCardProps) {
   const sourceData = item.source_data;
   const provider = sourceData?.provider || 'gmail';
+  const recipientContext = item.recipient_context;
 
   // Get work-state icon and color
   const getWorkStateDisplay = (workState: string) => {
@@ -61,6 +62,28 @@ export default function SimpleInboxCard({ item, onClick }: SimpleInboxCardProps)
   // Get priority indicator
   const showPriorityDot = item.priority >= 75 || sourceData?.urgency === 'high' || sourceData?.urgency === 'critical';
   const priorityColor = sourceData?.urgency === 'critical' ? 'bg-red-500' : 'bg-orange-500';
+
+  // Get recipient role display
+  const getRecipientRoleDisplay = (role: string) => {
+    switch (role) {
+      case 'primary_owner':
+        return { text: 'Owner', color: 'bg-blue-100 text-blue-700', emoji: '👤' };
+      case 'secondary_owner':
+        return { text: 'Co-owner', color: 'bg-indigo-100 text-indigo-700', emoji: '👥' };
+      case 'reviewer':
+        return { text: 'Reviewer', color: 'bg-purple-100 text-purple-700', emoji: '📝' };
+      case 'approver':
+        return { text: 'Approver', color: 'bg-green-100 text-green-700', emoji: '✓' };
+      case 'informed':
+        return { text: 'FYI', color: 'bg-gray-100 text-gray-600', emoji: '👁️' };
+      default:
+        return { text: role, color: 'bg-gray-100 text-gray-600', emoji: '' };
+    }
+  };
+
+  const recipientRole = recipientContext?.detectedRole ? getRecipientRoleDisplay(recipientContext.detectedRole) : null;
+  const suggestionLabel = recipientContext?.suggestionLabel; // NEW: Use business-friendly label
+  const position = recipientContext?.position?.toUpperCase();
 
   // Get CTA based on work state and prepared output
   const getCTA = () => {
@@ -200,7 +223,29 @@ export default function SimpleInboxCard({ item, onClick }: SimpleInboxCardProps)
         </p>
 
         {/* Metadata Row */}
-        <div className="flex items-center space-x-2 text-xs text-gray-400">
+        <div className="flex items-center flex-wrap gap-x-2 gap-y-1 text-xs text-gray-400">
+          {/* Recipient Role Badge (NEW) */}
+          {recipientRole && (
+            <div className="flex items-center space-x-1.5">
+              <span className={`inline-flex items-center space-x-1 px-2 py-0.5 rounded text-[10px] font-medium ${recipientRole.color}`}>
+                <span>{recipientRole.emoji}</span>
+                <span>{recipientRole.text}</span>
+              </span>
+              {position && (
+                <span className="text-[10px] text-gray-400">
+                  ({position})
+                </span>
+              )}
+              {suggestionLabel && (
+                <span className="text-[10px] font-medium text-gray-600 italic">
+                  {suggestionLabel}
+                </span>
+              )}
+            </div>
+          )}
+
+          {recipientRole && <span>•</span>}
+
           {/* Provider Badge */}
           <div className="flex items-center space-x-1">
             <Image

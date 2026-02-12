@@ -99,17 +99,17 @@ export default function ManualSyncButton({ provider, connectionId }: ManualSyncB
       <button
         onClick={handleSync}
         disabled={syncing}
-        className="w-full px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:opacity-50 font-medium transition-colors flex items-center justify-center space-x-2"
+        className="w-full px-4 py-2.5 bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 font-semibold transition-all flex items-center justify-center gap-2 shadow-sm hover:shadow text-[13px]"
       >
-        <ArrowPathIcon className={`w-5 h-5 ${syncing ? 'animate-spin' : ''}`} />
+        <ArrowPathIcon className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />
         <span>{syncing ? 'Syncing...' : 'Sync Now'}</span>
       </button>
 
       {message && (
-        <div className={`mt-3 text-sm p-3 rounded ${
+        <div className={`mt-3 text-[12px] p-3 border ${
           message.type === 'success'
-            ? 'bg-green-50 text-green-700'
-            : 'bg-red-50 text-red-700'
+            ? 'bg-green-50 text-green-800 border-green-200'
+            : 'bg-red-50 text-red-800 border-red-200'
         }`}>
           {message.text}
         </div>

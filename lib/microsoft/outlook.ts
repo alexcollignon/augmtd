@@ -16,6 +16,18 @@ interface OutlookMessage {
       address: string;
     };
   };
+  toRecipients: Array<{
+    emailAddress: {
+      name: string;
+      address: string;
+    };
+  }>;
+  ccRecipients: Array<{
+    emailAddress: {
+      name: string;
+      address: string;
+    };
+  }>;
   receivedDateTime: string;
   internetMessageId: string;
 }
@@ -88,7 +100,7 @@ export async function fetchUnreadEmails(
     .api('/me/messages')
     .filter(`receivedDateTime ge ${dateString}`)
     .top(maxResults)
-    .select('id,conversationId,subject,bodyPreview,body,from,receivedDateTime,internetMessageId')
+    .select('id,conversationId,subject,bodyPreview,body,from,toRecipients,ccRecipients,receivedDateTime,internetMessageId')
     .orderby('receivedDateTime desc')
     .get();
 
@@ -103,10 +115,16 @@ export function parseOutlookMessage(message: OutlookMessage) {
     bodyText = bodyText.replace(/<[^>]*>/g, '').trim();
   }
 
+  // Extract recipient addresses
+  const to_addresses = (message.toRecipients || []).map(r => r.emailAddress.address);
+  const cc_addresses = (message.ccRecipients || []).map(r => r.emailAddress.address);
+
   return {
     message_id: message.internetMessageId || message.id,
     from_address: message.from.emailAddress.address,
     from_name: message.from.emailAddress.name || message.from.emailAddress.address,
+    to_addresses,
+    cc_addresses,
     subject: message.subject || '(No subject)',
     body: bodyText || message.bodyPreview || '',
     received_at: new Date(message.receivedDateTime).toISOString(),
@@ -118,4 +136,43 @@ export function parseOutlookMessage(message: OutlookMessage) {
       conversation_id: message.conversationId,
     },
   };
+}
+
+interface SendOutlookReplyParams {
+  accessToken: string;
+  messageId: string;
+  body: string;
+}
+
+export async function sendOutlookReply(params: SendOutlookReplyParams): Promise<string> {
+  const { accessToken, messageId, body } = params;
+
+  // Reply to the message using Microsoft Graph API
+  const response = await fetch(
+    `https://graph.microsoft.com/v1.0/me/messages/${messageId}/reply`,
+    {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        message: {
+          body: {
+            contentType: 'HTML',
+            content: body,
+          },
+        },
+      }),
+    }
+  );
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`Failed to send Outlook reply: ${error}`);
+  }
+
+  // The reply endpoint doesn't return the sent message ID directly
+  // Return the original message ID for reference
+  return messageId;
 }

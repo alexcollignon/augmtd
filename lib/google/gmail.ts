@@ -97,12 +97,26 @@ export function parseGmailMessage(message: GmailMessage) {
   const from_address = emailMatch ? emailMatch[1] : fromHeader;
   const from_name = fromHeader.split('<')[0].trim().replace(/"/g, '') || from_address;
 
+  // Helper to parse comma-separated email addresses from header
+  const parseEmailAddresses = (header: string): string[] => {
+    if (!header) return [];
+
+    // Split by comma and extract email addresses
+    return header
+      .split(',')
+      .map(addr => {
+        const match = addr.match(/<(.+?)>/);
+        return match ? match[1] : addr.trim();
+      })
+      .filter(addr => addr && addr.includes('@')); // Only valid email addresses
+  };
+
   return {
     message_id: getHeader('Message-ID'),
     from_address,
     from_name,
-    to_addresses: [getHeader('To')],
-    cc_addresses: getHeader('Cc') ? [getHeader('Cc')] : [],
+    to_addresses: parseEmailAddresses(getHeader('To')),
+    cc_addresses: parseEmailAddresses(getHeader('Cc')),
     subject: getHeader('Subject') || '(no subject)',
     body: body || message.snippet || '',
     html_body: htmlBody || null,
@@ -114,4 +128,64 @@ export function parseGmailMessage(message: GmailMessage) {
       gmail_id: message.id,
     },
   };
+}
+
+interface SendGmailReplyParams {
+  accessToken: string;
+  threadId: string;
+  messageId: string;
+  to: string;
+  subject: string;
+  body: string;
+  inReplyTo?: string;
+  references?: string;
+}
+
+export async function sendGmailReply(params: SendGmailReplyParams): Promise<string> {
+  const { accessToken, threadId, to, subject, body, inReplyTo, references } = params;
+
+  // Create OAuth2 client
+  const oauth2Client = getOAuth2Client();
+  oauth2Client.setCredentials({ access_token: accessToken });
+
+  const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+
+  // Build email message in RFC 2822 format
+  const messageParts = [
+    `To: ${to}`,
+    `Subject: ${subject.startsWith('Re:') ? subject : `Re: ${subject}`}`,
+    'Content-Type: text/html; charset=utf-8',
+    'MIME-Version: 1.0',
+  ];
+
+  // Add threading headers
+  if (inReplyTo) {
+    messageParts.push(`In-Reply-To: ${inReplyTo}`);
+  }
+  if (references) {
+    messageParts.push(`References: ${references}`);
+  }
+
+  messageParts.push('');
+  messageParts.push(body);
+
+  const message = messageParts.join('\r\n');
+
+  // Encode in base64url format
+  const encodedMessage = Buffer.from(message)
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+
+  // Send the email
+  const response = await gmail.users.messages.send({
+    userId: 'me',
+    requestBody: {
+      raw: encodedMessage,
+      threadId: threadId,
+    },
+  });
+
+  return response.data.id || '';
 }

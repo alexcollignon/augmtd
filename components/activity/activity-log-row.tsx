@@ -12,7 +12,8 @@ interface ActivityLogRowProps {
 export default function ActivityLogRow({ item, onClick, isSelected }: ActivityLogRowProps) {
   const sourceData = item.source_data;
   const provider = sourceData?.provider || 'gmail';
-  const wasApproved = item.status === 'approved';
+  const wasCompleted = item.status === 'completed';
+  const wasDismissed = item.status === 'dismissed';
   const wasModified = sourceData?.modified === true;
 
   // Format timestamp for log-like display
@@ -41,14 +42,16 @@ export default function ActivityLogRow({ item, onClick, isSelected }: ActivityLo
 
   // Get concise action description
   const getLogAction = () => {
-    if (wasApproved) {
+    if (wasCompleted) {
       if (sourceData?.draft) {
         const recipient = sourceData.from_name || sourceData.from?.split('@')[0] || 'recipient';
         return `Sent reply to ${recipient}`;
       }
       return item.work_title || 'Action completed';
-    } else {
+    } else if (wasDismissed) {
       return `Dismissed: ${item.work_title || 'Item'}`;
+    } else {
+      return item.work_title || 'Item';
     }
   };
 
@@ -64,12 +67,12 @@ export default function ActivityLogRow({ item, onClick, isSelected }: ActivityLo
       <div className="flex items-center space-x-3 text-xs font-mono">
         {/* Timestamp */}
         <span className="text-gray-400 w-20 flex-shrink-0">
-          {formatLogTimestamp(item.reviewed_at || item.created_at)}
+          {formatLogTimestamp(item.updated_at || item.created_at)}
         </span>
 
         {/* Status Icon */}
         <div className="flex-shrink-0">
-          {wasApproved ? (
+          {wasCompleted ? (
             <CheckCircleIcon className="w-4 h-4 text-green-600" />
           ) : (
             <XMarkIcon className="w-4 h-4 text-gray-400" />
@@ -78,7 +81,7 @@ export default function ActivityLogRow({ item, onClick, isSelected }: ActivityLo
 
         {/* Action */}
         <span className={`flex-1 min-w-0 truncate ${
-          wasApproved ? 'text-gray-900' : 'text-gray-600'
+          wasCompleted ? 'text-gray-900' : 'text-gray-600'
         }`}>
           {getLogAction()}
         </span>
