@@ -523,6 +523,71 @@ CRITICAL: If USER'S COMMUNICATION STYLE is provided, MATCH IT EXACTLY:
 * Match emoji usage
 ```
 
+## Automatic Profile Initialization (NEW!)
+
+**Every user now gets a context profile automatically:**
+
+### How It Works
+
+1. **During First Sync:**
+   ```typescript
+   // Check if profile exists
+   const profile = await getUserContext(userId);
+
+   // If not found, create with defaults
+   if (!profile) {
+     console.log('[Sync] No user context found - initializing with defaults');
+     await createDefaultProfile(userId);
+     console.log('[Sync] ✓ Created new user context profile');
+   }
+   ```
+
+2. **Default Profile Structure:**
+   ```json
+   {
+     "communicationStyle": {
+       "avgLength": 0,
+       "toneVector": { "formal": 0.5, "casual": 0.5, ... },
+       "formalityScore": 0.5,
+       "greetingPatterns": [],
+       "signatureStyle": null,
+       "emojiUsage": 0,
+       "commonPhrases": []
+     },
+     "rolePatterns": { ... },
+     "confidenceMetrics": {
+       "overallScore": 0,
+       "signalCount": 0
+     }
+   }
+   ```
+
+3. **Console Output:**
+   ```
+   First sync (profile created):
+   [Sync] No user context found - initializing with defaults
+   [Sync] ✓ Created new user context profile with default values
+   ○ User context initialized - AI will learn from behavior
+
+   After learning (profile has data):
+   ✓ Loaded user context (confidence: 65%, 42 signals)
+   ```
+
+### Benefits
+
+✅ **Always ready** - Profile exists before first learning signal
+✅ **No errors** - Sync never fails due to missing profile
+✅ **Clean starting point** - All users start with neutral defaults
+✅ **Gradual learning** - Confidence grows from 0% → 100%
+
+### Backfill Existing Users
+
+Migration provided to create profiles for existing users:
+```sql
+-- Creates default profiles for all users without one
+-- See: supabase/migrations/20260210_backfill_user_context_profiles.sql
+```
+
 ## Next Steps
 
 ### 1. Complete Integration

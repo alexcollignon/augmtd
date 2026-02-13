@@ -34,6 +34,7 @@ export interface SyncOptions {
 
 /**
  * Fetch user context profile for personalized AI processing
+ * Creates profile with default values if it doesn't exist
  */
 async function getUserContext(
   userId: string,
@@ -47,8 +48,27 @@ async function getUserContext(
       .single();
 
     if (error || !data?.context_data) {
-      // No context yet - that's OK, AI will work without it
-      return undefined;
+      // Profile doesn't exist - initialize it with defaults
+      console.log('[Sync] No user context found - initializing with defaults');
+
+      const { DEFAULT_USER_CONTEXT } = await import('@/lib/types/user-context');
+
+      const { error: insertError } = await adminSupabase
+        .from('user_context_profiles')
+        .insert({
+          user_id: userId,
+          context_data: DEFAULT_USER_CONTEXT,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+
+      if (insertError) {
+        console.error('[Sync] Error creating user context profile:', insertError);
+        return undefined;
+      }
+
+      console.log('[Sync] ✓ Created new user context profile with default values');
+      return DEFAULT_USER_CONTEXT;
     }
 
     return data.context_data as UserContextProfile;
@@ -118,12 +138,17 @@ export async function syncEmailsForConnection(
 
     console.log(`Fetched ${messages.length} ${connection.provider} emails for user ${connection.user_id}`);
 
-    // Fetch user context for personalized AI processing
+    // Fetch user context for personalized AI processing (creates if doesn't exist)
     const userContext = await getUserContext(connection.user_id, adminSupabase);
     if (userContext) {
-      console.log(`✓ Loaded user context (confidence: ${Math.round(userContext.confidenceMetrics.overallScore * 100)}%)`);
+      const confidence = Math.round(userContext.confidenceMetrics.overallScore * 100);
+      if (confidence > 0) {
+        console.log(`✓ Loaded user context (confidence: ${confidence}%, ${userContext.confidenceMetrics.signalCount} signals)`);
+      } else {
+        console.log(`○ User context initialized - AI will learn from behavior`);
+      }
     } else {
-      console.log(`○ No user context yet - AI will learn from user's behavior`);
+      console.log(`⚠ Failed to load/create user context - AI will use generic prompts`);
     }
 
     // Process each email
