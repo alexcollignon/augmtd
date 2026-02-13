@@ -20,7 +20,8 @@
 | Action Execution (Phase 4) | ✅ Complete | 100% |
 | Learning Signals | ✅ Complete | 100% |
 | Auth & Session | ✅ Complete | 100% |
-| Advanced Learning Analytics | ⚠️ Next Phase | 0% |
+| User Context Engine (Phase 5) | 🔄 In Progress | 70% |
+| AI Prompt Integration | ⚠️ Next | 0% |
 | Vector Similarity | ⚠️ Planned | 0% |
 
 ---
@@ -173,11 +174,17 @@ app/
 │   │       └── disconnect/route.ts    ✅ Disconnect
 │   ├── cron/
 │   │   └── fetch-emails/route.ts      ✅ Main email sync logic
+│   ├── context/
+│   │   └── route.ts                   ✅ Get/process user context
 │   └── inbox/
 │       └── [id]/
 │           ├── approve/route.ts       ✅ Send email as-is (Gmail + Outlook)
 │           ├── modify/route.ts        ✅ Send modified email
-│           └── reject/route.ts        ✅ Dismiss item
+│           ├── reject/route.ts        ✅ Dismiss item
+│           ├── complete/route.ts      ✅ Mark as complete
+│           ├── dismiss/route.ts       ✅ Dismiss item
+│           ├── send-reply/route.ts    ✅ Send reply
+│           └── confirm/route.ts       ✅ Confirm suggested items
 ├── inbox/
 │   ├── page.tsx                       ✅ Server component (auth + data)
 │   └── inbox-page-client.tsx          ✅ Client component (UI + polling)
@@ -204,6 +211,11 @@ lib/
 ├── microsoft/
 │   ├── oauth.ts                       ✅ OAuth helpers
 │   └── outlook.ts                     ✅ Outlook API wrapper
+├── context/
+│   ├── user-context-engine.ts         ✅ Analytics engine for learning
+│   └── context-service.ts             ✅ Service layer for signals
+├── types/
+│   └── user-context.ts                ✅ Type definitions for profiles
 ├── utils/
 │   └── batch-inbox-items.ts           ✅ Batching logic
 └── supabase/
@@ -364,53 +376,80 @@ README.md                              ✅ Comprehensive documentation
 
 ---
 
-### Phase 5: Advanced Learning Analytics (Next - Critical for Personalization)
+### 🔄 Phase 5: Advanced Learning Analytics (In Progress - Critical for Personalization)
 
 **Goal:** Analyze learning signals to personalize AI suggestions
 
-**Tasks:**
+**Status:** Core engine built, integration in progress
+
+**Completed:**
 - [x] Learning signals infrastructure ✅ DONE
   - [x] Database table with all signal types
   - [x] Track completions, dismissals, replies
   - [x] Store contextual data (JSONB)
-- [ ] Advanced analytics engine
-  - [ ] Analyze signal patterns over time
-  - [ ] Detect user preferences and style
-  - [ ] Calculate personalized confidence thresholds
-  - [ ] Identify frequently accepted/rejected patterns
+- [x] User context profile structure ✅ DONE
+  - [x] TypeScript type definitions (`lib/types/user-context.ts`)
+  - [x] CommunicationStyle (tone, formality, phrases)
+  - [x] RolePatterns (To/CC response rates)
+  - [x] UrgencySensitivity (deadlines, response times)
+  - [x] RelationshipGraph (per-contact patterns)
+  - [x] DelegationBehavior (delegation patterns)
+  - [x] ConfidenceMetrics (learning progress tracking)
+- [x] User Context Engine ✅ DONE
+  - [x] `UserContextEngine` class (`lib/context/user-context-engine.ts`)
+  - [x] `getContext()` - Fetch current profile
+  - [x] `updateFromSignal()` - Main signal dispatcher
+  - [x] `updateCommunicationStyle()` - Learn from draft edits
+  - [x] `updateRolePatterns()` - Learn from confirmations
+  - [x] `updateUrgencySensitivity()` - Learn from response times
+  - [x] `updateRelationshipGraph()` - Track contact patterns
+  - [x] Tone delta extraction (compare AI vs user edits)
+  - [x] Running average calculations
+  - [x] Asymptotic confidence scoring
+- [x] Context Service Layer ✅ DONE
+  - [x] `ContextService` class (`lib/context/context-service.ts`)
+  - [x] `logSignal()` - Log and trigger updates
+  - [x] `logConfirmation()` - Track suggested item actions
+  - [x] `logDraftEdit()` - Track draft modifications
+  - [x] `logReplySent()` - Track sent replies
+  - [x] `logItemCompleted()` - Track completions
+  - [x] `logItemDismissed()` - Track dismissals
+  - [x] `processAllSignals()` - Backfill from historical data
+- [x] API Integration ✅ DONE
+  - [x] `/api/context` - Get profile + process signals
+  - [x] Updated `/api/inbox/[id]/confirm` to use ContextService
+  - [x] Automatic context updates on user actions
 
-- [ ] User context profiles:
-  - [ ] Initialize on first user action
-  - [ ] Store communication style
-  - [ ] Track approval rates
-  - [ ] Calculate confidence scores
+**In Progress:**
+- [ ] Integrate with remaining action endpoints
+  - [ ] Update `/api/inbox/[id]/send-reply` to log draft edits
+  - [ ] Update `/api/inbox/[id]/complete` to log urgency data
+  - [ ] Update `/api/inbox/[id]/dismiss` to use ContextService
+- [ ] AI prompt integration
+  - [ ] Include user context in email processing prompts
+  - [ ] Reference learned communication style
+  - [ ] Adjust confidence based on role patterns
+  - [ ] Match user's tone preferences
 
-- [ ] Create `context_learning_events`:
-  - [ ] Log every approval
-  - [ ] Log every modification
-  - [ ] Log every rejection
-  - [ ] Store delta (what changed)
+**Next Tasks:**
+- [ ] Test context engine with real user actions
+- [ ] Monitor context_data JSONB updates
+- [ ] Validate confidence scoring curves
+- [ ] Integrate learned patterns into AI prompts
+- [ ] Build context insights dashboard (optional)
 
-- [ ] Extract communication patterns:
-  - [ ] Common phrases
-  - [ ] Tone (formal/casual/mixed)
-  - [ ] Length preferences
-  - [ ] Signature style
-
-- [ ] Update AI prompts:
-  - [ ] Include user's past patterns
-  - [ ] Reference similar approved emails
-  - [ ] Match user's communication style
-
-**API Routes Needed:**
-- [ ] `/api/context/update` - Record learning event
-- [ ] `/api/context/profile` - Get user's context profile
+**Files Created:**
+- `lib/types/user-context.ts` - Type definitions for all context dimensions
+- `lib/context/user-context-engine.ts` - Main analytics engine (400+ lines)
+- `lib/context/context-service.ts` - Service layer for easy integration
+- `app/api/context/route.ts` - API endpoints for context retrieval
 
 **Success Criteria:**
 - After 10 interactions, confidence score > 50
 - After 50 interactions, confidence score > 80
 - AI drafts visibly match user's style
 - Approval rate increases over time
+- Context updates happen automatically on every user action
 
 ---
 

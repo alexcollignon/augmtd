@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { ContextService } from '@/lib/context/context-service';
 
 export async function POST(
   request: NextRequest,
@@ -64,21 +65,20 @@ export async function POST(
       );
     }
 
-    // Log learning signal for future improvements
-    await supabase.from('learning_signals').insert({
-      user_id: user.id,
-      inbox_item_id: id,
-      signal_type: action === 'confirm_as_mine' ? 'suggestion_confirmed' : 'suggestion_rejected',
-      signal_data: {
-        action,
+    // Log learning signal and trigger context update
+    await ContextService.logConfirmation(
+      user.id,
+      id,
+      action,
+      {
+        role: item.recipient_context?.detectedRole,
+        position_in_to: item.recipient_context?.position,
+        confidence_score: item.recipient_context?.responsibilityConfidence,
         previous_section: item.visual_section,
-        new_section: confirmationUpdate.visual_section,
-        suggestion_level: item.recipient_context?.suggestionLevel,
-        detected_role: item.recipient_context?.detectedRole,
-        confidence: item.recipient_context?.responsibilityConfidence,
-        position: item.recipient_context?.position,
-      },
-    });
+        has_mention: item.recipient_context?.hasMention,
+        has_explicit_assignment: item.recipient_context?.hasExplicitAssignment,
+      }
+    );
 
     return NextResponse.json({
       success: true,
