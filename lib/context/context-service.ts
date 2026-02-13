@@ -100,8 +100,8 @@ export class ContextService {
       formality_score?: number;
       communication_patterns?: {
         length?: number;
-        greeting?: string;
-        signature?: string;
+        greeting?: string | null;
+        signature?: string | null;
         emoji_count?: number;
         tone_indicators?: string[];
         common_phrases?: string[];
