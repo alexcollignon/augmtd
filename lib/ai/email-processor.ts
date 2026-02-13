@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import type { UserContextProfile } from '@/lib/types/user-context';
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY!,
@@ -21,6 +22,7 @@ export interface EmailData {
     received_at: string;
     is_from_user?: boolean;
   }>;
+  user_context?: UserContextProfile; // NEW: Learned user behavior patterns
 }
 
 /**
@@ -139,6 +141,83 @@ function truncateText(text: string, maxLength: number): string {
 }
 
 /**
+ * Helper function to format user context for AI prompt
+ */
+function formatUserContext(
+  userContext: UserContextProfile | undefined,
+  senderEmail: string
+): string {
+  if (!userContext) {
+    return '';
+  }
+
+  const style = userContext.communicationStyle;
+  const relationship = userContext.relationshipGraph[senderEmail];
+
+  // Format tone preferences
+  const toneDescriptions: string[] = [];
+  if (style.toneVector.formal > 0.6) toneDescriptions.push('formal');
+  if (style.toneVector.casual > 0.6) toneDescriptions.push('casual');
+  if (style.toneVector.friendly > 0.6) toneDescriptions.push('friendly');
+  if (style.toneVector.technical > 0.6) toneDescriptions.push('technical');
+  if (style.toneVector.direct > 0.6) toneDescriptions.push('direct');
+
+  const toneDescription = toneDescriptions.length > 0
+    ? toneDescriptions.join(', ')
+    : 'neutral';
+
+  // Format formality
+  let formalityDescription = 'neutral';
+  if (style.formalityScore > 0.7) formalityDescription = 'very formal';
+  else if (style.formalityScore > 0.55) formalityDescription = 'somewhat formal';
+  else if (style.formalityScore < 0.3) formalityDescription = 'very casual';
+  else if (style.formalityScore < 0.45) formalityDescription = 'somewhat casual';
+
+  // Build context section
+  let contextSection = `
+USER'S COMMUNICATION STYLE (learned from their past emails):
+- Typical email length: ${style.avgLength > 0 ? `${Math.round(style.avgLength)} characters` : 'varies'}
+- Formality level: ${formalityDescription}
+- Tone preferences: ${toneDescription}
+- Emoji usage: ${style.emojiUsage > 0.3 ? 'frequently uses emojis' : style.emojiUsage > 0.1 ? 'occasionally uses emojis' : 'rarely uses emojis'}`;
+
+  if (style.greetingPatterns.length > 0) {
+    contextSection += `\n- Common greetings: ${style.greetingPatterns.slice(-3).join(', ')}`;
+  }
+
+  if (style.signatureStyle) {
+    contextSection += `\n- Signature style: "${style.signatureStyle}"`;
+  }
+
+  if (style.commonPhrases.length > 0) {
+    contextSection += `\n- Frequently uses phrases like: ${style.commonPhrases.slice(-5).map(p => `"${p}"`).join(', ')}`;
+  }
+
+  // Add relationship context if available
+  if (relationship) {
+    contextSection += `\n\nRELATIONSHIP WITH SENDER:
+- Interaction frequency: ${relationship.interactionCount} previous emails
+- Response rate: ${Math.round(relationship.responseRate * 100)}%
+- Importance score: ${Math.round(relationship.importance * 100)}%
+- Typical tone with this person: ${relationship.typicalTone}`;
+
+    if (relationship.topics.length > 0) {
+      contextSection += `\n- Common topics: ${relationship.topics.slice(-3).join(', ')}`;
+    }
+  }
+
+  // Add confidence context
+  const confidence = userContext.confidenceMetrics;
+  if (confidence.overallScore > 0.5) {
+    contextSection += `\n\nSTYLE LEARNING CONFIDENCE: ${Math.round(confidence.overallScore * 100)}% (${confidence.signalCount} interactions analyzed)`;
+  }
+
+  contextSection += `\n\nIMPORTANT: Match the user's established communication style when drafting replies. Use their typical greetings, tone, formality level, and common phrases.\n`;
+
+  return contextSection;
+}
+
+/**
  * Helper function to format thread context
  */
 function formatThreadContext(threadContext: EmailData['thread_context']): string {
@@ -178,12 +257,15 @@ ${formatted}
  * Main processing function - detects signals and determines work state
  */
 export async function processEmail(email: EmailData): Promise<ProcessedEmail> {
+  // Format user context if available (learned communication style)
+  const userContextSection = formatUserContext(email.user_context, email.from_address);
+
   // Format thread context if available
   const threadContextSection = formatThreadContext(email.thread_context);
 
   const prompt = `You are a work preparation AI. Your job is to detect OBLIGATIONS and prepare WORK, not classify emails.
 
-${threadContextSection}CURRENT EMAIL (the one requiring your response):
+${userContextSection}${threadContextSection}CURRENT EMAIL (the one requiring your response):
 From: ${email.from_name} <${email.from_address}>
 Subject: ${email.subject}
 Received: ${new Date(email.received_at).toLocaleString()}
@@ -401,6 +483,16 @@ STEP 3: PREPARE THE WORK
 
 For WORK_PREPARED:
 - Draft a complete reply (subject, body, tone)
+  CRITICAL: If USER'S COMMUNICATION STYLE is provided, MATCH IT EXACTLY:
+  * Use their typical greetings (e.g., "Hey" vs "Dear" vs "Hi there")
+  * Match their formality level (very formal → somewhat formal → neutral → casual → very casual)
+  * Apply their signature style if provided
+  * Adopt their tone preferences (formal, casual, friendly, technical, direct)
+  * Use their common phrases naturally
+  * Match their typical email length
+  * Match emoji usage (frequently/occasionally/rarely)
+  * If relationship context shows high importance sender, adjust tone appropriately
+
   IMPORTANT: If thread context is provided, USE IT to write contextual replies:
   * Reference previous messages when relevant
   * Don't repeat what was already said

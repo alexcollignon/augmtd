@@ -19,6 +19,7 @@ import { processEmail } from '@/lib/ai/email-processor';
 import { analyzeRecipients, shouldCreateInboxItem, getSuggestionLevel, getSuggestionLabel } from '@/lib/ai/recipient-detector';
 import { getVisualSection } from '@/lib/types/inbox';
 import { analyzeSentEmail } from '@/lib/context/sent-email-analyzer';
+import type { UserContextProfile } from '@/lib/types/user-context';
 
 export interface SyncResult {
   emailsFetched: number;
@@ -29,6 +30,32 @@ export interface SyncResult {
 export interface SyncOptions {
   maxEmails?: number;
   syncWindowDays?: number;
+}
+
+/**
+ * Fetch user context profile for personalized AI processing
+ */
+async function getUserContext(
+  userId: string,
+  adminSupabase: SupabaseClient
+): Promise<UserContextProfile | undefined> {
+  try {
+    const { data, error } = await adminSupabase
+      .from('user_context_profiles')
+      .select('context_data')
+      .eq('user_id', userId)
+      .single();
+
+    if (error || !data?.context_data) {
+      // No context yet - that's OK, AI will work without it
+      return undefined;
+    }
+
+    return data.context_data as UserContextProfile;
+  } catch (error) {
+    console.error('[Sync] Error fetching user context:', error);
+    return undefined;
+  }
 }
 
 /**
@@ -90,6 +117,14 @@ export async function syncEmailsForConnection(
     }
 
     console.log(`Fetched ${messages.length} ${connection.provider} emails for user ${connection.user_id}`);
+
+    // Fetch user context for personalized AI processing
+    const userContext = await getUserContext(connection.user_id, adminSupabase);
+    if (userContext) {
+      console.log(`✓ Loaded user context (confidence: ${Math.round(userContext.confidenceMetrics.overallScore * 100)}%)`);
+    } else {
+      console.log(`○ No user context yet - AI will learn from user's behavior`);
+    }
 
     // Process each email
     for (const message of messages) {
@@ -267,7 +302,8 @@ export async function syncEmailsForConnection(
               subject: storedEmail.subject,
               body: storedEmail.body,
               received_at: storedEmail.received_at,
-              thread_context: threadEmails || []
+              thread_context: threadEmails || [],
+              user_context: userContext, // NEW: Personalize based on learned style
             });
 
             // Update existing inbox item with recipient context
@@ -354,7 +390,8 @@ export async function syncEmailsForConnection(
             from_name: storedEmail.from_name,
             subject: storedEmail.subject,
             body: storedEmail.body,
-            received_at: storedEmail.received_at
+            received_at: storedEmail.received_at,
+            user_context: userContext, // NEW: Personalize based on learned style
           });
 
           // Create inbox item for this recipient

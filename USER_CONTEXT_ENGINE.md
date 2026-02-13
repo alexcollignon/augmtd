@@ -406,6 +406,123 @@ Updates context:
 - Bootstrap API for existing users
 - UserContextEngine handles both draft edits AND sent emails
 
+## Using the Context in AI Prompts (NEW!)
+
+**The learned context is now automatically applied to every email draft:**
+
+### How It Works
+
+1. **During Email Sync:**
+   ```typescript
+   // Fetch user context
+   const userContext = await getUserContext(userId);
+
+   // Pass to AI processor
+   await processEmail({
+     ...emailData,
+     user_context: userContext  // Learned patterns included
+   });
+   ```
+
+2. **AI Prompt Includes:**
+   ```
+   USER'S COMMUNICATION STYLE (learned from their past emails):
+   - Typical email length: 150 characters
+   - Formality level: somewhat casual
+   - Tone preferences: casual, friendly
+   - Emoji usage: occasionally uses emojis
+   - Common greetings: Hey, Hi there
+   - Signature style: "Best,\nAlex"
+   - Frequently uses phrases like: "thanks for", "let me know", "sounds good"
+
+   RELATIONSHIP WITH SENDER:
+   - Interaction frequency: 42 previous emails
+   - Response rate: 95%
+   - Importance score: 85%
+   - Typical tone with this person: formal
+   - Common topics: project updates, budget, deadlines
+
+   CRITICAL: Match the user's established communication style when drafting replies.
+   Use their typical greetings, tone, formality level, and common phrases.
+   ```
+
+3. **AI Generates Personalized Drafts:**
+   ```
+   Without context:
+   "Dear John,
+   Thank you for your email regarding the project update.
+   I appreciate your time and look forward to discussing this further.
+   Best regards"
+
+   With context (learned casual style):
+   "Hey John!
+   Thanks for the update - sounds good!
+   Let me know if you need anything else.
+   Best,
+   Alex"
+   ```
+
+### What Gets Personalized
+
+✅ **Greetings** - Uses learned patterns ("Hey" vs "Dear" vs "Hi there")
+✅ **Formality** - Matches user's typical level (formal → casual scale)
+✅ **Tone** - Applies learned preferences (friendly, direct, technical)
+✅ **Length** - Approximates user's typical email length
+✅ **Phrases** - Incorporates common expressions naturally
+✅ **Signature** - Uses learned signature style
+✅ **Emojis** - Matches frequency (never/occasionally/frequently)
+✅ **Relationship context** - Adjusts tone based on sender importance
+
+### Example Learning + Application Flow
+
+```
+Day 1 - First Sync:
+  → Analyzes 50 sent emails
+  → Learns: casual tone, "Hey" greetings, "Best, Alex" signature
+  → confidence: 60%
+
+Day 1 - New email arrives:
+  → AI fetches learned context
+  → Generates draft: "Hey John! Thanks for reaching out. Best, Alex"
+  → Matches user's style perfectly
+  → High approval rate
+
+Day 5 - User edits draft:
+  → Original: "I appreciate your time"
+  → Edited: "thanks!"
+  → Learns: even more casual, shorter
+  → confidence: 75%
+
+Day 10:
+  → AI now generates naturally casual, short drafts
+  → User rarely needs to edit
+  → confidence: 85%
+```
+
+### Integration Points
+
+**Email Processing** (`lib/ai/email-processor.ts`):
+- Accepts `user_context` parameter
+- Formats context for AI prompt
+- Includes explicit instructions to match style
+
+**Email Sync** (`lib/email-sync/sync-emails.ts`):
+- Fetches context before processing
+- Passes to every processEmail() call
+- Logs confidence level
+
+**AI Prompt** (Enhanced):
+```typescript
+CRITICAL: If USER'S COMMUNICATION STYLE is provided, MATCH IT EXACTLY:
+* Use their typical greetings
+* Match their formality level
+* Apply their signature style
+* Adopt their tone preferences
+* Use their common phrases naturally
+* Match their typical email length
+* Match emoji usage
+```
+
 ## Next Steps
 
 ### 1. Complete Integration

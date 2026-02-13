@@ -421,7 +421,7 @@ README.md                              ✅ Comprehensive documentation
   - [x] Automatic context updates on user actions
 
 **Completed (Latest):**
-- [x] Bootstrap from sent emails ✅ NEW
+- [x] Bootstrap from sent emails ✅
   - [x] Analyze user's sent emails during sync
   - [x] Extract communication style automatically
   - [x] Learn greetings, signatures, tone, formality
@@ -429,16 +429,20 @@ README.md                              ✅ Comprehensive documentation
   - [x] `/api/context/bootstrap` - Manual bootstrap endpoint
   - [x] Immediate personalization from day 1
 
+- [x] AI Prompt Integration ✅ NEW
+  - [x] Fetch user context during email processing
+  - [x] Include learned style in AI prompts
+  - [x] Match user's greetings and signatures
+  - [x] Match formality and tone preferences
+  - [x] Reference relationship importance
+  - [x] Apply common phrases naturally
+  - [x] Personalized drafts from first sync
+
 **In Progress:**
 - [ ] Integrate with remaining action endpoints
   - [ ] Update `/api/inbox/[id]/send-reply` to log draft edits
   - [ ] Update `/api/inbox/[id]/complete` to log urgency data
   - [ ] Update `/api/inbox/[id]/dismiss` to use ContextService
-- [ ] AI prompt integration
-  - [ ] Include user context in email processing prompts
-  - [ ] Reference learned communication style
-  - [ ] Adjust confidence based on role patterns
-  - [ ] Match user's tone preferences
 
 **Next Tasks:**
 - [ ] Test context engine with real user actions
@@ -447,14 +451,16 @@ README.md                              ✅ Comprehensive documentation
 - [ ] Integrate learned patterns into AI prompts
 - [ ] Build context insights dashboard (optional)
 
-**Files Created:**
+**Files Created/Updated:**
 - `lib/types/user-context.ts` - Type definitions for all context dimensions
 - `lib/context/user-context-engine.ts` - Main analytics engine (500+ lines)
 - `lib/context/context-service.ts` - Service layer for easy integration
-- `lib/context/sent-email-analyzer.ts` - Bootstrap from sent emails (NEW)
+- `lib/context/sent-email-analyzer.ts` - Bootstrap from sent emails
 - `app/api/context/route.ts` - API endpoints for context retrieval
-- `app/api/context/bootstrap/route.ts` - Manual bootstrap endpoint (NEW)
+- `app/api/context/bootstrap/route.ts` - Manual bootstrap endpoint
 - `supabase/migrations/20260210_add_is_from_user_to_emails.sql` - Database migration
+- `lib/ai/email-processor.ts` - **Updated to use user context** (NEW)
+- `lib/email-sync/sync-emails.ts` - **Fetches and passes context to AI** (NEW)
 
 **Success Criteria:**
 - After 10 interactions, confidence score > 50
