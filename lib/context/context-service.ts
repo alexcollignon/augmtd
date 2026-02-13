@@ -98,6 +98,14 @@ export class ContextService {
       urgency_score?: number;
       topic?: string;
       formality_score?: number;
+      communication_patterns?: {
+        length?: number;
+        greeting?: string;
+        signature?: string;
+        emoji_count?: number;
+        tone_indicators?: string[];
+        common_phrases?: string[];
+      };
     }
   ): Promise<void> {
     await this.logSignal(userId, 'reply_sent', metadata, inboxItemId);
