@@ -58,8 +58,6 @@ async function getUserContext(
         .insert({
           user_id: userId,
           context_data: DEFAULT_USER_CONTEXT,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
         });
 
       if (insertError) {

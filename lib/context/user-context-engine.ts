@@ -387,7 +387,6 @@ export class UserContextEngine {
       .upsert({
         user_id: userId,
         context_data: context,
-        updated_at: new Date().toISOString(),
       });
 
     if (error) {
