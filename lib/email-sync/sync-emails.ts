@@ -278,6 +278,13 @@ export async function syncEmailsForConnection(
             continue;
           }
 
+          // CRITICAL: Only create inbox items for the connection owner
+          // Other recipients are analyzed for context only (roles, mentions, etc.)
+          if (recipient.userId !== connection.user_id) {
+            console.log(`   ⊘ Skipping ${recipient.email} (not connection owner)`);
+            continue;
+          }
+
           // Check if this is the current user (connection owner)
           const isCurrentUser = recipient.userId === connection.user_id;
 
