@@ -55,6 +55,8 @@ export class UserContextEngine {
         await this.updateRolePatterns(context, signal);
         break;
       case 'reply_sent':
+        // Learn from sent emails (both style and relationships)
+        await this.updateCommunicationStyle(context, signal); // NEW: Learn style from sent emails
         await this.updateUrgencySensitivity(context, signal);
         await this.updateRelationshipGraph(context, signal);
         break;
@@ -76,18 +78,26 @@ export class UserContextEngine {
   }
 
   /**
-   * Learn communication style from draft edits
+   * Learn communication style from draft edits or sent emails
    */
   private static async updateCommunicationStyle(
     context: UserContextProfile,
     signal: LearningSignal
   ): Promise<void> {
-    const { original_draft, edited_draft } = signal.signal_data;
+    const { original_draft, edited_draft, communication_patterns } = signal.signal_data;
 
+    const style = context.communicationStyle;
+
+    // Handle sent email patterns (from bootstrapping)
+    if (communication_patterns && signal.signal_type === 'reply_sent') {
+      this.updateFromSentEmail(style, communication_patterns, context.confidenceMetrics.signalCount);
+      return;
+    }
+
+    // Handle draft edits (from user modifications)
     if (!original_draft || !edited_draft) return;
 
     const delta = this.extractToneDelta(original_draft, edited_draft);
-    const style = context.communicationStyle;
 
     // Update average length (running average)
     style.avgLength = this.runningAverage(
@@ -383,6 +393,84 @@ export class UserContextEngine {
     if (error) {
       console.error('[UserContextEngine] Failed to save context:', error);
       throw error;
+    }
+  }
+
+  /**
+   * Update communication style from sent email patterns
+   */
+  private static updateFromSentEmail(
+    style: CommunicationStyle,
+    patterns: any,
+    signalCount: number
+  ): void {
+    // Update average length
+    if (patterns.length !== undefined) {
+      style.avgLength = this.runningAverage(
+        style.avgLength,
+        patterns.length,
+        signalCount
+      );
+    }
+
+    // Update formality score
+    if (patterns.formality_score !== undefined) {
+      style.formalityScore = this.runningAverage(
+        style.formalityScore,
+        patterns.formality_score,
+        signalCount
+      );
+    }
+
+    // Learn greeting pattern
+    if (patterns.greeting && !style.greetingPatterns.includes(patterns.greeting)) {
+      style.greetingPatterns.push(patterns.greeting);
+      // Keep only most recent 10 greetings
+      if (style.greetingPatterns.length > 10) {
+        style.greetingPatterns = style.greetingPatterns.slice(-10);
+      }
+    }
+
+    // Learn signature
+    if (patterns.signature) {
+      style.signatureStyle = patterns.signature;
+    }
+
+    // Update emoji usage
+    if (patterns.emoji_count !== undefined) {
+      const hasEmoji = patterns.emoji_count > 0 ? 1 : 0;
+      style.emojiUsage = this.runningAverage(
+        style.emojiUsage,
+        hasEmoji,
+        signalCount
+      );
+    }
+
+    // Learn common phrases
+    if (patterns.common_phrases && Array.isArray(patterns.common_phrases)) {
+      patterns.common_phrases.forEach((phrase: string) => {
+        if (!style.commonPhrases.includes(phrase)) {
+          style.commonPhrases.push(phrase);
+        }
+      });
+      // Keep only top 20 phrases
+      if (style.commonPhrases.length > 20) {
+        style.commonPhrases = style.commonPhrases.slice(-20);
+      }
+    }
+
+    // Update tone vector from tone indicators
+    if (patterns.tone_indicators && Array.isArray(patterns.tone_indicators)) {
+      patterns.tone_indicators.forEach((indicator: string) => {
+        const [tone, _phrase] = indicator.split(':');
+        if (tone === 'formal') {
+          style.toneVector.formal = Math.min(1, style.toneVector.formal + 0.05);
+          style.toneVector.casual = Math.max(0, style.toneVector.casual - 0.02);
+        } else if (tone === 'casual') {
+          style.toneVector.casual = Math.min(1, style.toneVector.casual + 0.05);
+          style.toneVector.formal = Math.max(0, style.toneVector.formal - 0.02);
+        }
+      });
     }
   }
 

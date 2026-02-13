@@ -18,6 +18,7 @@ import { fetchUnreadEmails as fetchOutlookEmails, parseOutlookMessage } from '@/
 import { processEmail } from '@/lib/ai/email-processor';
 import { analyzeRecipients, shouldCreateInboxItem, getSuggestionLevel, getSuggestionLabel } from '@/lib/ai/recipient-detector';
 import { getVisualSection } from '@/lib/types/inbox';
+import { analyzeSentEmail } from '@/lib/context/sent-email-analyzer';
 
 export interface SyncResult {
   emailsFetched: number;
@@ -113,12 +114,17 @@ export async function syncEmailsForConnection(
           continue;
         }
 
+        // Determine if email is from user (for learning)
+        const userEmail = connection.metadata?.email || connection.provider_account_id;
+        const isFromUser = parsed.from_address.toLowerCase() === userEmail?.toLowerCase();
+
         // Store email
         const { data: storedEmail, error: emailError } = await adminSupabase
           .from('emails')
           .insert({
             user_id: connection.user_id,
-            ...parsed
+            ...parsed,
+            is_from_user: isFromUser, // Flag for learning from sent emails
           })
           .select()
           .single();
@@ -131,16 +137,31 @@ export async function syncEmailsForConnection(
 
         result.emailsFetched++;
 
-        // Check if email is from the user (sent by them or by AUGMTD on their behalf)
-        // Store for context but don't create inbox item
-        const userEmail = connection.metadata?.email || connection.provider_account_id;
-        const isFromUser = storedEmail.from_address.toLowerCase() === userEmail?.toLowerCase();
-
+        // Check if email is from the user (already determined and stored)
         console.log(`    User email: ${userEmail}`);
-        console.log(`    Is from user: ${isFromUser}`);
+        console.log(`    Is from user: ${storedEmail.is_from_user}`);
 
-        if (isFromUser) {
-          console.log(`    ✓ Stored for context but skipping inbox item (sent email)\n`);
+        if (storedEmail.is_from_user) {
+          console.log(`    ✓ Stored for context, extracting learning signals...`);
+
+          // Extract learning signals from sent email (async, non-blocking)
+          analyzeSentEmail({
+            userId: connection.user_id,
+            emailId: storedEmail.id,
+            from: storedEmail.from_address,
+            to: storedEmail.to_addresses || [],
+            cc: storedEmail.cc_addresses || [],
+            subject: storedEmail.subject || '',
+            body: storedEmail.body || '',
+            sentAt: storedEmail.received_at || new Date().toISOString(),
+            threadId: storedEmail.thread_id,
+            inReplyTo: storedEmail.in_reply_to,
+          }).catch(err => {
+            console.error('    ✗ Error analyzing sent email:', err);
+            // Don't break sync if learning fails
+          });
+
+          console.log(`    ✓ Learning signals queued, skipping inbox item (sent email)\n`);
           continue; // Skip to next email (already stored for context)
         }
 

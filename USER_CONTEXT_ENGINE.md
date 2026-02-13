@@ -328,6 +328,84 @@ SELECT context_data FROM user_context_profiles WHERE user_id = '...';
 }
 ```
 
+## Bootstrap from Sent Emails (NEW!)
+
+**Immediate Personalization from Day 1**
+
+Instead of waiting for users to edit drafts, we now **automatically learn from their historical sent emails** during sync:
+
+### How It Works
+
+1. **During Email Sync:**
+   - When we detect a sent email (from_address = user's email)
+   - Store it in database with `is_from_user = true`
+   - Extract communication patterns immediately
+   - Update user context automatically
+
+2. **What We Learn:**
+   ```typescript
+   // From each sent email:
+   - Email length (running average)
+   - Formality score (formal vs casual)
+   - Greeting patterns ("Hi", "Hey", "Dear")
+   - Signature style ("Best, Name")
+   - Emoji usage frequency
+   - Common 3-word phrases
+   - Tone indicators (formal/casual markers)
+   - Relationship data (who they email, how often)
+   ```
+
+3. **Manual Bootstrap:**
+   ```bash
+   POST /api/context/bootstrap
+   { "limit": 50 }
+
+   # Processes up to 50 historical sent emails
+   # Returns: { emailsProcessed: 50 }
+   ```
+
+### Example Learning Flow
+
+```
+User sends email: "Hey John! Thanks for reaching out..."
+    ↓
+System detects: is_from_user = true
+    ↓
+Extracts patterns:
+  - greeting: "Hey John!"
+  - formality: 0.2 (very casual)
+  - emoji_count: 0
+  - tone: casual, friendly
+  - length: 150 chars
+    ↓
+Updates context:
+  - communicationStyle.formalityScore: 0.5 → 0.45
+  - communicationStyle.greetingPatterns: [..., "Hey"]
+  - communicationStyle.toneVector.casual: 0.5 → 0.55
+  - relationshipGraph["john@company.com"].interactionCount++
+```
+
+### Benefits
+
+✅ **Immediate personalization** - AI learns style before first draft edit
+✅ **Better first drafts** - Matches user's existing communication patterns
+✅ **Faster confidence growth** - Bootstrap from 50 emails = instant context
+✅ **Relationship graph** - Knows who's important from day 1
+✅ **No user effort** - Completely automatic
+
+### Implementation
+
+**Files:**
+- `lib/context/sent-email-analyzer.ts` - Pattern extraction
+- `lib/email-sync/sync-emails.ts` - Integration with sync
+- `app/api/context/bootstrap/route.ts` - Manual trigger
+- `supabase/migrations/20260210_add_is_from_user_to_emails.sql` - Database flag
+
+**Integration Points:**
+- Email sync automatically analyzes sent emails
+- Bootstrap API for existing users
+- UserContextEngine handles both draft edits AND sent emails
+
 ## Next Steps
 
 ### 1. Complete Integration
