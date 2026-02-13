@@ -556,7 +556,7 @@ export class UserContextEngine {
   private static extractSignature(text: string): string | null {
     // Look for common signature patterns at end of email
     const signaturePatterns = [
-      /\n(Best regards|Sincerely|Thanks|Cheers|Best)[,\n].*$/is,
+      /\n(Best regards|Sincerely|Thanks|Cheers|Best)[,\n].*$/i,
     ];
 
     for (const pattern of signaturePatterns) {
