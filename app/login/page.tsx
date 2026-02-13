@@ -16,13 +16,21 @@ function LoginForm() {
   const searchParams = useSearchParams();
   const supabase = createClient();
 
-  // Check for auth callback errors
+  // Check for auth callback errors and session expiration
   useEffect(() => {
     const error = searchParams?.get('error');
+    const session = searchParams?.get('session');
+
     if (error === 'auth_callback_failed') {
       setMessage('Authentication failed. Please try again.');
+      // Clean URL after showing message
+      router.replace('/login');
+    } else if (session === 'expired') {
+      setMessage('Your session has expired. Please log in again.');
+      // Clean URL after showing message
+      router.replace('/login');
     }
-  }, [searchParams]);
+  }, [searchParams, router]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();

@@ -58,6 +58,9 @@ export function InboxPageClient({
       setIsSyncing(true);
       optimisticSyncTriggered.current = true;
 
+      // Clean URL after reading the success param
+      window.history.replaceState({}, '', '/inbox');
+
       // Trigger initial sync automatically
       fetch('/api/connections/sync', {
         method: 'POST',
@@ -72,13 +75,36 @@ export function InboxPageClient({
     }
   }, [searchParams, connection]);
 
+  // Monitor session validity
+  useEffect(() => {
+    const supabase = createClient();
+
+    async function checkSession() {
+      const { data: { session }, error } = await supabase.auth.getSession();
+
+      if (error || !session) {
+        // Session is invalid or expired - redirect to login
+        console.log('[Session] Invalid or expired, redirecting to login');
+        window.location.href = '/login?session=expired';
+      }
+    }
+
+    // Check session every 30 seconds
+    const sessionCheckInterval = setInterval(checkSession, 30000);
+
+    // Initial check
+    checkSession();
+
+    return () => clearInterval(sessionCheckInterval);
+  }, []);
+
   // Poll for new items and check sync status
   useEffect(() => {
     const supabase = createClient();
 
     async function fetchData() {
       // Fetch inbox items
-      const { data: items } = await supabase
+      const { data: items, error: itemsError } = await supabase
         .from('inbox_items')
         .select('*')
         .eq('user_id', user.id)
@@ -86,17 +112,38 @@ export function InboxPageClient({
         .order('priority', { ascending: false })
         .order('created_at', { ascending: false });
 
+      // Check for auth errors
+      if (itemsError) {
+        console.error('[Inbox] Error fetching items:', itemsError);
+        // If it's an auth error, redirect to login
+        if (itemsError.message?.includes('JWT') || itemsError.code === 'PGRST301') {
+          console.log('[Session] Auth error detected, redirecting to login');
+          window.location.href = '/login?session=expired';
+          return;
+        }
+      }
+
       if (items) {
         setInboxItems(items);
       }
 
       // Check ALL connections sync status (Gmail + Outlook)
-      const { data: connections } = await supabase
+      const { data: connections, error: connectionsError } = await supabase
         .from('connections')
         .select('sync_status, provider')
         .eq('user_id', user.id)
         .in('provider', ['gmail', 'outlook'])
         .eq('status', 'active');
+
+      // Check for auth errors
+      if (connectionsError) {
+        console.error('[Inbox] Error fetching connections:', connectionsError);
+        if (connectionsError.message?.includes('JWT') || connectionsError.code === 'PGRST301') {
+          console.log('[Session] Auth error detected, redirecting to login');
+          window.location.href = '/login?session=expired';
+          return;
+        }
+      }
 
       if (connections && connections.length > 0) {
         // Check if ANY connection is currently syncing
@@ -150,7 +197,7 @@ export function InboxPageClient({
               Prepared Work
             </h1>
             <p className="text-[15px] text-neutral-600">
-              AI-prepared work items that need your attention right now.
+              Prepared work items that need your attention right now.
             </p>
           </div>
 
@@ -186,20 +233,12 @@ export function InboxPageClient({
                 <p className="text-[14px] text-neutral-600 mb-8">
                   Connect Gmail or Outlook to start receiving AI-prepared work
                 </p>
-                <div className="flex justify-center gap-3">
-                  <Link
-                    href="/api/auth/gmail/connect"
-                    className="inline-flex items-center px-6 py-3 bg-neutral-900 text-white text-[14px] font-semibold hover:bg-neutral-800 transition-all shadow-sm hover:shadow"
-                  >
-                    Connect Gmail
-                  </Link>
-                  <Link
-                    href="/api/auth/outlook/connect"
-                    className="inline-flex items-center px-6 py-3 bg-indigo-600 text-white text-[14px] font-semibold hover:bg-indigo-700 transition-all shadow-sm hover:shadow"
-                  >
-                    Connect Outlook
-                  </Link>
-                </div>
+                <Link
+                  href="/settings"
+                  className="inline-flex items-center px-8 py-3 bg-indigo-600 text-white text-[14px] font-semibold hover:bg-indigo-700 transition-all shadow-sm hover:shadow"
+                >
+                  Go to Settings
+                </Link>
               </div>
             </div>
           )}

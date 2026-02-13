@@ -1,9 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { ClockIcon } from '@heroicons/react/24/outline';
 import ActivityLogRow from '@/components/activity/activity-log-row';
 import ActivityDrawer from '@/components/activity/activity-drawer';
+import { createClient } from '@/lib/supabase/client';
 
 interface ActivityPageClientProps {
   activityItems: any[];
@@ -14,6 +15,28 @@ export default function ActivityPageClient({ activityItems }: ActivityPageClient
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
 
   console.log('[ActivityPageClient] Received items:', activityItems?.length || 0);
+
+  // Monitor session validity
+  useEffect(() => {
+    const supabase = createClient();
+
+    async function checkSession() {
+      const { data: { session }, error } = await supabase.auth.getSession();
+
+      if (error || !session) {
+        console.log('[Session] Invalid or expired, redirecting to login');
+        window.location.href = '/login?session=expired';
+      }
+    }
+
+    // Check session every 30 seconds
+    const sessionCheckInterval = setInterval(checkSession, 30000);
+
+    // Initial check
+    checkSession();
+
+    return () => clearInterval(sessionCheckInterval);
+  }, []);
 
   const handleRowClick = (item: any) => {
     setSelectedItem(item);
