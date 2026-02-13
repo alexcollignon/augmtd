@@ -6,19 +6,22 @@ AUGMTD is an intelligent email management and productivity tool that uses AI to 
 
 ## 🎯 Core Concept
 
-Instead of overwhelming you with a flat inbox, AUGMTD organizes work by **cognitive cost**:
+Instead of overwhelming you with a flat inbox, AUGMTD organizes work by **confidence and cognitive cost**:
 
-### Level 1: Action (Your Attention Required)
-- **Work Prepared** - Email responses drafted and ready for your judgment
-- **Action Required** - Execution tasks (payment updates, confirmations)
-- **Decision Required** - Choices under uncertainty requiring your input
-- **Waiting** - Blocked on external dependencies
+### Prepared Work (High Confidence)
+- **Direct assignments** detected through explicit mentions and role analysis
+- Email responses drafted and ready for your judgment
+- One-click send or edit capabilities
 
-### Level 2: Awareness
-- **Noted** - Low-stakes items you should be aware of (batched to reduce clutter)
+### Suggested for You (Medium Confidence)
+- **Potential responsibilities** that need your confirmation
+- User validation improves AI accuracy over time
+- Accept or dismiss to train the system
 
-### Level 3: Noise
-- **Hidden** - Marketing, social notifications (automatically filtered out)
+### For Your Awareness (Informational)
+- **Low-priority items** you should know about
+- Review-needed items and FYI messages
+- Batched to reduce visual clutter
 
 ## 🏗️ Architecture
 
@@ -36,15 +39,19 @@ Instead of overwhelming you with a flat inbox, AUGMTD organizes work by **cognit
 #### ✅ Email Integration
 - Gmail and Outlook OAuth integration
 - Automatic email sync (cron-based)
-- Read-only access (never sends emails without your approval)
+- Send email replies with proper threading
+- Full draft editing before sending
+- Provider-specific sync with learning signals
 
 #### ✅ AI Email Processing
 - **Thread-aware draft generation** - AI sees full conversation history
+- **Recipient detection** - Multi-tier confidence system (assigned/suggested/review/fyi)
+- **Body content analysis** - Detects explicit assignments ("Alex, can you...")
+- **Learning signals** - Tracks user actions to improve suggestions over time
+- **Visual sections** - Prepared Work, Suggested for You, For Your Awareness
+- **User confirmations** - Validate suggested items to train the AI
 - **Signal-based classification** (not keyword matching)
-- **Cognitive cost analysis** - Execution vs Decision distinction
 - **Work state detection** - 6 states with specific rules
-- **Mechanical action batching** - Groups repetitive tasks (email confirmations)
-- **Priority banding** - 80-100 (urgent), 50-79 (important), 20-49 (awareness), <20 (noise)
 - **Smart context truncation** - Last 20 messages, 3000 chars per email
 
 #### ✅ Auth & Session Management
@@ -54,8 +61,11 @@ Instead of overwhelming you with a flat inbox, AUGMTD organizes work by **cognit
 - Error handling for OAuth failures
 
 #### ✅ Modern UI/UX
-- **Consistent design language** - Angular logo → rounded-lg components throughout
-- **Minimal, professional aesthetic** - Clean shadows, subtle borders
+- **Sharp-corner design system** - Matches logo aesthetic, no rounded borders
+- **Right-side drawer** - Smooth slide animations for work item details
+- **Inline draft editing** - Full textarea with edit tracking and send capabilities
+- **Modern indigo/violet palette** - Professional gradient backgrounds
+- **Activity log** - Terminal-style compact view of completed/dismissed items
 - **Responsive layout** - Works on all screen sizes
 - **Accessible** - Proper labels, focus states, keyboard navigation
 
@@ -67,30 +77,58 @@ augmtd/
 │   ├── inbox/                    # Main inbox view
 │   │   ├── page.tsx             # Server component (auth + data fetching)
 │   │   └── inbox-page-client.tsx # Client component (interactive UI)
+│   ├── activity/                # Activity log
+│   │   ├── page.tsx             # Completed/dismissed items
+│   │   └── activity-page-client.tsx
 │   ├── settings/                # User settings
 │   ├── login/                   # Auth pages
 │   ├── signup/
 │   ├── api/                     # API routes
 │   │   ├── auth/               # OAuth callbacks (Gmail, Outlook)
 │   │   ├── connections/        # Manual sync endpoint
-│   │   └── cron/               # Scheduled email fetching
+│   │   ├── cron/               # Scheduled email fetching
+│   │   └── inbox/[id]/         # Work item actions
+│   │       ├── complete/       # Mark as complete
+│   │       ├── dismiss/        # Dismiss item
+│   │       ├── send-reply/     # Send email reply
+│   │       └── confirm/        # Confirm suggested items
 │   └── icon.png                # Favicon
 ├── components/                  # React components
 │   ├── inbox/                  # Inbox-specific components
-│   │   ├── simple-inbox-card.tsx
-│   │   ├── batch-card.tsx
+│   │   ├── work-card.tsx       # Work item card
+│   │   ├── work-sections.tsx   # Section-based layout
+│   │   ├── work-detail-panel.tsx # Right-side drawer
+│   │   ├── draft-preview-modal.tsx # Draft editor
+│   │   ├── recipient-context-display.tsx
 │   │   └── inbox-drawer.tsx
+│   ├── activity/               # Activity log components
+│   │   ├── activity-log-row.tsx
+│   │   └── activity-drawer.tsx
 │   ├── settings/               # Settings components
+│   │   ├── connection-card.tsx
+│   │   └── manual-sync-button.tsx
 │   └── sidebar-nav.tsx
 ├── lib/                        # Core logic
 │   ├── ai/
-│   │   └── email-processor.ts # AI email classification engine
+│   │   ├── recipient-detector.ts # Multi-tier confidence detection
+│   │   ├── body-analyzer.ts    # Explicit assignment detection
+│   │   ├── learning-analyzer.ts # User action analysis
+│   │   ├── signal-detector.ts  # Work signal detection
+│   │   └── work-state-mapper.ts # Work state rules
+│   ├── email-sync/
+│   │   └── sync-emails.ts      # Email sync logic
+│   ├── types/
+│   │   ├── inbox.ts            # Inbox item types
+│   │   └── recipient-detection.ts
 │   ├── supabase/              # Supabase clients
 │   ├── google/                # Gmail API integration
+│   │   └── gmail.ts           # Send reply support
 │   ├── microsoft/             # Outlook API integration
-│   └── utils/                 # Utilities
-│       └── batch-inbox-items.ts # Batching logic
-├── supabase-migration-cognitive-cost.sql # Database schema
+│   │   └── outlook.ts         # Send reply support
+│   └── design-system.ts       # Visual section styling
+├── supabase/migrations/       # Database migrations
+│   ├── 20260212_add_learning_signals.sql
+│   └── 20260212_add_confirmation_fields.sql
 └── middleware.ts              # Auth middleware (route protection)
 ```
 
@@ -221,16 +259,28 @@ The email processor (`lib/ai/email-processor.ts`) uses a sophisticated signal-ba
 - `work_title` - What needs your judgment
 - `what_i_prepared` - What AI prepared for you
 - `why_matters` - Context and importance
+- `visual_section` - prepared | suggested | awareness
+- `user_confirmation` - Confirmation status for suggested items (JSONB)
+- `recipient_context` - Detection details and confidence (JSONB)
 - `source_data` - Email details + AI analysis (JSONB)
 - `priority` - 0-100 score
+- `status` - pending | completed | dismissed
+
+**learning_signals**
+- User action tracking for AI improvement
+- `signal_type` - item_completed | item_dismissed | reply_sent | etc.
+- `signal_data` - Contextual information (JSONB)
+- Links to inbox_items for analysis
 
 **connections**
 - Email provider credentials (encrypted)
 - Last sync timestamp
 - Sync status
+- Provider-specific metadata
 
 **emails**
 - Raw email storage
+- Thread grouping
 - Links to inbox_items
 
 ## 🔐 Security
@@ -242,6 +292,27 @@ The email processor (`lib/ai/email-processor.ts`) uses a sophisticated signal-ba
 - **Encrypted tokens** - Email credentials encrypted (⚠️ currently base64, needs proper encryption)
 
 ## 📈 Recent Improvements
+
+### Phase 4: Actions & Right-Side Drawer (Feb 2026)
+- ✅ Right-side drawer with smooth slide-in/out animations
+- ✅ Inline draft preview with full editing capabilities
+- ✅ Complete/dismiss/send-reply API endpoints
+- ✅ Learning signals system for tracking user actions
+- ✅ Activity log showing completed and dismissed items
+- ✅ Sharp-corner design system (no rounded borders)
+- ✅ Draft editing modal with edit tracking and reset
+- ✅ Email sending with proper threading (Gmail + Outlook)
+- ✅ Removed AI branding for cleaner UX
+
+### Phase 2 & 3: Recipient Detection & Visual Sections (Feb 2026)
+- ✅ Multi-tier confidence system (assigned/suggested/review/fyi)
+- ✅ Body content analysis for explicit assignments
+- ✅ Visual sections: Prepared Work, Suggested for You, For Your Awareness
+- ✅ User confirmation system for suggested items
+- ✅ Learning analyzer for personalized thresholds
+- ✅ Compact work cards with single-line truncation
+- ✅ Section-based layout with badges and dots
+- ✅ Provider-specific sync with outcome-centric work titles
 
 ### Thread Context for Drafts (Feb 2026)
 - ✅ AI now sees full email thread history when drafting replies
@@ -297,10 +368,14 @@ The email processor (`lib/ai/email-processor.ts`) uses a sophisticated signal-ba
 
 1. ~~**Email thread batching** - Group thread messages into single inbox item~~ ✅ **DONE**
 2. ~~**Include sent emails** - Show user's sent emails in thread context~~ ✅ **DONE**
-3. **Thread message count** - Display message count in inbox cards
-4. **Automatic syncing** - Implement hourly/daily cron job for email sync
-5. **User Context Engine** - Learn from modifications and approvals over time
-6. **Proper token encryption** - Replace base64 with real encryption (AES-256)
+3. ~~**Right-side drawer** - Work item details with smooth animations~~ ✅ **DONE**
+4. ~~**Draft editing** - Full inline editor with send capabilities~~ ✅ **DONE**
+5. ~~**Learning signals** - Track user actions for AI improvement~~ ✅ **DONE**
+6. ~~**Recipient detection** - Multi-tier confidence system~~ ✅ **DONE**
+7. **Advanced learning** - Analyze patterns to improve suggestions
+8. **Automatic syncing** - Implement hourly/daily cron job for email sync
+9. **Vector similarity** - Find similar past interactions for better context
+10. **Proper token encryption** - Replace base64 with real encryption (AES-256)
 
 ## 📝 Documentation
 
