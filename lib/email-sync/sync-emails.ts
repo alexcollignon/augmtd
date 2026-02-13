@@ -99,7 +99,7 @@ export async function syncEmailsForConnection(
 
     // Fetch emails based on provider
     const encryptedTokens = connection.metadata.tokens;
-    const maxEmails = options.maxEmails || connection.metadata.max_emails_per_sync || 10;
+    const maxEmails = options.maxEmails || connection.metadata.max_emails_per_sync || 5;
     const syncWindowDays = options.syncWindowDays || connection.metadata.sync_window_days || 7;
 
     let messages: any[];
