@@ -28,11 +28,16 @@ export function InboxPageClient({
   const [user] = useState(initialUser);
   const [connection, setConnection] = useState(initialConnection);
   const [inboxItems, setInboxItems] = useState(initialInboxItems);
-  const [isOnboardingOpen, setIsOnboardingOpen] = useState(!initialConnection);
+  const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
 
   // Track when we've optimistically started a sync
   const optimisticSyncTriggered = useRef(false);
+
+  // Set onboarding modal state on client-side only (prevents hydration mismatch)
+  useEffect(() => {
+    setIsOnboardingOpen(!initialConnection);
+  }, [initialConnection]);
 
   // Sync connection state when initial prop changes (e.g., switching providers)
   useEffect(() => {
