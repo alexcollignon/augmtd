@@ -414,9 +414,9 @@ export class UserContextEngine {
           'identity',
           {
             fullName: currentIdentity?.fullName || '',
-            role: context.rolePatterns.primaryRole,
+            role: context.rolePatterns.primaryRole || '',
             email: currentIdentity?.email || '',
-            responsibilities: context.rolePatterns.responsibilities,
+            responsibilities: context.rolePatterns.responsibilities || [],
             authority: context.rolePatterns.decisionMakingLevel as any,
           },
           Math.round(context.confidenceMetrics.dimensionConfidence.rolePatterns * 100),
@@ -429,20 +429,19 @@ export class UserContextEngine {
 
       // TEMPORARY: Also write to old table for backward compatibility during transition
       // TODO: Remove this after validating modular profiles work correctly (1-2 weeks)
-      const supabase = await createClient();
-      await supabase
-        .from('user_context_profiles')
-        .upsert({
-          user_id: userId,
-          context_data: context,
-        })
-        .then(() => {
-          console.log(`[UserContextEngine] Saved to modular profiles + old table (${context.confidenceMetrics.signalCount} signals)`);
-        })
-        .catch(err => {
-          // Don't fail if old table write fails (might be deleted)
-          console.warn('[UserContextEngine] Old table write failed (expected if table deleted):', err.message);
-        });
+      try {
+        const supabase = await createClient();
+        await supabase
+          .from('user_context_profiles')
+          .upsert({
+            user_id: userId,
+            context_data: context,
+          });
+        console.log(`[UserContextEngine] Saved to modular profiles + old table (${context.confidenceMetrics.signalCount} signals)`);
+      } catch (err: any) {
+        // Don't fail if old table write fails (might be deleted)
+        console.warn('[UserContextEngine] Old table write failed (expected if table deleted):', err.message);
+      }
 
     } catch (error) {
       console.error('[UserContextEngine] Failed to save context:', error);

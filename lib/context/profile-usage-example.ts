@@ -35,7 +35,7 @@ async function draftEmailReply(emailData: any, userId: string) {
     recipientName: sender?.name || emailData.from.split('@')[0],
     body: '...', // Generated based on email context
     signature: email_communication.signature || `Best,\n${identity.fullName.split(' ')[0]}`,
-    tone: email_communication.tone + (sender?.importance > 80 ? 0.1 : 0), // Adjust for VIP
+    tone: email_communication.tone + ((sender?.importance ?? 0) > 80 ? 0.1 : 0), // Adjust for VIP
   };
 
   console.log('Draft generated with profiles:', {

@@ -93,6 +93,12 @@ export type ProfileDataMap = {
   work_patterns: any; // Future
 };
 
+// Type for profiles loaded from DB (includes confidence metadata)
+export type LoadedProfile<T> = T & {
+  _confidence: number;
+  _signalCount: number;
+};
+
 // ============= PROFILE LOADER CLASS =============
 
 export class ProfileLoader {
@@ -102,7 +108,7 @@ export class ProfileLoader {
   static async loadProfiles<T extends ProfileType>(
     userId: string,
     profileTypes: T[]
-  ): Promise<Partial<{ [K in T]: ProfileDataMap[K] }>> {
+  ): Promise<Partial<{ [K in T]: LoadedProfile<ProfileDataMap[K]> }>> {
     const supabase = await createClient();
 
     // Separate relationships from other profiles
