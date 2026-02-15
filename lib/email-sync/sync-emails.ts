@@ -241,9 +241,23 @@ export async function syncEmailsForConnection(
           continue;
         }
 
+        console.log(`    📧 Profile email: ${userProfile.email}`);
+        console.log(`    📧 Connection email: ${connection.provider_account_id}`);
+
         // Get all users in this organization for mention detection
         // Always include the connection owner even if organization_id is null
-        let orgUsers: Array<{ id: string; email: string; full_name: string | null }> = [userProfile];
+        // IMPORTANT: Include both profile email AND connection email (they may differ)
+        let orgUsers: Array<{ id: string; email: string; full_name: string | null }> = [
+          userProfile,
+          // Add connection email alias if different from profile email
+          ...(connection.provider_account_id !== userProfile.email
+            ? [{
+                id: userProfile.id,
+                email: connection.provider_account_id,
+                full_name: userProfile.full_name
+              }]
+            : [])
+        ];
 
         if (userProfile.organization_id) {
           const { data: orgMembers } = await adminSupabase
