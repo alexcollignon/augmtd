@@ -1,6 +1,12 @@
 # AUGMTD Technical Specification
-**Version:** 1.0
-**Last Updated:** 2026-02-05
+**Version:** 2.0
+**Last Updated:** 2026-02-14
+
+**Major Changes in v2.0:**
+- Migrated from monolithic user_context_profiles to modular context_profiles
+- Introduced skills-based architecture with profile composition
+- Updated database schema to support independent profile learning
+- Enhanced digital twin vision with organizational intelligence roadmap
 
 ---
 
@@ -56,7 +62,44 @@
 
 ### Vision Statement
 
-> "Build a personal digital twin for every employee that learns how they work, prepares their next steps, and evolves into a digital twin of the entire organization's operations."
+> "Build a modular digital twin for every employee that learns how they work across all connected tools, prepares their next steps with personalized intelligence, and evolves into a digital twin of the entire organization's operations."
+
+**What Makes AUGMTD Different:**
+
+AUGMTD is not just another AI assistant - it's a **modular learning system** that:
+- **Learns Independently**: Email communication patterns don't affect Slack behavior
+- **Composes Intelligently**: Skills combine exactly the profiles they need
+- **Grows with You**: Each profile improves independently, faster than monolithic systems
+- **Scales to Organization**: Individual digital twins aggregate into organizational intelligence
+- **Respects Privacy**: You control which profiles each skill can access
+
+**Evolution Path:**
+
+```
+Individual Digital Twin (Today)
+    ↓
+  Learns from: emails, meetings, calendar
+  Powers: email drafts, meeting prep, task suggestions
+    ↓
+Skill Marketplace (Next)
+    ↓
+  Skills: EmailDraft, MeetingSummary, ReportGenerator, ...
+  Profiles: identity, email_comm, slack_comm, domain_knowledge, ...
+  User controls: which skills, which profiles
+    ↓
+Team Intelligence (6-12 months)
+    ↓
+  Shared domain knowledge across team
+  Best practices automatically identified
+  New employees onboard faster
+    ↓
+Organizational Twin (12-24 months)
+    ↓
+  Workflow maps visualize information flow
+  Bottleneck detection and optimization
+  Predictive analytics for timelines
+  ROI measurement per process
+```
 
 ### Positioning Statement
 
@@ -519,105 +562,235 @@ Contract Review Request
 
 ## User Context Engine
 
-### Context Profile Structure
+### Modular Profile Architecture (v2.0)
+
+**Philosophy:** Each aspect of user behavior is stored as an independent profile. Skills compose required profiles to perform tasks.
+
+#### Profile Type Definitions
 
 ```typescript
-interface UserContextProfile {
-  userId: string;
+type ProfileType =
+  | 'identity'
+  | 'email_communication'
+  | 'domain_knowledge'
+  | 'relationships'
+  | 'slack_communication'
+  | 'meeting_behavior'
+  | 'work_patterns';
 
-  // Communication patterns
-  communicationStyle: {
-    emailResponsePatterns: {
-      avgResponseTime: Record<string, number>; // by sender type
-      typicalLength: 'brief' | 'detailed' | 'varies';
-      tone: 'formal' | 'casual' | 'mixed';
-      commonPhrases: string[];
-      signatureStyle: string;
+interface ProfileDataMap {
+  identity: {
+    fullName: string;
+    email: string;
+    role: string;
+    responsibilities: string[];
+    authority: 'junior' | 'senior' | 'lead' | 'executive';
+  };
+
+  email_communication: {
+    signature: string | null;
+    greetingPatterns: string[];
+    tone: number;  // 0-1 scale (0=casual, 1=formal)
+    formalityScore: number;  // 0-1 scale
+    avgLength: number;  // average chars
+    emojiUsage: number;  // 0-1 frequency
+    commonPhrases: string[];
+    responsePatterns: {
+      avgResponseTime: number;  // seconds
+      priorityAdjustments: Record<string, number>;
     };
-    slackPatterns?: {
-      tone: 'casual' | 'professional';
-      useEmojis: boolean;
-      avgLength: 'brief' | 'medium';
-    };
   };
 
-  // Work patterns
-  workPatterns: {
-    typicalWorkHours: { start: string; end: string };
-    peakProductivityHours: string[];
-    taskPrioritization: 'deadline-driven' | 'importance-first' | 'quick-wins';
-    delegationThreshold: number; // complexity threshold
-    reviewThoroughness: 'quick-scan' | 'detailed' | 'varies-by-type';
-  };
-
-  // Decision patterns
-  decisionPatterns: {
-    approvalRateByType: Record<string, number>;
-    typicalEdits: {
-      type: string;
-      pattern: string;
-      frequency: number;
-      examples: Array<{ original: string; modified: string }>;
-    }[];
-    riskTolerance: 'conservative' | 'moderate' | 'aggressive';
-  };
-
-  // Relationship graph
-  relationshipGraph: {
-    contacts: {
-      email: string;
-      name: string;
-      relationship: 'client' | 'internal' | 'vendor' | 'other';
-      importance: number; // 0-100
-      interactionFrequency: number;
-      lastInteraction: Date;
-      typicalTopics: string[];
-      preferredChannel: 'email' | 'meeting' | 'both';
-    }[];
-    projects: {
+  domain_knowledge: {
+    industry: string;
+    vocabulary: Record<string, string>;  // term -> definition
+    commonTopics: string[];
+    workflows: Array<{
       id: string;
       name: string;
-      activeContacts: string[];
-      stage: string;
-      urgency: number;
-    }[];
-  };
-
-  // Domain knowledge
-  domainKnowledge: {
-    vocabulary: Record<string, string>; // terms, acronyms
-    workflows: {
-      id: string;
-      name: string;
-      frequency: string;
       steps: string[];
-      userRole: 'owner' | 'contributor' | 'reviewer';
-    }[];
-    documentPatterns: {
-      type: string;
-      typicalLocation: string;
-      namingConvention: string;
-    }[];
+      frequency: string;
+    }>;
   };
 
-  // Learning metrics
-  learningMetrics: {
-    totalInteractions: number;
-    approvalRate: number;
-    avgTimeToReview: number;
-    confidenceScore: number; // 0-100
-    lastUpdated: Date;
+  relationships: {
+    totalContacts: number;
+    vipContacts: string[];  // email addresses
+    frequentCollaborators: string[];
+  };
+
+  slack_communication: {
+    tone: 'casual' | 'professional';
+    useEmojis: boolean;
+    avgLength: number;
+    commonReactions: string[];
+  };
+
+  meeting_behavior: {
+    preferredTimes: string[];
+    avgMeetingLength: number;
+    participationStyle: 'active' | 'observant' | 'balanced';
+  };
+
+  work_patterns: {
+    typicalWorkHours: { start: string; end: string };
+    peakHours: string[];
+    taskPrioritization: 'deadline' | 'importance' | 'quick-wins';
+    delegationThreshold: number;
   };
 }
 ```
 
-### Learning Events
+#### Profile Storage
 
-**Types of Learning:**
-1. **Approval**: User approves AI suggestion without changes
-2. **Rejection**: User dismisses AI suggestion
-3. **Modification**: User edits AI suggestion before using
-4. **Interaction**: User takes action (sends email, schedules meeting)
+```sql
+-- Example rows in context_profiles table:
+user_id: abc-123, profile_type: 'identity', confidence: 95, profile_data: {...}
+user_id: abc-123, profile_type: 'email_communication', confidence: 42, profile_data: {...}
+user_id: abc-123, profile_type: 'relationships', confidence: 30, profile_data: {...}
+```
+
+#### ProfileLoader API
+
+```typescript
+class ProfileLoader {
+  /**
+   * Load multiple profiles for a user
+   */
+  static async loadProfiles<T extends ProfileType>(
+    userId: string,
+    profileTypes: T[]
+  ): Promise<Partial<{ [K in T]: ProfileDataMap[K] & { _confidence: number } }>>
+
+  /**
+   * Update a specific profile
+   */
+  static async updateProfile<T extends ProfileType>(
+    userId: string,
+    profileType: T,
+    profileData: Partial<ProfileDataMap[T]>,
+    confidenceScore?: number,
+    incrementSignalCount?: boolean
+  ): Promise<void>
+
+  /**
+   * Initialize user with default profiles
+   */
+  static async initializeUser(
+    userId: string,
+    fullName: string,
+    role: string,
+    email: string
+  ): Promise<void>
+}
+```
+
+#### Skills Compose Profiles
+
+```typescript
+interface Skill {
+  id: string;
+  name: string;
+  requiredProfiles: ProfileType[];
+
+  execute(
+    profiles: LoadedProfiles,
+    input: SkillInput
+  ): Promise<SkillResult>;
+}
+
+// Example: Email Draft Skill
+const EmailDraftSkill: Skill = {
+  id: 'email_draft_v1',
+  name: 'Email Draft Assistant',
+  requiredProfiles: ['identity', 'email_communication', 'relationships'],
+
+  async execute(profiles, input) {
+    const { identity, email_communication, relationships } = profiles;
+
+    // Compose data from multiple profiles
+    const draft = await generateDraft({
+      senderName: identity.fullName,
+      signature: email_communication.signature,
+      greeting: email_communication.greetingPatterns[0],
+      tone: email_communication.tone,
+      // Adjust formality based on recipient importance
+      formalityBoost: relationships.vipContacts.includes(input.to) ? 0.2 : 0,
+    });
+
+    return { type: 'email_draft', content: draft };
+  }
+};
+```
+
+### Legacy UserContextProfile (Deprecated)
+
+For backward compatibility during migration, the old structure is still supported via `profile-adapter.ts`:
+
+```typescript
+// profile-adapter.ts assembles modular profiles into legacy format
+async function getUserContextLegacy(userId: string): Promise<UserContextProfile> {
+  const profiles = await ProfileLoader.loadProfiles(userId, [
+    'identity',
+    'email_communication',
+    'domain_knowledge',
+    'relationships',
+  ]);
+
+  // Map modular profiles to legacy structure
+  return {
+    userId,
+    communicationStyle: {
+      emailResponsePatterns: {
+        tone: profiles.email_communication?.tone > 0.7 ? 'formal' : 'casual',
+        commonPhrases: profiles.email_communication?.commonPhrases || [],
+        signatureStyle: profiles.email_communication?.signature || '',
+        // ...
+      },
+    },
+    // ... rest of legacy structure
+  };
+}
+```
+
+### Learning Pipeline with Modular Profiles
+
+**How Learning Works:**
+
+```
+1. User Action (sends email, edits draft, confirms suggestion)
+   ↓
+2. ContextService.logSignal()
+   - Stores signal in learning_signals table
+   - Triggers UserContextEngine.updateFromSignal()
+   ↓
+3. UserContextEngine processes signal
+   - Determines which profiles to update
+   - Extracts relevant patterns (greeting, tone, phrases)
+   ↓
+4. ProfileLoader.updateProfile() for each affected profile
+   - email_communication: update signature, tone, common phrases
+   - relationships: update contact importance
+   - identity: update role/responsibilities (rare)
+   ↓
+5. Confidence score recalculated
+   - Per profile: confidence = min(95, baseline + (signalCount * 2))
+   - Example: 20 + (10 signals * 2) = 40% confidence
+   ↓
+6. Next skill execution uses updated profiles
+   - EmailDraftSkill sees new signature immediately
+   - SlackReplySkill unaffected (separate profile)
+```
+
+**Signal Types:**
+1. **reply_sent**: User sends email (or we detect sent email in sync)
+2. **suggestion_confirmed**: User accepts "Suggested for You" item
+3. **suggestion_rejected**: User dismisses "Suggested for You" item
+4. **draft_modified**: User edits AI-generated draft before sending
+5. **item_completed**: User marks work item as complete
+6. **item_dismissed**: User dismisses work item
+
+**Learning Events**
 
 **Example Learning Flow:**
 ```typescript
@@ -872,19 +1045,45 @@ CREATE TABLE inbox_items (
 CREATE INDEX idx_inbox_user_status ON inbox_items(user_id, status);
 CREATE INDEX idx_inbox_priority ON inbox_items(priority DESC, created_at DESC);
 
--- User Context Profiles
+-- Modular Context Profiles (v2.0 - Replaces user_context_profiles)
+CREATE TABLE context_profiles (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+
+  profile_type TEXT NOT NULL,  -- 'identity', 'email_communication', 'domain_knowledge', etc.
+  profile_data JSONB NOT NULL,
+
+  confidence_score DECIMAL(5,2) DEFAULT 0.00,  -- 0-100 scale
+  learned_from_count INTEGER DEFAULT 0,
+
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  last_updated TIMESTAMPTZ DEFAULT NOW(),
+
+  CONSTRAINT valid_profile_type CHECK (profile_type IN (
+    'identity',
+    'email_communication',
+    'domain_knowledge',
+    'slack_communication',
+    'meeting_behavior',
+    'work_patterns',
+    'relationships'
+  )),
+  CONSTRAINT confidence_range CHECK (confidence_score >= 0 AND confidence_score <= 100),
+  UNIQUE(user_id, profile_type)
+);
+
+CREATE INDEX idx_context_profiles_user ON context_profiles(user_id);
+CREATE INDEX idx_context_profiles_type ON context_profiles(user_id, profile_type);
+
+-- Legacy table (maintained for backward compatibility, will be deprecated)
 CREATE TABLE user_context_profiles (
   user_id UUID PRIMARY KEY REFERENCES users(id),
-
   context_data JSONB NOT NULL,
-
   confidence_score INTEGER DEFAULT 0,
   total_interactions INTEGER DEFAULT 0,
   overall_approval_rate DECIMAL(5,2) DEFAULT 0.00,
-
   created_at TIMESTAMP DEFAULT NOW(),
   last_updated TIMESTAMP DEFAULT NOW(),
-
   CONSTRAINT context_confidence_range CHECK (confidence_score >= 0 AND confidence_score <= 100)
 );
 

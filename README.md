@@ -1,8 +1,8 @@
 # AUGMTD
 
-> Your personal AI assistant that learns how you work and prepares your next steps for review and approval.
+> Your digital twin that learns how you work, understands your context, and prepares your work across all connected tools.
 
-AUGMTD is an intelligent email management and productivity tool that uses AI to categorize, prepare, and batch your work by cognitive cost levels.
+AUGMTD is a personal AI platform that builds a modular understanding of how you work—your communication style, relationships, domain knowledge, and work patterns—then uses this digital twin to prepare your next steps across email, meetings, and more.
 
 ## 🎯 Core Concept
 
@@ -33,6 +33,67 @@ Instead of overwhelming you with a flat inbox, AUGMTD organizes work by **confid
 - **AI**: OpenAI GPT-4
 - **Styling**: Tailwind CSS
 - **Deployment**: Vercel
+
+### Modular Context Profiles System
+
+AUGMTD uses a **modular profile architecture** where each aspect of your work behavior is learned and stored independently. This enables:
+
+- **Skill-Based Composition**: Skills declare which profiles they need and compose them together
+- **Cross-Platform Learning**: Email communication patterns don't affect Slack patterns
+- **Reusable Profiles**: Core profiles (identity, relationships) are shared across all skills
+- **Incremental Confidence**: Each profile learns independently with its own confidence score
+
+#### Profile Types
+
+**Core Profiles:**
+- `identity` - Name, role, responsibilities, authority level
+- `email_communication` - Tone, greetings, signatures, formality, response patterns
+- `domain_knowledge` - Industry terms, workflows, common topics
+- `relationships` - Contact importance, interaction frequency, typical topics
+
+**Future Profiles:**
+- `slack_communication` - Messaging style, emoji usage, channel preferences
+- `meeting_behavior` - Scheduling preferences, meeting conduct patterns
+- `work_patterns` - Peak hours, task prioritization, delegation thresholds
+
+#### How Skills Compose Profiles
+
+```typescript
+// Example: Email Draft Skill
+const EmailDraftSkill = {
+  requiredProfiles: ['identity', 'email_communication', 'relationships'],
+
+  compose: (profiles) => {
+    // Use identity for signature
+    const signature = profiles.identity.fullName;
+
+    // Use email_communication for tone and style
+    const { greeting, tone, formalityScore } = profiles.email_communication;
+
+    // Use relationships to adjust formality
+    const contact = profiles.relationships.contacts.find(...);
+    const adjustedTone = contact.importance > 80 ? 'formal' : tone;
+
+    return draftEmail(signature, adjustedTone, greeting);
+  }
+};
+```
+
+#### Learning Pipeline
+
+```
+1. User Action (sends email, confirms suggestion, edits draft)
+   ↓
+2. ContextService logs learning signal
+   ↓
+3. UserContextEngine processes signal
+   ↓
+4. Relevant profiles updated (via ProfileLoader)
+   ↓
+5. Confidence scores recalculated (+2% per signal)
+   ↓
+6. Next interaction uses updated patterns
+```
 
 ### Key Features
 
@@ -254,6 +315,42 @@ The email processor (`lib/ai/email-processor.ts`) uses a sophisticated signal-ba
 
 ### Key Tables
 
+**context_profiles** (Modular Profile System)
+- `user_id` - User reference
+- `profile_type` - identity | email_communication | domain_knowledge | relationships
+- `profile_data` - Profile-specific data (JSONB)
+- `confidence_score` - 0-100, how well we know this profile
+- `learned_from_count` - Number of signals processed
+- `last_updated` - Timestamp
+- **Unique constraint**: (user_id, profile_type)
+
+**Profile Data Structures:**
+```typescript
+// identity profile
+{
+  fullName: "Alex Johnson",
+  email: "alex@company.com",
+  role: "Senior Consultant",
+  responsibilities: ["client management", "reporting"],
+  authority: "senior"
+}
+
+// email_communication profile
+{
+  signature: "Best,\nAlex",
+  greetingPatterns: ["Hey", "Hi"],
+  tone: 0.65,  // 0 = casual, 1 = formal
+  formalityScore: 0.65,
+  avgLength: 147,
+  emojiUsage: 0.1,
+  commonPhrases: ["Let me know", "Happy to help"],
+  responsePatterns: {
+    avgResponseTime: 7200,  // seconds
+    priorityAdjustments: {...}
+  }
+}
+```
+
 **inbox_items**
 - `work_state` - One of 6 cognitive cost states
 - `work_title` - What needs your judgment
@@ -268,9 +365,17 @@ The email processor (`lib/ai/email-processor.ts`) uses a sophisticated signal-ba
 
 **learning_signals**
 - User action tracking for AI improvement
-- `signal_type` - item_completed | item_dismissed | reply_sent | etc.
+- `signal_type` - reply_sent | suggestion_confirmed | suggestion_rejected | draft_modified | etc.
 - `signal_data` - Contextual information (JSONB)
-- Links to inbox_items for analysis
+- `inbox_item_id` - Optional link to inbox item (NULL for sent emails)
+- Feeds into UserContextEngine for profile updates
+
+**relationship_graph**
+- Contact importance tracking
+- Interaction frequency
+- Typical topics per contact
+- Preferred communication channels
+- Links to users for multi-user context
 
 **connections**
 - Email provider credentials (encrypted)
@@ -281,7 +386,105 @@ The email processor (`lib/ai/email-processor.ts`) uses a sophisticated signal-ba
 **emails**
 - Raw email storage
 - Thread grouping
+- `is_from_user` flag for sent emails
 - Links to inbox_items
+
+**user_context_profiles** (Legacy - Being Phased Out)
+- Monolithic context storage
+- Currently maintained via dual-write
+- Will be deprecated after validation period
+
+## 🎯 Digital Twin Vision
+
+### From Personal Assistant to Organizational Intelligence
+
+AUGMTD's architecture is designed to evolve from a personal digital twin to an organizational twin:
+
+**Phase 1: Personal Digital Twin (Current)**
+- Individual profiles learn from each user's behavior
+- Email drafts match personal communication style
+- Context awareness improves over time per user
+
+**Phase 2: Skill Marketplace**
+- Users see available skills (Email Draft, Meeting Prep, Report Generator)
+- Each skill declares required profiles
+- Skills can be enabled/disabled per user
+- Skills compose profiles to perform tasks
+
+**Phase 3: Cross-User Learning**
+- Company-wide patterns emerge from aggregated (anonymized) signals
+- New employees benefit from organizational knowledge
+- Domain-specific vocabulary shared across team
+- Best practices automatically identified
+
+**Phase 4: Organizational Twin**
+- Workflow maps show how work flows through organization
+- Bottleneck detection across teams
+- Predictive analytics for project timelines
+- ROI tracking per workflow
+
+### Skills Architecture (Planned)
+
+```typescript
+interface Skill {
+  id: string;
+  name: string;
+  description: string;
+  requiredProfiles: ProfileType[];
+  capabilities: string[];
+
+  execute(
+    profiles: LoadedProfiles,
+    input: SkillInput
+  ): Promise<SkillResult>;
+}
+
+// Example: Email Draft Skill
+{
+  id: 'email_draft_v1',
+  name: 'Email Draft Assistant',
+  requiredProfiles: ['identity', 'email_communication', 'relationships'],
+  capabilities: ['draft', 'email'],
+
+  execute: async (profiles, input) => {
+    const { identity, email_communication, relationships } = profiles;
+
+    // Compose profiles to draft email
+    const draft = await generateDraft({
+      senderName: identity.fullName,
+      signature: email_communication.signature,
+      greeting: email_communication.greetingPatterns[0],
+      tone: adjustToneForRecipient(
+        email_communication.tone,
+        relationships.findContact(input.recipientEmail)
+      ),
+      // ...
+    });
+
+    return { type: 'email_draft', content: draft };
+  }
+}
+```
+
+### Benefits of Modular Architecture
+
+**For Users:**
+- ✅ Faster learning (each profile learns independently)
+- ✅ More accurate (no cross-contamination between domains)
+- ✅ Transparent (see exactly what each skill knows about you)
+- ✅ Control (opt-in/out of specific profiles)
+
+**For Developers:**
+- ✅ Reusable components (identity profile used by all skills)
+- ✅ Easier testing (test profiles in isolation)
+- ✅ Faster iteration (update one profile type without affecting others)
+- ✅ Clear dependencies (skills declare what they need)
+
+**For Organization:**
+- ✅ Scalable (add new skills without redesigning profiles)
+- ✅ Compliant (audit what each skill accesses)
+- ✅ Insights (understand which profiles drive value)
+- ✅ Future-proof (ready for new integrations)
 
 ## 🔐 Security
 
@@ -292,6 +495,30 @@ The email processor (`lib/ai/email-processor.ts`) uses a sophisticated signal-ba
 - **Encrypted tokens** - Email credentials encrypted (⚠️ currently base64, needs proper encryption)
 
 ## 📈 Recent Improvements
+
+### Modular Context Profiles Migration (Feb 2026)
+- ✅ **Migrated from monolithic to modular profiles** - Each aspect of user behavior (identity, communication, relationships) stored separately
+- ✅ **ProfileLoader** - Unified API for loading and updating profiles
+- ✅ **Backward compatibility** - profile-adapter bridges old and new structures during transition
+- ✅ **Learning pipeline complete** - Sent emails analyzed, signals logged, profiles updated
+- ✅ **Confidence scoring** - Each profile tracks its own confidence (0-100 scale)
+- ✅ **Skills foundation** - Architecture ready for skill-based composition
+- ✅ **Dual-write strategy** - Safe migration with rollback capability
+- ✅ **Database migration** - One-time script successfully deployed
+- ✅ **Foreign key fixes** - Sent emails properly handled (no inbox items)
+- ✅ **RLS policies** - Row-level security for multi-tenant access
+
+**Migration Details:**
+```
+Old: user_context_profiles (1 row per user, all data in JSONB blob)
+New: context_profiles (N rows per user, 1 per profile type)
+
+Benefits:
+- Independent learning per profile
+- Reusable across skills
+- Clear confidence per domain
+- No cross-contamination
+```
 
 ### Phase 4: Actions & Right-Side Drawer (Feb 2026)
 - ✅ Right-side drawer with smooth slide-in/out animations
@@ -366,16 +593,31 @@ The email processor (`lib/ai/email-processor.ts`) uses a sophisticated signal-ba
 
 ## 🎯 What's Next
 
-1. ~~**Email thread batching** - Group thread messages into single inbox item~~ ✅ **DONE**
-2. ~~**Include sent emails** - Show user's sent emails in thread context~~ ✅ **DONE**
-3. ~~**Right-side drawer** - Work item details with smooth animations~~ ✅ **DONE**
-4. ~~**Draft editing** - Full inline editor with send capabilities~~ ✅ **DONE**
-5. ~~**Learning signals** - Track user actions for AI improvement~~ ✅ **DONE**
-6. ~~**Recipient detection** - Multi-tier confidence system~~ ✅ **DONE**
-7. **Advanced learning** - Analyze patterns to improve suggestions
-8. **Automatic syncing** - Implement hourly/daily cron job for email sync
-9. **Vector similarity** - Find similar past interactions for better context
-10. **Proper token encryption** - Replace base64 with real encryption (AES-256)
+### Completed ✅
+1. ~~**Email thread batching** - Group thread messages into single inbox item~~ ✅
+2. ~~**Include sent emails** - Show user's sent emails in thread context~~ ✅
+3. ~~**Right-side drawer** - Work item details with smooth animations~~ ✅
+4. ~~**Draft editing** - Full inline editor with send capabilities~~ ✅
+5. ~~**Learning signals** - Track user actions for AI improvement~~ ✅
+6. ~~**Recipient detection** - Multi-tier confidence system~~ ✅
+7. ~~**Modular context profiles** - Migrate from monolithic to modular structure~~ ✅
+8. ~~**Profile learning pipeline** - Sent emails feed into profile updates~~ ✅
+
+### In Progress 🚧
+9. **Skills UI** - Visual interface to see/manage available skills
+10. **Automatic syncing** - Implement hourly/daily cron job for email sync
+11. **Vector similarity** - Find similar past interactions using pgvector
+12. **Proper token encryption** - Replace base64 with AES-256
+
+### Planned 📋
+13. **Slack integration** - Add slack_communication profile type
+14. **Meeting behavior** - Learn from calendar and meeting patterns
+15. **Work patterns** - Detect peak hours, delegation thresholds
+16. **Domain knowledge** - Extract industry-specific vocabulary
+17. **Cross-user insights** - Aggregate anonymized patterns for company-wide learning
+18. **Skills marketplace** - Browse and enable new skills
+19. **Workflow discovery** - Detect recurring patterns and suggest automation
+20. **Digital twin visualization** - See how work flows through organization
 
 ## 📝 Documentation
 

@@ -1,7 +1,87 @@
-# AUGMTD Implementation Plan - Email Use Case MVP
-**Version:** 1.0
-**Target Stack:** Supabase + Vercel + n8n
-**Timeline:** 8 weeks to MVP
+# AUGMTD Implementation Plan
+**Version:** 2.0
+**Target Stack:** Supabase + Vercel
+**Status:** MVP Complete, Modular Profiles Migration Complete
+
+**Version History:**
+- v1.0 (Feb 2026): Initial MVP plan (8 weeks)
+- v2.0 (Feb 2026): Post-MVP, Modular Profiles Architecture
+
+**Major Milestones Achieved:**
+- ✅ Email integration (Gmail + Outlook OAuth)
+- ✅ Email sync with provider-specific handling
+- ✅ AI-powered email drafting with thread context
+- ✅ Multi-tier recipient detection (assigned/suggested/review/fyi)
+- ✅ Visual sections (Prepared Work, Suggested for You, For Your Awareness)
+- ✅ Right-side drawer with inline draft editing
+- ✅ Learning signals system for tracking user actions
+- ✅ **Modular context profiles migration (Feb 14, 2026)**
+- ✅ Activity log showing execution history
+- ✅ Send email replies with proper threading
+
+---
+
+## Current Status: Modular Profiles Architecture
+
+### Completed (Feb 2026)
+
+**Phase 5: Modular Context Profiles Migration**
+
+The system has been successfully migrated from a monolithic user context structure to a modular, skill-oriented architecture.
+
+**What Changed:**
+```
+Before: 1 row per user in user_context_profiles
+        All context in single JSONB blob
+        Hard to update individual aspects
+        Skills had to parse entire blob
+
+After:  N rows per user in context_profiles
+        1 row per profile type (identity, email_communication, etc.)
+        Each profile learns independently
+        Skills compose only what they need
+```
+
+**Key Components:**
+
+1. **Database Migration** (`supabase/migrations/20260214_migrate_to_modular_profiles.sql`)
+   - Created `context_profiles` table
+   - Migrated existing data from `user_context_profiles`
+   - Set up unique constraints and indexes
+
+2. **ProfileLoader** (`lib/context/profile-loader.ts`)
+   - Unified API for loading profiles: `loadProfiles(userId, ['identity', 'email_communication'])`
+   - Update profiles: `updateProfile(userId, 'email_communication', data, confidence)`
+   - Initialize new users: `initializeUser(userId, name, role, email)`
+
+3. **Backward Compatibility** (`lib/context/profile-adapter.ts`)
+   - Bridges old and new systems during transition
+   - `getUserContextLegacy()` assembles modular profiles into old format
+   - Existing code continues working without changes
+
+4. **Learning Pipeline** (`lib/context/user-context-engine.ts`)
+   - Updated `saveContext()` to write to modular profiles
+   - Dual-write to both old and new tables (temporary safety)
+   - Confidence calculation per profile type
+
+5. **Sent Email Analysis** (`lib/context/sent-email-analyzer.ts`)
+   - Extracts communication style from user's sent emails
+   - Feeds into `email_communication` profile
+   - Fixed foreign key constraints (sent emails don't have inbox items)
+
+**Migration Validation:**
+- ✅ All profiles created successfully
+- ✅ Confidence scores migrating correctly
+- ✅ Learning signals being logged
+- ✅ Sent emails analyzed and profiles updated
+- ✅ Email drafts using updated patterns
+- ✅ No data loss (dual-write safety)
+
+**Next Steps:**
+- Remove dual-write after 1-2 weeks validation
+- Deprecate `user_context_profiles` table
+- Build Skills UI to visualize available skills
+- Add new profile types (slack_communication, meeting_behavior)
 
 ---
 
@@ -289,19 +369,45 @@ CREATE INDEX idx_inbox_priority ON inbox_items(priority DESC, created_at DESC);
 -- USER CONTEXT ENGINE
 -- ==========================================
 
--- User context profiles
-CREATE TABLE user_context_profiles (
-  user_id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+-- Modular context profiles (v2.0)
+CREATE TABLE context_profiles (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
 
-  context_data JSONB NOT NULL DEFAULT '{}',
+  profile_type TEXT NOT NULL,  -- 'identity', 'email_communication', etc.
+  profile_data JSONB NOT NULL,
 
-  confidence_score INTEGER DEFAULT 0,
-  total_interactions INTEGER DEFAULT 0,
-  overall_approval_rate DECIMAL(5,2) DEFAULT 0.00,
+  confidence_score DECIMAL(5,2) DEFAULT 0.00,  -- 0-100
+  learned_from_count INTEGER DEFAULT 0,
 
   created_at TIMESTAMPTZ DEFAULT NOW(),
   last_updated TIMESTAMPTZ DEFAULT NOW(),
 
+  CONSTRAINT valid_profile_type CHECK (profile_type IN (
+    'identity',
+    'email_communication',
+    'domain_knowledge',
+    'slack_communication',
+    'meeting_behavior',
+    'work_patterns',
+    'relationships'
+  )),
+  CONSTRAINT confidence_range CHECK (confidence_score >= 0 AND confidence_score <= 100),
+  UNIQUE(user_id, profile_type)
+);
+
+CREATE INDEX idx_context_profiles_user ON context_profiles(user_id);
+CREATE INDEX idx_context_profiles_type ON context_profiles(user_id, profile_type);
+
+-- Legacy table (maintained for backward compatibility during migration)
+CREATE TABLE user_context_profiles (
+  user_id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  context_data JSONB NOT NULL DEFAULT '{}',
+  confidence_score INTEGER DEFAULT 0,
+  total_interactions INTEGER DEFAULT 0,
+  overall_approval_rate DECIMAL(5,2) DEFAULT 0.00,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  last_updated TIMESTAMPTZ DEFAULT NOW(),
   CONSTRAINT context_confidence_range CHECK (confidence_score >= 0 AND confidence_score <= 100)
 );
 
