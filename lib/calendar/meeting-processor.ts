@@ -134,7 +134,7 @@ export async function processMeetingsForUser(
             event,
             context,
           },
-          work_state: 'NOTED', // Informational - review before meeting
+          work_state: 'noted', // Informational - review before meeting (lowercase!)
           work_title: prep.title,
           what_i_prepared: prep.agenda,
           why_matters: prep.context,

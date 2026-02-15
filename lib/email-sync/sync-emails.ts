@@ -229,17 +229,37 @@ export async function syncEmailsForConnection(
         // ==== RECIPIENT DETECTION ====
         // Analyze all recipients to determine who needs inbox items
 
-        // Get all users in this organization for mention detection
-        const { data: orgUsers } = await adminSupabase
+        // Get user profile first
+        const { data: userProfile } = await adminSupabase
           .from('profiles')
-          .select('id, email, full_name')
-          .eq('organization_id', (await adminSupabase
+          .select('id, email, full_name, organization_id')
+          .eq('id', connection.user_id)
+          .single();
+
+        if (!userProfile) {
+          console.error('    ✗ User profile not found');
+          continue;
+        }
+
+        // Get all users in this organization for mention detection
+        // Always include the connection owner even if organization_id is null
+        let orgUsers: Array<{ id: string; email: string; full_name: string | null }> = [userProfile];
+
+        if (userProfile.organization_id) {
+          const { data: orgMembers } = await adminSupabase
             .from('profiles')
-            .select('organization_id')
-            .eq('id', connection.user_id)
-            .single()
-          ).data?.organization_id || '')
-          .limit(100);
+            .select('id, email, full_name')
+            .eq('organization_id', userProfile.organization_id)
+            .limit(100);
+
+          // Merge with user profile (avoid duplicates)
+          if (orgMembers) {
+            orgUsers = [
+              userProfile,
+              ...orgMembers.filter(m => m.id !== userProfile.id)
+            ];
+          }
+        }
 
         console.log(`🔍 Analyzing recipients for: "${parsed.subject}"`);
         console.log(`   To: ${storedEmail.to_addresses?.join(', ') || 'none'}`);
