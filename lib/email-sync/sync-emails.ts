@@ -241,6 +241,21 @@ export async function syncEmailsForConnection(
           ).data?.organization_id || '')
           .limit(100);
 
+        // Add the connection email as an alias for the connection owner
+        // This allows users to connect multiple inboxes (e.g., personal Gmail + work email)
+        const connectionEmail = connection.metadata?.email || connection.provider_account_id;
+        if (connectionEmail && orgUsers) {
+          const connectionOwner = orgUsers.find(u => u.id === connection.user_id);
+          if (connectionOwner && connectionEmail.toLowerCase() !== connectionOwner.email.toLowerCase()) {
+            // Add connection email as an alias
+            orgUsers.push({
+              id: connection.user_id,
+              email: connectionEmail,
+              full_name: connectionOwner.full_name,
+            });
+          }
+        }
+
         console.log(`🔍 Analyzing recipients for: "${parsed.subject}"`);
         console.log(`   To: ${storedEmail.to_addresses?.join(', ') || 'none'}`);
         console.log(`   CC: ${storedEmail.cc_addresses?.join(', ') || 'none'}`);
