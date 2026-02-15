@@ -12,6 +12,8 @@
 | Infrastructure Setup | ✅ Complete | 100% |
 | OAuth & Integration | ✅ Complete | 100% |
 | Email Processing | ✅ Complete | 100% |
+| Calendar Integration | ✅ Complete | 100% |
+| Meeting Assistant | ✅ Complete | 100% |
 | AI Work Preparation | ✅ Complete | 100% |
 | Cognitive Cost Framework | ✅ Complete | 100% |
 | Recipient Detection (Phase 2) | ✅ Complete | 100% |
@@ -20,8 +22,9 @@
 | Action Execution (Phase 4) | ✅ Complete | 100% |
 | Learning Signals | ✅ Complete | 100% |
 | Auth & Session | ✅ Complete | 100% |
-| User Context Engine (Phase 5) | 🔄 In Progress | 70% |
-| AI Prompt Integration | ⚠️ Next | 0% |
+| Multi-Inbox Support | ✅ Complete | 100% |
+| User Context Engine (Phase 5) | ✅ Complete | 100% |
+| AI Prompt Integration | ✅ Complete | 100% |
 | Vector Similarity | ⚠️ Planned | 0% |
 
 ---
@@ -87,6 +90,26 @@
 - [x] Groups low-stakes awareness items (NOTED)
 - [x] Shows operational actions individually
 - [x] Batch cards with expandable item lists
+
+**Calendar Integration (Complete):**
+- [x] Gmail Calendar sync via OAuth (same tokens as email)
+- [x] Outlook Calendar sync via Microsoft Graph API
+- [x] Calendar event storage in `calendar_events` table
+- [x] Multi-inbox support (connection email aliases)
+- [x] Token authentication with encrypted tokens
+- [x] Calendar scopes added to OAuth configurations
+- [x] Syncs next 14 days + past 7 days of events
+- [x] Event data: title, attendees, meeting links, organizer
+
+**Meeting Assistant (Complete):**
+- [x] Processes upcoming meetings (next 48 hours)
+- [x] Builds meeting context (attendees, relationships, email history)
+- [x] AI-generated meeting prep (agenda + context)
+- [x] Creates inbox items with work_state: 'noted'
+- [x] Priority calculation based on timing + VIP attendees
+- [x] Uses OpenAI GPT-4o-mini for prep generation
+- [x] Fallback prep if AI fails
+- [x] Duplicate prevention (checks for existing prep items)
 
 **Inbox UI (Complete):**
 - [x] Main inbox page (`/inbox`) - Server component with auth

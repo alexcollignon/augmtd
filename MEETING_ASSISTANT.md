@@ -45,7 +45,7 @@ For each meeting in next 48 hours:
   ↓
   └─ Create inbox item:
      - Source: 'calendar'
-     - Work State: 'NOTED' (informational)
+     - Work State: 'noted' (informational - lowercase!)
      - Visual Section: 'awareness'
      - Priority: Based on timing + VIP attendees
 ```
@@ -271,7 +271,7 @@ INSERT INTO inbox_items (
     }
   },
 
-  work_state: 'NOTED',           -- Informational (not actionable yet)
+  work_state: 'noted',           -- Informational (not actionable yet, lowercase!)
   work_title: "Prep: Team Standup (today)",
   what_i_prepared: "• Review sprint progress...",
   why_matters: "Meeting with 3 attendees including VIP...",

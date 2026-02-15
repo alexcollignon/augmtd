@@ -103,6 +103,16 @@ const EmailDraftSkill = {
 - Send email replies with proper threading
 - Full draft editing before sending
 - Provider-specific sync with learning signals
+- Multi-inbox support (connect personal + work emails)
+
+#### ✅ Calendar Integration
+- Gmail Calendar and Outlook Calendar sync
+- Same OAuth flow as email (one connection = both data sources)
+- Syncs next 14 days + past 7 days of events
+- Meeting prep generation for upcoming meetings (next 48 hours)
+- AI-powered agenda and context based on attendees + email history
+- VIP attendee detection and priority calculation
+- Meeting links, locations, and organizer information
 
 #### ✅ AI Email Processing
 - **Thread-aware draft generation** - AI sees full conversation history
@@ -178,6 +188,9 @@ augmtd/
 │   │   └── work-state-mapper.ts # Work state rules
 │   ├── email-sync/
 │   │   └── sync-emails.ts      # Email sync logic
+│   ├── calendar/
+│   │   ├── sync-calendar.ts    # Calendar sync logic (Gmail + Outlook)
+│   │   └── meeting-processor.ts # Meeting prep generation
 │   ├── types/
 │   │   ├── inbox.ts            # Inbox item types
 │   │   └── recipient-detection.ts
@@ -389,6 +402,14 @@ The email processor (`lib/ai/email-processor.ts`) uses a sophisticated signal-ba
 - `is_from_user` flag for sent emails
 - Links to inbox_items
 
+**calendar_events**
+- Calendar event storage (Gmail + Outlook)
+- Event details: title, description, start/end times
+- Attendee list with response status
+- Meeting links, locations, organizer
+- Event status (confirmed/cancelled)
+- Links to meeting prep inbox items
+
 **user_context_profiles** (Legacy - Being Phased Out)
 - Monolithic context storage
 - Currently maintained via dual-write
@@ -496,6 +517,24 @@ interface Skill {
 
 ## 📈 Recent Improvements
 
+### Calendar Integration & Meeting Assistant (Feb 2026)
+- ✅ **Gmail + Outlook calendar sync** - Uses same OAuth flow as email
+- ✅ **Meeting prep generation** - AI-powered agenda for upcoming meetings (next 48 hours)
+- ✅ **Attendee context** - Pulls relationship data and recent email threads
+- ✅ **Priority calculation** - Based on timing, VIP attendees, organizer status
+- ✅ **Multi-inbox support** - Users can connect multiple email accounts
+- ✅ **Connection email aliases** - Handles mismatch between profile email and connection email
+- ✅ **Token authentication fixes** - Proper OAuth token handling for calendar scopes
+
+**Technical Details:**
+```
+One OAuth connection → Email + Calendar access
+Gmail: calendar.readonly scope
+Outlook: Calendars.Read scope
+Syncs: Next 14 days + Past 7 days
+Meeting prep: Next 48 hours only
+```
+
 ### Modular Context Profiles Migration (Feb 2026)
 - ✅ **Migrated from monolithic to modular profiles** - Each aspect of user behavior (identity, communication, relationships) stored separately
 - ✅ **ProfileLoader** - Unified API for loading and updating profiles
@@ -602,22 +641,25 @@ Benefits:
 6. ~~**Recipient detection** - Multi-tier confidence system~~ ✅
 7. ~~**Modular context profiles** - Migrate from monolithic to modular structure~~ ✅
 8. ~~**Profile learning pipeline** - Sent emails feed into profile updates~~ ✅
+9. ~~**Calendar integration** - Gmail + Outlook calendar sync with same OAuth~~ ✅
+10. ~~**Meeting assistant** - AI-generated meeting prep for upcoming meetings~~ ✅
+11. ~~**Multi-inbox support** - Connect multiple email accounts to same user~~ ✅
 
 ### In Progress 🚧
-9. **Skills UI** - Visual interface to see/manage available skills
-10. **Automatic syncing** - Implement hourly/daily cron job for email sync
-11. **Vector similarity** - Find similar past interactions using pgvector
-12. **Proper token encryption** - Replace base64 with AES-256
+12. **Skills UI** - Visual interface to see/manage available skills
+13. **Automatic syncing** - Implement hourly/daily cron job for email/calendar sync
+14. **Vector similarity** - Find similar past interactions using pgvector
+15. **Proper token encryption** - Replace base64 with AES-256
 
 ### Planned 📋
-13. **Slack integration** - Add slack_communication profile type
-14. **Meeting behavior** - Learn from calendar and meeting patterns
-15. **Work patterns** - Detect peak hours, delegation thresholds
-16. **Domain knowledge** - Extract industry-specific vocabulary
-17. **Cross-user insights** - Aggregate anonymized patterns for company-wide learning
-18. **Skills marketplace** - Browse and enable new skills
-19. **Workflow discovery** - Detect recurring patterns and suggest automation
-20. **Digital twin visualization** - See how work flows through organization
+16. **Slack integration** - Add slack_communication profile type
+17. **Meeting behavior learning** - Learn from calendar patterns over time
+18. **Work patterns** - Detect peak hours, delegation thresholds
+19. **Domain knowledge** - Extract industry-specific vocabulary
+20. **Cross-user insights** - Aggregate anonymized patterns for company-wide learning
+21. **Skills marketplace** - Browse and enable new skills
+22. **Workflow discovery** - Detect recurring patterns and suggest automation
+23. **Digital twin visualization** - See how work flows through organization
 
 ## 📝 Documentation
 
