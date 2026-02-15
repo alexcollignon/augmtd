@@ -45,8 +45,7 @@ CREATE TABLE IF NOT EXISTS calendar_events (
 -- Indexes for common queries
 CREATE INDEX idx_calendar_events_user ON calendar_events(user_id);
 CREATE INDEX idx_calendar_events_user_time ON calendar_events(user_id, start_time);
-CREATE INDEX idx_calendar_events_upcoming ON calendar_events(user_id, start_time)
-  WHERE start_time > NOW() AND status != 'cancelled';
+CREATE INDEX idx_calendar_events_status ON calendar_events(user_id, status, start_time);
 CREATE INDEX idx_calendar_events_provider ON calendar_events(user_id, provider);
 CREATE INDEX idx_calendar_events_connection ON calendar_events(connection_id);
 
