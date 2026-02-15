@@ -7,7 +7,8 @@
 
 import { SupabaseClient } from '@supabase/supabase-js';
 import { google } from 'googleapis';
-import { Client } from '@microsoft/microsoft-graph-client';
+import { getOAuth2Client } from '@/lib/google/oauth';
+import { getGraphClient } from '@/lib/microsoft/outlook';
 
 interface Connection {
   id: string;
@@ -15,9 +16,9 @@ interface Connection {
   provider: 'gmail' | 'outlook';
   provider_account_id: string;
   metadata: {
-    access_token: string;
-    refresh_token?: string;
-    expires_at?: number;
+    tokens: string; // Encrypted base64 tokens
+    max_emails_per_sync?: number;
+    sync_window_days?: number;
   };
 }
 
@@ -84,15 +85,22 @@ async function syncGmailCalendar(
   daysAhead: number,
   daysBehind: number
 ): Promise<{ synced: number; errors: string[] }> {
-  const oauth2Client = new google.auth.OAuth2(
-    process.env.GOOGLE_CLIENT_ID,
-    process.env.GOOGLE_CLIENT_SECRET
-  );
+  // Decrypt tokens (same as email sync)
+  const tokens = JSON.parse(Buffer.from(connection.metadata.tokens, 'base64').toString());
 
-  oauth2Client.setCredentials({
-    access_token: connection.metadata.access_token,
-    refresh_token: connection.metadata.refresh_token,
-  });
+  // Create and configure OAuth2 client
+  const oauth2Client = getOAuth2Client();
+  oauth2Client.setCredentials(tokens);
+
+  // Refresh token if needed
+  if (tokens.expiry_date && tokens.expiry_date < Date.now()) {
+    try {
+      const { credentials } = await oauth2Client.refreshAccessToken();
+      oauth2Client.setCredentials(credentials);
+    } catch (error) {
+      console.error('[CalendarSync] Failed to refresh Gmail token:', error);
+    }
+  }
 
   const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
 
@@ -178,11 +186,29 @@ async function syncOutlookCalendar(
   daysAhead: number,
   daysBehind: number
 ): Promise<{ synced: number; errors: string[] }> {
-  const client = Client.init({
-    authProvider: (done) => {
-      done(null, connection.metadata.access_token);
-    },
-  });
+  // Token refresh callback - updates database when tokens are refreshed
+  const onTokenRefresh = async (newTokens: { accessToken: string; refreshToken: string; expiresOn: string }) => {
+    const newEncryptedTokens = Buffer.from(JSON.stringify({
+      accessToken: newTokens.accessToken,
+      refreshToken: newTokens.refreshToken,
+      expiresOn: newTokens.expiresOn,
+    })).toString('base64');
+
+    await supabase
+      .from('connections')
+      .update({
+        metadata: {
+          ...connection.metadata,
+          tokens: newEncryptedTokens
+        }
+      })
+      .eq('id', connection.id);
+
+    console.log(`✓ Updated refreshed tokens for connection ${connection.id}`);
+  };
+
+  // Use the same getGraphClient as email sync (handles token decryption + refresh)
+  const client = await getGraphClient(connection.metadata.tokens, onTokenRefresh);
 
   const timeMin = new Date(Date.now() - daysBehind * 24 * 60 * 60 * 1000).toISOString();
   const timeMax = new Date(Date.now() + daysAhead * 24 * 60 * 60 * 1000).toISOString();
