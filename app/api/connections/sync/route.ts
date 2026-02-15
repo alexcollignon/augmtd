@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createServerClient } from '@supabase/supabase-js';
 import { syncEmailsForConnection } from '@/lib/email-sync/sync-emails';
+import { syncCalendarForConnection } from '@/lib/calendar/sync-calendar';
 
 export const maxDuration = 300; // 5 minutes
 
@@ -63,8 +64,8 @@ export async function POST(request: NextRequest) {
     if (!connections || connections.length === 0) {
       return NextResponse.json(
         {
-          error: 'No active email connections',
-          message: 'Connect Gmail or Outlook to start syncing emails.',
+          error: 'No active connections',
+          message: 'Connect Gmail or Outlook to start syncing emails and calendar.',
           action: 'connect'
         },
         { status: 404 }
@@ -73,24 +74,34 @@ export async function POST(request: NextRequest) {
 
     let totalEmailsFetched = 0;
     let totalInboxItemsCreated = 0;
+    let totalEventsSynced = 0;
     const errors: string[] = [];
 
-    // Process each connection
+    // Process each connection (sync both emails AND calendar in parallel)
     for (const connection of connections) {
-      console.log(`Syncing ${connection.provider} emails for user ${user.id}...`);
+      console.log(`Syncing ${connection.provider} emails + calendar for user ${user.id}...`);
 
-      const result = await syncEmailsForConnection(connection, adminSupabase);
+      // Sync emails and calendar in parallel from the same connection
+      const [emailResult, calendarResult] = await Promise.all([
+        syncEmailsForConnection(connection, adminSupabase),
+        syncCalendarForConnection(connection, adminSupabase, {
+          daysAhead: 14,  // Next 2 weeks
+          daysBehind: 7,  // Past week (for updates)
+        }),
+      ]);
 
-      totalEmailsFetched += result.emailsFetched;
-      totalInboxItemsCreated += result.inboxItemsCreated;
-      errors.push(...result.errors);
+      totalEmailsFetched += emailResult.emailsFetched;
+      totalInboxItemsCreated += emailResult.inboxItemsCreated;
+      totalEventsSynced += calendarResult.synced;
+      errors.push(...emailResult.errors, ...calendarResult.errors);
     }
 
-    console.log(`Manual sync completed. Fetched: ${totalEmailsFetched}, Inbox items: ${totalInboxItemsCreated}`);
+    console.log(`Manual sync completed. Emails: ${totalEmailsFetched}, Calendar: ${totalEventsSynced}, Inbox items: ${totalInboxItemsCreated}`);
 
     return NextResponse.json({
       success: true,
       emailsFetched: totalEmailsFetched,
+      eventsSynced: totalEventsSynced,
       inboxItemsCreated: totalInboxItemsCreated,
       errors: errors.length > 0 ? errors : undefined
     });
@@ -100,7 +111,7 @@ export async function POST(request: NextRequest) {
 
     // Provide specific error messages based on error type
     const errorMessage = error instanceof Error ? error.message : 'Unknown';
-    let userMessage = 'Failed to sync emails. Please try again.';
+    let userMessage = 'Failed to sync emails and calendar. Please try again.';
     let action = 'retry';
 
     if (errorMessage.includes('Unauthorized') || errorMessage.includes('auth')) {
