@@ -229,51 +229,17 @@ export async function syncEmailsForConnection(
         // ==== RECIPIENT DETECTION ====
         // Analyze all recipients to determine who needs inbox items
 
-        // Get user profile first
-        const { data: userProfile } = await adminSupabase
-          .from('profiles')
-          .select('id, email, full_name, organization_id')
-          .eq('id', connection.user_id)
-          .single();
-
-        if (!userProfile) {
-          console.error('    ✗ User profile not found');
-          continue;
-        }
-
-        console.log(`    📧 Profile email: ${userProfile.email}`);
-        console.log(`    📧 Connection email: ${connection.provider_account_id}`);
-
         // Get all users in this organization for mention detection
-        // Always include the connection owner even if organization_id is null
-        // IMPORTANT: Include both profile email AND connection email (they may differ)
-        let orgUsers: Array<{ id: string; email: string; full_name: string | null }> = [
-          userProfile,
-          // Add connection email alias if different from profile email
-          ...(connection.provider_account_id !== userProfile.email
-            ? [{
-                id: userProfile.id,
-                email: connection.provider_account_id,
-                full_name: userProfile.full_name
-              }]
-            : [])
-        ];
-
-        if (userProfile.organization_id) {
-          const { data: orgMembers } = await adminSupabase
+        const { data: orgUsers } = await adminSupabase
+          .from('profiles')
+          .select('id, email, full_name')
+          .eq('organization_id', (await adminSupabase
             .from('profiles')
-            .select('id, email, full_name')
-            .eq('organization_id', userProfile.organization_id)
-            .limit(100);
-
-          // Merge with user profile (avoid duplicates)
-          if (orgMembers) {
-            orgUsers = [
-              userProfile,
-              ...orgMembers.filter(m => m.id !== userProfile.id)
-            ];
-          }
-        }
+            .select('organization_id')
+            .eq('id', connection.user_id)
+            .single()
+          ).data?.organization_id || '')
+          .limit(100);
 
         console.log(`🔍 Analyzing recipients for: "${parsed.subject}"`);
         console.log(`   To: ${storedEmail.to_addresses?.join(', ') || 'none'}`);
