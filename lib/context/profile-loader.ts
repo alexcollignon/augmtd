@@ -71,6 +71,32 @@ export interface RelationshipProfile {
   contacts: ContactContext[];
 }
 
+export interface MeetingBehaviorProfile {
+  // Scheduling preferences
+  preferredTimes: string[];           // ["10:00-12:00", "14:00-16:00"]
+  noMeetingDays: string[];            // ["Friday PM", "Monday AM"]
+  avgMeetingLength: number;           // Average duration in minutes
+
+  // Patterns
+  schedulingPatterns: {
+    bufferTime: number;               // Preferred minutes between meetings
+    backToBackTolerance: number;      // 0-1, how often they do back-to-back
+    advanceBookingDays: number;       // How far in advance they typically book
+  };
+
+  // Participation
+  participationStyle: 'active' | 'observant' | 'balanced';
+  organizerRate: number;              // 0-1, how often they organize vs attend
+  acceptanceRate: number;             // 0-1, how often they accept invites
+
+  // Meeting types
+  meetingTypes: Record<string, {
+    frequency: number;                // Times per week
+    avgDuration: number;              // Minutes
+    typicalAttendees: string[];       // Email addresses
+  }>;
+}
+
 export interface ContactContext {
   email: string;
   name?: string;
@@ -88,8 +114,8 @@ export type ProfileDataMap = {
   email_communication: EmailCommunicationProfile;
   domain_knowledge: DomainKnowledgeProfile;
   relationships: RelationshipProfile;
+  meeting_behavior: MeetingBehaviorProfile;
   slack_communication: any; // Future
-  meeting_behavior: any; // Future
   work_patterns: any; // Future
 };
 
@@ -379,6 +405,28 @@ export class ProfileLoader {
         vocabulary: {},
         workflows: [],
         expertise: [],
+      },
+      confidence_score: 0,
+      learned_from_count: 0,
+    });
+
+    // Create meeting behavior profile (defaults)
+    await supabase.from('context_profiles').insert({
+      user_id: userId,
+      profile_type: 'meeting_behavior',
+      profile_data: {
+        preferredTimes: [],
+        noMeetingDays: [],
+        avgMeetingLength: 30,
+        schedulingPatterns: {
+          bufferTime: 15,
+          backToBackTolerance: 0.5,
+          advanceBookingDays: 7,
+        },
+        participationStyle: 'balanced',
+        organizerRate: 0.5,
+        acceptanceRate: 0.5,
+        meetingTypes: {},
       },
       confidence_score: 0,
       learned_from_count: 0,

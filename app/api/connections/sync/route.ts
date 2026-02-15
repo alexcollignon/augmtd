@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { createClient as createServerClient } from '@supabase/supabase-js';
 import { syncEmailsForConnection } from '@/lib/email-sync/sync-emails';
 import { syncCalendarForConnection } from '@/lib/calendar/sync-calendar';
+import { processMeetingsForUser } from '@/lib/calendar/meeting-processor';
 
 export const maxDuration = 300; // 5 minutes
 
@@ -98,10 +99,21 @@ export async function POST(request: NextRequest) {
 
     console.log(`Manual sync completed. Emails: ${totalEmailsFetched}, Calendar: ${totalEventsSynced}, Inbox items: ${totalInboxItemsCreated}`);
 
+    // Process meetings to create prep items (after calendar sync)
+    let meetingPrepItemsCreated = 0;
+    if (totalEventsSynced > 0) {
+      console.log(`Processing meetings for user ${user.id}...`);
+      const meetingResult = await processMeetingsForUser(user.id, adminSupabase);
+      meetingPrepItemsCreated = meetingResult.created;
+      totalInboxItemsCreated += meetingPrepItemsCreated;
+      console.log(`Created ${meetingPrepItemsCreated} meeting prep items`);
+    }
+
     return NextResponse.json({
       success: true,
       emailsFetched: totalEmailsFetched,
       eventsSynced: totalEventsSynced,
+      meetingPrepItems: meetingPrepItemsCreated,
       inboxItemsCreated: totalInboxItemsCreated,
       errors: errors.length > 0 ? errors : undefined
     });
