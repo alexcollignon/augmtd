@@ -88,10 +88,10 @@ export class ContextService {
 
   /**
    * Log a reply sent
+   * Note: inboxItemId is optional - sent emails don't have inbox items
    */
   static async logReplySent(
     userId: string,
-    inboxItemId: string,
     metadata: {
       sender_email?: string;
       response_time_seconds?: number;
@@ -106,7 +106,8 @@ export class ContextService {
         tone_indicators?: string[];
         common_phrases?: string[];
       };
-    }
+    },
+    inboxItemId?: string
   ): Promise<void> {
     await this.logSignal(userId, 'reply_sent', metadata, inboxItemId);
   }

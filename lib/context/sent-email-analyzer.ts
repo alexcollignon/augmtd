@@ -33,9 +33,9 @@ export async function analyzeSentEmail(email: SentEmailData): Promise<void> {
     const relationshipSignals = extractRelationshipData(email);
 
     // Log as a reply_sent signal with extracted patterns
+    // Note: No inbox_item_id for sent emails (they don't have inbox items)
     await ContextService.logReplySent(
       email.userId,
-      email.emailId, // Use email_id as inbox_item_id for sent emails
       {
         sender_email: email.to[0], // Primary recipient (who they're replying to)
         formality_score: styleSignals.formalityScore,
@@ -50,6 +50,7 @@ export async function analyzeSentEmail(email: SentEmailData): Promise<void> {
           common_phrases: styleSignals.commonPhrases,
         },
       }
+      // inbox_item_id omitted - sent emails don't have inbox items
     );
 
     // Log relationship signals for each recipient
@@ -81,8 +82,8 @@ export async function analyzeSentEmail(email: SentEmailData): Promise<void> {
           topic: extractTopic(email.subject),
           formality_score: styleSignals.formalityScore,
           // This helps build the relationship graph
-        },
-        email.emailId
+        }
+        // inbox_item_id omitted - sent emails don't have inbox items
       );
     }
 

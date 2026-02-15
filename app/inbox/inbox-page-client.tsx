@@ -15,12 +15,14 @@ import {
 
 interface InboxPageClientProps {
   initialUser: any;
+  initialUserFullName?: string;
   initialConnection: any | null;
   initialInboxItems: any[];
 }
 
 export function InboxPageClient({
   initialUser,
+  initialUserFullName,
   initialConnection,
   initialInboxItems
 }: InboxPageClientProps) {
@@ -275,6 +277,7 @@ export function InboxPageClient({
         isOpen={isOnboardingOpen}
         onClose={() => setIsOnboardingOpen(false)}
         userEmail={user?.email}
+        userFullName={initialUserFullName}
       />
     </div>
   );

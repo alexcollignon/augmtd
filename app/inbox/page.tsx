@@ -12,6 +12,13 @@ export default async function PreparedWorkPage() {
     redirect('/login');
   }
 
+  // Fetch user profile
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('full_name')
+    .eq('id', user.id)
+    .single();
+
   // Fetch connection
   const { data: connections } = await supabase
     .from('connections')
@@ -36,6 +43,7 @@ export default async function PreparedWorkPage() {
   return (
     <InboxPageClient
       initialUser={user}
+      initialUserFullName={profile?.full_name}
       initialConnection={connection}
       initialInboxItems={inboxItems || []}
     />

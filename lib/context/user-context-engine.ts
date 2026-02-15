@@ -6,6 +6,7 @@
  */
 
 import { createClient } from '@/lib/supabase/server';
+import { ProfileLoader } from './profile-loader';
 import {
   UserContextProfile,
   LearningSignal,
@@ -22,20 +23,17 @@ export class UserContextEngine {
    * Fetch current context profile for user
    */
   static async getContext(userId: string): Promise<UserContextProfile> {
+    const { getUserContextLegacy } = await import('./profile-adapter');
     const supabase = await createClient();
 
-    const { data, error } = await supabase
-      .from('user_context_profiles')
-      .select('context_data')
-      .eq('user_id', userId)
-      .single();
+    const context = await getUserContextLegacy(userId, supabase);
 
-    if (error || !data?.context_data) {
+    if (!context) {
       // Return default context if none exists
       return DEFAULT_USER_CONTEXT;
     }
 
-    return data.context_data as UserContextProfile;
+    return context;
   }
 
   /**
@@ -374,22 +372,79 @@ export class UserContextEngine {
   }
 
   /**
-   * Save updated context to database
+   * Save updated context to modular context_profiles table
+   * Maps UserContextProfile to individual profile types
    */
   private static async saveContext(
     userId: string,
     context: UserContextProfile
   ): Promise<void> {
-    const supabase = await createClient();
+    try {
+      // Calculate confidence from signalCount
+      const emailCommConfidence = Math.min(95, 20 + (context.confidenceMetrics.signalCount * 2));
 
-    const { error } = await supabase
-      .from('user_context_profiles')
-      .upsert({
-        user_id: userId,
-        context_data: context,
-      });
+      // Update email_communication profile with learned patterns
+      await ProfileLoader.updateProfile(
+        userId,
+        'email_communication',
+        {
+          signature: context.communicationStyle.signatureStyle || null,
+          greetingPatterns: context.communicationStyle.greetingPatterns,
+          tone: context.communicationStyle.toneVector.formal, // 0-1 value
+          formalityScore: context.communicationStyle.formalityScore,
+          avgLength: Math.round(context.communicationStyle.avgLength),
+          emojiUsage: context.communicationStyle.emojiUsage,
+          commonPhrases: context.communicationStyle.commonPhrases,
+          responsePatterns: {
+            avgResponseTime: context.urgencySensitivity.avgResponseTime,
+            priorityAdjustments: {},
+          },
+        },
+        emailCommConfidence,
+        false // Don't auto-increment, we manage confidence manually
+      );
 
-    if (error) {
+      // Update identity profile if role information exists
+      if (context.rolePatterns.primaryRole) {
+        // Load current identity to preserve fullName and email
+        const currentIdentity = await ProfileLoader.loadProfile(userId, 'identity');
+
+        await ProfileLoader.updateProfile(
+          userId,
+          'identity',
+          {
+            fullName: currentIdentity?.fullName || '',
+            role: context.rolePatterns.primaryRole,
+            email: currentIdentity?.email || '',
+            responsibilities: context.rolePatterns.responsibilities,
+            authority: context.rolePatterns.decisionMakingLevel as any,
+          },
+          Math.round(context.confidenceMetrics.dimensionConfidence.rolePatterns * 100),
+          false
+        );
+      }
+
+      // Note: relationshipGraph is stored separately in relationship_graph table
+      // It's managed by the relationship sync process, not here
+
+      // TEMPORARY: Also write to old table for backward compatibility during transition
+      // TODO: Remove this after validating modular profiles work correctly (1-2 weeks)
+      const supabase = await createClient();
+      await supabase
+        .from('user_context_profiles')
+        .upsert({
+          user_id: userId,
+          context_data: context,
+        })
+        .then(() => {
+          console.log(`[UserContextEngine] Saved to modular profiles + old table (${context.confidenceMetrics.signalCount} signals)`);
+        })
+        .catch(err => {
+          // Don't fail if old table write fails (might be deleted)
+          console.warn('[UserContextEngine] Old table write failed (expected if table deleted):', err.message);
+        });
+
+    } catch (error) {
       console.error('[UserContextEngine] Failed to save context:', error);
       throw error;
     }

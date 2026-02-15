@@ -1,8 +1,8 @@
 /**
  * User Context Profile Structure
  *
- * All fields are learned automatically from user behavior.
- * No manual input required.
+ * Core identity (name, role) collected during onboarding.
+ * Communication style and behavioral patterns learned automatically from user behavior.
  */
 
 export interface UserContextProfile {
@@ -33,6 +33,12 @@ export interface ToneVector {
 }
 
 export interface RolePatterns {
+  // Explicit identity (from onboarding)
+  primaryRole?: string;                 // User's job title/role (e.g., "Product Manager")
+  responsibilities?: string[];          // Known responsibilities (learned or explicit)
+  decisionMakingLevel?: string;         // Authority level (learned from behavior)
+
+  // Learned behavioral patterns
   respondsWhenInTo: number;             // 0-1, response rate when primary recipient
   respondsWhenInCC: number;             // 0-1, response rate when CC'd
   mentionSensitivity: number;           // 0-1, response rate when @mentioned
@@ -42,6 +48,8 @@ export interface RolePatterns {
     secondary: number;                  // Later in To line
     cc: number;                         // In CC
   };
+  typicalSenders: string[];             // Common people they work with
+  confidenceScore?: number;             // Confidence in role understanding
 }
 
 export interface UrgencySensitivity {
@@ -134,6 +142,9 @@ export const DEFAULT_USER_CONTEXT: UserContextProfile = {
     commonPhrases: [],
   },
   rolePatterns: {
+    primaryRole: undefined,
+    responsibilities: [],
+    decisionMakingLevel: 'unknown',
     respondsWhenInTo: 0.5,
     respondsWhenInCC: 0.5,
     mentionSensitivity: 0.5,
@@ -143,6 +154,8 @@ export const DEFAULT_USER_CONTEXT: UserContextProfile = {
       secondary: 0.5,
       cc: 0.5,
     },
+    typicalSenders: [],
+    confidenceScore: 0,
   },
   urgencySensitivity: {
     thresholdScore: 0.5,

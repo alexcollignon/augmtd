@@ -34,42 +34,45 @@ export interface SyncOptions {
 
 /**
  * Fetch user context profile for personalized AI processing
- * Creates profile with default values if it doesn't exist
+ * Uses new modular profiles but returns legacy format for compatibility
  */
 async function getUserContext(
   userId: string,
   adminSupabase: SupabaseClient
 ): Promise<UserContextProfile | undefined> {
   try {
-    const { data, error } = await adminSupabase
-      .from('user_context_profiles')
-      .select('context_data')
-      .eq('user_id', userId)
-      .single();
+    const { getUserContextLegacy, initializeUserContext } = await import('@/lib/context/profile-adapter');
 
-    if (error || !data?.context_data) {
-      // Profile doesn't exist - initialize it with defaults
-      console.log('[Sync] No user context found - initializing with defaults');
+    // Try to load existing profiles
+    const context = await getUserContextLegacy(userId, adminSupabase);
 
-      const { DEFAULT_USER_CONTEXT } = await import('@/lib/types/user-context');
-
-      const { error: insertError } = await adminSupabase
-        .from('user_context_profiles')
-        .insert({
-          user_id: userId,
-          context_data: DEFAULT_USER_CONTEXT,
-        });
-
-      if (insertError) {
-        console.error('[Sync] Error creating user context profile:', insertError);
-        return undefined;
-      }
-
-      console.log('[Sync] ✓ Created new user context profile with default values');
-      return DEFAULT_USER_CONTEXT;
+    if (context) {
+      return context;
     }
 
-    return data.context_data as UserContextProfile;
+    // Profile doesn't exist - initialize it
+    console.log('[Sync] No user context found - initializing with smart defaults');
+
+    const { getUserInfo } = await import('@/lib/context/initialize-context');
+    const userInfo = await getUserInfo(userId, adminSupabase);
+
+    if (userInfo) {
+      // Initialize modular profiles
+      await initializeUserContext(
+        userId,
+        userInfo.fullName || 'User',
+        userInfo.fullName || '',
+        userInfo.email,
+        adminSupabase
+      );
+
+      // Load newly created profiles
+      const newContext = await getUserContextLegacy(userId, adminSupabase);
+      console.log('[Sync] ✓ Created new user context profiles (modular)');
+      return newContext;
+    }
+
+    return undefined;
   } catch (error) {
     console.error('[Sync] Error fetching user context:', error);
     return undefined;
@@ -99,7 +102,7 @@ export async function syncEmailsForConnection(
 
     // Fetch emails based on provider
     const encryptedTokens = connection.metadata.tokens;
-    const maxEmails = options.maxEmails || connection.metadata.max_emails_per_sync || 5;
+    const maxEmails = options.maxEmails || connection.metadata.max_emails_per_sync || 10;
     const syncWindowDays = options.syncWindowDays || connection.metadata.sync_window_days || 7;
 
     let messages: any[];
