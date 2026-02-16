@@ -35,8 +35,8 @@ export default function MeetingsSidebar({ userId, userEmail, isOpen, onClose }: 
 
     fetchMeetings();
 
-    // Poll for updates every 30 seconds
-    const interval = setInterval(fetchMeetings, 30000);
+    // Poll for updates every 60 seconds (reduced from 30s to minimize load during sync)
+    const interval = setInterval(fetchMeetings, 60000);
     return () => clearInterval(interval);
   }, [userId]);
 

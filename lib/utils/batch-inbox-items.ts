@@ -49,8 +49,9 @@ function categorizeBatch(items: InboxItem[]): BatchedItem['category'] {
     return 'notifications';
   }
 
-  // Check if it's operational action_required
-  if (firstItem.work_state === 'action_required' && !signals?.isMechanicalConfirmation) {
+  // Check if it's operational action_required or work_prepared (reminders/drafts)
+  if ((firstItem.work_state === 'action_required' || firstItem.work_state === 'work_prepared') &&
+      !signals?.isMechanicalConfirmation) {
     return 'operational';
   }
 
@@ -199,6 +200,8 @@ function groupBySimilarity(items: InboxItem[]): InboxItem[][] {
  * - Batch NOTED items (Level 2: Awareness)
  * - Batch mechanical ACTION_REQUIRED items (low friction, repetitive)
  * - Batch operational ACTION_REQUIRED items with similar subjects (reminders)
+ * - Batch WORK_PREPARED items with similar subjects (reminder drafts)
+ * - Don't batch DECISION_REQUIRED (needs individual attention)
  * - Group by category (confirmations, notifications, etc.)
  * - Require at least 2 items to create a batch
  * - Return batches + unbatched items
@@ -217,17 +220,14 @@ export function batchInboxItems(items: InboxItem[]): BatchingResult {
     i.work_state === 'action_required' &&
     i.source_data?.signals?.isMechanicalConfirmation === false
   );
-  const otherItems = items.filter(i =>
-    i.work_state !== 'noted' &&
-    i.work_state !== 'no_work' &&
-    i.work_state !== 'action_required'
-  );
+  const workPreparedItems = items.filter(i => i.work_state === 'work_prepared');
+  const decisionItems = items.filter(i => i.work_state === 'decision_required');
 
-  // Don't batch WORK_PREPARED and DECISION_REQUIRED - they need visibility
-  unbatched.push(...otherItems);
+  // Don't batch DECISION_REQUIRED - they need individual visibility
+  unbatched.push(...decisionItems);
 
-  // Combine NOTED, mechanical, and operational ACTION_REQUIRED for batching
-  const batchableItems = [...notedItems, ...mechanicalActions, ...operationalActions];
+  // Combine NOTED, ACTION_REQUIRED (mechanical + operational), and WORK_PREPARED for batching
+  const batchableItems = [...notedItems, ...mechanicalActions, ...operationalActions, ...workPreparedItems];
 
   // Group batchable items by similarity
   const groups = groupBySimilarity(batchableItems);
