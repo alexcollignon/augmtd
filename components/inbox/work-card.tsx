@@ -22,6 +22,7 @@ export default function WorkCard({ item }: WorkCardProps) {
   // Check if this is a batched item
   const isBatch = (item as any).__isBatch === true;
   const batchCount = (item as any).__batchCount;
+  const batchItems = (item as any).__batchItems || [];
 
   const sourceData = item.source_data;
   const recipientContext = item.recipient_context;
@@ -97,16 +98,11 @@ export default function WorkCard({ item }: WorkCardProps) {
   return (
     <>
       <article
-        onClick={() => {
-          // Don't open detail panel for batched items (they have fake IDs)
-          if (!isBatch) {
-            setShowDetail(true);
-          }
-        }}
+        onClick={() => setShowDetail(true)}
         className={`
           group relative bg-white
           border ${style.borderColor} ${style.hoverBorder}
-          ${!isBatch ? 'hover:shadow-md cursor-pointer' : 'cursor-default'}
+          hover:shadow-md cursor-pointer
           transition-all duration-150
           overflow-hidden
         `}
@@ -233,6 +229,7 @@ export default function WorkCard({ item }: WorkCardProps) {
         item={item}
         isOpen={showDetail}
         onClose={() => setShowDetail(false)}
+        batchItems={isBatch ? batchItems : undefined}
       />
     </>
   );

@@ -16,9 +16,11 @@ interface WorkDetailPanelProps {
   item: InboxItem;
   isOpen: boolean;
   onClose: () => void;
+  batchItems?: InboxItem[]; // If provided, this is a batch view
 }
 
-export default function WorkDetailPanel({ item, isOpen, onClose }: WorkDetailPanelProps) {
+export default function WorkDetailPanel({ item, isOpen, onClose, batchItems }: WorkDetailPanelProps) {
+  const isBatch = batchItems && batchItems.length > 1;
   const sourceData = item.source_data;
   const recipientContext = item.recipient_context;
   const [isSending, setIsSending] = useState(false);
@@ -120,6 +122,67 @@ export default function WorkDetailPanel({ item, isOpen, onClose }: WorkDetailPan
     }
   };
 
+  // Batch actions
+  const handleCompleteAll = async () => {
+    if (!batchItems) return;
+
+    setIsCompleting(true);
+    try {
+      const results = await Promise.allSettled(
+        batchItems.map(batchItem =>
+          fetch(`/api/inbox/${batchItem.id}/complete`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'reviewed' }),
+          })
+        )
+      );
+
+      const failures = results.filter(r => r.status === 'rejected').length;
+      if (failures > 0) {
+        console.error(`Failed to complete ${failures} items`);
+        alert(`Failed to complete ${failures} items. Please try again.`);
+      } else {
+        window.location.reload();
+      }
+    } catch (error) {
+      console.error('Batch complete error:', error);
+      alert('Failed to complete items. Please try again.');
+    } finally {
+      setIsCompleting(false);
+    }
+  };
+
+  const handleDismissAll = async () => {
+    if (!batchItems) return;
+
+    setIsDismissing(true);
+    try {
+      const results = await Promise.allSettled(
+        batchItems.map(batchItem =>
+          fetch(`/api/inbox/${batchItem.id}/dismiss`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ reason: 'not_relevant' }),
+          })
+        )
+      );
+
+      const failures = results.filter(r => r.status === 'rejected').length;
+      if (failures > 0) {
+        console.error(`Failed to dismiss ${failures} items`);
+        alert(`Failed to dismiss ${failures} items. Please try again.`);
+      } else {
+        window.location.reload();
+      }
+    } catch (error) {
+      console.error('Batch dismiss error:', error);
+      alert('Failed to dismiss items. Please try again.');
+    } finally {
+      setIsDismissing(false);
+    }
+  };
+
   return (
     <Transition show={isOpen} as={Fragment}>
       <Dialog onClose={onClose} className="relative z-50">
@@ -159,10 +222,16 @@ export default function WorkDetailPanel({ item, isOpen, onClose }: WorkDetailPan
                           <Dialog.Title className="text-[18px] font-semibold text-neutral-900 leading-tight">
                             {item.work_title || sourceData?.subject || 'Work Item'}
                           </Dialog.Title>
-                          {sourceData?.from_name && (
-                            <p className="text-[13px] text-neutral-600 mt-1.5">
-                              From: {sourceData.from_name}
+                          {isBatch ? (
+                            <p className="text-[13px] text-indigo-600 font-medium mt-1.5">
+                              {batchItems.length} similar items
                             </p>
+                          ) : (
+                            sourceData?.from_name && (
+                              <p className="text-[13px] text-neutral-600 mt-1.5">
+                                From: {sourceData.from_name}
+                              </p>
+                            )
                           )}
                         </div>
                         <button
@@ -176,8 +245,45 @@ export default function WorkDetailPanel({ item, isOpen, onClose }: WorkDetailPan
 
                     {/* Content - Scrollable */}
                     <div className="flex-1 overflow-y-auto px-6 py-6 space-y-6">
+                      {/* Batch Items List */}
+                      {isBatch && batchItems && (
+                        <div>
+                          <h3 className="text-[11px] font-semibold text-neutral-600 uppercase tracking-wide mb-3">
+                            All Items ({batchItems.length})
+                          </h3>
+                          <div className="space-y-3">
+                            {batchItems.map((batchItem, index) => (
+                              <div
+                                key={batchItem.id}
+                                className="bg-neutral-50 border border-neutral-200 p-4 hover:border-indigo-200 transition-colors"
+                              >
+                                <div className="flex items-start justify-between mb-2">
+                                  <h4 className="text-[14px] font-semibold text-neutral-900 flex-1">
+                                    {batchItem.source_data?.subject || 'No subject'}
+                                  </h4>
+                                  <span className="text-[11px] text-neutral-500 ml-2">
+                                    #{index + 1}
+                                  </span>
+                                </div>
+                                <p className="text-[13px] text-neutral-600 mb-2">
+                                  From: {batchItem.source_data?.from_name || batchItem.source_data?.from || 'Unknown'}
+                                </p>
+                                {batchItem.what_i_prepared && (
+                                  <p className="text-[12px] text-neutral-700 line-clamp-2 mt-2">
+                                    {batchItem.what_i_prepared}
+                                  </p>
+                                )}
+                                <p className="text-[11px] text-neutral-500 mt-2">
+                                  {new Date(batchItem.created_at).toLocaleString()}
+                                </p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
                       {/* What Was Prepared */}
-                      {item.what_i_prepared && (
+                      {!isBatch && item.what_i_prepared && (
                         <div>
                           <h3 className="text-[11px] font-semibold text-neutral-600 uppercase tracking-wide mb-2">
                             What Was Prepared
@@ -189,7 +295,7 @@ export default function WorkDetailPanel({ item, isOpen, onClose }: WorkDetailPan
                       )}
 
                       {/* Why This Matters */}
-                      {item.why_matters && (
+                      {!isBatch && item.why_matters && (
                         <div>
                           <h3 className="text-[11px] font-semibold text-neutral-600 uppercase tracking-wide mb-2">
                             Why This Matters
@@ -201,7 +307,7 @@ export default function WorkDetailPanel({ item, isOpen, onClose }: WorkDetailPan
                       )}
 
                       {/* Draft Reply */}
-                      {sourceData?.draft && (
+                      {!isBatch && sourceData?.draft && (
                         <div>
                           <h3 className="text-[11px] font-semibold text-neutral-600 uppercase tracking-wide mb-2">
                             Prepared Reply
@@ -225,35 +331,37 @@ export default function WorkDetailPanel({ item, isOpen, onClose }: WorkDetailPan
                       )}
 
                       {/* Your Role */}
-                      <div>
-                        <h3 className="text-[11px] font-semibold text-neutral-600 uppercase tracking-wide mb-3">
-                          Your Role
-                        </h3>
-                        <div className="bg-neutral-50 border border-neutral-200 p-4 space-y-2">
-                          <div className="flex items-center justify-between">
-                            <span className="text-[13px] text-neutral-600">Assigned Role:</span>
-                            <span className="text-[13px] font-semibold text-neutral-900">
-                              {getRoleDisplay()}
-                            </span>
-                          </div>
-                          <div className="flex items-center justify-between">
-                            <span className="text-[13px] text-neutral-600">Suggested Action:</span>
-                            <span className="text-[13px] font-semibold text-neutral-900">
-                              {getSuggestedAction()}
-                            </span>
-                          </div>
-                          {recipientContext?.suggestionLabel && (
-                            <div className="pt-2 border-t border-neutral-200">
-                              <p className="text-[12px] text-neutral-500 italic">
-                                {recipientContext.suggestionLabel}
-                              </p>
+                      {!isBatch && (
+                        <div>
+                          <h3 className="text-[11px] font-semibold text-neutral-600 uppercase tracking-wide mb-3">
+                            Your Role
+                          </h3>
+                          <div className="bg-neutral-50 border border-neutral-200 p-4 space-y-2">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[13px] text-neutral-600">Assigned Role:</span>
+                              <span className="text-[13px] font-semibold text-neutral-900">
+                                {getRoleDisplay()}
+                              </span>
                             </div>
-                          )}
+                            <div className="flex items-center justify-between">
+                              <span className="text-[13px] text-neutral-600">Suggested Action:</span>
+                              <span className="text-[13px] font-semibold text-neutral-900">
+                                {getSuggestedAction()}
+                              </span>
+                            </div>
+                            {recipientContext?.suggestionLabel && (
+                              <div className="pt-2 border-t border-neutral-200">
+                                <p className="text-[12px] text-neutral-500 italic">
+                                  {recipientContext.suggestionLabel}
+                                </p>
+                              </div>
+                            )}
+                          </div>
                         </div>
-                      </div>
+                      )}
 
                       {/* Involved Parties */}
-                      {recipientContext?.otherRecipients && recipientContext.otherRecipients.length > 0 && (
+                      {!isBatch && recipientContext?.otherRecipients && recipientContext.otherRecipients.length > 0 && (
                         <div>
                           <h3 className="text-[11px] font-semibold text-neutral-600 uppercase tracking-wide mb-2">
                             Also on Thread
@@ -278,7 +386,7 @@ export default function WorkDetailPanel({ item, isOpen, onClose }: WorkDetailPan
                       )}
 
                       {/* Key Points */}
-                      {sourceData?.keyPoints && sourceData.keyPoints.length > 0 && (
+                      {!isBatch && sourceData?.keyPoints && sourceData.keyPoints.length > 0 && (
                         <div>
                           <h3 className="text-[11px] font-semibold text-neutral-600 uppercase tracking-wide mb-2">
                             Key Points
@@ -295,7 +403,7 @@ export default function WorkDetailPanel({ item, isOpen, onClose }: WorkDetailPan
                       )}
 
                       {/* Thread History */}
-                      {sourceData?.thread_history && sourceData.thread_history.length > 1 && (
+                      {!isBatch && sourceData?.thread_history && sourceData.thread_history.length > 1 && (
                         <div>
                           <h3 className="text-[11px] font-semibold text-neutral-600 uppercase tracking-wide mb-2">
                             Thread History
@@ -324,7 +432,7 @@ export default function WorkDetailPanel({ item, isOpen, onClose }: WorkDetailPan
                       )}
 
                       {/* Advanced Details (Collapsible) */}
-                      {recipientContext && (
+                      {!isBatch && recipientContext && (
                         <details className="group">
                           <summary className="text-[11px] font-semibold text-neutral-600 uppercase tracking-wide cursor-pointer hover:text-indigo-600 transition-colors">
                             Advanced Details
@@ -341,37 +449,64 @@ export default function WorkDetailPanel({ item, isOpen, onClose }: WorkDetailPan
 
                     {/* Actions Footer - Fixed at bottom */}
                     <div className="flex-shrink-0 bg-neutral-50 px-6 py-4 border-t border-neutral-200">
-                      <div className="flex items-center gap-3">
-                        {/* Primary action */}
-                        {sourceData?.draft && (
-                          <button
-                            onClick={() => setShowDraftPreview(true)}
-                            className="flex-1 inline-flex items-center justify-center px-4 py-2.5 text-[13px] font-semibold bg-indigo-600 text-white hover:bg-indigo-700 transition-all shadow-sm hover:shadow"
-                          >
-                            <PaperAirplaneIcon className="w-4 h-4 mr-2" />
-                            Review & Send
-                          </button>
-                        )}
-                        {!sourceData?.draft && (
-                          <button
-                            onClick={handleComplete}
-                            disabled={isCompleting}
-                            className="flex-1 inline-flex items-center justify-center px-4 py-2.5 text-[13px] font-semibold bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm hover:shadow"
-                          >
-                            <CheckIcon className="w-4 h-4 mr-2" />
-                            {isCompleting ? 'Completing...' : 'Mark Complete'}
-                          </button>
-                        )}
+                      {isBatch ? (
+                        // Batch actions
+                        <div className="space-y-2">
+                          <p className="text-[12px] text-neutral-600 mb-3">
+                            Actions will apply to all {batchItems?.length} items
+                          </p>
+                          <div className="flex items-center gap-3">
+                            <button
+                              onClick={handleCompleteAll}
+                              disabled={isCompleting}
+                              className="flex-1 inline-flex items-center justify-center px-4 py-2.5 text-[13px] font-semibold bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm hover:shadow"
+                            >
+                              <CheckIcon className="w-4 h-4 mr-2" />
+                              {isCompleting ? 'Completing...' : 'Mark All Complete'}
+                            </button>
+                            <button
+                              onClick={handleDismissAll}
+                              disabled={isDismissing}
+                              className="px-4 py-2.5 text-[13px] font-semibold text-neutral-700 hover:bg-neutral-200 disabled:opacity-50 transition-colors border border-neutral-300"
+                            >
+                              {isDismissing ? 'Dismissing...' : 'Dismiss All'}
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        // Single item actions
+                        <div className="flex items-center gap-3">
+                          {/* Primary action */}
+                          {sourceData?.draft && (
+                            <button
+                              onClick={() => setShowDraftPreview(true)}
+                              className="flex-1 inline-flex items-center justify-center px-4 py-2.5 text-[13px] font-semibold bg-indigo-600 text-white hover:bg-indigo-700 transition-all shadow-sm hover:shadow"
+                            >
+                              <PaperAirplaneIcon className="w-4 h-4 mr-2" />
+                              Review & Send
+                            </button>
+                          )}
+                          {!sourceData?.draft && (
+                            <button
+                              onClick={handleComplete}
+                              disabled={isCompleting}
+                              className="flex-1 inline-flex items-center justify-center px-4 py-2.5 text-[13px] font-semibold bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm hover:shadow"
+                            >
+                              <CheckIcon className="w-4 h-4 mr-2" />
+                              {isCompleting ? 'Completing...' : 'Mark Complete'}
+                            </button>
+                          )}
 
-                        {/* Secondary actions */}
-                        <button
-                          onClick={handleDismiss}
-                          disabled={isDismissing}
-                          className="px-4 py-2.5 text-[13px] font-semibold text-neutral-700 hover:bg-neutral-200 disabled:opacity-50 transition-colors border border-neutral-300"
-                        >
-                          {isDismissing ? 'Dismissing...' : 'Dismiss'}
-                        </button>
-                      </div>
+                          {/* Secondary actions */}
+                          <button
+                            onClick={handleDismiss}
+                            disabled={isDismissing}
+                            className="px-4 py-2.5 text-[13px] font-semibold text-neutral-700 hover:bg-neutral-200 disabled:opacity-50 transition-colors border border-neutral-300"
+                          >
+                            {isDismissing ? 'Dismissing...' : 'Dismiss'}
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </Dialog.Panel>
