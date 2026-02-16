@@ -65,7 +65,7 @@ async function checkRLS() {
     console.log('   Policies:', policiesRaw);
   } else {
     console.log('   Policies found:', policies.length);
-    policies.forEach(p => {
+    policies.forEach((p: any) => {
       console.log(`   - ${p.tablename}.${p.policyname} (${p.cmd})`);
     });
   }
