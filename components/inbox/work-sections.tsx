@@ -30,14 +30,14 @@ export default function WorkSections({ items }: WorkSectionsProps) {
       __isBatch: true,
       __batchCount: batch.count,
       __batchItems: batch.items,
-    }));
+    } as InboxItem & { __isBatch: boolean; __batchCount: number; __batchItems: InboxItem[] }));
 
     return [...unbatched, ...batchItems];
   }, [batches, unbatched]);
 
   // Group items by visual section
   const itemsBySection = displayItems.reduce((acc, item) => {
-    const section = item.visual_section || 'awareness';
+    const section = (item as InboxItem).visual_section || 'awareness';
     if (!acc[section]) acc[section] = [];
     acc[section].push(item);
     return acc;
