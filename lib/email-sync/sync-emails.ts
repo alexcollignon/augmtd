@@ -155,8 +155,12 @@ export async function syncEmailsForConnection(
 
     // Fetch calendar context for scheduling-aware email processing
     const calendarContext = await getCalendarContext(connection.user_id, adminSupabase);
-    if (calendarContext.meetingBehavior || calendarContext.upcomingMeetings) {
-      console.log(`✓ Loaded calendar context (${calendarContext.upcomingMeetings?.length || 0} upcoming meetings, ${calendarContext.meetingBehavior ? 'patterns learned' : 'no patterns'})`);
+    const meetingsCount = calendarContext.upcomingMeetings?.length || 0;
+    const hasPatterns = !!calendarContext.meetingBehavior;
+    const hasMeetings = meetingsCount > 0;
+
+    if (hasMeetings || hasPatterns) {
+      console.log(`✓ Loaded calendar context (${meetingsCount} upcoming meetings${hasPatterns ? ', patterns learned' : ', no patterns yet'})`);
     } else {
       console.log(`○ No calendar context available - AI will not use scheduling insights`);
     }

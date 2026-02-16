@@ -286,51 +286,88 @@ function formatCalendarContext(calendarContext: CalendarContext | undefined): st
     return '';
   }
 
-  let contextSection = '\nCALENDAR CONTEXT:\n';
+  let contextSection = '\n=== CALENDAR CONTEXT ===\n';
+
+  // Add upcoming meetings with detailed time slots
+  if (calendarContext.upcomingMeetings && calendarContext.upcomingMeetings.length > 0) {
+    contextSection += '\n🚨 EXISTING MEETINGS (next 7 days) - CHECK FOR CONFLICTS:\n';
+
+    // Group by day for easier conflict detection
+    const meetingsByDay: Record<string, Array<{title: string, start: Date, end: Date, attendees: string[]}>> = {};
+
+    calendarContext.upcomingMeetings.forEach(meeting => {
+      const startTime = new Date(meeting.start_time);
+      const dayKey = startTime.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
+
+      if (!meetingsByDay[dayKey]) {
+        meetingsByDay[dayKey] = [];
+      }
+
+      meetingsByDay[dayKey].push({
+        title: meeting.title,
+        start: startTime,
+        end: new Date(meeting.end_time),
+        attendees: meeting.attendees,
+      });
+    });
+
+    // Format by day
+    Object.entries(meetingsByDay).forEach(([day, meetings]) => {
+      contextSection += `\n${day}:\n`;
+      meetings
+        .sort((a, b) => a.start.getTime() - b.start.getTime())
+        .forEach(m => {
+          const startStr = m.start.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+          const endStr = m.end.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+          contextSection += `  • ${startStr} - ${endStr}: ${m.title}\n`;
+        });
+    });
+  }
 
   // Add meeting behavior patterns
   if (calendarContext.meetingBehavior) {
     const behavior = calendarContext.meetingBehavior;
-    contextSection += '\nMeeting Preferences (learned from calendar patterns):\n';
+    contextSection += '\nMeeting Preferences (learned patterns):\n';
 
     if (behavior.preferredTimes.length > 0) {
-      contextSection += `- Preferred meeting times: ${behavior.preferredTimes.join(', ')}\n`;
+      contextSection += `- Preferred times: ${behavior.preferredTimes.join(', ')}\n`;
     }
 
     if (behavior.noMeetingDays.length > 0) {
-      contextSection += `- Protected time (no meetings): ${behavior.noMeetingDays.join(', ')}\n`;
+      contextSection += `- Protected periods: ${behavior.noMeetingDays.join(', ')}\n`;
     }
 
-    contextSection += `- Typical meeting length: ${behavior.avgMeetingLength} minutes\n`;
-    contextSection += `- Buffer time between meetings: ${behavior.bufferTime} minutes\n`;
-    contextSection += `- Meeting participation style: ${behavior.participationStyle}\n`;
+    contextSection += `- Typical duration: ${behavior.avgMeetingLength} min\n`;
+    contextSection += `- Buffer time: ${behavior.bufferTime} min\n`;
   }
 
-  // Add upcoming meetings
-  if (calendarContext.upcomingMeetings && calendarContext.upcomingMeetings.length > 0) {
-    contextSection += '\nUpcoming Meetings (next 7 days):\n';
-    calendarContext.upcomingMeetings.slice(0, 5).forEach(meeting => {
-      const startTime = new Date(meeting.start_time);
-      const endTime = new Date(meeting.end_time);
-      contextSection += `- ${meeting.title}: ${startTime.toLocaleString()} - ${endTime.toLocaleTimeString()}\n`;
-      if (meeting.attendees.length > 0) {
-        contextSection += `  Attendees: ${meeting.attendees.slice(0, 3).join(', ')}${meeting.attendees.length > 3 ? ` +${meeting.attendees.length - 3} more` : ''}\n`;
-      }
-    });
-  }
-
-  // Add availability insights
+  // Add availability summary
   if (calendarContext.availability) {
-    contextSection += '\nAvailability:\n';
-    if (calendarContext.availability.nextAvailableSlot) {
-      contextSection += `- Next available: ${calendarContext.availability.nextAvailableSlot}\n`;
+    contextSection += '\nAvailability Summary:\n';
+    if (calendarContext.availability.busyPeriods.length === 0) {
+      contextSection += '- Status: Fully available (no meetings scheduled)\n';
+    } else {
+      contextSection += `- Busy periods: ${calendarContext.availability.busyPeriods.length} meetings in next 7 days\n`;
     }
-    if (calendarContext.availability.busyPeriods.length > 0) {
-      contextSection += `- Busy periods: ${calendarContext.availability.busyPeriods.length} blocks in next week\n`;
+    if (calendarContext.availability.nextAvailableSlot) {
+      contextSection += `- Next free slot: ${calendarContext.availability.nextAvailableSlot}\n`;
     }
   }
 
-  contextSection += '\nIMPORTANT: When scheduling meetings, consider the user\'s preferred times and protected periods. Suggest times that align with their typical meeting patterns.\n\n---\n\n';
+  contextSection += `
+🚨 CRITICAL SCHEDULING RULES:
+1. ALWAYS check the EXISTING MEETINGS list above before confirming ANY meeting time
+2. If a requested time CONFLICTS with an existing meeting, you MUST:
+   - Politely DECLINE the conflicting time
+   - Explain the conflict ("I have [meeting name] from [time] to [time]")
+   - Suggest 2-3 alternative times that are FREE
+3. When suggesting times, prefer the user's preferred meeting times if available
+4. Account for buffer time (${calendarContext.meetingBehavior?.bufferTime || 15} min) between meetings
+5. NEVER confirm a time that overlaps with existing meetings, even partially
+
+===========================
+
+`;
 
   return contextSection;
 }

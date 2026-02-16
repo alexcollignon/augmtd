@@ -27,8 +27,8 @@ export async function getCalendarContext(
       .eq('profile_type', 'meeting_behavior')
       .single();
 
-    if (profile && profile.confidence_score > 0.3) {
-      // Only use profile if confidence is reasonable (>30%)
+    if (profile && profile.confidence_score > 0.15) {
+      // Use profile if confidence is >15% (low bar - any data is better than none)
       const data = profile.profile_data as any;
       context.meetingBehavior = {
         preferredTimes: data.preferredTimes || [],
@@ -63,7 +63,7 @@ export async function getCalendarContext(
       }));
     }
 
-    // 3. Calculate availability (find next free slot and busy periods)
+    // 3. Calculate availability (find next free slot and detailed busy periods)
     if (upcomingMeetings && upcomingMeetings.length > 0) {
       const busyPeriods = upcomingMeetings.map(m => ({
         start: m.start_time,
@@ -73,6 +73,12 @@ export async function getCalendarContext(
       context.availability = {
         busyPeriods,
         nextAvailableSlot: findNextAvailableSlot(now, upcomingMeetings),
+      };
+    } else {
+      // No meetings = fully available
+      context.availability = {
+        busyPeriods: [],
+        nextAvailableSlot: 'No upcoming meetings - fully available',
       };
     }
 
