@@ -4,6 +4,7 @@ import { createClient as createServerClient } from '@supabase/supabase-js';
 import { syncEmailsForConnection } from '@/lib/email-sync/sync-emails';
 import { syncCalendarForConnection } from '@/lib/calendar/sync-calendar';
 import { processMeetingsForUser } from '@/lib/calendar/meeting-processor';
+import { analyzeCalendarPatterns } from '@/lib/calendar/pattern-analyzer';
 
 export const maxDuration = 300; // 5 minutes
 
@@ -84,7 +85,7 @@ export async function POST(request: NextRequest) {
       console.log(`Syncing ${connection.provider} calendar + emails for user ${user.id}...`);
 
       // Step 1: Sync calendar FIRST (provides context for email processing)
-      console.log(`[Sync Order] 1/2: Syncing calendar for ${connection.provider}...`);
+      console.log(`[Sync Order] 1/3: Syncing calendar for ${connection.provider}...`);
       const calendarResult = await syncCalendarForConnection(connection, adminSupabase, {
         daysAhead: 14,  // Next 2 weeks
         daysBehind: 7,  // Past week (for updates)
@@ -95,10 +96,18 @@ export async function POST(request: NextRequest) {
 
       if (calendarResult.synced > 0) {
         console.log(`[Sync Order] ✓ Calendar synced: ${calendarResult.synced} events`);
+
+        // Step 1.5: Analyze calendar patterns to build meeting_behavior profile
+        console.log(`[Sync Order] 1.5/3: Analyzing calendar patterns...`);
+        const patternResult = await analyzeCalendarPatterns(user.id, adminSupabase);
+
+        if (patternResult.success) {
+          console.log(`[Sync Order] ✓ Patterns analyzed: ${patternResult.patternsDetected} meeting types, ${Math.round(patternResult.confidence * 100)}% confidence`);
+        }
       }
 
-      // Step 2: Sync emails AFTER calendar (can now use calendar context)
-      console.log(`[Sync Order] 2/2: Syncing emails for ${connection.provider}...`);
+      // Step 3: Sync emails AFTER calendar + pattern analysis (can now use calendar context)
+      console.log(`[Sync Order] 3/3: Syncing emails for ${connection.provider}...`);
       const emailResult = await syncEmailsForConnection(connection, adminSupabase);
 
       totalEmailsFetched += emailResult.emailsFetched;

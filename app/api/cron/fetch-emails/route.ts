@@ -3,6 +3,7 @@ import { createClient as createServerClient } from '@supabase/supabase-js';
 import { syncEmailsForConnection } from '@/lib/email-sync/sync-emails';
 import { syncCalendarForConnection } from '@/lib/calendar/sync-calendar';
 import { processMeetingsForUser } from '@/lib/calendar/meeting-processor';
+import { analyzeCalendarPatterns } from '@/lib/calendar/pattern-analyzer';
 
 export const maxDuration = 300; // 5 minutes
 
@@ -74,8 +75,16 @@ export async function GET(request: NextRequest) {
       totalEventsSynced += calendarResult.synced;
       errors.push(...calendarResult.errors);
 
-      // Step 2: Process meetings for prep generation
+      // Step 2: Analyze calendar patterns to build meeting_behavior profile
       if (calendarResult.synced > 0) {
+        console.log(`[Cron] Analyzing calendar patterns...`);
+        const patternResult = await analyzeCalendarPatterns(connection.user_id, supabase);
+
+        if (patternResult.success) {
+          console.log(`[Cron] ✓ Patterns: ${patternResult.patternsDetected} types, ${Math.round(patternResult.confidence * 100)}% confidence`);
+        }
+
+        // Process meetings for prep generation
         const meetingResult = await processMeetingsForUser(connection.user_id, supabase);
         totalMeetingPrep += meetingResult.created;
         console.log(`[Cron] ✓ Calendar: ${calendarResult.synced} events, ${meetingResult.created} prep items`);
