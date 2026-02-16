@@ -249,7 +249,7 @@ export function batchInboxItems(items: InboxItem[]): BatchingResult {
         items: group,
         summary: getBatchSummary(category, group.length, group),
         providers,
-        icon: category === 'other' ? 'notifications' : category,
+        icon: category === 'operational' ? 'notifications' : category === 'other' ? 'notifications' : category,
         latestDate
       });
     } else {
