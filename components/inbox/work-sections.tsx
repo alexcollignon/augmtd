@@ -1,10 +1,11 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { ChevronDownIcon, ChevronUpIcon } from '@heroicons/react/24/outline';
 import type { InboxItem, VisualSection } from '@/lib/types/inbox';
 import { getSectionDisplayName } from '@/lib/types/inbox';
 import WorkCard from './work-card';
+import { batchInboxItems } from '@/lib/utils/batch-inbox-items';
 
 interface WorkSectionsProps {
   items: InboxItem[];
@@ -15,13 +16,32 @@ export default function WorkSections({ items }: WorkSectionsProps) {
     new Set(['prepared', 'suggested'])
   );
 
+  // Apply batching logic to items
+  const { batches, unbatched } = useMemo(() => batchInboxItems(items), [items]);
+
+  // Combine batches and unbatched items for display
+  const displayItems = useMemo(() => {
+    // Convert batches to a display format (treat as regular items for now)
+    const batchItems = batches.map(batch => ({
+      ...batch.items[0], // Use first item as template
+      id: batch.id,
+      work_title: batch.summary,
+      // Add batch metadata so we can detect it
+      __isBatch: true,
+      __batchCount: batch.count,
+      __batchItems: batch.items,
+    }));
+
+    return [...unbatched, ...batchItems];
+  }, [batches, unbatched]);
+
   // Group items by visual section
-  const itemsBySection = items.reduce((acc, item) => {
+  const itemsBySection = displayItems.reduce((acc, item) => {
     const section = item.visual_section || 'awareness';
     if (!acc[section]) acc[section] = [];
     acc[section].push(item);
     return acc;
-  }, {} as Record<VisualSection, InboxItem[]>);
+  }, {} as Record<VisualSection, any[]>);
 
   const toggleSection = (section: VisualSection) => {
     setExpandedSections(prev => {
@@ -128,7 +148,17 @@ export default function WorkSections({ items }: WorkSectionsProps) {
             {isExpanded && (
               <div className="space-y-1 animate-in fade-in duration-200">
                 {sectionItems.map(item => (
-                  <WorkCard key={item.id} item={item} />
+                  <div key={item.id}>
+                    <WorkCard item={item} />
+                    {/* Show batch indicator if this is a batched item */}
+                    {(item as any).__isBatch && (
+                      <div className="ml-4 pl-4 border-l-2 border-neutral-200 py-1">
+                        <span className="text-xs text-neutral-500">
+                          {(item as any).__batchCount} similar items batched together
+                        </span>
+                      </div>
+                    )}
+                  </div>
                 ))}
               </div>
             )}
