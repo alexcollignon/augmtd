@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { createServerClient } from '@/lib/supabase/server';
+import { createClient } from '@/lib/supabase/server';
 
 /**
  * GET /api/meetings
@@ -7,7 +7,7 @@ import { createServerClient } from '@/lib/supabase/server';
  */
 export async function GET() {
   try {
-    const supabase = await createServerClient();
+    const supabase = await createClient();
 
     // Get authenticated user
     const {
