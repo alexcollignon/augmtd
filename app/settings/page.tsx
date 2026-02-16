@@ -91,9 +91,9 @@ export default async function SettingsPage() {
 
             {/* Meeting Transcription Section */}
             <div className="bg-white border border-neutral-200 p-6 mb-6 shadow-sm">
-              <h3 className="text-[15px] font-semibold text-neutral-900 mb-4">Meeting Transcription</h3>
+              <h3 className="text-[15px] font-semibold text-neutral-900 mb-4">Meeting Assistant</h3>
               <p className="text-[13px] text-neutral-600 mb-4">
-                Automatically capture transcripts and generate action items from your meetings with Zoom, Google Meet, or Microsoft Teams.
+                Automatically join your meetings, capture transcripts, and generate action items using AI.
               </p>
               <AttendeeConnectionCard
                 isEnabled={profile?.attendee_enabled || false}

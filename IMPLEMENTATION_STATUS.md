@@ -14,6 +14,7 @@
 | Email Processing | ✅ Complete | 100% |
 | Calendar Integration | ✅ Complete | 100% |
 | Meeting Assistant | ✅ Complete | 100% |
+| Attendee.dev Bot Integration | ✅ Complete | 100% |
 | AI Work Preparation | ✅ Complete | 100% |
 | Cognitive Cost Framework | ✅ Complete | 100% |
 | Recipient Detection (Phase 2) | ✅ Complete | 100% |
@@ -110,6 +111,20 @@
 - [x] Uses OpenAI GPT-4o-mini for prep generation
 - [x] Fallback prep if AI fails
 - [x] Duplicate prevention (checks for existing prep items)
+
+**Attendee.dev Bot Integration (Complete):**
+- [x] Scheduled bot creation with `join_at` parameter
+- [x] Bot lifecycle management (scheduled → joining → active → ended)
+- [x] Automatic meeting transcription
+- [x] Transcript storage in meeting_transcripts table
+- [x] AI-powered action item extraction from transcripts
+- [x] User context integration (identity + meeting_behavior profiles)
+- [x] Work item generation from meeting outcomes
+- [x] Transcript display in meeting detail UI
+- [x] Bot status polling (every 5 minutes via cron)
+- [x] Lazy-loaded OpenAI client (environment variable fix)
+- [x] Smart join timing (at meeting start, min 2 minutes from now)
+- [x] Support for Zoom, Google Meet, Microsoft Teams
 
 **Inbox UI (Complete):**
 - [x] Main inbox page (`/inbox`) - Server component with auth

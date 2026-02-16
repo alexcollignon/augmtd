@@ -16,7 +16,7 @@ export default function AttendeeConnectionCard({
   const [isLoading, setIsLoading] = useState(false);
 
   const config = {
-    name: 'Attendee.dev',
+    name: 'AUGMTD Meeting Assistant',
     logo: '/logos/attendee.svg',
     accentColor: 'bg-violet-500',
     bgGradient: 'from-violet-50/30 to-purple-50/20',
@@ -117,8 +117,8 @@ export default function AttendeeConnectionCard({
       {isEnabled && (
         <div className="mt-3 pl-3 text-[11px] text-neutral-600 leading-relaxed">
           <p>
-            The AUGMTD Assistant bot will automatically join meetings with Zoom, Google Meet, or Teams links.
-            Transcripts are processed after each call and converted into work items.
+            Your AI meeting assistant will automatically join meetings with Zoom, Google Meet, or Teams links.
+            Transcripts are analyzed with AI to extract action items and create work items.
           </p>
         </div>
       )}

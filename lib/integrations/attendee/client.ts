@@ -10,7 +10,7 @@ interface AttendeeBot {
   id: string;
   meeting_url: string;
   bot_name: string;
-  state: 'joining' | 'active' | 'ended' | 'failed';
+  state: 'scheduled' | 'joining' | 'active' | 'ended' | 'failed' | 'fatal_error';
   transcription_state: 'not_started' | 'in_progress' | 'completed' | 'failed';
 }
 
@@ -29,12 +29,23 @@ interface AttendeeTranscript {
  */
 export async function createAttendeeBot(
   meetingUrl: string,
-  botName: string = 'AUGMTD Assistant'
+  botName: string = 'AUGMTD Assistant',
+  joinAt?: string  // ISO 8601 format (e.g., "2024-01-15T10:30:00Z")
 ): Promise<AttendeeBot> {
   const apiKey = process.env.ATTENDEE_API_KEY;
 
   if (!apiKey) {
     throw new Error('ATTENDEE_API_KEY not configured');
+  }
+
+  const body: any = {
+    meeting_url: meetingUrl,
+    bot_name: botName,
+  };
+
+  // Add join_at for scheduled bots (must be at least 2 minutes in the future)
+  if (joinAt) {
+    body.join_at = joinAt;
   }
 
   const response = await fetch(`${ATTENDEE_API_URL}/bots`, {
@@ -43,10 +54,7 @@ export async function createAttendeeBot(
       'Authorization': `Token ${apiKey}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      meeting_url: meetingUrl,
-      bot_name: botName,
-    }),
+    body: JSON.stringify(body),
   });
 
   if (!response.ok) {

@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment } from 'react';
+import { Fragment, useState, useEffect } from 'react';
 import { Dialog, Transition } from '@headlessui/react';
 import {
   XMarkIcon,
@@ -10,6 +10,7 @@ import {
   VideoCameraIcon,
   UserGroupIcon,
   SparklesIcon,
+  DocumentTextIcon,
 } from '@heroicons/react/24/outline';
 import type { CalendarEvent } from '@/lib/types/meetings';
 import {
@@ -18,6 +19,21 @@ import {
   getVIPAttendees,
   isUserOrganizer,
 } from '@/lib/types/meetings';
+import { createClient } from '@/lib/supabase/client';
+
+interface TranscriptSegment {
+  speaker: string;
+  text: string;
+  timestamp: number;
+}
+
+interface MeetingTranscript {
+  id: string;
+  title: string;
+  transcript_segments: TranscriptSegment[];
+  duration_minutes: number;
+  work_items_generated: number;
+}
 
 interface MeetingDetailPanelProps {
   event: CalendarEvent;
@@ -37,9 +53,47 @@ export default function MeetingDetailPanel({
   const vipAttendees = getVIPAttendees(event.attendees);
   const isOrganizer = isUserOrganizer(event, userEmail);
 
+  // Transcript state
+  const [transcript, setTranscript] = useState<MeetingTranscript | null>(null);
+  const [transcriptLoading, setTranscriptLoading] = useState(false);
+
   // Get AI-generated prep from meeting metadata if available
   // This would come from the meeting processor's source_data
   const prep = (event.metadata as any)?.prep as { agenda?: string; context?: string } | undefined;
+
+  // Fetch transcript for completed meetings
+  useEffect(() => {
+    if (!isOpen || event.meeting_status !== 'completed') {
+      setTranscript(null);
+      return;
+    }
+
+    const fetchTranscript = async () => {
+      setTranscriptLoading(true);
+      try {
+        const supabase = createClient();
+        const { data, error } = await supabase
+          .from('meeting_transcripts')
+          .select('id, title, transcript_segments, duration_minutes, work_items_generated')
+          .eq('calendar_event_id', event.id)
+          .single();
+
+        if (error) {
+          console.error('Failed to fetch transcript:', error);
+          setTranscript(null);
+        } else {
+          setTranscript(data);
+        }
+      } catch (err) {
+        console.error('Error fetching transcript:', err);
+        setTranscript(null);
+      } finally {
+        setTranscriptLoading(false);
+      }
+    };
+
+    fetchTranscript();
+  }, [isOpen, event.id, event.meeting_status]);
 
   const handleJoinMeeting = () => {
     if (event.meeting_link) {
@@ -233,6 +287,64 @@ export default function MeetingDetailPanel({
                         </div>
                       )}
 
+                      {/* Meeting Transcript (for completed meetings) */}
+                      {event.meeting_status === 'completed' && (
+                        <div className="border-t border-neutral-200 pt-6">
+                          <div className="flex items-center gap-2 text-xs font-medium text-neutral-500 uppercase tracking-wide mb-3">
+                            <DocumentTextIcon className="w-4 h-4 text-blue-600" />
+                            Transcript
+                          </div>
+
+                          {transcriptLoading && (
+                            <div className="text-sm text-neutral-500 italic">
+                              Loading transcript...
+                            </div>
+                          )}
+
+                          {!transcriptLoading && !transcript && (
+                            <div className="text-sm text-neutral-500 italic">
+                              Transcript not available yet. It will appear here once the meeting bot has processed the recording.
+                            </div>
+                          )}
+
+                          {!transcriptLoading && transcript && (
+                            <>
+                              {/* Transcript metadata */}
+                              <div className="mb-4 flex items-center gap-4 text-xs text-neutral-600">
+                                <span>{transcript.transcript_segments.length} segments</span>
+                                <span>•</span>
+                                <span>{transcript.duration_minutes} min duration</span>
+                                {transcript.work_items_generated > 0 && (
+                                  <>
+                                    <span>•</span>
+                                    <span className="text-blue-600 font-medium">
+                                      {transcript.work_items_generated} action {transcript.work_items_generated === 1 ? 'item' : 'items'} created
+                                    </span>
+                                  </>
+                                )}
+                              </div>
+
+                              {/* Transcript segments */}
+                              <div className="space-y-3 max-h-96 overflow-y-auto bg-neutral-50 border border-neutral-200 rounded-md p-4">
+                                {transcript.transcript_segments.map((segment, idx) => (
+                                  <div key={idx} className="text-sm">
+                                    <div className="font-semibold text-neutral-900 mb-1">
+                                      {segment.speaker}
+                                      <span className="ml-2 text-xs font-normal text-neutral-500">
+                                        {formatTimestamp(segment.timestamp)}
+                                      </span>
+                                    </div>
+                                    <div className="text-neutral-700 leading-relaxed">
+                                      {segment.text}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      )}
+
                       {/* Description */}
                       {event.description && (
                         <div className="border-t border-neutral-200 pt-6">
@@ -272,4 +384,13 @@ export default function MeetingDetailPanel({
       </Dialog>
     </Transition.Root>
   );
+}
+
+/**
+ * Format timestamp (seconds) to MM:SS
+ */
+function formatTimestamp(seconds: number): string {
+  const minutes = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${minutes}:${secs.toString().padStart(2, '0')}`;
 }

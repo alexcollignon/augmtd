@@ -6,6 +6,27 @@
 
 import { SupabaseClient } from '@supabase/supabase-js';
 import { createAttendeeBot, getAttendeeBot, getAttendeeBotTranscript, isSupportedMeetingUrl } from './client';
+import OpenAI from 'openai';
+
+// Lazy-load OpenAI client to avoid initialization errors when env vars not loaded
+let openaiClient: OpenAI | null = null;
+
+function getOpenAIClient(): OpenAI {
+  if (!openaiClient) {
+    openaiClient = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+    });
+  }
+  return openaiClient;
+}
+
+interface ExtractedActionItem {
+  action: string;
+  assignee?: string;
+  priority: number; // 1-100
+  context?: string;
+  dueDate?: string;
+}
 
 /**
  * Create Attendee bots for calendar events with meeting links
@@ -59,8 +80,20 @@ export async function createBotsForCalendarEvents(
 
       console.log(`[AttendeeBot] Creating bot for: ${event.title}`);
 
-      // Create bot
-      const bot = await createAttendeeBot(event.meeting_link, 'AUGMTD Assistant');
+      // Create scheduled bot (joins at meeting start time)
+      // Attendee requires join_at to be at least 2 minutes in the future
+      const meetingStart = new Date(event.start_time);
+      const now = new Date();
+      const minJoinTime = new Date(now.getTime() + 2 * 60 * 1000); // 2 minutes from now
+
+      // Use the later of meeting start or minimum join time
+      const joinAt = meetingStart > minJoinTime ? meetingStart : minJoinTime;
+
+      const bot = await createAttendeeBot(
+        event.meeting_link,
+        'AUGMTD Assistant',
+        joinAt.toISOString()  // Schedule bot to join at meeting start
+      );
 
       // Update event with bot info
       const { error } = await supabase
@@ -76,7 +109,7 @@ export async function createBotsForCalendarEvents(
         errors.push(`Failed to save bot for event ${event.id}: ${error.message}`);
       } else {
         created++;
-        console.log(`[AttendeeBot] Created bot ${bot.id} for event: ${event.title}`);
+        console.log(`[AttendeeBot] Created scheduled bot ${bot.id} for event: ${event.title} (joins at ${joinAt.toISOString()})`);
       }
     } catch (error: any) {
       console.error(`[AttendeeBot] Error creating bot for event ${event.id}:`, error);
@@ -99,7 +132,7 @@ export async function pollAndFetchTranscripts(
     .from('calendar_events')
     .select('id, user_id, title, attendee_bot_id, attendee_bot_state, start_time, end_time')
     .not('attendee_bot_id', 'is', null)
-    .in('attendee_bot_state', ['joining', 'active', 'ended'])
+    .in('attendee_bot_state', ['scheduled', 'joining', 'active', 'ended'])
     .order('start_time', { ascending: false })
     .limit(100);
 
@@ -204,16 +237,18 @@ async function storeTranscriptAndGenerateWork(
 
   console.log(`[AttendeeBot] Stored transcript ${transcriptRecord.id}`);
 
-  // Extract action items and key topics from transcript
-  const actionItems = extractActionItems(transcript.segments);
+  // Extract action items and key topics from transcript with AI
+  const actionItems = await extractActionItemsWithAI(userId, title, transcript.segments, supabase);
   const keyTopics = extractKeyTopics(transcript.segments);
 
   let workItemsCreated = 0;
 
   // Create work items from action items
-  for (const actionItem of actionItems) {
-    const workTitle = `Follow up: ${actionItem}`;
-    const whyMatters = `Action item from meeting: ${title}`;
+  for (const item of actionItems) {
+    const workTitle = item.action;
+    const whyMatters = item.context
+      ? `${item.context} (from meeting: ${title})`
+      : `Action item from meeting: ${title}`;
 
     const { error } = await supabase
       .from('inbox_items')
@@ -228,18 +263,20 @@ async function storeTranscriptAndGenerateWork(
         source_data: {
           meeting_title: title,
           meeting_start: startTime,
-          action_item: actionItem,
+          action_item: item.action,
+          assignee: item.assignee,
+          due_date: item.dueDate,
           key_topics: keyTopics,
           auto_generated: true,
         },
         auto_generated: true,
-        priority: 70, // Higher priority - from meeting
+        priority: item.priority, // AI-determined priority
         status: 'pending',
       });
 
     if (!error) {
       workItemsCreated++;
-      console.log(`[AttendeeBot] Created work item: ${workTitle}`);
+      console.log(`[AttendeeBot] Created work item: ${workTitle} (priority: ${item.priority})`);
     }
   }
 
@@ -256,36 +293,119 @@ async function storeTranscriptAndGenerateWork(
 }
 
 /**
- * Extract action items from transcript segments
- * Simple keyword-based extraction (can be enhanced with AI later)
+ * Extract action items from transcript using GPT-4o mini with user context
  */
-function extractActionItems(segments: any[]): string[] {
-  const actionItems: string[] = [];
-  const actionKeywords = [
-    'will do',
-    'i\'ll',
-    'let me',
-    'action item',
-    'todo',
-    'need to',
-    'should',
-    'follow up',
-    'next step',
-  ];
+async function extractActionItemsWithAI(
+  userId: string,
+  meetingTitle: string,
+  segments: any[],
+  supabase: SupabaseClient
+): Promise<ExtractedActionItem[]> {
+  try {
+    // Load user profiles for context
+    const { data: profiles } = await supabase
+      .from('profiles')
+      .select('profile_type, data, confidence_score')
+      .eq('user_id', userId)
+      .in('profile_type', ['identity', 'meeting_behavior', 'communication_patterns']);
 
-  for (const segment of segments) {
-    const text = segment.text.toLowerCase();
+    // Build context from profiles
+    const identity = profiles?.find(p => p.profile_type === 'identity')?.data;
+    const meetingBehavior = profiles?.find(p => p.profile_type === 'meeting_behavior')?.data;
 
-    // Check if segment contains action keywords
-    const hasActionKeyword = actionKeywords.some(keyword => text.includes(keyword));
+    // Format transcript for AI
+    const transcriptText = segments
+      .map(s => `[${s.speaker}]: ${s.text}`)
+      .join('\n');
 
-    if (hasActionKeyword && segment.text.length > 20) {
-      actionItems.push(segment.text.trim());
+    // Build context prompt
+    let contextPrompt = '';
+    if (identity) {
+      contextPrompt += `User context:
+- Role: ${identity.role || 'Unknown'}
+- Title: ${identity.title || 'Unknown'}
+- Authority: ${identity.authority || 'Unknown'}
+- Responsibilities: ${identity.responsibilities?.join(', ') || 'Unknown'}
+
+`;
     }
-  }
 
-  // Limit to 10 most relevant action items
-  return actionItems.slice(0, 10);
+    if (meetingBehavior) {
+      contextPrompt += `Meeting patterns:
+- Typical meetings: ${meetingBehavior.commonMeetingTypes?.join(', ') || 'Various'}
+- Meeting frequency: ${meetingBehavior.averageMeetingsPerWeek || 'Unknown'} per week
+
+`;
+    }
+
+    const prompt = `${contextPrompt}Meeting: "${meetingTitle}"
+
+Transcript:
+${transcriptText}
+
+Extract concrete action items from this meeting transcript. For each action item:
+1. Identify what needs to be done (clear, actionable)
+2. Determine who should do it (if mentioned or implied from context)
+3. Estimate priority (1-100) based on urgency and user's role
+4. Note any due dates mentioned
+5. Provide brief context explaining why this matters
+
+Return ONLY a JSON array of action items in this exact format:
+[
+  {
+    "action": "Brief description of what needs to be done",
+    "assignee": "Name or null if unclear",
+    "priority": 75,
+    "context": "Brief explanation of why this matters",
+    "dueDate": "YYYY-MM-DD or null"
+  }
+]
+
+Rules:
+- Only extract items that require action (not discussions or updates)
+- Focus on items relevant to the user based on their role
+- Maximum 10 action items
+- Higher priority (70-100) for urgent or role-critical items
+- Medium priority (40-69) for important but not urgent
+- Lower priority (1-39) for nice-to-have or delegatable items
+- If no clear action items, return empty array []
+
+Return ONLY the JSON array, no other text.`;
+
+    const openai = getOpenAIClient();
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        {
+          role: 'system',
+          content: 'You are an expert at analyzing meeting transcripts and extracting actionable items. Always return valid JSON only.',
+        },
+        {
+          role: 'user',
+          content: prompt,
+        },
+      ],
+      temperature: 0.3, // Lower temperature for more consistent extraction
+      max_tokens: 2000,
+    });
+
+    const response = completion.choices[0]?.message?.content?.trim();
+
+    if (!response) {
+      console.error('[AttendeeBot] No response from GPT-4o mini');
+      return [];
+    }
+
+    // Parse JSON response
+    const actionItems = JSON.parse(response) as ExtractedActionItem[];
+
+    console.log(`[AttendeeBot] Extracted ${actionItems.length} action items with AI`);
+    return actionItems;
+  } catch (error) {
+    console.error('[AttendeeBot] Error extracting action items with AI:', error);
+    // Fallback: return empty array rather than crashing
+    return [];
+  }
 }
 
 /**

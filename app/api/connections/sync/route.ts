@@ -5,6 +5,7 @@ import { syncEmailsForConnection } from '@/lib/email-sync/sync-emails';
 import { syncCalendarForConnection } from '@/lib/calendar/sync-calendar';
 import { processMeetingsForUser } from '@/lib/calendar/meeting-processor';
 import { analyzeCalendarPatterns } from '@/lib/calendar/pattern-analyzer';
+import { createBotsForCalendarEvents } from '@/lib/integrations/attendee/bot-manager';
 
 export const maxDuration = 300; // 5 minutes
 
@@ -77,6 +78,7 @@ export async function POST(request: NextRequest) {
     let totalEmailsFetched = 0;
     let totalInboxItemsCreated = 0;
     let totalEventsSynced = 0;
+    let totalBotsCreated = 0;
     const errors: string[] = [];
 
     // Process each connection (sync calendar FIRST, then emails)
@@ -103,6 +105,16 @@ export async function POST(request: NextRequest) {
 
         if (patternResult.success) {
           console.log(`[Sync Order] ✓ Patterns analyzed: ${patternResult.patternsDetected} meeting types, ${Math.round(patternResult.confidence * 100)}% confidence`);
+        }
+
+        // Step 2: Create Attendee bots for meetings with links
+        console.log(`[Sync Order] 2/3: Creating meeting bots...`);
+        const botResult = await createBotsForCalendarEvents(user.id, adminSupabase);
+        totalBotsCreated += botResult.created;
+        errors.push(...botResult.errors);
+
+        if (botResult.created > 0) {
+          console.log(`[Sync Order] ✓ Bots created: ${botResult.created} meeting bots`);
         }
       }
 
@@ -135,6 +147,7 @@ export async function POST(request: NextRequest) {
       success: true,
       emailsFetched: totalEmailsFetched,
       eventsSynced: totalEventsSynced,
+      botsCreated: totalBotsCreated,
       meetingPrepItems: meetingPrepItemsCreated,
       inboxItemsCreated: totalInboxItemsCreated,
       errors: errors.length > 0 ? errors : undefined

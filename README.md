@@ -114,6 +114,15 @@ const EmailDraftSkill = {
 - VIP attendee detection and priority calculation
 - Meeting links, locations, and organizer information
 
+#### ✅ Attendee.dev Meeting Bot Integration
+- **Scheduled bot creation** - Bots join at meeting start time (not immediately)
+- **Automatic transcription** - Captures full meeting conversations
+- **AI-powered action items** - Extracts tasks from transcripts with user context
+- **Meeting outcomes** - Generates work items from meeting results
+- **Transcript display** - Full transcript view in meeting details
+- **Smart scheduling** - Uses `join_at` parameter for proper timing
+- **Bot lifecycle tracking** - scheduled → joining → active → ended → transcript
+
 #### ✅ AI Email Processing
 - **Thread-aware draft generation** - AI sees full conversation history
 - **Recipient detection** - Multi-tier confidence system (assigned/suggested/review/fyi)
@@ -533,6 +542,27 @@ Gmail: calendar.readonly scope
 Outlook: Calendars.Read scope
 Syncs: Next 14 days + Past 7 days
 Meeting prep: Next 48 hours only
+```
+
+### Attendee.dev Meeting Bot Integration (Feb 2026)
+- ✅ **Scheduled bot creation** - Bots use `join_at` parameter to join at meeting start time
+- ✅ **Bot lifecycle management** - scheduled → joining → active → ended states
+- ✅ **Automatic transcription** - Fetches completed transcripts after meetings end
+- ✅ **AI action item extraction** - GPT-4o-mini analyzes transcripts with user context
+- ✅ **Work item generation** - Creates actionable inbox items from meeting outcomes
+- ✅ **Transcript display** - Full transcript view with speaker names and timestamps
+- ✅ **User context integration** - Uses identity and meeting behavior profiles
+- ✅ **Smart priority scoring** - AI determines urgency based on user's role
+- ✅ **Lazy-loaded OpenAI client** - Fixes environment variable initialization issues
+
+**Technical Details:**
+```
+Bot Creation: POST /api/v1/bots with join_at timestamp
+Bot States: scheduled → joining → active → ended → fatal_error
+Transcript: Fetched after transcription_state = completed
+Action Items: Extracted via GPT-4o-mini with user profiles
+Work Items: Source = meeting, auto_generated = true
+Polling: Cron job checks bot status every 5 minutes
 ```
 
 ### Modular Context Profiles Migration (Feb 2026)
