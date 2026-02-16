@@ -7,6 +7,7 @@ import Link from 'next/link';
 import SidebarNav from '@/components/sidebar-nav';
 import WorkSections from '@/components/inbox/work-sections';
 import OnboardingModal from '@/components/onboarding-modal';
+import MeetingsSidebar from '@/components/meetings/meetings-sidebar';
 import {
   CheckCircleIcon,
   SparklesIcon,
@@ -195,9 +196,11 @@ export function InboxPageClient({
       {/* Sidebar */}
       <SidebarNav userEmail={user?.email} />
 
-      {/* Main Content */}
-      <main className="flex-1 overflow-y-auto">
-        <div className="max-w-7xl mx-auto px-6 lg:px-8 py-8 lg:py-12">
+      {/* Main Content - Two Column Layout */}
+      <main className="flex-1 overflow-y-auto flex">
+        {/* Center Column - Email Work */}
+        <div className="flex-1 overflow-y-auto">
+          <div className="max-w-7xl mx-auto px-6 lg:px-8 py-8 lg:py-12">
           {/* Page Header */}
           <div className="mb-10">
             <h1 className="text-2xl lg:text-3xl font-bold text-neutral-900 mb-2">
@@ -269,7 +272,16 @@ export function InboxPageClient({
           {connection && inboxItems.length > 0 && (
             <WorkSections items={inboxItems} />
           )}
+          </div>
         </div>
+
+        {/* Right Sidebar - Meetings */}
+        {connection && (
+          <MeetingsSidebar
+            userId={user.id}
+            userEmail={user.email}
+          />
+        )}
       </main>
 
       {/* Onboarding Modal */}

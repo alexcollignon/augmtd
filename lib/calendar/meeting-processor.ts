@@ -101,18 +101,11 @@ export async function processMeetingsForUser(
 
   for (const event of upcomingEvents) {
     try {
-      // Check if we've already created a prep item for this meeting
-      const { data: existingItem } = await supabase
-        .from('inbox_items')
-        .select('id')
-        .eq('user_id', userId)
-        .eq('source', 'calendar')
-        .eq('source_id', event.id)
-        .eq('status', 'pending')
-        .single();
+      // Check if we've already generated prep for this meeting
+      const hasPrepAlready = event.metadata?.prep !== undefined;
 
-      if (existingItem) {
-        console.log(`[MeetingProcessor] Prep item already exists for event ${event.id}`);
+      if (hasPrepAlready) {
+        console.log(`[MeetingProcessor] Prep already exists for event ${event.id}`);
         processed++;
         continue;
       }
@@ -123,30 +116,32 @@ export async function processMeetingsForUser(
       // Generate meeting prep
       const prep = await generateMeetingPrep(context);
 
-      // Create inbox item
-      const { error: insertError } = await supabase
-        .from('inbox_items')
-        .insert({
-          user_id: userId,
-          source: 'calendar',
-          source_id: event.id,
-          source_data: {
-            event,
-            context,
+      // Store prep in calendar_event metadata (not in inbox_items)
+      // Meetings now live in sidebar, prep shown in detail panel
+      const { error: updateError } = await supabase
+        .from('calendar_events')
+        .update({
+          metadata: {
+            ...event.metadata,
+            prep: {
+              title: prep.title,
+              agenda: prep.agenda,
+              context: prep.context,
+            },
+            context: {
+              attendeeRelationships: context.attendeeRelationships,
+              recentEmailThreads: context.recentEmailThreads,
+              hoursUntilMeeting: context.hoursUntilMeeting,
+              isOrganizer: context.isOrganizer,
+            },
           },
-          work_state: 'noted', // Informational - review before meeting (lowercase!)
-          work_title: prep.title,
-          what_i_prepared: prep.agenda,
-          why_matters: prep.context,
-          visual_section: 'awareness',
-          priority: calculateMeetingPriority(context),
-          status: 'pending',
-        });
+        })
+        .eq('id', event.id);
 
-      if (insertError) {
-        console.error(`[MeetingProcessor] Error creating inbox item for ${event.id}:`, insertError);
+      if (updateError) {
+        console.error(`[MeetingProcessor] Error storing prep for ${event.id}:`, updateError);
       } else {
-        console.log(`[MeetingProcessor] Created prep item: ${prep.title}`);
+        console.log(`[MeetingProcessor] Stored prep for: ${prep.title}`);
         created++;
       }
 
