@@ -1,16 +1,18 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { ChevronDownIcon, ChevronUpIcon } from '@heroicons/react/24/outline';
+import { ChevronDownIcon, ChevronUpIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import type { CalendarEvent } from '@/lib/types/meetings';
 import MeetingCard from './meeting-card';
 
 interface MeetingsSidebarProps {
   userId: string;
   userEmail: string;
+  isOpen: boolean;
+  onClose: () => void;
 }
 
-export default function MeetingsSidebar({ userId, userEmail }: MeetingsSidebarProps) {
+export default function MeetingsSidebar({ userId, userEmail, isOpen, onClose }: MeetingsSidebarProps) {
   const [meetings, setMeetings] = useState<CalendarEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set(['tomorrow', 'this_week']));
@@ -87,37 +89,47 @@ export default function MeetingsSidebar({ userId, userEmail }: MeetingsSidebarPr
     }),
   };
 
-  if (loading) {
-    return (
-      <div className="w-[300px] border-l border-neutral-200 bg-neutral-50/50 h-full p-4">
-        <div className="animate-pulse space-y-4">
-          <div className="h-4 bg-neutral-200 rounded w-1/2"></div>
-          <div className="space-y-3">
-            <div className="h-20 bg-neutral-200 rounded"></div>
-            <div className="h-20 bg-neutral-200 rounded"></div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   const totalMeetings = meetings.length;
 
   return (
-    <div className="w-[300px] border-l border-neutral-200 bg-neutral-50/50 h-full flex flex-col">
+    <div
+      className={`
+        fixed right-0 top-0 h-full w-[320px] bg-white border-l border-neutral-200 shadow-2xl
+        flex flex-col z-50 transition-transform duration-300 ease-out
+        ${isOpen ? 'translate-x-0' : 'translate-x-full'}
+      `}
+    >
       {/* Header */}
-      <div className="border-b border-neutral-200 bg-white px-4 py-3">
-        <h2 className="text-sm font-semibold text-neutral-900">Meetings</h2>
-        <p className="text-xs text-neutral-500 mt-0.5">
-          {totalMeetings} {totalMeetings === 1 ? 'meeting' : 'meetings'}
-        </p>
+      <div className="border-b border-neutral-200 bg-white px-5 py-4 flex items-center justify-between">
+        <div>
+          <h2 className="text-[15px] font-semibold text-neutral-900">Meetings</h2>
+          <p className="text-[13px] text-neutral-500 mt-0.5">
+            {loading ? 'Loading...' : `${totalMeetings} ${totalMeetings === 1 ? 'meeting' : 'meetings'}`}
+          </p>
+        </div>
+        <button
+          onClick={onClose}
+          className="p-1.5 hover:bg-neutral-100 rounded transition-colors"
+          aria-label="Close meetings panel"
+        >
+          <XMarkIcon className="w-5 h-5 text-neutral-500" />
+        </button>
       </div>
 
       {/* Scrollable content */}
-      <div className="flex-1 overflow-y-auto px-4 py-4">
-        {totalMeetings === 0 ? (
+      <div className="flex-1 overflow-y-auto px-5 py-4 bg-neutral-50/30">
+        {loading ? (
+          <div className="animate-pulse space-y-4">
+            <div className="h-4 bg-neutral-200 rounded w-1/2"></div>
+            <div className="space-y-3">
+              <div className="h-20 bg-neutral-200 rounded"></div>
+              <div className="h-20 bg-neutral-200 rounded"></div>
+              <div className="h-20 bg-neutral-200 rounded"></div>
+            </div>
+          </div>
+        ) : totalMeetings === 0 ? (
           <div className="text-center py-12">
-            <p className="text-sm text-neutral-500">No meetings scheduled</p>
+            <p className="text-[14px] text-neutral-500">No meetings scheduled</p>
           </div>
         ) : (
           <div className="space-y-6">

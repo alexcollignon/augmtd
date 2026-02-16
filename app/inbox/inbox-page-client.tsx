@@ -11,7 +11,8 @@ import MeetingsSidebar from '@/components/meetings/meetings-sidebar';
 import {
   CheckCircleIcon,
   SparklesIcon,
-  ArrowPathIcon
+  ArrowPathIcon,
+  CalendarIcon
 } from '@heroicons/react/24/outline';
 
 interface InboxPageClientProps {
@@ -33,6 +34,7 @@ export function InboxPageClient({
   const [inboxItems, setInboxItems] = useState(initialInboxItems);
   const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isCalendarOpen, setIsCalendarOpen] = useState(false);
 
   // Track when we've optimistically started a sync
   const optimisticSyncTriggered = useRef(false);
@@ -197,18 +199,32 @@ export function InboxPageClient({
       <SidebarNav userEmail={user?.email} />
 
       {/* Main Content - Two Column Layout */}
-      <main className="flex-1 overflow-y-auto flex">
+      <main className="flex-1 overflow-y-auto flex relative">
         {/* Center Column - Email Work */}
         <div className="flex-1 overflow-y-auto">
           <div className="max-w-7xl mx-auto px-6 lg:px-8 py-8 lg:py-12">
           {/* Page Header */}
-          <div className="mb-10">
-            <h1 className="text-2xl lg:text-3xl font-bold text-neutral-900 mb-2">
-              Prepared Work
-            </h1>
-            <p className="text-[15px] text-neutral-600">
-              Prepared work items that need your attention right now.
-            </p>
+          <div className="mb-10 flex items-start justify-between">
+            <div>
+              <h1 className="text-2xl lg:text-3xl font-bold text-neutral-900 mb-2">
+                Prepared Work
+              </h1>
+              <p className="text-[15px] text-neutral-600">
+                Prepared work items that need your attention right now.
+              </p>
+            </div>
+
+            {/* Calendar Toggle Button */}
+            {connection && (
+              <button
+                onClick={() => setIsCalendarOpen(!isCalendarOpen)}
+                className="flex items-center gap-2 px-4 py-2.5 bg-white border border-neutral-200 hover:border-neutral-300 text-neutral-700 hover:text-neutral-900 transition-all shadow-sm hover:shadow"
+                aria-label={isCalendarOpen ? 'Hide calendar' : 'Show calendar'}
+              >
+                <CalendarIcon className="w-5 h-5" />
+                <span className="text-[14px] font-medium">Meetings</span>
+              </button>
+            )}
           </div>
 
           {/* Syncing Banner */}
@@ -275,12 +291,26 @@ export function InboxPageClient({
           </div>
         </div>
 
-        {/* Right Sidebar - Meetings */}
+        {/* Right Sidebar - Meetings (Collapsible Drawer) */}
         {connection && (
-          <MeetingsSidebar
-            userId={user.id}
-            userEmail={user.email}
-          />
+          <>
+            {/* Overlay - Click to close */}
+            {isCalendarOpen && (
+              <div
+                className="fixed inset-0 bg-black/20 z-40 transition-opacity duration-300"
+                onClick={() => setIsCalendarOpen(false)}
+                aria-hidden="true"
+              />
+            )}
+
+            {/* Meetings Drawer */}
+            <MeetingsSidebar
+              userId={user.id}
+              userEmail={user.email}
+              isOpen={isCalendarOpen}
+              onClose={() => setIsCalendarOpen(false)}
+            />
+          </>
         )}
       </main>
 
