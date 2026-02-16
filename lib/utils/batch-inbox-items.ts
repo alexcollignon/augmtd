@@ -21,7 +21,7 @@ export interface InboxItem {
 export interface BatchedItem {
   id: string;
   type: 'batch';
-  category: 'confirmations' | 'notifications' | 'receipts' | 'marketing' | 'other';
+  category: 'confirmations' | 'notifications' | 'receipts' | 'marketing' | 'operational' | 'other';
   count: number;
   items: InboxItem[];
   summary: string;
@@ -49,10 +49,15 @@ function categorizeBatch(items: InboxItem[]): BatchedItem['category'] {
     return 'notifications';
   }
 
+  // Check if it's operational action_required
+  if (firstItem.work_state === 'action_required' && !signals?.isMechanicalConfirmation) {
+    return 'operational';
+  }
+
   // Fallback: look at subject patterns
   const subjects = items.map(i => i.source_data?.subject?.toLowerCase() || '');
 
-  if (subjects.some(s => s.includes('receipt') || s.includes('invoice') || s.includes('payment'))) {
+  if (subjects.some(s => s.includes('receipt') || s.includes('invoice'))) {
     return 'receipts';
   }
   if (subjects.some(s => s.includes('newsletter') || s.includes('update') || s.includes('announcement'))) {
@@ -88,9 +93,49 @@ function getBatchSummary(category: BatchedItem['category'], count: number, items
       return `${count} receipt${count > 1 ? 's' : ''}`;
     case 'marketing':
       return `${count} newsletter${count > 1 ? 's' : ''}`;
+    case 'operational':
+      // Get the base subject (first item's subject without numbers/prefixes)
+      const baseSubject = items[0].source_data?.subject || 'Action required';
+      const shortSubject = baseSubject.length > 40 ? baseSubject.slice(0, 40) + '...' : baseSubject;
+      if (count === 1) {
+        return `${shortSubject} — ${senders[0]}`;
+      }
+      return `${shortSubject} (${count} reminder${count > 1 ? 's' : ''})`;
     default:
       return `${count} item${count > 1 ? 's' : ''}`;
   }
+}
+
+/**
+ * Normalize subject for similarity comparison
+ * Removes common variations like "Re:", "Fwd:", numbers, etc.
+ */
+function normalizeSubject(subject: string): string {
+  return subject
+    .toLowerCase()
+    .replace(/^(re:|fwd?:|fw:)\s*/gi, '') // Remove reply/forward prefixes
+    .replace(/\d+/g, '') // Remove numbers
+    .replace(/[^\w\s]/g, '') // Remove special characters
+    .replace(/\s+/g, ' ') // Normalize whitespace
+    .trim();
+}
+
+/**
+ * Check if two subjects are similar enough to batch
+ */
+function areSimilarSubjects(subject1: string, subject2: string): boolean {
+  const norm1 = normalizeSubject(subject1);
+  const norm2 = normalizeSubject(subject2);
+
+  // Exact match after normalization
+  if (norm1 === norm2) return true;
+
+  // Check if one contains the other (for "Action required" vs "Action required: details")
+  if (norm1.includes(norm2) || norm2.includes(norm1)) {
+    return true;
+  }
+
+  return false;
 }
 
 /**
@@ -101,6 +146,8 @@ function groupBySimilarity(items: InboxItem[]): InboxItem[][] {
 
   for (const item of items) {
     const signals = item.source_data?.signals;
+    const sender = item.source_data?.from_address || 'unknown';
+    const subject = item.source_data?.subject || '';
 
     // Generate grouping key based on signals and sender
     let groupKey = '';
@@ -109,12 +156,31 @@ function groupBySimilarity(items: InboxItem[]): InboxItem[][] {
       groupKey = 'confirmations';
     } else if (signals?.isNotification) {
       // Group notifications by sender domain
-      const domain = item.source_data?.from_address?.split('@')[1] || 'unknown';
+      const domain = sender.split('@')[1] || 'unknown';
       groupKey = `notifications-${domain}`;
     } else {
-      // Group by sender domain for other items
-      const domain = item.source_data?.from_address?.split('@')[1] || 'unknown';
-      groupKey = `other-${domain}`;
+      // For operational items, check if similar to existing groups
+      const domain = sender.split('@')[1] || 'unknown';
+      let foundSimilar = false;
+
+      // Check existing groups for similar sender + subject
+      for (const [key, groupItems] of groups.entries()) {
+        if (key.startsWith(`operational-${domain}`)) {
+          // Same sender domain, check subject similarity
+          const firstItemSubject = groupItems[0].source_data?.subject || '';
+          if (areSimilarSubjects(subject, firstItemSubject)) {
+            groupKey = key;
+            foundSimilar = true;
+            break;
+          }
+        }
+      }
+
+      if (!foundSimilar) {
+        // Create new group with normalized subject
+        const normalizedSubject = normalizeSubject(subject).slice(0, 30); // First 30 chars
+        groupKey = `operational-${domain}-${normalizedSubject}`;
+      }
     }
 
     if (!groups.has(groupKey)) {
@@ -132,6 +198,7 @@ function groupBySimilarity(items: InboxItem[]): InboxItem[][] {
  * Rules:
  * - Batch NOTED items (Level 2: Awareness)
  * - Batch mechanical ACTION_REQUIRED items (low friction, repetitive)
+ * - Batch operational ACTION_REQUIRED items with similar subjects (reminders)
  * - Group by category (confirmations, notifications, etc.)
  * - Require at least 2 items to create a batch
  * - Return batches + unbatched items
@@ -146,16 +213,21 @@ export function batchInboxItems(items: InboxItem[]): BatchingResult {
     i.work_state === 'action_required' &&
     i.source_data?.signals?.isMechanicalConfirmation === true
   );
+  const operationalActions = items.filter(i =>
+    i.work_state === 'action_required' &&
+    i.source_data?.signals?.isMechanicalConfirmation === false
+  );
   const otherItems = items.filter(i =>
-    (i.work_state !== 'noted' && i.work_state !== 'no_work') &&
-    !(i.work_state === 'action_required' && i.source_data?.signals?.isMechanicalConfirmation === true)
+    i.work_state !== 'noted' &&
+    i.work_state !== 'no_work' &&
+    i.work_state !== 'action_required'
   );
 
-  // Don't batch other items - they should all be visible
+  // Don't batch WORK_PREPARED and DECISION_REQUIRED - they need visibility
   unbatched.push(...otherItems);
 
-  // Combine NOTED and mechanical ACTION_REQUIRED for batching
-  const batchableItems = [...notedItems, ...mechanicalActions];
+  // Combine NOTED, mechanical, and operational ACTION_REQUIRED for batching
+  const batchableItems = [...notedItems, ...mechanicalActions, ...operationalActions];
 
   // Group batchable items by similarity
   const groups = groupBySimilarity(batchableItems);
