@@ -148,17 +148,7 @@ export default function WorkSections({ items }: WorkSectionsProps) {
             {isExpanded && (
               <div className="space-y-1 animate-in fade-in duration-200">
                 {sectionItems.map(item => (
-                  <div key={item.id}>
-                    <WorkCard item={item} />
-                    {/* Show batch indicator if this is a batched item */}
-                    {(item as any).__isBatch && (
-                      <div className="ml-4 pl-4 border-l-2 border-neutral-200 py-1">
-                        <span className="text-xs text-neutral-500">
-                          {(item as any).__batchCount} similar items batched together
-                        </span>
-                      </div>
-                    )}
-                  </div>
+                  <WorkCard key={item.id} item={item} />
                 ))}
               </div>
             )}

@@ -19,6 +19,10 @@ export default function WorkCard({ item }: WorkCardProps) {
   const [showDetail, setShowDetail] = useState(false);
   const [isConfirming, setIsConfirming] = useState(false);
 
+  // Check if this is a batched item
+  const isBatch = (item as any).__isBatch === true;
+  const batchCount = (item as any).__batchCount;
+
   const sourceData = item.source_data;
   const recipientContext = item.recipient_context;
   const needsUserConfirmation = needsConfirmation(item);
@@ -93,12 +97,17 @@ export default function WorkCard({ item }: WorkCardProps) {
   return (
     <>
       <article
-        onClick={() => setShowDetail(true)}
+        onClick={() => {
+          // Don't open detail panel for batched items (they have fake IDs)
+          if (!isBatch) {
+            setShowDetail(true);
+          }
+        }}
         className={`
           group relative bg-white
           border ${style.borderColor} ${style.hoverBorder}
-          hover:shadow-md
-          transition-all duration-150 cursor-pointer
+          ${!isBatch ? 'hover:shadow-md cursor-pointer' : 'cursor-default'}
+          transition-all duration-150
           overflow-hidden
         `}
       >
@@ -145,6 +154,16 @@ export default function WorkCard({ item }: WorkCardProps) {
                 <span className="text-neutral-300">•</span>
                 <span className="italic truncate">
                   {recipientContext.suggestionLabel}
+                </span>
+              </>
+            )}
+
+            {/* Batch indicator */}
+            {isBatch && (
+              <>
+                <span className="text-neutral-300">•</span>
+                <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-neutral-100 text-neutral-700 font-semibold">
+                  {batchCount} reminders
                 </span>
               </>
             )}
