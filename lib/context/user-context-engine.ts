@@ -409,6 +409,16 @@ export class UserContextEngine {
         // Load current identity to preserve fullName and email
         const currentIdentity = await ProfileLoader.loadProfile(userId, 'identity');
 
+        // Calculate new confidence from learning
+        const learningConfidence = Math.round(context.confidenceMetrics.dimensionConfidence.rolePatterns * 100);
+
+        // Preserve high onboarding confidence (95%) - don't overwrite with low learning confidence
+        // Only use learning confidence if it's higher than current OR if current is very low (< 50)
+        const currentConfidence = (currentIdentity as any)?._confidence || 0;
+        const finalConfidence = currentConfidence >= 90
+          ? currentConfidence  // Preserve high onboarding confidence
+          : Math.max(currentConfidence, learningConfidence);  // Use higher of current or learned
+
         await ProfileLoader.updateProfile(
           userId,
           'identity',
@@ -419,7 +429,7 @@ export class UserContextEngine {
             responsibilities: context.rolePatterns.responsibilities || [],
             authority: context.rolePatterns.decisionMakingLevel as any,
           },
-          Math.round(context.confidenceMetrics.dimensionConfidence.rolePatterns * 100),
+          finalConfidence,
           false
         );
       }

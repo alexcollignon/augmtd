@@ -4,6 +4,7 @@ import { syncEmailsForConnection } from '@/lib/email-sync/sync-emails';
 import { syncCalendarForConnection } from '@/lib/calendar/sync-calendar';
 import { processMeetingsForUser } from '@/lib/calendar/meeting-processor';
 import { analyzeCalendarPatterns } from '@/lib/calendar/pattern-analyzer';
+import { createBotsForCalendarEvents } from '@/lib/integrations/attendee/bot-manager';
 
 export const maxDuration = 300; // 5 minutes
 
@@ -59,6 +60,7 @@ export async function GET(request: NextRequest) {
     let totalInboxItems = 0;
     let totalEventsSynced = 0;
     let totalMeetingPrep = 0;
+    let totalBotsCreated = 0;
     const errors: string[] = [];
 
     // Process each connection (Calendar FIRST, then emails)
@@ -87,7 +89,13 @@ export async function GET(request: NextRequest) {
         // Process meetings for prep generation
         const meetingResult = await processMeetingsForUser(connection.user_id, supabase);
         totalMeetingPrep += meetingResult.created;
-        console.log(`[Cron] ✓ Calendar: ${calendarResult.synced} events, ${meetingResult.created} prep items`);
+
+        // Create Attendee bots for meetings with links
+        const botResult = await createBotsForCalendarEvents(connection.user_id, supabase);
+        totalBotsCreated += botResult.created;
+        errors.push(...botResult.errors);
+
+        console.log(`[Cron] ✓ Calendar: ${calendarResult.synced} events, ${meetingResult.created} prep items, ${botResult.created} bots`);
       }
 
       // Step 3: Sync emails after calendar (can use calendar context)
@@ -101,13 +109,14 @@ export async function GET(request: NextRequest) {
       console.log(`[Cron] ✓ Emails: ${emailResult.emailsFetched} fetched, ${emailResult.inboxItemsCreated} inbox items`);
     }
 
-    console.log(`Cron job completed. Calendar: ${totalEventsSynced}, Emails: ${totalEmailsFetched}, Inbox: ${totalInboxItems}, Meeting prep: ${totalMeetingPrep}`);
+    console.log(`Cron job completed. Calendar: ${totalEventsSynced}, Emails: ${totalEmailsFetched}, Inbox: ${totalInboxItems}, Meeting prep: ${totalMeetingPrep}, Bots: ${totalBotsCreated}`);
 
     return NextResponse.json({
       success: true,
       processed: connections.length,
       eventsSynced: totalEventsSynced,
       meetingPrepItems: totalMeetingPrep,
+      botsCreated: totalBotsCreated,
       emailsFetched: totalEmailsFetched,
       inboxItemsCreated: totalInboxItems,
       errors: errors.length > 0 ? errors : undefined
