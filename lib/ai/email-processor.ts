@@ -5,6 +5,30 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY!,
 });
 
+/**
+ * Calendar context for email processing
+ */
+export interface CalendarContext {
+  meetingBehavior?: {
+    preferredTimes: string[];
+    noMeetingDays: string[];
+    avgMeetingLength: number;
+    bufferTime: number;
+    participationStyle: string;
+    organizerRate: number;
+  };
+  upcomingMeetings?: Array<{
+    title: string;
+    start_time: string;
+    end_time: string;
+    attendees: string[];
+  }>;
+  availability?: {
+    nextAvailableSlot?: string;
+    busyPeriods: Array<{ start: string; end: string }>;
+  };
+}
+
 export interface EmailData {
   id: string;
   user_id: string | null;
@@ -22,7 +46,8 @@ export interface EmailData {
     received_at: string;
     is_from_user?: boolean;
   }>;
-  user_context?: UserContextProfile; // NEW: Learned user behavior patterns
+  user_context?: UserContextProfile; // Learned user behavior patterns
+  calendar_context?: CalendarContext; // Calendar availability and meeting preferences
 }
 
 /**
@@ -254,6 +279,63 @@ ${formatted}
 }
 
 /**
+ * Helper function to format calendar context
+ */
+function formatCalendarContext(calendarContext: CalendarContext | undefined): string {
+  if (!calendarContext) {
+    return '';
+  }
+
+  let contextSection = '\nCALENDAR CONTEXT:\n';
+
+  // Add meeting behavior patterns
+  if (calendarContext.meetingBehavior) {
+    const behavior = calendarContext.meetingBehavior;
+    contextSection += '\nMeeting Preferences (learned from calendar patterns):\n';
+
+    if (behavior.preferredTimes.length > 0) {
+      contextSection += `- Preferred meeting times: ${behavior.preferredTimes.join(', ')}\n`;
+    }
+
+    if (behavior.noMeetingDays.length > 0) {
+      contextSection += `- Protected time (no meetings): ${behavior.noMeetingDays.join(', ')}\n`;
+    }
+
+    contextSection += `- Typical meeting length: ${behavior.avgMeetingLength} minutes\n`;
+    contextSection += `- Buffer time between meetings: ${behavior.bufferTime} minutes\n`;
+    contextSection += `- Meeting participation style: ${behavior.participationStyle}\n`;
+  }
+
+  // Add upcoming meetings
+  if (calendarContext.upcomingMeetings && calendarContext.upcomingMeetings.length > 0) {
+    contextSection += '\nUpcoming Meetings (next 7 days):\n';
+    calendarContext.upcomingMeetings.slice(0, 5).forEach(meeting => {
+      const startTime = new Date(meeting.start_time);
+      const endTime = new Date(meeting.end_time);
+      contextSection += `- ${meeting.title}: ${startTime.toLocaleString()} - ${endTime.toLocaleTimeString()}\n`;
+      if (meeting.attendees.length > 0) {
+        contextSection += `  Attendees: ${meeting.attendees.slice(0, 3).join(', ')}${meeting.attendees.length > 3 ? ` +${meeting.attendees.length - 3} more` : ''}\n`;
+      }
+    });
+  }
+
+  // Add availability insights
+  if (calendarContext.availability) {
+    contextSection += '\nAvailability:\n';
+    if (calendarContext.availability.nextAvailableSlot) {
+      contextSection += `- Next available: ${calendarContext.availability.nextAvailableSlot}\n`;
+    }
+    if (calendarContext.availability.busyPeriods.length > 0) {
+      contextSection += `- Busy periods: ${calendarContext.availability.busyPeriods.length} blocks in next week\n`;
+    }
+  }
+
+  contextSection += '\nIMPORTANT: When scheduling meetings, consider the user\'s preferred times and protected periods. Suggest times that align with their typical meeting patterns.\n\n---\n\n';
+
+  return contextSection;
+}
+
+/**
  * Main processing function - detects signals and determines work state
  */
 export async function processEmail(email: EmailData): Promise<ProcessedEmail> {
@@ -263,9 +345,12 @@ export async function processEmail(email: EmailData): Promise<ProcessedEmail> {
   // Format thread context if available
   const threadContextSection = formatThreadContext(email.thread_context);
 
+  // Format calendar context if available
+  const calendarContextSection = formatCalendarContext(email.calendar_context);
+
   const prompt = `You are a work preparation AI. Your job is to detect OBLIGATIONS and prepare WORK, not classify emails.
 
-${userContextSection}${threadContextSection}CURRENT EMAIL (the one requiring your response):
+${userContextSection}${calendarContextSection}${threadContextSection}CURRENT EMAIL (the one requiring your response):
 From: ${email.from_name} <${email.from_address}>
 Subject: ${email.subject}
 Received: ${new Date(email.received_at).toLocaleString()}

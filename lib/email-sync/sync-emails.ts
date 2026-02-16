@@ -19,6 +19,7 @@ import { processEmail } from '@/lib/ai/email-processor';
 import { analyzeRecipients, shouldCreateInboxItem, getSuggestionLevel, getSuggestionLabel } from '@/lib/ai/recipient-detector';
 import { getVisualSection } from '@/lib/types/inbox';
 import { analyzeSentEmail } from '@/lib/context/sent-email-analyzer';
+import { getCalendarContext } from '@/lib/calendar/calendar-context';
 import type { UserContextProfile } from '@/lib/types/user-context';
 
 export interface SyncResult {
@@ -150,6 +151,14 @@ export async function syncEmailsForConnection(
       }
     } else {
       console.log(`⚠ Failed to load/create user context - AI will use generic prompts`);
+    }
+
+    // Fetch calendar context for scheduling-aware email processing
+    const calendarContext = await getCalendarContext(connection.user_id, adminSupabase);
+    if (calendarContext.meetingBehavior || calendarContext.upcomingMeetings) {
+      console.log(`✓ Loaded calendar context (${calendarContext.upcomingMeetings?.length || 0} upcoming meetings, ${calendarContext.meetingBehavior ? 'patterns learned' : 'no patterns'})`);
+    } else {
+      console.log(`○ No calendar context available - AI will not use scheduling insights`);
     }
 
     // Process each email
@@ -352,6 +361,7 @@ export async function syncEmailsForConnection(
               received_at: storedEmail.received_at,
               thread_context: threadEmails || [],
               user_context: userContext, // NEW: Personalize based on learned style
+              calendar_context: calendarContext, // NEW: Schedule-aware processing
             });
 
             // Update existing inbox item with recipient context
@@ -440,6 +450,7 @@ export async function syncEmailsForConnection(
             body: storedEmail.body,
             received_at: storedEmail.received_at,
             user_context: userContext, // NEW: Personalize based on learned style
+            calendar_context: calendarContext, // NEW: Schedule-aware processing
           });
 
           // Create inbox item for this recipient
