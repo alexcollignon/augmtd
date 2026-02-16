@@ -183,6 +183,14 @@ function analyzePreferredTimes(events: CalendarEvent[]): string[] {
  * Detect no-meeting days or time blocks
  */
 function analyzeNoMeetingDays(events: CalendarEvent[]): string[] {
+  // IMPORTANT: Need enough data to detect patterns (at least 4 weeks)
+  const MIN_EVENTS_FOR_PATTERN = 10;
+
+  if (events.length < MIN_EVENTS_FOR_PATTERN) {
+    console.log(`[PatternAnalyzer] Not enough events (${events.length}) to detect no-meeting patterns. Need at least ${MIN_EVENTS_FOR_PATTERN}.`);
+    return []; // Return empty - don't guess with insufficient data
+  }
+
   const dayHourCounts: Record<string, Record<number, number>> = {
     'Monday': {},
     'Tuesday': {},
@@ -213,7 +221,7 @@ function analyzeNoMeetingDays(events: CalendarEvent[]): string[] {
     const morningMeetings = [8, 9, 10, 11].reduce((sum, h) => sum + (hours[h] || 0), 0);
     const afternoonMeetings = [12, 13, 14, 15, 16].reduce((sum, h) => sum + (hours[h] || 0), 0);
 
-    // If entire day has very few meetings
+    // If entire day has very few meetings (requires sufficient sample size)
     const totalMeetings = Object.values(hours).reduce((a, b) => a + b, 0);
     if (totalMeetings < 2) {
       noMeetingSlots.push(day);

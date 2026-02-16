@@ -357,8 +357,11 @@ export class ProfileLoader {
   ): Promise<void> {
     const supabase = await createClient();
 
-    // Create identity profile
-    await supabase.from('context_profiles').insert({
+    // Infer authority level from role
+    const authority = inferAuthorityFromRole(role);
+
+    // Create identity profile (upsert to avoid duplicates)
+    await supabase.from('context_profiles').upsert({
       user_id: userId,
       profile_type: 'identity',
       profile_data: {
@@ -366,18 +369,20 @@ export class ProfileLoader {
         role,
         email,
         responsibilities: [],
-        authority: 'unknown',
+        authority,
       },
       confidence_score: 95.0, // High - explicit from onboarding
       learned_from_count: 1,
+    }, {
+      onConflict: 'user_id,profile_type',
     });
 
-    // Create email communication profile (defaults)
+    // Create email communication profile (defaults) - upsert to avoid duplicates
     const firstName = fullName.split(' ')[0] || 'there';
     const domain = email.split('@')[1];
     const formalityScore = inferFormalityFromDomain(domain);
 
-    await supabase.from('context_profiles').insert({
+    await supabase.from('context_profiles').upsert({
       user_id: userId,
       profile_type: 'email_communication',
       profile_data: {
@@ -395,10 +400,13 @@ export class ProfileLoader {
       },
       confidence_score: 20.0, // Low - domain heuristic
       learned_from_count: 0,
+    }, {
+      onConflict: 'user_id,profile_type',
+      ignoreDuplicates: true, // Don't overwrite if already exists
     });
 
-    // Create domain knowledge profile (empty)
-    await supabase.from('context_profiles').insert({
+    // Create domain knowledge profile (empty) - upsert to avoid duplicates
+    await supabase.from('context_profiles').upsert({
       user_id: userId,
       profile_type: 'domain_knowledge',
       profile_data: {
@@ -408,15 +416,18 @@ export class ProfileLoader {
       },
       confidence_score: 0,
       learned_from_count: 0,
+    }, {
+      onConflict: 'user_id,profile_type',
+      ignoreDuplicates: true,
     });
 
-    // Create meeting behavior profile (defaults)
-    await supabase.from('context_profiles').insert({
+    // Create meeting behavior profile (defaults) - upsert to avoid duplicates
+    await supabase.from('context_profiles').upsert({
       user_id: userId,
       profile_type: 'meeting_behavior',
       profile_data: {
         preferredTimes: [],
-        noMeetingDays: [],
+        noMeetingDays: [], // Empty - will be learned from behavior
         avgMeetingLength: 30,
         schedulingPatterns: {
           bufferTime: 15,
@@ -430,11 +441,38 @@ export class ProfileLoader {
       },
       confidence_score: 0,
       learned_from_count: 0,
+    }, {
+      onConflict: 'user_id,profile_type',
+      ignoreDuplicates: true,
     });
   }
 }
 
 // ============= HELPER FUNCTIONS =============
+
+/**
+ * Infer authority level from role title
+ */
+function inferAuthorityFromRole(role: string): 'ic' | 'manager' | 'executive' | 'unknown' {
+  const roleLower = role.toLowerCase();
+
+  // Executive level: C-suite, VP, Founder, Partner, Owner
+  if (roleLower.match(/(ceo|cto|cfo|coo|cmo|cpo|founder|co-founder|owner|partner|president|vp|vice president|head of|director)/)) {
+    return 'executive';
+  }
+
+  // Manager level: Team lead, Manager, Supervisor
+  if (roleLower.match(/(manager|lead|supervisor|team lead|scrum master)/)) {
+    return 'manager';
+  }
+
+  // Individual contributor: Engineer, Designer, Analyst, Consultant, etc.
+  if (roleLower.match(/(engineer|developer|designer|analyst|consultant|specialist|coordinator|associate)/)) {
+    return 'ic';
+  }
+
+  return 'unknown';
+}
 
 function inferFormalityFromDomain(domain: string): number {
   if (domain.match(/\.(gov|mil|edu|law|legal|consulting)$/)) return 0.8;

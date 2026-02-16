@@ -10,6 +10,7 @@ import { UserContextProfile, DEFAULT_USER_CONTEXT } from '@/lib/types/user-conte
 export interface UserInfo {
   fullName?: string;
   email: string;
+  role?: string;
   organizationDomain?: string;
 }
 
@@ -85,7 +86,7 @@ export async function getUserInfo(userId: string, supabase: any): Promise<UserIn
   try {
     const { data: user, error } = await supabase
       .from('profiles')
-      .select('full_name, email, organization_id')
+      .select('full_name, email, role, organization_id')
       .eq('id', userId)
       .single();
 
@@ -96,6 +97,7 @@ export async function getUserInfo(userId: string, supabase: any): Promise<UserIn
         return {
           email: authUser.user.email || '',
           fullName: authUser.user.user_metadata?.full_name,
+          role: authUser.user.user_metadata?.role,
         };
       }
       return null;
@@ -104,6 +106,7 @@ export async function getUserInfo(userId: string, supabase: any): Promise<UserIn
     return {
       fullName: user.full_name,
       email: user.email,
+      role: user.role,
       organizationDomain: user.email?.split('@')[1],
     };
   } catch (error) {

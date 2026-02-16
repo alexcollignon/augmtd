@@ -62,7 +62,7 @@ async function getUserContext(
       await initializeUserContext(
         userId,
         userInfo.fullName || 'User',
-        userInfo.fullName || '',
+        userInfo.role || 'User', // Fixed: use role field, not fullName
         userInfo.email,
         adminSupabase
       );
