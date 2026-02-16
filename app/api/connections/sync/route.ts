@@ -78,23 +78,36 @@ export async function POST(request: NextRequest) {
     let totalEventsSynced = 0;
     const errors: string[] = [];
 
-    // Process each connection (sync both emails AND calendar in parallel)
+    // Process each connection (sync calendar FIRST, then emails)
+    // Calendar provides context for email analysis (availability, patterns, etc.)
     for (const connection of connections) {
-      console.log(`Syncing ${connection.provider} emails + calendar for user ${user.id}...`);
+      console.log(`Syncing ${connection.provider} calendar + emails for user ${user.id}...`);
 
-      // Sync emails and calendar in parallel from the same connection
-      const [emailResult, calendarResult] = await Promise.all([
-        syncEmailsForConnection(connection, adminSupabase),
-        syncCalendarForConnection(connection, adminSupabase, {
-          daysAhead: 14,  // Next 2 weeks
-          daysBehind: 7,  // Past week (for updates)
-        }),
-      ]);
+      // Step 1: Sync calendar FIRST (provides context for email processing)
+      console.log(`[Sync Order] 1/2: Syncing calendar for ${connection.provider}...`);
+      const calendarResult = await syncCalendarForConnection(connection, adminSupabase, {
+        daysAhead: 14,  // Next 2 weeks
+        daysBehind: 7,  // Past week (for updates)
+      });
+
+      totalEventsSynced += calendarResult.synced;
+      errors.push(...calendarResult.errors);
+
+      if (calendarResult.synced > 0) {
+        console.log(`[Sync Order] ✓ Calendar synced: ${calendarResult.synced} events`);
+      }
+
+      // Step 2: Sync emails AFTER calendar (can now use calendar context)
+      console.log(`[Sync Order] 2/2: Syncing emails for ${connection.provider}...`);
+      const emailResult = await syncEmailsForConnection(connection, adminSupabase);
 
       totalEmailsFetched += emailResult.emailsFetched;
       totalInboxItemsCreated += emailResult.inboxItemsCreated;
-      totalEventsSynced += calendarResult.synced;
-      errors.push(...emailResult.errors, ...calendarResult.errors);
+      errors.push(...emailResult.errors);
+
+      if (emailResult.emailsFetched > 0) {
+        console.log(`[Sync Order] ✓ Emails synced: ${emailResult.emailsFetched} emails`);
+      }
     }
 
     console.log(`Manual sync completed. Emails: ${totalEmailsFetched}, Calendar: ${totalEventsSynced}, Inbox items: ${totalInboxItemsCreated}`);

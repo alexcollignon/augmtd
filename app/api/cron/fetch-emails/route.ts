@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient as createServerClient } from '@supabase/supabase-js';
 import { syncEmailsForConnection } from '@/lib/email-sync/sync-emails';
+import { syncCalendarForConnection } from '@/lib/calendar/sync-calendar';
+import { processMeetingsForUser } from '@/lib/calendar/meeting-processor';
 
 export const maxDuration = 300; // 5 minutes
 
@@ -54,24 +56,49 @@ export async function GET(request: NextRequest) {
 
     let totalEmailsFetched = 0;
     let totalInboxItems = 0;
+    let totalEventsSynced = 0;
+    let totalMeetingPrep = 0;
     const errors: string[] = [];
 
-    // Process each connection (Gmail or Outlook)
+    // Process each connection (Calendar FIRST, then emails)
     for (const connection of connections) {
-      console.log(`Syncing ${connection.provider} emails for user ${connection.user_id}...`);
+      console.log(`[Cron] Syncing ${connection.provider} for user ${connection.user_id}...`);
 
-      const result = await syncEmailsForConnection(connection, supabase);
+      // Step 1: Sync calendar first (provides context for email processing)
+      console.log(`[Cron] 1/2: Syncing calendar...`);
+      const calendarResult = await syncCalendarForConnection(connection, supabase, {
+        daysAhead: 14,
+        daysBehind: 7,
+      });
 
-      totalEmailsFetched += result.emailsFetched;
-      totalInboxItems += result.inboxItemsCreated;
-      errors.push(...result.errors);
+      totalEventsSynced += calendarResult.synced;
+      errors.push(...calendarResult.errors);
+
+      // Step 2: Process meetings for prep generation
+      if (calendarResult.synced > 0) {
+        const meetingResult = await processMeetingsForUser(connection.user_id, supabase);
+        totalMeetingPrep += meetingResult.created;
+        console.log(`[Cron] ✓ Calendar: ${calendarResult.synced} events, ${meetingResult.created} prep items`);
+      }
+
+      // Step 3: Sync emails after calendar (can use calendar context)
+      console.log(`[Cron] 2/2: Syncing emails...`);
+      const emailResult = await syncEmailsForConnection(connection, supabase);
+
+      totalEmailsFetched += emailResult.emailsFetched;
+      totalInboxItems += emailResult.inboxItemsCreated;
+      errors.push(...emailResult.errors);
+
+      console.log(`[Cron] ✓ Emails: ${emailResult.emailsFetched} fetched, ${emailResult.inboxItemsCreated} inbox items`);
     }
 
-    console.log(`Cron job completed. Fetched: ${totalEmailsFetched}, Inbox items: ${totalInboxItems}`);
+    console.log(`Cron job completed. Calendar: ${totalEventsSynced}, Emails: ${totalEmailsFetched}, Inbox: ${totalInboxItems}, Meeting prep: ${totalMeetingPrep}`);
 
     return NextResponse.json({
       success: true,
       processed: connections.length,
+      eventsSynced: totalEventsSynced,
+      meetingPrepItems: totalMeetingPrep,
       emailsFetched: totalEmailsFetched,
       inboxItemsCreated: totalInboxItems,
       errors: errors.length > 0 ? errors : undefined
