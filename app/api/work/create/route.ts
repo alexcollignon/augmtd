@@ -17,7 +17,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { description, deadline } = body;
+    const { description, deadline, blueprintId, saveAsWorkflow } = body;
 
     if (!description || typeof description !== 'string') {
       return NextResponse.json(
@@ -48,9 +48,52 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    // Optionally save as reusable workflow
+    let workflowId = null;
+    if (saveAsWorkflow && executionPlan) {
+      try {
+        // Get user's department for workflow categorization
+        const { data: identity } = await supabase
+          .from('context_profiles')
+          .select('profile_data')
+          .eq('user_id', user.id)
+          .eq('profile_type', 'identity')
+          .single();
+
+        const department = identity?.profile_data?.department;
+
+        // Extract workflow name from description (first sentence or line)
+        const workflowName = description.split(/[.\n]/)[0].trim().substring(0, 100);
+
+        const { data: workflow } = await supabase
+          .from('user_workflows')
+          .insert({
+            user_id: user.id,
+            name: workflowName,
+            description: executionPlan.deliverable_description,
+            category: 'custom', // Can be enhanced based on deliverable_type
+            inputs: executionPlan.inputs || [],
+            steps: executionPlan.steps || [],
+            outputs: executionPlan.outputs || [],
+            estimated_time: executionPlan.estimated_time,
+            department: department,
+            source_type: blueprintId ? 'template' : 'ai_generated',
+            template_id: blueprintId,
+          })
+          .select()
+          .single();
+
+        workflowId = workflow?.id;
+      } catch (saveError) {
+        console.error('[API] Failed to save workflow:', saveError);
+        // Continue even if workflow save fails
+      }
+    }
+
     return NextResponse.json({
       message: 'Work analyzed successfully',
       executionPlan,
+      workflowId,
     });
   } catch (error) {
     console.error('[API] Error processing work:', error);

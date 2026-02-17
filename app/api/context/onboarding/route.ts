@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { initializeUserContext } from '@/lib/context/profile-adapter';
+import { saveOnboardingData } from '@/lib/context/work-patterns-service';
+import { Department } from '@/lib/types/work-blueprints';
 
 interface OnboardingRequest {
   fullName: string;
+  department: Department;
   role: string;
 }
 
@@ -18,11 +21,11 @@ export async function POST(request: NextRequest) {
     }
 
     // Parse request body
-    const { fullName, role }: OnboardingRequest = await request.json();
+    const { fullName, department, role }: OnboardingRequest = await request.json();
 
-    if (!fullName?.trim() || !role?.trim()) {
+    if (!fullName?.trim() || !department || !role?.trim()) {
       return NextResponse.json(
-        { error: 'Full name and role are required' },
+        { error: 'Full name, department, and role are required' },
         { status: 400 }
       );
     }
@@ -58,7 +61,22 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    console.log('[Onboarding] Successfully saved user info for', user.id, '- Role:', role);
+    // Save work patterns onboarding data (department + jobRole)
+    try {
+      await saveOnboardingData(
+        user.id,
+        {
+          department: department,
+          jobRole: role.trim(),
+        },
+        supabase
+      );
+    } catch (workPatternsError) {
+      console.error('[Onboarding] Failed to save work patterns data:', workPatternsError);
+      // Continue anyway - not critical for initial onboarding
+    }
+
+    console.log('[Onboarding] Successfully saved user info for', user.id, '- Department:', department, 'Role:', role);
 
     return NextResponse.json({ success: true });
   } catch (error) {

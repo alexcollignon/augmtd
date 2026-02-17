@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { InboxPageClient } from './inbox-page-client';
+import { getUserIdentity } from '@/lib/context/work-patterns-service';
 
 export default async function PreparedWorkPage() {
   const supabase = await createClient();
@@ -39,6 +40,14 @@ export default async function PreparedWorkPage() {
     .order('priority', { ascending: false })
     .order('created_at', { ascending: false });
 
+  // Check if user has completed identity profile (full name, department, role)
+  const identity = await getUserIdentity(user.id, supabase);
+  const hasCompletedIdentity = !!(
+    profile?.full_name &&
+    identity?.department &&
+    identity?.jobRole
+  );
+
   // Render client component with initial data
   return (
     <InboxPageClient
@@ -46,6 +55,7 @@ export default async function PreparedWorkPage() {
       initialUserFullName={profile?.full_name}
       initialConnection={connection}
       initialInboxItems={inboxItems || []}
+      hasCompletedIdentity={hasCompletedIdentity}
     />
   );
 }

@@ -29,9 +29,31 @@ export interface UserConfirmation {
   notes?: string; // Optional user notes
 }
 
+export interface WorkflowInput {
+  id: string;
+  name: string;
+  type: 'data_source' | 'document' | 'context' | 'approval' | 'meeting_notes' | 'user_input';
+  description: string;
+  required: boolean;
+  examples?: string[];
+}
+
+export interface WorkflowOutput {
+  id: string;
+  name: string;
+  type: 'draft' | 'final_document' | 'data_export' | 'visualization' | 'summary' | 'decision' | 'notification';
+  description: string;
+  deliverableType?: DeliverableType;
+}
+
 export interface ExecutionStep {
   number: number;
   action: string; // Human-readable description of what this step does
+  description?: string; // More detailed explanation
+  inputs?: string[]; // IDs of inputs needed for this step
+  outputs?: string[]; // IDs of outputs produced by this step
+  estimatedTime?: string; // Per-step time estimate
+  toolsNeeded?: string[]; // Tools/systems required
   skill?: string; // Which skill/capability will execute this step
   status: StepStatus;
   error?: string; // Error message if step failed
@@ -44,6 +66,8 @@ export interface ExecutionPlan {
   deliverable_description: string; // What will be created (e.g., "Q1 Revenue Excel report with charts")
   deadline?: string; // ISO timestamp if there's a deadline
   estimated_time?: string; // Human-readable estimate (e.g., "5 minutes")
+  inputs?: WorkflowInput[]; // What's needed to execute this workflow
+  outputs?: WorkflowOutput[]; // What gets produced
   steps: ExecutionStep[];
 }
 

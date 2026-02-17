@@ -22,6 +22,8 @@ import {
   EyeIcon,
   CheckCircleIcon,
   ExclamationCircleIcon,
+  MapPinIcon,
+  VideoCameraIcon,
 } from '@heroicons/react/24/outline';
 import type { InboxItem } from '@/lib/types/inbox';
 import {
@@ -84,6 +86,49 @@ export default function WorkDetailPanel({ item, isOpen, onClose, batchItems }: W
     if (item.work_state === 'decision_required') return 'Provide decision';
     if (item.work_state === 'action_required') return 'Take action';
     return 'Review details';
+  };
+
+  // Check if this inbox item has meeting/calendar data
+  const hasMeetingData = () => {
+    return !!(
+      sourceData?.meeting_link ||
+      sourceData?.event_id ||
+      sourceData?.start_time ||
+      sourceData?.calendar_event
+    );
+  };
+
+  // Format meeting time display
+  const formatMeetingTime = (startTime: string, endTime?: string) => {
+    const start = new Date(startTime);
+    const now = new Date();
+
+    const isToday = start.toDateString() === now.toDateString();
+    const isTomorrow = start.toDateString() === new Date(now.getTime() + 24 * 60 * 60 * 1000).toDateString();
+
+    const dateLabel = isToday ? 'Today' : isTomorrow ? 'Tomorrow' : start.toLocaleDateString('en-US', {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric'
+    });
+
+    const timeStr = start.toLocaleTimeString('en-US', {
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true
+    });
+
+    if (endTime) {
+      const end = new Date(endTime);
+      const endTimeStr = end.toLocaleTimeString('en-US', {
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true
+      });
+      return `${dateLabel} · ${timeStr}–${endTimeStr}`;
+    }
+
+    return `${dateLabel} · ${timeStr}`;
   };
 
   const handleSendReply = async (customMessage?: string) => {
@@ -555,6 +600,115 @@ export default function WorkDetailPanel({ item, isOpen, onClose, batchItems }: W
                           <p className="text-[14px] text-neutral-900 leading-relaxed">
                             {item.what_i_prepared}
                           </p>
+                        </div>
+                      )}
+
+                      {/* Meeting Details - Show calendar/meeting info if available */}
+                      {!isBatch && hasMeetingData() && (
+                        <div>
+                          <h3 className="text-[11px] font-semibold text-neutral-600 uppercase tracking-wide mb-3">
+                            Meeting Details
+                          </h3>
+                          <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4 space-y-3">
+                            {/* Meeting Time */}
+                            {(sourceData?.start_time || sourceData?.calendar_event?.start_time) && (
+                              <div className="flex items-start gap-3">
+                                <CalendarIcon className="w-5 h-5 text-indigo-600 flex-shrink-0 mt-0.5" />
+                                <div>
+                                  <p className="text-[13px] font-medium text-indigo-900">
+                                    {formatMeetingTime(
+                                      sourceData?.start_time || sourceData?.calendar_event?.start_time,
+                                      sourceData?.end_time || sourceData?.calendar_event?.end_time
+                                    )}
+                                  </p>
+                                  {(sourceData?.timezone || sourceData?.calendar_event?.timezone) && (
+                                    <p className="text-[11px] text-indigo-700 mt-0.5">
+                                      {sourceData?.timezone || sourceData?.calendar_event?.timezone}
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Meeting Link */}
+                            {(sourceData?.meeting_link || sourceData?.calendar_event?.meeting_link) && (
+                              <div className="flex items-start gap-3">
+                                <VideoCameraIcon className="w-5 h-5 text-indigo-600 flex-shrink-0 mt-0.5" />
+                                <a
+                                  href={sourceData?.meeting_link || sourceData?.calendar_event?.meeting_link}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-[13px] text-indigo-600 hover:text-indigo-800 hover:underline font-medium"
+                                >
+                                  Join Meeting
+                                </a>
+                              </div>
+                            )}
+
+                            {/* Location */}
+                            {(sourceData?.location || sourceData?.calendar_event?.location) && (
+                              <div className="flex items-start gap-3">
+                                <MapPinIcon className="w-5 h-5 text-indigo-600 flex-shrink-0 mt-0.5" />
+                                <p className="text-[13px] text-indigo-900">
+                                  {sourceData?.location || sourceData?.calendar_event?.location}
+                                </p>
+                              </div>
+                            )}
+
+                            {/* Organizer */}
+                            {(sourceData?.organizer || sourceData?.calendar_event?.organizer) && (
+                              <div className="flex items-start gap-3">
+                                <UserIcon className="w-5 h-5 text-indigo-600 flex-shrink-0 mt-0.5" />
+                                <div>
+                                  <p className="text-[11px] text-indigo-700 uppercase tracking-wide mb-0.5">
+                                    Organizer
+                                  </p>
+                                  <p className="text-[13px] text-indigo-900">
+                                    {sourceData?.organizer || sourceData?.calendar_event?.organizer}
+                                  </p>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Attendees */}
+                            {(sourceData?.attendees || sourceData?.calendar_event?.attendees) && (
+                              <div className="flex items-start gap-3">
+                                <UserIcon className="w-5 h-5 text-indigo-600 flex-shrink-0 mt-0.5" />
+                                <div className="flex-1">
+                                  <p className="text-[11px] text-indigo-700 uppercase tracking-wide mb-1.5">
+                                    Attendees ({(sourceData?.attendees || sourceData?.calendar_event?.attendees)?.length || 0})
+                                  </p>
+                                  <div className="flex flex-wrap gap-1.5">
+                                    {(sourceData?.attendees || sourceData?.calendar_event?.attendees)?.slice(0, 8).map((attendee: any, i: number) => (
+                                      <span
+                                        key={i}
+                                        className="inline-flex items-center px-2 py-1 text-[11px] bg-white text-indigo-900 border border-indigo-200 rounded"
+                                      >
+                                        {attendee.name || attendee.email || attendee}
+                                      </span>
+                                    ))}
+                                    {(sourceData?.attendees || sourceData?.calendar_event?.attendees)?.length > 8 && (
+                                      <span className="inline-flex items-center px-2 py-1 text-[11px] text-indigo-600">
+                                        +{(sourceData?.attendees || sourceData?.calendar_event?.attendees).length - 8} more
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Meeting Description */}
+                            {(sourceData?.description || sourceData?.calendar_event?.description) && (
+                              <div className="pt-2 border-t border-indigo-200">
+                                <p className="text-[11px] text-indigo-700 uppercase tracking-wide mb-1">
+                                  Description
+                                </p>
+                                <p className="text-[12px] text-indigo-900 leading-relaxed whitespace-pre-wrap">
+                                  {sourceData?.description || sourceData?.calendar_event?.description}
+                                </p>
+                              </div>
+                            )}
+                          </div>
                         </div>
                       )}
 

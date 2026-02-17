@@ -20,13 +20,15 @@ interface InboxPageClientProps {
   initialUserFullName?: string;
   initialConnection: any | null;
   initialInboxItems: any[];
+  hasCompletedIdentity: boolean;
 }
 
 export function InboxPageClient({
   initialUser,
   initialUserFullName,
   initialConnection,
-  initialInboxItems
+  initialInboxItems,
+  hasCompletedIdentity
 }: InboxPageClientProps) {
   const searchParams = useSearchParams();
   const [user] = useState(initialUser);
@@ -40,9 +42,10 @@ export function InboxPageClient({
   const optimisticSyncTriggered = useRef(false);
 
   // Set onboarding modal state on client-side only (prevents hydration mismatch)
+  // Show onboarding if user hasn't completed their identity profile
   useEffect(() => {
-    setIsOnboardingOpen(!initialConnection);
-  }, [initialConnection]);
+    setIsOnboardingOpen(!hasCompletedIdentity);
+  }, [hasCompletedIdentity]);
 
   // Sync connection state when initial prop changes (e.g., switching providers)
   useEffect(() => {

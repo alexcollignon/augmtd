@@ -360,17 +360,29 @@ export class ProfileLoader {
     // Infer authority level from role
     const authority = inferAuthorityFromRole(role);
 
+    // Get existing identity profile to preserve department and jobRole
+    const { data: existing } = await supabase
+      .from('context_profiles')
+      .select('profile_data')
+      .eq('user_id', userId)
+      .eq('profile_type', 'identity')
+      .single();
+
+    // Merge with existing data to preserve department and jobRole
+    const mergedData = {
+      ...(existing?.profile_data || {}),
+      fullName,
+      role,
+      email,
+      responsibilities: existing?.profile_data?.responsibilities || [],
+      authority,
+    };
+
     // Create identity profile (upsert to avoid duplicates)
     await supabase.from('context_profiles').upsert({
       user_id: userId,
       profile_type: 'identity',
-      profile_data: {
-        fullName,
-        role,
-        email,
-        responsibilities: [],
-        authority,
-      },
+      profile_data: mergedData,
       confidence_score: 95.0, // High - explicit from onboarding
       learned_from_count: 1,
     }, {

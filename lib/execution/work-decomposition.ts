@@ -142,16 +142,40 @@ Analyze this work request and determine if it requires creating a deliverable (r
 
 If this is NOT a deliverable request (e.g., just asking a question, requesting information, scheduling a meeting, simple yes/no), return: null
 
-If this IS a deliverable request, create an execution plan and return a JSON object in this exact format:
+If this IS a deliverable request, create a complete workflow and return a JSON object in this exact format:
 {
   "deliverable_type": "report" | "presentation" | "document" | "email" | "analysis" | "spreadsheet",
   "deliverable_description": "Brief description of what will be created",
   "deadline": "ISO timestamp if mentioned, otherwise null",
   "estimated_time": "Human-readable estimate like '10 minutes' or '1 hour'",
+  "inputs": [
+    {
+      "id": "input_1",
+      "name": "Input name",
+      "type": "data_source" | "document" | "context" | "approval" | "meeting_notes" | "user_input",
+      "description": "What is needed and why",
+      "required": true | false,
+      "examples": ["Example value 1", "Example value 2"]
+    }
+  ],
+  "outputs": [
+    {
+      "id": "output_1",
+      "name": "Output name",
+      "type": "draft" | "final_document" | "data_export" | "visualization" | "summary" | "decision" | "notification",
+      "description": "What gets produced",
+      "deliverableType": "report" | "presentation" | etc.
+    }
+  ],
   "steps": [
     {
       "number": 1,
       "action": "Clear description of what this step does",
+      "description": "More detailed explanation if needed",
+      "inputs": ["input_1"],
+      "outputs": ["output_1"],
+      "estimatedTime": "5 minutes",
+      "toolsNeeded": ["Excel", "Database"],
       "skill": "Capability needed (e.g., 'data_pull', 'excel_generator', 'email_drafter')",
       "status": "pending"
     }
@@ -170,11 +194,17 @@ Available skills:
 Guidelines:
 - Only create plans for deliverable requests (things that need to be created/generated)
 - Simple information requests, questions, or status updates should return null
-- Keep steps concrete and actionable (not generic like "do analysis")
+- **INPUTS**: Identify what data, documents, context, or approvals are needed BEFORE starting work
+- **OUTPUTS**: Define what artifacts/deliverables will be produced at each stage
+- **STEPS**: Keep concrete and actionable (not generic like "do analysis")
+  - Link steps to inputs (what they consume) and outputs (what they produce)
+  - Include estimated time per step
+  - Specify tools needed (Excel, PowerPoint, Database, Email, etc.)
 - Match deliverable_type to what's actually being requested
 - Use user's typical work patterns when available
 - Be realistic about estimated_time
 - Maximum 6 steps (if more complex, group related actions)
+- Think about the EXECUTION: what would an AI agent need to know to actually do this work?
 
 Examples of executable work:
 - "Can you send me the Q1 report?" → executable (report deliverable)
