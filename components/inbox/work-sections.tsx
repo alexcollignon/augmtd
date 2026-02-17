@@ -5,7 +5,10 @@ import { ChevronDownIcon, ChevronUpIcon } from '@heroicons/react/24/outline';
 import type { InboxItem, VisualSection } from '@/lib/types/inbox';
 import { getSectionDisplayName } from '@/lib/types/inbox';
 import WorkCard from './work-card';
+import BatchCard from './batch-card';
+import WorkDetailPanel from './work-detail-panel';
 import { batchInboxItems } from '@/lib/utils/batch-inbox-items';
+import type { BatchedItem } from '@/lib/utils/batch-inbox-items';
 
 interface WorkSectionsProps {
   items: InboxItem[];
@@ -15,33 +18,46 @@ export default function WorkSections({ items }: WorkSectionsProps) {
   const [expandedSections, setExpandedSections] = useState<Set<VisualSection>>(
     new Set(['prepared', 'suggested'])
   );
+  const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
+
+  // Helper to check if an item is a batch
+  const isBatch = (item: InboxItem | BatchedItem): item is BatchedItem => {
+    return 'count' in item && 'items' in item && Array.isArray((item as BatchedItem).items);
+  };
+
+  // Handle clicking on an individual item within a batch
+  const handleBatchItemClick = (itemId: string) => {
+    setSelectedItemId(itemId);
+  };
+
+  // Find the selected item to show its detail panel
+  const selectedItem = selectedItemId ? items.find(item => item.id === selectedItemId) : null;
 
   // Apply batching logic to items
   const { batches, unbatched } = useMemo(() => batchInboxItems(items), [items]);
 
-  // Combine batches and unbatched items for display
-  const displayItems = useMemo(() => {
-    // Convert batches to a display format (treat as regular items for now)
-    const batchItems = batches.map(batch => ({
-      ...batch.items[0], // Use first item as template
-      id: batch.id,
-      work_title: batch.summary,
-      // Add batch metadata so we can detect it
-      __isBatch: true,
-      __batchCount: batch.count,
-      __batchItems: batch.items,
-    } as InboxItem & { __isBatch: boolean; __batchCount: number; __batchItems: InboxItem[] }));
+  // Group both batches and unbatched items by visual section
+  const itemsBySection = useMemo(() => {
+    const grouped: Record<VisualSection, Array<InboxItem | BatchedItem>> = {
+      prepared: [],
+      suggested: [],
+      awareness: [],
+    };
 
-    return [...unbatched, ...batchItems];
+    // Add unbatched items
+    unbatched.forEach(item => {
+      const section = item.visual_section || 'awareness';
+      grouped[section].push(item);
+    });
+
+    // Add batches (use first item's section)
+    batches.forEach(batch => {
+      const section = batch.items[0]?.visual_section || 'awareness';
+      grouped[section].push(batch);
+    });
+
+    return grouped;
   }, [batches, unbatched]);
-
-  // Group items by visual section
-  const itemsBySection = displayItems.reduce((acc, item) => {
-    const section = (item as InboxItem).visual_section || 'awareness';
-    if (!acc[section]) acc[section] = [];
-    acc[section].push(item);
-    return acc;
-  }, {} as Record<VisualSection, any[]>);
 
   const toggleSection = (section: VisualSection) => {
     setExpandedSections(prev => {
@@ -147,9 +163,13 @@ export default function WorkSections({ items }: WorkSectionsProps) {
             {/* Section Items - List layout for better density */}
             {isExpanded && (
               <div className="space-y-1 animate-in fade-in duration-200">
-                {sectionItems.map(item => (
-                  <WorkCard key={item.id} item={item} />
-                ))}
+                {sectionItems.map(item => {
+                  if (isBatch(item)) {
+                    return <BatchCard key={item.id} batch={item} onClick={handleBatchItemClick} />;
+                  } else {
+                    return <WorkCard key={item.id} item={item} />;
+                  }
+                })}
               </div>
             )}
           </div>
@@ -181,6 +201,15 @@ export default function WorkSections({ items }: WorkSectionsProps) {
             No pending work items. New items will appear here when emails arrive.
           </p>
         </div>
+      )}
+
+      {/* Detail panel for batch item clicks */}
+      {selectedItem && (
+        <WorkDetailPanel
+          item={selectedItem}
+          isOpen={true}
+          onClose={() => setSelectedItemId(null)}
+        />
       )}
     </div>
   );
