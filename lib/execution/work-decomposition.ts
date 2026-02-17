@@ -89,27 +89,7 @@ async function loadUserContext(
   return context;
 }
 
-/**
- * Determine if the work request is a deliverable that can be executed
- */
-function isExecutableDeliverable(content: string, subject?: string): boolean {
-  const text = `${subject || ''} ${content}`.toLowerCase();
-
-  // Keywords indicating deliverable requests
-  const deliverablePatterns = [
-    /can you (send|provide|share|prepare|create|generate|make)/,
-    /need (a |the )?(report|presentation|analysis|deck|spreadsheet|document)/,
-    /please (send|provide|share|prepare|create)/,
-    /(send|provide|share) (me |us )?(the |a )?/,
-    /prepare (a |the )?(report|presentation|analysis)/,
-    /create (a |the )?(report|presentation|analysis|deck)/,
-    /put together/,
-    /pull together/,
-    /compile (a |the )?/,
-  ];
-
-  return deliverablePatterns.some(pattern => pattern.test(text));
-}
+// Removed heuristic-based detection - using pure AI analysis instead
 
 /**
  * Main decomposition function: Analyzes work and generates execution plan
@@ -120,16 +100,10 @@ export async function decomposeWork(
   supabase: SupabaseClient
 ): Promise<ExecutionPlan | null> {
   try {
-    // 1. Check if this is actually executable work
-    if (!isExecutableDeliverable(input.content, input.subject)) {
-      console.log('[WorkDecomposition] Not an executable deliverable, skipping');
-      return null;
-    }
-
-    // 2. Load user context profiles
+    // 1. Load user context profiles
     const userContext = await loadUserContext(userId, supabase);
 
-    // 3. Build context prompt
+    // 2. Build context prompt
     let contextPrompt = '';
     if (userContext.identity) {
       contextPrompt += `User Profile:
@@ -158,19 +132,17 @@ export async function decomposeWork(
 `;
     }
 
-    // 4. Build the decomposition prompt
+    // 3. Build the decomposition prompt
     const prompt = `${contextPrompt}Work Request:
 ${input.subject ? `Subject: ${input.subject}\n` : ''}${input.from ? `From: ${input.from}\n` : ''}
 Message:
 ${input.content}
 
-Analyze this work request and create an execution plan. Determine:
-1. What deliverable is being requested (report, presentation, analysis, etc.)
-2. What steps are needed to create it
-3. What skills or capabilities are required for each step
-4. Estimated timeline
+Analyze this work request and determine if it requires creating a deliverable (report, presentation, document, analysis, etc.).
 
-Return ONLY a JSON object in this exact format:
+If this is NOT a deliverable request (e.g., just asking a question, requesting information, scheduling a meeting, simple yes/no), return: null
+
+If this IS a deliverable request, create an execution plan and return a JSON object in this exact format:
 {
   "deliverable_type": "report" | "presentation" | "document" | "email" | "analysis" | "spreadsheet",
   "deliverable_description": "Brief description of what will be created",
@@ -196,23 +168,34 @@ Available skills:
 - chart_generator: Create visualizations and charts
 
 Guidelines:
+- Only create plans for deliverable requests (things that need to be created/generated)
+- Simple information requests, questions, or status updates should return null
 - Keep steps concrete and actionable (not generic like "do analysis")
 - Match deliverable_type to what's actually being requested
 - Use user's typical work patterns when available
 - Be realistic about estimated_time
 - Maximum 6 steps (if more complex, group related actions)
-- If no clear deliverable is requested, return null
 
-Return ONLY the JSON object, no other text.`;
+Examples of executable work:
+- "Can you send me the Q1 report?" → executable (report deliverable)
+- "Please prepare a deck for the board meeting" → executable (presentation deliverable)
+- "Analyze customer churn data" → executable (analysis deliverable)
 
-    // 5. Call OpenAI to generate execution plan
+Examples of non-executable work:
+- "What time is the meeting?" → return null (simple question)
+- "Thanks for the update" → return null (acknowledgment)
+- "Can you attend the standup?" → return null (calendar request)
+
+Return ONLY the JSON object or null, no other text.`;
+
+    // 4. Call OpenAI to generate execution plan
     const openai = getOpenAIClient();
     const completion = await openai.chat.completions.create({
-      model: 'gpt-4o',
+      model: 'gpt-4o-mini',
       messages: [
         {
           role: 'system',
-          content: 'You are an expert at analyzing work requests and breaking them down into executable steps. Always return valid JSON only.',
+          content: 'You are an expert at analyzing work requests and determining if they require creating deliverables. You distinguish between executable work (reports, presentations, analysis) and simple requests (questions, info). Return valid JSON for executable work or null for non-executable requests.',
         },
         {
           role: 'user',
@@ -226,11 +209,17 @@ Return ONLY the JSON object, no other text.`;
     const response = completion.choices[0]?.message?.content?.trim();
 
     if (!response) {
-      console.error('[WorkDecomposition] No response from GPT-4o');
+      console.error('[WorkDecomposition] No response from GPT-4o-mini');
       return null;
     }
 
-    // 6. Parse and validate the execution plan
+    // 5. Parse and validate the execution plan
+    // AI returns 'null' (string) for non-executable work
+    if (response === 'null') {
+      console.log('[WorkDecomposition] Not executable work (AI decision)');
+      return null;
+    }
+
     const executionPlan = JSON.parse(response) as ExecutionPlan;
 
     // Validate the plan has required fields
