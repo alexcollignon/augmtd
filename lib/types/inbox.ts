@@ -13,12 +13,47 @@ export type ConfirmationStatus = 'pending' | 'confirmed' | 'rejected';
 
 export type ConfirmationAction = 'confirm_as_mine' | 'not_my_task';
 
+export type ExecutionStatus = 'queued' | 'running' | 'awaiting_approval' | 'completed' | 'failed' | 'cancelled';
+
+export type DeliverableType = 'report' | 'presentation' | 'document' | 'email' | 'analysis' | 'spreadsheet';
+
+export type ArtifactType = 'excel' | 'powerpoint' | 'word' | 'pdf' | 'email_draft';
+
+export type StepStatus = 'pending' | 'running' | 'completed' | 'failed';
+
 export interface UserConfirmation {
   status: ConfirmationStatus | null;
   confirmedAt?: string; // ISO timestamp
   confirmedAction?: ConfirmationAction;
   previousSuggestionLevel?: string; // For learning: what was suggested before confirmation
   notes?: string; // Optional user notes
+}
+
+export interface ExecutionStep {
+  number: number;
+  action: string; // Human-readable description of what this step does
+  skill?: string; // Which skill/capability will execute this step
+  status: StepStatus;
+  error?: string; // Error message if step failed
+  started_at?: string;
+  completed_at?: string;
+}
+
+export interface ExecutionPlan {
+  deliverable_type: DeliverableType;
+  deliverable_description: string; // What will be created (e.g., "Q1 Revenue Excel report with charts")
+  deadline?: string; // ISO timestamp if there's a deadline
+  estimated_time?: string; // Human-readable estimate (e.g., "5 minutes")
+  steps: ExecutionStep[];
+}
+
+export interface Artifact {
+  type: ArtifactType;
+  name: string; // File name (e.g., "Q1_Revenue_Report.xlsx")
+  url: string; // Storage URL or path
+  size: number; // File size in bytes
+  created_at: string; // ISO timestamp
+  preview_url?: string; // Optional preview/thumbnail URL
 }
 
 export interface InboxItem {
@@ -59,6 +94,13 @@ export interface InboxItem {
 
   // Source data
   source_data: any;
+
+  // Execution fields (for AI-executable work)
+  is_executable?: boolean;
+  execution_plan?: ExecutionPlan;
+  execution_status?: ExecutionStatus;
+  current_step?: number;
+  artifacts?: Artifact[];
 
   // Legacy fields
   ai_suggestion_type: string | null;
@@ -125,4 +167,42 @@ export function isUserConfirmed(item: InboxItem): boolean {
  */
 export function isUserRejected(item: InboxItem): boolean {
   return item.user_confirmation?.status === 'rejected';
+}
+
+/**
+ * Helper: Check if item is executable work (has execution plan)
+ */
+export function isExecutable(item: InboxItem): boolean {
+  return item.is_executable === true && !!item.execution_plan;
+}
+
+/**
+ * Helper: Check if execution is in progress
+ */
+export function isExecutionInProgress(item: InboxItem): boolean {
+  return item.execution_status === 'running';
+}
+
+/**
+ * Helper: Check if execution is awaiting user approval
+ */
+export function isAwaitingApproval(item: InboxItem): boolean {
+  return item.execution_status === 'awaiting_approval';
+}
+
+/**
+ * Helper: Check if execution is completed
+ */
+export function isExecutionCompleted(item: InboxItem): boolean {
+  return item.execution_status === 'completed';
+}
+
+/**
+ * Helper: Get execution progress percentage
+ */
+export function getExecutionProgress(item: InboxItem): number {
+  if (!item.execution_plan?.steps.length) return 0;
+
+  const completedSteps = item.execution_plan.steps.filter(s => s.status === 'completed').length;
+  return Math.round((completedSteps / item.execution_plan.steps.length) * 100);
 }
