@@ -257,64 +257,106 @@ export function WorkPageClient({ userEmail }: WorkPageClientProps) {
           ) : (
             /* Execution Plan Display - Editable */
             <div className="bg-white border border-neutral-200 shadow-sm overflow-hidden">
-              {/* Plan Details */}
-              <div className="p-8 space-y-6">
-                {/* Header - Editable */}
-                <div className="flex items-start gap-4 pb-6 border-b border-neutral-200">
-                  {(() => {
-                    const Icon = getDeliverableIcon(executionPlan.deliverable_type);
-                    return (
-                      <div className="flex-shrink-0 w-12 h-12 bg-indigo-50 flex items-center justify-center">
-                        <Icon className="w-6 h-6 text-indigo-600" />
+              {/* Two-Column Layout */}
+              <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 p-8">
+                {/* Left Column - Deliverable & Metadata */}
+                <div className="lg:col-span-2 space-y-6">
+                  {/* Header - Editable */}
+                  <div className="flex items-start gap-4">
+                    {(() => {
+                      const Icon = getDeliverableIcon(executionPlan.deliverable_type);
+                      return (
+                        <div className="flex-shrink-0 w-12 h-12 bg-indigo-50 flex items-center justify-center">
+                          <Icon className="w-6 h-6 text-indigo-600" />
+                        </div>
+                      );
+                    })()}
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 mb-2">
+                        <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide">
+                          Deliverable
+                        </h2>
                       </div>
-                    );
-                  })()}
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-2">
-                      <PencilIcon className="w-4 h-4 text-neutral-400" />
-                      <h2 className="text-[13px] font-semibold text-neutral-500 uppercase tracking-wide">
-                        Deliverable
-                      </h2>
+                      <textarea
+                        value={editableDescription}
+                        onChange={(e) => setEditableDescription(e.target.value)}
+                        className="w-full text-[15px] font-medium text-neutral-900 border border-neutral-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 px-3 py-2 resize-none"
+                        placeholder="What will be created..."
+                        rows={3}
+                      />
                     </div>
-                    <input
-                      type="text"
-                      value={editableDescription}
-                      onChange={(e) => setEditableDescription(e.target.value)}
-                      className="w-full text-[15px] font-medium text-neutral-900 border-b border-transparent hover:border-neutral-300 focus:border-indigo-500 focus:outline-none py-1 transition-colors"
-                      placeholder="What will be created..."
-                    />
+                  </div>
+
+                  {/* Metadata - Editable */}
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2">
+                        Estimated Time
+                      </label>
+                      <input
+                        type="text"
+                        value={editableTime}
+                        onChange={(e) => setEditableTime(e.target.value)}
+                        className="w-full px-3 py-2 border border-neutral-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-[14px] text-neutral-900"
+                        placeholder="e.g., 2 hours"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2">
+                        Deadline
+                      </label>
+                      <input
+                        type="date"
+                        value={editableDeadline}
+                        onChange={(e) => setEditableDeadline(e.target.value)}
+                        className="w-full px-3 py-2 border border-neutral-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-[14px] text-neutral-900"
+                      />
+                    </div>
+                  </div>
+
+                  {error && (
+                    <div className="p-4 bg-red-50 border border-red-200">
+                      <p className="text-[13px] text-red-700">{error}</p>
+                    </div>
+                  )}
+
+                  {/* Actions */}
+                  <div className="pt-6 border-t border-neutral-200 space-y-3">
+                    <button
+                      onClick={handleCreateInboxItem}
+                      disabled={isCreating || !editableDescription || editableSteps.length === 0}
+                      className="w-full inline-flex items-center justify-center gap-2 px-6 py-3 bg-indigo-600 text-white text-[14px] font-semibold hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm hover:shadow"
+                    >
+                      {isCreating ? (
+                        <>
+                          <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                          Creating...
+                        </>
+                      ) : (
+                        <>
+                          Add to Inbox
+                          <ArrowRightIcon className="w-5 h-5" />
+                        </>
+                      )}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setExecutionPlan(null);
+                        setInput('');
+                        setEditableDescription('');
+                        setEditableSteps([]);
+                        setEditableDeadline('');
+                        setEditableTime('');
+                      }}
+                      className="w-full px-6 py-2.5 border border-neutral-300 text-neutral-700 text-[13px] font-medium hover:bg-neutral-50 transition-colors"
+                    >
+                      Start Over
+                    </button>
                   </div>
                 </div>
 
-                {/* Metadata - Editable */}
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2">
-                      Estimated Time
-                    </label>
-                    <input
-                      type="text"
-                      value={editableTime}
-                      onChange={(e) => setEditableTime(e.target.value)}
-                      className="w-full px-3 py-2 border border-neutral-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-[14px] text-neutral-900"
-                      placeholder="e.g., 2 hours"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2">
-                      Deadline
-                    </label>
-                    <input
-                      type="date"
-                      value={editableDeadline}
-                      onChange={(e) => setEditableDeadline(e.target.value)}
-                      className="w-full px-3 py-2 border border-neutral-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-[14px] text-neutral-900"
-                    />
-                  </div>
-                </div>
-
-                {/* Steps - Editable */}
-                <div>
+                {/* Right Column - Steps */}
+                <div className="lg:col-span-3">
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="text-[11px] font-semibold text-neutral-600 uppercase tracking-wide">
                       Execution Steps ({editableSteps.length})
@@ -328,23 +370,23 @@ export function WorkPageClient({ userEmail }: WorkPageClientProps) {
                     </button>
                   </div>
 
-                  <div className="space-y-3">
+                  <div className="space-y-2.5 max-h-[600px] overflow-y-auto pr-2">
                     {editableSteps.map((step: any, index: number) => (
                       <div
                         key={index}
-                        className="flex items-start gap-3 p-4 bg-neutral-50 border border-neutral-200 hover:border-neutral-300 transition-colors group"
+                        className="flex items-start gap-2.5 p-3 bg-neutral-50 border border-neutral-200 hover:border-neutral-300 transition-colors group"
                       >
                         {/* Step Number */}
-                        <div className="flex-shrink-0 w-7 h-7 bg-indigo-100 text-indigo-700 font-semibold flex items-center justify-center text-[13px]">
+                        <div className="flex-shrink-0 w-6 h-6 bg-indigo-100 text-indigo-700 font-semibold flex items-center justify-center text-[12px] mt-0.5">
                           {step.number}
                         </div>
 
                         {/* Step Content - Editable */}
-                        <div className="flex-1 space-y-2">
+                        <div className="flex-1 min-w-0">
                           <textarea
                             value={step.action}
                             onChange={(e) => updateStep(index, 'action', e.target.value)}
-                            className="w-full text-[14px] text-neutral-900 bg-transparent border-b border-transparent hover:border-neutral-300 focus:border-indigo-500 focus:outline-none resize-none"
+                            className="w-full text-[13px] text-neutral-900 bg-white border border-neutral-200 focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 px-2 py-1.5 resize-none"
                             placeholder="Describe what to do..."
                             rows={2}
                           />
@@ -352,80 +394,40 @@ export function WorkPageClient({ userEmail }: WorkPageClientProps) {
                             type="text"
                             value={step.skill || ''}
                             onChange={(e) => updateStep(index, 'skill', e.target.value)}
-                            className="w-full text-[12px] text-neutral-600 bg-transparent border-b border-transparent hover:border-neutral-300 focus:border-indigo-500 focus:outline-none"
-                            placeholder="Skill needed (optional)"
+                            className="w-full text-[11px] text-neutral-600 bg-white border border-neutral-200 focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 px-2 py-1 mt-1.5"
+                            placeholder="Skill (optional)"
                           />
                         </div>
 
                         {/* Step Actions */}
-                        <div className="flex-shrink-0 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <div className="flex-shrink-0 flex flex-col gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                           <button
                             onClick={() => moveStep(index, 'up')}
                             disabled={index === 0}
-                            className="p-1.5 text-neutral-500 hover:text-neutral-700 hover:bg-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                            className="p-1 text-neutral-400 hover:text-neutral-700 hover:bg-white disabled:opacity-20 disabled:cursor-not-allowed transition-colors"
                             title="Move up"
                           >
-                            <ArrowUpIcon className="w-4 h-4" />
+                            <ArrowUpIcon className="w-3.5 h-3.5" />
                           </button>
                           <button
                             onClick={() => moveStep(index, 'down')}
                             disabled={index === editableSteps.length - 1}
-                            className="p-1.5 text-neutral-500 hover:text-neutral-700 hover:bg-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                            className="p-1 text-neutral-400 hover:text-neutral-700 hover:bg-white disabled:opacity-20 disabled:cursor-not-allowed transition-colors"
                             title="Move down"
                           >
-                            <ArrowDownIcon className="w-4 h-4" />
+                            <ArrowDownIcon className="w-3.5 h-3.5" />
                           </button>
                           <button
                             onClick={() => removeStep(index)}
-                            className="p-1.5 text-red-500 hover:text-red-700 hover:bg-white transition-colors"
-                            title="Remove step"
+                            className="p-1 text-red-400 hover:text-red-700 hover:bg-white transition-colors"
+                            title="Remove"
                           >
-                            <TrashIcon className="w-4 h-4" />
+                            <TrashIcon className="w-3.5 h-3.5" />
                           </button>
                         </div>
                       </div>
                     ))}
                   </div>
-                </div>
-
-                {error && (
-                  <div className="p-4 bg-red-50 border border-red-200">
-                    <p className="text-[13px] text-red-700">{error}</p>
-                  </div>
-                )}
-
-                {/* Actions */}
-                <div className="pt-6 border-t border-neutral-200 flex items-center gap-3">
-                  <button
-                    onClick={() => {
-                      setExecutionPlan(null);
-                      setInput('');
-                      setEditableDescription('');
-                      setEditableSteps([]);
-                      setEditableDeadline('');
-                      setEditableTime('');
-                    }}
-                    className="px-6 py-3 border border-neutral-300 text-neutral-700 text-[14px] font-semibold hover:bg-neutral-50 transition-colors"
-                  >
-                    Start Over
-                  </button>
-                  <button
-                    onClick={handleCreateInboxItem}
-                    disabled={isCreating || !editableDescription || editableSteps.length === 0}
-                    className="flex-1 inline-flex items-center justify-center gap-2 px-6 py-3 bg-indigo-600 text-white text-[14px] font-semibold hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm hover:shadow"
-                  >
-                    {isCreating ? (
-                      <>
-                        <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                        Creating...
-                      </>
-                    ) : (
-                      <>
-                        Add to Inbox
-                        <ArrowRightIcon className="w-5 h-5" />
-                      </>
-                    )}
-                  </button>
                 </div>
               </div>
             </div>
