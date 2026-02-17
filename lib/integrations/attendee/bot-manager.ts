@@ -157,7 +157,8 @@ export async function pollAndFetchTranscripts(
         .eq('id', event.id);
 
       // If bot ended and transcription completed, fetch transcript
-      if (bot.state === 'ended' && bot.transcription_state === 'completed') {
+      // Note: API returns 'complete' not 'completed'
+      if (bot.state === 'ended' && bot.transcription_state === 'complete') {
         console.log(`[AttendeeBot] Fetching transcript for: ${event.title}`);
 
         const transcript = await getAttendeeBotTranscript(event.attendee_bot_id);
@@ -211,11 +212,27 @@ async function storeTranscriptAndGenerateWork(
     (new Date(endTime).getTime() - new Date(startTime).getTime()) / (1000 * 60)
   );
 
+  // Normalize transcript structure (Attendee API returns array directly)
+  const rawSegments = Array.isArray(transcript) ? transcript : [];
+
+  // Format transcript as plain text for storage
+  const transcriptText = rawSegments
+    .map((s: any) => `[${s.speaker_name || 'Unknown'}]: ${s.transcription?.transcript || ''}`)
+    .join('\n');
+
+  // Normalize segments to our expected format {speaker, text, timestamp}
+  const normalizedSegments = rawSegments.map((s: any) => ({
+    speaker: s.speaker_name || 'Unknown',
+    text: s.transcription?.transcript || '',
+    timestamp: Math.floor((s.timestamp_ms || 0) / 1000), // Convert ms to seconds
+  }));
+
   // Store transcript
-  const { data: transcriptRecord, error: insertError } = await supabase
+  const { data: transcriptRecord, error: insertError} = await supabase
     .from('meeting_transcripts')
     .insert({
       user_id: userId,
+      meeting_id: calendarEventId, // meeting_id is required (same as calendar_event_id)
       calendar_event_id: calendarEventId,
       attendee_bot_id: botId,
       bot_state: 'ended',
@@ -223,7 +240,8 @@ async function storeTranscriptAndGenerateWork(
       start_time: startTime,
       end_time: endTime,
       duration_minutes: durationMinutes,
-      transcript_segments: transcript.segments || [],
+      transcript: transcriptText, // Plain text transcript (required)
+      transcript_segments: normalizedSegments, // Normalized format
       attendees: [],
       processed: false,
     })
@@ -238,8 +256,8 @@ async function storeTranscriptAndGenerateWork(
   console.log(`[AttendeeBot] Stored transcript ${transcriptRecord.id}`);
 
   // Extract action items and key topics from transcript with AI
-  const actionItems = await extractActionItemsWithAI(userId, title, transcript.segments, supabase);
-  const keyTopics = extractKeyTopics(transcript.segments);
+  const actionItems = await extractActionItemsWithAI(userId, title, normalizedSegments, supabase);
+  const keyTopics = extractKeyTopics(normalizedSegments);
 
   let workItemsCreated = 0;
 

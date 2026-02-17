@@ -11,7 +11,7 @@ interface AttendeeBot {
   meeting_url: string;
   bot_name: string;
   state: 'scheduled' | 'joining' | 'active' | 'ended' | 'failed' | 'fatal_error';
-  transcription_state: 'not_started' | 'in_progress' | 'completed' | 'failed';
+  transcription_state: 'not_started' | 'in_progress' | 'complete' | 'failed'; // Note: API returns 'complete' not 'completed'
 }
 
 interface AttendeeTranscriptSegment {
