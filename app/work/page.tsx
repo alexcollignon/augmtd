@@ -6,6 +6,7 @@ import {
   getUserIdentity,
 } from '@/lib/context/work-patterns-service';
 import { getBlueprintsForDepartment } from '@/lib/blueprints/blueprint-library';
+import { WorkBlueprint } from '@/lib/types/work-blueprints';
 
 export default async function WorkPage() {
   const supabase = await createClient();
@@ -26,7 +27,7 @@ export default async function WorkPage() {
 
   // Check onboarding status and load blueprints based on department
   const completed = await hasCompletedOnboarding(user.id, supabase);
-  let blueprints = [];
+  let blueprints: WorkBlueprint[] = [];
 
   if (completed) {
     const identity = await getUserIdentity(user.id, supabase);
