@@ -76,13 +76,13 @@ export default function MeetingDetailPanel({
           .from('meeting_transcripts')
           .select('id, title, transcript_segments, duration_minutes, work_items_generated')
           .eq('calendar_event_id', event.id)
-          .single();
+          .maybeSingle(); // Use maybeSingle() instead of single() to handle no results gracefully
 
         if (error) {
           console.error('Failed to fetch transcript:', error);
           setTranscript(null);
         } else {
-          setTranscript(data);
+          setTranscript(data); // Will be null if no transcript exists yet
         }
       } catch (err) {
         console.error('Error fetching transcript:', err);
