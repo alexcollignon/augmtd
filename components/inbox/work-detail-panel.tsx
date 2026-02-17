@@ -4,6 +4,7 @@ import { Fragment, useState } from 'react';
 import { Dialog, Transition } from '@headlessui/react';
 import {
   XMarkIcon,
+  ArrowLeftIcon,
   PaperAirplaneIcon,
   UserIcon,
   CheckIcon,
@@ -42,12 +43,23 @@ interface WorkDetailPanelProps {
 
 export default function WorkDetailPanel({ item, isOpen, onClose, batchItems }: WorkDetailPanelProps) {
   const isBatch = batchItems && batchItems.length > 1;
-  const sourceData = item.source_data;
-  const recipientContext = item.recipient_context;
+  const [selectedBatchItem, setSelectedBatchItem] = useState<InboxItem | null>(null);
+
+  // Use selected batch item if viewing individual item in batch, otherwise use main item
+  const currentItem = selectedBatchItem || item;
+  const sourceData = currentItem.source_data;
+  const recipientContext = currentItem.recipient_context;
+
   const [isSending, setIsSending] = useState(false);
   const [isCompleting, setIsCompleting] = useState(false);
   const [isDismissing, setIsDismissing] = useState(false);
   const [showDraftPreview, setShowDraftPreview] = useState(false);
+
+  // Reset selected item when panel closes
+  const handleClose = () => {
+    setSelectedBatchItem(null);
+    onClose();
+  };
 
   // Get role display in business language
   const getRoleDisplay = () => {
@@ -255,12 +267,23 @@ export default function WorkDetailPanel({ item, isOpen, onClose, batchItems }: W
                             )
                           )}
                         </div>
-                        <button
-                          onClick={onClose}
-                          className="flex-shrink-0 p-2 hover:bg-white/60 transition-colors"
-                        >
-                          <XMarkIcon className="w-5 h-5 text-neutral-500" />
-                        </button>
+                        <div className="flex items-center gap-1">
+                          {selectedBatchItem && isBatch && (
+                            <button
+                              onClick={() => setSelectedBatchItem(null)}
+                              className="flex-shrink-0 p-2 hover:bg-white/60 transition-colors"
+                              title="Back to batch summary"
+                            >
+                              <ArrowLeftIcon className="w-5 h-5 text-neutral-500" />
+                            </button>
+                          )}
+                          <button
+                            onClick={handleClose}
+                            className="flex-shrink-0 p-2 hover:bg-white/60 transition-colors"
+                          >
+                            <XMarkIcon className="w-5 h-5 text-neutral-500" />
+                          </button>
+                        </div>
                       </div>
                     </div>
 
@@ -483,17 +506,18 @@ export default function WorkDetailPanel({ item, isOpen, onClose, batchItems }: W
                         </div>
                       )}
 
-                      {/* Batch Items List */}
-                      {isBatch && batchItems && (
+                      {/* Batch Items List - Only show when not viewing individual item */}
+                      {isBatch && batchItems && !selectedBatchItem && (
                         <div>
                           <h3 className="text-[11px] font-semibold text-neutral-600 uppercase tracking-wide mb-3">
                             All Items ({batchItems.length})
                           </h3>
                           <div className="space-y-3">
                             {batchItems.map((batchItem, index) => (
-                              <div
+                              <button
                                 key={batchItem.id}
-                                className="bg-neutral-50 border border-neutral-200 p-4 hover:border-indigo-200 transition-colors"
+                                onClick={() => setSelectedBatchItem(batchItem)}
+                                className="w-full text-left bg-neutral-50 border border-neutral-200 p-4 hover:border-indigo-300 hover:bg-indigo-50 transition-colors cursor-pointer"
                               >
                                 <div className="flex items-start justify-between mb-2">
                                   <h4 className="text-[14px] font-semibold text-neutral-900 flex-1">
@@ -514,7 +538,7 @@ export default function WorkDetailPanel({ item, isOpen, onClose, batchItems }: W
                                 <p className="text-[11px] text-neutral-500 mt-2">
                                   {new Date(batchItem.created_at).toLocaleString()}
                                 </p>
-                              </div>
+                              </button>
                             ))}
                           </div>
                         </div>
