@@ -554,15 +554,19 @@ Meeting prep: Next 48 hours only
 - ✅ **User context integration** - Uses identity and meeting behavior profiles
 - ✅ **Smart priority scoring** - AI determines urgency based on user's role
 - ✅ **Lazy-loaded OpenAI client** - Fixes environment variable initialization issues
+- ✅ **Production-ready** - Transcript normalization, error handling, automated polling
 
 **Technical Details:**
 ```
 Bot Creation: POST /api/v1/bots with join_at timestamp
 Bot States: scheduled → joining → active → ended → fatal_error
-Transcript: Fetched after transcription_state = completed
+Transcript State: API returns 'complete' (not 'completed')
+Transcript Format: Array of {speaker_name, transcription.transcript, timestamp_ms}
+Normalization: Converts to {speaker, text, timestamp} for storage
 Action Items: Extracted via GPT-4o-mini with user profiles
 Work Items: Source = meeting, auto_generated = true
-Polling: Cron job checks bot status every 5 minutes
+Polling: External cron job checks bot status every 5 minutes
+Database: meeting_transcripts table with transcript segments JSONB
 ```
 
 ### Modular Context Profiles Migration (Feb 2026)

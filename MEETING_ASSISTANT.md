@@ -842,6 +842,67 @@ function getOpenAIClient(): OpenAI {
 }
 ```
 
+#### Issue: Transcripts not fetching (transcription_state mismatch)
+**Cause:** Code checked for `'completed'` but API returns `'complete'`
+**Solution:** ✅ Fixed - Updated to check for `'complete'`
+
+```typescript
+// Before (broken):
+if (bot.state === 'ended' && bot.transcription_state === 'completed') {
+
+// After (fixed):
+if (bot.state === 'ended' && bot.transcription_state === 'complete') {
+```
+
+#### Issue: Transcript structure errors (Cannot read properties of undefined)
+**Cause:** Expected `transcript.segments` but API returns array directly
+**Solution:** ✅ Fixed - Normalize Attendee API format to internal format
+
+```typescript
+// Attendee API format:
+[
+  {
+    "speaker_name": "Alexandre Collignon",
+    "transcription": { "transcript": "Hey everyone..." },
+    "timestamp_ms": 1771279240444
+  }
+]
+
+// Normalized to internal format:
+const normalizedSegments = rawSegments.map(s => ({
+  speaker: s.speaker_name || 'Unknown',
+  text: s.transcription?.transcript || '',
+  timestamp: Math.floor((s.timestamp_ms || 0) / 1000)
+}));
+```
+
+#### Issue: Database insert fails (meeting_id/transcript null constraint)
+**Cause:** Table requires `meeting_id` and `transcript` fields
+**Solution:** ✅ Fixed - Added required fields to insert
+
+```typescript
+.insert({
+  meeting_id: calendarEventId,        // Required (same as calendar_event_id)
+  transcript: transcriptText,          // Required (plain text version)
+  transcript_segments: normalizedSegments,  // JSONB array
+  // ... other fields
+})
+```
+
+#### Issue: UI console error "Failed to fetch transcript: {}"
+**Cause:** Using `.single()` which throws error when no rows found
+**Solution:** ✅ Fixed - Use `.maybeSingle()` for graceful handling
+
+```typescript
+// Before (broken):
+.eq('calendar_event_id', event.id)
+.single();  // Throws error if no rows
+
+// After (fixed):
+.eq('calendar_event_id', event.id)
+.maybeSingle();  // Returns null if no rows
+```
+
 ### Testing
 
 **1. Enable Attendee in Settings:**
