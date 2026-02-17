@@ -21,6 +21,7 @@ import { getVisualSection } from '@/lib/types/inbox';
 import { analyzeSentEmail } from '@/lib/context/sent-email-analyzer';
 import { getCalendarContext } from '@/lib/calendar/calendar-context';
 import type { UserContextProfile } from '@/lib/types/user-context';
+import { decomposeEmailWork } from '@/lib/execution/work-decomposition';
 
 export interface SyncResult {
   emailsFetched: number;
@@ -368,6 +369,31 @@ export async function syncEmailsForConnection(
               calendar_context: calendarContext, // NEW: Schedule-aware processing
             });
 
+            // Work Decomposition (Layer 2): Check if this is executable work
+            let executionPlan = null;
+            let isExecutable = false;
+
+            try {
+              executionPlan = await decomposeEmailWork(
+                {
+                  subject: storedEmail.subject,
+                  body: storedEmail.body,
+                  from: storedEmail.from_name || storedEmail.from_address,
+                  threadHistory: threadEmails,
+                },
+                recipient.userId,
+                adminSupabase
+              );
+
+              if (executionPlan) {
+                isExecutable = true;
+                console.log(`       🤖 Executable work detected: ${executionPlan.deliverable_description}`);
+              }
+            } catch (error) {
+              console.error('[Sync] Work decomposition error:', error);
+              // Continue without execution plan - don't break email sync
+            }
+
             // Update existing inbox item with recipient context
             const { error: updateError } = await adminSupabase
               .from('inbox_items')
@@ -429,7 +455,14 @@ export async function syncEmailsForConnection(
                 ai_suggestion_reasoning: recipient.reasoning,
                 confidence_score: Math.round(recipient.responsibilityConfidence * 100),
                 priority: processed.priority,
-                needs_review: true
+                needs_review: true,
+
+                // Execution fields (Layer 2: Work Decomposition)
+                is_executable: isExecutable,
+                execution_plan: executionPlan,
+                execution_status: executionPlan ? 'queued' : null,
+                current_step: 0,
+                artifacts: [],
               })
               .eq('id', existingInboxItem.id);
 
@@ -456,6 +489,30 @@ export async function syncEmailsForConnection(
             user_context: userContext, // NEW: Personalize based on learned style
             calendar_context: calendarContext, // NEW: Schedule-aware processing
           });
+
+          // Work Decomposition (Layer 2): Check if this is executable work
+          let executionPlan = null;
+          let isExecutable = false;
+
+          try {
+            executionPlan = await decomposeEmailWork(
+              {
+                subject: storedEmail.subject,
+                body: storedEmail.body,
+                from: storedEmail.from_name || storedEmail.from_address,
+              },
+              recipient.userId,
+              adminSupabase
+            );
+
+            if (executionPlan) {
+              isExecutable = true;
+              console.log(`       🤖 Executable work detected: ${executionPlan.deliverable_description}`);
+            }
+          } catch (error) {
+            console.error('[Sync] Work decomposition error:', error);
+            // Continue without execution plan - don't break email sync
+          }
 
           // Create inbox item for this recipient
           const { error: inboxError } = await adminSupabase
@@ -513,6 +570,13 @@ export async function syncEmailsForConnection(
                 signals: processed.signals,
                 ...processed.preparedOutput
               },
+
+              // Execution fields (Layer 2: Work Decomposition)
+              is_executable: isExecutable,
+              execution_plan: executionPlan,
+              execution_status: executionPlan ? 'queued' : null,
+              current_step: 0,
+              artifacts: [],
 
               // Legacy fields
               ai_suggestion_type: recipient.inferredWorkState,
