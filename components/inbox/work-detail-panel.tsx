@@ -9,6 +9,13 @@ import {
   CheckIcon,
 } from '@heroicons/react/24/outline';
 import type { InboxItem } from '@/lib/types/inbox';
+import {
+  isExecutable,
+  isExecutionInProgress,
+  isAwaitingApproval,
+  isExecutionCompleted,
+  getExecutionProgress
+} from '@/lib/types/inbox';
 import RecipientContextDisplay from './recipient-context-display';
 import DraftPreviewModal from './draft-preview-modal';
 
@@ -245,6 +252,196 @@ export default function WorkDetailPanel({ item, isOpen, onClose, batchItems }: W
 
                     {/* Content - Scrollable */}
                     <div className="flex-1 overflow-y-auto px-6 py-6 space-y-6">
+                      {/* Execution View - for executable work items */}
+                      {!isBatch && isExecutable(item) && item.execution_plan && (
+                        <div className="space-y-6">
+                          {/* Deliverable Section */}
+                          <div>
+                            <h3 className="text-[11px] font-semibold text-neutral-600 uppercase tracking-wide mb-3">
+                              📊 Deliverable
+                            </h3>
+                            <div className="bg-gradient-to-br from-indigo-50 to-violet-50 border border-indigo-200 p-4 rounded-lg">
+                              <div className="flex items-start gap-3">
+                                <div className="flex-shrink-0 w-10 h-10 bg-indigo-500 text-white rounded-lg flex items-center justify-center font-bold text-lg">
+                                  {item.execution_plan.deliverable_type === 'report' && '📊'}
+                                  {item.execution_plan.deliverable_type === 'presentation' && '📽️'}
+                                  {item.execution_plan.deliverable_type === 'spreadsheet' && '📈'}
+                                  {item.execution_plan.deliverable_type === 'document' && '📄'}
+                                  {item.execution_plan.deliverable_type === 'analysis' && '🔍'}
+                                  {item.execution_plan.deliverable_type === 'email' && '✉️'}
+                                </div>
+                                <div className="flex-1">
+                                  <div className="text-[10px] uppercase tracking-wide text-indigo-600 font-semibold mb-1">
+                                    {item.execution_plan.deliverable_type}
+                                  </div>
+                                  <p className="text-[14px] text-neutral-900 font-medium leading-relaxed">
+                                    {item.execution_plan.deliverable_description}
+                                  </p>
+                                  <div className="flex items-center gap-4 mt-3 text-[12px]">
+                                    {item.execution_plan.estimated_time && (
+                                      <span className="text-neutral-600">
+                                        ⏱️ {item.execution_plan.estimated_time}
+                                      </span>
+                                    )}
+                                    {item.execution_plan.deadline && (
+                                      <span className="text-orange-600 font-medium">
+                                        ⏰ Due: {new Date(item.execution_plan.deadline).toLocaleDateString()}
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Execution Plan Steps */}
+                          <div>
+                            <h3 className="text-[11px] font-semibold text-neutral-600 uppercase tracking-wide mb-3">
+                              ✨ Execution Plan
+                            </h3>
+                            <div className="space-y-2">
+                              {item.execution_plan.steps.map((step) => (
+                                <div
+                                  key={step.number}
+                                  className={`
+                                    flex items-start gap-3 p-3 rounded-lg border
+                                    ${step.status === 'completed' ? 'bg-green-50 border-green-200' : ''}
+                                    ${step.status === 'running' ? 'bg-blue-50 border-blue-200' : ''}
+                                    ${step.status === 'pending' ? 'bg-neutral-50 border-neutral-200' : ''}
+                                    ${step.status === 'failed' ? 'bg-red-50 border-red-200' : ''}
+                                  `}
+                                >
+                                  <div className="flex-shrink-0 w-6 h-6 rounded-full bg-white border-2 border-neutral-300 flex items-center justify-center">
+                                    {step.status === 'completed' && (
+                                      <CheckIcon className="w-4 h-4 text-green-600" />
+                                    )}
+                                    {step.status === 'running' && (
+                                      <div className="w-3 h-3 bg-blue-500 rounded-full animate-pulse" />
+                                    )}
+                                    {step.status === 'pending' && (
+                                      <span className="text-[10px] text-neutral-500 font-medium">{step.number}</span>
+                                    )}
+                                    {step.status === 'failed' && (
+                                      <XMarkIcon className="w-4 h-4 text-red-600" />
+                                    )}
+                                  </div>
+                                  <div className="flex-1">
+                                    <p className="text-[13px] text-neutral-900 font-medium">
+                                      {step.action}
+                                    </p>
+                                    {step.skill && (
+                                      <p className="text-[11px] text-neutral-500 mt-1">
+                                        Skill: {step.skill}
+                                      </p>
+                                    )}
+                                    {step.error && (
+                                      <p className="text-[11px] text-red-600 mt-1">
+                                        Error: {step.error}
+                                      </p>
+                                    )}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+
+                            {/* Progress Bar */}
+                            {isExecutionInProgress(item) && (
+                              <div className="mt-4">
+                                <div className="flex items-center justify-between text-[11px] text-neutral-600 mb-1">
+                                  <span>Progress</span>
+                                  <span>{getExecutionProgress(item)}%</span>
+                                </div>
+                                <div className="w-full bg-neutral-200 rounded-full h-2">
+                                  <div
+                                    className="bg-indigo-600 h-2 rounded-full transition-all duration-300"
+                                    style={{ width: `${getExecutionProgress(item)}%` }}
+                                  />
+                                </div>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Status Badge */}
+                          <div>
+                            {item.execution_status === 'queued' && (
+                              <div className="flex items-center gap-2 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                                <div className="w-2 h-2 bg-blue-500 rounded-full" />
+                                <span className="text-[12px] text-blue-700 font-medium">
+                                  Ready to execute
+                                </span>
+                              </div>
+                            )}
+                            {item.execution_status === 'running' && (
+                              <div className="flex items-center gap-2 p-3 bg-indigo-50 border border-indigo-200 rounded-lg">
+                                <div className="w-2 h-2 bg-indigo-500 rounded-full animate-pulse" />
+                                <span className="text-[12px] text-indigo-700 font-medium">
+                                  Step {item.current_step + 1} of {item.execution_plan.steps.length}: In progress...
+                                </span>
+                              </div>
+                            )}
+                            {item.execution_status === 'awaiting_approval' && (
+                              <div className="flex items-center gap-2 p-3 bg-orange-50 border border-orange-200 rounded-lg">
+                                <div className="w-2 h-2 bg-orange-500 rounded-full" />
+                                <span className="text-[12px] text-orange-700 font-medium">
+                                  Awaiting your review
+                                </span>
+                              </div>
+                            )}
+                            {item.execution_status === 'completed' && (
+                              <div className="flex items-center gap-2 p-3 bg-green-50 border border-green-200 rounded-lg">
+                                <CheckIcon className="w-4 h-4 text-green-600" />
+                                <span className="text-[12px] text-green-700 font-medium">
+                                  Execution completed
+                                </span>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Artifacts (if any) */}
+                          {item.artifacts && item.artifacts.length > 0 && (
+                            <div>
+                              <h3 className="text-[11px] font-semibold text-neutral-600 uppercase tracking-wide mb-3">
+                                📎 Generated Files
+                              </h3>
+                              <div className="space-y-2">
+                                {item.artifacts.map((artifact, index) => (
+                                  <div
+                                    key={index}
+                                    className="flex items-center justify-between p-3 bg-neutral-50 border border-neutral-200 rounded-lg hover:border-indigo-300 transition-colors"
+                                  >
+                                    <div className="flex items-center gap-3">
+                                      <div className="text-2xl">
+                                        {artifact.type === 'excel' && '📊'}
+                                        {artifact.type === 'powerpoint' && '📽️'}
+                                        {artifact.type === 'word' && '📄'}
+                                        {artifact.type === 'pdf' && '📕'}
+                                        {artifact.type === 'email_draft' && '✉️'}
+                                      </div>
+                                      <div>
+                                        <p className="text-[13px] text-neutral-900 font-medium">
+                                          {artifact.name}
+                                        </p>
+                                        <p className="text-[11px] text-neutral-500">
+                                          {(artifact.size / 1024).toFixed(1)} KB
+                                        </p>
+                                      </div>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                      <button className="px-3 py-1.5 text-[11px] font-medium text-indigo-600 hover:bg-indigo-50 rounded transition-colors">
+                                        Preview
+                                      </button>
+                                      <button className="px-3 py-1.5 text-[11px] font-medium text-neutral-600 hover:bg-neutral-100 rounded transition-colors">
+                                        Download
+                                      </button>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
                       {/* Batch Items List */}
                       {isBatch && batchItems && (
                         <div>
@@ -282,8 +479,8 @@ export default function WorkDetailPanel({ item, isOpen, onClose, batchItems }: W
                         </div>
                       )}
 
-                      {/* What Was Prepared */}
-                      {!isBatch && item.what_i_prepared && (
+                      {/* What Was Prepared - Only for non-executable items */}
+                      {!isBatch && !isExecutable(item) && item.what_i_prepared && (
                         <div>
                           <h3 className="text-[11px] font-semibold text-neutral-600 uppercase tracking-wide mb-2">
                             What Was Prepared
@@ -294,8 +491,8 @@ export default function WorkDetailPanel({ item, isOpen, onClose, batchItems }: W
                         </div>
                       )}
 
-                      {/* Why This Matters */}
-                      {!isBatch && item.why_matters && (
+                      {/* Why This Matters - Only for non-executable items */}
+                      {!isBatch && !isExecutable(item) && item.why_matters && (
                         <div>
                           <h3 className="text-[11px] font-semibold text-neutral-600 uppercase tracking-wide mb-2">
                             Why This Matters
@@ -476,25 +673,71 @@ export default function WorkDetailPanel({ item, isOpen, onClose, batchItems }: W
                       ) : (
                         // Single item actions
                         <div className="flex items-center gap-3">
-                          {/* Primary action */}
-                          {sourceData?.draft && (
-                            <button
-                              onClick={() => setShowDraftPreview(true)}
-                              className="flex-1 inline-flex items-center justify-center px-4 py-2.5 text-[13px] font-semibold bg-indigo-600 text-white hover:bg-indigo-700 transition-all shadow-sm hover:shadow"
-                            >
-                              <PaperAirplaneIcon className="w-4 h-4 mr-2" />
-                              Review & Send
-                            </button>
+                          {/* Executable work actions */}
+                          {isExecutable(item) && (
+                            <>
+                              {item.execution_status === 'queued' && (
+                                <button
+                                  onClick={() => alert('Execution engine coming in Layer 3! This will start the AI execution.')}
+                                  className="flex-1 inline-flex items-center justify-center px-4 py-2.5 text-[13px] font-semibold bg-indigo-600 text-white hover:bg-indigo-700 transition-all shadow-sm hover:shadow"
+                                >
+                                  <span className="mr-2">▶️</span>
+                                  Execute Work
+                                </button>
+                              )}
+                              {item.execution_status === 'running' && (
+                                <button
+                                  disabled
+                                  className="flex-1 inline-flex items-center justify-center px-4 py-2.5 text-[13px] font-semibold bg-blue-600 text-white opacity-75 cursor-not-allowed"
+                                >
+                                  <div className="w-4 h-4 mr-2 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                  In Progress...
+                                </button>
+                              )}
+                              {item.execution_status === 'awaiting_approval' && (
+                                <button
+                                  onClick={() => alert('Review artifacts and approve/reject the execution')}
+                                  className="flex-1 inline-flex items-center justify-center px-4 py-2.5 text-[13px] font-semibold bg-orange-600 text-white hover:bg-orange-700 transition-all shadow-sm hover:shadow"
+                                >
+                                  <CheckIcon className="w-4 h-4 mr-2" />
+                                  Review & Approve
+                                </button>
+                              )}
+                              {item.execution_status === 'completed' && (
+                                <button
+                                  onClick={() => alert('Send the generated artifacts')}
+                                  className="flex-1 inline-flex items-center justify-center px-4 py-2.5 text-[13px] font-semibold bg-green-600 text-white hover:bg-green-700 transition-all shadow-sm hover:shadow"
+                                >
+                                  <PaperAirplaneIcon className="w-4 h-4 mr-2" />
+                                  Send Result
+                                </button>
+                              )}
+                            </>
                           )}
-                          {!sourceData?.draft && (
-                            <button
-                              onClick={handleComplete}
-                              disabled={isCompleting}
-                              className="flex-1 inline-flex items-center justify-center px-4 py-2.5 text-[13px] font-semibold bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm hover:shadow"
-                            >
-                              <CheckIcon className="w-4 h-4 mr-2" />
-                              {isCompleting ? 'Completing...' : 'Mark Complete'}
-                            </button>
+
+                          {/* Regular work actions */}
+                          {!isExecutable(item) && (
+                            <>
+                              {sourceData?.draft && (
+                                <button
+                                  onClick={() => setShowDraftPreview(true)}
+                                  className="flex-1 inline-flex items-center justify-center px-4 py-2.5 text-[13px] font-semibold bg-indigo-600 text-white hover:bg-indigo-700 transition-all shadow-sm hover:shadow"
+                                >
+                                  <PaperAirplaneIcon className="w-4 h-4 mr-2" />
+                                  Review & Send
+                                </button>
+                              )}
+                              {!sourceData?.draft && (
+                                <button
+                                  onClick={handleComplete}
+                                  disabled={isCompleting}
+                                  className="flex-1 inline-flex items-center justify-center px-4 py-2.5 text-[13px] font-semibold bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm hover:shadow"
+                                >
+                                  <CheckIcon className="w-4 h-4 mr-2" />
+                                  {isCompleting ? 'Completing...' : 'Mark Complete'}
+                                </button>
+                              )}
+                            </>
                           )}
 
                           {/* Secondary actions */}
