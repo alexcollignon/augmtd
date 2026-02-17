@@ -63,10 +63,11 @@ export interface EmailSignals {
   hasExplicitApprovalRequest: boolean;
 
   // CONTEXT SIGNALS
-  senderAuthority: 'high' | 'medium' | 'low'; // Boss, client, colleague, vendor, unknown
+  senderAuthority: 'high' | 'medium' | 'low' | 'none'; // Boss, client, colleague, vendor, automated system
   threadDepth: number; // Is this ongoing conversation?
   hasPreviousCommitment: boolean; // Did you promise to do something?
   isFollowUp: boolean; // Reminder about something?
+  isAutomatedSender: boolean; // Email from no-reply or automated system?
 
   // EXECUTION TARGET (where does execution happen? NOT mental state)
   executionTarget: 'email' | 'external' | 'none'; // Where is the action taken?
@@ -410,10 +411,20 @@ OBLIGATION SIGNALS:
 - hasExplicitApprovalRequest: Approval language? ("approve", "confirm", "authorize")
 
 CONTEXT SIGNALS:
-- senderAuthority: high (boss/exec), medium (client/colleague), low (vendor/marketing)
+- senderAuthority: high (boss/exec), medium (client/colleague), low (vendor/marketing), none (automated system)
 - threadDepth: 0 (new thread), 1-2 (short thread), 3+ (long thread)
 - hasPreviousCommitment: Did recipient promise something earlier?
 - isFollowUp: Is this a reminder/follow-up?
+- isAutomatedSender: CRITICAL - Check if sender is automated/no-reply
+  Set to TRUE if ANY of these patterns match:
+  ✓ Email contains: "noreply@", "no-reply@", "donotreply@", "do-not-reply@"
+  ✓ Email contains: "notifications@", "notify@", "alerts@", "billing@", "payments@"
+  ✓ Email contains: "support@", "help@", "info@", "accounts@", "auth@", "verify@"
+  ✓ Subject contains: "Payment Failed", "Card Declined", "Billing Issue", "Subscription"
+  ✓ Transactional patterns: receipts, invoices, shipping updates, automated notifications
+
+  IMPORTANT: Automated senders should NEVER be classified as WORK_PREPARED
+  → User cannot reply to these addresses, so drafting a response makes no sense
 
 EXECUTION TARGET (where does execution happen? Domains are PLACES, not mental states):
 Ask: "WHERE is this task executed?"
@@ -469,22 +480,26 @@ CRITICAL: Use ACTION DOMAIN to determine correct work state.
 Based on signals, classify into ONE work state:
 
 1. WORK_PREPARED (Judgment Now - Via Email)
-   STRICT: executionTarget MUST be 'email'
+   STRICT: executionTarget MUST be 'email' AND sender MUST NOT be automated
 
    Must meet ALL:
    ✓ executionTarget = 'email' (completed by REPLYING)
    ✓ canBePreparedViaEmail = true
    ✓ Requires human judgment or meaningful human touch
    ✓ NOT a confirmation/notification/receipt
+   ✓ isAutomatedSender = false (CRITICAL: Can't reply to no-reply addresses)
 
    Valid examples:
-   - "Can you send report?" → executionTarget='email', draft completes task
-   - "When can we meet?" → executionTarget='email', reply schedules
-   - "What's your opinion?" → executionTarget='email', reply answers
+   - "Can you send report?" FROM a person → executionTarget='email', draft completes task
+   - "When can we meet?" FROM a person → executionTarget='email', reply schedules
+   - "What's your opinion?" FROM a person → executionTarget='email', reply answers
 
-   INVALID:
+   INVALID (these are ACTION_REQUIRED, not WORK_PREPARED):
    - "Update payment" → executionTarget='external'
    - "Verify email" → executionTarget='external'
+   - "Payment failed" FROM noreply@stripe.com → isAutomatedSender=true, can't reply
+   - "Card declined" FROM billing@company.com → isAutomatedSender=true, can't reply
+   - Any email from no-reply/automated systems → ACTION_REQUIRED (go to website/portal)
 
    → Action: Prepare draft reply that COMPLETES the task
 
@@ -509,7 +524,13 @@ Based on signals, classify into ONE work state:
       - Payment updates → Will be shown INDIVIDUALLY
       - Compliance forms → Will be shown INDIVIDUALLY
       - Service issues → Will be shown INDIVIDUALLY
-      Examples: "Update payment method", "Complete tax form", "Fix billing"
+      Examples: "Update payment method", "Complete tax form", "Fix billing", "Payment failed"
+
+      CRITICAL for payment/billing emails:
+      - These are ALWAYS ACTION_REQUIRED (consequences exist)
+      - NEVER suggest replying to billing@/noreply@ addresses
+      - Guide user to portal/settings: "Go to [Company] settings to update payment method"
+      - Be specific about WHERE to take action: "Visit Stripe dashboard", "Log into account"
 
    NOT this state:
    - "Choose provider A or B" → requiresJudgment = true → DECISION_REQUIRED
@@ -657,9 +678,13 @@ Create user-facing text (OUTCOME-CENTRIC, NOT EMAIL-CENTRIC):
 
   For ACTION_REQUIRED (no draft):
     GOOD: "Click the verification link in the email to activate your account"
-    GOOD: "Update payment method in settings to avoid service interruption"
-    BAD: "Action needed" | "Click link"
+    GOOD: "Go to Stripe dashboard and update your payment method to avoid service suspension"
+    GOOD: "Visit the billing portal and add a valid payment card before Friday"
+    BAD: "Action needed" | "Click link" | "Reply to update payment" | "Respond to fix issue"
     Pattern: "[Specific action] to [outcome]" OR "[Action] before [deadline/consequence]"
+
+    CRITICAL: For automated/no-reply senders, ALWAYS specify WHERE to go (portal, settings, website)
+    NEVER suggest replying to no-reply@, billing@, payments@, or other automated addresses
 
   For DECISION_REQUIRED:
     GOOD: "Review the 3 vendor options and choose the best fit for budget and timeline"
@@ -816,6 +841,63 @@ EXAMPLE 2 - Mechanical Confirmation (ACTION_REQUIRED):
   "reasoning": "Mechanical confirmation: executionTarget='external' + hasOneObviousAction + isMechanicalConfirmation=true. Low priority (can be batched) but has consequences (ACTION_REQUIRED not NOTED)."
 }
 
+EXAMPLE 3 - Payment Failure (ACTION_REQUIRED - Operational):
+
+{
+  "workState": "action_required",
+  "workTitle": "Update payment method",
+  "whatIPrepared": "Go to Stripe billing dashboard and add a valid payment card before service suspension on March 15",
+  "whyMatters": "Payment failed - account will be suspended in 48 hours without updated payment method",
+
+  "signals": {
+    "hasDirectQuestion": false,
+    "hasRequestForAction": true,
+    "hasDeadlineMention": true,
+    "hasMeetingReference": false,
+    "hasAttachmentNeedingReview": false,
+    "hasExplicitApprovalRequest": false,
+    "senderAuthority": "none",
+    "threadDepth": 0,
+    "hasPreviousCommitment": false,
+    "isFollowUp": false,
+    "isAutomatedSender": true,  // ← CRITICAL: From billing@/noreply@ - can't reply
+    "executionTarget": "external",
+    "hasActionLinks": true,
+    "mentionsExternalSystem": true,
+    "requiresJudgment": false,
+    "canBePreparedViaEmail": false,
+    "needsExternalInput": false,
+    "isMechanicalConfirmation": false,  // ← Operational, not mechanical (high stakes)
+    "isNotification": false,
+    "hasOneObviousAction": true,
+    "explicitDeadline": "2024-03-15",
+    "impliedUrgency": "immediate",
+    "isTimebound": true
+  },
+
+  "preparedOutput": {
+    "nextSteps": [
+      {
+        "description": "Visit Stripe billing dashboard and update payment method",
+        "deadline": "2024-03-15",
+        "estimatedTime": "5 minutes",
+        "preparedLink": "https://billing.stripe.com/settings"
+      }
+    ]
+  },
+
+  "summary": "Payment failure - card declined, account at risk",
+  "keyPoints": [
+    "Payment method declined by bank",
+    "Service suspension in 48 hours",
+    "Action required: Update card in billing portal"
+  ],
+  "urgency": "high",
+  "confidence": 95,
+  "priority": 85,
+  "reasoning": "ACTION_REQUIRED (operational): isAutomatedSender=true means can't reply via email. executionTarget='external' + high consequences (service suspension) + clear deadline. NOT work_prepared (can't reply to billing@). High priority due to downside risk."
+}
+
 CRITICAL RULES:
 1. ALWAYS determine executionTarget FIRST: WHERE is execution?
    - If completed by email reply → executionTarget = 'email'
@@ -827,10 +909,11 @@ CRITICAL RULES:
 2. INVARIANT: If executionTarget !== 'email', then canBePreparedViaEmail = false
    - Prevents hallucinated drafts for external actions
 
-3. WORK_PREPARED rule: executionTarget MUST be 'email'
-   - Only if email reply COMPLETES the task
-   - "Can you send report?" → executionTarget='email' → WORK_PREPARED
-   - "Update payment" → executionTarget='external' → NOT work_prepared
+3. WORK_PREPARED rule: executionTarget MUST be 'email' AND isAutomatedSender MUST be false
+   - Only if email reply COMPLETES the task AND sender can receive replies
+   - "Can you send report?" FROM person@company.com → executionTarget='email' + isAutomatedSender=false → WORK_PREPARED
+   - "Update payment" FROM billing@stripe.com → executionTarget='external' + isAutomatedSender=true → ACTION_REQUIRED
+   - "Payment failed" FROM noreply@company.com → isAutomatedSender=true → NEVER work_prepared
 
 4. POSITIVE RULE for ACTION_REQUIRED:
    IF hasOneObviousAction = true

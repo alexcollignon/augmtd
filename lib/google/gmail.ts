@@ -35,8 +35,8 @@ export async function fetchUnreadEmails(
   try {
     const gmail = await getGmailClient(encryptedTokens);
 
-    // Search for recent emails (read and unread), excluding spam/promotions
-    const query = `newer_than:${syncWindowDays}d -category:promotions -category:social -category:forums -is:spam`;
+    // Search for recent emails (read and unread), only from Primary inbox
+    const query = `newer_than:${syncWindowDays}d -category:promotions -category:social -category:forums -category:updates -is:spam`;
 
     const response = await gmail.users.messages.list({
       userId: 'me',
