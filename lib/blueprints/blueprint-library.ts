@@ -23,12 +23,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '30 minutes',
     frequency: 'weekly',
     typicalDepartments: ['Product'],
-    defaultSteps: [
-      { number: 1, action: 'Review completed work from past week' },
-      { number: 2, action: 'Identify key wins and blockers' },
-      { number: 3, action: 'Draft update email with metrics' },
-      { number: 4, action: 'Send to stakeholders' },
-    ],
   },
   {
     id: 'pm-sprint-planning',
@@ -39,13 +33,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '2 hours',
     frequency: 'weekly',
     typicalDepartments: ['Product', 'Engineering'],
-    defaultSteps: [
-      { number: 1, action: 'Review product backlog and priorities' },
-      { number: 2, action: 'Identify stories ready for development' },
-      { number: 3, action: 'Write acceptance criteria for top items' },
-      { number: 4, action: 'Coordinate with engineering on estimates' },
-      { number: 5, action: 'Create sprint goal and plan' },
-    ],
   },
   {
     id: 'pm-feature-spec',
@@ -56,13 +43,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '4 hours',
     frequency: 'ad-hoc',
     typicalDepartments: ['Product'],
-    defaultSteps: [
-      { number: 1, action: 'Define problem statement and user needs' },
-      { number: 2, action: 'Outline proposed solution and alternatives' },
-      { number: 3, action: 'Write detailed user flows and edge cases' },
-      { number: 4, action: 'Define success metrics and acceptance criteria' },
-      { number: 5, action: 'Review with design and engineering' },
-    ],
   },
   {
     id: 'pm-roadmap-review',
@@ -73,13 +53,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '3 hours',
     frequency: 'quarterly',
     typicalDepartments: ['Product'],
-    defaultSteps: [
-      { number: 1, action: 'Review Q goals and priorities' },
-      { number: 2, action: 'Assess progress on current initiatives' },
-      { number: 3, action: 'Update roadmap with new priorities' },
-      { number: 4, action: 'Create presentation for leadership' },
-      { number: 5, action: 'Schedule review meeting' },
-    ],
   },
 
   // ========================================
@@ -94,13 +67,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '4 hours',
     frequency: 'monthly',
     typicalDepartments: ['Finance'],
-    defaultSteps: [
-      { number: 1, action: 'Reconcile all accounts' },
-      { number: 2, action: 'Review and categorize transactions' },
-      { number: 3, action: 'Generate financial statements' },
-      { number: 4, action: 'Prepare variance analysis' },
-      { number: 5, action: 'Review with CFO and distribute reports' },
-    ],
   },
   {
     id: 'finance-budget-review',
@@ -111,13 +77,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '2 hours',
     frequency: 'monthly',
     typicalDepartments: ['Finance'],
-    defaultSteps: [
-      { number: 1, action: 'Pull actual spend data by department' },
-      { number: 2, action: 'Compare to budgeted amounts' },
-      { number: 3, action: 'Identify significant variances (>10%)' },
-      { number: 4, action: 'Investigate root causes with department heads' },
-      { number: 5, action: 'Update forecast if needed' },
-    ],
   },
   {
     id: 'finance-vendor-reconciliation',
@@ -128,12 +87,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '1 hour',
     frequency: 'weekly',
     typicalDepartments: ['Finance'],
-    defaultSteps: [
-      { number: 1, action: 'Review outstanding vendor invoices' },
-      { number: 2, action: 'Verify invoice accuracy against POs' },
-      { number: 3, action: 'Approve payments in system' },
-      { number: 4, action: 'Update accounts payable aging report' },
-    ],
   },
   {
     id: 'finance-board-report',
@@ -144,13 +97,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '3 hours',
     frequency: 'quarterly',
     typicalDepartments: ['Finance'],
-    defaultSteps: [
-      { number: 1, action: 'Gather key financial metrics (revenue, EBITDA, cash)' },
-      { number: 2, action: 'Create visualizations and trend charts' },
-      { number: 3, action: 'Write executive summary of performance' },
-      { number: 4, action: 'Prepare deck with CFO commentary' },
-      { number: 5, action: 'Review with CEO before board meeting' },
-    ],
   },
 
   // ========================================
@@ -165,12 +111,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '1 hour',
     frequency: 'weekly',
     typicalDepartments: ['Sales'],
-    defaultSteps: [
-      { number: 1, action: 'Pull latest pipeline data from CRM' },
-      { number: 2, action: 'Review deal progression and stalled deals' },
-      { number: 3, action: 'Update win probability and close dates' },
-      { number: 4, action: 'Prepare forecast for leadership' },
-    ],
   },
   {
     id: 'sales-qbr-prep',
@@ -181,13 +121,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '2 hours',
     frequency: 'quarterly',
     typicalDepartments: ['Sales', 'Customer Success'],
-    defaultSteps: [
-      { number: 1, action: 'Review account health and usage metrics' },
-      { number: 2, action: 'Identify wins and areas for improvement' },
-      { number: 3, action: 'Prepare recommendations and upsell opportunities' },
-      { number: 4, action: 'Create QBR deck with exec summary' },
-      { number: 5, action: 'Send pre-read to customer' },
-    ],
   },
   {
     id: 'sales-deal-review',
@@ -198,12 +131,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '1 hour',
     frequency: 'ad-hoc',
     typicalDepartments: ['Sales'],
-    defaultSteps: [
-      { number: 1, action: 'Document deal details and stakeholders' },
-      { number: 2, action: 'Identify decision criteria and buying process' },
-      { number: 3, action: 'Map out competition and differentiators' },
-      { number: 4, action: 'Create win strategy and next steps' },
-    ],
   },
 
   // ========================================
@@ -218,12 +145,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '1.5 hours',
     frequency: 'weekly',
     typicalDepartments: ['Engineering'],
-    defaultSteps: [
-      { number: 1, action: 'Review sprint goals and outcomes' },
-      { number: 2, action: 'Gather team feedback (what went well, what to improve)' },
-      { number: 3, action: 'Identify action items and owners' },
-      { number: 4, action: 'Document and share retro notes' },
-    ],
   },
   {
     id: 'eng-incident-review',
@@ -234,12 +155,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '2 hours',
     frequency: 'ad-hoc',
     typicalDepartments: ['Engineering'],
-    defaultSteps: [
-      { number: 1, action: 'Document incident timeline and impact' },
-      { number: 2, action: 'Identify root cause(s)' },
-      { number: 3, action: 'List action items to prevent recurrence' },
-      { number: 4, action: 'Share postmortem with team and stakeholders' },
-    ],
   },
   {
     id: 'eng-hiring-review',
@@ -250,12 +165,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '30 minutes',
     frequency: 'weekly',
     typicalDepartments: ['Engineering'],
-    defaultSteps: [
-      { number: 1, action: 'Review active candidates and interview stages' },
-      { number: 2, action: 'Follow up on pending feedback' },
-      { number: 3, action: 'Schedule next round interviews' },
-      { number: 4, action: 'Update hiring tracker' },
-    ],
   },
 
   // ========================================
@@ -270,13 +179,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '2 hours',
     frequency: 'monthly',
     typicalDepartments: ['Marketing'],
-    defaultSteps: [
-      { number: 1, action: 'Pull campaign metrics (impressions, clicks, conversions)' },
-      { number: 2, action: 'Calculate ROI and cost per acquisition' },
-      { number: 3, action: 'Identify top performing channels and content' },
-      { number: 4, action: 'Create report with insights and recommendations' },
-      { number: 5, action: 'Present to leadership' },
-    ],
   },
   {
     id: 'marketing-content-plan',
@@ -287,12 +189,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '2 hours',
     frequency: 'monthly',
     typicalDepartments: ['Marketing'],
-    defaultSteps: [
-      { number: 1, action: 'Review content themes and priorities' },
-      { number: 2, action: 'Brainstorm topics and assign to writers' },
-      { number: 3, action: 'Schedule publication dates' },
-      { number: 4, action: 'Coordinate with design and social teams' },
-    ],
   },
 
   // ========================================
@@ -307,12 +203,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '3 hours',
     frequency: 'quarterly',
     typicalDepartments: ['Operations'],
-    defaultSteps: [
-      { number: 1, action: 'Map current process flow' },
-      { number: 2, action: 'Identify bottlenecks and inefficiencies' },
-      { number: 3, action: 'Design optimized process' },
-      { number: 4, action: 'Document changes and train team' },
-    ],
   },
   {
     id: 'ops-vendor-review',
@@ -323,12 +213,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '1.5 hours',
     frequency: 'quarterly',
     typicalDepartments: ['Operations'],
-    defaultSteps: [
-      { number: 1, action: 'Review SLA compliance and service quality' },
-      { number: 2, action: 'Analyze cost vs value' },
-      { number: 3, action: 'Document issues and improvement requests' },
-      { number: 4, action: 'Decide on renewal, renegotiation, or replacement' },
-    ],
   },
 
   // ========================================
@@ -343,13 +227,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '2 hours',
     frequency: 'daily',
     typicalDepartments: ['Operations'],
-    defaultSteps: [
-      { number: 1, action: 'Review payment queue for new instructions' },
-      { number: 2, action: 'Verify payment details and authorization' },
-      { number: 3, action: 'Process approved payments' },
-      { number: 4, action: 'Update payment tracking system' },
-      { number: 5, action: 'Send confirmation notifications' },
-    ],
   },
   {
     id: 'ops-corporate-onboarding',
@@ -360,13 +237,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '4 hours',
     frequency: 'ad-hoc',
     typicalDepartments: ['Operations'],
-    defaultSteps: [
-      { number: 1, action: 'Collect company documentation and KYC forms' },
-      { number: 2, action: 'Verify business registration and ownership' },
-      { number: 3, action: 'Complete due diligence checks' },
-      { number: 4, action: 'Set up account and access credentials' },
-      { number: 5, action: 'Send welcome package and onboarding materials' },
-    ],
   },
   {
     id: 'ops-retail-onboarding',
@@ -377,13 +247,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '1 hour',
     frequency: 'daily',
     typicalDepartments: ['Operations'],
-    defaultSteps: [
-      { number: 1, action: 'Review customer application and documentation' },
-      { number: 2, action: 'Verify identity and perform KYC checks' },
-      { number: 3, action: 'Create customer account in system' },
-      { number: 4, action: 'Issue account details and credentials' },
-      { number: 5, action: 'Schedule onboarding call or send welcome email' },
-    ],
   },
   {
     id: 'ops-kyc-updates',
@@ -394,13 +257,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '1 hour',
     frequency: 'quarterly',
     typicalDepartments: ['Operations'],
-    defaultSteps: [
-      { number: 1, action: 'Identify customers due for KYC refresh' },
-      { number: 2, action: 'Request updated documentation from customers' },
-      { number: 3, action: 'Review and verify new documents' },
-      { number: 4, action: 'Update customer records in system' },
-      { number: 5, action: 'Document review completion' },
-    ],
   },
   {
     id: 'ops-loan-disbursement',
@@ -411,13 +267,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '1.5 hours',
     frequency: 'ad-hoc',
     typicalDepartments: ['Operations'],
-    defaultSteps: [
-      { number: 1, action: 'Verify loan approval and documentation' },
-      { number: 2, action: 'Confirm disbursement account details' },
-      { number: 3, action: 'Process disbursement transaction' },
-      { number: 4, action: 'Update loan management system' },
-      { number: 5, action: 'Send disbursement confirmation to customer' },
-    ],
   },
   {
     id: 'ops-card-activation',
@@ -428,12 +277,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '30 minutes',
     frequency: 'daily',
     typicalDepartments: ['Operations'],
-    defaultSteps: [
-      { number: 1, action: 'Verify customer identity and card details' },
-      { number: 2, action: 'Activate card in system' },
-      { number: 3, action: 'Set initial PIN or security settings' },
-      { number: 4, action: 'Send activation confirmation' },
-    ],
   },
   {
     id: 'ops-atm-operations',
@@ -444,13 +287,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '2 hours',
     frequency: 'daily',
     typicalDepartments: ['Operations'],
-    defaultSteps: [
-      { number: 1, action: 'Check ATM status dashboard for alerts' },
-      { number: 2, action: 'Review cash levels and usage patterns' },
-      { number: 3, action: 'Coordinate cash replenishment for low-balance ATMs' },
-      { number: 4, action: 'Address any technical issues or outages' },
-      { number: 5, action: 'Update operations log' },
-    ],
   },
   {
     id: 'ops-reconciliations',
@@ -461,13 +297,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '3 hours',
     frequency: 'daily',
     typicalDepartments: ['Operations'],
-    defaultSteps: [
-      { number: 1, action: 'Export transaction data from all systems' },
-      { number: 2, action: 'Match transactions across systems' },
-      { number: 3, action: 'Identify and investigate discrepancies' },
-      { number: 4, action: 'Make correcting entries as needed' },
-      { number: 5, action: 'Document reconciliation results' },
-    ],
   },
   {
     id: 'ops-customer-data-updates',
@@ -478,12 +307,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '30 minutes',
     frequency: 'daily',
     typicalDepartments: ['Operations'],
-    defaultSteps: [
-      { number: 1, action: 'Review customer update requests' },
-      { number: 2, action: 'Verify supporting documentation' },
-      { number: 3, action: 'Update customer records in system' },
-      { number: 4, action: 'Send confirmation to customer' },
-    ],
   },
   {
     id: 'ops-digital-banking-support',
@@ -494,13 +317,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '1 hour',
     frequency: 'daily',
     typicalDepartments: ['Operations'],
-    defaultSteps: [
-      { number: 1, action: 'Review digital banking incident queue' },
-      { number: 2, action: 'Troubleshoot technical issues' },
-      { number: 3, action: 'Escalate complex issues to IT' },
-      { number: 4, action: 'Update customers on resolution status' },
-      { number: 5, action: 'Document issues and resolutions' },
-    ],
   },
   {
     id: 'ops-batch-processing',
@@ -511,13 +327,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '2 hours',
     frequency: 'daily',
     typicalDepartments: ['Operations'],
-    defaultSteps: [
-      { number: 1, action: 'Prepare batch files for processing' },
-      { number: 2, action: 'Initiate batch job execution' },
-      { number: 3, action: 'Monitor batch processing status' },
-      { number: 4, action: 'Review processing results and exceptions' },
-      { number: 5, action: 'Generate batch completion report' },
-    ],
   },
   {
     id: 'ops-exception-handling',
@@ -528,13 +337,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '2 hours',
     frequency: 'daily',
     typicalDepartments: ['Operations'],
-    defaultSteps: [
-      { number: 1, action: 'Review exception queue for failed transactions' },
-      { number: 2, action: 'Investigate root cause of each exception' },
-      { number: 3, action: 'Resolve or reprocess transactions' },
-      { number: 4, action: 'Escalate unresolved exceptions' },
-      { number: 5, action: 'Document exception resolutions' },
-    ],
   },
 
   // ========================================
@@ -549,12 +351,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '1 hour',
     frequency: 'weekly',
     typicalDepartments: ['Finance'],
-    defaultSteps: [
-      { number: 1, action: 'Review pending expense claims' },
-      { number: 2, action: 'Verify receipts and policy compliance' },
-      { number: 3, action: 'Approve or reject claims with comments' },
-      { number: 4, action: 'Process approved claims for payment' },
-    ],
   },
   {
     id: 'finance-audit-prep',
@@ -565,13 +361,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '4 hours',
     frequency: 'quarterly',
     typicalDepartments: ['Finance'],
-    defaultSteps: [
-      { number: 1, action: 'Review audit requirements and scope' },
-      { number: 2, action: 'Gather required financial documents' },
-      { number: 3, action: 'Prepare supporting schedules and reconciliations' },
-      { number: 4, action: 'Organize documents for auditor access' },
-      { number: 5, action: 'Coordinate with auditors on timeline' },
-    ],
   },
   {
     id: 'finance-cost-allocation',
@@ -582,13 +371,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '2 hours',
     frequency: 'monthly',
     typicalDepartments: ['Finance'],
-    defaultSteps: [
-      { number: 1, action: 'Review shared costs to be allocated' },
-      { number: 2, action: 'Calculate allocation percentages by department' },
-      { number: 3, action: 'Update cost allocation spreadsheet' },
-      { number: 4, action: 'Post allocation entries to general ledger' },
-      { number: 5, action: 'Share allocation report with department heads' },
-    ],
   },
   {
     id: 'finance-tax-compliance',
@@ -599,13 +381,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '3 hours',
     frequency: 'quarterly',
     typicalDepartments: ['Finance'],
-    defaultSteps: [
-      { number: 1, action: 'Gather financial data for tax period' },
-      { number: 2, action: 'Calculate tax liability' },
-      { number: 3, action: 'Prepare tax returns and schedules' },
-      { number: 4, action: 'Review with tax advisor' },
-      { number: 5, action: 'Submit filings and make payments' },
-    ],
   },
 
   // ========================================
@@ -620,13 +395,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '3 hours',
     frequency: 'ad-hoc',
     typicalDepartments: ['Human Resources'],
-    defaultSteps: [
-      { number: 1, action: 'Send offer letter and collect signed documents' },
-      { number: 2, action: 'Set up payroll and benefits enrollment' },
-      { number: 3, action: 'Coordinate with IT for equipment and access' },
-      { number: 4, action: 'Schedule orientation and training sessions' },
-      { number: 5, action: 'Assign onboarding buddy and check-in schedule' },
-    ],
   },
   {
     id: 'hr-payroll-processing',
@@ -637,13 +405,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '4 hours',
     frequency: 'monthly',
     typicalDepartments: ['Human Resources'],
-    defaultSteps: [
-      { number: 1, action: 'Collect timesheets and attendance data' },
-      { number: 2, action: 'Calculate salaries, bonuses, and deductions' },
-      { number: 3, action: 'Review payroll for accuracy' },
-      { number: 4, action: 'Submit payroll for bank transfer' },
-      { number: 5, action: 'Distribute payslips to employees' },
-    ],
   },
   {
     id: 'hr-performance-reviews',
@@ -654,13 +415,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '2 hours',
     frequency: 'quarterly',
     typicalDepartments: ['Human Resources'],
-    defaultSteps: [
-      { number: 1, action: 'Send review forms to managers and employees' },
-      { number: 2, action: 'Collect self-assessments and manager feedback' },
-      { number: 3, action: 'Schedule review meetings' },
-      { number: 4, action: 'Document review outcomes and development plans' },
-      { number: 5, action: 'Process any compensation changes' },
-    ],
   },
   {
     id: 'hr-leave-management',
@@ -671,13 +425,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '1 hour',
     frequency: 'weekly',
     typicalDepartments: ['Human Resources'],
-    defaultSteps: [
-      { number: 1, action: 'Review pending leave requests' },
-      { number: 2, action: 'Check leave balances and eligibility' },
-      { number: 3, action: 'Approve or request adjustments' },
-      { number: 4, action: 'Update leave tracking system' },
-      { number: 5, action: 'Notify employees of approval status' },
-    ],
   },
   {
     id: 'hr-offboarding',
@@ -688,13 +435,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '2 hours',
     frequency: 'ad-hoc',
     typicalDepartments: ['Human Resources'],
-    defaultSteps: [
-      { number: 1, action: 'Conduct exit interview' },
-      { number: 2, action: 'Coordinate equipment and access revocation with IT' },
-      { number: 3, action: 'Process final payroll and benefits' },
-      { number: 4, action: 'Collect company property' },
-      { number: 5, action: 'Update HR systems and file records' },
-    ],
   },
   {
     id: 'hr-training-coordination',
@@ -705,13 +445,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '2 hours',
     frequency: 'monthly',
     typicalDepartments: ['Human Resources'],
-    defaultSteps: [
-      { number: 1, action: 'Identify training needs and requirements' },
-      { number: 2, action: 'Schedule training sessions and book resources' },
-      { number: 3, action: 'Communicate training details to employees' },
-      { number: 4, action: 'Track attendance and completion' },
-      { number: 5, action: 'Collect feedback and update training records' },
-    ],
   },
   {
     id: 'hr-benefits-admin',
@@ -722,13 +455,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '2 hours',
     frequency: 'monthly',
     typicalDepartments: ['Human Resources'],
-    defaultSteps: [
-      { number: 1, action: 'Process new benefits enrollments' },
-      { number: 2, action: 'Handle benefits changes and updates' },
-      { number: 3, action: 'Coordinate with benefits providers' },
-      { number: 4, action: 'Respond to employee benefits questions' },
-      { number: 5, action: 'Update benefits documentation' },
-    ],
   },
   {
     id: 'hr-workforce-planning',
@@ -739,13 +465,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '3 hours',
     frequency: 'quarterly',
     typicalDepartments: ['Human Resources'],
-    defaultSteps: [
-      { number: 1, action: 'Review current headcount and open positions' },
-      { number: 2, action: 'Forecast hiring needs by department' },
-      { number: 3, action: 'Analyze budget vs staffing capacity' },
-      { number: 4, action: 'Create hiring plan and timeline' },
-      { number: 5, action: 'Present plan to leadership' },
-    ],
   },
 
   // ========================================
@@ -760,13 +479,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '30 minutes',
     frequency: 'daily',
     typicalDepartments: ['Engineering'],
-    defaultSteps: [
-      { number: 1, action: 'Review access request and approvals' },
-      { number: 2, action: 'Verify requestor identity and role' },
-      { number: 3, action: 'Create user accounts and assign permissions' },
-      { number: 4, action: 'Send credentials securely to user' },
-      { number: 5, action: 'Document access grant in audit log' },
-    ],
   },
   {
     id: 'it-change-management',
@@ -777,13 +489,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '2 hours',
     frequency: 'weekly',
     typicalDepartments: ['Engineering'],
-    defaultSteps: [
-      { number: 1, action: 'Review and approve change requests' },
-      { number: 2, action: 'Assess risk and impact of changes' },
-      { number: 3, action: 'Schedule implementation window' },
-      { number: 4, action: 'Coordinate with affected teams' },
-      { number: 5, action: 'Document change and post-implementation review' },
-    ],
   },
   {
     id: 'it-system-maintenance',
@@ -794,13 +499,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '3 hours',
     frequency: 'monthly',
     typicalDepartments: ['Engineering'],
-    defaultSteps: [
-      { number: 1, action: 'Review pending system updates and patches' },
-      { number: 2, action: 'Test updates in staging environment' },
-      { number: 3, action: 'Schedule maintenance window' },
-      { number: 4, action: 'Apply updates to production' },
-      { number: 5, action: 'Verify systems are operational post-update' },
-    ],
   },
   {
     id: 'it-security-monitoring',
@@ -811,13 +509,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '2 hours',
     frequency: 'daily',
     typicalDepartments: ['Engineering'],
-    defaultSteps: [
-      { number: 1, action: 'Review security alerts and logs' },
-      { number: 2, action: 'Investigate suspicious activity' },
-      { number: 3, action: 'Take remediation actions as needed' },
-      { number: 4, action: 'Update security incident log' },
-      { number: 5, action: 'Report critical issues to leadership' },
-    ],
   },
   {
     id: 'it-disaster-recovery',
@@ -828,13 +519,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '4 hours',
     frequency: 'quarterly',
     typicalDepartments: ['Engineering'],
-    defaultSteps: [
-      { number: 1, action: 'Review disaster recovery plan' },
-      { number: 2, action: 'Schedule DR test exercise' },
-      { number: 3, action: 'Execute recovery procedures in test environment' },
-      { number: 4, action: 'Document test results and gaps' },
-      { number: 5, action: 'Update DR plan based on findings' },
-    ],
   },
   {
     id: 'it-vendor-onboarding',
@@ -845,13 +529,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '2 hours',
     frequency: 'ad-hoc',
     typicalDepartments: ['Engineering'],
-    defaultSteps: [
-      { number: 1, action: 'Review vendor contract and SLA' },
-      { number: 2, action: 'Complete security and compliance review' },
-      { number: 3, action: 'Set up vendor access and integrations' },
-      { number: 4, action: 'Document vendor details and contacts' },
-      { number: 5, action: 'Schedule kickoff meeting' },
-    ],
   },
   {
     id: 'it-license-management',
@@ -862,13 +539,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '1 hour',
     frequency: 'monthly',
     typicalDepartments: ['Engineering'],
-    defaultSteps: [
-      { number: 1, action: 'Review license inventory and expiration dates' },
-      { number: 2, action: 'Identify licenses needing renewal' },
-      { number: 3, action: 'Verify user counts and license utilization' },
-      { number: 4, action: 'Process renewals or adjustments' },
-      { number: 5, action: 'Update license tracking system' },
-    ],
   },
 
   // ========================================
@@ -883,13 +553,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '30 minutes',
     frequency: 'daily',
     typicalDepartments: ['Sales'],
-    defaultSteps: [
-      { number: 1, action: 'Review new leads in CRM' },
-      { number: 2, action: 'Research company and decision makers' },
-      { number: 3, action: 'Score lead based on fit and intent' },
-      { number: 4, action: 'Route qualified leads to appropriate rep' },
-      { number: 5, action: 'Schedule initial outreach' },
-    ],
   },
   {
     id: 'sales-proposal-creation',
@@ -900,13 +563,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '2 hours',
     frequency: 'weekly',
     typicalDepartments: ['Sales'],
-    defaultSteps: [
-      { number: 1, action: 'Gather client requirements and pain points' },
-      { number: 2, action: 'Create customized solution proposal' },
-      { number: 3, action: 'Develop pricing and package options' },
-      { number: 4, action: 'Review proposal with sales manager' },
-      { number: 5, action: 'Send proposal and schedule follow-up' },
-    ],
   },
   {
     id: 'sales-contract-negotiation',
@@ -917,13 +573,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '3 hours',
     frequency: 'ad-hoc',
     typicalDepartments: ['Sales'],
-    defaultSteps: [
-      { number: 1, action: 'Review customer requirements and concerns' },
-      { number: 2, action: 'Draft contract terms and pricing' },
-      { number: 3, action: 'Negotiate terms with customer' },
-      { number: 4, action: 'Get internal approvals for concessions' },
-      { number: 5, action: 'Finalize and execute contract' },
-    ],
   },
   {
     id: 'sales-client-renewals',
@@ -934,13 +583,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '1 hour',
     frequency: 'monthly',
     typicalDepartments: ['Sales', 'Customer Success'],
-    defaultSteps: [
-      { number: 1, action: 'Identify contracts up for renewal' },
-      { number: 2, action: 'Review account health and satisfaction' },
-      { number: 3, action: 'Prepare renewal proposal with any upsells' },
-      { number: 4, action: 'Schedule renewal discussion with client' },
-      { number: 5, action: 'Process renewal and update CRM' },
-    ],
   },
   {
     id: 'sales-quote-generation',
@@ -951,12 +593,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '30 minutes',
     frequency: 'daily',
     typicalDepartments: ['Sales'],
-    defaultSteps: [
-      { number: 1, action: 'Collect product/service requirements from customer' },
-      { number: 2, action: 'Calculate pricing based on volume and terms' },
-      { number: 3, action: 'Generate formal quote document' },
-      { number: 4, action: 'Review and send to customer' },
-    ],
   },
   {
     id: 'sales-territory-management',
@@ -967,13 +603,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '2 hours',
     frequency: 'quarterly',
     typicalDepartments: ['Sales'],
-    defaultSteps: [
-      { number: 1, action: 'Review current territory assignments' },
-      { number: 2, action: 'Analyze territory performance and coverage' },
-      { number: 3, action: 'Rebalance territories based on opportunity' },
-      { number: 4, action: 'Communicate changes to sales team' },
-      { number: 5, action: 'Update CRM with new assignments' },
-    ],
   },
   {
     id: 'sales-commission-tracking',
@@ -984,13 +613,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '2 hours',
     frequency: 'monthly',
     typicalDepartments: ['Sales'],
-    defaultSteps: [
-      { number: 1, action: 'Pull closed deals and revenue data' },
-      { number: 2, action: 'Calculate commissions per rep' },
-      { number: 3, action: 'Review for accuracy and adjustments' },
-      { number: 4, action: 'Submit to finance for payment' },
-      { number: 5, action: 'Distribute commission statements to reps' },
-    ],
   },
 
   // ========================================
@@ -1005,13 +627,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '1 hour',
     frequency: 'daily',
     typicalDepartments: ['Customer Success'],
-    defaultSteps: [
-      { number: 1, action: 'Review complaint details and customer history' },
-      { number: 2, action: 'Investigate issue and root cause' },
-      { number: 3, action: 'Provide resolution or compensation' },
-      { number: 4, action: 'Follow up with customer to confirm satisfaction' },
-      { number: 5, action: 'Document complaint and resolution' },
-    ],
   },
   {
     id: 'cs-query-resolution',
@@ -1022,12 +637,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '30 minutes',
     frequency: 'daily',
     typicalDepartments: ['Customer Success'],
-    defaultSteps: [
-      { number: 1, action: 'Review customer query' },
-      { number: 2, action: 'Research answer in knowledge base' },
-      { number: 3, action: 'Provide detailed response to customer' },
-      { number: 4, action: 'Follow up if additional assistance needed' },
-    ],
   },
   {
     id: 'cs-account-inquiries',
@@ -1038,12 +647,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '30 minutes',
     frequency: 'daily',
     typicalDepartments: ['Customer Success'],
-    defaultSteps: [
-      { number: 1, action: 'Verify customer identity' },
-      { number: 2, action: 'Look up account information' },
-      { number: 3, action: 'Provide requested information or updates' },
-      { number: 4, action: 'Update customer record with inquiry details' },
-    ],
   },
   {
     id: 'cs-escalation-management',
@@ -1054,13 +657,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '1.5 hours',
     frequency: 'weekly',
     typicalDepartments: ['Customer Success'],
-    defaultSteps: [
-      { number: 1, action: 'Review escalated cases and priority' },
-      { number: 2, action: 'Coordinate with relevant teams for resolution' },
-      { number: 3, action: 'Keep customer informed of progress' },
-      { number: 4, action: 'Ensure timely resolution' },
-      { number: 5, action: 'Conduct post-resolution review' },
-    ],
   },
   {
     id: 'cs-feedback-collection',
@@ -1071,12 +667,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '1 hour',
     frequency: 'monthly',
     typicalDepartments: ['Customer Success'],
-    defaultSteps: [
-      { number: 1, action: 'Send feedback surveys to customers' },
-      { number: 2, action: 'Collect and analyze responses' },
-      { number: 3, action: 'Identify trends and improvement areas' },
-      { number: 4, action: 'Share insights with product and leadership' },
-    ],
   },
   {
     id: 'cs-sla-monitoring',
@@ -1087,13 +677,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '1 hour',
     frequency: 'weekly',
     typicalDepartments: ['Customer Success'],
-    defaultSteps: [
-      { number: 1, action: 'Pull SLA metrics (response time, resolution time)' },
-      { number: 2, action: 'Identify SLA breaches' },
-      { number: 3, action: 'Investigate root causes' },
-      { number: 4, action: 'Create improvement action plan' },
-      { number: 5, action: 'Report SLA performance to leadership' },
-    ],
   },
   {
     id: 'cs-knowledge-base-updates',
@@ -1104,13 +687,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '2 hours',
     frequency: 'monthly',
     typicalDepartments: ['Customer Success'],
-    defaultSteps: [
-      { number: 1, action: 'Review common customer questions' },
-      { number: 2, action: 'Identify gaps in knowledge base' },
-      { number: 3, action: 'Write or update articles' },
-      { number: 4, action: 'Review with team for accuracy' },
-      { number: 5, action: 'Publish and notify team of updates' },
-    ],
   },
   {
     id: 'cs-channel-management',
@@ -1121,12 +697,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '1 hour',
     frequency: 'daily',
     typicalDepartments: ['Customer Success'],
-    defaultSteps: [
-      { number: 1, action: 'Monitor all support channels (email, chat, phone)' },
-      { number: 2, action: 'Route inquiries to appropriate team members' },
-      { number: 3, action: 'Balance workload across channels' },
-      { number: 4, action: 'Track channel-specific metrics' },
-    ],
   },
 
   // ========================================
@@ -1141,13 +711,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '1 hour',
     frequency: 'daily',
     typicalDepartments: ['Marketing'],
-    defaultSteps: [
-      { number: 1, action: 'Review scheduled posts for the day' },
-      { number: 2, action: 'Monitor mentions and engagement' },
-      { number: 3, action: 'Respond to comments and messages' },
-      { number: 4, action: 'Share relevant content and updates' },
-      { number: 5, action: 'Track performance metrics' },
-    ],
   },
   {
     id: 'marketing-brand-guidelines',
@@ -1158,13 +721,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '2 hours',
     frequency: 'quarterly',
     typicalDepartments: ['Marketing'],
-    defaultSteps: [
-      { number: 1, action: 'Review current brand guidelines' },
-      { number: 2, action: 'Update with new brand elements or changes' },
-      { number: 3, action: 'Ensure compliance across marketing materials' },
-      { number: 4, action: 'Train team on guidelines' },
-      { number: 5, action: 'Distribute updated guidelines' },
-    ],
   },
   {
     id: 'marketing-event-management',
@@ -1175,13 +731,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '5 hours',
     frequency: 'quarterly',
     typicalDepartments: ['Marketing'],
-    defaultSteps: [
-      { number: 1, action: 'Define event goals and target audience' },
-      { number: 2, action: 'Plan event logistics (venue, catering, materials)' },
-      { number: 3, action: 'Create promotional campaign' },
-      { number: 4, action: 'Execute event and track attendance' },
-      { number: 5, action: 'Conduct post-event analysis and follow-up' },
-    ],
   },
   {
     id: 'marketing-analytics',
@@ -1192,13 +741,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '2 hours',
     frequency: 'monthly',
     typicalDepartments: ['Marketing'],
-    defaultSteps: [
-      { number: 1, action: 'Pull marketing metrics from all channels' },
-      { number: 2, action: 'Analyze performance vs goals' },
-      { number: 3, action: 'Identify top and bottom performers' },
-      { number: 4, action: 'Create insights and recommendations' },
-      { number: 5, action: 'Present findings to team and leadership' },
-    ],
   },
   {
     id: 'marketing-lead-nurturing',
@@ -1209,13 +751,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '2 hours',
     frequency: 'weekly',
     typicalDepartments: ['Marketing'],
-    defaultSteps: [
-      { number: 1, action: 'Segment leads by stage and interest' },
-      { number: 2, action: 'Create targeted email campaigns' },
-      { number: 3, action: 'Schedule and send campaigns' },
-      { number: 4, action: 'Monitor open and click rates' },
-      { number: 5, action: 'Adjust campaigns based on performance' },
-    ],
   },
   {
     id: 'marketing-partner-marketing',
@@ -1226,13 +761,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '3 hours',
     frequency: 'monthly',
     typicalDepartments: ['Marketing'],
-    defaultSteps: [
-      { number: 1, action: 'Identify co-marketing opportunities with partners' },
-      { number: 2, action: 'Develop joint marketing plan' },
-      { number: 3, action: 'Create co-branded materials' },
-      { number: 4, action: 'Execute campaign with partner' },
-      { number: 5, action: 'Track and share results' },
-    ],
   },
   {
     id: 'marketing-budget-tracking',
@@ -1243,13 +771,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '1 hour',
     frequency: 'monthly',
     typicalDepartments: ['Marketing'],
-    defaultSteps: [
-      { number: 1, action: 'Collect spend data from all campaigns' },
-      { number: 2, action: 'Compare actual vs budgeted spend' },
-      { number: 3, action: 'Calculate ROI for each campaign' },
-      { number: 4, action: 'Identify optimization opportunities' },
-      { number: 5, action: 'Report budget status to leadership' },
-    ],
   },
 
   // ========================================
@@ -1263,13 +784,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     deliverableType: 'document',
     estimatedTime: '2 hours',
     frequency: 'weekly',
-    defaultSteps: [
-      { number: 1, action: 'Review contract terms and obligations' },
-      { number: 2, action: 'Identify legal risks and red flags' },
-      { number: 3, action: 'Propose edits and negotiate terms' },
-      { number: 4, action: 'Get final approval from stakeholders' },
-      { number: 5, action: 'File executed contract' },
-    ],
   },
   {
     id: 'legal-regulatory-filings',
@@ -1279,13 +793,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     deliverableType: 'document',
     estimatedTime: '3 hours',
     frequency: 'quarterly',
-    defaultSteps: [
-      { number: 1, action: 'Review regulatory filing requirements' },
-      { number: 2, action: 'Gather required documentation' },
-      { number: 3, action: 'Prepare filing documents' },
-      { number: 4, action: 'Review with compliance team' },
-      { number: 5, action: 'Submit to regulatory authority' },
-    ],
   },
   {
     id: 'legal-litigation-management',
@@ -1295,13 +802,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     deliverableType: 'document',
     estimatedTime: '4 hours',
     frequency: 'ad-hoc',
-    defaultSteps: [
-      { number: 1, action: 'Review case details and evidence' },
-      { number: 2, action: 'Coordinate with external counsel' },
-      { number: 3, action: 'Prepare legal strategy and filings' },
-      { number: 4, action: 'Attend hearings and depositions' },
-      { number: 5, action: 'Document case outcomes and learnings' },
-    ],
   },
   {
     id: 'legal-policy-updates',
@@ -1311,13 +811,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     deliverableType: 'document',
     estimatedTime: '2 hours',
     frequency: 'quarterly',
-    defaultSteps: [
-      { number: 1, action: 'Review existing policies for updates needed' },
-      { number: 2, action: 'Draft policy changes' },
-      { number: 3, action: 'Review with stakeholders and get approval' },
-      { number: 4, action: 'Communicate updated policies to organization' },
-      { number: 5, action: 'Update policy repository' },
-    ],
   },
   {
     id: 'legal-advisory',
@@ -1327,12 +820,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     deliverableType: 'email',
     estimatedTime: '1 hour',
     frequency: 'weekly',
-    defaultSteps: [
-      { number: 1, action: 'Review legal question or issue' },
-      { number: 2, action: 'Research applicable laws and precedents' },
-      { number: 3, action: 'Provide legal advice and recommendations' },
-      { number: 4, action: 'Document guidance for future reference' },
-    ],
   },
   {
     id: 'legal-ip-management',
@@ -1342,13 +829,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     deliverableType: 'spreadsheet',
     estimatedTime: '1.5 hours',
     frequency: 'quarterly',
-    defaultSteps: [
-      { number: 1, action: 'Review IP portfolio and renewal dates' },
-      { number: 2, action: 'Process new IP applications' },
-      { number: 3, action: 'Monitor for potential IP infringement' },
-      { number: 4, action: 'Coordinate with IP counsel on issues' },
-      { number: 5, action: 'Update IP tracking system' },
-    ],
   },
   {
     id: 'legal-nda-processing',
@@ -1358,13 +838,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     deliverableType: 'document',
     estimatedTime: '30 minutes',
     frequency: 'weekly',
-    defaultSteps: [
-      { number: 1, action: 'Review NDA request and counterparty' },
-      { number: 2, action: 'Use standard template or negotiate terms' },
-      { number: 3, action: 'Get approvals from stakeholders' },
-      { number: 4, action: 'Execute NDA' },
-      { number: 5, action: 'File and track NDA' },
-    ],
   },
   {
     id: 'legal-research',
@@ -1374,13 +847,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     deliverableType: 'document',
     estimatedTime: '2 hours',
     frequency: 'ad-hoc',
-    defaultSteps: [
-      { number: 1, action: 'Define research question and scope' },
-      { number: 2, action: 'Research case law and regulations' },
-      { number: 3, action: 'Analyze findings and implications' },
-      { number: 4, action: 'Prepare research memo' },
-      { number: 5, action: 'Present findings to stakeholders' },
-    ],
   },
 
   // ========================================
@@ -1394,13 +860,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     deliverableType: 'report',
     estimatedTime: '2 hours',
     frequency: 'weekly',
-    defaultSteps: [
-      { number: 1, action: 'Review regulatory news and updates' },
-      { number: 2, action: 'Assess impact on organization' },
-      { number: 3, action: 'Document changes and requirements' },
-      { number: 4, action: 'Communicate to affected teams' },
-      { number: 5, action: 'Update compliance procedures' },
-    ],
   },
   {
     id: 'compliance-testing',
@@ -1410,13 +869,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     deliverableType: 'report',
     estimatedTime: '3 hours',
     frequency: 'quarterly',
-    defaultSteps: [
-      { number: 1, action: 'Define testing scope and samples' },
-      { number: 2, action: 'Execute compliance tests' },
-      { number: 3, action: 'Document findings and exceptions' },
-      { number: 4, action: 'Prepare remediation plan for issues' },
-      { number: 5, action: 'Report results to management' },
-    ],
   },
   {
     id: 'compliance-aml-screening',
@@ -1426,13 +878,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     deliverableType: 'report',
     estimatedTime: '2 hours',
     frequency: 'daily',
-    defaultSteps: [
-      { number: 1, action: 'Review flagged transactions' },
-      { number: 2, action: 'Investigate customer and transaction patterns' },
-      { number: 3, action: 'Document findings and risk assessment' },
-      { number: 4, action: 'Escalate suspicious activity as needed' },
-      { number: 5, action: 'Update AML case management system' },
-    ],
   },
   {
     id: 'compliance-sanctions-checks',
@@ -1442,13 +887,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     deliverableType: 'report',
     estimatedTime: '1 hour',
     frequency: 'daily',
-    defaultSteps: [
-      { number: 1, action: 'Screen customers and transactions against sanctions lists' },
-      { number: 2, action: 'Investigate potential matches' },
-      { number: 3, action: 'Document screening results' },
-      { number: 4, action: 'Block or escalate sanctioned entities' },
-      { number: 5, action: 'Update sanctions monitoring system' },
-    ],
   },
   {
     id: 'compliance-reporting',
@@ -1458,13 +896,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     deliverableType: 'report',
     estimatedTime: '3 hours',
     frequency: 'monthly',
-    defaultSteps: [
-      { number: 1, action: 'Gather compliance data and metrics' },
-      { number: 2, action: 'Prepare regulatory reports' },
-      { number: 3, action: 'Review with compliance officer' },
-      { number: 4, action: 'Submit to regulators' },
-      { number: 5, action: 'File reports and confirmations' },
-    ],
   },
   {
     id: 'compliance-policy-enforcement',
@@ -1474,13 +905,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     deliverableType: 'report',
     estimatedTime: '2 hours',
     frequency: 'monthly',
-    defaultSteps: [
-      { number: 1, action: 'Review policy compliance metrics' },
-      { number: 2, action: 'Identify violations and exceptions' },
-      { number: 3, action: 'Investigate root causes' },
-      { number: 4, action: 'Implement corrective actions' },
-      { number: 5, action: 'Report on policy adherence' },
-    ],
   },
   {
     id: 'compliance-training-tracking',
@@ -1490,13 +914,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     deliverableType: 'spreadsheet',
     estimatedTime: '1 hour',
     frequency: 'monthly',
-    defaultSteps: [
-      { number: 1, action: 'Review training completion rates' },
-      { number: 2, action: 'Identify employees needing training' },
-      { number: 3, action: 'Send reminders to complete training' },
-      { number: 4, action: 'Track and document completion' },
-      { number: 5, action: 'Report training status to management' },
-    ],
   },
   {
     id: 'compliance-incident-reporting',
@@ -1506,13 +923,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     deliverableType: 'document',
     estimatedTime: '2 hours',
     frequency: 'ad-hoc',
-    defaultSteps: [
-      { number: 1, action: 'Document incident details' },
-      { number: 2, action: 'Assess severity and regulatory implications' },
-      { number: 3, action: 'Prepare incident report' },
-      { number: 4, action: 'Submit to regulators if required' },
-      { number: 5, action: 'Implement corrective measures' },
-    ],
   },
   {
     id: 'compliance-vendor-due-diligence',
@@ -1522,13 +932,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     deliverableType: 'document',
     estimatedTime: '3 hours',
     frequency: 'quarterly',
-    defaultSteps: [
-      { number: 1, action: 'Review vendor compliance documentation' },
-      { number: 2, action: 'Assess vendor risk profile' },
-      { number: 3, action: 'Conduct site visits or audits if needed' },
-      { number: 4, action: 'Document findings and risk rating' },
-      { number: 5, action: 'Approve or require remediation' },
-    ],
   },
 
   // ========================================
@@ -1542,13 +945,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     deliverableType: 'document',
     estimatedTime: '3 hours',
     frequency: 'quarterly',
-    defaultSteps: [
-      { number: 1, action: 'Identify potential risks across business' },
-      { number: 2, action: 'Assess likelihood and impact of each risk' },
-      { number: 3, action: 'Document risk register and ratings' },
-      { number: 4, action: 'Propose risk mitigation strategies' },
-      { number: 5, action: 'Present to risk committee' },
-    ],
   },
   {
     id: 'risk-credit-analysis',
@@ -1558,13 +954,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     deliverableType: 'document',
     estimatedTime: '2 hours',
     frequency: 'ad-hoc',
-    defaultSteps: [
-      { number: 1, action: 'Gather client financial statements' },
-      { number: 2, action: 'Analyze financial ratios and trends' },
-      { number: 3, action: 'Review credit bureau reports' },
-      { number: 4, action: 'Assign credit rating and limits' },
-      { number: 5, action: 'Document credit decision' },
-    ],
   },
   {
     id: 'risk-fraud-detection',
@@ -1574,13 +963,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     deliverableType: 'report',
     estimatedTime: '2 hours',
     frequency: 'daily',
-    defaultSteps: [
-      { number: 1, action: 'Review fraud alerts and suspicious patterns' },
-      { number: 2, action: 'Investigate flagged transactions' },
-      { number: 3, action: 'Gather evidence and documentation' },
-      { number: 4, action: 'Take preventive action (block accounts, etc.)' },
-      { number: 5, action: 'Report to authorities if needed' },
-    ],
   },
   {
     id: 'risk-reporting',
@@ -1590,13 +972,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     deliverableType: 'report',
     estimatedTime: '2 hours',
     frequency: 'monthly',
-    defaultSteps: [
-      { number: 1, action: 'Collect risk metrics and data' },
-      { number: 2, action: 'Analyze key risk indicators' },
-      { number: 3, action: 'Prepare executive risk dashboard' },
-      { number: 4, action: 'Highlight emerging risks and trends' },
-      { number: 5, action: 'Present to leadership and board' },
-    ],
   },
   {
     id: 'risk-stress-testing',
@@ -1606,13 +981,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     deliverableType: 'report',
     estimatedTime: '4 hours',
     frequency: 'quarterly',
-    defaultSteps: [
-      { number: 1, action: 'Define stress test scenarios' },
-      { number: 2, action: 'Gather relevant data and assumptions' },
-      { number: 3, action: 'Run stress test models' },
-      { number: 4, action: 'Analyze results and impact' },
-      { number: 5, action: 'Document findings and recommendations' },
-    ],
   },
   {
     id: 'risk-incident-response',
@@ -1622,13 +990,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     deliverableType: 'document',
     estimatedTime: '3 hours',
     frequency: 'ad-hoc',
-    defaultSteps: [
-      { number: 1, action: 'Assess incident severity and impact' },
-      { number: 2, action: 'Activate incident response team' },
-      { number: 3, action: 'Contain and mitigate incident' },
-      { number: 4, action: 'Communicate to stakeholders' },
-      { number: 5, action: 'Conduct post-incident review' },
-    ],
   },
   {
     id: 'risk-control-testing',
@@ -1638,13 +999,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     deliverableType: 'report',
     estimatedTime: '3 hours',
     frequency: 'quarterly',
-    defaultSteps: [
-      { number: 1, action: 'Identify controls to test' },
-      { number: 2, action: 'Execute control tests' },
-      { number: 3, action: 'Document control effectiveness' },
-      { number: 4, action: 'Identify control gaps or weaknesses' },
-      { number: 5, action: 'Recommend improvements' },
-    ],
   },
   {
     id: 'risk-appetite-monitoring',
@@ -1654,13 +1008,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     deliverableType: 'report',
     estimatedTime: '1.5 hours',
     frequency: 'monthly',
-    defaultSteps: [
-      { number: 1, action: 'Review risk appetite framework' },
-      { number: 2, action: 'Monitor risk metrics against limits' },
-      { number: 3, action: 'Identify breaches or near-breaches' },
-      { number: 4, action: 'Escalate issues to risk committee' },
-      { number: 5, action: 'Document monitoring results' },
-    ],
   },
 
   // ========================================
@@ -1675,13 +1022,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '2 hours',
     frequency: 'ad-hoc',
     typicalDepartments: ['Product'],
-    defaultSteps: [
-      { number: 1, action: 'Interview stakeholders and users' },
-      { number: 2, action: 'Document functional and non-functional requirements' },
-      { number: 3, action: 'Prioritize requirements' },
-      { number: 4, action: 'Review with engineering and design' },
-      { number: 5, action: 'Get sign-off from stakeholders' },
-    ],
   },
   {
     id: 'product-user-research',
@@ -1692,13 +1032,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '4 hours',
     frequency: 'monthly',
     typicalDepartments: ['Product'],
-    defaultSteps: [
-      { number: 1, action: 'Define research questions and goals' },
-      { number: 2, action: 'Recruit participants' },
-      { number: 3, action: 'Conduct interviews or surveys' },
-      { number: 4, action: 'Analyze findings and insights' },
-      { number: 5, action: 'Share research report with team' },
-    ],
   },
   {
     id: 'product-feature-testing',
@@ -1709,13 +1042,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '2 hours',
     frequency: 'weekly',
     typicalDepartments: ['Product'],
-    defaultSteps: [
-      { number: 1, action: 'Review feature requirements and acceptance criteria' },
-      { number: 2, action: 'Execute test cases and scenarios' },
-      { number: 3, action: 'Document bugs and issues' },
-      { number: 4, action: 'Verify fixes and retest' },
-      { number: 5, action: 'Approve for release' },
-    ],
   },
   {
     id: 'product-launch',
@@ -1726,13 +1052,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '5 hours',
     frequency: 'quarterly',
     typicalDepartments: ['Product'],
-    defaultSteps: [
-      { number: 1, action: 'Create launch plan and timeline' },
-      { number: 2, action: 'Coordinate with marketing on messaging' },
-      { number: 3, action: 'Prepare internal training and documentation' },
-      { number: 4, action: 'Execute launch and monitor rollout' },
-      { number: 5, action: 'Gather feedback and metrics' },
-    ],
   },
   {
     id: 'product-backlog-grooming',
@@ -1743,13 +1062,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '1.5 hours',
     frequency: 'weekly',
     typicalDepartments: ['Product'],
-    defaultSteps: [
-      { number: 1, action: 'Review backlog items' },
-      { number: 2, action: 'Refine user stories and acceptance criteria' },
-      { number: 3, action: 'Prioritize based on value and effort' },
-      { number: 4, action: 'Remove outdated or irrelevant items' },
-      { number: 5, action: 'Prepare top items for sprint planning' },
-    ],
   },
   {
     id: 'product-competitor-analysis',
@@ -1760,13 +1072,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '2 hours',
     frequency: 'monthly',
     typicalDepartments: ['Product'],
-    defaultSteps: [
-      { number: 1, action: 'Research competitor product updates' },
-      { number: 2, action: 'Compare features and positioning' },
-      { number: 3, action: 'Analyze pricing and market strategy' },
-      { number: 4, action: 'Identify gaps and opportunities' },
-      { number: 5, action: 'Share insights with team' },
-    ],
   },
   {
     id: 'product-beta-management',
@@ -1777,13 +1082,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '3 hours',
     frequency: 'ad-hoc',
     typicalDepartments: ['Product'],
-    defaultSteps: [
-      { number: 1, action: 'Recruit and onboard beta participants' },
-      { number: 2, action: 'Distribute beta version and instructions' },
-      { number: 3, action: 'Collect feedback and bug reports' },
-      { number: 4, action: 'Analyze feedback and prioritize fixes' },
-      { number: 5, action: 'Thank participants and share outcomes' },
-    ],
   },
   {
     id: 'product-feedback-synthesis',
@@ -1794,13 +1092,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     estimatedTime: '2 hours',
     frequency: 'monthly',
     typicalDepartments: ['Product'],
-    defaultSteps: [
-      { number: 1, action: 'Collect feedback from all sources' },
-      { number: 2, action: 'Categorize and tag feedback' },
-      { number: 3, action: 'Identify common themes and requests' },
-      { number: 4, action: 'Prioritize based on impact and frequency' },
-      { number: 5, action: 'Update roadmap with feedback insights' },
-    ],
   },
 
   // ========================================
@@ -1814,12 +1105,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     deliverableType: 'document',
     estimatedTime: '30 minutes',
     frequency: 'weekly',
-    defaultSteps: [
-      { number: 1, action: 'Review action items from last meeting' },
-      { number: 2, action: 'Gather updates from team members' },
-      { number: 3, action: 'Create agenda with discussion topics' },
-      { number: 4, action: 'Send agenda to team 24h in advance' },
-    ],
   },
   {
     id: 'general-1on1-prep',
@@ -1829,11 +1114,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     deliverableType: 'document',
     estimatedTime: '15 minutes',
     frequency: 'weekly',
-    defaultSteps: [
-      { number: 1, action: 'Review previous 1-on-1 notes and action items' },
-      { number: 2, action: 'Prepare topics to discuss (wins, blockers, feedback)' },
-      { number: 3, action: 'Add items to shared doc' },
-    ],
   },
   {
     id: 'general-project-status',
@@ -1843,12 +1123,6 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
     deliverableType: 'email',
     estimatedTime: '30 minutes',
     frequency: 'weekly',
-    defaultSteps: [
-      { number: 1, action: 'Review project milestones and progress' },
-      { number: 2, action: 'Identify accomplishments, blockers, and risks' },
-      { number: 3, action: 'Draft status email with RAG status' },
-      { number: 4, action: 'Send to stakeholders and project team' },
-    ],
   },
 ];
 
