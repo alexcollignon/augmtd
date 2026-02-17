@@ -549,14 +549,14 @@ For each meeting with link:
 
 #### 2. Bot Lifecycle
 ```
-scheduled → joining → active → ended → transcript fetched
+scheduled → joining → joined_recording/active → ended → transcript fetched
 
-scheduled:  Bot created, waiting for join_at time
-joining:    Bot is requesting to join meeting
-active:     Bot in meeting, recording transcript
-ended:      Meeting finished, transcription processing
-completed:  Transcript ready for retrieval
-fatal_error: Bot failed (denied access, invalid link, etc.)
+scheduled:        Bot created, waiting for join_at time
+joining:          Bot is requesting to join meeting
+joined_recording: Bot successfully joined and is recording (Attendee API state)
+active:           Bot in meeting, recording transcript (alternative state)
+ended:            Meeting finished, transcription processing
+fatal_error:      Bot failed (denied access, invalid link, etc.)
 ```
 
 #### 3. Transcript Polling
@@ -920,6 +920,21 @@ const result = await pollAndFetchTranscripts(supabaseAdmin);
 - Database trigger auto-calculates status on insert/update
 - Cron job runs every 5 minutes to update all meeting statuses
 - Status transitions: `upcoming` → `starting_soon` (60 min before) → `in_progress` → `completed`
+
+#### Issue: Transcripts not fetching (bot in 'joined_recording' state)
+**Cause:** Attendee API returns `'joined_recording'` state but polling query didn't include it
+**Solution:** ✅ Fixed - Added `'joined_recording'` to polling query and TypeScript interface
+
+```typescript
+// Before (broken):
+.in('attendee_bot_state', ['scheduled', 'joining', 'active', 'ended'])
+
+// After (fixed):
+.in('attendee_bot_state', ['scheduled', 'joining', 'joined_recording', 'active', 'ended'])
+```
+
+**Actual bot lifecycle from Attendee API:**
+- `scheduled` → `joining` → `joined_recording` → `ended` → transcript ready
 
 ### Testing
 

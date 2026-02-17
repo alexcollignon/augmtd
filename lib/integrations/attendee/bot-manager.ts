@@ -123,6 +123,8 @@ export async function createBotsForCalendarEvents(
 /**
  * Poll bot status and fetch completed transcripts
  * Should be run periodically (e.g., every 5 minutes)
+ *
+ * Bot lifecycle: scheduled → joining → joined_recording/active → ended → transcript fetched
  */
 export async function pollAndFetchTranscripts(
   supabase: SupabaseClient
@@ -132,7 +134,7 @@ export async function pollAndFetchTranscripts(
     .from('calendar_events')
     .select('id, user_id, title, attendee_bot_id, attendee_bot_state, start_time, end_time')
     .not('attendee_bot_id', 'is', null)
-    .in('attendee_bot_state', ['scheduled', 'joining', 'active', 'ended'])
+    .in('attendee_bot_state', ['scheduled', 'joining', 'joined_recording', 'active', 'ended'])
     .order('start_time', { ascending: false })
     .limit(100);
 

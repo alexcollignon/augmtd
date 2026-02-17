@@ -10,7 +10,7 @@ interface AttendeeBot {
   id: string;
   meeting_url: string;
   bot_name: string;
-  state: 'scheduled' | 'joining' | 'active' | 'ended' | 'failed' | 'fatal_error';
+  state: 'scheduled' | 'joining' | 'joined_recording' | 'active' | 'ended' | 'failed' | 'fatal_error';
   transcription_state: 'not_started' | 'in_progress' | 'complete' | 'failed'; // Note: API returns 'complete' not 'completed'
 }
 
