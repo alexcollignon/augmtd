@@ -13,6 +13,10 @@ import {
   EnvelopeIcon,
   ClockIcon,
   CalendarIcon,
+  TrashIcon,
+  ArrowUpIcon,
+  ArrowDownIcon,
+  PencilIcon,
 } from '@heroicons/react/24/outline';
 
 interface WorkPageClientProps {
@@ -25,6 +29,13 @@ export function WorkPageClient({ userEmail }: WorkPageClientProps) {
   const [isProcessing, setIsProcessing] = useState(false);
   const [executionPlan, setExecutionPlan] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
+  const [isCreating, setIsCreating] = useState(false);
+
+  // Editable plan state
+  const [editableDescription, setEditableDescription] = useState('');
+  const [editableSteps, setEditableSteps] = useState<any[]>([]);
+  const [editableDeadline, setEditableDeadline] = useState('');
+  const [editableTime, setEditableTime] = useState('');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -49,6 +60,11 @@ export function WorkPageClient({ userEmail }: WorkPageClientProps) {
 
       if (result.executionPlan) {
         setExecutionPlan(result.executionPlan);
+        // Initialize editable state
+        setEditableDescription(result.executionPlan.deliverable_description || '');
+        setEditableSteps(result.executionPlan.steps || []);
+        setEditableDeadline(result.executionPlan.deadline || '');
+        setEditableTime(result.executionPlan.estimated_time || '');
       } else {
         // If not executable, just go to inbox
         router.push('/inbox');
@@ -61,13 +77,25 @@ export function WorkPageClient({ userEmail }: WorkPageClientProps) {
   };
 
   const handleCreateInboxItem = async () => {
+    setIsCreating(true);
+    setError(null);
+
     try {
+      // Use edited values
+      const finalPlan = {
+        ...executionPlan,
+        deliverable_description: editableDescription,
+        steps: editableSteps,
+        deadline: editableDeadline,
+        estimated_time: editableTime,
+      };
+
       const response = await fetch('/api/work/create-item', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           description: input,
-          executionPlan,
+          executionPlan: finalPlan,
         }),
       });
 
@@ -78,7 +106,49 @@ export function WorkPageClient({ userEmail }: WorkPageClientProps) {
       router.push('/inbox');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create work item');
+    } finally {
+      setIsCreating(false);
     }
+  };
+
+  const updateStep = (index: number, field: string, value: string) => {
+    const newSteps = [...editableSteps];
+    newSteps[index] = { ...newSteps[index], [field]: value };
+    setEditableSteps(newSteps);
+  };
+
+  const addStep = () => {
+    const newStep = {
+      number: editableSteps.length + 1,
+      action: '',
+      skill: '',
+      status: 'pending',
+    };
+    setEditableSteps([...editableSteps, newStep]);
+  };
+
+  const removeStep = (index: number) => {
+    const newSteps = editableSteps.filter((_, i) => i !== index);
+    // Renumber steps
+    const renumbered = newSteps.map((step, i) => ({ ...step, number: i + 1 }));
+    setEditableSteps(renumbered);
+  };
+
+  const moveStep = (index: number, direction: 'up' | 'down') => {
+    if (
+      (direction === 'up' && index === 0) ||
+      (direction === 'down' && index === editableSteps.length - 1)
+    ) {
+      return;
+    }
+
+    const newSteps = [...editableSteps];
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    [newSteps[index], newSteps[targetIndex]] = [newSteps[targetIndex], newSteps[index]];
+
+    // Renumber steps
+    const renumbered = newSteps.map((step, i) => ({ ...step, number: i + 1 }));
+    setEditableSteps(renumbered);
   };
 
   const getDeliverableIcon = (type: string) => {
@@ -185,11 +255,11 @@ export function WorkPageClient({ userEmail }: WorkPageClientProps) {
               </div>
             </div>
           ) : (
-            /* Execution Plan Display */
+            /* Execution Plan Display - Editable */
             <div className="bg-white border border-neutral-200 shadow-sm overflow-hidden">
               {/* Plan Details */}
               <div className="p-8 space-y-6">
-                {/* Header */}
+                {/* Header - Editable */}
                 <div className="flex items-start gap-4 pb-6 border-b border-neutral-200">
                   {(() => {
                     const Icon = getDeliverableIcon(executionPlan.deliverable_type);
@@ -200,63 +270,129 @@ export function WorkPageClient({ userEmail }: WorkPageClientProps) {
                     );
                   })()}
                   <div className="flex-1">
-                    <h2 className="text-[17px] font-bold text-neutral-900 mb-1">
-                      Work Plan Ready
-                    </h2>
-                    <p className="text-[15px] text-neutral-600">
-                      {executionPlan.deliverable_description}
-                    </p>
+                    <div className="flex items-center gap-2 mb-2">
+                      <PencilIcon className="w-4 h-4 text-neutral-400" />
+                      <h2 className="text-[13px] font-semibold text-neutral-500 uppercase tracking-wide">
+                        Deliverable
+                      </h2>
+                    </div>
+                    <input
+                      type="text"
+                      value={editableDescription}
+                      onChange={(e) => setEditableDescription(e.target.value)}
+                      className="w-full text-[15px] font-medium text-neutral-900 border-b border-transparent hover:border-neutral-300 focus:border-indigo-500 focus:outline-none py-1 transition-colors"
+                      placeholder="What will be created..."
+                    />
                   </div>
                 </div>
 
-                {/* Metadata */}
-                {(executionPlan.estimated_time || executionPlan.deadline) && (
-                  <div className="flex items-center gap-6 text-[13px]">
-                    {executionPlan.estimated_time && (
-                      <div className="flex items-center gap-2 text-neutral-600">
-                        <ClockIcon className="w-4 h-4 text-neutral-400" />
-                        <span className="font-medium">Time:</span>
-                        <span>{executionPlan.estimated_time}</span>
-                      </div>
-                    )}
-                    {executionPlan.deadline && (
-                      <div className="flex items-center gap-2 text-neutral-600">
-                        <CalendarIcon className="w-4 h-4 text-neutral-400" />
-                        <span className="font-medium">Deadline:</span>
-                        <span>{new Date(executionPlan.deadline).toLocaleDateString()}</span>
-                      </div>
-                    )}
+                {/* Metadata - Editable */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2">
+                      Estimated Time
+                    </label>
+                    <input
+                      type="text"
+                      value={editableTime}
+                      onChange={(e) => setEditableTime(e.target.value)}
+                      className="w-full px-3 py-2 border border-neutral-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-[14px] text-neutral-900"
+                      placeholder="e.g., 2 hours"
+                    />
                   </div>
-                )}
+                  <div>
+                    <label className="block text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2">
+                      Deadline
+                    </label>
+                    <input
+                      type="date"
+                      value={editableDeadline}
+                      onChange={(e) => setEditableDeadline(e.target.value)}
+                      className="w-full px-3 py-2 border border-neutral-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-[14px] text-neutral-900"
+                    />
+                  </div>
+                </div>
 
-                {/* Steps */}
+                {/* Steps - Editable */}
                 <div>
-                  <h3 className="text-[11px] font-semibold text-neutral-600 uppercase tracking-wide mb-4">
-                    Execution Steps ({executionPlan.steps.length})
-                  </h3>
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-[11px] font-semibold text-neutral-600 uppercase tracking-wide">
+                      Execution Steps ({editableSteps.length})
+                    </h3>
+                    <button
+                      onClick={addStep}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium text-indigo-700 hover:text-indigo-800 hover:bg-indigo-50 transition-colors"
+                    >
+                      <PlusIcon className="w-4 h-4" />
+                      Add Step
+                    </button>
+                  </div>
+
                   <div className="space-y-3">
-                    {executionPlan.steps.map((step: any, index: number) => (
+                    {editableSteps.map((step: any, index: number) => (
                       <div
                         key={index}
-                        className="flex items-start gap-4 p-4 bg-neutral-50 border border-neutral-200"
+                        className="flex items-start gap-3 p-4 bg-neutral-50 border border-neutral-200 hover:border-neutral-300 transition-colors group"
                       >
+                        {/* Step Number */}
                         <div className="flex-shrink-0 w-7 h-7 bg-indigo-100 text-indigo-700 font-semibold flex items-center justify-center text-[13px]">
                           {step.number}
                         </div>
-                        <div className="flex-1">
-                          <p className="text-[14px] font-medium text-neutral-900 mb-1">
-                            {step.action}
-                          </p>
-                          {step.skill && (
-                            <p className="text-[12px] text-neutral-500">
-                              Skill: <span className="font-medium">{step.skill}</span>
-                            </p>
-                          )}
+
+                        {/* Step Content - Editable */}
+                        <div className="flex-1 space-y-2">
+                          <textarea
+                            value={step.action}
+                            onChange={(e) => updateStep(index, 'action', e.target.value)}
+                            className="w-full text-[14px] text-neutral-900 bg-transparent border-b border-transparent hover:border-neutral-300 focus:border-indigo-500 focus:outline-none resize-none"
+                            placeholder="Describe what to do..."
+                            rows={2}
+                          />
+                          <input
+                            type="text"
+                            value={step.skill || ''}
+                            onChange={(e) => updateStep(index, 'skill', e.target.value)}
+                            className="w-full text-[12px] text-neutral-600 bg-transparent border-b border-transparent hover:border-neutral-300 focus:border-indigo-500 focus:outline-none"
+                            placeholder="Skill needed (optional)"
+                          />
+                        </div>
+
+                        {/* Step Actions */}
+                        <div className="flex-shrink-0 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button
+                            onClick={() => moveStep(index, 'up')}
+                            disabled={index === 0}
+                            className="p-1.5 text-neutral-500 hover:text-neutral-700 hover:bg-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                            title="Move up"
+                          >
+                            <ArrowUpIcon className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => moveStep(index, 'down')}
+                            disabled={index === editableSteps.length - 1}
+                            className="p-1.5 text-neutral-500 hover:text-neutral-700 hover:bg-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                            title="Move down"
+                          >
+                            <ArrowDownIcon className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => removeStep(index)}
+                            className="p-1.5 text-red-500 hover:text-red-700 hover:bg-white transition-colors"
+                            title="Remove step"
+                          >
+                            <TrashIcon className="w-4 h-4" />
+                          </button>
                         </div>
                       </div>
                     ))}
                   </div>
                 </div>
+
+                {error && (
+                  <div className="p-4 bg-red-50 border border-red-200">
+                    <p className="text-[13px] text-red-700">{error}</p>
+                  </div>
+                )}
 
                 {/* Actions */}
                 <div className="pt-6 border-t border-neutral-200 flex items-center gap-3">
@@ -264,6 +400,10 @@ export function WorkPageClient({ userEmail }: WorkPageClientProps) {
                     onClick={() => {
                       setExecutionPlan(null);
                       setInput('');
+                      setEditableDescription('');
+                      setEditableSteps([]);
+                      setEditableDeadline('');
+                      setEditableTime('');
                     }}
                     className="px-6 py-3 border border-neutral-300 text-neutral-700 text-[14px] font-semibold hover:bg-neutral-50 transition-colors"
                   >
@@ -271,10 +411,20 @@ export function WorkPageClient({ userEmail }: WorkPageClientProps) {
                   </button>
                   <button
                     onClick={handleCreateInboxItem}
-                    className="flex-1 inline-flex items-center justify-center gap-2 px-6 py-3 bg-indigo-600 text-white text-[14px] font-semibold hover:bg-indigo-700 transition-all shadow-sm hover:shadow"
+                    disabled={isCreating || !editableDescription || editableSteps.length === 0}
+                    className="flex-1 inline-flex items-center justify-center gap-2 px-6 py-3 bg-indigo-600 text-white text-[14px] font-semibold hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm hover:shadow"
                   >
-                    Add to Inbox
-                    <ArrowRightIcon className="w-5 h-5" />
+                    {isCreating ? (
+                      <>
+                        <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                        Creating...
+                      </>
+                    ) : (
+                      <>
+                        Add to Inbox
+                        <ArrowRightIcon className="w-5 h-5" />
+                      </>
+                    )}
                   </button>
                 </div>
               </div>
