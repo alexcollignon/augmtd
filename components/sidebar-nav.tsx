@@ -6,6 +6,7 @@ import { usePathname } from 'next/navigation';
 import {
   InboxIcon,
   ClockIcon,
+  PlusCircleIcon,
   Cog6ToothIcon,
   ArrowRightOnRectangleIcon,
   UserCircleIcon
@@ -20,6 +21,7 @@ export default function SidebarNav({ userEmail }: SidebarNavProps) {
 
   const mainNavigation = [
     { name: 'Prepared Work', href: '/inbox', icon: InboxIcon },
+    { name: 'Create Work', href: '/work', icon: PlusCircleIcon },
     { name: 'Activity Log', href: '/activity', icon: ClockIcon },
   ];
 
