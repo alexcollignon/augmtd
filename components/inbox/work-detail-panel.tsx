@@ -558,96 +558,20 @@ export default function WorkDetailPanel({ item, isOpen, onClose, batchItems }: W
                         </div>
                       )}
 
-                      {/* Why This Matters - Only for non-executable items */}
-                      {!isBatch && !isExecutable(item) && item.why_matters && (
+                      {/* Key Points */}
+                      {!isBatch && sourceData?.keyPoints && sourceData.keyPoints.length > 0 && (
                         <div>
                           <h3 className="text-[11px] font-semibold text-neutral-600 uppercase tracking-wide mb-2">
-                            Why This Matters
+                            Key Points
                           </h3>
-                          <p className="text-[14px] text-neutral-900 leading-relaxed">
-                            {item.why_matters}
-                          </p>
-                        </div>
-                      )}
-
-                      {/* Suggested Actions - Only for non-executable items */}
-                      {!isBatch && !isExecutable(item) && (
-                        <div>
-                          <h3 className="text-[11px] font-semibold text-neutral-600 uppercase tracking-wide mb-3">
-                            What You Should Do
-                          </h3>
-                          <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
-                            {sourceData?.draft ? (
-                              <div className="space-y-2">
-                                <div className="flex items-start gap-2">
-                                  <CheckCircleIcon className="w-5 h-5 text-indigo-600 flex-shrink-0 mt-0.5" />
-                                  <div>
-                                    <p className="text-[13px] font-medium text-indigo-900">
-                                      Review the prepared response
-                                    </p>
-                                    <p className="text-[12px] text-indigo-700 mt-1">
-                                      AI has drafted a reply for you. Review it, make any edits, and send when ready.
-                                    </p>
-                                  </div>
-                                </div>
-                              </div>
-                            ) : (
-                              <div className="space-y-3">
-                                {item.work_state === 'action_required' && (
-                                  <div className="flex items-start gap-2">
-                                    <ExclamationCircleIcon className="w-5 h-5 text-orange-600 flex-shrink-0 mt-0.5" />
-                                    <div>
-                                      <p className="text-[13px] font-medium text-neutral-900">
-                                        Action needed
-                                      </p>
-                                      <p className="text-[12px] text-neutral-700 mt-1">
-                                        This requires you to take action outside of email (click a link, update settings, complete a task).
-                                      </p>
-                                    </div>
-                                  </div>
-                                )}
-                                {item.work_state === 'decision_required' && (
-                                  <div className="flex items-start gap-2">
-                                    <ExclamationCircleIcon className="w-5 h-5 text-orange-600 flex-shrink-0 mt-0.5" />
-                                    <div>
-                                      <p className="text-[13px] font-medium text-neutral-900">
-                                        Decision needed
-                                      </p>
-                                      <p className="text-[12px] text-neutral-700 mt-1">
-                                        This requires a judgment call or decision from you. Review the options and respond.
-                                      </p>
-                                    </div>
-                                  </div>
-                                )}
-                                {item.work_state === 'noted' && (
-                                  <div className="flex items-start gap-2">
-                                    <CheckIcon className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
-                                    <div>
-                                      <p className="text-[13px] font-medium text-neutral-900">
-                                        For awareness
-                                      </p>
-                                      <p className="text-[12px] text-neutral-700 mt-1">
-                                        This is informational. Mark as complete once you've reviewed it.
-                                      </p>
-                                    </div>
-                                  </div>
-                                )}
-                                {item.work_state === 'work_prepared' && (
-                                  <div className="flex items-start gap-2">
-                                    <EnvelopeIcon className="w-5 h-5 text-indigo-600 flex-shrink-0 mt-0.5" />
-                                    <div>
-                                      <p className="text-[13px] font-medium text-neutral-900">
-                                        Reply recommended
-                                      </p>
-                                      <p className="text-[12px] text-neutral-700 mt-1">
-                                        Consider replying to this email to acknowledge or provide information.
-                                      </p>
-                                    </div>
-                                  </div>
-                                )}
-                              </div>
-                            )}
-                          </div>
+                          <ul className="space-y-2">
+                            {sourceData.keyPoints.map((point: string, i: number) => (
+                              <li key={i} className="flex items-start text-[13px] text-neutral-700">
+                                <span className="text-indigo-600 mr-2 font-bold">•</span>
+                                <span>{point}</span>
+                              </li>
+                            ))}
+                          </ul>
                         </div>
                       )}
 
@@ -675,36 +599,6 @@ export default function WorkDetailPanel({ item, isOpen, onClose, batchItems }: W
                         </div>
                       )}
 
-                      {/* Your Role */}
-                      {!isBatch && (
-                        <div>
-                          <h3 className="text-[11px] font-semibold text-neutral-600 uppercase tracking-wide mb-3">
-                            Your Role
-                          </h3>
-                          <div className="bg-neutral-50 border border-neutral-200 p-4 space-y-2">
-                            <div className="flex items-center justify-between">
-                              <span className="text-[13px] text-neutral-600">Assigned Role:</span>
-                              <span className="text-[13px] font-semibold text-neutral-900">
-                                {getRoleDisplay()}
-                              </span>
-                            </div>
-                            <div className="flex items-center justify-between">
-                              <span className="text-[13px] text-neutral-600">Suggested Action:</span>
-                              <span className="text-[13px] font-semibold text-neutral-900">
-                                {getSuggestedAction()}
-                              </span>
-                            </div>
-                            {recipientContext?.suggestionLabel && (
-                              <div className="pt-2 border-t border-neutral-200">
-                                <p className="text-[12px] text-neutral-500 italic">
-                                  {recipientContext.suggestionLabel}
-                                </p>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      )}
-
                       {/* Involved Parties */}
                       {!isBatch && recipientContext?.otherRecipients && recipientContext.otherRecipients.length > 0 && (
                         <div>
@@ -727,23 +621,6 @@ export default function WorkDetailPanel({ item, isOpen, onClose, batchItems }: W
                               </span>
                             )}
                           </div>
-                        </div>
-                      )}
-
-                      {/* Key Points */}
-                      {!isBatch && sourceData?.keyPoints && sourceData.keyPoints.length > 0 && (
-                        <div>
-                          <h3 className="text-[11px] font-semibold text-neutral-600 uppercase tracking-wide mb-2">
-                            Key Points
-                          </h3>
-                          <ul className="space-y-2">
-                            {sourceData.keyPoints.map((point: string, i: number) => (
-                              <li key={i} className="flex items-start text-[13px] text-neutral-700">
-                                <span className="text-indigo-600 mr-2 font-bold">•</span>
-                                <span>{point}</span>
-                              </li>
-                            ))}
-                          </ul>
                         </div>
                       )}
 
@@ -776,20 +653,6 @@ export default function WorkDetailPanel({ item, isOpen, onClose, batchItems }: W
                         </div>
                       )}
 
-                      {/* Advanced Details (Collapsible) */}
-                      {!isBatch && recipientContext && (
-                        <details className="group">
-                          <summary className="text-[11px] font-semibold text-neutral-600 uppercase tracking-wide cursor-pointer hover:text-indigo-600 transition-colors">
-                            Advanced Details
-                          </summary>
-                          <div className="mt-3">
-                            <RecipientContextDisplay
-                              recipientContext={recipientContext}
-                              otherRecipients={recipientContext.otherRecipients || []}
-                            />
-                          </div>
-                        </details>
-                      )}
                     </div>
 
                     {/* Actions Footer - Fixed at bottom */}
