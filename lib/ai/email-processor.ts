@@ -647,10 +647,43 @@ Create user-facing text (OUTCOME-CENTRIC, NOT EMAIL-CENTRIC):
   BAD: "Reply to John" | "Respond to Sarah" | "Email back to client"
   Pattern: [Verb] + [Object/Topic] (the actual work to be done)
 
-- whatIPrepared: What you actually prepared (draft/analysis/summary)
-  Examples: "Draft confirming Tuesday at 2pm" | "Analysis with 3 vendor options" | "Summary of key points"
+- whatIPrepared: ACTIONABLE GUIDANCE - What the user should do next
+  CRITICAL: Be specific and action-oriented, not just descriptive
 
-- whyMatters: One sentence explaining context and importance
+  For WORK_PREPARED (has draft):
+    GOOD: "Review and send the prepared response confirming availability"
+    BAD: "Draft reply" | "Response prepared"
+    Pattern: "Review and send [specific content]" OR "Edit and send [specific content]"
+
+  For ACTION_REQUIRED (no draft):
+    GOOD: "Click the verification link in the email to activate your account"
+    GOOD: "Update payment method in settings to avoid service interruption"
+    BAD: "Action needed" | "Click link"
+    Pattern: "[Specific action] to [outcome]" OR "[Action] before [deadline/consequence]"
+
+  For DECISION_REQUIRED:
+    GOOD: "Review the 3 vendor options and choose the best fit for budget and timeline"
+    BAD: "Make a decision" | "Choose an option"
+    Pattern: "Review [options] and decide based on [criteria]"
+
+  For NOTED:
+    GOOD: "Read the update and mark as complete - no response needed"
+    BAD: "FYI" | "For awareness"
+    Pattern: "[What to review] and mark complete - no action needed"
+
+  Examples by state:
+  - work_prepared: "Review the prepared decline and send, or edit if you want to soften the tone"
+  - action_required (mechanical): "Click the confirmation link to verify your email address"
+  - action_required (operational): "Update your payment method in Stripe to avoid service suspension"
+  - decision_required: "Review the budget proposal and approve or request changes by Friday"
+  - noted: "Read the shipment notification - your package arrives Thursday"
+
+- whyMatters: One sentence explaining WHY this is important (context, urgency, consequences)
+  GOOD: "VIP client request with tight deadline - delay could impact partnership"
+  GOOD: "Account will be suspended in 48 hours without payment update"
+  GOOD: "FYI only - shipment is on schedule, no action needed"
+  BAD: "Important" | "From client" | "Needs attention"
+  Pattern: [Stakes/Consequence] + [Context/Timing]
 
 ---
 
