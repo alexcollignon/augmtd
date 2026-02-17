@@ -159,6 +159,18 @@ export async function pollAndFetchTranscripts(
       // If bot ended and transcription completed, fetch transcript
       // Note: API returns 'complete' not 'completed'
       if (bot.state === 'ended' && bot.transcription_state === 'complete') {
+        // Check if transcript already exists (prevent duplicates)
+        const { data: existingTranscript } = await supabase
+          .from('meeting_transcripts')
+          .select('id')
+          .eq('attendee_bot_id', event.attendee_bot_id)
+          .single();
+
+        if (existingTranscript) {
+          console.log(`[AttendeeBot] Transcript already exists for: ${event.title}`);
+          continue; // Skip - already processed
+        }
+
         console.log(`[AttendeeBot] Fetching transcript for: ${event.title}`);
 
         const transcript = await getAttendeeBotTranscript(event.attendee_bot_id);
