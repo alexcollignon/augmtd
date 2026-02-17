@@ -42,8 +42,10 @@ interface WorkDetailPanelProps {
 }
 
 export default function WorkDetailPanel({ item, isOpen, onClose, batchItems }: WorkDetailPanelProps) {
-  const isBatch = batchItems && batchItems.length > 1;
   const [selectedBatchItem, setSelectedBatchItem] = useState<InboxItem | null>(null);
+
+  // When viewing a selected batch item, treat it as a single item (not a batch)
+  const isBatch = batchItems && batchItems.length > 1 && !selectedBatchItem;
 
   // Use selected batch item if viewing individual item in batch, otherwise use main item
   const currentItem = selectedBatchItem || item;
