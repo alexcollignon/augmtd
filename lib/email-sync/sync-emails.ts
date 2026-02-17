@@ -379,7 +379,7 @@ export async function syncEmailsForConnection(
                   subject: storedEmail.subject,
                   body: storedEmail.body,
                   from: storedEmail.from_name || storedEmail.from_address,
-                  threadHistory: threadEmails,
+                  threadHistory: threadEmails || undefined,
                 },
                 recipient.userId,
                 adminSupabase
