@@ -7,6 +7,20 @@ import {
   PaperAirplaneIcon,
   UserIcon,
   CheckIcon,
+  DocumentTextIcon,
+  PresentationChartBarIcon,
+  DocumentChartBarIcon,
+  DocumentIcon,
+  MagnifyingGlassIcon,
+  EnvelopeIcon,
+  PlayIcon,
+  ClockIcon,
+  CalendarIcon,
+  SparklesIcon,
+  ArrowDownTrayIcon,
+  EyeIcon,
+  CheckCircleIcon,
+  ExclamationCircleIcon,
 } from '@heroicons/react/24/outline';
 import type { InboxItem } from '@/lib/types/inbox';
 import {
@@ -255,37 +269,89 @@ export default function WorkDetailPanel({ item, isOpen, onClose, batchItems }: W
                       {/* Execution View - for executable work items */}
                       {!isBatch && isExecutable(item) && item.execution_plan && (
                         <div className="space-y-6">
+                          {/* Email Context - Show what the request is */}
+                          <div>
+                            <h3 className="text-[11px] font-semibold text-neutral-600 uppercase tracking-wide mb-2">
+                              Request
+                            </h3>
+                            <div className="bg-neutral-50 border border-neutral-200 p-4 rounded-lg">
+                              <div className="flex items-start gap-3 mb-3">
+                                <UserIcon className="w-5 h-5 text-neutral-500 flex-shrink-0 mt-0.5" />
+                                <div className="flex-1">
+                                  <p className="text-[13px] font-medium text-neutral-900">
+                                    {sourceData?.from_name || sourceData?.from || 'Unknown'}
+                                  </p>
+                                  <p className="text-[12px] text-neutral-600">
+                                    {sourceData?.subject || item.work_title}
+                                  </p>
+                                </div>
+                              </div>
+                              {item.why_matters && (
+                                <p className="text-[13px] text-neutral-700 leading-relaxed">
+                                  {item.why_matters}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* AI Detection Notice */}
+                          <div className="flex items-start gap-3 p-4 bg-indigo-50 border border-indigo-200 rounded-lg">
+                            <SparklesIcon className="w-5 h-5 text-indigo-600 flex-shrink-0 mt-0.5" />
+                            <div>
+                              <p className="text-[13px] font-medium text-indigo-900 mb-1">
+                                Executable Work Detected
+                              </p>
+                              <p className="text-[12px] text-indigo-700">
+                                AI analyzed this request and generated an execution plan to complete it for you.
+                              </p>
+                            </div>
+                          </div>
+
                           {/* Deliverable Section */}
                           <div>
                             <h3 className="text-[11px] font-semibold text-neutral-600 uppercase tracking-wide mb-3">
-                              📊 Deliverable
+                              What Will Be Created
                             </h3>
-                            <div className="bg-gradient-to-br from-indigo-50 to-violet-50 border border-indigo-200 p-4 rounded-lg">
+                            <div className="bg-white border border-neutral-300 p-4 rounded-lg">
                               <div className="flex items-start gap-3">
-                                <div className="flex-shrink-0 w-10 h-10 bg-indigo-500 text-white rounded-lg flex items-center justify-center font-bold text-lg">
-                                  {item.execution_plan.deliverable_type === 'report' && '📊'}
-                                  {item.execution_plan.deliverable_type === 'presentation' && '📽️'}
-                                  {item.execution_plan.deliverable_type === 'spreadsheet' && '📈'}
-                                  {item.execution_plan.deliverable_type === 'document' && '📄'}
-                                  {item.execution_plan.deliverable_type === 'analysis' && '🔍'}
-                                  {item.execution_plan.deliverable_type === 'email' && '✉️'}
+                                <div className="flex-shrink-0 w-10 h-10 bg-indigo-100 rounded-lg flex items-center justify-center">
+                                  {item.execution_plan.deliverable_type === 'report' && (
+                                    <DocumentTextIcon className="w-6 h-6 text-indigo-600" />
+                                  )}
+                                  {item.execution_plan.deliverable_type === 'presentation' && (
+                                    <PresentationChartBarIcon className="w-6 h-6 text-indigo-600" />
+                                  )}
+                                  {item.execution_plan.deliverable_type === 'spreadsheet' && (
+                                    <DocumentChartBarIcon className="w-6 h-6 text-indigo-600" />
+                                  )}
+                                  {item.execution_plan.deliverable_type === 'document' && (
+                                    <DocumentIcon className="w-6 h-6 text-indigo-600" />
+                                  )}
+                                  {item.execution_plan.deliverable_type === 'analysis' && (
+                                    <MagnifyingGlassIcon className="w-6 h-6 text-indigo-600" />
+                                  )}
+                                  {item.execution_plan.deliverable_type === 'email' && (
+                                    <EnvelopeIcon className="w-6 h-6 text-indigo-600" />
+                                  )}
                                 </div>
                                 <div className="flex-1">
                                   <div className="text-[10px] uppercase tracking-wide text-indigo-600 font-semibold mb-1">
                                     {item.execution_plan.deliverable_type}
                                   </div>
-                                  <p className="text-[14px] text-neutral-900 font-medium leading-relaxed">
+                                  <p className="text-[14px] text-neutral-900 leading-relaxed">
                                     {item.execution_plan.deliverable_description}
                                   </p>
                                   <div className="flex items-center gap-4 mt-3 text-[12px]">
                                     {item.execution_plan.estimated_time && (
-                                      <span className="text-neutral-600">
-                                        ⏱️ {item.execution_plan.estimated_time}
+                                      <span className="flex items-center gap-1.5 text-neutral-600">
+                                        <ClockIcon className="w-4 h-4" />
+                                        {item.execution_plan.estimated_time}
                                       </span>
                                     )}
                                     {item.execution_plan.deadline && (
-                                      <span className="text-orange-600 font-medium">
-                                        ⏰ Due: {new Date(item.execution_plan.deadline).toLocaleDateString()}
+                                      <span className="flex items-center gap-1.5 text-orange-600 font-medium">
+                                        <CalendarIcon className="w-4 h-4" />
+                                        {new Date(item.execution_plan.deadline).toLocaleDateString()}
                                       </span>
                                     )}
                                   </div>
@@ -297,7 +363,7 @@ export default function WorkDetailPanel({ item, isOpen, onClose, batchItems }: W
                           {/* Execution Plan Steps */}
                           <div>
                             <h3 className="text-[11px] font-semibold text-neutral-600 uppercase tracking-wide mb-3">
-                              ✨ Execution Plan
+                              Execution Steps
                             </h3>
                             <div className="space-y-2">
                               {item.execution_plan.steps.map((step) => (
@@ -306,37 +372,36 @@ export default function WorkDetailPanel({ item, isOpen, onClose, batchItems }: W
                                   className={`
                                     flex items-start gap-3 p-3 rounded-lg border
                                     ${step.status === 'completed' ? 'bg-green-50 border-green-200' : ''}
-                                    ${step.status === 'running' ? 'bg-blue-50 border-blue-200' : ''}
-                                    ${step.status === 'pending' ? 'bg-neutral-50 border-neutral-200' : ''}
+                                    ${step.status === 'running' ? 'bg-indigo-50 border-indigo-200' : ''}
+                                    ${step.status === 'pending' ? 'bg-white border-neutral-200' : ''}
                                     ${step.status === 'failed' ? 'bg-red-50 border-red-200' : ''}
                                   `}
                                 >
-                                  <div className="flex-shrink-0 w-6 h-6 rounded-full bg-white border-2 border-neutral-300 flex items-center justify-center">
-                                    {step.status === 'completed' && (
-                                      <CheckIcon className="w-4 h-4 text-green-600" />
-                                    )}
-                                    {step.status === 'running' && (
-                                      <div className="w-3 h-3 bg-blue-500 rounded-full animate-pulse" />
-                                    )}
-                                    {step.status === 'pending' && (
-                                      <span className="text-[10px] text-neutral-500 font-medium">{step.number}</span>
-                                    )}
-                                    {step.status === 'failed' && (
-                                      <XMarkIcon className="w-4 h-4 text-red-600" />
-                                    )}
+                                  <div className={`
+                                    flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-semibold
+                                    ${step.status === 'completed' ? 'bg-green-100 text-green-700' : ''}
+                                    ${step.status === 'running' ? 'bg-indigo-100 text-indigo-700' : ''}
+                                    ${step.status === 'pending' ? 'bg-neutral-100 text-neutral-600' : ''}
+                                    ${step.status === 'failed' ? 'bg-red-100 text-red-700' : ''}
+                                  `}>
+                                    {step.status === 'completed' && <CheckIcon className="w-4 h-4" />}
+                                    {step.status === 'running' && <div className="w-2 h-2 bg-indigo-600 rounded-full animate-pulse" />}
+                                    {step.status === 'pending' && step.number}
+                                    {step.status === 'failed' && <XMarkIcon className="w-4 h-4" />}
                                   </div>
                                   <div className="flex-1">
-                                    <p className="text-[13px] text-neutral-900 font-medium">
+                                    <p className="text-[13px] text-neutral-900">
                                       {step.action}
                                     </p>
                                     {step.skill && (
                                       <p className="text-[11px] text-neutral-500 mt-1">
-                                        Skill: {step.skill}
+                                        {step.skill}
                                       </p>
                                     )}
                                     {step.error && (
-                                      <p className="text-[11px] text-red-600 mt-1">
-                                        Error: {step.error}
+                                      <p className="text-[11px] text-red-600 mt-1 flex items-center gap-1">
+                                        <ExclamationCircleIcon className="w-3 h-3" />
+                                        {step.error}
                                       </p>
                                     )}
                                   </div>
@@ -361,61 +426,35 @@ export default function WorkDetailPanel({ item, isOpen, onClose, batchItems }: W
                             )}
                           </div>
 
-                          {/* Status Badge */}
-                          <div>
-                            {item.execution_status === 'queued' && (
-                              <div className="flex items-center gap-2 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                                <div className="w-2 h-2 bg-blue-500 rounded-full" />
-                                <span className="text-[12px] text-blue-700 font-medium">
-                                  Ready to execute
-                                </span>
-                              </div>
-                            )}
-                            {item.execution_status === 'running' && (
-                              <div className="flex items-center gap-2 p-3 bg-indigo-50 border border-indigo-200 rounded-lg">
-                                <div className="w-2 h-2 bg-indigo-500 rounded-full animate-pulse" />
-                                <span className="text-[12px] text-indigo-700 font-medium">
-                                  Step {item.current_step + 1} of {item.execution_plan.steps.length}: In progress...
-                                </span>
-                              </div>
-                            )}
-                            {item.execution_status === 'awaiting_approval' && (
-                              <div className="flex items-center gap-2 p-3 bg-orange-50 border border-orange-200 rounded-lg">
-                                <div className="w-2 h-2 bg-orange-500 rounded-full" />
-                                <span className="text-[12px] text-orange-700 font-medium">
-                                  Awaiting your review
-                                </span>
-                              </div>
-                            )}
-                            {item.execution_status === 'completed' && (
-                              <div className="flex items-center gap-2 p-3 bg-green-50 border border-green-200 rounded-lg">
-                                <CheckIcon className="w-4 h-4 text-green-600" />
-                                <span className="text-[12px] text-green-700 font-medium">
-                                  Execution completed
-                                </span>
-                              </div>
-                            )}
-                          </div>
-
                           {/* Artifacts (if any) */}
                           {item.artifacts && item.artifacts.length > 0 && (
                             <div>
                               <h3 className="text-[11px] font-semibold text-neutral-600 uppercase tracking-wide mb-3">
-                                📎 Generated Files
+                                Generated Files
                               </h3>
                               <div className="space-y-2">
                                 {item.artifacts.map((artifact, index) => (
                                   <div
                                     key={index}
-                                    className="flex items-center justify-between p-3 bg-neutral-50 border border-neutral-200 rounded-lg hover:border-indigo-300 transition-colors"
+                                    className="flex items-center justify-between p-3 bg-white border border-neutral-200 rounded-lg hover:border-indigo-300 transition-colors"
                                   >
                                     <div className="flex items-center gap-3">
-                                      <div className="text-2xl">
-                                        {artifact.type === 'excel' && '📊'}
-                                        {artifact.type === 'powerpoint' && '📽️'}
-                                        {artifact.type === 'word' && '📄'}
-                                        {artifact.type === 'pdf' && '📕'}
-                                        {artifact.type === 'email_draft' && '✉️'}
+                                      <div className="w-10 h-10 bg-neutral-100 rounded-lg flex items-center justify-center">
+                                        {artifact.type === 'excel' && (
+                                          <DocumentChartBarIcon className="w-6 h-6 text-green-600" />
+                                        )}
+                                        {artifact.type === 'powerpoint' && (
+                                          <PresentationChartBarIcon className="w-6 h-6 text-orange-600" />
+                                        )}
+                                        {artifact.type === 'word' && (
+                                          <DocumentTextIcon className="w-6 h-6 text-blue-600" />
+                                        )}
+                                        {artifact.type === 'pdf' && (
+                                          <DocumentIcon className="w-6 h-6 text-red-600" />
+                                        )}
+                                        {artifact.type === 'email_draft' && (
+                                          <EnvelopeIcon className="w-6 h-6 text-indigo-600" />
+                                        )}
                                       </div>
                                       <div>
                                         <p className="text-[13px] text-neutral-900 font-medium">
@@ -427,10 +466,12 @@ export default function WorkDetailPanel({ item, isOpen, onClose, batchItems }: W
                                       </div>
                                     </div>
                                     <div className="flex items-center gap-2">
-                                      <button className="px-3 py-1.5 text-[11px] font-medium text-indigo-600 hover:bg-indigo-50 rounded transition-colors">
+                                      <button className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium text-indigo-600 hover:bg-indigo-50 rounded transition-colors">
+                                        <EyeIcon className="w-3.5 h-3.5" />
                                         Preview
                                       </button>
-                                      <button className="px-3 py-1.5 text-[11px] font-medium text-neutral-600 hover:bg-neutral-100 rounded transition-colors">
+                                      <button className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium text-neutral-600 hover:bg-neutral-100 rounded transition-colors">
+                                        <ArrowDownTrayIcon className="w-3.5 h-3.5" />
                                         Download
                                       </button>
                                     </div>
@@ -500,6 +541,87 @@ export default function WorkDetailPanel({ item, isOpen, onClose, batchItems }: W
                           <p className="text-[14px] text-neutral-900 leading-relaxed">
                             {item.why_matters}
                           </p>
+                        </div>
+                      )}
+
+                      {/* Suggested Actions - Only for non-executable items */}
+                      {!isBatch && !isExecutable(item) && (
+                        <div>
+                          <h3 className="text-[11px] font-semibold text-neutral-600 uppercase tracking-wide mb-3">
+                            What You Should Do
+                          </h3>
+                          <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
+                            {sourceData?.draft ? (
+                              <div className="space-y-2">
+                                <div className="flex items-start gap-2">
+                                  <CheckCircleIcon className="w-5 h-5 text-indigo-600 flex-shrink-0 mt-0.5" />
+                                  <div>
+                                    <p className="text-[13px] font-medium text-indigo-900">
+                                      Review the prepared response
+                                    </p>
+                                    <p className="text-[12px] text-indigo-700 mt-1">
+                                      AI has drafted a reply for you. Review it, make any edits, and send when ready.
+                                    </p>
+                                  </div>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="space-y-3">
+                                {item.work_state === 'action_required' && (
+                                  <div className="flex items-start gap-2">
+                                    <ExclamationCircleIcon className="w-5 h-5 text-orange-600 flex-shrink-0 mt-0.5" />
+                                    <div>
+                                      <p className="text-[13px] font-medium text-neutral-900">
+                                        Action needed
+                                      </p>
+                                      <p className="text-[12px] text-neutral-700 mt-1">
+                                        This requires you to take action outside of email (click a link, update settings, complete a task).
+                                      </p>
+                                    </div>
+                                  </div>
+                                )}
+                                {item.work_state === 'decision_required' && (
+                                  <div className="flex items-start gap-2">
+                                    <ExclamationCircleIcon className="w-5 h-5 text-orange-600 flex-shrink-0 mt-0.5" />
+                                    <div>
+                                      <p className="text-[13px] font-medium text-neutral-900">
+                                        Decision needed
+                                      </p>
+                                      <p className="text-[12px] text-neutral-700 mt-1">
+                                        This requires a judgment call or decision from you. Review the options and respond.
+                                      </p>
+                                    </div>
+                                  </div>
+                                )}
+                                {item.work_state === 'noted' && (
+                                  <div className="flex items-start gap-2">
+                                    <CheckIcon className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
+                                    <div>
+                                      <p className="text-[13px] font-medium text-neutral-900">
+                                        For awareness
+                                      </p>
+                                      <p className="text-[12px] text-neutral-700 mt-1">
+                                        This is informational. Mark as complete once you've reviewed it.
+                                      </p>
+                                    </div>
+                                  </div>
+                                )}
+                                {item.work_state === 'work_prepared' && (
+                                  <div className="flex items-start gap-2">
+                                    <EnvelopeIcon className="w-5 h-5 text-indigo-600 flex-shrink-0 mt-0.5" />
+                                    <div>
+                                      <p className="text-[13px] font-medium text-neutral-900">
+                                        Reply recommended
+                                      </p>
+                                      <p className="text-[12px] text-neutral-700 mt-1">
+                                        Consider replying to this email to acknowledge or provide information.
+                                      </p>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
                         </div>
                       )}
 
@@ -679,37 +801,37 @@ export default function WorkDetailPanel({ item, isOpen, onClose, batchItems }: W
                               {item.execution_status === 'queued' && (
                                 <button
                                   onClick={() => alert('Execution engine coming in Layer 3! This will start the AI execution.')}
-                                  className="flex-1 inline-flex items-center justify-center px-4 py-2.5 text-[13px] font-semibold bg-indigo-600 text-white hover:bg-indigo-700 transition-all shadow-sm hover:shadow"
+                                  className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 text-[13px] font-semibold bg-indigo-600 text-white hover:bg-indigo-700 transition-all shadow-sm hover:shadow rounded"
                                 >
-                                  <span className="mr-2">▶️</span>
-                                  Execute Work
+                                  <PlayIcon className="w-4 h-4" />
+                                  Execute
                                 </button>
                               )}
                               {item.execution_status === 'running' && (
                                 <button
                                   disabled
-                                  className="flex-1 inline-flex items-center justify-center px-4 py-2.5 text-[13px] font-semibold bg-blue-600 text-white opacity-75 cursor-not-allowed"
+                                  className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 text-[13px] font-semibold bg-indigo-600 text-white opacity-75 cursor-not-allowed rounded"
                                 >
-                                  <div className="w-4 h-4 mr-2 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                                  In Progress...
+                                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                  Executing...
                                 </button>
                               )}
                               {item.execution_status === 'awaiting_approval' && (
                                 <button
                                   onClick={() => alert('Review artifacts and approve/reject the execution')}
-                                  className="flex-1 inline-flex items-center justify-center px-4 py-2.5 text-[13px] font-semibold bg-orange-600 text-white hover:bg-orange-700 transition-all shadow-sm hover:shadow"
+                                  className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 text-[13px] font-semibold bg-orange-600 text-white hover:bg-orange-700 transition-all shadow-sm hover:shadow rounded"
                                 >
-                                  <CheckIcon className="w-4 h-4 mr-2" />
+                                  <CheckCircleIcon className="w-4 h-4" />
                                   Review & Approve
                                 </button>
                               )}
                               {item.execution_status === 'completed' && (
                                 <button
                                   onClick={() => alert('Send the generated artifacts')}
-                                  className="flex-1 inline-flex items-center justify-center px-4 py-2.5 text-[13px] font-semibold bg-green-600 text-white hover:bg-green-700 transition-all shadow-sm hover:shadow"
+                                  className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 text-[13px] font-semibold bg-green-600 text-white hover:bg-green-700 transition-all shadow-sm hover:shadow rounded"
                                 >
-                                  <PaperAirplaneIcon className="w-4 h-4 mr-2" />
-                                  Send Result
+                                  <PaperAirplaneIcon className="w-4 h-4" />
+                                  Send
                                 </button>
                               )}
                             </>
