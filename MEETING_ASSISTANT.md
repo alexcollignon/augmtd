@@ -903,6 +903,24 @@ const normalizedSegments = rawSegments.map(s => ({
 .maybeSingle();  // Returns null if no rows
 ```
 
+#### Issue: Past meetings still showing "Happening now" badge
+**Cause:** Meeting statuses only update when events are modified, not automatically over time
+**Solution:** ✅ Fixed - Attendee poll cron now updates meeting statuses every 5 minutes
+
+```typescript
+// app/api/cron/attendee-poll/route.ts
+// 1. Update meeting statuses (upcoming → in_progress → completed)
+const { data: statusUpdates } = await supabaseAdmin.rpc('update_meeting_statuses');
+
+// 2. Poll bots and fetch transcripts
+const result = await pollAndFetchTranscripts(supabaseAdmin);
+```
+
+**How it works:**
+- Database trigger auto-calculates status on insert/update
+- Cron job runs every 5 minutes to update all meeting statuses
+- Status transitions: `upcoming` → `starting_soon` (60 min before) → `in_progress` → `completed`
+
 ### Testing
 
 **1. Enable Attendee in Settings:**

@@ -10,8 +10,9 @@ const supabaseAdmin = createClient(
 /**
  * GET /api/cron/attendee-poll
  *
- * Polls Attendee bots and fetches completed transcripts.
- * Should be called periodically (e.g., every 5 minutes via cron job).
+ * Runs every 5 minutes to:
+ * 1. Update meeting statuses (upcoming → starting_soon → in_progress → completed)
+ * 2. Poll Attendee bots and fetch completed transcripts
  *
  * Secure this endpoint in production with:
  * - Vercel Cron secret header
@@ -27,8 +28,18 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    console.log('[Cron] Starting Attendee bot polling');
+    console.log('[Cron] Starting Attendee bot polling and meeting status update');
 
+    // 1. Update meeting statuses (upcoming → in_progress → completed)
+    const { data: statusUpdates, error: statusError } = await supabaseAdmin.rpc('update_meeting_statuses');
+
+    if (statusError) {
+      console.error('[Cron] Error updating meeting statuses:', statusError);
+    } else {
+      console.log(`[Cron] Updated ${statusUpdates || 0} meeting statuses`);
+    }
+
+    // 2. Poll bots and fetch transcripts
     const result = await pollAndFetchTranscripts(supabaseAdmin);
 
     console.log(`[Cron] Processed ${result.processed} transcripts`);
@@ -39,6 +50,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
+      statusUpdates: statusUpdates || 0,
       processed: result.processed,
       errors: result.errors,
       timestamp: new Date().toISOString(),
