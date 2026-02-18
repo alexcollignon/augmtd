@@ -139,12 +139,13 @@ export async function POST(
       ? `\n\nUser context: ${identity.jobRole || ''} ${identity.department ? `in ${identity.department}` : ''}`.trim()
       : '';
 
-    if (workPatterns?.recentWorkflows?.length) {
-      const recent = workPatterns.recentWorkflows.slice(0, 3)
-        .map((w: { name: string; purpose: string; deliverableType: string }) =>
-          `- "${w.name}" (${w.deliverableType}): ${w.purpose}`
-        ).join('\n');
-      userContextNote += `\n\nRecent workflows this user has created:\n${recent}`;
+    // Inject only anonymised patterns — never specific names/clients from other threads
+    if (workPatterns?.deliverableTypes && Object.keys(workPatterns.deliverableTypes).length > 0) {
+      const typesSummary = Object.entries(workPatterns.deliverableTypes as Record<string, number>)
+        .sort((a, b) => b[1] - a[1])
+        .map(([type, count]) => `${type} (${count}x)`)
+        .join(', ');
+      userContextNote += `\n\nDeliverable types this user typically creates: ${typesSummary}`;
     }
     if (workPatterns?.commonSkills?.length) {
       userContextNote += `\n\nMost-used skills: ${workPatterns.commonSkills.join(', ')}`;
