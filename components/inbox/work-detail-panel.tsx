@@ -24,6 +24,7 @@ import {
   ExclamationCircleIcon,
   MapPinIcon,
   VideoCameraIcon,
+  ChevronRightIcon,
 } from '@heroicons/react/24/outline';
 import type { InboxItem } from '@/lib/types/inbox';
 import {
@@ -58,6 +59,7 @@ export default function WorkDetailPanel({ item, isOpen, onClose, batchItems }: W
   const [isCompleting, setIsCompleting] = useState(false);
   const [isDismissing, setIsDismissing] = useState(false);
   const [showDraftPreview, setShowDraftPreview] = useState(false);
+  const [showOriginalEmail, setShowOriginalEmail] = useState(false);
 
   // Reset selected item when panel closes
   const handleClose = () => {
@@ -307,9 +309,12 @@ export default function WorkDetailPanel({ item, isOpen, onClose, batchItems }: W
                               {batchItems.length} similar items
                             </p>
                           ) : (
-                            sourceData?.from_name && (
+                            (sourceData?.from_name || sourceData?.from) && (
                               <p className="text-[13px] text-neutral-600 mt-1.5">
                                 From: {sourceData.from_name}
+                                {sourceData.from && (
+                                  <span className="text-neutral-400"> &lt;{sourceData.from}&gt;</span>
+                                )}
                               </p>
                             )
                           )}
@@ -738,13 +743,6 @@ export default function WorkDetailPanel({ item, isOpen, onClose, batchItems }: W
                           <div className="relative bg-gradient-to-br from-indigo-50 to-violet-50 border border-indigo-200 p-4">
                             <div className="absolute left-0 top-0 bottom-0 w-[2px] bg-indigo-500" />
                             <div className="pl-3">
-                              {typeof sourceData.draft === 'object' && sourceData.draft.tone && (
-                                <div className="mb-3">
-                                  <span className="text-[10px] text-indigo-600 font-medium">
-                                    Tone: {sourceData.draft.tone}
-                                  </span>
-                                </div>
-                              )}
                               <p className="text-[13px] text-neutral-800 leading-relaxed whitespace-pre-wrap">
                                 {typeof sourceData.draft === 'string' ? sourceData.draft : sourceData.draft.body}
                               </p>
@@ -804,6 +802,68 @@ export default function WorkDetailPanel({ item, isOpen, onClose, batchItems }: W
                               </div>
                             ))}
                           </div>
+                        </div>
+                      )}
+
+                      {/* Original Email - Collapsible */}
+                      {!isBatch && !isExecutable(item) && (sourceData?.body || sourceData?.snippet) && (
+                        <div>
+                          <button
+                            onClick={() => setShowOriginalEmail(!showOriginalEmail)}
+                            className="flex items-center gap-1.5 text-[11px] font-semibold text-neutral-500 uppercase tracking-wide hover:text-neutral-700 transition-colors"
+                          >
+                            <ChevronRightIcon className={`w-3.5 h-3.5 transition-transform duration-150 ${showOriginalEmail ? 'rotate-90' : ''}`} />
+                            Original Email
+                          </button>
+                          {showOriginalEmail && (
+                            <div className="mt-2 bg-neutral-50 border border-neutral-200">
+                              {/* Email meta header */}
+                              <div className="px-4 py-3 border-b border-neutral-200 space-y-1">
+                                {(sourceData?.from_name || sourceData?.from) && (
+                                  <div className="flex gap-2 text-[12px]">
+                                    <span className="text-neutral-400 w-12 flex-shrink-0">From</span>
+                                    <span className="text-neutral-800">
+                                      {sourceData.from_name}
+                                      {sourceData.from && (
+                                        <span className="text-neutral-500"> &lt;{sourceData.from}&gt;</span>
+                                      )}
+                                    </span>
+                                  </div>
+                                )}
+                                {sourceData?.subject && (
+                                  <div className="flex gap-2 text-[12px]">
+                                    <span className="text-neutral-400 w-12 flex-shrink-0">Subject</span>
+                                    <span className="text-neutral-800">{sourceData.subject}</span>
+                                  </div>
+                                )}
+                                {sourceData?.received_at && (
+                                  <div className="flex gap-2 text-[12px]">
+                                    <span className="text-neutral-400 w-12 flex-shrink-0">Date</span>
+                                    <span className="text-neutral-800">
+                                      {new Date(sourceData.received_at).toLocaleDateString('en-US', {
+                                        weekday: 'short',
+                                        year: 'numeric',
+                                        month: 'short',
+                                        day: 'numeric',
+                                      })}{' '}
+                                      at{' '}
+                                      {new Date(sourceData.received_at).toLocaleTimeString('en-US', {
+                                        hour: 'numeric',
+                                        minute: '2-digit',
+                                        hour12: true,
+                                      })}
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                              {/* Body */}
+                              <div className="px-4 py-3">
+                                <p className="text-[13px] text-neutral-700 leading-relaxed whitespace-pre-wrap">
+                                  {sourceData.body || sourceData.snippet}
+                                </p>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       )}
 

@@ -436,6 +436,7 @@ export async function syncEmailsForConnection(
                   from: storedEmail.from_address,
                   from_name: storedEmail.from_name,
                   subject: storedEmail.subject,
+                  body: storedEmail.body,
                   received_at: storedEmail.received_at,
                   provider: connection.provider,
                   thread_history: threadEmails?.map(e => ({
@@ -562,6 +563,7 @@ export async function syncEmailsForConnection(
                 from: storedEmail.from_address,
                 from_name: storedEmail.from_name,
                 subject: storedEmail.subject,
+                body: storedEmail.body,
                 received_at: storedEmail.received_at,
                 provider: connection.provider,
                 summary: processed.summary,
