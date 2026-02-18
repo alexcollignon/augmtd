@@ -164,17 +164,38 @@ function getCategoryIcon(category: string) {
 
 // ─── Plan Panel ───────────────────────────────────────────────────────────────
 
-function PlanPanel({ plan }: { plan: ExecutionPlan | null }) {
+function PlanPanel({
+  plan,
+  isUpdating,
+  planJustUpdated,
+}: {
+  plan: ExecutionPlan | null;
+  isUpdating: boolean;
+  planJustUpdated: boolean;
+}) {
   if (!plan) {
     return (
       <div className="flex-1 flex items-center justify-center border-r border-neutral-200 bg-neutral-50">
         <div className="text-center px-8">
-          <div className="w-10 h-10 bg-neutral-100 rounded-full flex items-center justify-center mx-auto mb-3">
-            <DocumentTextIcon className="w-5 h-5 text-neutral-400" />
-          </div>
-          <p className="text-[13px] text-neutral-400">
-            Describe your work — the plan will appear here
-          </p>
+          {isUpdating ? (
+            <>
+              <div className="flex items-center justify-center gap-1.5 mb-3">
+                <span className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce [animation-delay:0ms]" />
+                <span className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce [animation-delay:150ms]" />
+                <span className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce [animation-delay:300ms]" />
+              </div>
+              <p className="text-[13px] text-neutral-400">Building your plan…</p>
+            </>
+          ) : (
+            <>
+              <div className="w-10 h-10 bg-neutral-100 rounded-full flex items-center justify-center mx-auto mb-3">
+                <DocumentTextIcon className="w-5 h-5 text-neutral-400" />
+              </div>
+              <p className="text-[13px] text-neutral-400">
+                Describe your work — the plan will appear here
+              </p>
+            </>
+          )}
         </div>
       </div>
     );
@@ -184,6 +205,28 @@ function PlanPanel({ plan }: { plan: ExecutionPlan | null }) {
 
   return (
     <div className="flex-1 overflow-y-auto border-r border-neutral-200 bg-white">
+      {/* Status bar */}
+      {(isUpdating || planJustUpdated) && (
+        <div className={`flex items-center gap-1.5 px-4 py-2 border-b text-[11px] font-medium transition-all ${
+          planJustUpdated && !isUpdating
+            ? 'border-green-100 bg-green-50 text-green-600'
+            : 'border-indigo-100 bg-indigo-50 text-indigo-600'
+        }`}>
+          {isUpdating ? (
+            <>
+              <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse flex-shrink-0" />
+              Updating plan…
+            </>
+          ) : (
+            <>
+              <svg className="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+              Plan updated
+            </>
+          )}
+        </div>
+      )}
       <div className="p-6 space-y-6">
         {/* Deliverable header */}
         <div className="flex items-start gap-3">
@@ -333,9 +376,11 @@ export function WorkPageClient({
   const [streamingText, setStreamingText] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [isLoadingThread, setIsLoadingThread] = useState(false);
+  const [planJustUpdated, setPlanJustUpdated] = useState(false);
   const [chatInput, setChatInput] = useState('');
   const [entryInput, setEntryInput] = useState('');
   const [isCreatingThread, setIsCreatingThread] = useState(false);
+  const planUpdatedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatInputRef = useRef<HTMLTextAreaElement>(null);
@@ -440,6 +485,10 @@ export function WorkPageClient({
                 : t
             )
           );
+          // Flash "Plan updated" for 2 seconds
+          if (planUpdatedTimerRef.current) clearTimeout(planUpdatedTimerRef.current);
+          setPlanJustUpdated(true);
+          planUpdatedTimerRef.current = setTimeout(() => setPlanJustUpdated(false), 2000);
         } catch {
           // plan parse failed — keep existing plan
         }
@@ -485,14 +534,10 @@ export function WorkPageClient({
       setActiveThreadId(newThread.id);
       setMessages([]);
       setEntryInput('');
-
-      // Wait a tick for activeThreadId to settle, then send first message
-      setTimeout(() => {
-        sendMessage(description, newThread.id);
-      }, 50);
+      setIsCreatingThread(false);
+      sendMessage(description, newThread.id);
     } catch (err) {
       console.error('Failed to start thread:', err);
-    } finally {
       setIsCreatingThread(false);
     }
   }, [isCreatingThread, sendMessage]);
@@ -656,7 +701,11 @@ export function WorkPageClient({
         /* ── Split view: plan + chat ── */
         <>
           {/* Plan panel */}
-          <PlanPanel plan={activeThread?.plan ?? null} />
+          <PlanPanel
+            plan={activeThread?.plan ?? null}
+            isUpdating={isStreaming}
+            planJustUpdated={planJustUpdated}
+          />
 
           {/* Chat panel */}
           <div className="w-[400px] flex-shrink-0 flex flex-col border-l border-neutral-200 bg-white">
@@ -699,8 +748,8 @@ export function WorkPageClient({
                     </div>
                   )}
 
-                  {/* Typing indicator (before text starts) */}
-                  {isStreaming && !streamingText && (
+                  {/* Typing indicator (before text starts, or during thread creation) */}
+                  {(isStreaming || isCreatingThread) && !streamingText && (
                     <div className="pt-5 flex items-center gap-1">
                       <span className="w-1.5 h-1.5 bg-neutral-300 rounded-full animate-bounce [animation-delay:0ms]" />
                       <span className="w-1.5 h-1.5 bg-neutral-300 rounded-full animate-bounce [animation-delay:150ms]" />
