@@ -134,6 +134,7 @@ interface WorkPageClientProps {
   blueprints: WorkBlueprint[];
   initialThreads: WorkThread[];
   initialActiveThreadId?: string | null;
+  initialWorkflowPrompt?: string | null;
 }
 
 const PLAN_SEPARATOR = '---PLAN_UPDATE---';
@@ -369,6 +370,7 @@ export function WorkPageClient({
   blueprints,
   initialThreads,
   initialActiveThreadId,
+  initialWorkflowPrompt,
 }: WorkPageClientProps) {
   const [threads, setThreads] = useState<WorkThread[]>(initialThreads);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
@@ -394,8 +396,14 @@ export function WorkPageClient({
   const activeThread = threads.find((t) => t.id === activeThreadId) ?? null;
 
   // Activate thread from URL param on first mount (e.g. navigated from inbox)
+  // If a workflowPrompt is provided, auto-send it as the first message instead of loading history
   useEffect(() => {
-    if (initialActiveThreadId) {
+    if (initialActiveThreadId && initialWorkflowPrompt) {
+      skipLoadRef.current = initialActiveThreadId;
+      setMessages([]);
+      setActiveThreadId(initialActiveThreadId);
+      sendMessage(initialWorkflowPrompt, initialActiveThreadId);
+    } else if (initialActiveThreadId) {
       setActiveThreadId(initialActiveThreadId);
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps

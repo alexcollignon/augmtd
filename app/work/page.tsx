@@ -8,9 +8,9 @@ import { WorkBlueprint } from '@/lib/types/work-blueprints';
 export default async function WorkPage({
   searchParams,
 }: {
-  searchParams: Promise<{ thread?: string }>;
+  searchParams: Promise<{ thread?: string; prompt?: string }>;
 }) {
-  const { thread: initialThreadId } = await searchParams;
+  const { thread: initialThreadId, prompt: initialWorkflowPrompt } = await searchParams;
   const supabase = await createClient();
 
   const { data: { user } } = await supabase.auth.getUser();
@@ -53,6 +53,7 @@ export default async function WorkPage({
       blueprints={blueprints}
       initialThreads={threads || []}
       initialActiveThreadId={initialThreadId || null}
+      initialWorkflowPrompt={initialWorkflowPrompt || null}
     />
   );
 }

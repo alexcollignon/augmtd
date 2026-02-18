@@ -129,8 +129,11 @@ export default function WorkDetailPanel({ item, isOpen, onClose, batchItems }: W
         method: 'POST',
       });
       if (response.ok) {
-        const { threadId } = await response.json();
-        window.location.href = `/work?thread=${threadId}`;
+        const { threadId, workflowPrompt } = await response.json();
+        const url = workflowPrompt
+          ? `/work?thread=${threadId}&prompt=${encodeURIComponent(workflowPrompt)}`
+          : `/work?thread=${threadId}`;
+        window.location.href = url;
       } else {
         alert('Failed to open workflow. Please try again.');
       }
@@ -415,12 +418,10 @@ export default function WorkDetailPanel({ item, isOpen, onClose, batchItems }: W
                             </div>
                           </div>
 
-                          {/* Step count hint */}
-                          {item.execution_plan.steps && item.execution_plan.steps.length > 0 && (
-                            <p className="text-[12px] text-neutral-500">
-                              {item.execution_plan.steps.length}-step workflow ready to open and refine in Workflows.
-                            </p>
-                          )}
+                          {/* Workflow hint */}
+                          <p className="text-[12px] text-neutral-500">
+                            Open in Workflows to build and refine a step-by-step plan.
+                          </p>
                         </div>
                       )}
 

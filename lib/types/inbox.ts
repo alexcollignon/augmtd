@@ -71,6 +71,18 @@ export interface ExecutionPlan {
   steps: ExecutionStep[];
 }
 
+/**
+ * Slim seed stored on inbox items for executable work.
+ * Contains just enough to show in the detail panel and seed the workflow chat.
+ * The full plan is generated live by the workflow AI when the user opens it.
+ */
+export interface WorkflowSeed {
+  deliverable_type: DeliverableType;
+  deliverable_description: string;
+  deadline?: string; // ISO timestamp if mentioned in the email
+  workflow_prompt: string; // Natural language description that becomes the first user message
+}
+
 export interface Artifact {
   type: ArtifactType;
   name: string; // File name (e.g., "Q1_Revenue_Report.xlsx")
@@ -121,7 +133,7 @@ export interface InboxItem {
 
   // Execution fields (for AI-executable work)
   is_executable?: boolean;
-  execution_plan?: ExecutionPlan;
+  execution_plan?: WorkflowSeed;
   execution_status?: ExecutionStatus;
   current_step?: number;
   artifacts?: Artifact[];
@@ -223,10 +235,8 @@ export function isExecutionCompleted(item: InboxItem): boolean {
 
 /**
  * Helper: Get execution progress percentage
+ * @deprecated Steps are no longer stored on inbox items — progress lives on work_threads.
  */
-export function getExecutionProgress(item: InboxItem): number {
-  if (!item.execution_plan?.steps.length) return 0;
-
-  const completedSteps = item.execution_plan.steps.filter(s => s.status === 'completed').length;
-  return Math.round((completedSteps / item.execution_plan.steps.length) * 100);
+export function getExecutionProgress(_item: InboxItem): number {
+  return 0;
 }

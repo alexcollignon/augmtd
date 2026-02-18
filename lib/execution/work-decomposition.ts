@@ -10,7 +10,7 @@
 
 import { SupabaseClient } from '@supabase/supabase-js';
 import OpenAI from 'openai';
-import type { ExecutionPlan, DeliverableType } from '@/lib/types/inbox';
+import type { WorkflowSeed, DeliverableType } from '@/lib/types/inbox';
 
 // Lazy-load OpenAI client
 let openaiClient: OpenAI | null = null;
@@ -98,7 +98,7 @@ export async function decomposeWork(
   input: DecompositionInput,
   userId: string,
   supabase: SupabaseClient
-): Promise<ExecutionPlan | null> {
+): Promise<WorkflowSeed | null> {
   try {
     // 1. Load user context profiles
     const userContext = await loadUserContext(userId, supabase);
@@ -142,61 +142,20 @@ Analyze this work request and determine if it requires creating a deliverable (r
 
 If this is NOT a deliverable request (e.g., just asking a question, requesting information, scheduling a meeting, simple yes/no), return: null
 
-If this IS a deliverable request, create a complete workflow and return a JSON object in this exact format:
+If this IS a deliverable request, return a JSON object in this exact format:
 {
   "deliverable_type": "report" | "presentation" | "document" | "email" | "analysis" | "spreadsheet",
   "deliverable_description": "Specific description using actual names from the email — e.g. 'Q1 2024 revenue report for Acme Corp' not 'quarterly report'",
   "deadline": "ISO timestamp if mentioned, otherwise null",
-  "inputs": [
-    {
-      "id": "input_1",
-      "name": "Input name using actual names from the email",
-      "type": "data_source" | "document" | "context" | "approval" | "meeting_notes" | "user_input",
-      "description": "What is needed and why, referencing specific systems or data sources named in the email",
-      "required": true | false,
-      "examples": ["Example value 1", "Example value 2"]
-    }
-  ],
-  "outputs": [
-    {
-      "id": "output_1",
-      "name": "Output name using actual names from the email",
-      "type": "draft" | "final_document" | "data_export" | "visualization" | "summary" | "decision" | "notification",
-      "description": "What gets produced, naming the specific deliverable"
-    }
-  ],
-  "steps": [
-    {
-      "number": 1,
-      "action": "Specific action using actual names from the email — e.g. 'Pull Acme Corp Q1 revenue from Salesforce' not 'pull sales data'",
-      "toolsNeeded": ["Excel", "Database"],
-      "skill": "data_pull" | "excel_generator" | "powerpoint_generator" | "word_generator" | "email_drafter" | "data_analyzer" | "chart_generator",
-      "status": "pending"
-    }
-  ]
+  "workflow_prompt": "2-4 sentences describing exactly what needs to be created, grounded in the email's specific details. Include the requester's name, the exact client or project name, what content is needed, and any constraints or deadlines. This becomes the opening message of a workflow conversation — make it specific enough that an AI can generate a detailed plan from it alone."
 }
 
-Available skills:
-- data_pull: Retrieve data from databases or systems
-- excel_generator: Create Excel spreadsheets with formatting and charts
-- powerpoint_generator: Create PowerPoint presentations
-- word_generator: Create Word documents
-- email_drafter: Draft professional email responses
-- data_analyzer: Analyze data and generate insights
-- chart_generator: Create visualizations and charts
-
 Guidelines:
-- Only create plans for deliverable requests (things that need to be created/generated)
+- Only identify deliverable requests (things that need to be created/generated)
 - Simple information requests, questions, or status updates should return null
-- **USE SPECIFIC DETAILS**: Extract and use exact proper nouns from the email — client/company names, project names, system names, data types, dates. If the email says "Acme Corp", write "Acme Corp", not "the client". If it says "Q1 2024", write "Q1 2024", not "quarterly".
-- **INPUTS**: Identify what data, documents, context, or approvals are needed BEFORE starting work
-- **OUTPUTS**: Define what artifacts/deliverables will be produced at each stage
-- **STEPS**: Keep concrete and actionable, referencing specific systems/data from the email
-  - Specify tools needed (Excel, PowerPoint, Database, Email, etc.)
+- **USE SPECIFIC DETAILS**: Extract and use exact proper nouns from the email — client/company names, project names, system names, data types, dates. If the email says "Acme Corp", write "Acme Corp" not "the client".
+- **workflow_prompt**: Must be specific and actionable. Include: who requested it, what exactly needs to be created, for whom, and any key constraints from the email. Do NOT be generic.
 - Match deliverable_type to what's actually being requested
-- Use user's typical work patterns when available
-- Maximum 6 steps (if more complex, group related actions)
-- Think about the EXECUTION: what would an AI agent need to know to actually do this work?
 
 Examples of executable work:
 - "Can you send me the Q1 report?" → executable (report deliverable)
@@ -242,16 +201,16 @@ Return ONLY the JSON object or null, no other text.`;
       return null;
     }
 
-    const executionPlan = JSON.parse(response) as ExecutionPlan;
+    const seed = JSON.parse(response) as WorkflowSeed;
 
-    // Validate the plan has required fields
-    if (!executionPlan.deliverable_type || !executionPlan.steps || executionPlan.steps.length === 0) {
-      console.error('[WorkDecomposition] Invalid execution plan structure');
+    // Validate the seed has required fields
+    if (!seed.deliverable_type || !seed.workflow_prompt) {
+      console.error('[WorkDecomposition] Invalid workflow seed structure');
       return null;
     }
 
-    console.log(`[WorkDecomposition] Generated plan: ${executionPlan.deliverable_description} (${executionPlan.steps.length} steps)`);
-    return executionPlan;
+    console.log(`[WorkDecomposition] Generated seed: ${seed.deliverable_description}`);
+    return seed;
 
   } catch (error) {
     console.error('[WorkDecomposition] Error decomposing work:', error);
