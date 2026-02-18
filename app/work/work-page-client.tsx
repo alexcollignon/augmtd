@@ -19,6 +19,7 @@ import {
 } from '@heroicons/react/24/outline';
 import { WorkBlueprint } from '@/lib/types/work-blueprints';
 import { ExecutionPlan } from '@/lib/types/inbox';
+import OnboardingModal from '@/components/onboarding-modal';
 
 // ─── Markdown renderer ────────────────────────────────────────────────────────
 
@@ -128,6 +129,7 @@ interface WorkMessage {
 
 interface WorkPageClientProps {
   userEmail?: string;
+  userFullName?: string;
   hasCompletedOnboarding: boolean;
   blueprints: WorkBlueprint[];
   initialThreads: WorkThread[];
@@ -371,6 +373,8 @@ function PlanPanel({
 
 export function WorkPageClient({
   userEmail,
+  userFullName,
+  hasCompletedOnboarding,
   blueprints,
   initialThreads,
 }: WorkPageClientProps) {
@@ -384,6 +388,7 @@ export function WorkPageClient({
   const [chatInput, setChatInput] = useState('');
   const [entryInput, setEntryInput] = useState('');
   const [isCreatingThread, setIsCreatingThread] = useState(false);
+  const [isOnboardingOpen, setIsOnboardingOpen] = useState(!hasCompletedOnboarding);
   const [editingThreadId, setEditingThreadId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -931,6 +936,13 @@ export function WorkPageClient({
           </div>
         </>
       )}
+
+      <OnboardingModal
+        isOpen={isOnboardingOpen}
+        onClose={() => setIsOnboardingOpen(false)}
+        userEmail={userEmail}
+        userFullName={userFullName}
+      />
     </div>
   );
 }

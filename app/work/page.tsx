@@ -1,10 +1,7 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { WorkPageClient } from './work-page-client';
-import {
-  hasCompletedOnboarding,
-  getUserIdentity,
-} from '@/lib/context/work-patterns-service';
+import { getUserIdentity } from '@/lib/context/work-patterns-service';
 import { getBlueprintsForDepartment } from '@/lib/blueprints/blueprint-library';
 import { WorkBlueprint } from '@/lib/types/work-blueprints';
 
@@ -20,13 +17,18 @@ export default async function WorkPage() {
     .eq('id', user.id)
     .single();
 
-  const completed = await hasCompletedOnboarding(user.id, supabase);
+  // Same identity check as inbox page — requires name + dept + role
+  const identity = await getUserIdentity(user.id, supabase);
+  const hasCompletedIdentity = !!(
+    profile?.full_name &&
+    identity?.department &&
+    identity?.jobRole
+  );
+
+  // Load department-filtered blueprints when identity is complete
   let blueprints: WorkBlueprint[] = [];
-  if (completed) {
-    const identity = await getUserIdentity(user.id, supabase);
-    if (identity?.department) {
-      blueprints = getBlueprintsForDepartment(identity.department);
-    }
+  if (hasCompletedIdentity && identity?.department) {
+    blueprints = getBlueprintsForDepartment(identity.department);
   }
 
   // Load existing work threads
@@ -41,7 +43,8 @@ export default async function WorkPage() {
   return (
     <WorkPageClient
       userEmail={profile?.email || user.email}
-      hasCompletedOnboarding={completed}
+      userFullName={profile?.full_name}
+      hasCompletedOnboarding={hasCompletedIdentity}
       blueprints={blueprints}
       initialThreads={threads || []}
     />
