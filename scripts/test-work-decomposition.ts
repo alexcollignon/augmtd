@@ -102,16 +102,11 @@ async function runTests() {
       );
 
       if (plan) {
-        console.log('✅ EXECUTABLE - Execution plan generated:\n');
+        console.log('✅ EXECUTABLE - Workflow seed generated:\n');
         console.log(`📊 Deliverable: ${plan.deliverable_type}`);
         console.log(`📝 Description: ${plan.deliverable_description}`);
         if (plan.deadline) console.log(`⏰ Deadline: ${plan.deadline}`);
-        if (plan.estimated_time) console.log(`⏱️  Estimated: ${plan.estimated_time}`);
-        console.log(`\n🔧 Steps (${plan.steps.length}):`);
-        plan.steps.forEach(step => {
-          console.log(`  ${step.number}. ${step.action}`);
-          if (step.skill) console.log(`     Skill: ${step.skill}`);
-        });
+        console.log(`\n💬 Workflow prompt:\n${plan.workflow_prompt}`);
       } else {
         console.log('⏭️  NOT EXECUTABLE - Skipped (not a deliverable request)');
       }
