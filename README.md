@@ -526,6 +526,25 @@ interface Skill {
 
 ## 📈 Recent Improvements
 
+### Chat-Driven Workflows & Settings Identity (Feb 18, 2026)
+- ✅ **Workflows page rebuilt** as split-panel chat UI (thread list | plan panel | chat panel)
+- ✅ **Work threads DB** — `work_threads` + `work_messages` tables with RLS and cascade delete
+- ✅ **Streaming AI with live plan updates** — `---PLAN_UPDATE---` separator protocol; JSON parsed silently to update Plan Panel
+- ✅ **Plan context injection** — Current plan JSON injected into system prompt so model updates ALL fields correctly (deliverable_type, skill, toolsNeeded)
+- ✅ **Thread management** — Inline rename + delete with confirmation in sidebar
+- ✅ **Settings identity section** — Editable name, department, role with avatar card layout
+- ✅ **Sidebar nav rebrand** — "Workflows" + "Work Inbox", left-accent active state, user profile popover (Activity Log / Settings / Sign Out)
+- ✅ **Onboarding modal on Workflows** — Triggers on `/work` since it's now the primary page
+
+**Technical Details:**
+```
+AI Protocol: conversational text (1-3 sentences) ---PLAN_UPDATE--- full JSON plan
+Model: gpt-4o-mini, max_tokens: 2500, temperature: 0.4
+Plan Panel: live deliverable / inputs / steps / outputs
+Thread list: optimistic rename + delete, inline confirm
+Settings: draft state pattern, saves via POST /api/context/onboarding
+```
+
 ### Calendar Integration & Meeting Assistant (Feb 2026)
 - ✅ **Gmail + Outlook calendar sync** - Uses same OAuth flow as email
 - ✅ **Meeting prep generation** - AI-powered agenda for upcoming meetings (next 48 hours)
@@ -678,12 +697,19 @@ Benefits:
 9. ~~**Calendar integration** - Gmail + Outlook calendar sync with same OAuth~~ ✅
 10. ~~**Meeting assistant** - AI-generated meeting prep for upcoming meetings~~ ✅
 11. ~~**Multi-inbox support** - Connect multiple email accounts to same user~~ ✅
+12. ~~**Chat-driven workflows** - Split-panel UI with live plan updates~~ ✅
+13. ~~**Work threads persistence** - DB + streaming API for work conversations~~ ✅
+14. ~~**Settings identity section** - Editable name, department, role~~ ✅
+15. ~~**Sidebar nav rebrand** - Workflows/Work Inbox, user profile popover~~ ✅
 
 ### In Progress 🚧
-12. **Skills UI** - Visual interface to see/manage available skills
-13. **Automatic syncing** - Implement hourly/daily cron job for email/calendar sync
-14. **Vector similarity** - Find similar past interactions using pgvector
-15. **Proper token encryption** - Replace base64 with AES-256
+12. **Execution engine** - Actually run workflows (dispatch to skill agents)
+13. **Skill implementations** - data_pull, powerpoint_generator, excel_generator, etc.
+14. **Input collection UI** - Gather required inputs when executing a saved workflow
+15. **Workflow library** - Browse and reuse saved workflows
+16. **Automatic syncing** - Implement hourly/daily cron job for email/calendar sync
+17. **Vector similarity** - Find similar past interactions using pgvector
+18. **Proper token encryption** - Replace base64 with AES-256
 
 ### Planned 📋
 16. **Slack integration** - Add slack_communication profile type

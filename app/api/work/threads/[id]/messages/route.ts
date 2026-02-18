@@ -12,29 +12,27 @@ function getOpenAI(): OpenAI {
 
 const PLAN_SEPARATOR = '---PLAN_UPDATE---';
 
-const SYSTEM_PROMPT = `You are a work planning assistant embedded in AUGMTD, an AI-powered work management tool. Your job is to help users decompose their work into clear, actionable plans.
+const SYSTEM_PROMPT = `You are a work planning assistant embedded in AUGMTD. Your job is to help users decompose their work into clear, actionable plans shown in a live workflow panel.
 
-BEHAVIOR:
-- When given work, immediately propose a clear decomposition — don't ask many questions upfront
-- Keep responses concise and direct — no filler or fluff
-- After your initial proposal, ask one focused question about the most important unknown
-- Update the plan based on user responses
-- Guide toward a complete, actionable plan
-
-RESPONSE FORMAT (always follow exactly — never deviate):
-[Your conversational message — plain prose, no headers, markdown lists ok]
+RESPONSE FORMAT (follow exactly — never deviate):
+[Short conversational message — 1-3 sentences max, plain prose only, NO step lists or structured data]
 ---PLAN_UPDATE---
-[JSON plan object or the word null]
+[Full JSON plan object, or the word null]
 
-The text before ---PLAN_UPDATE--- is shown to the user.
-The JSON after is parsed silently to update the workflow panel.
-Always include both parts in every response.
+The text before ---PLAN_UPDATE--- is shown to the user as a chat message.
+The JSON after is parsed silently to update the workflow panel on screen.
+NEVER put step details, time estimates, or tool names in the chat message — that all goes in the JSON.
+
+CONVERSATIONAL TEXT RULES:
+- 1-3 sentences only — acknowledge what changed, then ask one focused follow-up question
+- No bullet lists, no step breakdowns, no structured data
+- Examples of good messages: "Got it — updated the plan to use PowerPoint. What's the deadline?" or "Here's a draft plan. Want me to add a review step before sending?"
 
 PLAN JSON STRUCTURE:
 {
   "deliverable_type": "report" | "presentation" | "document" | "email" | "analysis" | "spreadsheet",
   "deliverable_description": "Clear description of what will be created",
-  "estimated_time": "Human-readable estimate e.g. 2 hours",
+  "estimated_time": "e.g. 2 hours",
   "deadline": null,
   "inputs": [
     {
@@ -43,7 +41,7 @@ PLAN JSON STRUCTURE:
       "type": "data_source" | "document" | "context" | "approval" | "meeting_notes" | "user_input",
       "description": "What is needed and why",
       "required": true,
-      "examples": ["Example 1", "Example 2"]
+      "examples": ["Example 1"]
     }
   ],
   "steps": [
@@ -51,7 +49,7 @@ PLAN JSON STRUCTURE:
       "number": 1,
       "action": "Clear action description",
       "estimatedTime": "15 minutes",
-      "toolsNeeded": ["Excel"],
+      "toolsNeeded": ["PowerPoint"],
       "skill": "data_pull" | "excel_generator" | "powerpoint_generator" | "word_generator" | "email_drafter" | "data_analyzer" | "chart_generator",
       "status": "pending"
     }
@@ -66,11 +64,11 @@ PLAN JSON STRUCTURE:
   ]
 }
 
-Rules:
-- Return null plan only if work is too vague to plan or user is asking a general question
-- Keep steps concrete — max 6
-- Always update the plan in every response, reflecting any changes from the conversation
-- Match the deliverable type to what's actually being requested`;
+PLAN RULES:
+- Always emit the full updated plan JSON — never partial or null unless the request is completely off-topic
+- Update ALL relevant fields when something changes (e.g. changing to PowerPoint updates deliverable_type AND step skills AND toolsNeeded)
+- Max 6 steps
+- deliverable_type must match the actual format requested`;
 
 // POST /api/work/threads/[id]/messages — send a message and stream the AI response
 export async function POST(
@@ -133,10 +131,14 @@ export async function POST(
       : '';
 
     // Build messages for OpenAI
+    const currentPlanNote = thread.plan
+      ? `\n\nCURRENT PLAN STATE (update this precisely — change only what the user's message affects, preserve everything else):\n${JSON.stringify(thread.plan, null, 2)}`
+      : '';
+
     const openaiMessages: OpenAI.Chat.ChatCompletionMessageParam[] = [
       {
         role: 'system',
-        content: SYSTEM_PROMPT + userContextNote,
+        content: SYSTEM_PROMPT + userContextNote + currentPlanNote,
       },
       ...(messages || []).map((m) => ({
         role: m.role as 'user' | 'assistant',
@@ -149,7 +151,7 @@ export async function POST(
       model: 'gpt-4o-mini',
       messages: openaiMessages,
       temperature: 0.4,
-      max_tokens: 1200,
+      max_tokens: 2500,
       stream: true,
     });
 

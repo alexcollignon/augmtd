@@ -1,253 +1,188 @@
-# Recent Changes - Work Decomposition & Workflows
+# Recent Changes - Chat-Driven Workflows & Settings Identity
 
-## Summary (Feb 17, 2026)
+## Summary (Feb 18, 2026)
 
-Major improvements to work decomposition system with complete workflow structure including inputs, outputs, and skills for future execution.
+Major UX overhaul: Workflows page rebuilt as a chat-driven split-panel interface with live plan updates. Settings page now includes editable identity profile. Sidebar nav rebranded.
 
 ---
 
-## Key Changes
+## 1. Chat-Driven Workflows UI (Complete Rewrite)
 
-### 1. Work Decomposition - Complete Structure
+The `/work` page was rebuilt from a static decomposition form into a **chat-driven split-panel interface** — similar to Claude/ChatGPT but with a live workflow panel.
 
-**AI now generates complete, executable workflows:**
-- ✅ **Inputs** - What data/documents/context needed before starting
-- ✅ **Steps** - Actions with tools, skills, time estimates, dependencies
-- ✅ **Outputs** - Expected artifacts/deliverables produced
+### Layout (3 panels)
 
-**Type System:**
-```typescript
-// Input types
-'data_source' | 'document' | 'context' | 'approval' | 'meeting_notes' | 'user_input'
-
-// Output types
-'draft' | 'final_document' | 'data_export' | 'visualization' | 'summary' | 'decision' | 'notification'
-
-// Skills assigned to steps
-'data_pull' | 'excel_generator' | 'powerpoint_generator' | 'email_drafter' | 'data_analyzer' | 'chart_generator'
+```
+[Sidebar Nav] [Thread List (w-52)] [Plan Panel (flex-1)] [Chat Panel (w-400px)]
 ```
 
-### 2. Work Page UI Enhancements
+- **Thread List** — Lists all work threads, inline rename + delete with confirmation
+- **Plan Panel** — Live workflow: deliverable, inputs, steps, outputs. Shows "Updating plan…" pulse while streaming, "Plan updated ✓" flash when JSON arrives
+- **Chat Panel** — Clean prose AI responses (no message bubbles for AI), right-aligned muted user messages, streaming cursor
 
-**New sections display complete workflow:**
-- **Inputs Section** (Blue) - Required data sources, documents, context with examples
-- **Steps Section** (Gray) - Actions with tools needed, time estimates, skills
-- **Outputs Section** (Green) - Expected artifacts with types and descriptions
-- **Save as Workflow** - Checkbox to save for reuse
+### Key Design Decisions
 
-### 3. Workflow Persistence
+- AI conversational text = 1–3 sentences of plain prose only
+- All structured data (steps, skills, times) lives in the JSON plan → rendered in the Plan Panel
+- `---PLAN_UPDATE---` separator protocol: client splits stream at separator, shows only text in chat, parses JSON silently
+- Current plan JSON injected into system prompt so model updates ALL fields correctly (not just steps)
+- `max_tokens: 2500` to ensure full JSON plan fits after separator
 
-**Database Schema:**
-- `user_workflows` table stores reusable workflows
-- Includes inputs, steps, outputs, metadata
-- Tracks usage count and last used
-- Links to user and department
+### Streaming Architecture
 
-**API:**
-- `POST /api/workflows/save` - Save workflow for reuse
-- Simple endpoint focused on persistence
+```
+Client sends message →
+  Server loads conversation history + current plan JSON →
+  Streams OpenAI response →
+    Client buffers stream, displays text before separator →
+    On stream complete: parse JSON after separator →
+    Update Plan Panel + flash "Plan updated"
+  Server saves assistant message (text only) + updates thread.plan (JSON)
+```
 
-### 4. Onboarding Improvements
+### Entry View (no active thread)
 
-**Simplified onboarding:**
-- Removed seniority field
-- Job role now free text (not dropdown)
-- Department first, then role
-- Workflows filtered by department only
+- Large textarea + "Start" button
+- Blueprint grid (2-col, department-filtered, up to 8 blueprints)
+- Creating thread: immediately calls sendMessage with initial description
 
-**Main onboarding modal:**
-- Added department field (14 options)
-- Integrated with work patterns system
-- Saves to both profiles table and context_profiles
+---
 
-**Fixed identity preservation:**
-- `ProfileLoader.initializeUser()` now merges with existing data
-- Preserves `department` and `jobRole` during email sync
-- Prevents onboarding modal from re-appearing after sync
+## 2. Database — Work Threads & Messages
 
-### 5. Blueprint System Updates
+**New tables:**
 
-**Removed unused code:**
-- Deleted `defaultSteps` from blueprints (were never used)
-- Removed `BlueprintStep` interface
-- Simplified `WorkBlueprint` to template only
-- AI generates actual steps dynamically
-
-**Blueprint filtering:**
-- Now filters by department only
-- Shows only blueprints for user's department
-- Removed frequency and time pills from cards
-
-### 6. Database Migrations
-
-**Created:**
-- `20260217_create_workflows_table.sql` - user_workflows schema
-- `20260217_add_department_to_profiles.sql` - (created but not used)
-- `20260217_remove_workflow_executions.sql` - Cleanup unused table
-
-**Tables:**
 ```sql
-user_workflows - Stores reusable workflows with inputs/steps/outputs
-  - inputs JSONB (WorkflowInput[])
-  - steps JSONB (ExecutionStep[])
-  - outputs JSONB (WorkflowOutput[])
-  - usage tracking and metadata
+work_threads (id, user_id, title, plan JSONB, status, created_at, updated_at)
+work_messages (id, thread_id, role, content, created_at)
+```
+
+- RLS: users access only their own threads/messages
+- FK: `work_messages.thread_id` → `work_threads.id` ON DELETE CASCADE
+
+**Migration:** `supabase/migrations/20260218_create_work_threads.sql`
+
+---
+
+## 3. API Routes — Work Threads
+
+| Route | Method | Purpose |
+|-------|--------|---------|
+| `/api/work/threads` | GET | List user's active threads |
+| `/api/work/threads` | POST | Create new thread |
+| `/api/work/threads/[id]/messages` | POST | Send message + stream AI response |
+| `/api/work/threads/[id]/messages` | GET | Load thread + message history |
+| `/api/work/threads/[id]` | PATCH | Rename thread title |
+| `/api/work/threads/[id]` | DELETE | Delete thread (cascades messages) |
+
+**Streaming details:**
+- Uses OpenAI SDK native stream, wrapped in `ReadableStream`
+- After stream ends: saves assistant message + updates `thread.plan` via service role client
+- Plan parse failures caught silently — just updates `updated_at`
+
+---
+
+## 4. AI System Prompt (Work Planning)
+
+**Model:** `gpt-4o-mini` · **Temperature:** 0.4 · **Max tokens:** 2500
+
+**Key rules enforced:**
+- Conversational text = 1–3 sentences max, no lists or structured data
+- Full plan JSON always emitted after `---PLAN_UPDATE---`
+- Current plan state injected as `CURRENT PLAN STATE` in system prompt → enables precise field-level updates
+- Changing deliverable format (e.g. PPT) must update `deliverable_type` + step `skill` + `toolsNeeded` together
+
+**Plan JSON structure:**
+```json
+{
+  "deliverable_type": "presentation",
+  "deliverable_description": "...",
+  "estimated_time": "3 hours",
+  "deadline": null,
+  "inputs": [...],
+  "steps": [{ "number": 1, "action": "...", "estimatedTime": "30 min", "toolsNeeded": ["PowerPoint"], "skill": "powerpoint_generator", "status": "pending" }],
+  "outputs": [...]
+}
+```
+
+---
+
+## 5. Sidebar Nav Rebrand
+
+- **Width:** w-64 → w-52
+- **Navigation renamed:**
+  - "Create Work" → **"Workflows"** (moved to top)
+  - "Prepared Work" → **"Work Inbox"**
+- **Active state:** sharp `border-l-2 border-indigo-500 bg-indigo-50` (no rounded corners)
+- **User profile popover** (click on avatar at bottom):
+  - Activity Log
+  - Settings
+  - Sign Out
+  - Click-outside handler via `useRef` + `useEffect`
+- **Logo:** Smaller (w-5), `tracking-widest uppercase`
+- **Avatar:** Indigo square with email initial
+
+---
+
+## 6. Settings — Identity Section
+
+New editable profile card at the top of `/settings`, replacing the static Account section.
+
+**Component:** `components/settings/identity-section.tsx`
+
+**Read mode:**
+- Avatar square (indigo, first initial) + full name + email in one row
+- Department | Role in 2-column grid below
+
+**Edit mode:**
+- Full Name input (full width)
+- Department (select, 14 options) | Role (text input) in 2-col grid
+- Email shown as quiet hint text
+
+**Save:** `POST /api/context/onboarding` (reuses existing upsert endpoint)
+- Optimistic commit on success
+- "✓ Saved" flash for 3 seconds
+- Draft state pattern: changes uncommitted until Save pressed
+
+**Data fetched in `app/settings/page.tsx`:**
+- `full_name` from `profiles` table
+- `department` + `jobRole` from `context_profiles` via `getUserIdentity`
+
+---
+
+## 7. Onboarding Modal on Workflows Page
+
+The onboarding modal (name + department + role prompt) now appears on `/work` (Workflows), since that's the new primary landing page. Previously only triggered on `/inbox`.
+
+**Logic in `app/work/page.tsx`:**
+```typescript
+const hasCompletedIdentity = !!(profile?.full_name && identity?.department && identity?.jobRole);
 ```
 
 ---
 
 ## Files Changed
 
-### Core Logic
-- `lib/execution/work-decomposition.ts` - AI prompt with complete structure
-- `lib/context/work-patterns-service.ts` - Removed seniority, updated validation
-- `lib/context/profile-loader.ts` - **Fixed: Preserve department/jobRole during sync**
+### New Files
+- `supabase/migrations/20260218_create_work_threads.sql`
+- `app/api/work/threads/route.ts`
+- `app/api/work/threads/[id]/messages/route.ts`
+- `app/api/work/threads/[id]/route.ts`
+- `components/settings/identity-section.tsx`
 
-### Type Definitions
-- `lib/types/inbox.ts` - Added WorkflowInput, WorkflowOutput, updated ExecutionStep
-- `lib/types/workflows.ts` - Complete Workflow type system
-- `lib/types/work-blueprints.ts` - Removed defaultSteps, simplified
+### Major Rewrites
+- `app/work/work-page-client.tsx` — Complete rewrite as split-panel chat UI
+- `components/sidebar-nav.tsx` — Rebrand + user profile popover
 
-### UI Components
-- `app/work/work-page-client.tsx` - Display inputs/outputs, workflow saving
-- `components/onboarding-modal.tsx` - Added department field
-- `components/onboarding/work-patterns-onboarding.tsx` - Simplified (no longer used in main flow)
-- `app/inbox/inbox-page-client.tsx` - Updated onboarding trigger logic
-- `components/sidebar-nav.tsx` - Cleaned up (removed workflows link)
-
-### API Endpoints
-- `app/api/workflows/save/route.ts` - **New:** Simple workflow save endpoint
-- `app/api/work/create/route.ts` - Updated with workflow saving
-- `app/api/work/onboarding/route.ts` - Removed seniority validation
-- `app/api/context/onboarding/route.ts` - Added department saving
-
-### Database
-- `supabase/migrations/20260217_create_workflows_table.sql`
-- `supabase/migrations/20260217_remove_workflow_executions.sql`
-
-### Documentation
-- `WORK_DECOMPOSITION_COMPLETE.md` - Comprehensive guide
-- `RECENT_CHANGES.md` - This file
+### Updated
+- `app/work/page.tsx` — Fetches threads + identity, passes hasCompletedOnboarding
+- `app/settings/page.tsx` — Fetches identity data, renders IdentitySection
 
 ---
 
-## What Was Removed
+## What's Still Not Built
 
-**Workflow Library UI (intentionally excluded):**
-- ❌ `/app/workflows` pages - Not needed yet
-- ❌ `/app/api/workflows` full CRUD - Simplified to save-only
-- ❌ Sidebar "Workflows" link - Keeping it simple
-
-**Unused Blueprint Code:**
-- ❌ `defaultSteps` field from all blueprints
-- ❌ `BlueprintStep` interface
-- ❌ `typicalRoles` references
-
-**Database:**
-- ❌ `workflow_executions` table - Will recreate when building execution engine
-
----
-
-## Current State
-
-### ✅ Working
-- AI generates complete workflows (inputs → steps → outputs)
-- Work page displays all three sections
-- Workflows can be saved and reused
-- Department-based blueprint filtering
-- Onboarding captures department + job role
-- Identity profile preserved during email sync
-
-### ⏳ Not Built Yet
 - Execution engine (actually running workflows)
-- Skill implementations (data_pull, excel_generator, etc.)
-- Input collection UI when executing saved workflows
-- Artifact generation and storage
-- Progress tracking during execution
-- Workflow library UI (intentionally postponed)
-
----
-
-## Bug Fixes
-
-### Critical: Identity Profile Overwrite
-**Issue:** Email sync was resetting onboarding data, causing modal to re-appear
-
-**Root Cause:** `ProfileLoader.initializeUser()` was overwriting identity profile without preserving `department` and `jobRole`
-
-**Fix:** Updated to merge with existing profile data:
-```typescript
-// Get existing profile
-const { data: existing } = await supabase
-  .from('context_profiles')
-  .select('profile_data')
-  .eq('user_id', userId)
-  .eq('profile_type', 'identity')
-  .single();
-
-// Merge instead of overwrite
-const mergedData = {
-  ...(existing?.profile_data || {}),  // Preserves department, jobRole
-  fullName,
-  role,
-  email,
-  responsibilities: existing?.profile_data?.responsibilities || [],
-  authority,
-};
-```
-
-**File:** `lib/context/profile-loader.ts` (lines 360-378)
-
----
-
-## Testing Recommendations
-
-1. **Work Decomposition:**
-   - Create work from blueprint → Check inputs/outputs generated
-   - Create custom work → Verify complete structure
-   - Save as workflow → Confirm saves to database
-
-2. **Onboarding:**
-   - Complete onboarding → Verify department + role saved
-   - Sync emails → Confirm onboarding doesn't re-appear
-   - Check context_profiles table → Verify department/jobRole preserved
-
-3. **Blueprints:**
-   - Check department filtering → Only see relevant templates
-   - Verify no frequency/time pills on cards
-
----
-
-## Migration Instructions
-
-Run these migrations in Supabase:
-
-```sql
--- Already run by user
--- CREATE TABLE user_workflows (...)
-
--- Run this to clean up
-DROP TABLE IF EXISTS workflow_executions;
-```
-
----
-
-## Next Steps
-
-When building execution engine:
-1. Input collection UI for saved workflows
-2. Step execution router (dispatch to skills)
-3. Skill implementations (data_pull, excel_generator, etc.)
-4. Artifact generation and storage
-5. Progress tracking and status updates
-6. Error handling and retries
-
----
-
-## Developer Notes
-
-- Work decomposition structure is now complete for execution
-- All necessary metadata captured (inputs, outputs, tools, skills)
-- Identity profile preservation critical - always merge, never overwrite
-- Workflow library UI postponed - focus on decomposition quality first
-- Blueprint templates are prompts only - AI generates actual workflows
+- Skill implementations (data_pull, powerpoint_generator, etc.)
+- Input collection UI for executing saved workflows
+- Workflow library / saved workflow browser

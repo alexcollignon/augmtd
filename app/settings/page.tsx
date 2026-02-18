@@ -3,7 +3,9 @@ import { redirect } from 'next/navigation';
 import SidebarNav from '@/components/sidebar-nav';
 import ConnectionCard from '@/components/settings/connection-card';
 import AttendeeConnectionCard from '@/components/settings/attendee-connection-card';
+import IdentitySection from '@/components/settings/identity-section';
 import SettingsPageClient from './settings-page-client';
+import { getUserIdentity } from '@/lib/context/work-patterns-service';
 
 export default async function SettingsPage() {
   const supabase = await createClient();
@@ -26,12 +28,15 @@ export default async function SettingsPage() {
   const gmailConnection = connections?.find(c => c.provider === 'gmail');
   const outlookConnection = connections?.find(c => c.provider === 'outlook');
 
-  // Fetch Attendee connection status
+  // Fetch profile data (name + attendee status)
   const { data: profile } = await supabase
     .from('profiles')
-    .select('attendee_enabled')
+    .select('full_name, attendee_enabled')
     .eq('id', user.id)
     .single();
+
+  // Fetch identity (department + role)
+  const identity = await getUserIdentity(user.id, supabase);
 
   // Check if API key is configured
   const apiKeyConfigured = !!process.env.ATTENDEE_API_KEY;
@@ -55,20 +60,13 @@ export default async function SettingsPage() {
               </p>
             </div>
 
-            {/* Account Section */}
-            <div className="bg-white border border-neutral-200 p-6 mb-6 shadow-sm">
-              <h3 className="text-[15px] font-semibold text-neutral-900 mb-4">Account</h3>
-              <div className="space-y-3">
-                <div className="p-4 bg-neutral-50 border border-neutral-200">
-                  <label className="text-[11px] font-semibold text-neutral-600 uppercase tracking-wide">Email</label>
-                  <p className="text-[14px] text-neutral-900 mt-1">{user.email}</p>
-                </div>
-                <div className="p-4 bg-neutral-50 border border-neutral-200">
-                  <label className="text-[11px] font-semibold text-neutral-600 uppercase tracking-wide">User ID</label>
-                  <p className="text-[12px] text-neutral-600 mt-1 font-mono break-all">{user.id}</p>
-                </div>
-              </div>
-            </div>
+            {/* Profile / Identity Section */}
+            <IdentitySection
+              userEmail={user.email ?? ''}
+              initialName={profile?.full_name ?? ''}
+              initialDepartment={identity?.department ?? ''}
+              initialRole={identity?.jobRole ?? ''}
+            />
 
             {/* Email Connections Section */}
             <div className="bg-white border border-neutral-200 p-6 mb-6 shadow-sm">

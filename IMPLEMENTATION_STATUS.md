@@ -1,7 +1,7 @@
 # AUGMTD Implementation Status
-**Version:** 4.2
-**Last Updated:** 2026-02-17
-**Current Phase:** Phase 5 Complete - Work Decomposition with Complete Workflow Structure
+**Version:** 4.3
+**Last Updated:** 2026-02-18
+**Current Phase:** Phase 7 Complete - Chat-Driven Workflows, Settings Identity, Nav Rebrand
 
 ---
 
@@ -29,6 +29,10 @@
 | Work Decomposition (Phase 6) | ✅ Complete | 100% |
 | Workflow System | ✅ Complete | 100% |
 | Onboarding Integration | ✅ Complete | 100% |
+| Chat-Driven Workflows UI (Phase 7) | ✅ Complete | 100% |
+| Work Threads DB + API | ✅ Complete | 100% |
+| Settings Identity Section | ✅ Complete | 100% |
+| Sidebar Nav Rebrand | ✅ Complete | 100% |
 | Vector Similarity | ⚠️ Planned | 0% |
 
 ---
@@ -968,4 +972,68 @@ augmtd/
 
 See `WORK_DECOMPOSITION_COMPLETE.md` for detailed documentation.
 See `RECENT_CHANGES.md` for summary of recent changes.
+
+---
+
+## ✅ Phase 7: Chat-Driven Workflows, Settings Identity & Nav Rebrand (Feb 18, 2026)
+
+### Chat-Driven Workflows UI
+
+The `/work` page was completely rebuilt as a split-panel chat interface:
+
+- **Thread list sidebar** — All work threads with inline rename + delete
+- **Plan panel** — Live workflow display (deliverable, inputs, steps, outputs) with "Updating…" / "Updated ✓" status bar
+- **Chat panel** — Streaming AI responses (clean prose, no bubbles), right-aligned user messages
+
+**AI streaming protocol:**
+- `---PLAN_UPDATE---` separator: text before shown in chat, JSON after parsed silently
+- Current plan state injected into system prompt for precise field-level updates
+- Conversational text strictly 1–3 sentences (no structured data in chat)
+- `max_tokens: 2500` to fit full plan JSON after separator
+
+**DB Tables:**
+- `work_threads` — id, user_id, title, plan JSONB, status, timestamps
+- `work_messages` — id, thread_id, role, content, created_at (FK cascade)
+
+**API Routes:**
+```
+GET  /api/work/threads                    — list threads
+POST /api/work/threads                    — create thread
+POST /api/work/threads/[id]/messages      — send message + stream response
+GET  /api/work/threads/[id]/messages      — load history
+PATCH /api/work/threads/[id]              — rename
+DELETE /api/work/threads/[id]             — delete
+```
+
+### Settings — Identity Section
+
+New editable identity card at the top of `/settings`:
+- **Read mode:** Avatar + name + email row, Department | Role 2-column grid
+- **Edit mode:** Full Name input, Department select + Role input side-by-side
+- Saves via `POST /api/context/onboarding` (reuses existing upsert)
+- Draft state pattern — changes uncommitted until Save
+
+### Sidebar Nav Rebrand
+
+- "Create Work" → **"Workflows"** (top nav item)
+- "Prepared Work" → **"Work Inbox"**
+- Active state: `border-l-2 border-indigo-500` sharp left accent
+- User profile popover at bottom: Activity Log + Settings + Sign Out
+- Width: w-64 → w-52
+
+### Onboarding Modal on Workflows Page
+
+- Modal now triggers on `/work` (not just `/inbox`)
+- Same identity check: `full_name + department + jobRole`
+
+### Files Created/Updated
+- `supabase/migrations/20260218_create_work_threads.sql` — NEW
+- `app/api/work/threads/route.ts` — NEW
+- `app/api/work/threads/[id]/messages/route.ts` — NEW
+- `app/api/work/threads/[id]/route.ts` — NEW
+- `components/settings/identity-section.tsx` — NEW
+- `app/work/work-page-client.tsx` — Complete rewrite
+- `components/sidebar-nav.tsx` — Rebrand + popover
+- `app/work/page.tsx` — Updated data fetching
+- `app/settings/page.tsx` — Added identity data + IdentitySection
 

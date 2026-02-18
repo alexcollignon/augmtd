@@ -1,0 +1,231 @@
+'use client';
+
+import { useState } from 'react';
+import { PencilIcon, CheckIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import { Department } from '@/lib/types/work-blueprints';
+
+const DEPARTMENTS: { value: Department; label: string }[] = [
+  { value: 'Operations', label: 'Operations' },
+  { value: 'Finance', label: 'Finance' },
+  { value: 'Sales', label: 'Sales' },
+  { value: 'Marketing', label: 'Marketing' },
+  { value: 'Product', label: 'Product' },
+  { value: 'Engineering', label: 'Engineering' },
+  { value: 'Customer Success', label: 'Customer Success' },
+  { value: 'Human Resources', label: 'Human Resources' },
+  { value: 'Legal', label: 'Legal' },
+  { value: 'Compliance', label: 'Compliance' },
+  { value: 'Risk', label: 'Risk' },
+  { value: 'Data & Analytics', label: 'Data & Analytics' },
+  { value: 'Executive', label: 'Executive' },
+  { value: 'Other', label: 'Other' },
+];
+
+interface IdentitySectionProps {
+  initialName: string;
+  initialDepartment: string;
+  initialRole: string;
+  userEmail: string;
+}
+
+export default function IdentitySection({
+  initialName,
+  initialDepartment,
+  initialRole,
+  userEmail,
+}: IdentitySectionProps) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  const [name, setName] = useState(initialName);
+  const [department, setDepartment] = useState(initialDepartment);
+  const [role, setRole] = useState(initialRole);
+
+  // Draft values while editing
+  const [draftName, setDraftName] = useState(initialName);
+  const [draftDepartment, setDraftDepartment] = useState(initialDepartment);
+  const [draftRole, setDraftRole] = useState(initialRole);
+
+  const startEditing = () => {
+    setDraftName(name);
+    setDraftDepartment(department);
+    setDraftRole(role);
+    setError(null);
+    setSaved(false);
+    setIsEditing(true);
+  };
+
+  const cancelEditing = () => {
+    setIsEditing(false);
+    setError(null);
+  };
+
+  const handleSave = async () => {
+    if (!draftName.trim() || !draftDepartment || !draftRole.trim()) {
+      setError('All fields are required');
+      return;
+    }
+
+    setIsSaving(true);
+    setError(null);
+
+    try {
+      const res = await fetch('/api/context/onboarding', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fullName: draftName.trim(),
+          department: draftDepartment,
+          role: draftRole.trim(),
+        }),
+      });
+
+      if (!res.ok) throw new Error('Failed to save');
+
+      // Commit draft values
+      setName(draftName.trim());
+      setDepartment(draftDepartment);
+      setRole(draftRole.trim());
+      setIsEditing(false);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 3000);
+    } catch {
+      setError('Failed to save. Please try again.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const nameInitial = (name || userEmail)?.[0]?.toUpperCase() ?? '?';
+
+  return (
+    <div className="bg-white border border-neutral-200 p-6 mb-6 shadow-sm">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-5">
+        <h3 className="text-[15px] font-semibold text-neutral-900">Profile</h3>
+        <div className="flex items-center gap-2">
+          {saved && (
+            <span className="text-[12px] text-green-600 flex items-center gap-1">
+              <CheckIcon className="w-3.5 h-3.5" />
+              Saved
+            </span>
+          )}
+          {!isEditing ? (
+            <button
+              onClick={startEditing}
+              className="flex items-center gap-1.5 text-[12px] text-neutral-500 hover:text-neutral-800 transition-colors"
+            >
+              <PencilIcon className="w-3.5 h-3.5" />
+              Edit
+            </button>
+          ) : (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={cancelEditing}
+                disabled={isSaving}
+                className="flex items-center gap-1 text-[12px] text-neutral-400 hover:text-neutral-600 transition-colors disabled:opacity-50"
+              >
+                <XMarkIcon className="w-3.5 h-3.5" />
+                Cancel
+              </button>
+              <button
+                onClick={handleSave}
+                disabled={isSaving}
+                className="flex items-center gap-1.5 text-[12px] font-medium text-white bg-indigo-600 hover:bg-indigo-700 px-3 py-1.5 disabled:opacity-50 transition-colors"
+              >
+                {isSaving ? (
+                  <span className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                ) : (
+                  <CheckIcon className="w-3.5 h-3.5" />
+                )}
+                Save
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {error && (
+        <div className="mb-4 px-3 py-2 bg-red-50 border border-red-200 text-[12px] text-red-700">
+          {error}
+        </div>
+      )}
+
+      {!isEditing ? (
+        /* Read mode — avatar + name/email row, then 2-col grid */
+        <div className="space-y-4">
+          <div className="flex items-center gap-4">
+            <div className="flex-shrink-0 w-10 h-10 bg-indigo-100 flex items-center justify-center text-[15px] font-semibold text-indigo-700 select-none">
+              {nameInitial}
+            </div>
+            <div>
+              <p className="text-[14px] font-medium text-neutral-900">
+                {name || <span className="text-neutral-400 italic text-[13px]">Name not set</span>}
+              </p>
+              <p className="text-[12px] text-neutral-500 mt-0.5">{userEmail}</p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="px-4 py-3 bg-neutral-50 border border-neutral-200">
+              <p className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wide mb-1">Department</p>
+              <p className="text-[13px] text-neutral-900">
+                {department || <span className="text-neutral-400 italic">Not set</span>}
+              </p>
+            </div>
+            <div className="px-4 py-3 bg-neutral-50 border border-neutral-200">
+              <p className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wide mb-1">Role</p>
+              <p className="text-[13px] text-neutral-900">
+                {role || <span className="text-neutral-400 italic">Not set</span>}
+              </p>
+            </div>
+          </div>
+        </div>
+      ) : (
+        /* Edit mode — stacked inputs */
+        <div className="space-y-3">
+          <div>
+            <label className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wide">Full Name</label>
+            <input
+              type="text"
+              value={draftName}
+              onChange={(e) => setDraftName(e.target.value)}
+              placeholder="Your full name"
+              className="mt-1.5 w-full text-[13px] text-neutral-900 bg-white border border-neutral-300 focus:border-indigo-400 focus:outline-none px-3 py-2"
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wide">Department</label>
+              <select
+                value={draftDepartment}
+                onChange={(e) => setDraftDepartment(e.target.value)}
+                className="mt-1.5 w-full text-[13px] text-neutral-900 bg-white border border-neutral-300 focus:border-indigo-400 focus:outline-none px-3 py-2"
+              >
+                <option value="">Select…</option>
+                {DEPARTMENTS.map((d) => (
+                  <option key={d.value} value={d.value}>
+                    {d.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wide">Role</label>
+              <input
+                type="text"
+                value={draftRole}
+                onChange={(e) => setDraftRole(e.target.value)}
+                placeholder="e.g. Senior Product Manager"
+                className="mt-1.5 w-full text-[13px] text-neutral-900 bg-white border border-neutral-300 focus:border-indigo-400 focus:outline-none px-3 py-2"
+              />
+            </div>
+          </div>
+          <p className="text-[11px] text-neutral-400">{userEmail}</p>
+        </div>
+      )}
+    </div>
+  );
+}
