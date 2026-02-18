@@ -12,6 +12,10 @@ import {
   CalendarIcon,
   SparklesIcon,
   CheckCircleIcon,
+  PencilIcon,
+  TrashIcon,
+  CheckIcon,
+  XMarkIcon,
 } from '@heroicons/react/24/outline';
 import { WorkBlueprint } from '@/lib/types/work-blueprints';
 import { ExecutionPlan } from '@/lib/types/inbox';
@@ -380,10 +384,14 @@ export function WorkPageClient({
   const [chatInput, setChatInput] = useState('');
   const [entryInput, setEntryInput] = useState('');
   const [isCreatingThread, setIsCreatingThread] = useState(false);
+  const [editingThreadId, setEditingThreadId] = useState<string | null>(null);
+  const [editingTitle, setEditingTitle] = useState('');
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const planUpdatedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatInputRef = useRef<HTMLTextAreaElement>(null);
+  const editTitleInputRef = useRef<HTMLInputElement>(null);
 
   const activeThread = threads.find((t) => t.id === activeThreadId) ?? null;
 
@@ -542,6 +550,50 @@ export function WorkPageClient({
     }
   }, [isCreatingThread, sendMessage]);
 
+  const startEditing = (thread: WorkThread) => {
+    setEditingThreadId(thread.id);
+    setEditingTitle(thread.title);
+    setConfirmDeleteId(null);
+    setTimeout(() => editTitleInputRef.current?.focus(), 0);
+  };
+
+  const cancelEditing = () => {
+    setEditingThreadId(null);
+    setEditingTitle('');
+  };
+
+  const handleRenameThread = async (threadId: string) => {
+    const title = editingTitle.trim();
+    if (!title) { cancelEditing(); return; }
+    setEditingThreadId(null);
+    setThreads((prev) =>
+      prev.map((t) => t.id === threadId ? { ...t, title } : t)
+    );
+    try {
+      await fetch(`/api/work/threads/${threadId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title }),
+      });
+    } catch {
+      // revert on failure
+      setThreads((prev) =>
+        prev.map((t) => t.id === threadId ? { ...t, title: t.title } : t)
+      );
+    }
+  };
+
+  const handleDeleteThread = async (threadId: string) => {
+    setConfirmDeleteId(null);
+    setThreads((prev) => prev.filter((t) => t.id !== threadId));
+    if (activeThreadId === threadId) setActiveThreadId(null);
+    try {
+      await fetch(`/api/work/threads/${threadId}`, { method: 'DELETE' });
+    } catch {
+      console.error('Failed to delete thread');
+    }
+  };
+
   const handleBlueprintSelect = (blueprint: WorkBlueprint) => {
     const description = `${blueprint.name}: ${blueprint.description}`;
     startThread(description);
@@ -592,24 +644,102 @@ export function WorkPageClient({
               Your work threads will appear here
             </p>
           ) : (
-            threads.map((thread) => (
-              <button
-                key={thread.id}
-                onClick={() => setActiveThreadId(thread.id)}
-                className={`w-full text-left px-3 py-2.5 hover:bg-neutral-50 transition-colors border-b border-neutral-50 ${
-                  activeThreadId === thread.id ? 'bg-indigo-50 border-l-2 border-l-indigo-500' : ''
-                }`}
-              >
-                <p className={`text-[12px] leading-snug truncate ${
-                  activeThreadId === thread.id ? 'text-indigo-900 font-medium' : 'text-neutral-800'
-                }`}>
-                  {thread.title}
-                </p>
-                <p className="text-[10px] text-neutral-400 mt-0.5">
-                  {relativeTime(thread.updated_at)}
-                </p>
-              </button>
-            ))
+            threads.map((thread) => {
+              const isActive = activeThreadId === thread.id;
+              const isEditing = editingThreadId === thread.id;
+              const isConfirmingDelete = confirmDeleteId === thread.id;
+
+              return (
+                <div
+                  key={thread.id}
+                  className={`group relative border-b border-neutral-50 ${
+                    isActive ? 'bg-indigo-50 border-l-2 border-l-indigo-500' : 'hover:bg-neutral-50'
+                  } transition-colors`}
+                >
+                  {isEditing ? (
+                    /* ── Inline title edit ── */
+                    <div className="px-2 py-2 flex items-center gap-1">
+                      <input
+                        ref={editTitleInputRef}
+                        value={editingTitle}
+                        onChange={(e) => setEditingTitle(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') handleRenameThread(thread.id);
+                          if (e.key === 'Escape') cancelEditing();
+                        }}
+                        className="flex-1 min-w-0 text-[12px] text-neutral-900 border border-indigo-300 focus:outline-none focus:border-indigo-500 px-2 py-1 bg-white"
+                      />
+                      <button
+                        onClick={() => handleRenameThread(thread.id)}
+                        className="flex-shrink-0 p-1 text-indigo-600 hover:text-indigo-800"
+                      >
+                        <CheckIcon className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={cancelEditing}
+                        className="flex-shrink-0 p-1 text-neutral-400 hover:text-neutral-600"
+                      >
+                        <XMarkIcon className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ) : isConfirmingDelete ? (
+                    /* ── Delete confirmation ── */
+                    <div className="px-3 py-2.5">
+                      <p className="text-[11px] text-red-600 mb-1.5">Delete this thread?</p>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => handleDeleteThread(thread.id)}
+                          className="text-[11px] font-medium text-white bg-red-500 hover:bg-red-600 px-2 py-0.5 transition-colors"
+                        >
+                          Delete
+                        </button>
+                        <button
+                          onClick={() => setConfirmDeleteId(null)}
+                          className="text-[11px] text-neutral-500 hover:text-neutral-700"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    /* ── Normal thread item ── */
+                    <div className="flex items-start">
+                      <button
+                        onClick={() => setActiveThreadId(thread.id)}
+                        className="flex-1 min-w-0 text-left px-3 py-2.5"
+                      >
+                        <p className={`text-[12px] leading-snug truncate ${
+                          isActive ? 'text-indigo-900 font-medium' : 'text-neutral-800'
+                        }`}>
+                          {thread.title}
+                        </p>
+                        <p className="text-[10px] text-neutral-400 mt-0.5">
+                          {relativeTime(thread.updated_at)}
+                        </p>
+                      </button>
+
+                      {/* Action buttons — visible on hover */}
+                      <div className="flex-shrink-0 flex items-center gap-0.5 pr-1.5 pt-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button
+                          onClick={(e) => { e.stopPropagation(); startEditing(thread); }}
+                          className="p-1 text-neutral-400 hover:text-neutral-700 transition-colors"
+                          title="Rename"
+                        >
+                          <PencilIcon className="w-3 h-3" />
+                        </button>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(thread.id); setEditingThreadId(null); }}
+                          className="p-1 text-neutral-400 hover:text-red-500 transition-colors"
+                          title="Delete"
+                        >
+                          <TrashIcon className="w-3 h-3" />
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })
           )}
         </div>
       </div>
