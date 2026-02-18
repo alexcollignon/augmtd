@@ -40,6 +40,8 @@ export function InboxPageClient({
 
   // Track when we've optimistically started a sync
   const optimisticSyncTriggered = useRef(false);
+  // Ref so fetchData can read current isSyncing without being in the effect deps
+  const isSyncingRef = useRef(false);
 
   // Set onboarding modal state on client-side only (prevents hydration mismatch)
   // Show onboarding if user hasn't completed their identity profile
@@ -170,30 +172,42 @@ export function InboxPageClient({
           // Sync has actually started or completed - clear optimistic flag
           if (isCurrentlySyncing || allCompleted) {
             optimisticSyncTriggered.current = false;
+            isSyncingRef.current = isCurrentlySyncing;
             setIsSyncing(isCurrentlySyncing);
           }
           // Otherwise, keep showing optimistic loading state (ignore 'pending')
         } else {
           // Normal polling - update state based on database
-          setIsSyncing(isCurrentlySyncing);
+          if (isSyncingRef.current !== isCurrentlySyncing) {
+            isSyncingRef.current = isCurrentlySyncing;
+            setIsSyncing(isCurrentlySyncing);
+          }
         }
 
         // If was syncing and now completed, refresh to show new items
-        if (isSyncing && !isCurrentlySyncing) {
+        if (isSyncingRef.current && !isCurrentlySyncing) {
           setInboxItems(items || []);
         }
       }
     }
 
-    // Poll more frequently (every 2s) when syncing, otherwise every 10s
-    const pollInterval = isSyncing ? 2000 : 10000;
-    const pollingInterval = setInterval(fetchData, pollInterval);
+    // Use a self-rescheduling approach so interval adapts to sync state
+    // without putting isSyncing in the dependency array
+    let timeoutId: ReturnType<typeof setTimeout>;
 
-    // Fetch immediately on mount
-    fetchData();
+    function scheduleNext() {
+      const delay = isSyncingRef.current ? 2000 : 10000;
+      timeoutId = setTimeout(async () => {
+        await fetchData();
+        scheduleNext();
+      }, delay);
+    }
 
-    return () => clearInterval(pollingInterval);
-  }, [user.id, connection, isSyncing]);
+    // Fetch immediately on mount, then start adaptive scheduling
+    fetchData().then(scheduleNext);
+
+    return () => clearTimeout(timeoutId);
+  }, [user.id, connection]); // eslint-disable-line react-hooks/exhaustive-deps
 
 
   return (
