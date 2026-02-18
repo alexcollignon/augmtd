@@ -875,7 +875,7 @@ export function WorkPageClient({
                     ) : (
                       /* User message — right-aligned, muted */
                       <div key={msg.id} className="flex justify-end pt-5 pb-1">
-                        <div className="max-w-[85%] text-right">
+                        <div className="max-w-[85%]">
                           <p className="text-[12px] text-neutral-500 leading-relaxed">
                             {msg.content}
                           </p>

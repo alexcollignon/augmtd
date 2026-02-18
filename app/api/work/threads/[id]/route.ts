@@ -66,6 +66,51 @@ export async function DELETE(
 
     if (error) throw error;
 
+    // Remove thread from work_patterns.recentWorkflows and recompute aggregates
+    const { data: existingProfile } = await supabase
+      .from('context_profiles')
+      .select('profile_data')
+      .eq('user_id', user.id)
+      .eq('profile_type', 'work_patterns')
+      .single();
+
+    if (existingProfile?.profile_data?.recentWorkflows) {
+      const remaining = existingProfile.profile_data.recentWorkflows.filter(
+        (w: { threadId: string }) => w.threadId !== threadId
+      );
+
+      const deliverableTypes: Record<string, number> = {};
+      for (const w of remaining) {
+        if (w.deliverableType) {
+          deliverableTypes[w.deliverableType] = (deliverableTypes[w.deliverableType] || 0) + 1;
+        }
+      }
+
+      const skillCounts: Record<string, number> = {};
+      for (const w of remaining) {
+        for (const skill of (w.skills || []) as string[]) {
+          skillCounts[skill] = (skillCounts[skill] || 0) + 1;
+        }
+      }
+      const commonSkills = Object.entries(skillCounts)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 5)
+        .map(([skill]) => skill);
+
+      await supabase
+        .from('context_profiles')
+        .update({
+          profile_data: {
+            ...existingProfile.profile_data,
+            recentWorkflows: remaining,
+            deliverableTypes,
+            commonSkills,
+          },
+        })
+        .eq('user_id', user.id)
+        .eq('profile_type', 'work_patterns');
+    }
+
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('[WorkThread] DELETE error:', error);
