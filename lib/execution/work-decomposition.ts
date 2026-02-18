@@ -145,14 +145,14 @@ If this is NOT a deliverable request (e.g., just asking a question, requesting i
 If this IS a deliverable request, create a complete workflow and return a JSON object in this exact format:
 {
   "deliverable_type": "report" | "presentation" | "document" | "email" | "analysis" | "spreadsheet",
-  "deliverable_description": "Brief description of what will be created",
+  "deliverable_description": "Specific description using actual names from the email — e.g. 'Q1 2024 revenue report for Acme Corp' not 'quarterly report'",
   "deadline": "ISO timestamp if mentioned, otherwise null",
   "inputs": [
     {
       "id": "input_1",
-      "name": "Input name",
+      "name": "Input name using actual names from the email",
       "type": "data_source" | "document" | "context" | "approval" | "meeting_notes" | "user_input",
-      "description": "What is needed and why",
+      "description": "What is needed and why, referencing specific systems or data sources named in the email",
       "required": true | false,
       "examples": ["Example value 1", "Example value 2"]
     }
@@ -160,15 +160,15 @@ If this IS a deliverable request, create a complete workflow and return a JSON o
   "outputs": [
     {
       "id": "output_1",
-      "name": "Output name",
+      "name": "Output name using actual names from the email",
       "type": "draft" | "final_document" | "data_export" | "visualization" | "summary" | "decision" | "notification",
-      "description": "What gets produced"
+      "description": "What gets produced, naming the specific deliverable"
     }
   ],
   "steps": [
     {
       "number": 1,
-      "action": "Clear description of what this step does",
+      "action": "Specific action using actual names from the email — e.g. 'Pull Acme Corp Q1 revenue from Salesforce' not 'pull sales data'",
       "toolsNeeded": ["Excel", "Database"],
       "skill": "data_pull" | "excel_generator" | "powerpoint_generator" | "word_generator" | "email_drafter" | "data_analyzer" | "chart_generator",
       "status": "pending"
@@ -188,9 +188,10 @@ Available skills:
 Guidelines:
 - Only create plans for deliverable requests (things that need to be created/generated)
 - Simple information requests, questions, or status updates should return null
+- **USE SPECIFIC DETAILS**: Extract and use exact proper nouns from the email — client/company names, project names, system names, data types, dates. If the email says "Acme Corp", write "Acme Corp", not "the client". If it says "Q1 2024", write "Q1 2024", not "quarterly".
 - **INPUTS**: Identify what data, documents, context, or approvals are needed BEFORE starting work
 - **OUTPUTS**: Define what artifacts/deliverables will be produced at each stage
-- **STEPS**: Keep concrete and actionable (not generic like "do analysis")
+- **STEPS**: Keep concrete and actionable, referencing specific systems/data from the email
   - Specify tools needed (Excel, PowerPoint, Database, Email, etc.)
 - Match deliverable_type to what's actually being requested
 - Use user's typical work patterns when available

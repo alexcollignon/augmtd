@@ -90,28 +90,6 @@ export function InboxPageClient({
     }
   }, [searchParams, connection]);
 
-  // Monitor session validity
-  useEffect(() => {
-    const supabase = createClient();
-
-    async function checkSession() {
-      const { data: { session }, error } = await supabase.auth.getSession();
-
-      if (error || !session) {
-        // Session is invalid or expired - redirect to login
-        console.log('[Session] Invalid or expired, redirecting to login');
-        window.location.href = '/login?session=expired';
-      }
-    }
-
-    // Check session every 30 seconds
-    const sessionCheckInterval = setInterval(checkSession, 30000);
-
-    // Initial check
-    checkSession();
-
-    return () => clearInterval(sessionCheckInterval);
-  }, []);
 
   // Poll for new items and check sync status
   useEffect(() => {
