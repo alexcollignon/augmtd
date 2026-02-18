@@ -9,6 +9,7 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import {
   OnboardingData,
   WorkPatternsProfileData,
+  WorkflowRecord,
   IdentityProfileData,
   WorkBlueprint,
 } from '@/lib/types/work-blueprints';
@@ -249,5 +250,117 @@ export async function addCustomBlueprint(
   } catch (error) {
     console.error('[WorkPatternsService] Error adding custom blueprint:', error);
     throw error;
+  }
+}
+
+/**
+ * Update work_patterns profile from a finalized work thread plan.
+ * Called after each AI message that produces a plan update.
+ * Non-fatal — errors are logged but not thrown.
+ */
+export async function updateWorkPatternsFromThread(
+  userId: string,
+  threadId: string,
+  threadTitle: string,
+  plan: {
+    deliverable_type?: string;
+    deliverable_description?: string;
+    steps?: Array<{ skill?: string }>;
+    inputs?: Array<{ name?: string }>;
+  },
+  supabase?: SupabaseClient
+): Promise<void> {
+  const client = supabase || (await createClient());
+
+  try {
+    // Extract workflow signal from plan
+    const skills = [
+      ...new Set(
+        (plan.steps || []).map((s) => s.skill).filter(Boolean) as string[]
+      ),
+    ];
+    const commonInputs = (plan.inputs || [])
+      .map((i) => i.name)
+      .filter(Boolean) as string[];
+
+    const record: WorkflowRecord = {
+      threadId,
+      name: threadTitle,
+      purpose: plan.deliverable_description || '',
+      deliverableType: plan.deliverable_type || 'document',
+      skills,
+      commonInputs,
+      updatedAt: new Date().toISOString(),
+    };
+
+    // Load existing work_patterns profile
+    const { data: existing } = await client
+      .from('context_profiles')
+      .select('profile_data')
+      .eq('user_id', userId)
+      .eq('profile_type', 'work_patterns')
+      .single();
+
+    const current: WorkPatternsProfileData = {
+      selectedBlueprints: [],
+      customBlueprints: [],
+      blueprintUsage: {},
+      recentWorkflows: [],
+      deliverableTypes: {},
+      commonSkills: [],
+      ...(existing?.profile_data || {}),
+    };
+
+    // Update or insert the workflow record (keyed by threadId)
+    const idx = current.recentWorkflows.findIndex((w) => w.threadId === threadId);
+    if (idx >= 0) {
+      current.recentWorkflows[idx] = record;
+    } else {
+      current.recentWorkflows.unshift(record); // newest first
+    }
+    current.recentWorkflows = current.recentWorkflows.slice(0, 20);
+
+    // Recalculate deliverable type counts from all stored workflows
+    const deliverableTypes: Record<string, number> = {};
+    for (const w of current.recentWorkflows) {
+      if (w.deliverableType) {
+        deliverableTypes[w.deliverableType] = (deliverableTypes[w.deliverableType] || 0) + 1;
+      }
+    }
+
+    // Recalculate top skills by frequency across all stored workflows
+    const skillCounts: Record<string, number> = {};
+    for (const w of current.recentWorkflows) {
+      for (const skill of w.skills || []) {
+        skillCounts[skill] = (skillCounts[skill] || 0) + 1;
+      }
+    }
+    const commonSkills = Object.entries(skillCounts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([skill]) => skill);
+
+    await client
+      .from('context_profiles')
+      .upsert(
+        {
+          user_id: userId,
+          profile_type: 'work_patterns',
+          profile_data: {
+            ...current,
+            recentWorkflows: current.recentWorkflows,
+            deliverableTypes,
+            commonSkills,
+          },
+          confidence_score: 90.0,
+          learned_from_count: current.recentWorkflows.length,
+        },
+        { onConflict: 'user_id,profile_type' }
+      );
+
+    console.log('[WorkPatternsService] Updated work_patterns from thread:', threadId);
+  } catch (error) {
+    console.error('[WorkPatternsService] Error updating work_patterns:', error);
+    // Non-fatal — don't throw
   }
 }

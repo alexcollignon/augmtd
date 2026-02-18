@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import OpenAI from 'openai';
+import { updateWorkPatternsFromThread } from '@/lib/context/work-patterns-service';
 
 let openaiClient: OpenAI | null = null;
 function getOpenAI(): OpenAI {
@@ -32,7 +33,6 @@ PLAN JSON STRUCTURE:
 {
   "deliverable_type": "report" | "presentation" | "document" | "email" | "analysis" | "spreadsheet",
   "deliverable_description": "Clear description of what will be created",
-  "estimated_time": "e.g. 2 hours",
   "deadline": null,
   "inputs": [
     {
@@ -48,7 +48,6 @@ PLAN JSON STRUCTURE:
     {
       "number": 1,
       "action": "Clear action description",
-      "estimatedTime": "15 minutes",
       "toolsNeeded": ["PowerPoint"],
       "skill": "data_pull" | "excel_generator" | "powerpoint_generator" | "word_generator" | "email_drafter" | "data_analyzer" | "chart_generator",
       "status": "pending"
@@ -87,7 +86,7 @@ export async function POST(
     // Verify thread belongs to user
     const { data: thread, error: threadError } = await supabase
       .from('work_threads')
-      .select('id, plan')
+      .select('id, title, plan')
       .eq('id', threadId)
       .eq('user_id', user.id)
       .single();
@@ -118,17 +117,38 @@ export async function POST(
       .order('created_at', { ascending: true });
 
     // Load user context for personalization
-    const { data: identityProfile } = await supabase
-      .from('context_profiles')
-      .select('profile_data')
-      .eq('user_id', user.id)
-      .eq('profile_type', 'identity')
-      .single();
+    const [{ data: identityProfile }, { data: workPatternsProfile }] = await Promise.all([
+      supabase
+        .from('context_profiles')
+        .select('profile_data')
+        .eq('user_id', user.id)
+        .eq('profile_type', 'identity')
+        .single(),
+      supabase
+        .from('context_profiles')
+        .select('profile_data')
+        .eq('user_id', user.id)
+        .eq('profile_type', 'work_patterns')
+        .single(),
+    ]);
 
     const identity = identityProfile?.profile_data;
-    const userContextNote = identity
-      ? `\n\nUser context: ${identity.role || ''} ${identity.department ? `in ${identity.department}` : ''}`.trim()
+    const workPatterns = workPatternsProfile?.profile_data;
+
+    let userContextNote = identity
+      ? `\n\nUser context: ${identity.jobRole || ''} ${identity.department ? `in ${identity.department}` : ''}`.trim()
       : '';
+
+    if (workPatterns?.recentWorkflows?.length) {
+      const recent = workPatterns.recentWorkflows.slice(0, 3)
+        .map((w: { name: string; purpose: string; deliverableType: string }) =>
+          `- "${w.name}" (${w.deliverableType}): ${w.purpose}`
+        ).join('\n');
+      userContextNote += `\n\nRecent workflows this user has created:\n${recent}`;
+    }
+    if (workPatterns?.commonSkills?.length) {
+      userContextNote += `\n\nMost-used skills: ${workPatterns.commonSkills.join(', ')}`;
+    }
 
     // Build messages for OpenAI
     const currentPlanNote = thread.plan
@@ -201,6 +221,15 @@ export async function POST(
                 plan,
                 updated_at: new Date().toISOString(),
               }).eq('id', threadId);
+
+              // Update work_patterns context profile from this thread's plan
+              await updateWorkPatternsFromThread(
+                user.id,
+                threadId,
+                thread.title,
+                plan,
+                adminClient
+              );
             } catch {
               // Plan parse failed — just update timestamp
               await adminClient.from('work_threads').update({

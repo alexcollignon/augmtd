@@ -247,11 +247,6 @@ function PlanPanel({
               {plan.deliverable_description}
             </p>
             <div className="flex items-center gap-3 mt-2">
-              {plan.estimated_time && (
-                <span className="text-[11px] text-neutral-500 bg-neutral-100 px-2 py-0.5">
-                  {plan.estimated_time}
-                </span>
-              )}
               <span className="text-[11px] text-indigo-600 bg-indigo-50 px-2 py-0.5 capitalize">
                 {plan.deliverable_type}
               </span>
@@ -316,11 +311,6 @@ function PlanPanel({
                   <div className="flex-1 min-w-0">
                     <p className="text-[12px] text-neutral-900">{step.action}</p>
                     <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-                      {step.estimatedTime && (
-                        <span className="text-[10px] text-neutral-400">
-                          {step.estimatedTime}
-                        </span>
-                      )}
                       {step.skill && (
                         <span className="text-[10px] text-neutral-500 bg-neutral-200 px-1.5 py-0.5">
                           {step.skill.replace('_', ' ')}

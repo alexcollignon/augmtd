@@ -38,6 +38,20 @@ export interface IdentityProfileData {
 }
 
 /**
+ * A workflow record derived from a completed work_thread plan.
+ * Stored in work_patterns profile to build context over time.
+ */
+export interface WorkflowRecord {
+  threadId: string;
+  name: string;            // thread title
+  purpose: string;         // plan.deliverable_description
+  deliverableType: string; // plan.deliverable_type
+  skills: string[];        // deduplicated from plan.steps[].skill
+  commonInputs: string[];  // from plan.inputs[].name
+  updatedAt: string;       // ISO timestamp
+}
+
+/**
  * Work Patterns Profile (new profile type in context_profiles)
  */
 export interface WorkPatternsProfileData {
@@ -49,6 +63,13 @@ export interface WorkPatternsProfileData {
 
   // Usage statistics
   blueprintUsage: Record<string, number>; // blueprint_id -> usage count
+
+  // Workflows created through chat (newest first, capped at 20)
+  recentWorkflows: WorkflowRecord[];
+
+  // Derived counts from recentWorkflows — for quick lookup
+  deliverableTypes: Record<string, number>; // e.g. { presentation: 5, report: 2 }
+  commonSkills: string[];                   // top skills by frequency
 }
 
 /**
