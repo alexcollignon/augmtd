@@ -133,6 +133,7 @@ interface WorkPageClientProps {
   hasCompletedOnboarding: boolean;
   blueprints: WorkBlueprint[];
   initialThreads: WorkThread[];
+  initialActiveThreadId?: string | null;
 }
 
 const PLAN_SEPARATOR = '---PLAN_UPDATE---';
@@ -367,6 +368,7 @@ export function WorkPageClient({
   hasCompletedOnboarding,
   blueprints,
   initialThreads,
+  initialActiveThreadId,
 }: WorkPageClientProps) {
   const [threads, setThreads] = useState<WorkThread[]>(initialThreads);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
@@ -390,6 +392,13 @@ export function WorkPageClient({
   const editTitleInputRef = useRef<HTMLInputElement>(null);
 
   const activeThread = threads.find((t) => t.id === activeThreadId) ?? null;
+
+  // Activate thread from URL param on first mount (e.g. navigated from inbox)
+  useEffect(() => {
+    if (initialActiveThreadId) {
+      setActiveThreadId(initialActiveThreadId);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Scroll chat to bottom
   useEffect(() => {
