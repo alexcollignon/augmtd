@@ -16,6 +16,94 @@ import {
 import { WorkBlueprint } from '@/lib/types/work-blueprints';
 import { ExecutionPlan } from '@/lib/types/inbox';
 
+// ─── Markdown renderer ────────────────────────────────────────────────────────
+
+function renderInline(text: string): React.ReactNode {
+  const parts = text.split(/(\*\*[^*]+\*\*|\*[^*]+\*)/g);
+  return (
+    <>
+      {parts.map((part, i) => {
+        if (part.startsWith('**') && part.endsWith('**')) {
+          return <strong key={i} className="font-semibold text-neutral-900">{part.slice(2, -2)}</strong>;
+        }
+        if (part.startsWith('*') && part.endsWith('*')) {
+          return <em key={i}>{part.slice(1, -1)}</em>;
+        }
+        return <span key={i}>{part}</span>;
+      })}
+    </>
+  );
+}
+
+function MarkdownText({ content, cursor }: { content: string; cursor?: boolean }) {
+  // Split into blocks separated by blank lines
+  const blocks = content.split(/\n{2,}/);
+
+  return (
+    <div className="space-y-2.5">
+      {blocks.map((block, bi) => {
+        const lines = block.split('\n').filter((l) => l.trim() !== '');
+
+        // Bullet list block
+        if (lines.length > 0 && lines.every((l) => /^[-•]\s/.test(l) || /^\d+\.\s/.test(l))) {
+          const isOrdered = /^\d+\.\s/.test(lines[0]);
+          return (
+            <ul key={bi} className="space-y-1">
+              {lines.map((line, li) => {
+                const text = isOrdered
+                  ? line.replace(/^\d+\.\s/, '')
+                  : line.replace(/^[-•]\s/, '');
+                return (
+                  <li key={li} className="flex items-start gap-2 text-[13.5px] text-neutral-800 leading-relaxed">
+                    <span className="text-neutral-400 flex-shrink-0 mt-px select-none">
+                      {isOrdered ? `${li + 1}.` : '·'}
+                    </span>
+                    <span>
+                      {renderInline(text)}
+                      {cursor && bi === blocks.length - 1 && li === lines.length - 1 && (
+                        <span className="inline-block w-0.5 h-3.5 bg-neutral-400 ml-0.5 animate-pulse align-middle" />
+                      )}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          );
+        }
+
+        // Mixed block — render line by line
+        return (
+          <p key={bi} className="text-[13.5px] text-neutral-800 leading-relaxed">
+            {lines.map((line, li) => {
+              const isBullet = /^[-•]\s/.test(line);
+              const isOrdered = /^\d+\.\s/.test(line);
+              const text = isBullet
+                ? line.replace(/^[-•]\s/, '')
+                : isOrdered
+                ? line.replace(/^\d+\.\s/, '')
+                : line;
+              return (
+                <span key={li} className={isBullet || isOrdered ? 'flex items-start gap-2' : 'block'}>
+                  {(isBullet || isOrdered) && (
+                    <span className="text-neutral-400 flex-shrink-0 select-none">·</span>
+                  )}
+                  <span>
+                    {renderInline(text)}
+                    {li < lines.length - 1 && !isBullet && !isOrdered && <br />}
+                    {cursor && bi === blocks.length - 1 && li === lines.length - 1 && (
+                      <span className="inline-block w-0.5 h-3.5 bg-neutral-400 ml-0.5 animate-pulse align-middle" />
+                    )}
+                  </span>
+                </span>
+              );
+            })}
+          </p>
+        );
+      })}
+    </div>
+  );
+}
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface WorkThread {
@@ -584,9 +672,7 @@ export function WorkPageClient({
                     msg.role === 'assistant' ? (
                       /* AI message — full width, clean prose */
                       <div key={msg.id} className={`${i > 0 ? 'pt-5' : ''}`}>
-                        <p className="text-[13.5px] text-neutral-800 leading-relaxed whitespace-pre-wrap">
-                          {msg.content}
-                        </p>
+                        <MarkdownText content={msg.content} />
                       </div>
                     ) : (
                       /* User message — right-aligned, muted */
@@ -609,10 +695,7 @@ export function WorkPageClient({
                   {/* Streaming AI response */}
                   {isStreaming && streamingText && (
                     <div className="pt-5">
-                      <p className="text-[13.5px] text-neutral-800 leading-relaxed whitespace-pre-wrap">
-                        {streamingText}
-                        <span className="inline-block w-0.5 h-3.5 bg-neutral-400 ml-0.5 animate-pulse align-middle" />
-                      </p>
+                      <MarkdownText content={streamingText} cursor />
                     </div>
                   )}
 
