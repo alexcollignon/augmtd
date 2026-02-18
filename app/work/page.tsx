@@ -11,24 +11,17 @@ import { WorkBlueprint } from '@/lib/types/work-blueprints';
 export default async function WorkPage() {
   const supabase = await createClient();
 
-  // Server-side auth check
   const { data: { user } } = await supabase.auth.getUser();
+  if (!user) redirect('/login');
 
-  if (!user) {
-    redirect('/login');
-  }
-
-  // Fetch user profile
   const { data: profile } = await supabase
     .from('profiles')
     .select('email, full_name')
     .eq('id', user.id)
     .single();
 
-  // Check onboarding status and load blueprints based on department
   const completed = await hasCompletedOnboarding(user.id, supabase);
   let blueprints: WorkBlueprint[] = [];
-
   if (completed) {
     const identity = await getUserIdentity(user.id, supabase);
     if (identity?.department) {
@@ -36,12 +29,21 @@ export default async function WorkPage() {
     }
   }
 
-  // Render client component
+  // Load existing work threads
+  const { data: threads } = await supabase
+    .from('work_threads')
+    .select('id, title, plan, status, created_at, updated_at')
+    .eq('user_id', user.id)
+    .eq('status', 'active')
+    .order('updated_at', { ascending: false })
+    .limit(50);
+
   return (
     <WorkPageClient
       userEmail={profile?.email || user.email}
       hasCompletedOnboarding={completed}
       blueprints={blueprints}
+      initialThreads={threads || []}
     />
   );
 }
