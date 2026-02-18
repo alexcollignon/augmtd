@@ -1,7 +1,7 @@
 # AUGMTD Implementation Status
-**Version:** 4.3
+**Version:** 4.4
 **Last Updated:** 2026-02-18
-**Current Phase:** Phase 7 Complete - Chat-Driven Workflows, Settings Identity, Nav Rebrand
+**Current Phase:** Phase 8 Complete - Work Patterns Context Learning, user_workflows Cleanup, Chat Fixes
 
 ---
 
@@ -33,6 +33,8 @@
 | Work Threads DB + API | ✅ Complete | 100% |
 | Settings Identity Section | ✅ Complete | 100% |
 | Sidebar Nav Rebrand | ✅ Complete | 100% |
+| Work Patterns Context Learning (Phase 8) | ✅ Complete | 100% |
+| user_workflows Cleanup | ✅ Complete | 100% |
 | Vector Similarity | ⚠️ Planned | 0% |
 
 ---
@@ -1036,4 +1038,73 @@ New editable identity card at the top of `/settings`:
 - `components/sidebar-nav.tsx` — Rebrand + popover
 - `app/work/page.tsx` — Updated data fetching
 - `app/settings/page.tsx` — Added identity data + IdentitySection
+
+---
+
+## ✅ Phase 8: Work Patterns Context Learning & Refinements (Feb 18, 2026)
+
+### Work Patterns Context Profile Learning
+
+After each AI plan update, the system now extracts a `WorkflowRecord` and upserts it into `context_profiles` (profile_type = `work_patterns`). This gives the AI progressive context about what kinds of work the user creates most often.
+
+**`WorkflowRecord` fields:**
+```typescript
+{
+  threadId: string;       // key for upsert (replaces on refinement)
+  name: string;           // thread title
+  purpose: string;        // plan.deliverable_description
+  deliverableType: string;// plan.deliverable_type
+  skills: string[];       // deduplicated from plan.steps[].skill
+  commonInputs: string[]; // from plan.inputs[].name
+  updatedAt: string;      // ISO timestamp
+}
+```
+
+**Extended `WorkPatternsProfileData`:**
+- `recentWorkflows: WorkflowRecord[]` — newest first, capped at 20
+- `deliverableTypes: Record<string, number>` — recalculated from all stored workflows
+- `commonSkills: string[]` — top 5 skills by frequency across all workflows
+
+**Upsert semantics:** Records keyed by `threadId`. Workflow refinements (follow-up messages) replace the previous record — profile always reflects final intent, not intermediate states.
+
+**AI prompt enrichment:**
+- Messages route loads both `identity` and `work_patterns` profiles in parallel
+- Injects last 3 recent workflows (name, deliverableType, purpose) into system prompt
+- Injects most-used skills
+- Progressive improvement: suggestions get better as the user creates more workflows
+
+### user_workflows Cleanup
+
+`work_threads` is the functional superset of `user_workflows` (same plan JSONB + conversation history). Cleaned up:
+
+**Deleted:**
+- `app/api/workflows/save/route.ts`
+- `app/api/work/create/route.ts`
+- `lib/types/workflows.ts`
+
+**Migration:** `supabase/migrations/20260218_drop_user_workflows.sql`
+
+### estimated_time Removed
+
+Removed `estimated_time` (top-level) and `estimatedTime` (per-step) from both the plan JSON schema and the UI display. These are human effort estimates — irrelevant when an execution engine will run the steps.
+
+### First Chat Message Fix (skipLoadRef)
+
+**Bug:** First user message disappeared from chat when creating a new thread.
+
+**Root cause:** `setActiveThreadId` → `useEffect` → `loadThread` → `setMessages([])` race condition wiping the optimistic message from `sendMessage`.
+
+**Fix:** `skipLoadRef` — set to the new thread's ID before activating, checked in the `useEffect` to skip `loadThread` for newly created threads. Cleared after first use.
+
+### Files Created/Updated
+- `supabase/migrations/20260218_drop_user_workflows.sql` — NEW
+- `lib/types/work-blueprints.ts` — Added WorkflowRecord, extended WorkPatternsProfileData
+- `lib/context/work-patterns-service.ts` — Added updateWorkPatternsFromThread()
+- `app/api/work/threads/[id]/messages/route.ts` — Plan context injection, AI enrichment, work_patterns call
+- `app/work/work-page-client.tsx` — skipLoadRef fix, estimated_time removed from UI
+
+**Deleted:**
+- `app/api/workflows/save/route.ts`
+- `app/api/work/create/route.ts`
+- `lib/types/workflows.ts`
 

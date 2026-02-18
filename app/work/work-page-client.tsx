@@ -383,6 +383,7 @@ export function WorkPageClient({
   const [editingTitle, setEditingTitle] = useState('');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const planUpdatedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const skipLoadRef = useRef<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatInputRef = useRef<HTMLTextAreaElement>(null);
@@ -418,6 +419,11 @@ export function WorkPageClient({
 
   useEffect(() => {
     if (activeThreadId) {
+      // Skip loading for threads just created — sendMessage already set up state
+      if (skipLoadRef.current === activeThreadId) {
+        skipLoadRef.current = null;
+        return;
+      }
       loadThread(activeThreadId);
     }
   }, [activeThreadId, loadThread]);
@@ -534,6 +540,7 @@ export function WorkPageClient({
       const newThread: WorkThread = data.thread;
 
       setThreads((prev) => [newThread, ...prev]);
+      skipLoadRef.current = newThread.id;
       setActiveThreadId(newThread.id);
       setMessages([]);
       setEntryInput('');

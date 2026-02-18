@@ -97,13 +97,14 @@ work_messages (id, thread_id, role, content, created_at)
 {
   "deliverable_type": "presentation",
   "deliverable_description": "...",
-  "estimated_time": "3 hours",
   "deadline": null,
   "inputs": [...],
-  "steps": [{ "number": 1, "action": "...", "estimatedTime": "30 min", "toolsNeeded": ["PowerPoint"], "skill": "powerpoint_generator", "status": "pending" }],
+  "steps": [{ "number": 1, "action": "...", "toolsNeeded": ["PowerPoint"], "skill": "powerpoint_generator", "status": "pending" }],
   "outputs": [...]
 }
 ```
+
+Note: `estimated_time` and `estimatedTime` were removed — these are human time estimates, not relevant for an execution engine that will run tasks on behalf of the user.
 
 ---
 
@@ -161,22 +162,127 @@ const hasCompletedIdentity = !!(profile?.full_name && identity?.department && id
 
 ---
 
+## 8. Work Patterns Context Learning
+
+After each AI message that saves a plan update, the system now builds a persistent `work_patterns` context profile from the user's work threads.
+
+### What gets extracted (per thread)
+
+From `thread.plan`:
+- `deliverableType` → maps to `plan.deliverable_type`
+- `purpose` → maps to `plan.deliverable_description`
+- `skills` → deduplicated list from `plan.steps[].skill`
+- `commonInputs` → list from `plan.inputs[].name`
+
+All stored as a `WorkflowRecord` (keyed by `threadId`) inside `context_profiles` where `profile_type = 'work_patterns'`.
+
+### Extended profile shape (`WorkPatternsProfileData`)
+
+```typescript
+{
+  selectedBlueprints: string[];    // from onboarding
+  customBlueprints: WorkBlueprint[];
+  blueprintUsage: Record<string, number>;
+
+  // NEW — populated from work threads
+  recentWorkflows: WorkflowRecord[];         // newest first, capped at 20
+  deliverableTypes: Record<string, number>;  // e.g. { presentation: 5, report: 2 }
+  commonSkills: string[];                    // top 5 skills by frequency
+}
+```
+
+### Upsert semantics
+
+Records are indexed by `threadId`. As the user refines their workflow through follow-up messages, the same record gets updated — so the profile always reflects the **final intent** of each workflow, not intermediate drafts.
+
+### AI system prompt enrichment
+
+The messages route loads `work_patterns` alongside `identity` (parallel fetch) and injects:
+- Last 3 recent workflows: name, deliverableType, purpose
+- Most-used skills
+
+This gives the AI progressively better suggestions as the user creates more workflows.
+
+### Service
+
+`lib/context/work-patterns-service.ts` → `updateWorkPatternsFromThread()`
+- Called from `app/api/work/threads/[id]/messages/route.ts` after every successful plan save
+- Non-fatal: errors logged, not thrown
+- Uses the admin (service role) client passed from the messages route
+
+---
+
+## 9. user_workflows Cleanup
+
+`user_workflows` was superseded by `work_threads` — same data structure (plan JSONB with inputs/steps/outputs) but with the full conversation history attached. There was no reason to maintain both.
+
+**Removed:**
+- `app/api/workflows/save/route.ts` — wrote to user_workflows
+- `app/api/work/create/route.ts` — old pre-chat decomposition endpoint
+- `lib/types/workflows.ts` — type definitions for old model
+
+**Migration:**
+- `supabase/migrations/20260218_drop_user_workflows.sql` — `DROP TABLE IF EXISTS user_workflows CASCADE`
+
+---
+
+## 10. First Chat Message Fix (skipLoadRef)
+
+**Bug:** When a user creates a new thread, their first message was not appearing in the right-side chat panel.
+
+**Root cause:** Race condition in `work-page-client.tsx`:
+1. `startThread()` calls `setActiveThreadId(newThread.id)`
+2. A `useEffect` on `activeThreadId` fires `loadThread(id)`
+3. `loadThread` calls `setMessages([])` at the start
+4. This wipes the optimistic user message that `sendMessage` had just added
+
+**Fix:** `skipLoadRef` pattern
+```typescript
+const skipLoadRef = useRef<string | null>(null);
+
+// In startThread — set before activating:
+skipLoadRef.current = newThread.id;
+setActiveThreadId(newThread.id);
+
+// In useEffect:
+useEffect(() => {
+  if (activeThreadId) {
+    if (skipLoadRef.current === activeThreadId) {
+      skipLoadRef.current = null;
+      return; // skip loadThread — messages were set optimistically
+    }
+    loadThread(activeThreadId);
+  }
+}, [activeThreadId, loadThread]);
+```
+
+---
+
 ## Files Changed
 
 ### New Files
 - `supabase/migrations/20260218_create_work_threads.sql`
+- `supabase/migrations/20260218_drop_user_workflows.sql`
 - `app/api/work/threads/route.ts`
 - `app/api/work/threads/[id]/messages/route.ts`
 - `app/api/work/threads/[id]/route.ts`
 - `components/settings/identity-section.tsx`
 
 ### Major Rewrites
-- `app/work/work-page-client.tsx` — Complete rewrite as split-panel chat UI
+- `app/work/work-page-client.tsx` — Complete rewrite as split-panel chat UI; skipLoadRef fix
 - `components/sidebar-nav.tsx` — Rebrand + user profile popover
 
 ### Updated
 - `app/work/page.tsx` — Fetches threads + identity, passes hasCompletedOnboarding
 - `app/settings/page.tsx` — Fetches identity data, renders IdentitySection
+- `app/api/work/threads/[id]/messages/route.ts` — AI enrichment, plan context injection, work_patterns update
+- `lib/context/work-patterns-service.ts` — Added updateWorkPatternsFromThread()
+- `lib/types/work-blueprints.ts` — Added WorkflowRecord, extended WorkPatternsProfileData
+
+### Deleted
+- `app/api/workflows/save/route.ts` — superseded by work_threads
+- `app/api/work/create/route.ts` — old pre-chat endpoint
+- `lib/types/workflows.ts` — old type definitions
 
 ---
 
