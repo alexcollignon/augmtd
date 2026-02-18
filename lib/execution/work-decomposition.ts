@@ -230,7 +230,7 @@ export async function decomposeEmailWork(
   },
   userId: string,
   supabase: SupabaseClient
-): Promise<ExecutionPlan | null> {
+): Promise<WorkflowSeed | null> {
   return decomposeWork(
     {
       source_type: 'email',
@@ -254,7 +254,7 @@ export async function decomposeManualWork(
   userId: string,
   supabase: SupabaseClient,
   deadline?: string
-): Promise<ExecutionPlan | null> {
+): Promise<WorkflowSeed | null> {
   return decomposeWork(
     {
       source_type: 'manual',
