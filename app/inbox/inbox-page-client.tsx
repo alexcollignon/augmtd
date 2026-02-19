@@ -5,15 +5,14 @@ import { createClient } from '@/lib/supabase/client';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import SidebarNav from '@/components/sidebar-nav';
-import WorkSections from '@/components/inbox/work-sections';
+import InboxTopBar from '@/components/inbox/inbox-top-bar';
+import EmailListSections from '@/components/inbox/email-list-sections';
+import WorkDetailInline from '@/components/inbox/work-detail-inline';
+import MeetingsColumn from '@/components/inbox/meetings-column';
 import OnboardingModal from '@/components/onboarding-modal';
-import MeetingsSidebar from '@/components/meetings/meetings-sidebar';
-import {
-  CheckCircleIcon,
-  SparklesIcon,
-  ArrowPathIcon,
-  CalendarIcon
-} from '@heroicons/react/24/outline';
+import { ArrowPathIcon, SparklesIcon } from '@heroicons/react/24/outline';
+import type { CalendarEvent } from '@/lib/types/meetings';
+import type { InboxItem } from '@/lib/types/inbox';
 
 interface InboxPageClientProps {
   initialUser: any;
@@ -28,75 +27,73 @@ export function InboxPageClient({
   initialUserFullName,
   initialConnection,
   initialInboxItems,
-  hasCompletedIdentity
+  hasCompletedIdentity,
 }: InboxPageClientProps) {
   const searchParams = useSearchParams();
   const [user] = useState(initialUser);
   const [connection, setConnection] = useState(initialConnection);
-  const [inboxItems, setInboxItems] = useState(initialInboxItems);
+  const [inboxItems, setInboxItems] = useState<InboxItem[]>(initialInboxItems);
+  const [selectedItem, setSelectedItem] = useState<InboxItem | null>(null);
   const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
-  const [isCalendarOpen, setIsCalendarOpen] = useState(false);
+  const [isCalendarOpen, setIsCalendarOpen] = useState(true);
+  const [meetings, setMeetings] = useState<CalendarEvent[]>([]);
+  const [meetingsLoading, setMeetingsLoading] = useState(true);
 
-  // Track when we've optimistically started a sync
   const optimisticSyncTriggered = useRef(false);
-  // Ref so fetchData can read current isSyncing without being in the effect deps
   const isSyncingRef = useRef(false);
 
-  // Set onboarding modal state on client-side only (prevents hydration mismatch)
-  // Show onboarding if user hasn't completed their identity profile
+  // Show onboarding if user hasn't completed identity profile
   useEffect(() => {
     setIsOnboardingOpen(!hasCompletedIdentity);
   }, [hasCompletedIdentity]);
 
-  // Sync connection state when initial prop changes (e.g., switching providers)
+  // Sync connection state
   useEffect(() => {
     setConnection(initialConnection);
   }, [initialConnection]);
 
-  // Check if we just connected and trigger initial sync
+  // Fetch meetings (shared between top bar and calendar column)
+  useEffect(() => {
+    const fetchMeetings = async () => {
+      try {
+        const res = await fetch('/api/meetings');
+        if (res.ok) {
+          const data = await res.json();
+          setMeetings(data.meetings || []);
+        }
+      } catch {
+        // non-fatal
+      } finally {
+        setMeetingsLoading(false);
+      }
+    };
+    fetchMeetings();
+    const interval = setInterval(fetchMeetings, 60000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Trigger initial sync after connecting
   useEffect(() => {
     const successParam = searchParams?.get('success');
     const justConnected = successParam === 'outlook_connected' || successParam === 'gmail_connected';
 
-    console.log('[Inbox] Connection check:', {
-      successParam,
-      justConnected,
-      hasConnection: !!connection,
-      provider: connection?.provider
-    });
-
     if (justConnected && connection) {
-      console.log('[Inbox] Triggering optimistic sync for', connection.provider);
-
-      // Show loading state immediately (optimistic UI)
       setIsSyncing(true);
       optimisticSyncTriggered.current = true;
-
-      // Clean URL after reading the success param
       window.history.replaceState({}, '', '/inbox');
-
-      // Trigger initial sync automatically
-      fetch('/api/connections/sync', {
-        method: 'POST',
-      }).then(() => {
-        console.log('[Inbox] Sync API called successfully');
-      }).catch(err => {
-        console.error('Failed to trigger initial sync:', err);
-        // Stop showing loading if sync failed to start
+      fetch('/api/connections/sync', { method: 'POST' }).catch(() => {
         setIsSyncing(false);
         optimisticSyncTriggered.current = false;
       });
     }
   }, [searchParams, connection]);
 
-
-  // Poll for new items and check sync status
+  // Poll for inbox items and sync status
   useEffect(() => {
     const supabase = createClient();
 
     async function fetchData() {
-      // Fetch inbox items
       const { data: items, error: itemsError } = await supabase
         .from('inbox_items')
         .select('*')
@@ -105,22 +102,15 @@ export function InboxPageClient({
         .order('priority', { ascending: false })
         .order('created_at', { ascending: false });
 
-      // Check for auth errors
       if (itemsError) {
-        console.error('[Inbox] Error fetching items:', itemsError);
-        // If it's an auth error, redirect to login
         if (itemsError.message?.includes('JWT') || itemsError.code === 'PGRST301') {
-          console.log('[Session] Auth error detected, redirecting to login');
           window.location.href = '/login?session=expired';
           return;
         }
       }
 
-      if (items) {
-        setInboxItems(items);
-      }
+      if (items) setInboxItems(items);
 
-      // Check ALL connections sync status (Gmail + Outlook)
       const { data: connections, error: connectionsError } = await supabase
         .from('connections')
         .select('sync_status, provider')
@@ -128,51 +118,39 @@ export function InboxPageClient({
         .in('provider', ['gmail', 'outlook'])
         .eq('status', 'active');
 
-      // Check for auth errors
       if (connectionsError) {
-        console.error('[Inbox] Error fetching connections:', connectionsError);
         if (connectionsError.message?.includes('JWT') || connectionsError.code === 'PGRST301') {
-          console.log('[Session] Auth error detected, redirecting to login');
           window.location.href = '/login?session=expired';
           return;
         }
       }
 
       if (connections && connections.length > 0) {
-        // Check if ANY connection is currently syncing
         const isCurrentlySyncing = connections.some(conn => conn.sync_status === 'syncing');
         const allCompleted = connections.every(conn =>
           conn.sync_status === 'completed' || conn.sync_status === 'failed'
         );
 
-        // If we optimistically triggered a sync, only update state when we see actual progress
         if (optimisticSyncTriggered.current) {
-          // Sync has actually started or completed - clear optimistic flag
           if (isCurrentlySyncing || allCompleted) {
             optimisticSyncTriggered.current = false;
             isSyncingRef.current = isCurrentlySyncing;
             setIsSyncing(isCurrentlySyncing);
           }
-          // Otherwise, keep showing optimistic loading state (ignore 'pending')
         } else {
-          // Normal polling - update state based on database
           if (isSyncingRef.current !== isCurrentlySyncing) {
             isSyncingRef.current = isCurrentlySyncing;
             setIsSyncing(isCurrentlySyncing);
           }
         }
 
-        // If was syncing and now completed, refresh to show new items
         if (isSyncingRef.current && !isCurrentlySyncing) {
           setInboxItems(items || []);
         }
       }
     }
 
-    // Use a self-rescheduling approach so interval adapts to sync state
-    // without putting isSyncing in the dependency array
     let timeoutId: ReturnType<typeof setTimeout>;
-
     function scheduleNext() {
       const delay = isSyncingRef.current ? 2000 : 10000;
       timeoutId = setTimeout(async () => {
@@ -181,135 +159,99 @@ export function InboxPageClient({
       }, delay);
     }
 
-    // Fetch immediately on mount, then start adaptive scheduling
     fetchData().then(scheduleNext);
-
     return () => clearTimeout(timeoutId);
   }, [user.id, connection]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Derived data for top bar
+  const todayMeetings = meetings.filter(m =>
+    new Date(m.start_time).toDateString() === new Date().toDateString()
+  );
+  const preparedItems = inboxItems.filter((item: any) => item.visual_section === 'prepared');
 
   return (
-    <div className="flex h-screen bg-gradient-to-br from-neutral-50 to-white">
-      {/* Sidebar */}
+    <div className="flex h-screen bg-white overflow-hidden">
       <SidebarNav userEmail={user?.email} />
 
-      {/* Main Content - Two Column Layout */}
-      <main className="flex-1 overflow-y-auto flex relative">
-        {/* Center Column - Email Work */}
-        <div className="flex-1 overflow-y-auto">
-          <div className="max-w-7xl mx-auto px-6 lg:px-8 py-8 lg:py-12">
-          {/* Page Header */}
-          <div className="mb-10 flex items-start justify-between">
-            <div>
-              <h1 className="text-2xl lg:text-3xl font-bold text-neutral-900 mb-2">
-                Prepared Work
-              </h1>
-              <p className="text-[15px] text-neutral-600">
-                Prepared work items that need your attention right now.
-              </p>
-            </div>
-
-            {/* Calendar Toggle Button */}
-            {connection && (
-              <button
-                onClick={() => setIsCalendarOpen(!isCalendarOpen)}
-                className="flex items-center gap-2 px-4 py-2.5 bg-white border border-neutral-200 hover:border-neutral-300 text-neutral-700 hover:text-neutral-900 transition-all shadow-sm hover:shadow"
-                aria-label={isCalendarOpen ? 'Hide calendar' : 'Show calendar'}
-              >
-                <CalendarIcon className="w-5 h-5" />
-                <span className="text-[14px] font-medium">Meetings</span>
-              </button>
-            )}
-          </div>
-
-          {/* Syncing Banner */}
-          {isSyncing && (
-            <div className="mb-8 p-5 bg-gradient-to-r from-indigo-50 to-violet-50 border border-indigo-100 shadow-sm">
-              <div className="flex items-center gap-4">
-                <div className="flex-shrink-0 w-10 h-10 bg-white shadow-sm flex items-center justify-center">
-                  <ArrowPathIcon className="w-5 h-5 text-indigo-600 animate-spin" />
-                </div>
-                <div className="flex-1">
-                  <p className="text-[14px] font-semibold text-indigo-900 mb-0.5">
-                    Syncing your emails...
-                  </p>
-                  <p className="text-[13px] text-indigo-700">
-                    Fetching and processing your emails. This usually takes 30-60 seconds.
-                  </p>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* No Connection State */}
-          {!connection && (
-            <div className="text-center py-20 bg-white border border-neutral-200 shadow-sm">
-              <div className="max-w-md mx-auto">
-                <div className="w-16 h-16 mx-auto mb-5 bg-gradient-to-br from-indigo-50 to-violet-50 flex items-center justify-center shadow-sm">
-                  <SparklesIcon className="w-8 h-8 text-indigo-600" />
-                </div>
-                <h3 className="text-[17px] font-semibold text-neutral-900 mb-2">
-                  Connect Your Email
-                </h3>
-                <p className="text-[14px] text-neutral-600 mb-8">
-                  Connect Gmail or Outlook to start receiving AI-prepared work
-                </p>
-                <Link
-                  href="/settings"
-                  className="inline-flex items-center px-8 py-3 bg-indigo-600 text-white text-[14px] font-semibold hover:bg-indigo-700 transition-all shadow-sm hover:shadow"
-                >
-                  Go to Settings
-                </Link>
-              </div>
-            </div>
-          )}
-
-          {/* Empty State */}
-          {connection && inboxItems.length === 0 && !isSyncing && (
-            <div className="text-center py-20 bg-gradient-to-br from-green-50 to-emerald-50 border border-green-200 shadow-sm">
-              <div className="w-16 h-16 mx-auto mb-5 bg-white flex items-center justify-center shadow-sm">
-                <CheckCircleIcon className="w-8 h-8 text-green-600" />
-              </div>
-              <h3 className="text-[17px] font-semibold text-neutral-900 mb-2">
-                All caught up!
-              </h3>
-              <p className="text-[14px] text-neutral-600">
-                No pending work. I'll prepare new items during the next email sync.
-              </p>
-            </div>
-          )}
-
-          {/* Content - Section-Based Layout */}
-          {connection && inboxItems.length > 0 && (
-            <WorkSections items={inboxItems} />
-          )}
-          </div>
-        </div>
-
-        {/* Right Sidebar - Meetings (Collapsible Drawer) */}
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+        {/* Top bar — priorities + today's meetings */}
         {connection && (
-          <>
-            {/* Overlay - Click to close */}
-            {isCalendarOpen && (
-              <div
-                className="fixed inset-0 bg-black/20 z-40 transition-opacity duration-300"
-                onClick={() => setIsCalendarOpen(false)}
-                aria-hidden="true"
-              />
-            )}
-
-            {/* Meetings Drawer */}
-            <MeetingsSidebar
-              userId={user.id}
-              userEmail={user.email}
-              isOpen={isCalendarOpen}
-              onClose={() => setIsCalendarOpen(false)}
-            />
-          </>
+          <InboxTopBar
+            preparedItems={preparedItems}
+            todayMeetings={todayMeetings}
+            onSelectItem={setSelectedItem}
+          />
         )}
-      </main>
 
-      {/* Onboarding Modal */}
+        {/* Syncing banner */}
+        {isSyncing && (
+          <div className="flex-shrink-0 flex items-center gap-3 px-4 py-2.5 bg-indigo-50 border-b border-indigo-100">
+            <ArrowPathIcon className="w-4 h-4 text-indigo-600 animate-spin flex-shrink-0" />
+            <p className="text-[13px] text-indigo-800 font-medium">
+              Syncing your emails... This usually takes 30–60 seconds.
+            </p>
+          </div>
+        )}
+
+        {/* No connection */}
+        {!connection && (
+          <div className="flex-1 flex items-center justify-center">
+            <div className="text-center max-w-sm">
+              <div className="w-14 h-14 mx-auto mb-4 bg-indigo-50 flex items-center justify-center">
+                <SparklesIcon className="w-7 h-7 text-indigo-600" />
+              </div>
+              <h3 className="text-[17px] font-semibold text-neutral-900 mb-2">Connect Your Email</h3>
+              <p className="text-[14px] text-neutral-600 mb-6">
+                Connect Gmail or Outlook to start receiving AI-prepared work
+              </p>
+              <Link
+                href="/settings"
+                className="inline-flex items-center px-6 py-2.5 bg-indigo-600 text-white text-[14px] font-semibold hover:bg-indigo-700 transition-all"
+              >
+                Go to Settings
+              </Link>
+            </div>
+          </div>
+        )}
+
+        {/* 3-column layout */}
+        {connection && (
+          <div className="flex-1 flex min-h-0 overflow-hidden">
+            {/* Left: email list */}
+            <div className="w-[272px] flex-shrink-0 border-r border-neutral-200 overflow-y-auto bg-white">
+              {inboxItems.length === 0 && !isSyncing ? (
+                <div className="flex flex-col items-center justify-center h-full py-16 px-4 text-center">
+                  <p className="text-[13px] text-neutral-500 font-medium mb-1">All caught up!</p>
+                  <p className="text-[12px] text-neutral-400">
+                    New items will appear here after the next sync.
+                  </p>
+                </div>
+              ) : (
+                <EmailListSections
+                  items={inboxItems}
+                  selectedId={selectedItem?.id || null}
+                  onSelect={setSelectedItem}
+                />
+              )}
+            </div>
+
+            {/* Middle: inline detail panel */}
+            <div className="flex-1 min-w-0 overflow-hidden flex flex-col">
+              <WorkDetailInline key={selectedItem?.id ?? 'empty'} item={selectedItem} />
+            </div>
+
+            {/* Right: calendar column */}
+            <MeetingsColumn
+              isOpen={isCalendarOpen}
+              onToggle={() => setIsCalendarOpen(o => !o)}
+              meetings={meetings}
+              loading={meetingsLoading}
+              userEmail={user?.email || ''}
+            />
+          </div>
+        )}
+      </div>
+
       <OnboardingModal
         isOpen={isOnboardingOpen}
         onClose={() => setIsOnboardingOpen(false)}
