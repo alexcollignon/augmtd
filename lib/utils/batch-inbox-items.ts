@@ -3,20 +3,8 @@
  * Groups similar NO_WORK items to reduce visual clutter
  */
 
-export interface InboxItem {
-  id: string;
-  user_id: string;
-  source: string;
-  source_id: string;
-  work_state: string;
-  work_title: string | null;
-  what_i_prepared: string | null;
-  why_matters: string | null;
-  source_data: any;
-  status: string;
-  priority: number;
-  created_at: string;
-}
+import type { InboxItem } from '@/lib/types/inbox';
+export type { InboxItem };
 
 export interface BatchedItem {
   id: string;
