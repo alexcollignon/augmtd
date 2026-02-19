@@ -163,10 +163,6 @@ export function InboxPageClient({
     return () => clearTimeout(timeoutId);
   }, [user.id, connection]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Derived data for top bar
-  const todayMeetings = meetings.filter(m =>
-    new Date(m.start_time).toDateString() === new Date().toDateString()
-  );
   const preparedItems = inboxItems.filter((item: any) => item.visual_section === 'prepared');
 
   return (
@@ -174,14 +170,12 @@ export function InboxPageClient({
       <SidebarNav userEmail={user?.email} />
 
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-        {/* Top bar — priorities + today's meetings */}
-        {connection && (
-          <InboxTopBar
-            preparedItems={preparedItems}
-            todayMeetings={todayMeetings}
-            onSelectItem={setSelectedItem}
-          />
-        )}
+        {/* Top bar — always visible */}
+        <InboxTopBar
+          preparedItems={preparedItems}
+          meetings={meetings}
+          onSelectItem={setSelectedItem}
+        />
 
         {/* Syncing banner */}
         {isSyncing && (
