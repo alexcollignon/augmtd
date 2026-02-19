@@ -303,7 +303,6 @@ async function storeTranscriptAndGenerateWork(
           category: item.category || 'todo',
           auto_generated: true,
         },
-        source_meeting_transcript_id: transcriptRecord.id,
         auto_generated: true,
         priority: item.priority,
         status: 'pending',
