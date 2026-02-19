@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import NextTopLoader from 'nextjs-toploader';
+import { Toaster } from 'sonner';
 
 export const metadata: Metadata = {
   title: "AUGMTD - Your Personal Digital Twin",
@@ -22,6 +23,7 @@ export default function RootLayout({
           shadow="0 0 10px #8B5CF6,0 0 5px #8B5CF6"
         />
         {children}
+        <Toaster position="bottom-right" richColors />
       </body>
     </html>
   );

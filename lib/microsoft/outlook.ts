@@ -139,13 +139,28 @@ export function parseOutlookMessage(message: OutlookMessage) {
 }
 
 interface SendOutlookReplyParams {
-  accessToken: string;
+  encryptedTokens: string;
   messageId: string;
   body: string;
 }
 
 export async function sendOutlookReply(params: SendOutlookReplyParams): Promise<string> {
-  const { accessToken, messageId, body } = params;
+  const { encryptedTokens, messageId, body } = params;
+
+  // Decode tokens and refresh if needed (mirrors getGraphClient logic)
+  const tokens = JSON.parse(Buffer.from(encryptedTokens, 'base64').toString());
+  let accessToken = tokens.accessToken;
+  if (tokens.refreshToken && tokens.expiresOn) {
+    const timeUntilExpiry = new Date(tokens.expiresOn).getTime() - Date.now();
+    if (timeUntilExpiry < 5 * 60 * 1000) {
+      try {
+        const refreshed = await refreshAccessToken(tokens.refreshToken);
+        accessToken = refreshed.accessToken;
+      } catch {
+        // Fall back to existing token
+      }
+    }
+  }
 
   // Reply to the message using Microsoft Graph API
   const response = await fetch(

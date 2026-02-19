@@ -1,7 +1,7 @@
 # AUGMTD Implementation Status
-**Version:** 4.4
-**Last Updated:** 2026-02-18
-**Current Phase:** Phase 8 Complete - Work Patterns Context Learning, user_workflows Cleanup, Chat Fixes
+**Version:** 4.5
+**Last Updated:** 2026-02-19
+**Current Phase:** Phase 9 Complete - Batch UI Redesign, Email Send Fixes, Toast Notifications, Activity Log Timestamps
 
 ---
 
@@ -35,6 +35,10 @@
 | Sidebar Nav Rebrand | ✅ Complete | 100% |
 | Work Patterns Context Learning (Phase 8) | ✅ Complete | 100% |
 | user_workflows Cleanup | ✅ Complete | 100% |
+| Batch UI Redesign (Phase 9) | ✅ Complete | 100% |
+| Email Send Fixes (Gmail + Outlook) | ✅ Complete | 100% |
+| Toast Notifications | ✅ Complete | 100% |
+| Activity Log Timestamps | ✅ Complete | 100% |
 | Vector Similarity | ⚠️ Planned | 0% |
 
 ---
@@ -720,7 +724,7 @@ augmtd/
 
 ### Testing Needed
 - [ ] End-to-end user flow (full approval → send)
-- [ ] Email sending (Gmail API + Outlook API)
+- ✅ Email sending (Gmail API + Outlook API) — tested and fixed in Phase 9
 - [ ] Draft editing and modification
 - [ ] Error scenarios (failed sends, OAuth refresh)
 - [ ] Load testing (multiple users, high volumes)
@@ -828,9 +832,9 @@ augmtd/
 - ✅ **DONE**: All UI pages built
 - ✅ **DONE**: Loading states added
 - ✅ **DONE**: Error states added
+- ✅ **DONE**: Toast notifications (sonner) — success/error toasts on all actions
 - ⚠️ **TODO**: Test mobile responsive design on real devices
 - ⚠️ **TODO**: Add keyboard shortcuts (j/k navigation, x to dismiss, etc.)
-- ⚠️ **TODO**: Toast notifications library (replace inline alerts)
 
 ### Features
 - ⚠️ **TODO**: Context learning engine
@@ -1108,3 +1112,96 @@ Removed `estimated_time` (top-level) and `estimatedTime` (per-step) from both th
 - `app/api/work/create/route.ts`
 - `lib/types/workflows.ts`
 
+---
+
+## ✅ Phase 9: Batch UI Redesign, Email Send Fixes, Toast Notifications & Activity Timestamps (Feb 19, 2026)
+
+### Batch Items UI Redesign
+
+Replaced text-based "Mine / Not mine" per-card buttons with compact icon-only controls, and simplified the bulk-action footer.
+
+**Per-card controls:**
+- ✓ (green) — "Mine": confirms and marks the item (calls `handleSingleItemConfirmation(id, true)`)
+- ✗ (neutral → red on hover) — "Not mine": instantly removes the card from the batch list, then dismisses via API
+
+**Optimistic removal:** `batchItems` converted from a derived `const` to `useState<InboxItem[]>` so clicking ✗ removes the card immediately before the API call completes.
+
+**Footer bulk actions (replaces old per-batch section buttons):**
+- "Mark All Complete" — marks all remaining batch items complete, clears selection, shows toast
+- "Dismiss All" — dismisses all remaining batch items, clears selection, shows toast
+
+**Banner simplification:** The amber info banner for batch items no longer shows action buttons — it's now a pure informational label ("N grouped items · Click to act individually").
+
+### Full Optimistic UI After All Actions
+
+All three action paths (complete, dismiss, send reply) now:
+1. Clear the middle panel immediately via `onItemConfirmed([id], ...)` callback
+2. Show a `toast.success()` notification
+3. Do **not** call `router.refresh()` (removed — caused full page reload)
+
+**Batch selection clear fix:** `handleItemConfirmed` in `inbox-page-client.tsx` checks `__batchItems.every(b => ids.includes(b.id))` to detect when a whole batch has been actioned — since the batch virtual item has a synthetic ID (`batch-${category}-...`) that never matches real UUIDs.
+
+### Activity Log Timestamp Fix
+
+Activity log items are now sorted by **when the action was taken** (`updated_at`) instead of when the email arrived (`created_at`).
+
+**Database migration** (`supabase/migrations/20260219_add_updated_at_to_inbox_items.sql`):
+- Added `updated_at TIMESTAMPTZ DEFAULT NOW()` column
+- Backfilled existing rows: `UPDATE inbox_items SET updated_at = created_at WHERE updated_at IS NULL`
+- Added `BEFORE UPDATE` trigger (`inbox_items_updated_at`) to auto-set `updated_at = NOW()`
+
+**Route changes** (explicit `updated_at` on all writes):
+- `app/api/inbox/[id]/complete/route.ts` — sets `updated_at: new Date().toISOString()`
+- `app/api/inbox/[id]/dismiss/route.ts` — sets `updated_at: new Date().toISOString()`
+- `app/api/inbox/[id]/confirm/route.ts` — uses shared `now` constant for both `updated_at` and `confirmedAt`
+
+**Query change:**
+- `app/activity/page.tsx` — `.order('updated_at', { ascending: false })`
+
+### Email Send Fixes
+
+**Gmail (root cause):** `connection.access_token` is `undefined` — tokens live in `connection.metadata.tokens` as a base64-encoded JSON string. `sendGmailReply` was called with a raw `accessToken` string. Fixed by changing signature to `encryptedTokens` and delegating to `getGmailClient(encryptedTokens)` (which already handles decoding + refresh).
+
+**Outlook — Token issue:** Same root cause as Gmail. `sendOutlookReply` was called with `connection.access_token`. Fixed by accepting `encryptedTokens: string`, decoding the base64 JSON, and applying the same expiry-check + refresh logic as `getGraphClient`.
+
+**Outlook — Message ID mismatch:** Microsoft Graph API `/me/messages/{id}/reply` requires the *internal* Outlook message ID, not the RFC 2822 internet message ID stored as `message_id` in `source_data`. The internal ID is stored in `emails.metadata.outlook_id`. Fixed by looking up the internal ID via `source_data.email_id` join before calling `sendOutlookReply`.
+
+```typescript
+// In send-reply/route.ts
+let outlookMessageId = sourceData.message_id;
+if (sourceData.email_id) {
+  const { data: email } = await supabase
+    .from('emails').select('metadata').eq('id', sourceData.email_id).single();
+  if (email?.metadata?.outlook_id) outlookMessageId = email.metadata.outlook_id;
+}
+```
+
+### Toast Notifications
+
+Installed `sonner` toast library and wired it throughout the action flow.
+
+- `app/layout.tsx` — Added `<Toaster position="bottom-right" richColors />`
+- `components/inbox/work-detail-inline.tsx` — `import { toast } from 'sonner'`
+  - `handleComplete` — `toast.success('Marked as complete')`
+  - `handleDismiss` — `toast.success('Item dismissed')`
+  - `handleSendReply` — `toast.success('Reply sent successfully')`
+  - `handleBatchComplete` — `toast.success('All items marked as complete')`
+  - `handleBatchDismiss` — `toast.success('All items dismissed')`
+  - All `alert()` error calls replaced with `toast.error()`
+
+### Files Created/Updated
+
+**New:**
+- `supabase/migrations/20260219_add_updated_at_to_inbox_items.sql` — `updated_at` column + trigger
+
+**Updated:**
+- `components/inbox/work-detail-inline.tsx` — Batch UI redesign, optimistic removal, toast notifications, removed `useRouter`
+- `app/inbox/inbox-page-client.tsx` — Batch selection clear fix (`__batchItems` traversal)
+- `app/api/inbox/[id]/complete/route.ts` — `updated_at` on update
+- `app/api/inbox/[id]/dismiss/route.ts` — `updated_at` on update
+- `app/api/inbox/[id]/confirm/route.ts` — `updated_at` on confirmationUpdate
+- `app/activity/page.tsx` — Order by `updated_at`
+- `lib/google/gmail.ts` — `sendGmailReply` accepts `encryptedTokens`, uses `getGmailClient`
+- `lib/microsoft/outlook.ts` — `sendOutlookReply` accepts `encryptedTokens`, handles token decode + refresh
+- `app/api/inbox/[id]/send-reply/route.ts` — passes `encryptedTokens`, looks up Outlook internal ID
+- `app/layout.tsx` — Added `Toaster` from sonner

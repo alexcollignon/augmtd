@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { toast } from 'sonner';
 import {
   UserIcon,
   DocumentTextIcon,
@@ -13,25 +14,31 @@ import {
   ArrowTopRightOnSquareIcon,
   ChevronRightIcon,
   CheckIcon,
+  XMarkIcon,
   PaperAirplaneIcon,
   VideoCameraIcon,
   MapPinIcon,
 } from '@heroicons/react/24/outline';
 import type { InboxItem } from '@/lib/types/inbox';
-import { isExecutable } from '@/lib/types/inbox';
+import { isExecutable, needsConfirmation } from '@/lib/types/inbox';
+import { CheckCircleIcon } from '@heroicons/react/24/outline';
 import DraftPreviewModal from './draft-preview-modal';
 
 interface WorkDetailInlineProps {
   item: InboxItem | null;
+  onItemConfirmed?: (ids: string[], action: 'confirm_as_mine' | 'not_my_task') => void;
 }
 
-export default function WorkDetailInline({ item }: WorkDetailInlineProps) {
+export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailInlineProps) {
   const [isOpeningWorkflow, setIsOpeningWorkflow] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [isCompleting, setIsCompleting] = useState(false);
   const [isDismissing, setIsDismissing] = useState(false);
   const [showDraftPreview, setShowDraftPreview] = useState(false);
   const [showOriginalEmail, setShowOriginalEmail] = useState(false);
+  const [isConfirming, setIsConfirming] = useState(false);
+  const [isBatchCompleting, setIsBatchCompleting] = useState(false);
+  const [isBatchDismissing, setIsBatchDismissing] = useState(false);
 
   if (!item) {
     return (
@@ -50,7 +57,7 @@ export default function WorkDetailInline({ item }: WorkDetailInlineProps) {
   const recipientContext = item.recipient_context;
   const executable = isExecutable(item);
   const isBatch = (item as any).__isBatch === true;
-  const batchItems: InboxItem[] = (item as any).__batchItems || [];
+  const [batchItems, setBatchItems] = useState<InboxItem[]>((item as any).__batchItems || []);
 
   const handleOpenInWorkflows = async () => {
     setIsOpeningWorkflow(true);
@@ -80,10 +87,14 @@ export default function WorkDetailInline({ item }: WorkDetailInlineProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ customMessage }),
       });
-      if (response.ok) window.location.reload();
-      else alert('Failed to send reply. Please try again.');
+      if (response.ok) {
+        toast.success('Reply sent successfully');
+        onItemConfirmed?.([item.id], 'not_my_task');
+      } else {
+        toast.error('Failed to send reply. Please try again.');
+      }
     } catch {
-      alert('Failed to send reply. Please try again.');
+      toast.error('Failed to send reply. Please try again.');
     } finally {
       setIsSending(false);
     }
@@ -97,10 +108,14 @@ export default function WorkDetailInline({ item }: WorkDetailInlineProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'reviewed' }),
       });
-      if (response.ok) window.location.reload();
-      else alert('Failed to complete item. Please try again.');
+      if (response.ok) {
+        toast.success('Marked as complete');
+        onItemConfirmed?.([item.id], 'not_my_task');
+      } else {
+        toast.error('Failed to complete item. Please try again.');
+      }
     } catch {
-      alert('Failed to complete item. Please try again.');
+      toast.error('Failed to complete item. Please try again.');
     } finally {
       setIsCompleting(false);
     }
@@ -115,13 +130,109 @@ export default function WorkDetailInline({ item }: WorkDetailInlineProps) {
         body: JSON.stringify({ reason: 'not_relevant' }),
       });
       const data = await response.json();
-      if (response.ok) window.location.reload();
-      else alert(data.error || 'Failed to dismiss item. Please try again.');
+      if (response.ok) {
+        toast.success('Item dismissed');
+        onItemConfirmed?.([item.id], 'not_my_task');
+      } else {
+        toast.error(data.error || 'Failed to dismiss item. Please try again.');
+      }
     } catch {
-      alert('Failed to dismiss item. Please try again.');
+      toast.error('Failed to dismiss item. Please try again.');
     } finally {
       setIsDismissing(false);
     }
+  };
+
+  const confirmItem = async (id: string, confirmed: boolean) => {
+    const action = confirmed ? 'confirm_as_mine' : 'not_my_task';
+    await fetch(`/api/inbox/${id}/confirm`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action }),
+    });
+  };
+
+  const handleConfirmation = async (confirmed: boolean) => {
+    setIsConfirming(true);
+    const action = confirmed ? 'confirm_as_mine' : 'not_my_task';
+    const ids = isBatch ? batchItems.map(b => b.id) : [item.id];
+    try {
+      await Promise.all(ids.map(id => confirmItem(id, confirmed)));
+      onItemConfirmed?.(ids, action);
+    } catch {
+      alert('Failed to update. Please try again.');
+    } finally {
+      setIsConfirming(false);
+    }
+  };
+
+  const handleSingleItemConfirmation = async (id: string, confirmed: boolean) => {
+    const action = confirmed ? 'confirm_as_mine' : 'not_my_task';
+    setBatchItems(prev => prev.filter(b => b.id !== id));
+    try {
+      await confirmItem(id, confirmed);
+      onItemConfirmed?.([id], action);
+    } catch {
+      setBatchItems(prev => [...prev]); // revert on error isn't trivial, just let polling correct it
+      alert('Failed to update. Please try again.');
+    }
+  };
+
+  const handleBatchComplete = async () => {
+    setIsBatchCompleting(true);
+    try {
+      await Promise.all(batchItems.map(b =>
+        fetch(`/api/inbox/${b.id}/complete`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'reviewed' }),
+        })
+      ));
+      onItemConfirmed?.(batchItems.map(b => b.id), 'not_my_task');
+    } catch {
+      alert('Failed to complete items. Please try again.');
+    } finally {
+      setIsBatchCompleting(false);
+    }
+  };
+
+  const handleBatchDismiss = async () => {
+    setIsBatchDismissing(true);
+    try {
+      await Promise.all(batchItems.map(b =>
+        fetch(`/api/inbox/${b.id}/dismiss`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reason: 'not_relevant' }),
+        })
+      ));
+      onItemConfirmed?.(batchItems.map(b => b.id), 'not_my_task');
+    } catch {
+      alert('Failed to dismiss items. Please try again.');
+    } finally {
+      setIsBatchDismissing(false);
+    }
+  };
+
+  const stripHtml = (html: string): string => {
+    return html
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/p>/gi, '\n')
+      .replace(/<\/div>/gi, '\n')
+      .replace(/<\/tr>/gi, '\n')
+      .replace(/<\/li>/gi, '\n')
+      .replace(/<\/h[1-6]>/gi, '\n')
+      .replace(/<\/td>/gi, ' ')
+      .replace(/<[^>]+>/g, '')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/[ \t]{2,}/g, ' ')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
   };
 
   const hasMeetingData = () => !!(
@@ -168,6 +279,39 @@ export default function WorkDetailInline({ item }: WorkDetailInlineProps) {
       {/* Scrollable content */}
       <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
 
+        {/* Confirmation banner for suggested items */}
+        {(isBatch ? batchItems.some(b => needsConfirmation(b)) : needsConfirmation(item)) && (
+          <div className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200">
+            <CheckCircleIcon className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <p className="text-[13px] font-semibold text-amber-900">
+                {isBatch ? `AI suggested these ${batchItems.length} items` : 'AI suggested this work item'}
+              </p>
+              <p className="text-[12px] text-amber-700 mt-0.5">
+                {isBatch ? 'Use ✓ / ✗ on each item, or use the bulk actions below.' : 'Confirm if relevant to you, or dismiss.'}
+              </p>
+              {!isBatch && (
+                <div className="flex gap-2 mt-3">
+                  <button
+                    onClick={() => handleConfirmation(true)}
+                    disabled={isConfirming}
+                    className="px-4 py-1.5 text-[12px] font-semibold bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-50 transition-colors"
+                  >
+                    {isConfirming ? 'Saving...' : "Yes, it's mine"}
+                  </button>
+                  <button
+                    onClick={() => handleConfirmation(false)}
+                    disabled={isConfirming}
+                    className="px-4 py-1.5 text-[12px] font-semibold bg-white text-amber-800 border border-amber-300 hover:bg-amber-50 disabled:opacity-50 transition-colors"
+                  >
+                    Not mine
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Batch: list of items */}
         {isBatch && (
           <div>
@@ -177,12 +321,32 @@ export default function WorkDetailInline({ item }: WorkDetailInlineProps) {
             <div className="space-y-2">
               {batchItems.map((bItem) => (
                 <div key={bItem.id} className="bg-neutral-50 border border-neutral-200 p-3">
-                  <p className="text-[13px] font-semibold text-neutral-900 mb-0.5">
-                    {bItem.source_data?.subject || 'No subject'}
-                  </p>
-                  <p className="text-[12px] text-neutral-600">
-                    {bItem.source_data?.from_name || bItem.source_data?.from || 'Unknown'}
-                  </p>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-[13px] font-semibold text-neutral-900 mb-0.5">
+                        {bItem.source_data?.subject || 'No subject'}
+                      </p>
+                      <p className="text-[12px] text-neutral-500">
+                        {bItem.source_data?.from_name || bItem.source_data?.from || 'Unknown'}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-1 flex-shrink-0">
+                      <button
+                        onClick={() => handleSingleItemConfirmation(bItem.id, true)}
+                        title="Mine"
+                        className="w-7 h-7 flex items-center justify-center bg-green-50 border border-green-200 text-green-700 hover:bg-green-100 transition-colors"
+                      >
+                        <CheckIcon className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={() => handleSingleItemConfirmation(bItem.id, false)}
+                        title="Not mine"
+                        className="w-7 h-7 flex items-center justify-center bg-white border border-neutral-200 text-neutral-500 hover:bg-red-50 hover:border-red-200 hover:text-red-600 transition-colors"
+                      >
+                        <XMarkIcon className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
                 </div>
               ))}
             </div>
@@ -377,7 +541,7 @@ export default function WorkDetailInline({ item }: WorkDetailInlineProps) {
         )}
 
         {/* Original email */}
-        {!isBatch && !executable && (sourceData?.body || sourceData?.snippet) && (
+        {!isBatch && (sourceData?.body || sourceData?.snippet) && (
           <div>
             <button
               onClick={() => setShowOriginalEmail(!showOriginalEmail)}
@@ -407,7 +571,7 @@ export default function WorkDetailInline({ item }: WorkDetailInlineProps) {
                 </div>
                 <div className="px-4 py-3">
                   <p className="text-[13px] text-neutral-700 leading-relaxed whitespace-pre-wrap">
-                    {sourceData.body || sourceData.snippet}
+                    {stripHtml(sourceData.body || sourceData.snippet)}
                   </p>
                 </div>
               </div>
@@ -419,68 +583,90 @@ export default function WorkDetailInline({ item }: WorkDetailInlineProps) {
       {/* Actions footer */}
       <div className="flex-shrink-0 border-t border-neutral-200 bg-neutral-50 px-6 py-4">
         <div className="flex items-center gap-3">
-          {executable && (
+          {isBatch ? (
             <>
-              {sourceData?.draft && (
-                <button
-                  onClick={() => setShowDraftPreview(true)}
-                  className="flex-1 inline-flex items-center justify-center px-4 py-2.5 text-[13px] font-semibold bg-white text-indigo-700 border border-indigo-300 hover:bg-indigo-50 transition-all"
-                >
-                  <PaperAirplaneIcon className="w-4 h-4 mr-2" />
-                  Review & Send
-                </button>
-              )}
               <button
-                onClick={handleOpenInWorkflows}
-                disabled={isOpeningWorkflow}
-                className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 text-[13px] font-semibold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm"
+                onClick={handleBatchComplete}
+                disabled={isBatchCompleting || isBatchDismissing}
+                className="flex-1 inline-flex items-center justify-center px-4 py-2.5 text-[13px] font-semibold bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm"
               >
-                {isOpeningWorkflow ? (
-                  <>
-                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    Opening...
-                  </>
-                ) : (
-                  <>
-                    <ArrowTopRightOnSquareIcon className="w-4 h-4" />
-                    Open in Workflows
-                  </>
-                )}
+                <CheckIcon className="w-4 h-4 mr-2" />
+                {isBatchCompleting ? 'Completing...' : 'Mark All Complete'}
+              </button>
+              <button
+                onClick={handleBatchDismiss}
+                disabled={isBatchCompleting || isBatchDismissing}
+                className="px-4 py-2.5 text-[13px] font-semibold text-neutral-700 hover:bg-neutral-200 disabled:opacity-50 transition-colors border border-neutral-300"
+              >
+                {isBatchDismissing ? 'Dismissing...' : 'Dismiss All'}
+              </button>
+            </>
+          ) : (
+            <>
+              {executable && (
+                <>
+                  {sourceData?.draft && (
+                    <button
+                      onClick={() => setShowDraftPreview(true)}
+                      className="flex-1 inline-flex items-center justify-center px-4 py-2.5 text-[13px] font-semibold bg-white text-indigo-700 border border-indigo-300 hover:bg-indigo-50 transition-all"
+                    >
+                      <PaperAirplaneIcon className="w-4 h-4 mr-2" />
+                      Review & Send
+                    </button>
+                  )}
+                  <button
+                    onClick={handleOpenInWorkflows}
+                    disabled={isOpeningWorkflow}
+                    className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 text-[13px] font-semibold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm"
+                  >
+                    {isOpeningWorkflow ? (
+                      <>
+                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        Opening...
+                      </>
+                    ) : (
+                      <>
+                        <ArrowTopRightOnSquareIcon className="w-4 h-4" />
+                        Open in Workflows
+                      </>
+                    )}
+                  </button>
+                </>
+              )}
+
+              {!executable && (
+                <>
+                  {sourceData?.draft && (
+                    <button
+                      onClick={() => setShowDraftPreview(true)}
+                      className="flex-1 inline-flex items-center justify-center px-4 py-2.5 text-[13px] font-semibold bg-indigo-600 text-white hover:bg-indigo-700 transition-all shadow-sm"
+                    >
+                      <PaperAirplaneIcon className="w-4 h-4 mr-2" />
+                      Review & Send
+                    </button>
+                  )}
+                  {!sourceData?.draft && (
+                    <button
+                      onClick={handleComplete}
+                      disabled={isCompleting}
+                      className="flex-1 inline-flex items-center justify-center px-4 py-2.5 text-[13px] font-semibold bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm"
+                    >
+                      <CheckIcon className="w-4 h-4 mr-2" />
+                      {isCompleting ? 'Completing...' : 'Mark Complete'}
+                    </button>
+                  )}
+                </>
+              )}
+
+              <button
+                onClick={handleDismiss}
+                disabled={isDismissing}
+                className="px-4 py-2.5 text-[13px] font-semibold text-neutral-700 hover:bg-neutral-200 disabled:opacity-50 transition-colors border border-neutral-300"
+              >
+                {isDismissing ? 'Dismissing...' : 'Dismiss'}
               </button>
             </>
           )}
-
-          {!executable && (
-            <>
-              {sourceData?.draft && (
-                <button
-                  onClick={() => setShowDraftPreview(true)}
-                  className="flex-1 inline-flex items-center justify-center px-4 py-2.5 text-[13px] font-semibold bg-indigo-600 text-white hover:bg-indigo-700 transition-all shadow-sm"
-                >
-                  <PaperAirplaneIcon className="w-4 h-4 mr-2" />
-                  Review & Send
-                </button>
-              )}
-              {!sourceData?.draft && (
-                <button
-                  onClick={handleComplete}
-                  disabled={isCompleting}
-                  className="flex-1 inline-flex items-center justify-center px-4 py-2.5 text-[13px] font-semibold bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm"
-                >
-                  <CheckIcon className="w-4 h-4 mr-2" />
-                  {isCompleting ? 'Completing...' : 'Mark Complete'}
-                </button>
-              )}
-            </>
-          )}
-
-          <button
-            onClick={handleDismiss}
-            disabled={isDismissing}
-            className="px-4 py-2.5 text-[13px] font-semibold text-neutral-700 hover:bg-neutral-200 disabled:opacity-50 transition-colors border border-neutral-300"
-          >
-            {isDismissing ? 'Dismissing...' : 'Dismiss'}
-          </button>
         </div>
       </div>
 

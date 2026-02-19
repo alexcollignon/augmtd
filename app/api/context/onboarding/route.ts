@@ -1,8 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { initializeUserContext } from '@/lib/context/profile-adapter';
-import { saveOnboardingData } from '@/lib/context/work-patterns-service';
+import { saveOnboardingData, hasCompletedOnboarding } from '@/lib/context/work-patterns-service';
 import { Department } from '@/lib/types/work-blueprints';
+
+export async function GET() {
+  try {
+    const supabase = await createClient();
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    const completed = await hasCompletedOnboarding(user.id, supabase);
+    return NextResponse.json({ completed });
+  } catch (error) {
+    console.error('[Onboarding] Status check error:', error);
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+  }
+}
 
 interface OnboardingRequest {
   fullName: string;

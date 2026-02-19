@@ -131,7 +131,7 @@ export function parseGmailMessage(message: GmailMessage) {
 }
 
 interface SendGmailReplyParams {
-  accessToken: string;
+  encryptedTokens: string;
   threadId: string;
   messageId: string;
   to: string;
@@ -142,13 +142,9 @@ interface SendGmailReplyParams {
 }
 
 export async function sendGmailReply(params: SendGmailReplyParams): Promise<string> {
-  const { accessToken, threadId, to, subject, body, inReplyTo, references } = params;
+  const { encryptedTokens, threadId, to, subject, body, inReplyTo, references } = params;
 
-  // Create OAuth2 client
-  const oauth2Client = getOAuth2Client();
-  oauth2Client.setCredentials({ access_token: accessToken });
-
-  const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+  const gmail = await getGmailClient(encryptedTokens);
 
   // Build email message in RFC 2822 format
   const messageParts = [

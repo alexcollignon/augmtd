@@ -19,7 +19,6 @@ interface InboxPageClientProps {
   initialUserFullName?: string;
   initialConnection: any | null;
   initialInboxItems: any[];
-  hasCompletedIdentity: boolean;
 }
 
 export function InboxPageClient({
@@ -27,7 +26,6 @@ export function InboxPageClient({
   initialUserFullName,
   initialConnection,
   initialInboxItems,
-  hasCompletedIdentity,
 }: InboxPageClientProps) {
   const searchParams = useSearchParams();
   const [user] = useState(initialUser);
@@ -43,10 +41,15 @@ export function InboxPageClient({
   const optimisticSyncTriggered = useRef(false);
   const isSyncingRef = useRef(false);
 
-  // Show onboarding if user hasn't completed identity profile
+  // Check actual context profile to decide whether to show onboarding
   useEffect(() => {
-    setIsOnboardingOpen(!hasCompletedIdentity);
-  }, [hasCompletedIdentity]);
+    fetch('/api/context/onboarding')
+      .then(r => r.json())
+      .then(data => {
+        if (!data.completed) setIsOnboardingOpen(true);
+      })
+      .catch(() => {}); // non-fatal
+  }, []);
 
   // Sync connection state
   useEffect(() => {
@@ -164,6 +167,27 @@ export function InboxPageClient({
   }, [user.id, connection]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const preparedItems = inboxItems.filter((item: any) => item.visual_section === 'prepared');
+  const meetingAssistantItems = inboxItems.filter((item: any) => item.source === 'meeting');
+
+  const handleItemConfirmed = (ids: string[], action: 'confirm_as_mine' | 'not_my_task') => {
+    setInboxItems(prev => {
+      if (action === 'confirm_as_mine') {
+        // Move confirmed items to 'prepared' section
+        return prev.map(i => ids.includes(i.id) ? { ...i, visual_section: 'prepared' } : i);
+      } else {
+        // Remove rejected items from the list
+        return prev.filter(i => !ids.includes(i.id));
+      }
+    });
+    // Clear selection if the confirmed item was selected, or if it's a batch whose items are all actioned
+    setSelectedItem(prev => {
+      if (!prev) return null;
+      if (ids.includes(prev.id)) return null;
+      const batchItems: InboxItem[] = (prev as any).__batchItems;
+      if (batchItems && batchItems.every(b => ids.includes(b.id))) return null;
+      return prev;
+    });
+  };
 
   return (
     <div className="flex h-screen bg-white overflow-hidden">
@@ -174,7 +198,9 @@ export function InboxPageClient({
         <InboxTopBar
           preparedItems={preparedItems}
           meetings={meetings}
+          meetingAssistantItems={meetingAssistantItems}
           onSelectItem={setSelectedItem}
+          firstName={initialUserFullName?.split(' ')[0] || null}
         />
 
         {/* Syncing banner */}
@@ -231,7 +257,7 @@ export function InboxPageClient({
 
             {/* Middle: inline detail panel */}
             <div className="flex-1 min-w-0 overflow-hidden flex flex-col">
-              <WorkDetailInline key={selectedItem?.id ?? 'empty'} item={selectedItem} />
+              <WorkDetailInline key={selectedItem?.id ?? 'empty'} item={selectedItem} onItemConfirmed={handleItemConfirmed} />
             </div>
 
             {/* Right: calendar column */}

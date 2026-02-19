@@ -26,6 +26,7 @@ interface ExtractedActionItem {
   priority: number; // 1-100
   context?: string;
   dueDate?: string;
+  category: 'todo' | 'waiting_for' | 'project';
 }
 
 /**
@@ -299,11 +300,14 @@ async function storeTranscriptAndGenerateWork(
           assignee: item.assignee,
           due_date: item.dueDate,
           key_topics: keyTopics,
+          category: item.category || 'todo',
           auto_generated: true,
         },
+        source_meeting_transcript_id: transcriptRecord.id,
         auto_generated: true,
-        priority: item.priority, // AI-determined priority
+        priority: item.priority,
         status: 'pending',
+        visual_section: 'suggested',
       });
 
     if (!error) {
@@ -322,6 +326,95 @@ async function storeTranscriptAndGenerateWork(
     .eq('id', transcriptRecord.id);
 
   console.log(`[AttendeeBot] Generated ${workItemsCreated} work items from: ${title}`);
+}
+
+/**
+ * Reprocess existing transcripts that never generated work items (e.g. due to missing columns).
+ * Safe to call multiple times — only processes transcripts with work_items_generated = 0.
+ */
+export async function reprocessTranscripts(
+  userId: string,
+  supabase: SupabaseClient
+): Promise<{ reprocessed: number; created: number; errors: string[] }> {
+  const { data: transcripts } = await supabase
+    .from('meeting_transcripts')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('work_items_generated', 0)
+    .order('created_at', { ascending: false })
+    .limit(50);
+
+  if (!transcripts || transcripts.length === 0) {
+    return { reprocessed: 0, created: 0, errors: [] };
+  }
+
+  console.log(`[AttendeeBot] Reprocessing ${transcripts.length} transcripts for user ${userId}`);
+
+  let reprocessed = 0;
+  let created = 0;
+  const errors: string[] = [];
+
+  for (const transcript of transcripts) {
+    try {
+      const segments = transcript.transcript_segments || [];
+      if (segments.length === 0) continue;
+
+      const actionItems = await extractActionItemsWithAI(userId, transcript.title, segments, supabase);
+      const keyTopics = extractKeyTopics(segments);
+
+      let workItemsCreated = 0;
+
+      for (const item of actionItems) {
+        const { error } = await supabase
+          .from('inbox_items')
+          .insert({
+            user_id: userId,
+            source: 'meeting',
+            source_id: transcript.attendee_bot_id,
+            source_meeting_transcript_id: transcript.id,
+            work_state: 'action_required',
+            work_title: item.action,
+            why_matters: item.context
+              ? `${item.context} (from meeting: ${transcript.title})`
+              : `Action item from meeting: ${transcript.title}`,
+            source_data: {
+              meeting_title: transcript.title,
+              meeting_start: transcript.start_time,
+              action_item: item.action,
+              assignee: item.assignee || null,
+              due_date: item.dueDate || null,
+              key_topics: keyTopics,
+              category: item.category || 'todo',
+              auto_generated: true,
+            },
+            source_meeting_transcript_id: transcript.id,
+            auto_generated: true,
+            priority: item.priority,
+            status: 'pending',
+            visual_section: 'suggested',
+          });
+
+        if (!error) {
+          workItemsCreated++;
+          created++;
+        } else {
+          console.error('[AttendeeBot] Reprocess insert error:', error);
+        }
+      }
+
+      await supabase
+        .from('meeting_transcripts')
+        .update({ work_items_generated: workItemsCreated, processed: true })
+        .eq('id', transcript.id);
+
+      reprocessed++;
+    } catch (error: any) {
+      console.error(`[AttendeeBot] Reprocess error for transcript ${transcript.id}:`, error);
+      errors.push(`${transcript.title}: ${error.message}`);
+    }
+  }
+
+  return { reprocessed, created, errors };
 }
 
 /**
@@ -389,9 +482,15 @@ Return ONLY a JSON array of action items in this exact format:
     "assignee": "Name or null if unclear",
     "priority": 75,
     "context": "Brief explanation of why this matters",
-    "dueDate": "YYYY-MM-DD or null"
+    "dueDate": "YYYY-MM-DD or null",
+    "category": "todo"
   }
 ]
+
+Category must be one of:
+- "todo" — a specific task the user needs to do
+- "waiting_for" — something the user is waiting on from someone else
+- "project" — a larger initiative or ongoing effort to track
 
 Rules:
 - Only extract items that require action (not discussions or updates)

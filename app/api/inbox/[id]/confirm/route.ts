@@ -39,16 +39,20 @@ export async function POST(
       );
     }
 
+    const now = new Date().toISOString();
+
     // Update user confirmation
-    const confirmationUpdate = {
+    const confirmationUpdate: Record<string, any> = {
       user_confirmation: {
         status: action === 'confirm_as_mine' ? 'confirmed' : 'rejected',
-        confirmedAt: new Date().toISOString(),
+        confirmedAt: now,
         confirmedAction: action,
         previousSuggestionLevel: item.recipient_context?.suggestionLevel,
       },
-      // If confirmed, move to "prepared" section
+      // If confirmed, move to "prepared" section; if rejected, dismiss like the dismiss button
       visual_section: action === 'confirm_as_mine' ? 'prepared' : item.visual_section,
+      updated_at: now,
+      ...(action === 'not_my_task' && { status: 'dismissed' }),
     };
 
     const { error: updateError } = await supabase

@@ -379,7 +379,7 @@ export class ProfileLoader {
     };
 
     // Create identity profile (upsert to avoid duplicates)
-    await supabase.from('context_profiles').upsert({
+    const { error: identityError } = await supabase.from('context_profiles').upsert({
       user_id: userId,
       profile_type: 'identity',
       profile_data: mergedData,
@@ -388,6 +388,11 @@ export class ProfileLoader {
     }, {
       onConflict: 'user_id,profile_type',
     });
+
+    if (identityError) {
+      console.error('[ProfileLoader] Failed to upsert identity profile:', identityError);
+      throw identityError;
+    }
 
     // Create email communication profile (defaults) - upsert to avoid duplicates
     const firstName = fullName.split(' ')[0] || 'there';

@@ -42,7 +42,7 @@ export async function saveOnboardingData(
     };
 
     // Update identity profile with merged data
-    await client
+    const { error: upsertError } = await client
       .from('context_profiles')
       .upsert({
         user_id: userId,
@@ -53,6 +53,11 @@ export async function saveOnboardingData(
       }, {
         onConflict: 'user_id,profile_type',
       });
+
+    if (upsertError) {
+      console.error('[WorkPatternsService] Failed to upsert identity profile:', upsertError);
+      throw upsertError;
+    }
 
     // Create or update work_patterns profile (empty initially)
     await client

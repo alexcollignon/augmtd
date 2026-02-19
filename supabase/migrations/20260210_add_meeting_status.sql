@@ -90,6 +90,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS trigger_auto_calculate_meeting_status ON calendar_events;
 CREATE TRIGGER trigger_auto_calculate_meeting_status
   BEFORE INSERT OR UPDATE ON calendar_events
   FOR EACH ROW

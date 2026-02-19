@@ -65,7 +65,7 @@ export async function POST(
 
     if (sourceData.provider === 'gmail') {
       sentMessageId = await sendGmailReply({
-        accessToken: connection.access_token,
+        encryptedTokens: connection.metadata.tokens,
         threadId: sourceData.thread_id,
         messageId: sourceData.message_id,
         to: sourceData.from,
@@ -75,9 +75,22 @@ export async function POST(
         references: sourceData.references,
       });
     } else if (sourceData.provider === 'outlook') {
+      // Graph API needs the internal Outlook ID (not the RFC 2822 internet message ID).
+      // Look it up from the emails table where it's stored in metadata.outlook_id.
+      let outlookMessageId = sourceData.message_id;
+      if (sourceData.email_id) {
+        const { data: email } = await supabase
+          .from('emails')
+          .select('metadata')
+          .eq('id', sourceData.email_id)
+          .single();
+        if (email?.metadata?.outlook_id) {
+          outlookMessageId = email.metadata.outlook_id;
+        }
+      }
       sentMessageId = await sendOutlookReply({
-        accessToken: connection.access_token,
-        messageId: sourceData.message_id,
+        encryptedTokens: connection.metadata.tokens,
+        messageId: outlookMessageId,
         body: messageBody,
       });
     } else {

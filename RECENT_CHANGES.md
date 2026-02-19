@@ -1,3 +1,184 @@
+# Recent Changes - Inbox UX Polish, Email Send Fixes & Toast Notifications
+
+## Summary (Feb 19, 2026)
+
+Major inbox UX improvements: batch items redesigned with per-card ✓/✗ icons and bulk actions, full optimistic UI after all actions (complete/dismiss/confirm), activity log timestamps now reflect action time, email sending fixed for both Gmail and Outlook, and toast notifications added throughout.
+
+---
+
+## 1. Batch Items UI Redesign
+
+### Per-Card ✓/✗ Icons
+Replaced "Mine" / "Not mine" text buttons on each batch card with compact 28×28px icon buttons:
+- **✓ (CheckIcon)** — green-tinted, calls `handleSingleItemConfirmation(id, true)` → moves item to prepared
+- **✗ (XMarkIcon)** — neutral, turns red on hover, calls `handleSingleItemConfirmation(id, false)` → dismisses
+- Cards disappear instantly (optimistic: local `batchItems` state updated before API response)
+- `batchItems` converted from a derived constant to `useState` to enable instant card removal
+
+### Bulk Footer Actions
+When viewing a batch, the footer now shows:
+- **"Mark All Complete"** — calls `/api/inbox/[id]/complete` for all items in parallel
+- **"Dismiss All"** — calls `/api/inbox/[id]/dismiss` for all items in parallel
+- Both remove items from the left list and clear the detail panel to empty state
+
+### Amber Banner Simplified for Batch
+The "AI suggested these X items" banner in batch view no longer shows "Confirm all" / "Not mine (all)" buttons. It now reads: *"Use ✓ / ✗ on each item, or use the bulk actions below."* — the per-card icons and bulk footer replace the banner's actions.
+
+**Files Changed:**
+- `components/inbox/work-detail-inline.tsx` — batchItems as state, icon buttons, handleBatchComplete/Dismiss, footer logic
+
+---
+
+## 2. Full Optimistic UI After All Actions
+
+### Problem
+After clicking complete/dismiss/confirm/bulk actions, the detail panel stayed showing the old item content. The left list only updated after a full page reload (`router.refresh()`).
+
+### Solution
+Replaced all `router.refresh()` calls with `onItemConfirmed([id], 'not_my_task')`:
+- **Complete** → removes from list + clears panel
+- **Dismiss** → removes from list + clears panel
+- **Send Reply** → removes from list + clears panel
+- **Confirm ✓** → moves to prepared section (or removes from list for batch)
+- **Confirm ✗** → removes from list + clears panel
+
+### Batch Selection Clear Fix
+`handleItemConfirmed` in `inbox-page-client.tsx` now also clears `selectedItem` when the selected item is a batch virtual item whose all underlying `__batchItems` have been actioned:
+```typescript
+setSelectedItem(prev => {
+  if (!prev) return null;
+  if (ids.includes(prev.id)) return null;
+  // Batch virtual items have synthetic IDs — check underlying items
+  const batchItems: InboxItem[] = (prev as any).__batchItems;
+  if (batchItems && batchItems.every(b => ids.includes(b.id))) return null;
+  return prev;
+});
+```
+
+**Files Changed:**
+- `app/inbox/inbox-page-client.tsx` — batch clear logic in handleItemConfirmed
+- `components/inbox/work-detail-inline.tsx` — replaced router.refresh() with onItemConfirmed; removed useRouter import
+
+---
+
+## 3. Activity Log Timestamp Fix
+
+### Problem
+The activity log showed when the email was received (`created_at`), not when the user took action. The `inbox_items` table had no `updated_at` column and no trigger to set it.
+
+### Fix
+- Added `updated_at` column to `inbox_items` with backfill from `created_at`
+- Added `BEFORE UPDATE` trigger `inbox_items_updated_at` to auto-set `updated_at = NOW()`
+- All three action routes now explicitly set `updated_at: new Date().toISOString()`:
+  - `/api/inbox/[id]/complete/route.ts`
+  - `/api/inbox/[id]/dismiss/route.ts`
+  - `/api/inbox/[id]/confirm/route.ts`
+- Activity page now orders by `updated_at DESC` (most recently actioned appears first)
+
+**Files Changed:**
+- `supabase/migrations/20260219_add_updated_at_to_inbox_items.sql` — NEW
+- `app/api/inbox/[id]/complete/route.ts` — adds updated_at to update payload
+- `app/api/inbox/[id]/dismiss/route.ts` — adds updated_at to update payload
+- `app/api/inbox/[id]/confirm/route.ts` — adds updated_at to update payload
+- `app/activity/page.tsx` — order by updated_at DESC
+
+---
+
+## 4. Email Send Fixes (Gmail + Outlook)
+
+### Root Cause
+Both `sendGmailReply` and `sendOutlookReply` were receiving `connection.access_token` which doesn't exist on the connections table. OAuth tokens are stored as base64-encoded JSON in `connection.metadata.tokens`.
+
+### Gmail Fix
+`sendGmailReply` now accepts `encryptedTokens: string` instead of `accessToken: string` and calls `getGmailClient(encryptedTokens)` — the same pattern as `fetchUnreadEmails`. The client handles decoding the base64 token JSON, setting credentials, and refreshing if expired.
+
+### Outlook Fix — Two Issues
+1. **Wrong token field**: `sendOutlookReply` now accepts `encryptedTokens`, decodes the token JSON, and handles token refresh before sending (mirrors `getGraphClient` logic)
+2. **Wrong message ID**: The Graph API `/reply` endpoint requires the Outlook internal ID (opaque `AAMkAGI...` string), not the internet message ID (`<...@...>` RFC 2822 format). Fixed by looking up `metadata.outlook_id` from the `emails` table via `source_data.email_id`:
+```typescript
+const { data: email } = await supabase
+  .from('emails').select('metadata').eq('id', sourceData.email_id).single();
+if (email?.metadata?.outlook_id) outlookMessageId = email.metadata.outlook_id;
+```
+
+**Files Changed:**
+- `lib/google/gmail.ts` — sendGmailReply accepts encryptedTokens, uses getGmailClient
+- `lib/microsoft/outlook.ts` — sendOutlookReply accepts encryptedTokens, decodes + refreshes token
+- `app/api/inbox/[id]/send-reply/route.ts` — passes connection.metadata.tokens; Outlook uses DB lookup for internal message ID
+
+---
+
+## 5. Toast Notifications
+
+Installed `sonner` for clean toast notifications throughout the inbox.
+
+**Setup:** `<Toaster position="bottom-right" richColors />` added to `app/layout.tsx` (global, all pages).
+
+**Notifications added:**
+| Action | Toast |
+|--------|-------|
+| Reply sent | ✅ "Reply sent successfully" |
+| Mark Complete | ✅ "Marked as complete" |
+| Dismiss | ✅ "Item dismissed" |
+| Any failure | ❌ Descriptive error message |
+
+All `alert()` calls replaced with `toast.error()`. `useRouter` import removed (no longer needed).
+
+**Files Changed:**
+- `app/layout.tsx` — added Toaster
+- `components/inbox/work-detail-inline.tsx` — imported toast, added success/error toasts
+
+---
+
+## 6. Confirmation Flow Fixes
+
+### not_my_task Now Behaves Like Dismiss
+When a user clicks ✗ on a suggested item, the confirm route now sets `status: 'dismissed'` in addition to recording `user_confirmation.status = 'rejected'`. Previously the item stayed `status: 'pending'` and reappeared after the next sync.
+
+### Onboarding Check Moved to Client-Side
+The onboarding check was previously done server-side based on page load data, which could be stale. Now:
+- `GET /api/context/onboarding` endpoint returns `{ completed: boolean }` by calling `hasCompletedOnboarding()`
+- `inbox-page-client.tsx` fetches this on mount via `useEffect`
+- Always reflects actual DB state — no stale server-side snapshots
+
+### Identity Profile Preservation During Sync
+`UserContextEngine.saveContext()` was overwriting the `identity` context profile during email sync, dropping `department` and `jobRole` saved during onboarding. Fixed by preserving those fields from `currentIdentity` when writing back to the profile.
+
+**Files Changed:**
+- `app/api/inbox/[id]/confirm/route.ts` — adds status: 'dismissed' for not_my_task
+- `app/api/context/onboarding/route.ts` — added GET handler
+- `app/inbox/page.tsx` — removed server-side hasCompletedIdentity check
+- `app/inbox/inbox-page-client.tsx` — client-side onboarding check via fetch
+- `lib/context/user-context-engine.ts` — preserves department/jobRole during saveContext
+- `lib/context/work-patterns-service.ts` — added error checking to identity upsert
+- `lib/context/profile-loader.ts` — added error checking to identity upsert
+
+---
+
+## Files Changed (Phase 9)
+
+### New Files
+- `supabase/migrations/20260219_add_updated_at_to_inbox_items.sql`
+
+### Updated
+- `components/inbox/work-detail-inline.tsx` — batch icons, bulk actions, toast, optimistic UI
+- `app/inbox/inbox-page-client.tsx` — batch clear fix, client-side onboarding check
+- `app/api/inbox/[id]/complete/route.ts` — updated_at, toast-compatible
+- `app/api/inbox/[id]/dismiss/route.ts` — updated_at
+- `app/api/inbox/[id]/confirm/route.ts` — updated_at, status: 'dismissed' for not_my_task
+- `app/api/inbox/[id]/send-reply/route.ts` — Gmail/Outlook token fix + Outlook message ID fix
+- `app/api/context/onboarding/route.ts` — added GET handler
+- `app/inbox/page.tsx` — removed stale server-side onboarding prop
+- `app/activity/page.tsx` — order by updated_at
+- `app/layout.tsx` — Toaster added
+- `lib/google/gmail.ts` — sendGmailReply uses encryptedTokens
+- `lib/microsoft/outlook.ts` — sendOutlookReply uses encryptedTokens + token decode/refresh
+- `lib/context/user-context-engine.ts` — identity profile preservation fix
+- `lib/context/work-patterns-service.ts` — error checking on upsert
+- `lib/context/profile-loader.ts` — error checking on upsert
+
+---
+
 # Recent Changes - Chat-Driven Workflows & Settings Identity
 
 ## Summary (Feb 18, 2026)

@@ -19,7 +19,7 @@ export default async function ActivityPage() {
     .select('*')
     .eq('user_id', user.id)
     .in('status', ['completed', 'dismissed'])
-    .order('created_at', { ascending: false })
+    .order('updated_at', { ascending: false })
     .limit(100);
 
   if (fetchError) {

@@ -526,6 +526,26 @@ interface Skill {
 
 ## 📈 Recent Improvements
 
+### Batch UI Redesign, Email Send Fixes & Toast Notifications (Feb 19, 2026)
+- ✅ **Batch item cards** now have ✓/✗ icon buttons per card instead of text buttons — green check to claim, neutral→red X to instantly remove the card
+- ✅ **Optimistic card removal** — clicking ✗ removes the card from the list immediately (converted `batchItems` from derived const to `useState`)
+- ✅ **Bulk actions footer** — "Mark All Complete" and "Dismiss All" buttons replace per-section buttons; fully clear the batch and show a toast
+- ✅ **Middle panel auto-clears** after any action (complete, dismiss, send reply) via `onItemConfirmed` callback — no more stale content after acting
+- ✅ **Activity log sorted by action time** — now orders by `updated_at` (when the user acted) instead of `created_at` (when email arrived)
+- ✅ **`updated_at` column + trigger** added to `inbox_items` via migration; all action routes set it explicitly
+- ✅ **Gmail email send fixed** — `sendGmailReply` now receives `encryptedTokens` and uses `getGmailClient()` (tokens live in `connection.metadata.tokens`, not `connection.access_token`)
+- ✅ **Outlook email send fixed (2 bugs)**: correct token source (`encryptedTokens`), and correct message ID (internal Outlook ID from `emails.metadata.outlook_id`, not the internet message ID)
+- ✅ **Toast notifications** via `sonner` — success/error toasts on complete, dismiss, send reply, and all batch actions; replaced all `alert()` calls
+
+**Technical Details:**
+```
+Batch virtual ID: batch-${category}-${Date.now()}-${Math.random()} (synthetic, not a real UUID)
+Batch clear detection: __batchItems.every(b => ids.includes(b.id))
+Outlook ID types: message_id = RFC 2822 internet ID; emails.metadata.outlook_id = Graph API internal ID
+Token storage: connection.metadata.tokens (base64-encoded JSON), NOT connection.access_token
+Toast library: sonner — <Toaster position="bottom-right" richColors /> in app/layout.tsx
+```
+
 ### Chat-Driven Workflows & Settings Identity (Feb 18, 2026)
 - ✅ **Workflows page rebuilt** as split-panel chat UI (thread list | plan panel | chat panel)
 - ✅ **Work threads DB** — `work_threads` + `work_messages` tables with RLS and cascade delete
@@ -682,6 +702,7 @@ Benefits:
 
 1. **Token encryption** - Currently using base64 (needs proper encryption)
 2. **Email batching** - Needs real-world testing with high volumes
+3. **DB migration pending** - `supabase/migrations/20260219_add_updated_at_to_inbox_items.sql` needs to be applied via `npx supabase db push` or directly in the Supabase dashboard
 
 ## 🎯 What's Next
 
@@ -701,6 +722,10 @@ Benefits:
 13. ~~**Work threads persistence** - DB + streaming API for work conversations~~ ✅
 14. ~~**Settings identity section** - Editable name, department, role~~ ✅
 15. ~~**Sidebar nav rebrand** - Workflows/Work Inbox, user profile popover~~ ✅
+16. ~~**Batch UI redesign** - ✓/✗ icon buttons per card, bulk actions footer~~ ✅
+17. ~~**Email send fixes** - Gmail + Outlook both working with correct token source and message IDs~~ ✅
+18. ~~**Toast notifications** - sonner library, success/error toasts on all actions~~ ✅
+19. ~~**Activity log timestamps** - Sorted by action time (updated_at) not email arrival~~ ✅
 
 ### In Progress 🚧
 12. **Execution engine** - Actually run workflows (dispatch to skill agents)
