@@ -37,6 +37,9 @@ export interface IdentityProfile {
   email: string;
   responsibilities: string[];
   authority: 'ic' | 'manager' | 'executive' | 'unknown';
+  // Onboarding fields — set by user, never overwritten by learning signals
+  department?: string;
+  jobRole?: string;
 }
 
 export interface EmailCommunicationProfile {

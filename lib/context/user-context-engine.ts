@@ -429,8 +429,8 @@ export class UserContextEngine {
             responsibilities: context.rolePatterns.responsibilities || [],
             authority: context.rolePatterns.decisionMakingLevel as any,
             // Preserve onboarding fields — never overwrite with learning signals
-            department: (currentIdentity as any)?.department,
-            jobRole: (currentIdentity as any)?.jobRole,
+            department: currentIdentity?.department,
+            jobRole: currentIdentity?.jobRole,
           },
           finalConfidence,
           false
