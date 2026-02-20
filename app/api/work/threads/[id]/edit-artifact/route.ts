@@ -135,18 +135,16 @@ Rules:
 - Be specific and detailed — this is a real professional document
 - No bullet characters in paragraph text`;
 
-    const userPrompt = `Regenerate this ${artifact.type} document with the following edit applied.
+    const contentJson = artifact.content ? JSON.stringify(artifact.content, null, 2) : null;
 
-ORIGINAL DOCUMENT:
-Title: ${artifact.title}
-Type: ${artifact.type}
+    const userPrompt = `Edit the following ${artifact.type} document based on the instruction below.
 
-ORIGINAL PLAN:
-${JSON.stringify(plan, null, 2)}
+CURRENT DOCUMENT CONTENT:
+${contentJson ?? `Title: ${artifact.title}\nType: ${artifact.type}\n(no content preview available — regenerate from plan)`}
 
 EDIT INSTRUCTION: ${instruction.trim()}
 
-Apply the edit and return the complete updated document JSON. Keep everything else the same.`;
+Return the complete updated document JSON with the edit applied. Only change what the instruction asks for. Keep all other sections, paragraphs, tone, and content exactly as they are.`;
 
     const readable = new ReadableStream({
       async start(controller) {
@@ -159,7 +157,7 @@ Apply the edit and return the complete updated document JSON. Keep everything el
           const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
           const completion = await anthropic.messages.create({
             model: 'claude-haiku-4-5-20251001',
-            max_tokens: 4000,
+            max_tokens: 8000,
             system: systemPrompt,
             messages: [{ role: 'user', content: userPrompt }],
           });
