@@ -1,7 +1,7 @@
 # AUGMTD Implementation Status
-**Version:** 4.6
+**Version:** 4.7
 **Last Updated:** 2026-02-20
-**Current Phase:** Phase 10 Complete - Docx Generation Execution Engine (Haiku + docx npm)
+**Current Phase:** Phase 10 Complete + Post-launch fixes (document UX, email sync, edit quality)
 
 ---
 
@@ -1229,7 +1229,7 @@ planning → generating → document
 - **`generating`**: steps pulse indigo, chat disabled, "Building your document…" header
 - **`document`**: left panel shows `DocumentPanel` with full preview + download; right panel is edit chat
 
-`workMode` is restored from `thread.artifact` on page load — refreshing a document thread returns to document mode.
+`workMode` always starts at `planning` when opening a thread. If an artifact exists, the green "Document ready" banner + "View document" button appear — user navigates to document view explicitly. This avoids the jarring auto-jump that occurred when clicking a thread.
 
 ### Document Types Supported
 
@@ -1299,10 +1299,12 @@ export interface DocumentArtifact {
 
 **Edit-artifact flow:**
 1. Stream acknowledgment text immediately (1 sentence describing the change)
-2. Call Haiku with current plan + original artifact + edit instruction
+2. Call Haiku with **full `artifact.content` JSON** (not the plan) + edit instruction — "edit this document, change only what's asked, keep everything else"
 3. Strip JSON fences, parse `DocContent`, rebuild docx, overwrite storage file
 4. Append `---ARTIFACT_UPDATE---` + updated artifact JSON to stream
 5. Save user+assistant message pair to `work_messages`
+
+**Critical:** The plan is NOT sent during edits. `artifact.content` is the source of truth — Haiku edits existing rich prose rather than regenerating from a skeleton. `max_tokens: 8000` to handle full document round-trips.
 
 **Key implementation detail — storage path:** `artifact.storage_path` stores the path WITHIN the bucket (no bucket name prefix). All routes use `adminClient.storage.from('work-artifacts').upload(storagePath, ...)` — do NOT add `work-artifacts/` prefix to the path.
 
@@ -1332,4 +1334,52 @@ const raw = rawText.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').tri
 
 **External dependency added:**
 - `docx` npm package — builds .docx files from structured JSON
+
+---
+
+## ✅ Post-Phase 10 Fixes (Feb 20, 2026)
+
+A series of UX, correctness, and quality fixes applied after Phase 10 launched.
+
+### Document UX Fixes
+
+**Thread loading — no auto-jump to document view**
+Clicking a thread with an artifact now always lands on the plan screen. The `loadThread` function resets `workMode` to `'planning'` at the start and never auto-switches to `'document'`. The green "Document ready → View document" banner and bottom "View document" button provide explicit navigation.
+
+**"Back to plan" no longer clears artifact from state**
+Previously called `setArtifact(null)` which lost the artifact until refresh. Now only calls `setWorkMode('planning')` — artifact stays in memory, navigating back to document view is instant.
+
+**Generate button replaced by View document when artifact exists**
+When `artifact !== null` in planning mode, the bottom CTA becomes "View document" (same indigo style, consistent position). "Generate document" only appears on threads with no artifact. Prevents accidental regeneration.
+
+**Storage cleanup on thread delete**
+`DELETE /api/work/threads/[id]` now reads `thread.artifact.storage_path` before deleting the row, then calls `adminClient.storage.from('work-artifacts').remove([storagePath])`. No more orphaned `.docx` files in the bucket.
+
+### Document Edit Quality Fix
+
+**Edit uses `artifact.content` as source of truth (not the plan)**
+The edit-artifact prompt previously sent only the plan (steps/outputs), causing Haiku to regenerate from scratch on every edit — losing all rich prose from the original generation. Fixed: the full `artifact.content` JSON is now the primary input, with a clear instruction to only modify what's asked and keep everything else unchanged. `max_tokens` raised from 4000 → 8000.
+
+### Edit UX Fixes
+
+**Optimistic user message on edit**
+User message bubble now appears immediately on Enter, before the API call. Previously it only appeared after the full edit completed (~5-10 seconds). Fixed by calling `setMessages((prev) => [...prev, tempUserMsg])` before the fetch.
+
+**"Updating document…" banner during edit**
+`DocumentPanel` now accepts an `isEditing` prop and shows an animated indigo bounce-dot banner at the top while `isEditingArtifact` is true. Gives clear feedback that the document is being regenerated.
+
+### Email Sync Fix — Recipient Detection for Solo Users
+
+**Root cause:** The `usersInSystem` array was built via an organization-based query. Solo users (no `organization_id`) got an empty result. `connectionOwner` was always `undefined`, so the connected inbox email alias was never added. Every recipient lookup returned `null` → zero inbox items created despite emails being fetched.
+
+**Fix:** Always fetch the connection owner's profile directly by `user_id` first (guaranteed to work). Then optionally append other org members if an org exists. The connected inbox email is still added as an alias when it differs from the AUGMTD login email — supporting users who connect a personal Gmail while their AUGMTD account uses a work email.
+
+**File:** `lib/email-sync/sync-emails.ts`
+
+### Files Updated (Post-Phase 10)
+
+- `app/work/work-page-client.tsx` — no auto-jump, "Back to plan" fix, generate/view CTA swap, optimistic message, editing banner prop
+- `app/api/work/threads/[id]/route.ts` — storage cleanup on delete
+- `app/api/work/threads/[id]/edit-artifact/route.ts` — artifact.content as source of truth, max_tokens 8000
+- `lib/email-sync/sync-emails.ts` — solo user recipient detection fix
 

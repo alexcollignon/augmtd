@@ -1,3 +1,142 @@
+# Recent Changes — Post-Phase 10 Fixes
+
+## Summary (Feb 20, 2026)
+
+Seven focused fixes across document UX, edit quality, and email sync — all applied after the Phase 10 docx execution engine launched.
+
+---
+
+## 1. Thread loading — always land on plan screen
+
+**Problem:** Clicking a thread with a generated document briefly showed the plan screen then auto-jumped to document view (~0.5s flash).
+
+**Fix:** `loadThread()` now calls `setWorkMode('planning')` at the start and never auto-switches modes. The artifact is still loaded into state (enabling the banner and CTA), but the user navigates to document view explicitly.
+
+**File:** `app/work/work-page-client.tsx`
+
+---
+
+## 2. "Back to plan" kept artifact in state
+
+**Problem:** `onRegenerate` called `setArtifact(null)` — artifact was lost from React state until refresh. No way to go back to document view without reloading.
+
+**Fix:** `onRegenerate` now only calls `setWorkMode('planning')`. Artifact stays in memory. `PlanPanel` receives `artifact` and `onViewDocument` props and shows a green "Document ready → View document" banner when an artifact exists.
+
+**File:** `app/work/work-page-client.tsx`
+
+---
+
+## 3. Generate button → View document when artifact exists
+
+**Problem:** With an existing document, the "Generate document" button was still visible. Clicking it would silently overwrite the document — no warning.
+
+**Fix:** When `artifact !== null` in planning mode, the bottom CTA becomes "View document" (same indigo style). "Generate document" only appears when no artifact exists. The two actions are mutually exclusive — no accidental regeneration from the plan view.
+
+**File:** `app/work/work-page-client.tsx`
+
+---
+
+## 4. Storage cleanup on thread delete
+
+**Problem:** Deleting a thread removed the DB row but left the `.docx` file orphaned in Supabase Storage (`work-artifacts` bucket).
+
+**Fix:** Before deleting the `work_threads` row, the route reads `thread.artifact.storage_path` and calls `adminClient.storage.from('work-artifacts').remove([storagePath])`. Threads without an artifact are unaffected.
+
+**File:** `app/api/work/threads/[id]/route.ts`
+
+---
+
+## 5. Edit quality — artifact.content as source of truth
+
+**Problem:** The edit-artifact prompt sent only the plan (steps/outputs/deliverable description) — not the actual document content. Haiku regenerated from scratch on every edit, losing all the rich prose from the original generation. Output was shallow and short.
+
+**Fix:** The full `artifact.content` JSON is now the primary prompt input:
+```
+CURRENT DOCUMENT CONTENT:
+{full DocContent JSON}
+
+EDIT INSTRUCTION: {instruction}
+
+Return the complete updated document JSON with the edit applied.
+Only change what the instruction asks for. Keep all other sections,
+paragraphs, tone, and content exactly as they are.
+```
+
+`max_tokens` raised from 4000 → 8000 to handle full document round-trips without truncation.
+
+**File:** `app/api/work/threads/[id]/edit-artifact/route.ts`
+
+---
+
+## 6. Edit UX — optimistic user message + updating banner
+
+**Problem 1:** User message bubble only appeared after the full edit completed (~5-10 seconds). No immediate feedback on Enter.
+
+**Fix:** `editArtifact()` now calls `setMessages((prev) => [...prev, tempUserMsg])` before the fetch. Message appears instantly. The duplicate insert at the end of the function was removed.
+
+**Problem 2:** The document panel showed no visual feedback while the edit was running.
+
+**Fix:** `DocumentPanel` accepts a new `isEditing` prop. When `isEditingArtifact` is true, an animated indigo "Updating document…" banner appears at the top of the panel.
+
+**File:** `app/work/work-page-client.tsx`
+
+---
+
+## 7. Email sync — recipient detection broken for solo users
+
+**Root cause:** `usersInSystem` was built via:
+```typescript
+await adminSupabase
+  .from('profiles')
+  .select('id, email, full_name')
+  .eq('organization_id', ownerProfile.organization_id || '')
+```
+Solo users have no `organization_id` → query returns empty → `usersInSystem` is empty → every recipient has `userId = null` → `⊘ Skipping [email] (not in system)` → **zero inbox items created**.
+
+The alias mechanism (to map a connected Gmail to a different AUGMTD login email) also failed silently because `connectionOwner` was always `undefined`.
+
+**Fix:**
+```typescript
+// Always fetch the owner directly — works for solo users and orgs
+const { data: ownerProfile } = await adminSupabase
+  .from('profiles')
+  .select('id, email, full_name, organization_id')
+  .eq('id', connection.user_id)
+  .single();
+
+const usersInSystem = ownerProfile ? [ownerProfile] : [];
+
+// Append org members if applicable
+if (ownerProfile?.organization_id) {
+  const { data: orgMembers } = await adminSupabase
+    .from('profiles')
+    .select('id, email, full_name')
+    .eq('organization_id', ownerProfile.organization_id)
+    .neq('id', connection.user_id)
+    .limit(100);
+  if (orgMembers) usersInSystem.push(...orgMembers);
+}
+
+// Add connected inbox email as alias if different from AUGMTD login email
+const connectionEmail = connection.metadata?.email || connection.provider_account_id;
+if (connectionEmail && ownerProfile && connectionEmail.toLowerCase() !== ownerProfile.email.toLowerCase()) {
+  usersInSystem.push({ id: connection.user_id, email: connectionEmail, ... });
+}
+```
+
+**File:** `lib/email-sync/sync-emails.ts`
+
+---
+
+## Files Changed
+
+- `app/work/work-page-client.tsx` — items 1, 2, 3, 6
+- `app/api/work/threads/[id]/route.ts` — item 4
+- `app/api/work/threads/[id]/edit-artifact/route.ts` — item 5
+- `lib/email-sync/sync-emails.ts` — item 7
+
+---
+
 # Recent Changes - Docx Generation Execution Engine
 
 ## Summary (Feb 20, 2026)
