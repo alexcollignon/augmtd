@@ -444,14 +444,26 @@ function DocumentPanel({
   onDownload,
   onRegenerate,
   isDownloading,
+  isEditing,
 }: {
   artifact: DocumentArtifact;
   onDownload: () => void;
   onRegenerate: () => void;
   isDownloading: boolean;
+  isEditing: boolean;
 }) {
   return (
     <div className="flex-1 flex flex-col border-r border-neutral-200 bg-neutral-100 min-w-0">
+      {/* Editing banner */}
+      {isEditing && (
+        <div className="flex items-center gap-2 px-4 py-2.5 bg-indigo-50 border-b border-indigo-100 flex-shrink-0">
+          <span className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce [animation-delay:0ms]" />
+          <span className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce [animation-delay:150ms]" />
+          <span className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce [animation-delay:300ms]" />
+          <p className="text-[12px] text-indigo-700 font-medium">Updating document…</p>
+        </div>
+      )}
+
       {/* Toolbar */}
       <div className="flex items-center justify-between px-4 py-2.5 border-b border-neutral-200 bg-white flex-shrink-0">
         <div className="flex items-center gap-2 min-w-0">
@@ -739,6 +751,14 @@ export function WorkPageClient({
   const editArtifact = useCallback(async (instruction: string, threadId: string) => {
     if (!instruction.trim() || isEditingArtifact) return;
 
+    // Add user message immediately before the fetch
+    const tempUserMsg: WorkMessage = {
+      id: `u-${Date.now()}`,
+      role: 'user',
+      content: instruction.trim(),
+      created_at: new Date().toISOString(),
+    };
+    setMessages((prev) => [...prev, tempUserMsg]);
     setIsEditingArtifact(true);
     setArtifactInput('');
     setEditStreamText('');
@@ -783,20 +803,14 @@ export function WorkPageClient({
         }
       }
 
-      // Add the exchange to messages
-      const userMsg: WorkMessage = {
-        id: `u-${Date.now()}`,
-        role: 'user',
-        content: instruction.trim(),
-        created_at: new Date().toISOString(),
-      };
+      // Add assistant response (user message was already added optimistically)
       const aiMsg: WorkMessage = {
         id: `a-${Date.now()}`,
         role: 'assistant',
         content: finalText,
         created_at: new Date().toISOString(),
       };
-      setMessages((prev) => [...prev, userMsg, aiMsg]);
+      setMessages((prev) => [...prev, aiMsg]);
       setEditStreamText('');
     } catch (err) {
       console.error('Edit artifact error:', err);
@@ -1165,6 +1179,7 @@ export function WorkPageClient({
               onDownload={() => activeThreadId && downloadDocument(activeThreadId)}
               onRegenerate={() => setWorkMode('planning')}
               isDownloading={isDownloading}
+              isEditing={isEditingArtifact}
             />
           ) : (
             <PlanPanel
