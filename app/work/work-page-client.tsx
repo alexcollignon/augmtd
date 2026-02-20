@@ -411,16 +411,26 @@ function PlanPanel({
         )}
       </div>
 
-      {/* Generate button — docx only (document/report) */}
+      {/* Bottom CTA — docx only (document/report) */}
       {workMode === 'planning' && threadId && (plan.deliverable_type === 'document' || plan.deliverable_type === 'report') && (
         <div className="p-4 border-t border-neutral-100">
-          <button
-            onClick={() => onGenerate(threadId)}
-            className="w-full px-4 py-2.5 bg-indigo-600 text-white text-[13px] font-semibold hover:bg-indigo-700 transition-colors flex items-center justify-center gap-2"
-          >
-            <SparklesIcon className="w-4 h-4" />
-            Generate {plan.deliverable_type}
-          </button>
+          {artifact ? (
+            <button
+              onClick={onViewDocument}
+              className="w-full px-4 py-2.5 bg-indigo-600 text-white text-[13px] font-semibold hover:bg-indigo-700 transition-colors flex items-center justify-center gap-2"
+            >
+              <DocumentTextIcon className="w-4 h-4" />
+              View document
+            </button>
+          ) : (
+            <button
+              onClick={() => onGenerate(threadId)}
+              className="w-full px-4 py-2.5 bg-indigo-600 text-white text-[13px] font-semibold hover:bg-indigo-700 transition-colors flex items-center justify-center gap-2"
+            >
+              <SparklesIcon className="w-4 h-4" />
+              Generate {plan.deliverable_type}
+            </button>
+          )}
         </div>
       )}
     </div>
