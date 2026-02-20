@@ -594,12 +594,13 @@ export function WorkPageClient({
     setMessages([]);
     setStreamingText('');
     setEditStreamText('');
+    setWorkMode('planning');
     try {
       const res = await fetch(`/api/work/threads/${threadId}/messages`);
       if (!res.ok) return;
       const data = await res.json();
       setMessages(data.messages || []);
-      // Sync plan + artifact from server
+      // Sync plan + artifact from server — always stay in planning mode
       if (data.thread) {
         setThreads((prev) =>
           prev.map((t) => t.id === threadId ? {
@@ -608,13 +609,7 @@ export function WorkPageClient({
             artifact: data.thread.artifact ?? null,
           } : t)
         );
-        if (data.thread.artifact) {
-          setArtifact(data.thread.artifact);
-          setWorkMode('document');
-        } else {
-          setArtifact(null);
-          setWorkMode('planning');
-        }
+        setArtifact(data.thread.artifact ?? null);
       }
     } finally {
       setIsLoadingThread(false);
