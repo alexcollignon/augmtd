@@ -39,7 +39,7 @@ export default async function WorkPage({
   // Load existing work threads
   const { data: threads } = await supabase
     .from('work_threads')
-    .select('id, title, plan, status, created_at, updated_at')
+    .select('id, title, plan, artifact, status, created_at, updated_at')
     .eq('user_id', user.id)
     .eq('status', 'active')
     .order('updated_at', { ascending: false })

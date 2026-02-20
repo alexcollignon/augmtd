@@ -1,7 +1,7 @@
 # AUGMTD Implementation Status
-**Version:** 4.5
-**Last Updated:** 2026-02-19
-**Current Phase:** Phase 9 Complete - Batch UI Redesign, Email Send Fixes, Toast Notifications, Activity Log Timestamps
+**Version:** 4.6
+**Last Updated:** 2026-02-20
+**Current Phase:** Phase 10 Complete - Docx Generation Execution Engine (Haiku + docx npm)
 
 ---
 
@@ -39,6 +39,7 @@
 | Email Send Fixes (Gmail + Outlook) | ✅ Complete | 100% |
 | Toast Notifications | ✅ Complete | 100% |
 | Activity Log Timestamps | ✅ Complete | 100% |
+| Docx Execution Engine (Phase 10) | ✅ Complete | 100% |
 | Vector Similarity | ⚠️ Planned | 0% |
 
 ---
@@ -1205,3 +1206,130 @@ Installed `sonner` toast library and wired it throughout the action flow.
 - `lib/microsoft/outlook.ts` — `sendOutlookReply` accepts `encryptedTokens`, handles token decode + refresh
 - `app/api/inbox/[id]/send-reply/route.ts` — passes `encryptedTokens`, looks up Outlook internal ID
 - `app/layout.tsx` — Added `Toaster` from sonner
+
+---
+
+## ✅ Phase 10: Docx Generation Execution Engine (Feb 20, 2026)
+
+### Overview
+
+First real execution step for the Workflows system: users can now generate an actual Word document (.docx) from their work plan, preview it in-panel, edit it conversationally, and download it.
+
+**Approach chosen:** Claude Haiku 4.5 generates structured JSON (`DocContent`), `docx` npm package assembles the Word file locally. Files stored in Supabase Storage (`work-artifacts` bucket). ~$0.01 per document, ~5-10 seconds generation time.
+
+> **Note:** Anthropic Skills API (docx skill, `skills-2025-10-02` beta) was evaluated first but abandoned — it requires a multi-turn `pause_turn` continuation loop that causes 130s+ latency and browser timeouts. The Haiku + docx npm approach is simpler, cheaper, and production-ready.
+
+### New State Machine: `WorkMode`
+
+```
+planning → generating → document
+```
+
+- **`planning`**: current behavior — plan panel + plan refinement chat
+- **`generating`**: steps pulse indigo, chat disabled, "Building your document…" header
+- **`document`**: left panel shows `DocumentPanel` with full preview + download; right panel is edit chat
+
+`workMode` is restored from `thread.artifact` on page load — refreshing a document thread returns to document mode.
+
+### Document Types Supported
+
+Generate button is gated to `document` and `report` deliverable types only. Other types (presentation, spreadsheet, email, analysis) show no generate button — they would require different file formats.
+
+### DocumentPanel (Left Panel — Document Mode)
+
+Full in-panel document preview rendered as a styled "paper" component:
+- White background card with shadow — matches Claude's artifact view
+- Title (bold, large) + subtitle if present
+- Section headings as h2/h3 (Tailwind prose hierarchy)
+- Full paragraph text
+- Toolbar: title, generated date, "Download .docx" button, "Back to plan" link
+
+### Edit Chat (Right Panel — Document Mode)
+
+- Placeholder: *"Edit the document… (e.g., 'make the summary shorter')"*
+- Sends to `edit-artifact` route — streams acknowledgment text immediately, regenerates file in background
+- `---ARTIFACT_UPDATE---` separator — same pattern as `---PLAN_UPDATE---`
+- On completion: updates `artifact` state with new `generated_at` and refreshed `content`
+- Stream text shown in right panel as streaming assistant message; clears when done
+
+### Thread List Badge
+
+Threads with a generated artifact show a `docx` badge next to the title in the thread list.
+
+### Content Types Added (`lib/types/inbox.ts`)
+
+```typescript
+export interface DocSection {
+  heading: string;
+  level: 1 | 2;
+  paragraphs: string[];
+}
+
+export interface DocContent {
+  title: string;
+  subtitle?: string;
+  sections: DocSection[];
+}
+
+export interface DocumentArtifact {
+  title: string;
+  type: DeliverableType;
+  generated_at: string;
+  storage_path: string; // Path within work-artifacts bucket: "{userId}/{threadId}.docx"
+  content?: DocContent; // Full document content for in-panel preview
+}
+```
+
+### API Routes
+
+| Route | Method | Description |
+|-------|--------|-------------|
+| `/api/work/threads/[id]/generate` | POST | Generate docx from plan |
+| `/api/work/threads/[id]/download` | GET | Download stored docx file |
+| `/api/work/threads/[id]/edit-artifact` | POST | Edit + regenerate (streaming) |
+
+**Generate flow:**
+1. Auth + thread ownership check
+2. Load plan, recent messages, identity profile
+3. Call Haiku 4.5 → returns `DocContent` JSON (strips ```json fences before parsing)
+4. Build .docx buffer via `docx` npm (`buildDocx(content)`)
+5. Upload to Supabase Storage at `{userId}/{threadId}.docx`
+6. Save `artifact` (with full `content`) to `work_threads.artifact` JSONB
+7. Return `{ artifact }`
+
+**Edit-artifact flow:**
+1. Stream acknowledgment text immediately (1 sentence describing the change)
+2. Call Haiku with current plan + original artifact + edit instruction
+3. Strip JSON fences, parse `DocContent`, rebuild docx, overwrite storage file
+4. Append `---ARTIFACT_UPDATE---` + updated artifact JSON to stream
+5. Save user+assistant message pair to `work_messages`
+
+**Key implementation detail — storage path:** `artifact.storage_path` stores the path WITHIN the bucket (no bucket name prefix). All routes use `adminClient.storage.from('work-artifacts').upload(storagePath, ...)` — do NOT add `work-artifacts/` prefix to the path.
+
+**Haiku JSON fences:** Haiku wraps output in ` ```json ... ``` ` fences. Must strip before `JSON.parse`:
+```typescript
+const raw = rawText.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
+```
+
+### Cost
+
+- ~$0.004 per document (Haiku 4.5 input + output tokens)
+- One-time per generate/edit, not per-page-load
+- Document stored permanently in Supabase Storage
+
+### Files Created/Updated
+
+**New:**
+- `supabase/migrations/20260220_add_artifact_to_work_threads.sql` — adds `artifact JSONB` column
+- `app/api/work/threads/[id]/generate/route.ts` — generate docx from plan
+- `app/api/work/threads/[id]/download/route.ts` — download stored file
+- `app/api/work/threads/[id]/edit-artifact/route.ts` — edit + regenerate (streaming)
+
+**Updated:**
+- `lib/types/inbox.ts` — added `DocSection`, `DocContent`, `DocumentArtifact`
+- `app/work/work-page-client.tsx` — `WorkMode` state machine, `DocumentPanel` with preview, edit chat, `generateDocument()`, `editArtifact()`, `downloadDocument()`, docx badge in thread list
+- `app/work/page.tsx` — added `artifact` to thread select query
+
+**External dependency added:**
+- `docx` npm package — builds .docx files from structured JSON
+

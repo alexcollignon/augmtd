@@ -16,9 +16,10 @@ import {
   TrashIcon,
   CheckIcon,
   XMarkIcon,
+  ArrowDownTrayIcon,
 } from '@heroicons/react/24/outline';
 import { WorkBlueprint } from '@/lib/types/work-blueprints';
-import { ExecutionPlan } from '@/lib/types/inbox';
+import { ExecutionPlan, DocumentArtifact } from '@/lib/types/inbox';
 import OnboardingModal from '@/components/onboarding-modal';
 
 // ─── Markdown renderer ────────────────────────────────────────────────────────
@@ -41,7 +42,6 @@ function renderInline(text: string): React.ReactNode {
 }
 
 function MarkdownText({ content, cursor }: { content: string; cursor?: boolean }) {
-  // Split into blocks separated by blank lines
   const blocks = content.split(/\n{2,}/);
 
   return (
@@ -49,7 +49,6 @@ function MarkdownText({ content, cursor }: { content: string; cursor?: boolean }
       {blocks.map((block, bi) => {
         const lines = block.split('\n').filter((l) => l.trim() !== '');
 
-        // Bullet list block
         if (lines.length > 0 && lines.every((l) => /^[-•]\s/.test(l) || /^\d+\.\s/.test(l))) {
           const isOrdered = /^\d+\.\s/.test(lines[0]);
           return (
@@ -76,7 +75,6 @@ function MarkdownText({ content, cursor }: { content: string; cursor?: boolean }
           );
         }
 
-        // Mixed block — render line by line
         return (
           <p key={bi} className="text-[13.5px] text-neutral-800 leading-relaxed">
             {lines.map((line, li) => {
@@ -111,10 +109,13 @@ function MarkdownText({ content, cursor }: { content: string; cursor?: boolean }
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+type WorkMode = 'planning' | 'generating' | 'document';
+
 interface WorkThread {
   id: string;
   title: string;
   plan: ExecutionPlan | null;
+  artifact: DocumentArtifact | null;
   status: string;
   created_at: string;
   updated_at: string;
@@ -138,6 +139,7 @@ interface WorkPageClientProps {
 }
 
 const PLAN_SEPARATOR = '---PLAN_UPDATE---';
+const ARTIFACT_SEPARATOR = '---ARTIFACT_UPDATE---';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -176,11 +178,19 @@ function PlanPanel({
   plan,
   isUpdating,
   planJustUpdated,
+  workMode,
+  onGenerate,
+  threadId,
 }: {
   plan: ExecutionPlan | null;
   isUpdating: boolean;
   planJustUpdated: boolean;
+  workMode: WorkMode;
+  onGenerate: (threadId: string) => void;
+  threadId: string | null;
 }) {
+  const isGenerating = workMode === 'generating';
+
   if (!plan) {
     return (
       <div className="flex-1 flex items-center justify-center border-r border-neutral-200 bg-neutral-50">
@@ -212,9 +222,21 @@ function PlanPanel({
   const Icon = getDeliverableIcon(plan.deliverable_type);
 
   return (
-    <div className="flex-1 overflow-y-auto border-r border-neutral-200 bg-white">
-      {/* Status bar */}
-      {(isUpdating || planJustUpdated) && (
+    <div className="flex-1 overflow-y-auto border-r border-neutral-200 bg-white flex flex-col">
+      {/* Generating overlay banner */}
+      {isGenerating && (
+        <div className="flex items-center gap-2 px-4 py-3 bg-indigo-50 border-b border-indigo-100">
+          <div className="flex items-center gap-1">
+            <span className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce [animation-delay:0ms]" />
+            <span className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce [animation-delay:150ms]" />
+            <span className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce [animation-delay:300ms]" />
+          </div>
+          <p className="text-[12px] text-indigo-700 font-medium">Building your document…</p>
+        </div>
+      )}
+
+      {/* Status bar (plan updates) */}
+      {!isGenerating && (isUpdating || planJustUpdated) && (
         <div className={`flex items-center gap-1.5 px-4 py-2 border-b text-[11px] font-medium transition-all ${
           planJustUpdated && !isUpdating
             ? 'border-green-100 bg-green-50 text-green-600'
@@ -235,7 +257,8 @@ function PlanPanel({
           )}
         </div>
       )}
-      <div className="p-6 space-y-6">
+
+      <div className="flex-1 p-6 space-y-6">
         {/* Deliverable header */}
         <div className="flex items-start gap-3">
           <div className="flex-shrink-0 w-9 h-9 bg-indigo-50 flex items-center justify-center">
@@ -305,10 +328,20 @@ function PlanPanel({
               {plan.steps.map((step) => (
                 <div
                   key={step.number}
-                  className="flex items-start gap-2.5 p-3 bg-neutral-50 border border-neutral-100"
+                  className={`flex items-start gap-2.5 p-3 border ${
+                    isGenerating
+                      ? 'bg-indigo-50 border-indigo-100'
+                      : 'bg-neutral-50 border-neutral-100'
+                  }`}
                 >
-                  <div className="flex-shrink-0 w-5 h-5 bg-indigo-100 text-indigo-700 text-[10px] font-bold flex items-center justify-center mt-0.5">
-                    {step.number}
+                  <div className={`flex-shrink-0 w-5 h-5 text-[10px] font-bold flex items-center justify-center mt-0.5 ${
+                    isGenerating ? 'bg-indigo-200 text-indigo-700' : 'bg-indigo-100 text-indigo-700'
+                  }`}>
+                    {isGenerating ? (
+                      <span className="w-2 h-2 bg-indigo-500 rounded-full animate-pulse" />
+                    ) : (
+                      step.number
+                    )}
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-[12px] text-neutral-900">{step.action}</p>
@@ -357,6 +390,112 @@ function PlanPanel({
           </div>
         )}
       </div>
+
+      {/* Generate button — docx only (document/report) */}
+      {workMode === 'planning' && threadId && (plan.deliverable_type === 'document' || plan.deliverable_type === 'report') && (
+        <div className="p-4 border-t border-neutral-100">
+          <button
+            onClick={() => onGenerate(threadId)}
+            className="w-full px-4 py-2.5 bg-indigo-600 text-white text-[13px] font-semibold hover:bg-indigo-700 transition-colors flex items-center justify-center gap-2"
+          >
+            <SparklesIcon className="w-4 h-4" />
+            Generate {plan.deliverable_type}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Document Panel ───────────────────────────────────────────────────────────
+
+function DocumentPanel({
+  artifact,
+  onDownload,
+  onRegenerate,
+  isDownloading,
+}: {
+  artifact: DocumentArtifact;
+  onDownload: () => void;
+  onRegenerate: () => void;
+  isDownloading: boolean;
+}) {
+  return (
+    <div className="flex-1 flex flex-col border-r border-neutral-200 bg-neutral-100 min-w-0">
+      {/* Toolbar */}
+      <div className="flex items-center justify-between px-4 py-2.5 border-b border-neutral-200 bg-white flex-shrink-0">
+        <div className="flex items-center gap-2 min-w-0">
+          <DocumentTextIcon className="w-4 h-4 text-indigo-500 flex-shrink-0" />
+          <span className="text-[12px] font-medium text-neutral-700 truncate">{artifact.title}</span>
+          <span className="text-[10px] text-neutral-400 flex-shrink-0">
+            · {new Date(artifact.generated_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+          </span>
+        </div>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <button
+            onClick={onRegenerate}
+            className="text-[11px] text-neutral-500 hover:text-neutral-700 px-2 py-1 hover:bg-neutral-100 transition-colors"
+          >
+            Back to plan
+          </button>
+          <button
+            onClick={onDownload}
+            disabled={isDownloading}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 text-white text-[11px] font-semibold hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+          >
+            <ArrowDownTrayIcon className="w-3.5 h-3.5" />
+            {isDownloading ? 'Downloading…' : 'Download .docx'}
+          </button>
+        </div>
+      </div>
+
+      {/* Document preview */}
+      <div className="flex-1 overflow-y-auto p-6">
+        {artifact.content ? (
+          /* Paper */
+          <div className="max-w-2xl mx-auto bg-white shadow-sm border border-neutral-200 px-12 py-10 min-h-full">
+            {/* Title */}
+            <h1 className="text-[22px] font-bold text-neutral-900 leading-tight mb-1">
+              {artifact.content.title}
+            </h1>
+            {artifact.content.subtitle && (
+              <p className="text-[13px] text-neutral-500 mb-8">{artifact.content.subtitle}</p>
+            )}
+            {!artifact.content.subtitle && <div className="mb-8" />}
+
+            {/* Sections */}
+            {artifact.content.sections.map((section, i) => (
+              <div key={i} className={section.level === 1 ? 'mt-8 first:mt-0' : 'mt-5'}>
+                {section.level === 1 ? (
+                  <h2 className="text-[15px] font-bold text-neutral-900 mb-3 pb-1.5 border-b border-neutral-100">
+                    {section.heading}
+                  </h2>
+                ) : (
+                  <h3 className="text-[13px] font-semibold text-neutral-800 mb-2">
+                    {section.heading}
+                  </h3>
+                )}
+                <div className="space-y-3">
+                  {section.paragraphs.map((para, j) => (
+                    <p key={j} className="text-[13px] text-neutral-700 leading-relaxed">
+                      {para}
+                    </p>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          /* Fallback for artifacts without content */
+          <div className="max-w-2xl mx-auto bg-white shadow-sm border border-neutral-200 px-12 py-10 flex items-center justify-center min-h-64">
+            <div className="text-center">
+              <CheckCircleIcon className="w-8 h-8 text-green-500 mx-auto mb-2" />
+              <p className="text-[13px] text-neutral-600">Document ready</p>
+              <p className="text-[11px] text-neutral-400 mt-1">Regenerate to see a preview</p>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -386,17 +525,25 @@ export function WorkPageClient({
   const [editingThreadId, setEditingThreadId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
+  // Document states
+  const [workMode, setWorkMode] = useState<WorkMode>('planning');
+  const [artifact, setArtifact] = useState<DocumentArtifact | null>(null);
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [artifactInput, setArtifactInput] = useState('');
+  const [isEditingArtifact, setIsEditingArtifact] = useState(false);
+  const [editStreamText, setEditStreamText] = useState('');
+
   const planUpdatedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const skipLoadRef = useRef<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatInputRef = useRef<HTMLTextAreaElement>(null);
   const editTitleInputRef = useRef<HTMLInputElement>(null);
+  const artifactInputRef = useRef<HTMLTextAreaElement>(null);
 
   const activeThread = threads.find((t) => t.id === activeThreadId) ?? null;
 
-  // Activate thread from URL param on first mount (e.g. navigated from inbox)
-  // If a workflowPrompt is provided, auto-send it as the first message instead of loading history
   useEffect(() => {
     if (initialActiveThreadId && initialWorkflowPrompt) {
       skipLoadRef.current = initialActiveThreadId;
@@ -408,26 +555,36 @@ export function WorkPageClient({
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Scroll chat to bottom
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, streamingText]);
+  }, [messages, streamingText, editStreamText]);
 
-  // Load thread messages when switching threads
   const loadThread = useCallback(async (threadId: string) => {
     setIsLoadingThread(true);
     setMessages([]);
     setStreamingText('');
+    setEditStreamText('');
     try {
       const res = await fetch(`/api/work/threads/${threadId}/messages`);
       if (!res.ok) return;
       const data = await res.json();
       setMessages(data.messages || []);
-      // Sync plan from server into local thread state
-      if (data.thread?.plan) {
+      // Sync plan + artifact from server
+      if (data.thread) {
         setThreads((prev) =>
-          prev.map((t) => t.id === threadId ? { ...t, plan: data.thread.plan } : t)
+          prev.map((t) => t.id === threadId ? {
+            ...t,
+            plan: data.thread.plan ?? t.plan,
+            artifact: data.thread.artifact ?? null,
+          } : t)
         );
+        if (data.thread.artifact) {
+          setArtifact(data.thread.artifact);
+          setWorkMode('document');
+        } else {
+          setArtifact(null);
+          setWorkMode('planning');
+        }
       }
     } finally {
       setIsLoadingThread(false);
@@ -436,20 +593,21 @@ export function WorkPageClient({
 
   useEffect(() => {
     if (activeThreadId) {
-      // Skip loading for threads just created — sendMessage already set up state
       if (skipLoadRef.current === activeThreadId) {
         skipLoadRef.current = null;
         return;
       }
       loadThread(activeThreadId);
+    } else {
+      // Reset when going back to entry view
+      setWorkMode('planning');
+      setArtifact(null);
     }
   }, [activeThreadId, loadThread]);
 
-  // Stream a message to the active thread
   const sendMessage = useCallback(async (content: string, threadId: string) => {
     if (!content.trim() || isStreaming) return;
 
-    // Optimistic user message
     const tempUserMsg: WorkMessage = {
       id: `temp-${Date.now()}`,
       role: 'user',
@@ -479,18 +637,15 @@ export function WorkPageClient({
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
 
-        // Display only the part before the plan separator
         const sepIdx = buffer.indexOf(PLAN_SEPARATOR);
         const display = sepIdx !== -1 ? buffer.slice(0, sepIdx).trim() : buffer;
         setStreamingText(display);
       }
 
-      // Stream complete — extract plan from buffer
       const sepIdx = buffer.indexOf(PLAN_SEPARATOR);
       const finalText = sepIdx !== -1 ? buffer.slice(0, sepIdx).trim() : buffer.trim();
       const planRaw = sepIdx !== -1 ? buffer.slice(sepIdx + PLAN_SEPARATOR.length).trim() : null;
 
-      // Add AI message to local state
       const aiMsg: WorkMessage = {
         id: `ai-${Date.now()}`,
         role: 'assistant',
@@ -500,7 +655,6 @@ export function WorkPageClient({
       setMessages((prev) => [...prev, aiMsg]);
       setStreamingText('');
 
-      // Update plan in local thread state
       if (planRaw && planRaw !== 'null') {
         try {
           const plan = JSON.parse(planRaw) as ExecutionPlan;
@@ -511,16 +665,14 @@ export function WorkPageClient({
                 : t
             )
           );
-          // Flash "Plan updated" for 2 seconds
           if (planUpdatedTimerRef.current) clearTimeout(planUpdatedTimerRef.current);
           setPlanJustUpdated(true);
           planUpdatedTimerRef.current = setTimeout(() => setPlanJustUpdated(false), 2000);
         } catch {
-          // plan parse failed — keep existing plan
+          // plan parse failed
         }
       }
 
-      // Move thread to top of list
       setThreads((prev) => {
         const thread = prev.find((t) => t.id === threadId);
         if (!thread) return prev;
@@ -538,7 +690,119 @@ export function WorkPageClient({
     }
   }, [isStreaming]);
 
-  // Create a new thread and send the first message
+  const generateDocument = useCallback(async (threadId: string) => {
+    setWorkMode('generating');
+    try {
+      const res = await fetch(`/api/work/threads/${threadId}/generate`, { method: 'POST' });
+      if (!res.ok) {
+        setWorkMode('planning');
+        return;
+      }
+      const data = await res.json();
+      const newArtifact: DocumentArtifact = data.artifact;
+      setArtifact(newArtifact);
+      setWorkMode('document');
+      setThreads((prev) =>
+        prev.map((t) => t.id === threadId ? { ...t, artifact: newArtifact } : t)
+      );
+    } catch (err) {
+      console.error('Generate error:', err);
+      setWorkMode('planning');
+    }
+  }, []);
+
+  const editArtifact = useCallback(async (instruction: string, threadId: string) => {
+    if (!instruction.trim() || isEditingArtifact) return;
+
+    setIsEditingArtifact(true);
+    setArtifactInput('');
+    setEditStreamText('');
+
+    try {
+      const res = await fetch(`/api/work/threads/${threadId}/edit-artifact`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ instruction: instruction.trim() }),
+      });
+
+      if (!res.ok || !res.body) throw new Error('Edit failed');
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        const sepIdx = buffer.indexOf(ARTIFACT_SEPARATOR);
+        const display = sepIdx !== -1 ? buffer.slice(0, sepIdx).trim() : buffer;
+        setEditStreamText(display);
+      }
+
+      // Extract updated artifact from buffer
+      const sepIdx = buffer.indexOf(ARTIFACT_SEPARATOR);
+      const finalText = sepIdx !== -1 ? buffer.slice(0, sepIdx).trim() : buffer.trim();
+      const artifactRaw = sepIdx !== -1 ? buffer.slice(sepIdx + ARTIFACT_SEPARATOR.length).trim() : null;
+
+      if (artifactRaw) {
+        try {
+          const updatedArtifact = JSON.parse(artifactRaw) as DocumentArtifact;
+          setArtifact(updatedArtifact);
+          setThreads((prev) =>
+            prev.map((t) => t.id === threadId ? { ...t, artifact: updatedArtifact } : t)
+          );
+        } catch {
+          // artifact parse failed
+        }
+      }
+
+      // Add the exchange to messages
+      const userMsg: WorkMessage = {
+        id: `u-${Date.now()}`,
+        role: 'user',
+        content: instruction.trim(),
+        created_at: new Date().toISOString(),
+      };
+      const aiMsg: WorkMessage = {
+        id: `a-${Date.now()}`,
+        role: 'assistant',
+        content: finalText,
+        created_at: new Date().toISOString(),
+      };
+      setMessages((prev) => [...prev, userMsg, aiMsg]);
+      setEditStreamText('');
+    } catch (err) {
+      console.error('Edit artifact error:', err);
+      setEditStreamText('');
+    } finally {
+      setIsEditingArtifact(false);
+      artifactInputRef.current?.focus();
+    }
+  }, [isEditingArtifact]);
+
+  const downloadDocument = useCallback(async (threadId: string) => {
+    setIsDownloading(true);
+    try {
+      const res = await fetch(`/api/work/threads/${threadId}/download`);
+      if (!res.ok) throw new Error('Download failed');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${artifact?.title ?? 'document'}.docx`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Download error:', err);
+    } finally {
+      setIsDownloading(false);
+    }
+  }, [artifact]);
+
   const startThread = useCallback(async (description: string) => {
     if (!description.trim() || isCreatingThread) return;
 
@@ -561,6 +825,8 @@ export function WorkPageClient({
       setActiveThreadId(newThread.id);
       setMessages([]);
       setEntryInput('');
+      setWorkMode('planning');
+      setArtifact(null);
       setIsCreatingThread(false);
       sendMessage(description, newThread.id);
     } catch (err) {
@@ -595,7 +861,6 @@ export function WorkPageClient({
         body: JSON.stringify({ title }),
       });
     } catch {
-      // revert on failure
       setThreads((prev) =>
         prev.map((t) => t.id === threadId ? { ...t, title: t.title } : t)
       );
@@ -605,7 +870,11 @@ export function WorkPageClient({
   const handleDeleteThread = async (threadId: string) => {
     setConfirmDeleteId(null);
     setThreads((prev) => prev.filter((t) => t.id !== threadId));
-    if (activeThreadId === threadId) setActiveThreadId(null);
+    if (activeThreadId === threadId) {
+      setActiveThreadId(null);
+      setWorkMode('planning');
+      setArtifact(null);
+    }
     try {
       await fetch(`/api/work/threads/${threadId}`, { method: 'DELETE' });
     } catch {
@@ -635,6 +904,22 @@ export function WorkPageClient({
       e.preventDefault();
       if (activeThreadId && chatInput.trim() && !isStreaming) {
         sendMessage(chatInput, activeThreadId);
+      }
+    }
+  };
+
+  const handleArtifactSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (activeThreadId && artifactInput.trim()) {
+      editArtifact(artifactInput, activeThreadId);
+    }
+  };
+
+  const handleArtifactKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      if (activeThreadId && artifactInput.trim() && !isEditingArtifact) {
+        editArtifact(artifactInput, activeThreadId);
       }
     }
   };
@@ -676,7 +961,6 @@ export function WorkPageClient({
                   } transition-colors`}
                 >
                   {isEditing ? (
-                    /* ── Inline title edit ── */
                     <div className="px-2 py-2 flex items-center gap-1">
                       <input
                         ref={editTitleInputRef}
@@ -702,7 +986,6 @@ export function WorkPageClient({
                       </button>
                     </div>
                   ) : isConfirmingDelete ? (
-                    /* ── Delete confirmation ── */
                     <div className="px-3 py-2.5">
                       <p className="text-[11px] text-red-600 mb-1.5">Delete this thread?</p>
                       <div className="flex items-center gap-2">
@@ -721,7 +1004,6 @@ export function WorkPageClient({
                       </div>
                     </div>
                   ) : (
-                    /* ── Normal thread item ── */
                     <div className="flex items-start">
                       <button
                         onClick={() => setActiveThreadId(thread.id)}
@@ -732,12 +1014,16 @@ export function WorkPageClient({
                         }`}>
                           {thread.title}
                         </p>
-                        <p className="text-[10px] text-neutral-400 mt-0.5">
-                          {relativeTime(thread.updated_at)}
-                        </p>
+                        <div className="flex items-center gap-1.5 mt-0.5">
+                          <p className="text-[10px] text-neutral-400">
+                            {relativeTime(thread.updated_at)}
+                          </p>
+                          {thread.artifact && (
+                            <span className="text-[9px] text-green-600 bg-green-50 px-1 py-px">docx</span>
+                          )}
+                        </div>
                       </button>
 
-                      {/* Action buttons — visible on hover */}
                       <div className="flex-shrink-0 flex items-center gap-0.5 pr-1.5 pt-2 opacity-0 group-hover:opacity-100 transition-opacity">
                         <button
                           onClick={(e) => { e.stopPropagation(); startEditing(thread); }}
@@ -763,7 +1049,7 @@ export function WorkPageClient({
         </div>
       </div>
 
-      {/* Main content: either entry view or split panel */}
+      {/* Main content */}
       {!activeThreadId ? (
         /* ── Entry view ── */
         <div className="flex-1 overflow-y-auto bg-gray-50">
@@ -775,7 +1061,6 @@ export function WorkPageClient({
               </p>
             </div>
 
-            {/* Entry input */}
             <form onSubmit={handleEntrySubmit} className="mb-10">
               <div className="bg-white border border-neutral-200 shadow-sm">
                 <textarea
@@ -808,7 +1093,6 @@ export function WorkPageClient({
               </div>
             </form>
 
-            {/* Blueprints */}
             {blueprints.length > 0 && (
               <div>
                 <div className="flex items-center gap-2 mb-4">
@@ -847,106 +1131,230 @@ export function WorkPageClient({
           </div>
         </div>
       ) : (
-        /* ── Split view: plan + chat ── */
+        /* ── Split view: left panel + right chat ── */
         <>
-          {/* Plan panel */}
-          <PlanPanel
-            plan={activeThread?.plan ?? null}
-            isUpdating={isStreaming}
-            planJustUpdated={planJustUpdated}
-          />
+          {/* Left panel: plan or document */}
+          {workMode === 'document' && artifact ? (
+            <DocumentPanel
+              artifact={artifact}
+              onDownload={() => activeThreadId && downloadDocument(activeThreadId)}
+              onRegenerate={() => {
+                setWorkMode('planning');
+                setArtifact(null);
+                setThreads((prev) =>
+                  prev.map((t) => t.id === activeThreadId ? { ...t, artifact: null } : t)
+                );
+              }}
+              isDownloading={isDownloading}
+            />
+          ) : (
+            <PlanPanel
+              plan={activeThread?.plan ?? null}
+              isUpdating={isStreaming}
+              planJustUpdated={planJustUpdated}
+              workMode={workMode}
+              onGenerate={generateDocument}
+              threadId={activeThreadId}
+            />
+          )}
 
-          {/* Chat panel */}
+          {/* Right panel: chat or document edit */}
           <div className="w-[400px] flex-shrink-0 flex flex-col border-l border-neutral-200 bg-white">
-            {/* Messages */}
-            <div className="flex-1 overflow-y-auto px-5 py-5 space-y-0">
-              {isLoadingThread ? (
-                <div className="flex items-center justify-center h-full">
-                  <div className="w-4 h-4 border-2 border-neutral-200 border-t-neutral-500 rounded-full animate-spin" />
+
+            {workMode === 'generating' ? (
+              /* Generating state — disabled chat */
+              <div className="flex-1 flex items-center justify-center">
+                <div className="text-center px-8">
+                  <div className="flex items-center justify-center gap-1.5 mb-3">
+                    <span className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce [animation-delay:0ms]" />
+                    <span className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce [animation-delay:150ms]" />
+                    <span className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce [animation-delay:300ms]" />
+                  </div>
+                  <p className="text-[13px] text-neutral-500 font-medium">Generating your document…</p>
+                  <p className="text-[11px] text-neutral-400 mt-1">This may take a few seconds</p>
                 </div>
-              ) : (
-                <>
-                  {messages.map((msg, i) => (
-                    msg.role === 'assistant' ? (
-                      /* AI message — full width, clean prose */
-                      <div key={msg.id} className={`${i > 0 ? 'pt-5' : ''}`}>
-                        <MarkdownText content={msg.content} />
-                      </div>
-                    ) : (
-                      /* User message — right-aligned, muted */
-                      <div key={msg.id} className="flex justify-end pt-5 pb-1">
-                        <div className="max-w-[85%]">
-                          <p className="text-[12px] text-neutral-500 leading-relaxed">
-                            {msg.content}
-                          </p>
-                          <p className="text-[10px] text-neutral-300 mt-1">
-                            {new Date(msg.created_at).toLocaleTimeString('en-US', {
-                              hour: 'numeric',
-                              minute: '2-digit',
-                            })}
+              </div>
+            ) : workMode === 'document' ? (
+              /* Document edit mode */
+              <>
+                <div className="flex-1 overflow-y-auto px-5 py-5 space-y-0">
+                  {isLoadingThread ? (
+                    <div className="flex items-center justify-center h-full">
+                      <div className="w-4 h-4 border-2 border-neutral-200 border-t-neutral-500 rounded-full animate-spin" />
+                    </div>
+                  ) : (
+                    <>
+                      {messages.length === 0 && !isEditingArtifact && (
+                        <div className="text-center pt-8 pb-4">
+                          <p className="text-[12px] text-neutral-400 leading-relaxed">
+                            Document generated. Ask me to make edits — I'll regenerate it with your changes.
                           </p>
                         </div>
-                      </div>
-                    )
-                  ))}
+                      )}
 
-                  {/* Streaming AI response */}
-                  {isStreaming && streamingText && (
-                    <div className="pt-5">
-                      <MarkdownText content={streamingText} cursor />
-                    </div>
+                      {messages.map((msg, i) => (
+                        msg.role === 'assistant' ? (
+                          <div key={msg.id} className={`${i > 0 ? 'pt-5' : ''}`}>
+                            <MarkdownText content={msg.content} />
+                          </div>
+                        ) : (
+                          <div key={msg.id} className="flex justify-end pt-5 pb-1">
+                            <div className="max-w-[85%]">
+                              <p className="text-[12px] text-neutral-500 leading-relaxed">
+                                {msg.content}
+                              </p>
+                              <p className="text-[10px] text-neutral-300 mt-1">
+                                {new Date(msg.created_at).toLocaleTimeString('en-US', {
+                                  hour: 'numeric',
+                                  minute: '2-digit',
+                                })}
+                              </p>
+                            </div>
+                          </div>
+                        )
+                      ))}
+
+                      {isEditingArtifact && editStreamText && (
+                        <div className="pt-5">
+                          <MarkdownText content={editStreamText} cursor />
+                        </div>
+                      )}
+
+                      {isEditingArtifact && !editStreamText && (
+                        <div className="pt-5 flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 bg-neutral-300 rounded-full animate-bounce [animation-delay:0ms]" />
+                          <span className="w-1.5 h-1.5 bg-neutral-300 rounded-full animate-bounce [animation-delay:150ms]" />
+                          <span className="w-1.5 h-1.5 bg-neutral-300 rounded-full animate-bounce [animation-delay:300ms]" />
+                        </div>
+                      )}
+
+                      <div ref={messagesEndRef} />
+                    </>
                   )}
+                </div>
 
-                  {/* Typing indicator (before text starts, or during thread creation) */}
-                  {(isStreaming || isCreatingThread) && !streamingText && (
-                    <div className="pt-5 flex items-center gap-1">
-                      <span className="w-1.5 h-1.5 bg-neutral-300 rounded-full animate-bounce [animation-delay:0ms]" />
-                      <span className="w-1.5 h-1.5 bg-neutral-300 rounded-full animate-bounce [animation-delay:150ms]" />
-                      <span className="w-1.5 h-1.5 bg-neutral-300 rounded-full animate-bounce [animation-delay:300ms]" />
+                <div className="border-t border-neutral-100" />
+
+                <form onSubmit={handleArtifactSubmit} className="p-4">
+                  <div className="flex items-end gap-2">
+                    <textarea
+                      ref={artifactInputRef}
+                      value={artifactInput}
+                      onChange={(e) => setArtifactInput(e.target.value)}
+                      onKeyDown={handleArtifactKeyDown}
+                      placeholder="Edit the document… e.g. 'make the summary shorter'"
+                      rows={1}
+                      disabled={isEditingArtifact}
+                      className="flex-1 text-[13px] text-neutral-900 placeholder-neutral-400 resize-none focus:outline-none border border-neutral-200 focus:border-indigo-400 px-3 py-2.5 max-h-32 disabled:opacity-50 leading-relaxed"
+                      style={{ height: 'auto', minHeight: '40px' }}
+                      onInput={(e) => {
+                        const el = e.currentTarget;
+                        el.style.height = 'auto';
+                        el.style.height = `${Math.min(el.scrollHeight, 128)}px`;
+                      }}
+                    />
+                    <button
+                      type="submit"
+                      disabled={!artifactInput.trim() || isEditingArtifact}
+                      className="flex-shrink-0 w-8 h-8 flex items-center justify-center bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors self-end mb-px"
+                    >
+                      <svg className="w-3.5 h-3.5 rotate-90" fill="currentColor" viewBox="0 0 20 20">
+                        <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" />
+                      </svg>
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-neutral-400 mt-2">
+                    Enter to send · Shift+Enter for new line
+                  </p>
+                </form>
+              </>
+            ) : (
+              /* Planning mode chat */
+              <>
+                <div className="flex-1 overflow-y-auto px-5 py-5 space-y-0">
+                  {isLoadingThread ? (
+                    <div className="flex items-center justify-center h-full">
+                      <div className="w-4 h-4 border-2 border-neutral-200 border-t-neutral-500 rounded-full animate-spin" />
                     </div>
+                  ) : (
+                    <>
+                      {messages.map((msg, i) => (
+                        msg.role === 'assistant' ? (
+                          <div key={msg.id} className={`${i > 0 ? 'pt-5' : ''}`}>
+                            <MarkdownText content={msg.content} />
+                          </div>
+                        ) : (
+                          <div key={msg.id} className="flex justify-end pt-5 pb-1">
+                            <div className="max-w-[85%]">
+                              <p className="text-[12px] text-neutral-500 leading-relaxed">
+                                {msg.content}
+                              </p>
+                              <p className="text-[10px] text-neutral-300 mt-1">
+                                {new Date(msg.created_at).toLocaleTimeString('en-US', {
+                                  hour: 'numeric',
+                                  minute: '2-digit',
+                                })}
+                              </p>
+                            </div>
+                          </div>
+                        )
+                      ))}
+
+                      {isStreaming && streamingText && (
+                        <div className="pt-5">
+                          <MarkdownText content={streamingText} cursor />
+                        </div>
+                      )}
+
+                      {(isStreaming || isCreatingThread) && !streamingText && (
+                        <div className="pt-5 flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 bg-neutral-300 rounded-full animate-bounce [animation-delay:0ms]" />
+                          <span className="w-1.5 h-1.5 bg-neutral-300 rounded-full animate-bounce [animation-delay:150ms]" />
+                          <span className="w-1.5 h-1.5 bg-neutral-300 rounded-full animate-bounce [animation-delay:300ms]" />
+                        </div>
+                      )}
+
+                      <div ref={messagesEndRef} />
+                    </>
                   )}
+                </div>
 
-                  <div ref={messagesEndRef} />
-                </>
-              )}
-            </div>
+                <div className="border-t border-neutral-100" />
 
-            {/* Divider */}
-            <div className="border-t border-neutral-100" />
-
-            {/* Chat input */}
-            <form onSubmit={handleChatSubmit} className="p-4">
-              <div className="flex items-end gap-2">
-                <textarea
-                  ref={chatInputRef}
-                  value={chatInput}
-                  onChange={(e) => setChatInput(e.target.value)}
-                  onKeyDown={handleChatKeyDown}
-                  placeholder="Reply…"
-                  rows={1}
-                  disabled={isStreaming}
-                  className="flex-1 text-[13px] text-neutral-900 placeholder-neutral-400 resize-none focus:outline-none border border-neutral-200 focus:border-indigo-400 px-3 py-2.5 max-h-32 disabled:opacity-50 leading-relaxed"
-                  style={{ height: 'auto', minHeight: '40px' }}
-                  onInput={(e) => {
-                    const el = e.currentTarget;
-                    el.style.height = 'auto';
-                    el.style.height = `${Math.min(el.scrollHeight, 128)}px`;
-                  }}
-                />
-                <button
-                  type="submit"
-                  disabled={!chatInput.trim() || isStreaming}
-                  className="flex-shrink-0 w-8 h-8 flex items-center justify-center bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors self-end mb-px"
-                >
-                  <svg className="w-3.5 h-3.5 rotate-90" fill="currentColor" viewBox="0 0 20 20">
-                    <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" />
-                  </svg>
-                </button>
-              </div>
-              <p className="text-[10px] text-neutral-400 mt-2">
-                Enter to send · Shift+Enter for new line
-              </p>
-            </form>
+                <form onSubmit={handleChatSubmit} className="p-4">
+                  <div className="flex items-end gap-2">
+                    <textarea
+                      ref={chatInputRef}
+                      value={chatInput}
+                      onChange={(e) => setChatInput(e.target.value)}
+                      onKeyDown={handleChatKeyDown}
+                      placeholder="Reply…"
+                      rows={1}
+                      disabled={isStreaming}
+                      className="flex-1 text-[13px] text-neutral-900 placeholder-neutral-400 resize-none focus:outline-none border border-neutral-200 focus:border-indigo-400 px-3 py-2.5 max-h-32 disabled:opacity-50 leading-relaxed"
+                      style={{ height: 'auto', minHeight: '40px' }}
+                      onInput={(e) => {
+                        const el = e.currentTarget;
+                        el.style.height = 'auto';
+                        el.style.height = `${Math.min(el.scrollHeight, 128)}px`;
+                      }}
+                    />
+                    <button
+                      type="submit"
+                      disabled={!chatInput.trim() || isStreaming}
+                      className="flex-shrink-0 w-8 h-8 flex items-center justify-center bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors self-end mb-px"
+                    >
+                      <svg className="w-3.5 h-3.5 rotate-90" fill="currentColor" viewBox="0 0 20 20">
+                        <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" />
+                      </svg>
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-neutral-400 mt-2">
+                    Enter to send · Shift+Enter for new line
+                  </p>
+                </form>
+              </>
+            )}
           </div>
         </>
       )}

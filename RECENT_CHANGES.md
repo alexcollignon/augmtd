@@ -1,3 +1,204 @@
+# Recent Changes - Docx Generation Execution Engine
+
+## Summary (Feb 20, 2026)
+
+First real execution capability for the Workflows system: users can generate a professional Word document (.docx) from their work plan, preview the full document in-panel (rendered as styled paper), edit it conversationally with streaming responses, and download it. Built with Claude Haiku 4.5 (JSON generation) + `docx` npm (file assembly) + Supabase Storage.
+
+---
+
+## 1. Architecture: Haiku + docx npm (not Skills API)
+
+**Evaluated:** Anthropic Skills API (`skills-2025-10-02` + `code-execution-2025-08-25` betas, `docx` skill version `20260203`). Required multi-turn `pause_turn` continuation loop with growing context — 130s+ latency, browser connections dropped. Abandoned.
+
+**Chosen approach:**
+- **Claude Haiku 4.5** (`claude-haiku-4-5-20251001`) — generates `DocContent` JSON (title + subtitle + sections with headings/paragraphs)
+- **`docx` npm package** — assembles the Word file locally in the API route from the JSON
+- **Supabase Storage** (`work-artifacts` private bucket) — stores generated `.docx` files at `{userId}/{threadId}.docx`
+- **Cost:** ~$0.004/doc · **Time:** ~5-10 seconds
+
+**Key implementation note — JSON fences:** Haiku wraps JSON output in ` ```json ... ``` ` fences. Must strip before `JSON.parse`:
+```typescript
+const raw = rawText.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
+```
+
+**Key implementation note — storage path:** `artifact.storage_path` is the path WITHIN the bucket (no `work-artifacts/` prefix in the string). Always: `${user.id}/${threadId}.docx`.
+
+---
+
+## 2. New Types (`lib/types/inbox.ts`)
+
+Three new interfaces added:
+
+```typescript
+export interface DocSection {
+  heading: string;
+  level: 1 | 2;        // 1 = major heading, 2 = subheading
+  paragraphs: string[]; // full prose paragraphs, no bullets
+}
+
+export interface DocContent {
+  title: string;
+  subtitle?: string;
+  sections: DocSection[];
+}
+
+export interface DocumentArtifact {
+  title: string;
+  type: DeliverableType;
+  generated_at: string;    // ISO timestamp
+  storage_path: string;    // path within work-artifacts bucket
+  content?: DocContent;    // full content for in-panel preview
+}
+```
+
+`DocumentArtifact` is stored as JSONB in `work_threads.artifact`. Includes `content` so the panel can render a full preview without downloading the file.
+
+---
+
+## 3. Database Migration
+
+`supabase/migrations/20260220_add_artifact_to_work_threads.sql`:
+```sql
+ALTER TABLE work_threads ADD COLUMN IF NOT EXISTS artifact JSONB;
+```
+
+---
+
+## 4. New API Routes
+
+### `POST /api/work/threads/[id]/generate`
+
+Generates a docx from the thread's current plan.
+
+**Flow:**
+1. Auth + thread ownership check
+2. Load plan, last 10 messages, identity profile
+3. Build Haiku prompt (deliverable type, plan steps, outputs, conversation context, author context)
+4. Call `claude-haiku-4-5-20251001`, strip JSON fences, parse `DocContent`
+5. Build `.docx` buffer via `buildDocx(content)` using `docx` npm
+6. Upload to Supabase Storage at `${user.id}/${threadId}.docx` (upsert: true)
+7. Save `artifact` (with full `content`) to `work_threads.artifact`
+8. Return `{ artifact }`
+
+### `GET /api/work/threads/[id]/download`
+
+Downloads the stored file.
+
+**Flow:**
+1. Auth + thread ownership check
+2. Load `work_threads.artifact`, return 404 if null
+3. Download from Supabase Storage using `artifact.storage_path` directly
+4. Return with `Content-Disposition: attachment; filename="{title}.docx"`
+
+### `POST /api/work/threads/[id]/edit-artifact` (streaming)
+
+Edits and regenerates the document, streams acknowledgment first.
+
+**Stream format:**
+```
+Updating the document — [first 80 chars of instruction]
+---ARTIFACT_UPDATE---
+{"title":"...","type":"...","generated_at":"...","storage_path":"...","content":{...}}
+```
+
+**Flow:**
+1. Auth + thread ownership check
+2. Load thread (plan + artifact)
+3. Immediately stream acknowledgment: *"Updating the document — {instruction}"*
+4. Call Haiku with plan + original artifact context + edit instruction
+5. Strip fences, parse `DocContent`, rebuild docx buffer
+6. Overwrite same storage path (upsert: true)
+7. Update `artifact.generated_at` + `artifact.content`, save to DB
+8. Append `---ARTIFACT_UPDATE---` + updated artifact JSON
+9. Save user + assistant message pair to `work_messages`
+
+---
+
+## 5. WorkMode State Machine (UI)
+
+New `WorkMode` type: `'planning' | 'generating' | 'document'`
+
+```
+planning → [Generate button] → generating → [API response] → document
+                                                              [Back to plan] → planning
+```
+
+**State restoration:** On `loadThread()`, if `thread.artifact` exists → `setWorkMode('document')`. Refreshing a document thread returns to document mode automatically.
+
+**Generate button gating:** Only shown when `plan.deliverable_type === 'document' || plan.deliverable_type === 'report'`. Presentation, spreadsheet, email, analysis → no button (different file formats not yet implemented).
+
+---
+
+## 6. DocumentPanel (Left Panel — Document Mode)
+
+Replaces `PlanPanel` when `workMode === 'document'`.
+
+**Toolbar:**
+- Document type badge (e.g. "report")
+- Thread title as document title
+- Generated date ("Generated Feb 20, 2026")
+- "Download .docx" button (triggers download route)
+- "Back to plan" link (resets to planning mode, clears artifact from state)
+
+**Document preview:**
+- Styled as a white "paper" card with shadow (matches Claude's artifact view)
+- `artifact.content` rendered as HTML: h2 for level-1 headings, h3 for level-2
+- Full paragraph text — no truncation
+- Scrollable within the panel
+
+**Thread list badge:** Threads with an artifact show a `docx` label next to the title.
+
+---
+
+## 7. Edit Chat (Right Panel — Document Mode)
+
+When `workMode === 'document'`, the right chat panel switches to edit mode:
+
+- Placeholder: *"Edit the document… (e.g., 'make the summary shorter')"*
+- Input bound to `artifactInput` state
+- Submit calls `editArtifact(instruction, threadId)` — same streaming pattern as `sendMessage`
+- Streaming response shown in right panel with animated cursor
+- On `---ARTIFACT_UPDATE---`: parse updated artifact JSON, update `artifact` state (panel re-renders with new content), clear `editStreamText`
+
+---
+
+## 8. Generating State (UI)
+
+When `workMode === 'generating'`:
+- Left panel shows plan steps pulsing with indigo animation
+- "Building your document…" header replaces generate button
+- Right chat panel shows spinner + "Generating your document..." — input disabled
+
+---
+
+## Files Changed
+
+### New Files
+- `supabase/migrations/20260220_add_artifact_to_work_threads.sql`
+- `app/api/work/threads/[id]/generate/route.ts`
+- `app/api/work/threads/[id]/download/route.ts`
+- `app/api/work/threads/[id]/edit-artifact/route.ts`
+
+### Updated Files
+- `lib/types/inbox.ts` — `DocSection`, `DocContent`, `DocumentArtifact`
+- `app/work/work-page-client.tsx` — `WorkMode`, `DocumentPanel`, edit chat, generate/edit/download functions, docx badge
+- `app/work/page.tsx` — added `artifact` to thread select query
+
+### External Dependency Added
+- `docx` npm package — builds Word files from structured JSON (`Document`, `Paragraph`, `TextRun`, `HeadingLevel`, etc.)
+
+---
+
+## What's Still Not Built
+
+- Execution for non-document types (presentation → pptx, spreadsheet → xlsx)
+- Input collection UI (gathering data inputs before executing a workflow)
+- Workflow library / saved workflow browser
+- Vector similarity search for similar past workflows
+- Skill implementations beyond document generation
+
+---
+
 # Recent Changes - Inbox UX Polish, Email Send Fixes & Toast Notifications
 
 ## Summary (Feb 19, 2026)

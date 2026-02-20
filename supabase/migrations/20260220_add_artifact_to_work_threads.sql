@@ -1,0 +1,1 @@
+ALTER TABLE work_threads ADD COLUMN IF NOT EXISTS artifact JSONB;

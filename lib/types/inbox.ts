@@ -92,6 +92,26 @@ export interface Artifact {
   preview_url?: string; // Optional preview/thumbnail URL
 }
 
+export interface DocSection {
+  heading: string;
+  level: 1 | 2;
+  paragraphs: string[];
+}
+
+export interface DocContent {
+  title: string;
+  subtitle?: string;
+  sections: DocSection[];
+}
+
+export interface DocumentArtifact {
+  title: string;
+  type: DeliverableType;
+  generated_at: string; // ISO timestamp
+  storage_path: string; // Path within work-artifacts bucket: "{userId}/{threadId}.docx"
+  content?: DocContent; // Full document content for in-panel preview
+}
+
 export interface InboxItem {
   id: string;
   user_id: string;
