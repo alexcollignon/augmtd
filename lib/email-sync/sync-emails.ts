@@ -243,32 +243,40 @@ export async function syncEmailsForConnection(
         // ==== RECIPIENT DETECTION ====
         // Analyze all recipients to determine who needs inbox items
 
-        // Get all users in this organization for mention detection
-        const { data: orgUsers } = await adminSupabase
+        // Always fetch the connection owner's profile directly (works for solo users and orgs)
+        const { data: ownerProfile } = await adminSupabase
           .from('profiles')
-          .select('id, email, full_name')
-          .eq('organization_id', (await adminSupabase
-            .from('profiles')
-            .select('organization_id')
-            .eq('id', connection.user_id)
-            .single()
-          ).data?.organization_id || '')
-          .limit(100);
+          .select('id, email, full_name, organization_id')
+          .eq('id', connection.user_id)
+          .single();
 
-        // Add the connection email as an alias for the connection owner
-        // This allows users to connect multiple inboxes (e.g., personal Gmail + work email)
-        const connectionEmail = connection.metadata?.email || connection.provider_account_id;
-        if (connectionEmail && orgUsers) {
-          const connectionOwner = orgUsers.find(u => u.id === connection.user_id);
-          if (connectionOwner && connectionEmail.toLowerCase() !== connectionOwner.email.toLowerCase()) {
-            // Add connection email as an alias
-            orgUsers.push({
-              id: connection.user_id,
-              email: connectionEmail,
-              full_name: connectionOwner.full_name,
-            });
-          }
+        const usersInSystem: Array<{ id: string; email: string; full_name: string | null }> =
+          ownerProfile ? [{ id: ownerProfile.id, email: ownerProfile.email, full_name: ownerProfile.full_name }] : [];
+
+        // Also fetch other org members if the user belongs to an org
+        if (ownerProfile?.organization_id) {
+          const { data: orgMembers } = await adminSupabase
+            .from('profiles')
+            .select('id, email, full_name')
+            .eq('organization_id', ownerProfile.organization_id)
+            .neq('id', connection.user_id)
+            .limit(100);
+          if (orgMembers) usersInSystem.push(...orgMembers);
         }
+
+        // Add the connection email as an alias if it differs from the profile email
+        // This allows users to connect inboxes that don't match their AUGMTD login email
+        const connectionEmail = connection.metadata?.email || connection.provider_account_id;
+        if (connectionEmail && ownerProfile && connectionEmail.toLowerCase() !== ownerProfile.email.toLowerCase()) {
+          usersInSystem.push({
+            id: connection.user_id,
+            email: connectionEmail,
+            full_name: ownerProfile.full_name,
+          });
+        }
+
+        // orgUsers alias kept for the analyzeRecipients call below
+        const orgUsers = usersInSystem;
 
         console.log(`🔍 Analyzing recipients for: "${parsed.subject}"`);
         console.log(`   To: ${storedEmail.to_addresses?.join(', ') || 'none'}`);
