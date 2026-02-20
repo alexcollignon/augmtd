@@ -181,6 +181,8 @@ function PlanPanel({
   workMode,
   onGenerate,
   threadId,
+  artifact,
+  onViewDocument,
 }: {
   plan: ExecutionPlan | null;
   isUpdating: boolean;
@@ -188,6 +190,8 @@ function PlanPanel({
   workMode: WorkMode;
   onGenerate: (threadId: string) => void;
   threadId: string | null;
+  artifact: DocumentArtifact | null;
+  onViewDocument: () => void;
 }) {
   const isGenerating = workMode === 'generating';
 
@@ -232,6 +236,22 @@ function PlanPanel({
             <span className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce [animation-delay:300ms]" />
           </div>
           <p className="text-[12px] text-indigo-700 font-medium">Building your document…</p>
+        </div>
+      )}
+
+      {/* Document ready banner */}
+      {!isGenerating && artifact && workMode === 'planning' && (
+        <div className="flex items-center justify-between px-4 py-2.5 bg-green-50 border-b border-green-100 flex-shrink-0">
+          <div className="flex items-center gap-2">
+            <DocumentTextIcon className="w-3.5 h-3.5 text-green-600" />
+            <span className="text-[11px] text-green-700 font-medium">Document ready</span>
+          </div>
+          <button
+            onClick={onViewDocument}
+            className="text-[11px] text-green-600 hover:text-green-800 font-medium px-2 py-1 hover:bg-green-100 transition-colors"
+          >
+            View document →
+          </button>
         </div>
       )}
 
@@ -1138,13 +1158,7 @@ export function WorkPageClient({
             <DocumentPanel
               artifact={artifact}
               onDownload={() => activeThreadId && downloadDocument(activeThreadId)}
-              onRegenerate={() => {
-                setWorkMode('planning');
-                setArtifact(null);
-                setThreads((prev) =>
-                  prev.map((t) => t.id === activeThreadId ? { ...t, artifact: null } : t)
-                );
-              }}
+              onRegenerate={() => setWorkMode('planning')}
               isDownloading={isDownloading}
             />
           ) : (
@@ -1155,6 +1169,8 @@ export function WorkPageClient({
               workMode={workMode}
               onGenerate={generateDocument}
               threadId={activeThreadId}
+              artifact={artifact}
+              onViewDocument={() => setWorkMode('document')}
             />
           )}
 
