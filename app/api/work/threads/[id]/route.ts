@@ -58,6 +58,14 @@ export async function DELETE(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    // Load artifact before deleting so we can clean up storage
+    const { data: thread } = await supabase
+      .from('work_threads')
+      .select('artifact')
+      .eq('id', threadId)
+      .eq('user_id', user.id)
+      .single();
+
     const { error } = await supabase
       .from('work_threads')
       .delete()
@@ -65,6 +73,16 @@ export async function DELETE(
       .eq('user_id', user.id);
 
     if (error) throw error;
+
+    // Delete artifact file from storage if one exists
+    const storagePath = thread?.artifact?.storage_path;
+    if (storagePath) {
+      const adminClient = (await import('@supabase/supabase-js')).createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.SUPABASE_SERVICE_ROLE_KEY!
+      );
+      await adminClient.storage.from('work-artifacts').remove([storagePath]);
+    }
 
     // Remove thread from work_patterns.recentWorkflows and recompute aggregates
     const { data: existingProfile } = await supabase
