@@ -23,6 +23,16 @@ import { getCalendarContext } from '@/lib/calendar/calendar-context';
 import type { UserContextProfile } from '@/lib/types/user-context';
 import { decomposeEmailWork } from '@/lib/execution/work-decomposition';
 
+/**
+ * Detect whether an email was forwarded based on subject and body patterns
+ */
+function detectForwarded(subject: string, body: string): boolean {
+  if (/^(fwd?:|fw:)\s/i.test(subject.trim())) return true;
+  if (/^-{5,}\s*forwarded message\s*-{5,}/im.test(body)) return true;
+  if (/^begin forwarded message:/im.test(body)) return true;
+  return false;
+}
+
 export interface SyncResult {
   emailsFetched: number;
   inboxItemsCreated: number;
@@ -174,6 +184,8 @@ export async function syncEmailsForConnection(
           ? parseGmailMessage(message)
           : parseOutlookMessage(message);
 
+        const isForwarded = detectForwarded(parsed.subject || '', parsed.body || '');
+
         console.log(`\n--- Processing email: ${parsed.subject}`);
         console.log(`    From: ${parsed.from_address}`);
 
@@ -282,6 +294,12 @@ export async function syncEmailsForConnection(
         console.log(`   To: ${storedEmail.to_addresses?.join(', ') || 'none'}`);
         console.log(`   CC: ${storedEmail.cc_addresses?.join(', ') || 'none'}`);
 
+        // Look up sender in relationship graph to provide context for recipient detection
+        const senderRelData = userContext?.relationshipGraph?.[storedEmail.from_address.toLowerCase()];
+        const senderContext = senderRelData
+          ? { importance: senderRelData.importance * 100, relationshipType: senderRelData.typicalTone }
+          : undefined;
+
         // Analyze recipients (detects roles and calculates confidence)
         const recipientAnalysis = await analyzeRecipients(
           {
@@ -298,7 +316,8 @@ export async function syncEmailsForConnection(
             userId: u.id,
             email: u.email,
             fullName: u.full_name || undefined,
-          }))
+          })),
+          senderContext
         );
 
         console.log(`✓ Found ${recipientAnalysis.recipients.length} recipients in system`);
@@ -375,6 +394,7 @@ export async function syncEmailsForConnection(
               thread_context: threadEmails || [],
               user_context: userContext, // NEW: Personalize based on learned style
               calendar_context: calendarContext, // NEW: Schedule-aware processing
+              is_forwarded: isForwarded,
             });
 
             // Work Decomposition (Layer 2): Check if this is executable work
@@ -447,11 +467,13 @@ export async function syncEmailsForConnection(
                   body: storedEmail.body,
                   received_at: storedEmail.received_at,
                   provider: connection.provider,
+                  isForwarded,
                   thread_history: threadEmails?.map(e => ({
                     from: e.from_address,
+                    from_name: e.from_name,
                     subject: e.subject,
                     received_at: e.received_at,
-                    snippet: e.body.substring(0, 150)
+                    snippet: e.body.substring(0, 2500)
                   })),
                   summary: processed.summary,
                   keyPoints: processed.keyPoints,
@@ -485,6 +507,14 @@ export async function syncEmailsForConnection(
             continue; // Continue to next recipient
           }
 
+          // Fetch thread history for new item (same context as update path)
+          const { data: threadEmailsForNew } = await adminSupabase
+            .from('emails')
+            .select('*')
+            .eq('user_id', recipient.userId)
+            .eq('thread_id', storedEmail.thread_id || storedEmail.message_id)
+            .order('received_at', { ascending: true });
+
           // AI Processing for this recipient (recipient-specific)
           const processed = await processEmail({
             id: storedEmail.id,
@@ -495,8 +525,10 @@ export async function syncEmailsForConnection(
             subject: storedEmail.subject,
             body: storedEmail.body,
             received_at: storedEmail.received_at,
+            thread_context: threadEmailsForNew || [],
             user_context: userContext, // NEW: Personalize based on learned style
             calendar_context: calendarContext, // NEW: Schedule-aware processing
+            is_forwarded: isForwarded,
           });
 
           // Work Decomposition (Layer 2): Check if this is executable work
@@ -509,6 +541,7 @@ export async function syncEmailsForConnection(
                 subject: storedEmail.subject,
                 body: storedEmail.body,
                 from: storedEmail.from_name || storedEmail.from_address,
+                threadHistory: threadEmailsForNew || undefined,
               },
               recipient.userId,
               adminSupabase
@@ -574,6 +607,14 @@ export async function syncEmailsForConnection(
                 body: storedEmail.body,
                 received_at: storedEmail.received_at,
                 provider: connection.provider,
+                isForwarded,
+                thread_history: threadEmailsForNew?.map(e => ({
+                  from: e.from_address,
+                  from_name: e.from_name,
+                  subject: e.subject,
+                  received_at: e.received_at,
+                  snippet: e.body.substring(0, 2500)
+                })),
                 summary: processed.summary,
                 keyPoints: processed.keyPoints,
                 urgency: processed.urgency,

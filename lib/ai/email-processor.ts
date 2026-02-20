@@ -48,6 +48,7 @@ export interface EmailData {
   }>;
   user_context?: UserContextProfile; // Learned user behavior patterns
   calendar_context?: CalendarContext; // Calendar availability and meeting preferences
+  is_forwarded?: boolean; // Whether this email was forwarded to the user
 }
 
 /**
@@ -386,9 +387,14 @@ export async function processEmail(email: EmailData): Promise<ProcessedEmail> {
   // Format calendar context if available
   const calendarContextSection = formatCalendarContext(email.calendar_context);
 
+  // Forwarded email note (prepended to thread context section)
+  const forwardedNote = email.is_forwarded
+    ? `\nNote: This email was forwarded to you. You were not in the original thread.\nThis represents work being delegated to you — treat it as an assignment, not a reply.\n`
+    : '';
+
   const prompt = `You are a work preparation AI. Your job is to detect OBLIGATIONS and prepare WORK, not classify emails.
 
-${userContextSection}${calendarContextSection}${threadContextSection}CURRENT EMAIL (the one requiring your response):
+${userContextSection}${calendarContextSection}${forwardedNote}${threadContextSection}CURRENT EMAIL (the one requiring your response):
 From: ${email.from_name} <${email.from_address}>
 Subject: ${email.subject}
 Received: ${new Date(email.received_at).toLocaleString()}

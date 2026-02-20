@@ -57,8 +57,8 @@ export async function POST(
       );
     }
 
-    // Use custom message if provided, otherwise use AI draft
-    const messageBody = customMessage || sourceData.draft;
+    // Use custom message if provided, otherwise use AI draft body
+    const messageBody = customMessage || sourceData.draft?.body || sourceData.draft;
 
     // Send reply based on provider
     let sentMessageId: string;

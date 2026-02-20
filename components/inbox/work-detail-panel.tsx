@@ -48,7 +48,10 @@ export default function WorkDetailPanel({ item, isOpen, onClose, batchItems }: W
   const [isDismissing, setIsDismissing] = useState(false);
   const [isOpeningWorkflow, setIsOpeningWorkflow] = useState(false);
   const [showDraftPreview, setShowDraftPreview] = useState(false);
-  const [showOriginalEmail, setShowOriginalEmail] = useState(false);
+  const [expandedEmails, setExpandedEmails] = useState<Record<number, boolean>>({});
+
+  const toggleEmail = (idx: number) =>
+    setExpandedEmails(prev => ({ ...prev, [idx]: !prev[idx] }));
 
   // Reset selected item when panel closes
   const handleClose = () => {
@@ -643,94 +646,70 @@ export default function WorkDetailPanel({ item, isOpen, onClose, batchItems }: W
                         </div>
                       )}
 
-                      {/* Thread History */}
-                      {!isBatch && sourceData?.thread_history && sourceData.thread_history.length > 1 && (
+                      {/* Email Thread — expandable cards */}
+                      {!isBatch && sourceData?.thread_history && sourceData.thread_history.length > 0 && (
                         <div>
-                          <h3 className="text-[11px] font-semibold text-neutral-600 uppercase tracking-wide mb-2">
-                            Thread History
-                          </h3>
-                          <div className="space-y-2">
-                            {sourceData.thread_history.slice(0, 3).map((msg: any, i: number) => (
-                              <div
-                                key={i}
-                                className="bg-neutral-50 border border-neutral-200 p-3 text-[12px]"
-                              >
-                                <div className="flex items-center justify-between mb-1.5">
-                                  <span className="font-medium text-neutral-900">
-                                    {msg.from_name || msg.from}
-                                  </span>
-                                  <span className="text-neutral-500">
-                                    {new Date(msg.received_at).toLocaleDateString()}
-                                  </span>
-                                </div>
-                                <p className="text-neutral-600 line-clamp-2">
-                                  {msg.snippet}
-                                </p>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Original Email - Collapsible */}
-                      {!isBatch && !isExecutable(item) && (sourceData?.body || sourceData?.snippet) && (
-                        <div>
-                          <button
-                            onClick={() => setShowOriginalEmail(!showOriginalEmail)}
-                            className="flex items-center gap-1.5 text-[11px] font-semibold text-neutral-500 uppercase tracking-wide hover:text-neutral-700 transition-colors"
-                          >
-                            <ChevronRightIcon className={`w-3.5 h-3.5 transition-transform duration-150 ${showOriginalEmail ? 'rotate-90' : ''}`} />
-                            Original Email
-                          </button>
-                          {showOriginalEmail && (
-                            <div className="mt-2 bg-neutral-50 border border-neutral-200">
-                              {/* Email meta header */}
-                              <div className="px-4 py-3 border-b border-neutral-200 space-y-1">
-                                {(sourceData?.from_name || sourceData?.from) && (
-                                  <div className="flex gap-2 text-[12px]">
-                                    <span className="text-neutral-400 w-12 flex-shrink-0">From</span>
-                                    <span className="text-neutral-800">
-                                      {sourceData.from_name}
-                                      {sourceData.from && (
-                                        <span className="text-neutral-500"> &lt;{sourceData.from}&gt;</span>
-                                      )}
-                                    </span>
-                                  </div>
-                                )}
-                                {sourceData?.subject && (
-                                  <div className="flex gap-2 text-[12px]">
-                                    <span className="text-neutral-400 w-12 flex-shrink-0">Subject</span>
-                                    <span className="text-neutral-800">{sourceData.subject}</span>
-                                  </div>
-                                )}
-                                {sourceData?.received_at && (
-                                  <div className="flex gap-2 text-[12px]">
-                                    <span className="text-neutral-400 w-12 flex-shrink-0">Date</span>
-                                    <span className="text-neutral-800">
-                                      {new Date(sourceData.received_at).toLocaleDateString('en-US', {
-                                        weekday: 'short',
-                                        year: 'numeric',
-                                        month: 'short',
-                                        day: 'numeric',
-                                      })}{' '}
-                                      at{' '}
-                                      {new Date(sourceData.received_at).toLocaleTimeString('en-US', {
-                                        hour: 'numeric',
-                                        minute: '2-digit',
-                                        hour12: true,
-                                      })}
-                                    </span>
-                                  </div>
-                                )}
-                              </div>
-                              {/* Body */}
-                              <div className="px-4 py-3">
-                                <p className="text-[13px] text-neutral-700 leading-relaxed whitespace-pre-wrap">
-                                  {sourceData.body || sourceData.snippet}
-                                </p>
-                              </div>
-                            </div>
+                          {sourceData.thread_history.length > 1 && (
+                            <h3 className="text-[11px] font-semibold text-neutral-600 uppercase tracking-wide mb-2">
+                              Thread History
+                            </h3>
                           )}
+                          <div className="space-y-2">
+                            {sourceData.thread_history.slice(0, 5).map((msg: any, i: number) => {
+                              const isLast = i === Math.min(sourceData.thread_history.length, 5) - 1;
+                              // Use full body from sourceData for the latest email card
+                              const body = isLast && sourceData.body ? sourceData.body : msg.snippet;
+                              const isExpanded = !!expandedEmails[i];
+
+                              return (
+                                <div
+                                  key={i}
+                                  className={`border text-[12px] ${isLast ? 'border-neutral-300 bg-white' : 'border-neutral-200 bg-neutral-50'}`}
+                                >
+                                  <button
+                                    onClick={() => toggleEmail(i)}
+                                    className="w-full flex items-center justify-between px-3 py-2.5 text-left"
+                                  >
+                                    <div className="flex items-center gap-2 min-w-0">
+                                      <span className="font-medium text-neutral-900 truncate">
+                                        {msg.from_name || msg.from}
+                                      </span>
+                                      {isLast && sourceData.thread_history.length > 1 && (
+                                        <span className="flex-shrink-0 text-[10px] font-medium text-neutral-400 uppercase tracking-wide">
+                                          Latest
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="flex items-center gap-2 flex-shrink-0 ml-2">
+                                      <span className="text-neutral-400">
+                                        {new Date(msg.received_at).toLocaleDateString()}
+                                      </span>
+                                      <ChevronRightIcon
+                                        className={`w-3.5 h-3.5 text-neutral-400 transition-transform duration-150 ${isExpanded ? 'rotate-90' : ''}`}
+                                      />
+                                    </div>
+                                  </button>
+
+                                  {!isExpanded && (
+                                    <p className="px-3 pb-2.5 text-neutral-500 line-clamp-2 text-[12px]">
+                                      {msg.snippet}
+                                    </p>
+                                  )}
+
+                                  {isExpanded && (
+                                    <div className="px-3 pb-3 border-t border-neutral-100 pt-2.5 space-y-2">
+                                      {msg.subject && msg.subject !== sourceData.subject && (
+                                        <p className="text-neutral-400 text-[11px]">{msg.subject}</p>
+                                      )}
+                                      <p className="text-[12px] text-neutral-700 leading-relaxed whitespace-pre-wrap">
+                                        {body}
+                                      </p>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
                         </div>
                       )}
 

@@ -141,10 +141,27 @@ interface SendGmailReplyParams {
   references?: string;
 }
 
+/**
+ * Convert plain text (with \n newlines) to HTML for email sending.
+ * Double newlines become paragraph breaks; single newlines become <br>.
+ */
+function plainTextToHtml(text: string): string {
+  const escaped = text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+  const paragraphs = escaped.split(/\n{2,}/);
+  return paragraphs
+    .map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`)
+    .join('');
+}
+
 export async function sendGmailReply(params: SendGmailReplyParams): Promise<string> {
   const { encryptedTokens, threadId, to, subject, body, inReplyTo, references } = params;
 
   const gmail = await getGmailClient(encryptedTokens);
+
+  const htmlBody = plainTextToHtml(body);
 
   // Build email message in RFC 2822 format
   const messageParts = [
@@ -163,7 +180,7 @@ export async function sendGmailReply(params: SendGmailReplyParams): Promise<stri
   }
 
   messageParts.push('');
-  messageParts.push(body);
+  messageParts.push(htmlBody);
 
   const message = messageParts.join('\r\n');
 

@@ -54,7 +54,8 @@ interface UserInSystem {
  */
 export async function analyzeRecipients(
   email: Email,
-  usersInSystem: UserInSystem[]
+  usersInSystem: UserInSystem[],
+  senderContext?: { importance: number; relationshipType?: string }
 ): Promise<RecipientAnalysis> {
 
   // 1. Get all recipients
@@ -88,7 +89,7 @@ export async function analyzeRecipients(
   const isTeamEmail = isTeamAddress(email.to);
 
   // 6. Use AI to detect roles for each recipient
-  const aiRoleDetection = await detectRolesWithAI(email, recipientsInSystem);
+  const aiRoleDetection = await detectRolesWithAI(email, recipientsInSystem, senderContext);
 
   // 6. For each recipient, calculate full context
   const recipientContexts: Array<RecipientContext & {
@@ -123,7 +124,8 @@ export async function analyzeRecipients(
       recipient.position,
       mentionedUsers.includes(recipient.email),
       workSignals,
-      email.from // sender email for relationship context
+      email.from, // sender email for relationship context
+      senderContext
     );
 
     // Apply body analysis boost for explicit assignments
@@ -164,7 +166,7 @@ export async function analyzeRecipients(
         .filter(r => r.email !== recipient.email)
         .map(r => r.email),
       senderEmail: email.from,
-      senderRelationship: 'unknown', // Will enhance with actual relationship data later
+      senderRelationship: (senderContext?.relationshipType as SenderRelationship) || 'unknown',
     };
 
     recipientContexts.push(context);
@@ -199,10 +201,11 @@ interface AIRoleDetection {
  */
 async function detectRolesWithAI(
   email: Email,
-  recipients: Array<{ email: string; position: EmailPosition; userName: string | null }>
+  recipients: Array<{ email: string; position: EmailPosition; userName: string | null }>,
+  senderContext?: { importance: number; relationshipType?: string }
 ): Promise<AIRoleDetection[]> {
 
-  const prompt = buildRoleDetectionPrompt(email, recipients);
+  const prompt = buildRoleDetectionPrompt(email, recipients, senderContext);
 
   try {
     const response = await openai.chat.completions.create({
@@ -263,8 +266,13 @@ Return JSON with role, confidence (0.0-1.0), and reasoning for each recipient.`;
 
 function buildRoleDetectionPrompt(
   email: Email,
-  recipients: Array<{ email: string; position: EmailPosition; userName: string | null }>
+  recipients: Array<{ email: string; position: EmailPosition; userName: string | null }>,
+  senderContext?: { importance: number; relationshipType?: string }
 ): string {
+  const senderContextLine = senderContext
+    ? `\nSENDER CONTEXT:\n${email.from} is a ${senderContext.relationshipType || 'contact'} (importance: ${Math.round(senderContext.importance)}/100). High importance senders may create stronger obligations even from CC.\n`
+    : '';
+
   return `Analyze this email and determine each recipient's role.
 
 EMAIL METADATA:
@@ -272,6 +280,7 @@ From: ${email.fromName || email.from}
 To: ${email.to.join(', ')}
 CC: ${email.cc.join(', ')}
 Subject: ${email.subject}
+${senderContextLine}
 
 EMAIL BODY:
 ${email.body.substring(0, 2500)}${email.body.length > 2500 ? '...[truncated]' : ''}
@@ -322,7 +331,8 @@ function calculateConfidenceBreakdown(
   position: EmailPosition,
   wasMentioned: boolean,
   workSignals: WorkSignals,
-  senderEmail: string
+  senderEmail: string,
+  senderContext?: { importance: number; relationshipType?: string }
 ): ConfidenceBreakdown {
 
   // Factor 1: Base AI confidence
@@ -340,8 +350,13 @@ function calculateConfidenceBreakdown(
   const p_signals = getSignalsProbability(workSignals);
   confidence *= p_signals;
 
-  // Factor 5: Relationship (placeholder - will integrate with user context later)
-  const p_relationship = 1.0; // Neutral for now
+  // Factor 5: Relationship — boost confidence for high-importance senders
+  let p_relationship = 1.0; // Neutral default
+  if (senderContext) {
+    if (senderContext.importance > 70) p_relationship = 1.25;       // VIP: boost
+    else if (senderContext.importance < 40) p_relationship = 0.9;   // Low priority: slight reduction
+    // 40-70: stays 1.0 (neutral)
+  }
   confidence *= p_relationship;
 
   return {
