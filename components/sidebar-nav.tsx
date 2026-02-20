@@ -23,8 +23,8 @@ export default function SidebarNav({ userEmail }: SidebarNavProps) {
   const menuRef = useRef<HTMLDivElement>(null);
 
   const navigation = [
-    { name: 'Workflows', href: '/work', icon: QueueListIcon },
     { name: 'Work Inbox', href: '/inbox', icon: InboxIcon },
+    { name: 'Workflows', href: '/work', icon: QueueListIcon },
   ];
 
   // Close popover on outside click
