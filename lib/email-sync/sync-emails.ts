@@ -13,8 +13,18 @@
  */
 
 import { SupabaseClient } from '@supabase/supabase-js';
-import { fetchUnreadEmails as fetchGmailEmails, parseGmailMessage } from '@/lib/google/gmail';
-import { fetchUnreadEmails as fetchOutlookEmails, parseOutlookMessage } from '@/lib/microsoft/outlook';
+import {
+  fetchUnreadEmails as fetchGmailEmails,
+  parseGmailMessage,
+  fetchGmailAttachment,
+} from '@/lib/google/gmail';
+import {
+  fetchUnreadEmails as fetchOutlookEmails,
+  parseOutlookMessage,
+  fetchOutlookAttachments,
+  fetchOutlookAttachmentContent,
+} from '@/lib/microsoft/outlook';
+import { extractTextFromAttachment } from '@/lib/attachments/text-extractor';
 import { processEmail } from '@/lib/ai/email-processor';
 import { analyzeRecipients, shouldCreateInboxItem, getSuggestionLevel, getSuggestionLabel } from '@/lib/ai/recipient-detector';
 import { getVisualSection } from '@/lib/types/inbox';
@@ -31,6 +41,99 @@ function detectForwarded(subject: string, body: string): boolean {
   if (/^-{5,}\s*forwarded message\s*-{5,}/im.test(body)) return true;
   if (/^begin forwarded message:/im.test(body)) return true;
   return false;
+}
+
+interface ProcessedAttachment {
+  filename: string;
+  mimeType: string;
+  size: number;
+  storagePath: string;
+  extractedText: string | null;
+}
+
+async function processAttachmentsForEmail(params: {
+  emailId: string;
+  userId: string;
+  provider: 'gmail' | 'outlook';
+  encryptedTokens: string;
+  parsedEmail: ReturnType<typeof parseGmailMessage> | ReturnType<typeof parseOutlookMessage>;
+  outlookInternalId?: string;
+  adminSupabase: SupabaseClient;
+}): Promise<ProcessedAttachment[]> {
+  const { emailId, userId, provider, encryptedTokens, parsedEmail, outlookInternalId, adminSupabase } = params;
+  const results: ProcessedAttachment[] = [];
+
+  let attachmentList: Array<{ id: string; filename: string; mimeType: string; size: number }> = [];
+
+  if (provider === 'gmail') {
+    const gmailParsed = parsedEmail as ReturnType<typeof parseGmailMessage>;
+    attachmentList = (gmailParsed.attachments || []).map(a => ({
+      id: a.attachmentId,
+      filename: a.filename,
+      mimeType: a.mimeType,
+      size: a.size,
+    }));
+  } else if (provider === 'outlook' && outlookInternalId) {
+    try {
+      const outlookAttachments = await fetchOutlookAttachments(encryptedTokens, outlookInternalId);
+      attachmentList = outlookAttachments.map(a => ({
+        id: a.id,
+        filename: a.name,
+        mimeType: a.contentType,
+        size: a.size,
+      }));
+    } catch (err) {
+      console.error(`[Attachments] Failed to list Outlook attachments for email ${emailId}:`, err);
+      return results;
+    }
+  }
+
+  console.log(`[Attachments] Processing ${attachmentList.length} attachments for email ${emailId}`);
+
+  for (const att of attachmentList) {
+    try {
+      // Download attachment content
+      let buffer: Buffer;
+      if (provider === 'gmail') {
+        const gmailId = (parsedEmail as ReturnType<typeof parseGmailMessage>).metadata.gmail_id as string;
+        buffer = await fetchGmailAttachment(encryptedTokens, gmailId, att.id);
+      } else {
+        buffer = await fetchOutlookAttachmentContent(encryptedTokens, outlookInternalId!, att.id);
+      }
+
+      // Extract text
+      const extractedText = await extractTextFromAttachment(buffer, att.mimeType, att.filename);
+
+      // Upload to Supabase Storage
+      const storagePath = `${userId}/${emailId}/${att.filename}`;
+      const { error: uploadError } = await adminSupabase.storage
+        .from('email-attachments')
+        .upload(storagePath, buffer, {
+          contentType: att.mimeType,
+          upsert: true,
+        });
+
+      if (uploadError) {
+        console.error(`[Attachments] Failed to upload ${att.filename}:`, uploadError);
+        continue;
+      }
+
+      results.push({
+        filename: att.filename,
+        mimeType: att.mimeType,
+        size: att.size,
+        storagePath,
+        extractedText: extractedText ? extractedText.slice(0, 3000) : null,
+      });
+
+      console.log(`[Attachments] ✓ Stored ${att.filename} (${att.size} bytes, text: ${extractedText ? 'yes' : 'no'})`);
+    } catch (err) {
+      console.error(`[Attachments] Failed to process attachment ${att.filename}:`, err);
+      // Never throw — one bad attachment shouldn't kill the sync
+    }
+  }
+
+  return results;
 }
 
 export interface SyncResult {
@@ -205,12 +308,16 @@ export async function syncEmailsForConnection(
         const userEmail = connection.metadata?.email || connection.provider_account_id;
         const isFromUser = parsed.from_address.toLowerCase() === userEmail?.toLowerCase();
 
+        // Strip parser-only fields that don't exist as DB columns before inserting
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const { attachments: _att, hasAttachments: _ha, outlookInternalId: _oid, ...emailDbFields } = parsed as any;
+
         // Store email
         const { data: storedEmail, error: emailError } = await adminSupabase
           .from('emails')
           .insert({
             user_id: connection.user_id,
-            ...parsed,
+            ...emailDbFields,
             is_from_user: isFromUser, // Flag for learning from sent emails
           })
           .select()
@@ -223,6 +330,25 @@ export async function syncEmailsForConnection(
         }
 
         result.emailsFetched++;
+
+        // Process attachments (Gmail: check parsed.attachments; Outlook: check parsed.hasAttachments)
+        const hasAttachments =
+          ((parsed as any).attachments?.length > 0) ||
+          ((parsed as any).hasAttachments === true);
+
+        let processedAttachments: ProcessedAttachment[] = [];
+
+        if (hasAttachments) {
+          processedAttachments = await processAttachmentsForEmail({
+            emailId: storedEmail.id,
+            userId: connection.user_id,
+            provider: connection.provider as 'gmail' | 'outlook',
+            encryptedTokens,
+            parsedEmail: parsed,
+            outlookInternalId: (parsed as any).outlookInternalId,
+            adminSupabase,
+          });
+        }
 
         // Check if email is from the user (already determined and stored)
         console.log(`    User email: ${userEmail}`);
@@ -381,19 +507,28 @@ export async function syncEmailsForConnection(
               .eq('thread_id', storedEmail.thread_id || storedEmail.message_id)
               .order('received_at', { ascending: true });
 
+            // Use the latest non-user email from the thread as the "current email"
+            // (Gmail fetches newest-first, so the update path often processes an older email
+            // that arrives after a newer one already created the inbox item — without this fix
+            // the draft would be generated against the old email, not the latest reply)
+            const latestIncoming = threadEmails
+              ? [...threadEmails].reverse().find(e => !e.is_from_user)
+              : null;
+            const emailForProcessing = latestIncoming || storedEmail;
+
             // AI Processing with full thread context (recipient-specific)
             const processed = await processEmail({
-              id: storedEmail.id,
+              id: emailForProcessing.id,
               user_id: recipient.userId,
-              message_id: storedEmail.message_id,
-              from_address: storedEmail.from_address,
-              from_name: storedEmail.from_name,
-              subject: storedEmail.subject,
-              body: storedEmail.body,
-              received_at: storedEmail.received_at,
+              message_id: emailForProcessing.message_id,
+              from_address: emailForProcessing.from_address,
+              from_name: emailForProcessing.from_name,
+              subject: emailForProcessing.subject,
+              body: emailForProcessing.body,
+              received_at: emailForProcessing.received_at,
               thread_context: threadEmails || [],
-              user_context: userContext, // NEW: Personalize based on learned style
-              calendar_context: calendarContext, // NEW: Schedule-aware processing
+              user_context: userContext,
+              calendar_context: calendarContext,
               is_forwarded: isForwarded,
             });
 
@@ -404,9 +539,9 @@ export async function syncEmailsForConnection(
             try {
               executionPlan = await decomposeEmailWork(
                 {
-                  subject: storedEmail.subject,
-                  body: storedEmail.body,
-                  from: storedEmail.from_name || storedEmail.from_address,
+                  subject: emailForProcessing.subject,
+                  body: emailForProcessing.body,
+                  from: emailForProcessing.from_name || emailForProcessing.from_address,
                   threadHistory: threadEmails || undefined,
                 },
                 recipient.userId,
@@ -461,11 +596,14 @@ export async function syncEmailsForConnection(
                   email_id: storedEmail.id,
                   message_id: storedEmail.message_id,
                   thread_id: storedEmail.thread_id || storedEmail.message_id,
-                  from: storedEmail.from_address,
-                  from_name: storedEmail.from_name,
-                  subject: storedEmail.subject,
-                  body: storedEmail.body,
-                  received_at: storedEmail.received_at,
+                  from: emailForProcessing.from_address,
+                  from_name: emailForProcessing.from_name,
+                  subject: emailForProcessing.subject,
+                  // Use the absolute latest thread email body so the "Latest" card expands correctly
+                  body: threadEmails && threadEmails.length > 0
+                    ? threadEmails[threadEmails.length - 1].body
+                    : storedEmail.body,
+                  received_at: emailForProcessing.received_at,
                   provider: connection.provider,
                   isForwarded,
                   thread_history: threadEmails?.map(e => ({
@@ -479,6 +617,7 @@ export async function syncEmailsForConnection(
                   keyPoints: processed.keyPoints,
                   urgency: processed.urgency,
                   signals: processed.signals,
+                  attachments: processedAttachments.length > 0 ? processedAttachments : undefined,
                   ...processed.preparedOutput
                 },
                 ai_suggestion_type: recipient.inferredWorkState,
@@ -619,6 +758,7 @@ export async function syncEmailsForConnection(
                 keyPoints: processed.keyPoints,
                 urgency: processed.urgency,
                 signals: processed.signals,
+                attachments: processedAttachments.length > 0 ? processedAttachments : undefined,
                 ...processed.preparedOutput
               },
 

@@ -19,6 +19,7 @@ import {
   MapPinIcon,
   VideoCameraIcon,
   ChevronRightIcon,
+  PaperClipIcon,
 } from '@heroicons/react/24/outline';
 import type { InboxItem } from '@/lib/types/inbox';
 import { isExecutable } from '@/lib/types/inbox';
@@ -49,9 +50,35 @@ export default function WorkDetailPanel({ item, isOpen, onClose, batchItems }: W
   const [isOpeningWorkflow, setIsOpeningWorkflow] = useState(false);
   const [showDraftPreview, setShowDraftPreview] = useState(false);
   const [expandedEmails, setExpandedEmails] = useState<Record<number, boolean>>({});
+  const [downloadingFile, setDownloadingFile] = useState<string | null>(null);
 
   const toggleEmail = (idx: number) =>
     setExpandedEmails(prev => ({ ...prev, [idx]: !prev[idx] }));
+
+  const formatFileSize = (bytes: number) => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
+  const handleDownloadAttachment = async (filename: string) => {
+    setDownloadingFile(filename);
+    try {
+      const response = await fetch(
+        `/api/inbox/${currentItem.id}/attachment?filename=${encodeURIComponent(filename)}`
+      );
+      if (response.ok) {
+        const { signedUrl } = await response.json();
+        window.open(signedUrl, '_blank');
+      } else {
+        console.error('Failed to get attachment URL');
+      }
+    } catch (error) {
+      console.error('Download attachment error:', error);
+    } finally {
+      setDownloadingFile(null);
+    }
+  };
 
   // Reset selected item when panel closes
   const handleClose = () => {
@@ -642,6 +669,45 @@ export default function WorkDetailPanel({ item, isOpen, onClose, batchItems }: W
                                 +{recipientContext.otherRecipients.length - 5} more
                               </span>
                             )}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Attachments */}
+                      {!isBatch && sourceData?.attachments && sourceData.attachments.length > 0 && (
+                        <div>
+                          <h3 className="text-[11px] font-semibold text-neutral-600 uppercase tracking-wide mb-2">
+                            Attachments ({sourceData.attachments.length})
+                          </h3>
+                          <div className="space-y-1.5">
+                            {sourceData.attachments.map((att: { filename: string; mimeType: string; size: number; storagePath: string }, i: number) => (
+                              <div
+                                key={i}
+                                className="flex items-center justify-between px-3 py-2 bg-neutral-50 border border-neutral-200"
+                              >
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <PaperClipIcon className="w-4 h-4 text-neutral-400 flex-shrink-0" />
+                                  <span className="text-[13px] text-neutral-800 truncate">
+                                    {att.filename}
+                                  </span>
+                                  <span className="text-[11px] text-neutral-400 flex-shrink-0">
+                                    {formatFileSize(att.size)}
+                                  </span>
+                                </div>
+                                <button
+                                  onClick={() => handleDownloadAttachment(att.filename)}
+                                  disabled={downloadingFile === att.filename}
+                                  className="flex-shrink-0 ml-3 text-[12px] font-medium text-indigo-600 hover:text-indigo-800 disabled:opacity-50 flex items-center gap-1"
+                                >
+                                  {downloadingFile === att.filename ? (
+                                    <div className="w-3 h-3 border border-indigo-600 border-t-transparent rounded-full animate-spin" />
+                                  ) : (
+                                    <ArrowTopRightOnSquareIcon className="w-3.5 h-3.5" />
+                                  )}
+                                  Download
+                                </button>
+                              </div>
+                            ))}
                           </div>
                         </div>
                       )}

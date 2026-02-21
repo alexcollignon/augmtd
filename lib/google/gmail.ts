@@ -1,6 +1,13 @@
 import { google } from 'googleapis';
 import { getOAuth2Client } from './oauth';
 
+export interface GmailAttachmentMeta {
+  attachmentId: string;
+  filename: string;
+  mimeType: string;
+  size: number;
+}
+
 export interface GmailMessage {
   id: string;
   threadId: string;
@@ -71,15 +78,23 @@ export function parseGmailMessage(message: GmailMessage) {
   const getHeader = (name: string) =>
     headers.find((h: any) => h.name.toLowerCase() === name.toLowerCase())?.value || '';
 
-  // Extract body
+  // Extract body and attachment metadata
   let body = '';
   let htmlBody = '';
+  const attachments: GmailAttachmentMeta[] = [];
 
   const extractBody = (part: any) => {
     if (part.mimeType === 'text/plain' && part.body?.data) {
       body = Buffer.from(part.body.data, 'base64').toString('utf-8');
     } else if (part.mimeType === 'text/html' && part.body?.data) {
       htmlBody = Buffer.from(part.body.data, 'base64').toString('utf-8');
+    } else if (part.body?.attachmentId && part.filename) {
+      attachments.push({
+        attachmentId: part.body.attachmentId,
+        filename: part.filename,
+        mimeType: part.mimeType || 'application/octet-stream',
+        size: part.body.size || 0,
+      });
     }
 
     if (part.parts) {
@@ -123,11 +138,29 @@ export function parseGmailMessage(message: GmailMessage) {
     received_at: new Date(parseInt(message.internalDate)).toISOString(),
     thread_id: message.threadId,
     labels: message.labelIds || [],
+    attachments,
     metadata: {
       provider: 'gmail',
       gmail_id: message.id,
     },
   };
+}
+
+export async function fetchGmailAttachment(
+  encryptedTokens: string,
+  messageId: string,
+  attachmentId: string
+): Promise<Buffer> {
+  const gmail = await getGmailClient(encryptedTokens);
+  const response = await gmail.users.messages.attachments.get({
+    userId: 'me',
+    messageId,
+    id: attachmentId,
+  });
+  const data = response.data.data || '';
+  // Gmail uses base64url encoding
+  const base64 = data.replace(/-/g, '+').replace(/_/g, '/');
+  return Buffer.from(base64, 'base64');
 }
 
 interface SendGmailReplyParams {

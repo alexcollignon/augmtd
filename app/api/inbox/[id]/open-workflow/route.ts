@@ -44,6 +44,18 @@ export async function POST(
     const seed = item.execution_plan;
     const title = item.work_title || seed.deliverable_description || 'Untitled workflow';
 
+    // Inject attachment text into the workflow prompt if available
+    const attachments: Array<{ filename: string; extractedText: string | null }> =
+      item.source_data?.attachments || [];
+    const attachmentContext = attachments
+      .filter(a => a.extractedText)
+      .map(a => `--- Attachment: ${a.filename} ---\n${a.extractedText}`)
+      .join('\n\n');
+
+    const workflowPrompt = attachmentContext
+      ? `${seed.workflow_prompt}\n\n${attachmentContext}`
+      : seed.workflow_prompt;
+
     // Use service role client for writes that bypass RLS
     const adminClient = (await import('@supabase/supabase-js')).createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -75,7 +87,7 @@ export async function POST(
 
     return NextResponse.json({
       threadId: thread.id,
-      workflowPrompt: seed.workflow_prompt,
+      workflowPrompt,
     });
   } catch (error) {
     console.error('[OpenWorkflow] Error:', error);

@@ -1,7 +1,7 @@
 # AUGMTD Implementation Status
-**Version:** 4.7
-**Last Updated:** 2026-02-20
-**Current Phase:** Phase 10 Complete + Post-launch fixes (document UX, email sync, edit quality)
+**Version:** 4.9
+**Last Updated:** 2026-02-21
+**Current Phase:** Phase 12 Complete (email attachment pipeline + inbox UI fixes)
 
 ---
 
@@ -40,6 +40,9 @@
 | Toast Notifications | ✅ Complete | 100% |
 | Activity Log Timestamps | ✅ Complete | 100% |
 | Docx Execution Engine (Phase 10) | ✅ Complete | 100% |
+| Email Processing Improvements (Phase 11) | ✅ Complete | 100% |
+| Email Attachment Pipeline (Phase 12) | ✅ Complete | 100% |
+| Inbox UI Fixes (Phase 12) | ✅ Complete | 100% |
 | Vector Similarity | ⚠️ Planned | 0% |
 
 ---
@@ -1382,4 +1385,89 @@ User message bubble now appears immediately on Enter, before the API call. Previ
 - `app/api/work/threads/[id]/route.ts` — storage cleanup on delete
 - `app/api/work/threads/[id]/edit-artifact/route.ts` — artifact.content as source of truth, max_tokens 8000
 - `lib/email-sync/sync-emails.ts` — solo user recipient detection fix
+
+---
+
+## ✅ Phase 11: Email Processing Improvements + Send Formatting Fix (Feb 20, 2026)
+
+### Thread Context for New Items
+
+`threadEmailsForNew` now fetched **before** `processEmail()` for new inbox items (was update-only). The AI sees full thread context on first creation.
+
+`thread_history` now written to `source_data` on **both** create and update paths (was update-only). Snippet size: 2500 chars (was 150).
+
+### Forwarded Email Detection
+
+`detectForwarded(subject, body)` checks FW:/Fwd: prefix and "Forwarded message" body markers. Sets `is_forwarded` on `source_data` and injects delegation note into AI prompt.
+
+### Sender Relationship Boosting
+
+Sender looked up in `userContext.relationshipGraph` before `analyzeRecipients()`. Importance (×100) and typicalTone passed as `senderContext`:
+- `importance > 70` → `p_relationship = 1.25` (VIP boost)
+- `importance < 40` → `p_relationship = 0.9` (reduction)
+
+### Send Reply Format Fix
+
+- Fallback in `send-reply/route.ts` now uses `sourceData.draft?.body` (not the whole draft object)
+- `plainTextToHtml()` added: both `sendGmailReply` and `sendOutlookReply` convert plain text to HTML before sending. Both providers declare `Content-Type: HTML`.
+
+### Files Updated
+
+- `lib/email-sync/sync-emails.ts` — thread context for new items, thread_history on both paths, snippet size, detectForwarded(), senderContext boosting
+- `lib/google/gmail.ts` — plainTextToHtml() in sendGmailReply
+- `lib/microsoft/outlook.ts` — plainTextToHtml() in sendOutlookReply
+- `app/api/inbox/[id]/send-reply/route.ts` — draft body fallback fix
+
+---
+
+## ✅ Phase 12: Email Attachment Pipeline + Inbox UI Fixes (Feb 21, 2026)
+
+### Email Attachment Pipeline
+
+End-to-end attachment handling: detect during sync → download → extract text → store in Supabase Storage → surface in UI + inject into workflow prompts.
+
+**Key packages:** `pdf-parse` v2.4.5 (uses `PDFParse` class, NOT the old v1 function), `mammoth` — both in `serverExternalPackages`.
+
+**`lib/attachments/text-extractor.ts`** (new): PDF → `new PDFParse({ data: buffer }).getText()`, DOCX → `mammoth.extractRawText({ buffer })`, TXT → `buffer.toString()`, others → null (never throws).
+
+**Supabase bucket** `email-attachments` (private, 10 MB limit): migration `supabase/migrations/20260221_add_email_attachments_bucket.sql`.
+
+**Gmail:** `parseGmailMessage()` returns `attachments: GmailAttachmentMeta[]`. `fetchGmailAttachment()` decodes base64url.
+
+**Outlook:** `parseOutlookMessage()` returns `hasAttachments` + `outlookInternalId`. `fetchOutlookAttachments()` + `fetchOutlookAttachmentContent()` added.
+
+**Sync:** Parser-only fields stripped before DB insert. `processAttachmentsForEmail()` runs after email stored; `source_data.attachments` populated on both create and update paths.
+
+**Download API** `app/api/inbox/[id]/attachment/route.ts` (new): `GET ?filename=X` → 60-second signed URL.
+
+**Workflow injection** (`open-workflow/route.ts`): attachment `extractedText` (max 3000 chars) appended to `workflowPrompt` at thread creation.
+
+### Inbox UI Fixes
+
+**Thread body bug:** `source_data.body` in update path now uses `threadEmails[threadEmails.length - 1].body` (latest email), not `storedEmail.body` (oldest).
+
+**`latestIncoming` pattern:** `processEmail()` and `decomposeEmailWork()` use the latest non-user thread email for context — drafts are now contextually relevant to the most recent incoming message.
+
+**Expandable thread history** (`work-detail-inline.tsx`): replaced static "Original Email" section with per-email expandable cards. Each card shows sender + date; expands to full body. "Latest" badge on last card.
+
+**Attachment UI:** `work-detail-panel.tsx` and `work-detail-inline.tsx` both show "Attachments (N)" section with filename, size, and Download button. `email-list-card.tsx` shows paperclip icon + count badge.
+
+### Files Created / Updated
+
+**New:**
+- `lib/attachments/text-extractor.ts`
+- `supabase/migrations/20260221_add_email_attachments_bucket.sql`
+- `app/api/inbox/[id]/attachment/route.ts`
+
+**Updated:**
+- `next.config.ts` — `serverExternalPackages`
+- `lib/google/gmail.ts` — attachment metadata + `fetchGmailAttachment()`
+- `lib/microsoft/outlook.ts` — `hasAttachments`, `outlookInternalId`, fetch helpers
+- `lib/email-sync/sync-emails.ts` — strip parser-only fields, `processAttachmentsForEmail()`, `latestIncoming` pattern, thread body fix
+- `app/api/inbox/[id]/open-workflow/route.ts` — attachment text injection
+- `components/inbox/work-detail-panel.tsx` — Attachments section
+- `components/inbox/work-detail-inline.tsx` — Attachments section + expandable thread cards
+- `components/inbox/email-list-card.tsx` — paperclip badge + snippet typeof guard
+
+**External dependencies:** `pdf-parse` + `@types/pdf-parse`, `mammoth`
 

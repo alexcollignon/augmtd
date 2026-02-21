@@ -1,6 +1,7 @@
 'use client';
 
 import Image from 'next/image';
+import { PaperClipIcon } from '@heroicons/react/24/outline';
 import type { InboxItem } from '@/lib/types/inbox';
 import { needsConfirmation } from '@/lib/types/inbox';
 
@@ -41,7 +42,9 @@ export default function EmailListCard({ item, isSelected, onSelect }: EmailListC
     ? item.work_title || sourceData?.subject || '(no subject)'
     : sourceData?.subject || '(no subject)';
 
-  const snippetDisplay = sourceData?.snippet || (sourceData?.body as string | undefined)?.slice(0, 120) || '';
+  const snippetDisplay = (typeof sourceData?.snippet === 'string' ? sourceData.snippet : null)
+    || (typeof sourceData?.body === 'string' ? sourceData.body.slice(0, 120) : null)
+    || '';
   const timeDisplay = sourceData?.received_at ? formatTime(sourceData.received_at as string) : '';
 
   return (
@@ -93,6 +96,12 @@ export default function EmailListCard({ item, isSelected, onSelect }: EmailListC
           )}
           {sourceData?.draft && (
             <span className="text-[10px] text-violet-600">Draft ready</span>
+          )}
+          {sourceData?.attachments?.length > 0 && (
+            <span className="inline-flex items-center gap-0.5 text-neutral-400">
+              <PaperClipIcon className="w-2.5 h-2.5" />
+              <span className="text-[10px]">{sourceData.attachments.length}</span>
+            </span>
           )}
         </div>
       </div>

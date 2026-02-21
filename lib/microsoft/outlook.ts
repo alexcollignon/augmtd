@@ -30,6 +30,14 @@ interface OutlookMessage {
   }>;
   receivedDateTime: string;
   internetMessageId: string;
+  hasAttachments?: boolean;
+}
+
+export interface OutlookAttachmentMeta {
+  id: string;
+  name: string;
+  contentType: string;
+  size: number;
 }
 
 interface TokenRefreshCallback {
@@ -100,7 +108,7 @@ export async function fetchUnreadEmails(
     .api('/me/messages')
     .filter(`receivedDateTime ge ${dateString}`)
     .top(maxResults)
-    .select('id,conversationId,subject,bodyPreview,body,from,toRecipients,ccRecipients,receivedDateTime,internetMessageId')
+    .select('id,conversationId,subject,bodyPreview,body,from,toRecipients,ccRecipients,receivedDateTime,internetMessageId,hasAttachments')
     .orderby('receivedDateTime desc')
     .get();
 
@@ -129,6 +137,8 @@ export function parseOutlookMessage(message: OutlookMessage) {
     body: bodyText || message.bodyPreview || '',
     received_at: new Date(message.receivedDateTime).toISOString(),
     thread_id: message.conversationId, // Outlook conversation ID for threading
+    hasAttachments: message.hasAttachments || false,
+    outlookInternalId: message.id, // Graph API message ID (needed for attachment calls)
     metadata: {
       provider: 'outlook',
       outlook_id: message.id,
@@ -136,6 +146,30 @@ export function parseOutlookMessage(message: OutlookMessage) {
       conversation_id: message.conversationId,
     },
   };
+}
+
+export async function fetchOutlookAttachments(
+  encryptedTokens: string,
+  outlookMessageId: string
+): Promise<OutlookAttachmentMeta[]> {
+  const client = await getGraphClient(encryptedTokens);
+  const response = await client
+    .api(`/me/messages/${outlookMessageId}/attachments`)
+    .select('id,name,contentType,size')
+    .get();
+  return (response.value || []) as OutlookAttachmentMeta[];
+}
+
+export async function fetchOutlookAttachmentContent(
+  encryptedTokens: string,
+  outlookMessageId: string,
+  attachmentId: string
+): Promise<Buffer> {
+  const client = await getGraphClient(encryptedTokens);
+  const attachment = await client
+    .api(`/me/messages/${outlookMessageId}/attachments/${attachmentId}`)
+    .get();
+  return Buffer.from(attachment.contentBytes, 'base64');
 }
 
 interface SendOutlookReplyParams {

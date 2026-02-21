@@ -6,6 +6,7 @@ import {
   CheckCircleIcon,
   ArrowTopRightOnSquareIcon,
   SparklesIcon,
+  PaperClipIcon,
 } from '@heroicons/react/24/outline';
 import type { InboxItem } from '@/lib/types/inbox';
 import { needsConfirmation } from '@/lib/types/inbox';
@@ -171,6 +172,17 @@ export default function WorkCard({ item }: WorkCardProps) {
                 <span className="inline-flex items-center gap-0.5 text-violet-600">
                   <SparklesIcon className="w-2.5 h-2.5" />
                   <span className="text-[10px]">Draft ready</span>
+                </span>
+              </>
+            )}
+
+            {/* Attachment indicator */}
+            {sourceData?.attachments?.length > 0 && (
+              <>
+                <span className="text-neutral-300">•</span>
+                <span className="inline-flex items-center gap-0.5 text-neutral-500">
+                  <PaperClipIcon className="w-2.5 h-2.5" />
+                  <span className="text-[10px]">{sourceData.attachments.length}</span>
                 </span>
               </>
             )}
