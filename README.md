@@ -526,6 +526,27 @@ interface Skill {
 
 ## 📈 Recent Improvements
 
+### Workflow Attachment Inputs + Document Lifecycle UX (Feb 21, 2026)
+- ✅ **URL persistence for workflow chat** — active thread ID reflected in URL (`?thread=<id>`); sharing or refreshing reopens the correct thread
+- ✅ **User file uploads to plan inputs** — "Attach file" button on each pending plan input; PDF/DOCX/TXT supported (max 10 MB); text extracted, stored in Supabase Storage, input marked "provided"
+- ✅ **Attach button in entry view** — files can be attached to workflow inputs before opening a thread from an inbox item
+- ✅ **Attachment text at generation time** — `generate` route merges all `user_attachments` extracted text into the Haiku prompt, so contract clauses and report data appear in the generated document
+- ✅ **`isDocumentStale` signal** — amber banner appears in PlanPanel when plan has changed since last document generation (5-second threshold to avoid false positives)
+- ✅ **Regeneration guard** — clicking "Regenerate document" requires a second confirmation ("Replace document" in red) to prevent accidental overwrites
+- ✅ **4-state CTA logic** — No artifact → Generate; Not stale → View; Stale → Regenerate (amber); Confirming → Replace/Cancel
+- ✅ **"Revise plan" label** — replaces "Back to plan" in DocumentPanel toolbar; communicates intent (edit plan) rather than navigation mechanics
+- ✅ **Stale flag auto-resets after generation** — React thread state synced with `updated_at: artifact.generated_at` so the amber banner clears immediately after generating/editing without a page reload
+
+**Technical Details:**
+```
+user_attachments: JSONB column on work_threads — [{inputId, filename, mimeType, size, storagePath, extractedText}]
+Attach API: POST /api/work/threads/[id]/attach (multipart) + DELETE ?inputId=<id>
+isDocumentStale: (updated_at - artifact.generated_at) > 5000ms
+confirmingRegenerate: local useState, resets via useEffect when isDocumentStale clears
+Storage: email-attachments bucket, path {userId}/{threadId}/{inputId}-{filename}
+Allowed types: application/pdf, application/vnd.openxmlformats-officedocument.wordprocessingml.document, text/plain
+```
+
 ### Batch UI Redesign, Email Send Fixes & Toast Notifications (Feb 19, 2026)
 - ✅ **Batch item cards** now have ✓/✗ icon buttons per card instead of text buttons — green check to claim, neutral→red X to instantly remove the card
 - ✅ **Optimistic card removal** — clicking ✗ removes the card from the list immediately (converted `batchItems` from derived const to `useState`)

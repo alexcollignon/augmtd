@@ -44,16 +44,21 @@ export async function POST(
     const seed = item.execution_plan;
     const title = item.work_title || seed.deliverable_description || 'Untitled workflow';
 
-    // Inject attachment text into the workflow prompt if available
-    const attachments: Array<{ filename: string; extractedText: string | null }> =
+    // Inject attachment metadata into the workflow prompt (not full text — that's injected at generation time)
+    const attachments: Array<{ filename: string; mimeType?: string; size?: number }> =
       item.source_data?.attachments || [];
-    const attachmentContext = attachments
-      .filter(a => a.extractedText)
-      .map(a => `--- Attachment: ${a.filename} ---\n${a.extractedText}`)
-      .join('\n\n');
 
-    const workflowPrompt = attachmentContext
-      ? `${seed.workflow_prompt}\n\n${attachmentContext}`
+    const attachmentMeta = attachments.map((a) => {
+      const typeLabel = a.mimeType?.includes('pdf') ? 'PDF'
+        : a.mimeType?.includes('wordprocessingml') ? 'Word document'
+        : a.mimeType === 'text/plain' ? 'text file'
+        : 'file';
+      const sizeLabel = a.size ? `, ${Math.round(a.size / 1024)} KB` : '';
+      return `- ${a.filename} (${typeLabel}${sizeLabel})`;
+    }).join('\n');
+
+    const workflowPrompt = attachmentMeta
+      ? `${seed.workflow_prompt}\n\nAvailable attachments (already provided — include each as an input with status "provided" in the plan):\n${attachmentMeta}`
       : seed.workflow_prompt;
 
     // Use service role client for writes that bypass RLS

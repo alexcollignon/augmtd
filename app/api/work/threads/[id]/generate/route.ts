@@ -102,7 +102,7 @@ export async function POST(
 
     const { data: thread, error: threadError } = await supabase
       .from('work_threads')
-      .select('id, title, plan')
+      .select('id, title, plan, user_attachments')
       .eq('id', threadId)
       .eq('user_id', user.id)
       .single();
@@ -115,12 +115,20 @@ export async function POST(
       return NextResponse.json({ error: 'Thread has no plan yet' }, { status: 400 });
     }
 
-    const { data: recentMessages } = await supabase
-      .from('work_messages')
-      .select('role, content')
-      .eq('thread_id', threadId)
-      .order('created_at', { ascending: false })
-      .limit(10);
+    const [{ data: recentMessages }, { data: linkedItem }] = await Promise.all([
+      supabase
+        .from('work_messages')
+        .select('role, content')
+        .eq('thread_id', threadId)
+        .order('created_at', { ascending: false })
+        .limit(10),
+      supabase
+        .from('inbox_items')
+        .select('source_data')
+        .eq('work_thread_id', threadId)
+        .eq('user_id', user.id)
+        .maybeSingle(),
+    ]);
 
     const { data: identityProfile } = await supabase
       .from('context_profiles')
@@ -136,6 +144,21 @@ export async function POST(
       .reverse()
       .map((m: { role: string; content: string }) => `${m.role}: ${m.content}`)
       .join('\n');
+
+    // Inject full attachment text at generation time (only metadata was used during planning)
+    // Merges email-originated attachments + user-uploaded attachments
+    const emailAttachments = (linkedItem?.source_data?.attachments || []) as Array<{
+      filename: string;
+      extractedText: string | null;
+    }>;
+    const userAttachments = ((thread as any).user_attachments || []) as Array<{
+      filename: string;
+      extractedText: string | null;
+    }>;
+    const attachmentContext = [...emailAttachments, ...userAttachments]
+      .filter((a) => a.extractedText)
+      .map((a) => `--- ${a.filename} ---\n${a.extractedText}`)
+      .join('\n\n');
 
     const deadlineLine = plan.deadline ? `\nDeadline: ${new Date(plan.deadline).toLocaleDateString()}` : '';
     const userContext = identity
@@ -176,7 +199,7 @@ ${(plan.outputs || []).map((o: { description: string }) => `- ${o.description}`)
 
 CONVERSATION CONTEXT:
 ${conversationContext || '(none)'}
-
+${attachmentContext ? `\nATTACHMENT CONTENT (use as source material when writing the document):\n${attachmentContext}\n` : ''}
 AUTHOR CONTEXT: ${userContext}
 
 Return the JSON document structure.`;

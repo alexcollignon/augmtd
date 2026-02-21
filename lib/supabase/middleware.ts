@@ -16,10 +16,8 @@ export async function updateSession(request: NextRequest) {
         },
         setAll(cookiesToSet) {
           cookiesToSet.forEach(({ name, value, options }) => {
-            // Ensure secure cookie settings
             const secureOptions = {
               ...options,
-              httpOnly: true,
               secure: process.env.NODE_ENV === 'production',
               sameSite: 'lax' as const,
               maxAge: 60 * 60 * 24 * 7, // 7 days

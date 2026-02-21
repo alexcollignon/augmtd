@@ -1,3 +1,181 @@
+# Recent Changes — Phase 13: Workflow Attachment Input System + Document Lifecycle UX (Feb 21, 2026)
+
+## Summary
+
+Workflow threads can now accept user-uploaded files directly (attached to plan inputs or at thread creation time). Full text is injected at document generation, not at planning time — keeping planning prompts lean. The document lifecycle UX was also hardened: a stale-document signal, a regeneration guard, and intent-clearer labeling ("Revise plan", "Regenerate document") prevent accidental data loss and silent plan/document drift.
+
+---
+
+## 1. URL Persistence Bug Fix
+
+**Problem:** Opening a workflow from an inbox item sets `?prompt=yyy` in the URL. Refreshing the page re-fired the initial workflow prompt via `sendMessage`, creating a duplicate first message and hiding the thread history.
+
+**Fix:** `window.history.replaceState(null, '', '/work')` called at mount, before `sendMessage`, in the `initialWorkflowPrompt` useEffect. The URL is stripped immediately so refreshes behave identically to threads opened from scratch. `skipLoadRef` continues to prevent the `loadThread` race condition on new threads.
+
+**File:** `app/work/work-page-client.tsx`
+
+---
+
+## 2. Metadata-Only Attachment Injection at Planning Time
+
+**Changed from:** Full `extractedText` (≤ 3000 chars) appended to `workflowPrompt` when opening a workflow from an inbox item with attachments.
+
+**Changed to:** Filename + type + size only in the planning prompt:
+```
+Available attachments (already provided — include each as an input with status "provided"):
+- contract.pdf (PDF, 45 KB)
+- brief.docx (Word document, 12 KB)
+```
+
+Full attachment text is now injected at document **generation** time only (see §4). This keeps planning conversations short and avoids ballooning the GPT-4o-mini context window.
+
+**Files:** `app/api/inbox/[id]/open-workflow/route.ts`, `app/api/work/threads/[id]/messages/route.ts` (system prompt updated to instruct AI to set `status: "provided"` and `providedFilename` from the prompt)
+
+---
+
+## 3. Workflow Input Attach Button (Plan Panel)
+
+Users can now upload files directly to individual inputs in the plan panel.
+
+**New API route — `POST /api/work/threads/[id]/attach`:**
+1. Validates file (PDF/DOCX/TXT, max 10 MB)
+2. Extracts text via `lib/attachments/text-extractor.ts` (truncated to 3000 chars)
+3. Uploads raw buffer to `email-attachments` bucket at `{userId}/{threadId}/{inputId}-{filename}`
+4. Appends to `work_threads.user_attachments` JSONB array: `{inputId, filename, mimeType, size, storagePath, extractedText}`
+5. Updates `work_threads.plan` to set `status: "provided"` and `providedFilename` on the matching input
+6. Returns `{ attachment, plan }`
+
+**`DELETE /api/work/threads/[id]/attach?inputId=xxx`:**
+- Removes file from Supabase Storage
+- Removes entry from `work_threads.user_attachments`
+- Resets plan input to `{ status: "pending", providedFilename: undefined }`
+
+**Plan panel UI changes:**
+- Pending inputs: blue background, type badge + "Attach" button (right column)
+- Provided inputs: green background, filename with document icon + ✕ remove button; "Attach" button hidden
+- Upload in-progress: spinner replaces "Attach" button
+- State changes synced to DB and reflected immediately in React state
+
+**New DB migration:** `supabase/migrations/20260221_add_user_attachments_to_work_threads.sql`
+```sql
+ALTER TABLE work_threads ADD COLUMN IF NOT EXISTS user_attachments JSONB DEFAULT '[]'::jsonb;
+```
+Note: Apply manually via Supabase SQL editor (local migration history mismatch prevents `db push`).
+
+**New `WorkflowInput` type fields (`lib/types/inbox.ts`):**
+```typescript
+status?: 'provided' | 'pending';
+providedFilename?: string;
+```
+
+**File:** `app/api/work/threads/[id]/attach/route.ts` (new), `app/work/work-page-client.tsx`, `lib/types/inbox.ts`
+
+---
+
+## 4. Generate Route Merges Email + User Attachments
+
+At document generation time, Haiku now receives text from **both** attachment sources:
+
+```typescript
+const emailAttachments = (linkedItem?.source_data?.attachments || []) as Array<{filename: string; extractedText: string | null}>;
+const userAttachments = ((thread as any).user_attachments || []) as Array<{filename: string; extractedText: string | null}>;
+const attachmentContext = [...emailAttachments, ...userAttachments]
+  .filter((a) => a.extractedText)
+  .map((a) => `--- ${a.filename} ---\n${a.extractedText}`)
+  .join('\n\n');
+```
+
+Injected into the Haiku user prompt as `ATTACHMENT CONTENT (use as source material when writing the document)`.
+
+**File:** `app/api/work/threads/[id]/generate/route.ts`
+
+---
+
+## 5. Entry View File Attachment (Create Work)
+
+Users can now attach files on the "Create Work" entry view before a thread exists.
+
+**UX flow:**
+1. User types a description and clicks "Attach" → multi-file picker (PDF/DOCX/TXT)
+2. File chips appear below the textarea with ✕ remove per file
+3. Files held in `entryFiles: File[]` React state (not uploaded yet)
+4. On submit: thread created → files uploaded in parallel via the attach route (with `inputId = file.name` as sentinel) → prompt enriched with file metadata → `sendMessage(enrichedPrompt, newThreadId)` called
+5. Planning AI sees the file names in the enriched prompt and marks those inputs as `provided`
+
+**Known quirk:** Entry-file `inputId` uses the filename as a sentinel; the AI generates its own IDs (e.g., `input_1`). The remove button on plan-panel inputs won't correlate to the correct `user_attachments` entry for entry-originated files. The plan input resets visually but the Storage file is not deleted.
+
+**File:** `app/work/work-page-client.tsx`
+
+---
+
+## 6. Document Lifecycle UX Guardrails
+
+### Stale document signal
+
+`isDocumentStale` computed from `activeThread.updated_at` vs `activeThread.artifact.generated_at`:
+```typescript
+const isDocumentStale = !!(
+  activeThread?.artifact &&
+  activeThread?.updated_at &&
+  new Date(activeThread.updated_at).getTime() - new Date(activeThread.artifact.generated_at).getTime() > 5000
+);
+```
+
+Any chat message (plan update) or attach/remove action bumps `updated_at`. `generate` and `editArtifact` callbacks now sync `updated_at` in React state to `artifact.generated_at`, ensuring the flag resets immediately after generation/edit without a page reload.
+
+**When stale:** Amber banner replaces green "Document ready" banner — "Plan updated — document may not reflect latest changes" + "View current →" secondary link.
+
+### Regeneration guard
+
+When the artifact exists and is stale, clicking "Regenerate document" does **not** immediately regenerate. It shows a two-step confirmation:
+- "This will replace your current document. Manual edits will be lost."
+- [Cancel] [Replace document (red)]
+
+Confirmation state lives in PlanPanel internal state (`confirmingRegenerate`) and auto-resets when `isDocumentStale` clears.
+
+### Revised labels
+
+| Old | New | Where |
+|---|---|---|
+| "Back to plan" | **"Revise plan"** | DocumentPanel toolbar |
+| "Generate document" (when artifact exists, stale) | **"Regenerate document"** (amber) | PlanPanel CTA |
+| (no confirmation) | **"Replace document"** confirmation step | PlanPanel CTA |
+
+**Bottom CTA logic (4 states):**
+- No artifact → "Generate [type]" (indigo, no guard)
+- Artifact, not stale → "View document" (indigo)
+- Artifact, stale, not confirming → "Regenerate document" (amber)
+- Artifact, stale, confirming → "Replace document" (red) + "Cancel"
+
+**File:** `app/work/work-page-client.tsx`
+
+---
+
+## Known Gaps (deferred)
+
+- **PDF extraction bug:** `text-extractor.ts` uses `new PDFParse({ data: buffer }).getText()` — the `pdf-parse` package API may not match; verify extraction works in production before relying on it
+- **Sync update path overwrites attachments:** If a thread gets a follow-up email with no attachments, `processedAttachments` is empty, and `source_data.attachments` is cleared from the inbox item (JSONB field omitted on full overwrite)
+- **Edit-artifact has no attachment access:** The edit route reads `artifact.content` only — user-uploaded files are not re-injected during incremental edits
+- **Storage cleanup:** `email-attachments` bucket files are never deleted when inbox items or connections are removed
+- **No inbox UI for email attachments download:** `app/api/inbox/[id]/attachment/route.ts` planned but not built
+
+---
+
+## Files Created / Updated
+
+**New:**
+- `app/api/work/threads/[id]/attach/route.ts` — POST (upload) + DELETE (remove)
+- `supabase/migrations/20260221_add_user_attachments_to_work_threads.sql`
+
+**Updated:**
+- `app/work/work-page-client.tsx` — entryFiles state, handleAttach/handleRemoveAttachment, startThread upload flow, plan panel provided/pending states, isDocumentStale, confirmingRegenerate, stale/regenerate banners + CTAs, "Revise plan" label, updated_at sync
+- `app/api/work/threads/[id]/generate/route.ts` — user_attachments + linked inbox item merge
+- `app/api/inbox/[id]/open-workflow/route.ts` — metadata-only injection
+- `app/api/work/threads/[id]/messages/route.ts` — system prompt: status + providedFilename schema
+- `lib/types/inbox.ts` — WorkflowInput: `status?`, `providedFilename?`
+
+---
+
 # Recent Changes — Phase 12: Email Attachment Pipeline + Inbox UI Fixes (Feb 21, 2026)
 
 ## Summary

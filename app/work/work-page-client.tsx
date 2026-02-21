@@ -17,6 +17,7 @@ import {
   CheckIcon,
   XMarkIcon,
   ArrowDownTrayIcon,
+  PaperClipIcon,
 } from '@heroicons/react/24/outline';
 import { WorkBlueprint } from '@/lib/types/work-blueprints';
 import { ExecutionPlan, DocumentArtifact } from '@/lib/types/inbox';
@@ -183,6 +184,10 @@ function PlanPanel({
   threadId,
   artifact,
   onViewDocument,
+  onAttach,
+  uploadingInputId,
+  onRemoveAttachment,
+  isDocumentStale,
 }: {
   plan: ExecutionPlan | null;
   isUpdating: boolean;
@@ -192,8 +197,18 @@ function PlanPanel({
   threadId: string | null;
   artifact: DocumentArtifact | null;
   onViewDocument: () => void;
+  onAttach?: (inputId: string) => void;
+  uploadingInputId?: string | null;
+  onRemoveAttachment?: (inputId: string) => void;
+  isDocumentStale?: boolean;
 }) {
   const isGenerating = workMode === 'generating';
+  const [confirmingRegenerate, setConfirmingRegenerate] = useState(false);
+
+  // Reset confirmation state whenever the stale flag clears (generation completed)
+  useEffect(() => {
+    if (!isDocumentStale) setConfirmingRegenerate(false);
+  }, [isDocumentStale]);
 
   if (!plan) {
     return (
@@ -239,8 +254,26 @@ function PlanPanel({
         </div>
       )}
 
-      {/* Document ready banner */}
-      {!isGenerating && artifact && workMode === 'planning' && (
+      {/* Document stale banner — plan changed after last generation */}
+      {!isGenerating && artifact && isDocumentStale && workMode === 'planning' && (
+        <div className="flex items-center justify-between px-4 py-2.5 bg-amber-50 border-b border-amber-100 flex-shrink-0">
+          <div className="flex items-center gap-2">
+            <svg className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+            </svg>
+            <span className="text-[11px] text-amber-700 font-medium">Plan updated — document may not reflect latest changes</span>
+          </div>
+          <button
+            onClick={onViewDocument}
+            className="text-[11px] text-amber-600 hover:text-amber-800 font-medium px-2 py-1 hover:bg-amber-100 transition-colors"
+          >
+            View current →
+          </button>
+        </div>
+      )}
+
+      {/* Document ready banner — up to date */}
+      {!isGenerating && artifact && !isDocumentStale && workMode === 'planning' && (
         <div className="flex items-center justify-between px-4 py-2.5 bg-green-50 border-b border-green-100 flex-shrink-0">
           <div className="flex items-center gap-2">
             <DocumentTextIcon className="w-3.5 h-3.5 text-green-600" />
@@ -306,34 +339,76 @@ function PlanPanel({
               Inputs needed
             </p>
             <div className="space-y-1.5">
-              {plan.inputs.map((input) => (
-                <div
-                  key={input.id}
-                  className="p-3 bg-blue-50 border border-blue-100"
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex-1 min-w-0">
-                      <p className="text-[12px] font-medium text-neutral-900">
-                        {input.name}
-                        {input.required && (
-                          <span className="text-red-400 ml-1 text-[10px]">required</span>
-                        )}
-                      </p>
-                      <p className="text-[11px] text-neutral-600 mt-0.5 leading-relaxed">
-                        {input.description}
-                      </p>
-                      {input.examples && input.examples.length > 0 && (
-                        <p className="text-[10px] text-neutral-400 mt-1">
-                          e.g. {input.examples[0]}
+              {plan.inputs.map((input) => {
+                const isProvided = input.status === 'provided';
+                return (
+                  <div
+                    key={input.id}
+                    className={`p-3 border ${isProvided ? 'bg-green-50 border-green-100' : 'bg-blue-50 border-blue-100'}`}
+                  >
+                    <div className="flex items-start gap-2">
+                      {/* Left: name + description + filename */}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[12px] font-medium text-neutral-900">
+                          {input.name}
+                          {input.required && !isProvided && (
+                            <span className="text-red-400 ml-1 text-[10px]">required</span>
+                          )}
                         </p>
-                      )}
+                        <p className="text-[11px] text-neutral-600 mt-0.5 leading-relaxed">
+                          {input.description}
+                        </p>
+                        {input.examples && input.examples.length > 0 && !isProvided && (
+                          <p className="text-[10px] text-neutral-400 mt-1">
+                            e.g. {input.examples[0]}
+                          </p>
+                        )}
+                        {isProvided && input.providedFilename && (
+                          <div className="flex items-center gap-1 mt-1.5">
+                            <DocumentTextIcon className="w-3 h-3 text-green-600 flex-shrink-0" />
+                            <span className="text-[10px] text-green-700 truncate">{input.providedFilename}</span>
+                            <button
+                              onClick={() => onRemoveAttachment?.(input.id)}
+                              className="flex-shrink-0 ml-0.5 text-neutral-400 hover:text-red-500 transition-colors"
+                              title="Remove attachment"
+                            >
+                              <XMarkIcon className="w-3 h-3" />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Right: badge + attach button */}
+                      <div className="flex-shrink-0 flex flex-col items-end gap-1.5">
+                        <span className={`text-[10px] px-1.5 py-0.5 ${
+                          isProvided ? 'text-green-700 bg-green-100' : 'text-blue-600 bg-blue-100'
+                        }`}>
+                          {isProvided ? 'provided' : input.type.replace('_', ' ')}
+                        </span>
+                        {!isProvided && (
+                          <button
+                            onClick={() => onAttach?.(input.id)}
+                            disabled={uploadingInputId === input.id}
+                            className="inline-flex items-center gap-1 text-[10px] text-blue-600 hover:text-blue-800 font-medium disabled:opacity-50"
+                          >
+                            {uploadingInputId === input.id ? (
+                              <>
+                                <span className="w-2.5 h-2.5 border border-blue-400 border-t-transparent rounded-full animate-spin" />
+                                Attaching…
+                              </>
+                            ) : (
+                              <>
+                                <PaperClipIcon className="w-2.5 h-2.5" />
+                                Attach
+                              </>
+                            )}
+                          </button>
+                        )}
+                      </div>
                     </div>
-                    <span className="flex-shrink-0 text-[10px] text-blue-600 bg-blue-100 px-1.5 py-0.5">
-                      {input.type.replace('_', ' ')}
-                    </span>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}
@@ -414,7 +489,17 @@ function PlanPanel({
       {/* Bottom CTA — docx only (document/report) */}
       {workMode === 'planning' && threadId && (plan.deliverable_type === 'document' || plan.deliverable_type === 'report') && (
         <div className="p-4 border-t border-neutral-100">
-          {artifact ? (
+          {!artifact ? (
+            /* First generation — no guard needed */
+            <button
+              onClick={() => onGenerate(threadId)}
+              className="w-full px-4 py-2.5 bg-indigo-600 text-white text-[13px] font-semibold hover:bg-indigo-700 transition-colors flex items-center justify-center gap-2"
+            >
+              <SparklesIcon className="w-4 h-4" />
+              Generate {plan.deliverable_type}
+            </button>
+          ) : !isDocumentStale ? (
+            /* Document is current — just view it */
             <button
               onClick={onViewDocument}
               className="w-full px-4 py-2.5 bg-indigo-600 text-white text-[13px] font-semibold hover:bg-indigo-700 transition-colors flex items-center justify-center gap-2"
@@ -422,13 +507,35 @@ function PlanPanel({
               <DocumentTextIcon className="w-4 h-4" />
               View document
             </button>
+          ) : confirmingRegenerate ? (
+            /* Confirmation step — replacing is destructive */
+            <div className="space-y-2">
+              <p className="text-[11px] text-neutral-500 text-center">
+                This will replace your current document. Manual edits will be lost.
+              </p>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setConfirmingRegenerate(false)}
+                  className="flex-1 px-3 py-2 border border-neutral-200 text-neutral-600 text-[12px] font-medium hover:bg-neutral-50 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => onGenerate(threadId)}
+                  className="flex-1 px-3 py-2 bg-red-500 text-white text-[12px] font-semibold hover:bg-red-600 transition-colors"
+                >
+                  Replace document
+                </button>
+              </div>
+            </div>
           ) : (
+            /* Plan is stale — offer regeneration */
             <button
-              onClick={() => onGenerate(threadId)}
-              className="w-full px-4 py-2.5 bg-indigo-600 text-white text-[13px] font-semibold hover:bg-indigo-700 transition-colors flex items-center justify-center gap-2"
+              onClick={() => setConfirmingRegenerate(true)}
+              className="w-full px-4 py-2.5 bg-amber-500 text-white text-[13px] font-semibold hover:bg-amber-600 transition-colors flex items-center justify-center gap-2"
             >
               <SparklesIcon className="w-4 h-4" />
-              Generate {plan.deliverable_type}
+              Regenerate document
             </button>
           )}
         </div>
@@ -478,7 +585,7 @@ function DocumentPanel({
             onClick={onRegenerate}
             className="text-[11px] text-neutral-500 hover:text-neutral-700 px-2 py-1 hover:bg-neutral-100 transition-colors"
           >
-            Back to plan
+            Revise plan
           </button>
           <button
             onClick={onDownload}
@@ -562,6 +669,7 @@ export function WorkPageClient({
   const [planJustUpdated, setPlanJustUpdated] = useState(false);
   const [chatInput, setChatInput] = useState('');
   const [entryInput, setEntryInput] = useState('');
+  const [entryFiles, setEntryFiles] = useState<File[]>([]);
   const [isCreatingThread, setIsCreatingThread] = useState(false);
   const [isOnboardingOpen, setIsOnboardingOpen] = useState(!hasCompletedOnboarding);
   const [editingThreadId, setEditingThreadId] = useState<string | null>(null);
@@ -575,6 +683,7 @@ export function WorkPageClient({
   const [artifactInput, setArtifactInput] = useState('');
   const [isEditingArtifact, setIsEditingArtifact] = useState(false);
   const [editStreamText, setEditStreamText] = useState('');
+  const [uploadingInputId, setUploadingInputId] = useState<string | null>(null);
 
   const planUpdatedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const skipLoadRef = useRef<string | null>(null);
@@ -586,11 +695,22 @@ export function WorkPageClient({
 
   const activeThread = threads.find((t) => t.id === activeThreadId) ?? null;
 
+  // True when the plan/attachments have been modified after the last generation or edit.
+  // Both updated_at and artifact.generated_at are kept in sync by generate/edit callbacks,
+  // so a gap > 5 s reliably means a chat message or attach action happened in between.
+  const isDocumentStale = !!(
+    activeThread?.artifact &&
+    activeThread?.updated_at &&
+    new Date(activeThread.updated_at).getTime() - new Date(activeThread.artifact.generated_at).getTime() > 5000
+  );
+
   useEffect(() => {
     if (initialActiveThreadId && initialWorkflowPrompt) {
       skipLoadRef.current = initialActiveThreadId;
       setMessages([]);
       setActiveThreadId(initialActiveThreadId);
+      // Remove ?prompt= from URL immediately so refreshing doesn't re-send the workflow prompt
+      window.history.replaceState(null, '', '/work');
       sendMessage(initialWorkflowPrompt, initialActiveThreadId);
     } else if (initialActiveThreadId) {
       setActiveThreadId(initialActiveThreadId);
@@ -740,7 +860,7 @@ export function WorkPageClient({
       setArtifact(newArtifact);
       setWorkMode('document');
       setThreads((prev) =>
-        prev.map((t) => t.id === threadId ? { ...t, artifact: newArtifact } : t)
+        prev.map((t) => t.id === threadId ? { ...t, artifact: newArtifact, updated_at: newArtifact.generated_at } : t)
       );
     } catch (err) {
       console.error('Generate error:', err);
@@ -796,7 +916,7 @@ export function WorkPageClient({
           const updatedArtifact = JSON.parse(artifactRaw) as DocumentArtifact;
           setArtifact(updatedArtifact);
           setThreads((prev) =>
-            prev.map((t) => t.id === threadId ? { ...t, artifact: updatedArtifact } : t)
+            prev.map((t) => t.id === threadId ? { ...t, artifact: updatedArtifact, updated_at: updatedArtifact.generated_at } : t)
           );
         } catch {
           // artifact parse failed
@@ -820,6 +940,56 @@ export function WorkPageClient({
       artifactInputRef.current?.focus();
     }
   }, [isEditingArtifact]);
+
+  const handleAttach = useCallback(async (inputId: string, threadId: string) => {
+    const fileInput = document.createElement('input');
+    fileInput.type = 'file';
+    fileInput.accept = '.pdf,.docx,.txt';
+    fileInput.onchange = async () => {
+      const file = fileInput.files?.[0];
+      if (!file) return;
+      setUploadingInputId(inputId);
+      try {
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('inputId', inputId);
+        const res = await fetch(`/api/work/threads/${threadId}/attach`, {
+          method: 'POST',
+          body: formData,
+        });
+        if (!res.ok) {
+          const err = await res.json();
+          alert(err.error || 'Failed to attach file');
+          return;
+        }
+        const { plan: updatedPlan } = await res.json();
+        setThreads((prev) =>
+          prev.map((t) => t.id === threadId ? { ...t, plan: updatedPlan } : t)
+        );
+      } catch {
+        alert('Failed to attach file');
+      } finally {
+        setUploadingInputId(null);
+      }
+    };
+    fileInput.click();
+  }, []);
+
+  const handleRemoveAttachment = useCallback(async (inputId: string, threadId: string) => {
+    try {
+      const res = await fetch(
+        `/api/work/threads/${threadId}/attach?inputId=${encodeURIComponent(inputId)}`,
+        { method: 'DELETE' }
+      );
+      if (!res.ok) return;
+      const { plan: updatedPlan } = await res.json();
+      setThreads((prev) =>
+        prev.map((t) => t.id === threadId ? { ...t, plan: updatedPlan } : t)
+      );
+    } catch {
+      console.error('Failed to remove attachment');
+    }
+  }, []);
 
   const downloadDocument = useCallback(async (threadId: string) => {
     setIsDownloading(true);
@@ -866,13 +1036,41 @@ export function WorkPageClient({
       setEntryInput('');
       setWorkMode('planning');
       setArtifact(null);
+
+      // Upload any attached files, then enrich the initial prompt with their metadata
+      let enrichedPrompt = description;
+      if (entryFiles.length > 0) {
+        await Promise.all(
+          entryFiles.map((file) => {
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('inputId', file.name); // filename as stable sentinel
+            return fetch(`/api/work/threads/${newThread.id}/attach`, {
+              method: 'POST',
+              body: formData,
+            });
+          })
+        );
+        const fileMeta = entryFiles
+          .map((f) => {
+            const typeLabel = f.type.includes('pdf') ? 'PDF'
+              : f.type.includes('wordprocessingml') ? 'Word document'
+              : f.type === 'text/plain' ? 'text file'
+              : 'file';
+            return `- ${f.name} (${typeLabel}, ${Math.round(f.size / 1024)} KB)`;
+          })
+          .join('\n');
+        enrichedPrompt = `${description}\n\nAttached files (already provided — include each as an input with status "provided" in the plan):\n${fileMeta}`;
+        setEntryFiles([]);
+      }
+
       setIsCreatingThread(false);
-      sendMessage(description, newThread.id);
+      sendMessage(enrichedPrompt, newThread.id);
     } catch (err) {
       console.error('Failed to start thread:', err);
       setIsCreatingThread(false);
     }
-  }, [isCreatingThread, sendMessage]);
+  }, [isCreatingThread, sendMessage, entryFiles]);
 
   const startEditing = (thread: WorkThread) => {
     setEditingThreadId(thread.id);
@@ -1116,8 +1314,48 @@ export function WorkPageClient({
                   rows={4}
                   disabled={isCreatingThread}
                 />
+                {/* Attached file chips */}
+                {entryFiles.length > 0 && (
+                  <div className="px-4 py-2.5 border-t border-neutral-100 flex flex-wrap gap-1.5">
+                    {entryFiles.map((file, i) => (
+                      <div key={i} className="inline-flex items-center gap-1.5 text-[11px] bg-neutral-100 text-neutral-700 px-2 py-1">
+                        <PaperClipIcon className="w-3 h-3 text-neutral-400 flex-shrink-0" />
+                        <span className="truncate max-w-[180px]">{file.name}</span>
+                        <button
+                          type="button"
+                          onClick={() => setEntryFiles((prev) => prev.filter((_, j) => j !== i))}
+                          className="flex-shrink-0 text-neutral-400 hover:text-neutral-600"
+                        >
+                          <XMarkIcon className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
                 <div className="flex items-center justify-between px-4 py-3 border-t border-neutral-100">
-                  <p className="text-[11px] text-neutral-400">Press Enter to start</p>
+                  <div className="flex items-center gap-3">
+                    <p className="text-[11px] text-neutral-400">Press Enter to start</p>
+                    <button
+                      type="button"
+                      disabled={isCreatingThread}
+                      onClick={() => {
+                        const input = document.createElement('input');
+                        input.type = 'file';
+                        input.accept = '.pdf,.docx,.txt';
+                        input.multiple = true;
+                        input.onchange = () => {
+                          const files = Array.from(input.files || []);
+                          if (files.length) setEntryFiles((prev) => [...prev, ...files]);
+                        };
+                        input.click();
+                      }}
+                      className="inline-flex items-center gap-1 text-[11px] text-neutral-500 hover:text-neutral-700 disabled:opacity-40 transition-colors"
+                    >
+                      <PaperClipIcon className="w-3.5 h-3.5" />
+                      Attach
+                    </button>
+                  </div>
                   <button
                     type="submit"
                     disabled={!entryInput.trim() || isCreatingThread}
@@ -1191,6 +1429,10 @@ export function WorkPageClient({
               threadId={activeThreadId}
               artifact={artifact}
               onViewDocument={() => setWorkMode('document')}
+              onAttach={(inputId) => activeThreadId && handleAttach(inputId, activeThreadId)}
+              uploadingInputId={uploadingInputId}
+              onRemoveAttachment={(inputId) => activeThreadId && handleRemoveAttachment(inputId, activeThreadId)}
+              isDocumentStale={isDocumentStale}
             />
           )}
 

@@ -36,6 +36,8 @@ export interface WorkflowInput {
   description: string;
   required: boolean;
   examples?: string[];
+  status?: 'provided' | 'pending';
+  providedFilename?: string;
 }
 
 export interface WorkflowOutput {

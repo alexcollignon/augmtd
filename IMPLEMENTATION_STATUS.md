@@ -1,7 +1,7 @@
 # AUGMTD Implementation Status
-**Version:** 4.9
+**Version:** 5.0
 **Last Updated:** 2026-02-21
-**Current Phase:** Phase 12 Complete (email attachment pipeline + inbox UI fixes)
+**Current Phase:** Phase 13 Complete (workflow attachment inputs + document lifecycle UX)
 
 ---
 
@@ -43,6 +43,8 @@
 | Email Processing Improvements (Phase 11) | ✅ Complete | 100% |
 | Email Attachment Pipeline (Phase 12) | ✅ Complete | 100% |
 | Inbox UI Fixes (Phase 12) | ✅ Complete | 100% |
+| Workflow Attachment Inputs (Phase 13) | ✅ Complete | 100% |
+| Document Lifecycle UX (Phase 13) | ✅ Complete | 100% |
 | Vector Similarity | ⚠️ Planned | 0% |
 
 ---
@@ -1470,4 +1472,121 @@ End-to-end attachment handling: detect during sync → download → extract text
 - `components/inbox/email-list-card.tsx` — paperclip badge + snippet typeof guard
 
 **External dependencies:** `pdf-parse` + `@types/pdf-parse`, `mammoth`
+
+---
+
+## ✅ Phase 13: Workflow Attachment Inputs + Document Lifecycle UX (Feb 21, 2026)
+
+### URL Persistence for Workflow Chat
+
+The active thread ID is now reflected in the URL as a query param (`?thread=<id>`) using `router.replace()` — no page reload. On load, `searchParams.get('thread')` seeds `activeThreadId`. Sharing or refreshing a URL reopens the correct thread.
+
+### User Attachments in Plan Inputs (Metadata-Only Approach)
+
+Users can now upload files to plan inputs directly from the workflow UI. The approach is **metadata-only at injection**: extracted text is stored in Supabase Storage, but the `open-workflow` route injects only filenames and descriptions (not full text) into the workflow prompt. Full text is merged at document generation time.
+
+**DB column:** `work_threads.user_attachments JSONB DEFAULT '[]'` — stores per-input attachment records:
+```typescript
+{
+  inputId: string;
+  filename: string;
+  mimeType: string;
+  size: number;
+  storagePath: string;  // in email-attachments bucket
+  extractedText: string | null;  // up to 3000 chars
+}
+```
+
+**Migration:** `supabase/migrations/20260221_add_user_attachments_to_work_threads.sql` (must be applied manually — local migration history mismatch).
+
+### Plan Panel Attach Button
+
+Each `pending` plan input now shows an "Attach file" button. On click:
+- `<input type="file" accept=".pdf,.docx,.txt">` is programmatically triggered
+- File is uploaded via `POST /api/work/threads/[id]/attach` (multipart form: `file` + `inputId`)
+- Server extracts text, uploads to storage, marks input as `status: "provided"`, sets `providedFilename`
+- Plan state updates client-side immediately (input shows filename + green "provided" badge)
+- Attached inputs show a `×` remove button that calls `DELETE /api/work/threads/[id]/attach?inputId=<id>`
+
+**API Routes:**
+```
+POST /api/work/threads/[id]/attach   — upload + extract + store, returns {attachment, plan}
+DELETE /api/work/threads/[id]/attach — remove file from storage + reset input to pending
+```
+
+Allowed MIME types: `application/pdf`, `application/vnd.openxmlformats-officedocument.wordprocessingml.document`, `text/plain`. Max file size: 10 MB.
+
+### Entry View Attach Button
+
+Email inbox items with a workflow seed can have files attached before opening the thread. The entry detail view (work-detail-panel / work-detail-inline) shows an "Attach to workflow" button per plan input:
+- Uploads to the same `email-attachments` bucket at `{userId}/pending/{inputId}-{filename}`
+- Metadata stored in the inbox item's `source_data.pendingAttachments`
+- When "Open as Workflow" is called, pending attachments are transferred to the new `work_thread.user_attachments`
+
+### Document Generation — Attachment Text Merge
+
+`POST /api/work/threads/[id]/generate` now merges attachment text into the generation prompt. At generate time:
+1. Load `thread.user_attachments` from DB
+2. For each attachment with `extractedText`, append to the Haiku prompt: `--- Attachment: {filename} ---\n{text}`
+3. Full text available to Haiku when writing the document — not just filenames
+
+This ensures contract clauses, report data, or brief details are reflected in the generated document content.
+
+### Document Lifecycle UX Guardrails
+
+Three UX improvements applied to `work-page-client.tsx` to make the document generation lifecycle safer and more predictable:
+
+#### 1. Stale Document Signal (`isDocumentStale`)
+
+```typescript
+const isDocumentStale = !!(
+  activeThread?.artifact &&
+  activeThread?.updated_at &&
+  new Date(activeThread.updated_at).getTime() -
+    new Date(activeThread.artifact.generated_at).getTime() > 5000
+);
+```
+
+A 5-second buffer prevents false positives from same-millisecond saves. After `generateDocument()` or `editArtifact()`, the React thread state is updated with `updated_at: artifact.generated_at` to immediately clear the stale flag — no page refresh required.
+
+The PlanPanel banner switches between:
+- **Amber** ("Document may be outdated — your plan changed since it was generated") when stale
+- **Green** ("Document is up to date") when current
+
+#### 2. Regeneration Guard (`confirmingRegenerate`)
+
+When `isDocumentStale` is true, clicking "Regenerate document" enters a confirmation state (local `useState`). The CTA area shows two buttons: **Replace document** (destructive, red) and **Cancel**. Clicking "Replace document" triggers `generateDocument()`.
+
+`confirmingRegenerate` resets automatically via `useEffect` when `isDocumentStale` clears (i.e., after a successful regeneration or after going back to plan and returning to current).
+
+**4-state CTA logic in PlanPanel:**
+1. No artifact → "Generate document" (indigo)
+2. Artifact, not stale → "View document" (indigo)
+3. Artifact, stale, not confirming → "Regenerate document" (amber)
+4. Artifact, stale, confirming → "Replace document" (red) + "Cancel"
+
+#### 3. Revised Labels
+
+- "Back to plan" (in DocumentPanel toolbar) → **"Revise plan"** — signals intent over mechanics; user understands they're editing the plan, not losing the document
+- "Generate document" remains for first-time generation
+- "Regenerate document" (amber) is distinct from "Generate document" — signals a destructive replacement, not a first creation
+
+### Files Created / Updated
+
+**New:**
+- `app/api/work/threads/[id]/attach/route.ts` — POST + DELETE for user file uploads to plan inputs
+- `supabase/migrations/20260221_add_user_attachments_to_work_threads.sql` — `user_attachments JSONB` column
+
+**Updated:**
+- `app/work/work-page-client.tsx` — URL persistence, attach button in PlanPanel, `isDocumentStale`, `confirmingRegenerate`, 4-state CTA, "Revise plan" label, `updated_at` sync in generate/editArtifact callbacks
+- `app/api/work/threads/[id]/generate/route.ts` — merges `user_attachments` text into Haiku prompt
+- `app/api/inbox/[id]/open-workflow/route.ts` — metadata-only injection (filenames, not full text)
+- `app/api/work/threads/[id]/messages/route.ts` — `status` + `providedFilename` in plan input schema
+- `lib/types/inbox.ts` — `WorkflowInput` gets `status?: 'provided' | 'pending'` and `providedFilename?: string`
+
+### Known Gaps (carried forward)
+
+- Plan AI can reset `status: 'provided'` inputs to `pending` if a chat message causes a full plan regeneration — no guard yet
+- Entry-view attach pending attachments not yet wired into `open-workflow` transfer
+- Rename bumps `updated_at` in DB — on reload after rename, a briefly stale flag may appear if gap < 5 seconds (unlikely in practice)
 

@@ -41,6 +41,8 @@ PLAN JSON STRUCTURE:
       "type": "data_source" | "document" | "context" | "approval" | "meeting_notes" | "user_input",
       "description": "What is needed and why",
       "required": true,
+      "status": "provided" | "pending",
+      "providedFilename": "filename.pdf",
       "examples": ["Example 1"]
     }
   ],
@@ -67,7 +69,8 @@ PLAN RULES:
 - Always emit the full updated plan JSON — never partial or null unless the request is completely off-topic
 - Update ALL relevant fields when something changes (e.g. changing to PowerPoint updates deliverable_type AND step skills AND toolsNeeded)
 - Max 6 steps
-- deliverable_type must match the actual format requested`;
+- deliverable_type must match the actual format requested
+- If the workflow prompt mentions available attachments, include each as an input with status "provided" and set providedFilename to the exact filename — never ask the user to re-upload something already attached`;
 
 // POST /api/work/threads/[id]/messages — send a message and stream the AI response
 export async function POST(
