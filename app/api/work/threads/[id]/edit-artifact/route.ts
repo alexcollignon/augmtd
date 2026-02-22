@@ -91,7 +91,7 @@ export async function POST(
 
     const { data: thread, error: threadError } = await supabase
       .from('work_threads')
-      .select('id, title, plan, artifact')
+      .select('id, title, plan, artifact, user_attachments')
       .eq('id', threadId)
       .eq('user_id', user.id)
       .single();
@@ -105,101 +105,135 @@ export async function POST(
     }
 
     const body = await request.json();
-    const { instruction } = body;
+    const { instruction, mode = 'edit' } = body;
 
     if (!instruction || typeof instruction !== 'string') {
       return NextResponse.json({ error: 'Instruction is required' }, { status: 400 });
     }
 
+    const isAskMode = mode === 'ask';
     const artifact = thread.artifact as DocumentArtifact;
-    const plan = thread.plan;
+    const contentJson = artifact.content ? JSON.stringify(artifact.content, null, 2) : null;
 
-    const systemPrompt = `You generate structured document content in JSON. Return ONLY valid JSON — no markdown, no explanation.
+    const userAttachments = ((thread as any).user_attachments || []) as Array<{
+      filename: string;
+      extractedText: string | null;
+    }>;
+    const attachmentContext = userAttachments
+      .filter((a) => a.extractedText)
+      .map((a) => `--- Attached file: ${a.filename} ---\n${a.extractedText}`)
+      .join('\n\n');
 
-JSON format:
+    const docContext = `${attachmentContext ? `REFERENCE FILES:\n${attachmentContext}\n\n` : ''}CURRENT DOCUMENT:\n${contentJson ?? `Title: ${artifact.title}\nType: ${artifact.type}`}`;
+
+    const systemPrompt = isAskMode
+      ? `You are a document assistant. Answer the user's question about the document or attached files in 2-4 sentences. Be specific and reference actual content when relevant.`
+      : `You are a document editor. Apply the edit instruction to the document and respond in this exact format:
+
+[1 sentence describing what you changed]
+---ARTIFACT_UPDATE---
+[Complete updated DocContent JSON]
+
+RULES: Only change what was asked — preserve all other sections, tone, and content exactly.
+
+JSON FORMAT:
 {
   "title": "Document title",
-  "subtitle": "Optional subtitle or date",
+  "subtitle": "Optional subtitle",
   "sections": [
-    {
-      "heading": "Section heading",
-      "level": 1,
-      "paragraphs": ["Full paragraph text...", "Another paragraph..."]
-    }
+    { "heading": "Section heading", "level": 1, "paragraphs": ["Prose paragraph..."] }
   ]
 }
 
-Rules:
-- level 1 = major section, level 2 = subsection
-- Each paragraph should be complete, well-written prose
-- Be specific and detailed — this is a real professional document
-- No bullet characters in paragraph text`;
+level 1 = major section, level 2 = subsection. Complete prose paragraphs only.`;
 
-    const contentJson = artifact.content ? JSON.stringify(artifact.content, null, 2) : null;
-
-    const userPrompt = `Edit the following ${artifact.type} document based on the instruction below.
-
-CURRENT DOCUMENT CONTENT:
-${contentJson ?? `Title: ${artifact.title}\nType: ${artifact.type}\n(no content preview available — regenerate from plan)`}
-
-EDIT INSTRUCTION: ${instruction.trim()}
-
-Return the complete updated document JSON with the edit applied. Only change what the instruction asks for. Keep all other sections, paragraphs, tone, and content exactly as they are.`;
+    const userPrompt = isAskMode
+      ? `${docContext}\n\nQUESTION: ${instruction.trim()}`
+      : `${docContext}\n\nEDIT INSTRUCTION: ${instruction.trim()}`;
 
     const readable = new ReadableStream({
       async start(controller) {
         const encoder = new TextEncoder();
 
         try {
-          const ackText = `Updating the document — ${instruction.trim().slice(0, 80)}${instruction.length > 80 ? '...' : ''}`;
-          controller.enqueue(encoder.encode(ackText));
-
           const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
           const completion = await anthropic.messages.create({
             model: 'claude-haiku-4-5-20251001',
-            max_tokens: 8000,
+            max_tokens: isAskMode ? 1024 : 8000,
             system: systemPrompt,
             messages: [{ role: 'user', content: userPrompt }],
           });
 
-          const rawText = (completion.content[0] as { type: string; text: string })?.text ?? '{}';
-          const raw = rawText.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
-          const content = JSON.parse(raw) as DocContent;
-
-          const buffer = await buildDocx(content);
+          const rawText = (completion.content[0] as { type: string; text: string })?.text ?? '';
 
           const adminClient = (await import('@supabase/supabase-js')).createClient(
             process.env.NEXT_PUBLIC_SUPABASE_URL!,
             process.env.SUPABASE_SERVICE_ROLE_KEY!
           );
 
-          const storagePath = artifact.storage_path;
-          await adminClient.storage
-            .from('work-artifacts')
-            .upload(storagePath, buffer, {
-              contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-              upsert: true,
-            });
+          if (isAskMode) {
+            const conversationalText = rawText.trim();
+            controller.enqueue(encoder.encode(conversationalText));
 
-          const updatedArtifact: DocumentArtifact = {
-            ...artifact,
-            generated_at: new Date().toISOString(),
-            content,
-          };
+            await adminClient.from('work_messages').insert([
+              { thread_id: threadId, role: 'user', content: instruction.trim() },
+              { thread_id: threadId, role: 'assistant', content: conversationalText },
+            ]);
+            // Don't bump updated_at for ask-mode queries — it would make the document
+            // appear stale (updated_at > artifact.generated_at) on next load.
+            await adminClient
+              .from('work_threads')
+              .update({ updated_at: artifact.generated_at })
+              .eq('id', threadId);
 
-          await adminClient
-            .from('work_threads')
-            .update({ artifact: updatedArtifact, updated_at: new Date().toISOString() })
-            .eq('id', threadId);
+            controller.enqueue(encoder.encode(`\n${ARTIFACT_SEPARATOR}\nnull`));
+          } else {
+            const sepIdx = rawText.indexOf(ARTIFACT_SEPARATOR);
+            const conversationalText = sepIdx !== -1 ? rawText.slice(0, sepIdx).trim() : rawText.trim();
+            const rawContent = sepIdx !== -1 ? rawText.slice(sepIdx + ARTIFACT_SEPARATOR.length).trim() : null;
 
-          await adminClient.from('work_messages').insert([
-            { thread_id: threadId, role: 'user', content: instruction.trim() },
-            { thread_id: threadId, role: 'assistant', content: ackText },
-          ]);
+            controller.enqueue(encoder.encode(conversationalText));
 
-          controller.enqueue(
-            encoder.encode(`\n${ARTIFACT_SEPARATOR}\n${JSON.stringify(updatedArtifact)}`)
-          );
+            await adminClient.from('work_messages').insert([
+              { thread_id: threadId, role: 'user', content: instruction.trim() },
+              { thread_id: threadId, role: 'assistant', content: conversationalText },
+            ]);
+
+            if (!rawContent) throw new Error('No artifact content in edit response');
+
+            const firstBrace = rawContent.indexOf('{');
+            const lastBrace = rawContent.lastIndexOf('}');
+            if (firstBrace === -1 || lastBrace === -1) throw new Error('No JSON object in Haiku response');
+            const content = JSON.parse(rawContent.slice(firstBrace, lastBrace + 1)) as DocContent;
+
+            const buffer = await buildDocx(content);
+
+            const storagePath = artifact.storage_path;
+            await adminClient.storage
+              .from('work-artifacts')
+              .upload(storagePath, buffer, {
+                contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                upsert: true,
+              });
+
+            const updatedArtifact: DocumentArtifact = {
+              ...artifact,
+              generated_at: new Date().toISOString(),
+              content,
+            };
+
+            // updated_at must equal generated_at — NOT new Date() — because generated_at
+            // is captured before buildDocx() which takes seconds. Using new Date() here
+            // would put updated_at > generated_at and trigger the stale-document banner.
+            await adminClient
+              .from('work_threads')
+              .update({ artifact: updatedArtifact, updated_at: updatedArtifact.generated_at })
+              .eq('id', threadId);
+
+            controller.enqueue(
+              encoder.encode(`\n${ARTIFACT_SEPARATOR}\n${JSON.stringify(updatedArtifact)}`)
+            );
+          }
         } catch (err) {
           console.error('[EditArtifact] Error:', err);
           controller.enqueue(encoder.encode('\n\nAn error occurred while editing the document.'));

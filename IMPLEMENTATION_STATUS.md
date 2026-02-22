@@ -1,7 +1,7 @@
 # AUGMTD Implementation Status
-**Version:** 5.0
-**Last Updated:** 2026-02-21
-**Current Phase:** Phase 13 Complete (workflow attachment inputs + document lifecycle UX)
+**Version:** 5.1
+**Last Updated:** 2026-02-22
+**Current Phase:** Phase 14 Complete (document chat ask/edit split + attachment context)
 
 ---
 
@@ -45,6 +45,9 @@
 | Inbox UI Fixes (Phase 12) | ✅ Complete | 100% |
 | Workflow Attachment Inputs (Phase 13) | ✅ Complete | 100% |
 | Document Lifecycle UX (Phase 13) | ✅ Complete | 100% |
+| Document Chat Ask/Edit Split (Phase 14) | ✅ Complete | 100% |
+| Attachment Context in Chat Routes (Phase 14) | ✅ Complete | 100% |
+| isDocumentStale False Positive Fix (Phase 14) | ✅ Complete | 100% |
 | Vector Similarity | ⚠️ Planned | 0% |
 
 ---
@@ -1589,4 +1592,47 @@ When `isDocumentStale` is true, clicking "Regenerate document" enters a confirma
 - Plan AI can reset `status: 'provided'` inputs to `pending` if a chat message causes a full plan regeneration — no guard yet
 - Entry-view attach pending attachments not yet wired into `open-workflow` transfer
 - Rename bumps `updated_at` in DB — on reload after rename, a briefly stale flag may appear if gap < 5 seconds (unlikely in practice)
+
+---
+
+## ✅ Phase 14: Document Chat Ask/Edit Split + Attachment Context (Feb 22, 2026)
+
+### Ask/Edit Mode Toggle
+
+The document edit chat previously ran every message (questions, edits, comparisons) through a full Haiku call + docx rebuild + Storage upload. An explicit `Ask | Edit` segmented toggle replaces auto-intent-detection.
+
+**UI:** Pill-style toggle (`Ask | Edit`) above the textarea. Defaults to `Ask`. Placeholder and submit button colour adapt to mode.
+
+**Server-side branching** (`edit-artifact/route.ts` accepts `mode: 'ask' | 'edit'`):
+- **Ask:** `max_tokens: 1024`, conversational system prompt, no docx build, no storage write, no artifact DB update. ~8× cheaper per question.
+- **Edit:** `max_tokens: 8000`, focused edit prompt (no intent classification), full docx build + storage upload as before.
+
+### Attachment Context in Both Chat Routes
+
+`user_attachments` from `work_threads` is now injected into the AI context in both the planning chat and the document chat, so users can reference uploaded files throughout the thread lifecycle — not just at generation time.
+
+- `messages/route.ts`: `user_attachments` added to select; extracted text appended to OpenAI system prompt as `ATTACHED FILES` block.
+- `edit-artifact/route.ts`: extracted text prepended to user prompt as `REFERENCE FILES` block (both ask and edit modes).
+
+### `isDocumentStale` False Positive Fix
+
+**Root cause — edit mode:** `generated_at` was captured before `buildDocx()` + `upload()`. `updated_at` was set to `new Date()` after upload (potentially seconds later). If build > 5s: `updated_at > generated_at + 5000` → false stale on next load.
+
+**Root cause — ask mode:** Ask path bumped `updated_at` to `new Date()`. If user asked a question >5s after the last edit, stale flag triggered even though nothing changed.
+
+**Fix:** Both paths now set `updated_at = artifact.generated_at` (or `updatedArtifact.generated_at`), ensuring `updated_at === generated_at` after any doc-chat interaction. Stale flag only triggers on actual plan changes.
+
+### Banner and JSON Fixes
+
+**`isRebuildingDocument` state:** Separate from `isEditingArtifact`. Set to `true` immediately on edit-mode send; never set for ask mode. `DocumentPanel` receives this instead of `isEditingArtifact` — banner is always correct.
+
+**JSON parse robustness:** Brace matching (`rawContent.slice(firstBrace, lastBrace + 1)`) replaces regex fence stripping — handles Haiku appending trailing text after the closing `}`.
+
+**Null artifact guard:** `if (updatedArtifact)` check after `JSON.parse(artifactRaw)` — prevents `"null"` string (truthy) from wiping the document preview in ask mode.
+
+### Files Updated
+
+- `app/api/work/threads/[id]/edit-artifact/route.ts` — mode param, ask/edit branching, attachment context, brace-based JSON parse, `updated_at` fix
+- `app/api/work/threads/[id]/messages/route.ts` — `user_attachments` in select + attachment context in system prompt
+- `app/work/work-page-client.tsx` — `docChatMode` state + toggle UI, `isRebuildingDocument`, null artifact guard, brace-based JSON parse, updated empty state hint
 

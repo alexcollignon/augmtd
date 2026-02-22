@@ -681,7 +681,9 @@ export function WorkPageClient({
   const [artifact, setArtifact] = useState<DocumentArtifact | null>(null);
   const [isDownloading, setIsDownloading] = useState(false);
   const [artifactInput, setArtifactInput] = useState('');
+  const [docChatMode, setDocChatMode] = useState<'ask' | 'edit'>('ask');
   const [isEditingArtifact, setIsEditingArtifact] = useState(false);
+  const [isRebuildingDocument, setIsRebuildingDocument] = useState(false);
   const [editStreamText, setEditStreamText] = useState('');
   const [uploadingInputId, setUploadingInputId] = useState<string | null>(null);
 
@@ -871,6 +873,8 @@ export function WorkPageClient({
   const editArtifact = useCallback(async (instruction: string, threadId: string) => {
     if (!instruction.trim() || isEditingArtifact) return;
 
+    const isEditMode = docChatMode === 'edit';
+
     // Add user message immediately before the fetch
     const tempUserMsg: WorkMessage = {
       id: `u-${Date.now()}`,
@@ -880,6 +884,7 @@ export function WorkPageClient({
     };
     setMessages((prev) => [...prev, tempUserMsg]);
     setIsEditingArtifact(true);
+    if (isEditMode) setIsRebuildingDocument(true);
     setArtifactInput('');
     setEditStreamText('');
 
@@ -887,7 +892,7 @@ export function WorkPageClient({
       const res = await fetch(`/api/work/threads/${threadId}/edit-artifact`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ instruction: instruction.trim() }),
+        body: JSON.stringify({ instruction: instruction.trim(), mode: docChatMode }),
       });
 
       if (!res.ok || !res.body) throw new Error('Edit failed');
@@ -911,13 +916,17 @@ export function WorkPageClient({
       const finalText = sepIdx !== -1 ? buffer.slice(0, sepIdx).trim() : buffer.trim();
       const artifactRaw = sepIdx !== -1 ? buffer.slice(sepIdx + ARTIFACT_SEPARATOR.length).trim() : null;
 
-      if (artifactRaw) {
+      if (artifactRaw && artifactRaw !== 'null') {
         try {
-          const updatedArtifact = JSON.parse(artifactRaw) as DocumentArtifact;
-          setArtifact(updatedArtifact);
-          setThreads((prev) =>
-            prev.map((t) => t.id === threadId ? { ...t, artifact: updatedArtifact, updated_at: updatedArtifact.generated_at } : t)
-          );
+          const firstBrace = artifactRaw.indexOf('{');
+          const lastBrace = artifactRaw.lastIndexOf('}');
+          if (firstBrace !== -1 && lastBrace !== -1) {
+            const updatedArtifact = JSON.parse(artifactRaw.slice(firstBrace, lastBrace + 1)) as DocumentArtifact;
+            setArtifact(updatedArtifact);
+            setThreads((prev) =>
+              prev.map((t) => t.id === threadId ? { ...t, artifact: updatedArtifact, updated_at: updatedArtifact.generated_at } : t)
+            );
+          }
         } catch {
           // artifact parse failed
         }
@@ -937,9 +946,10 @@ export function WorkPageClient({
       setEditStreamText('');
     } finally {
       setIsEditingArtifact(false);
+      setIsRebuildingDocument(false);
       artifactInputRef.current?.focus();
     }
-  }, [isEditingArtifact]);
+  }, [isEditingArtifact, docChatMode]);
 
   const handleAttach = useCallback(async (inputId: string, threadId: string) => {
     const fileInput = document.createElement('input');
@@ -1417,7 +1427,7 @@ export function WorkPageClient({
               onDownload={() => activeThreadId && downloadDocument(activeThreadId)}
               onRegenerate={() => setWorkMode('planning')}
               isDownloading={isDownloading}
-              isEditing={isEditingArtifact}
+              isEditing={isRebuildingDocument}
             />
           ) : (
             <PlanPanel
@@ -1465,7 +1475,7 @@ export function WorkPageClient({
                       {messages.length === 0 && !isEditingArtifact && (
                         <div className="text-center pt-8 pb-4">
                           <p className="text-[12px] text-neutral-400 leading-relaxed">
-                            Document generated. Ask me to make edits — I'll regenerate it with your changes.
+                            Ask questions about the document, or switch to Edit to make changes.
                           </p>
                         </div>
                       )}
@@ -1514,13 +1524,43 @@ export function WorkPageClient({
                 <div className="border-t border-neutral-100" />
 
                 <form onSubmit={handleArtifactSubmit} className="p-4">
+                  {/* Ask / Edit toggle */}
+                  <div className="flex items-center gap-0.5 mb-3 bg-neutral-100 rounded p-0.5 w-fit">
+                    <button
+                      type="button"
+                      onClick={() => setDocChatMode('ask')}
+                      disabled={isEditingArtifact}
+                      className={`px-3 py-1 text-[11px] font-medium rounded transition-colors ${
+                        docChatMode === 'ask'
+                          ? 'bg-white text-neutral-900 shadow-sm'
+                          : 'text-neutral-400 hover:text-neutral-600'
+                      }`}
+                    >
+                      Ask
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDocChatMode('edit')}
+                      disabled={isEditingArtifact}
+                      className={`px-3 py-1 text-[11px] font-medium rounded transition-colors ${
+                        docChatMode === 'edit'
+                          ? 'bg-white text-neutral-900 shadow-sm'
+                          : 'text-neutral-400 hover:text-neutral-600'
+                      }`}
+                    >
+                      Edit
+                    </button>
+                  </div>
+
                   <div className="flex items-end gap-2">
                     <textarea
                       ref={artifactInputRef}
                       value={artifactInput}
                       onChange={(e) => setArtifactInput(e.target.value)}
                       onKeyDown={handleArtifactKeyDown}
-                      placeholder="Edit the document… e.g. 'make the summary shorter'"
+                      placeholder={docChatMode === 'ask'
+                        ? 'Ask about the document or attached files…'
+                        : 'Describe your edit… e.g. "make the summary shorter"'}
                       rows={1}
                       disabled={isEditingArtifact}
                       className="flex-1 text-[13px] text-neutral-900 placeholder-neutral-400 resize-none focus:outline-none border border-neutral-200 focus:border-indigo-400 px-3 py-2.5 max-h-32 disabled:opacity-50 leading-relaxed"
@@ -1534,7 +1574,9 @@ export function WorkPageClient({
                     <button
                       type="submit"
                       disabled={!artifactInput.trim() || isEditingArtifact}
-                      className="flex-shrink-0 w-8 h-8 flex items-center justify-center bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors self-end mb-px"
+                      className={`flex-shrink-0 w-8 h-8 flex items-center justify-center text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors self-end mb-px ${
+                        docChatMode === 'edit' ? 'bg-indigo-600 hover:bg-indigo-700' : 'bg-neutral-700 hover:bg-neutral-800'
+                      }`}
                     >
                       <svg className="w-3.5 h-3.5 rotate-90" fill="currentColor" viewBox="0 0 20 20">
                         <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" />

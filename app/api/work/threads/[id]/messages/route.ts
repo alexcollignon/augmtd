@@ -89,7 +89,7 @@ export async function POST(
     // Verify thread belongs to user
     const { data: thread, error: threadError } = await supabase
       .from('work_threads')
-      .select('id, title, plan')
+      .select('id, title, plan, user_attachments')
       .eq('id', threadId)
       .eq('user_id', user.id)
       .single();
@@ -159,10 +159,22 @@ export async function POST(
       ? `\n\nCURRENT PLAN STATE (update this precisely — change only what the user's message affects, preserve everything else):\n${JSON.stringify(thread.plan, null, 2)}`
       : '';
 
+    const userAttachments = ((thread as any).user_attachments || []) as Array<{
+      filename: string;
+      extractedText: string | null;
+    }>;
+    const attachmentContext = userAttachments
+      .filter((a) => a.extractedText)
+      .map((a) => `--- Attached file: ${a.filename} ---\n${a.extractedText}`)
+      .join('\n\n');
+    const attachmentNote = attachmentContext
+      ? `\n\nATTACHED FILES (reference material the user has uploaded — use these when answering questions about their content):\n${attachmentContext}`
+      : '';
+
     const openaiMessages: OpenAI.Chat.ChatCompletionMessageParam[] = [
       {
         role: 'system',
-        content: SYSTEM_PROMPT + userContextNote + currentPlanNote,
+        content: SYSTEM_PROMPT + userContextNote + currentPlanNote + attachmentNote,
       },
       ...(messages || []).map((m) => ({
         role: m.role as 'user' | 'assistant',

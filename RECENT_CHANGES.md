@@ -1,3 +1,165 @@
+# Recent Changes — Phase 14: Document Chat Ask/Edit Split + Attachment Context (Feb 22, 2026)
+
+## Summary
+
+The document edit chat was forcing every message — questions and edits alike — through a full Haiku call + docx rebuild + Storage upload. This session splits that into two explicit modes via a UI toggle and fixes three related bugs: false "Plan updated" stale banners after doc edits, a JSON parse error when Haiku appended trailing text after the closing brace, and a null-artifact wipe that would have cleared the document preview on ask-mode responses.
+
+---
+
+## 1. Explicit Ask / Edit Mode Toggle
+
+**Problem:** Auto-detecting intent via Haiku was inherently racy — the banner state, prompt, and docx build couldn't all be correct without knowing the mode before Haiku responded. Every message was running the full expensive path regardless.
+
+**Solution:** A `docChatMode: 'ask' | 'edit'` state (default `'ask'`) with a segmented pill toggle above the document chat input.
+
+**UI:**
+- `Ask | Edit` segmented control (`bg-neutral-100` container, `bg-white shadow-sm` active tab)
+- Placeholder text adapts: "Ask about the document or attached files…" vs "Describe your edit…"
+- Submit button colour adapts: neutral-700 (ask) vs indigo-600 (edit)
+- Empty state hint updated: "Ask questions about the document, or switch to Edit to make changes."
+
+**Files:** `app/work/work-page-client.tsx`
+
+---
+
+## 2. Server-Side Mode Branching (`edit-artifact/route.ts`)
+
+**Before:** Single system prompt asked Haiku to classify intent AND generate JSON — two jobs in one, prone to misclassification, and running the full docx pipeline even for questions.
+
+**After:** `mode: 'ask' | 'edit'` accepted in the request body. Two completely separate paths:
+
+### Ask path
+- `max_tokens: 1024` (was 8000 — ~8× cheaper)
+- System prompt: "Answer the question in 2-4 sentences. Be specific and reference actual content when relevant."
+- No docx build, no Storage write, no `work_threads.artifact` update
+- Streams conversational text + `---ARTIFACT_UPDATE---\nnull` sentinel
+
+### Edit path
+- `max_tokens: 8000`
+- System prompt: focused edit-only prompt, no intent classification
+- Haiku responds: `[1 sentence describing change]\n---ARTIFACT_UPDATE---\n[DocContent JSON]`
+- Builds docx, uploads to Storage, updates `work_threads.artifact` as before
+
+**Important:** The `---ARTIFACT_UPDATE---` separator is no longer emitted by the Haiku system prompt for ask mode — the server appends it with "null" directly after Haiku returns. Only the edit path requires Haiku to emit the separator itself.
+
+**Files:** `app/api/work/threads/[id]/edit-artifact/route.ts`
+
+---
+
+## 3. Attachment Context Injected into Both Chat Routes
+
+**Before:** User-uploaded plan attachments (PDFs, DOCX, TXT in `work_threads.user_attachments`) were only used at document generation time. Planning chat and document edit chat had no access to them.
+
+**After:** Both routes now read `user_attachments` and inject extracted text into the AI system/user prompt.
+
+### Plan chat (`messages/route.ts`)
+- Added `user_attachments` to the thread select
+- Built `attachmentNote` from files with non-null `extractedText`
+- Appended to the OpenAI system prompt after `currentPlanNote`:
+  ```
+  ATTACHED FILES (reference material the user has uploaded — use these when answering questions about their content):
+  --- Attached file: contract.pdf ---
+  [extracted text]
+  ```
+
+### Document edit/ask chat (`edit-artifact/route.ts`)
+- Added `user_attachments` to the thread select
+- Built `attachmentContext` from files with non-null `extractedText`
+- Prepended to the user prompt as `REFERENCE FILES:` block when non-empty
+- Works for both ask mode ("does my document cover what the contract says?") and edit mode
+
+**Files:** `app/api/work/threads/[id]/messages/route.ts`, `app/api/work/threads/[id]/edit-artifact/route.ts`
+
+---
+
+## 4. `isRebuildingDocument` — Correct "Updating document" Banner
+
+**Before:** The "Updating document…" banner in `DocumentPanel` was tied to `isEditingArtifact` — it showed for BOTH ask and edit messages. Then after the ask/edit split it was over-corrected to only show after the stream ended (React batching prevented the `true` state from rendering).
+
+**After:** Separate `isRebuildingDocument` state:
+- Set to `true` **immediately** when the user submits in edit mode (`docChatMode === 'edit'`)
+- Never set for ask mode — banner never appears for questions
+- Cleared in the `finally` block after stream ends
+- `DocumentPanel` receives `isEditing={isRebuildingDocument}` (not `isEditingArtifact`)
+- `isEditingArtifact` is retained for disabling input/button during any in-flight request
+
+**Files:** `app/work/work-page-client.tsx`
+
+---
+
+## 5. `isDocumentStale` False Positive Fix
+
+**Problem:** After editing the document OR asking a question in doc chat, the "Plan updated — document may not reflect latest changes" amber banner appeared on the next visit to the planning view — even though neither the plan nor the document had changed.
+
+**Root cause — edit mode:** `generated_at` was captured on `updatedArtifact` before `buildDocx()` + `upload()` ran (could take 2-5+ seconds). `updated_at` was then set to `new Date()` after the upload. If the build took > 5 seconds, `updated_at > generated_at + 5000` → stale flag true on next DB load.
+
+**Root cause — ask mode:** The ask path was bumping `updated_at` to `new Date()`. If the user asked a question more than 5 seconds after the last edit, `updated_at > generated_at + 5000` → stale flag triggered.
+
+**Fix:**
+```typescript
+// Edit mode: use the artifact's own timestamp, not new Date()
+await adminClient.from('work_threads')
+  .update({ artifact: updatedArtifact, updated_at: updatedArtifact.generated_at })
+
+// Ask mode: don't advance updated_at past the artifact's timestamp
+await adminClient.from('work_threads')
+  .update({ updated_at: artifact.generated_at })
+```
+
+Both paths now ensure `updated_at === artifact.generated_at` after doc-chat interactions, so `isDocumentStale` always returns `false` on next load unless the PLAN was actually changed via the planning chat.
+
+**Files:** `app/api/work/threads/[id]/edit-artifact/route.ts`
+
+---
+
+## 6. JSON Parse Robustness (Haiku Trailing Text)
+
+**Error seen:**
+```
+SyntaxError: Unexpected non-whitespace character after JSON at position 10534
+```
+
+**Cause:** Haiku sometimes appends a plain-text note after the closing `}` of the JSON (e.g., "Note: I've updated the introduction."). The previous regex approach (`replace(/^```json...\n/i, '').replace(/```\s*$/i, '')`) only handled markdown fences, not trailing text.
+
+**Fix:** Extract JSON by brace matching — `rawContent.slice(firstBrace, lastBrace + 1)` — applied on both server (parsing Haiku's response) and client (parsing the streamed artifact):
+
+```typescript
+const firstBrace = rawContent.indexOf('{');
+const lastBrace = rawContent.lastIndexOf('}');
+if (firstBrace === -1 || lastBrace === -1) throw new Error('No JSON object in Haiku response');
+const content = JSON.parse(rawContent.slice(firstBrace, lastBrace + 1)) as DocContent;
+```
+
+**Files:** `app/api/work/threads/[id]/edit-artifact/route.ts`, `app/work/work-page-client.tsx`
+
+---
+
+## 7. Null Artifact Guard (Client)
+
+**Bug:** After an ask-mode response, the server sends `---ARTIFACT_UPDATE---\nnull`. The client check `if (artifactRaw)` was truthy for the string `"null"` (non-empty string). `JSON.parse("null")` returns JS `null`, which was then passed to `setArtifact(null)` — wiping the document preview.
+
+**Fix:** Added explicit null check after parse:
+```typescript
+const updatedArtifact = JSON.parse(...) as DocumentArtifact | null;
+if (updatedArtifact) {   // guard: "null" string parses to null
+  setArtifact(updatedArtifact);
+  setThreads(...);
+}
+```
+
+**Files:** `app/work/work-page-client.tsx`
+
+---
+
+## Files Changed
+
+**Updated:**
+- `app/api/work/threads/[id]/edit-artifact/route.ts` — mode param, ask/edit branching, attachment context, brace-based JSON parse, `updated_at` fix for both paths
+- `app/api/work/threads/[id]/messages/route.ts` — `user_attachments` in select, attachment context in system prompt
+- `app/work/work-page-client.tsx` — `docChatMode` state + toggle UI, `isRebuildingDocument` state, null artifact guard, brace-based JSON parse on client, updated empty state hint
+
+---
+
 # Recent Changes — Phase 13: Workflow Attachment Input System + Document Lifecycle UX (Feb 21, 2026)
 
 ## Summary
