@@ -1,7 +1,7 @@
 # AUGMTD Implementation Status
-**Version:** 5.1
-**Last Updated:** 2026-02-22
-**Current Phase:** Phase 14 Complete (document chat ask/edit split + attachment context)
+**Version:** 5.2
+**Last Updated:** 2026-02-23
+**Current Phase:** Phase 15 Complete (multi-account per provider + data management)
 
 ---
 
@@ -48,6 +48,10 @@
 | Document Chat Ask/Edit Split (Phase 14) | ✅ Complete | 100% |
 | Attachment Context in Chat Routes (Phase 14) | ✅ Complete | 100% |
 | isDocumentStale False Positive Fix (Phase 14) | ✅ Complete | 100% |
+| Multi-Account Per Provider (Phase 15) | ✅ Complete | 100% |
+| Account-Specific Disconnect (Phase 15) | ✅ Complete | 100% |
+| connection_id FK on emails + inbox_items (Phase 15) | ✅ Complete | 100% |
+| Data Management Section + Delete API (Phase 15) | ✅ Complete | 100% |
 | Vector Similarity | ⚠️ Planned | 0% |
 
 ---
@@ -1592,6 +1596,56 @@ When `isDocumentStale` is true, clicking "Regenerate document" enters a confirma
 - Plan AI can reset `status: 'provided'` inputs to `pending` if a chat message causes a full plan regeneration — no guard yet
 - Entry-view attach pending attachments not yet wired into `open-workflow` transfer
 - Rename bumps `updated_at` in DB — on reload after rename, a briefly stale flag may appear if gap < 5 seconds (unlikely in practice)
+
+---
+
+## ✅ Phase 15: Multi-Account Per Provider + Data Management (Feb 23, 2026)
+
+### Multi-Account Per Provider
+
+Users can now connect more than one Gmail or Outlook inbox. The database schema already supported this via `UNIQUE(user_id, provider, provider_account_id)` — only UI and disconnect logic needed changing.
+
+**Account-specific disconnect:** Both disconnect routes (`/api/auth/gmail/disconnect`, `/api/auth/outlook/disconnect`) now read `connectionId` from `formData` and delete by `id + user_id` instead of by provider. `ConnectionCard` passes the ID via a hidden input.
+
+**Settings page:** `connections.find()` → `connections.filter()`. Renders one `<ConnectionCard>` per connected account (existing component unchanged). An "Add another Gmail/Outlook account" dashed link appears below existing cards. Zero-account state falls back to the existing "Not connected" card.
+
+**Inbox page:** Removed `.limit(1)` from connections query. Passes `initialHasConnection: boolean` (was `initialConnection: any | null`). `InboxPageClient` uses a `hasConnection` boolean to gate the 3-column layout — correctly shows inbox with any number of active connections.
+
+### connection_id FK on emails + inbox_items
+
+Added `connection_id UUID REFERENCES connections(id) ON DELETE SET NULL` to both `emails` and `inbox_items`. Nullable for existing rows. Populated by sync for all new rows going forward (email insert, inbox_item insert, inbox_item update).
+
+**Migration:** `supabase/migrations/20260223_add_connection_id_to_emails_inbox_items.sql` — applied manually via Supabase SQL editor (local migration history mismatch).
+
+### Data Management Section
+
+New "Data Management" section in Settings (`components/settings/data-management-section.tsx`). Users select scope (All accounts or a specific connection by email address), click "Delete data", confirm in an inline red panel, and the API permanently removes all synced data for that scope.
+
+**`POST /api/settings/delete-data`** deletes in safe order:
+1. Storage attachment files from `email-attachments` bucket
+2. Email-sourced `inbox_items`
+3. `meeting_transcripts` linked to affected calendar events
+4. Meeting-sourced `inbox_items` linked to those transcripts
+5. `calendar_events`
+6. `emails`
+
+Ownership of specific connections is verified before deletion.
+
+### Files Created / Updated
+
+**New:**
+- `supabase/migrations/20260223_add_connection_id_to_emails_inbox_items.sql`
+- `app/api/settings/delete-data/route.ts`
+- `components/settings/data-management-section.tsx`
+
+**Updated:**
+- `app/api/auth/gmail/disconnect/route.ts` — connectionId from formData
+- `app/api/auth/outlook/disconnect/route.ts` — connectionId from formData
+- `components/settings/connection-card.tsx` — hidden connectionId input
+- `app/settings/page.tsx` — filter-based N cards, add account link, DataManagementSection
+- `app/inbox/page.tsx` — remove limit, initialHasConnection
+- `app/inbox/inbox-page-client.tsx` — hasConnection boolean state
+- `lib/email-sync/sync-emails.ts` — connection_id in email + inbox_item writes
 
 ---
 

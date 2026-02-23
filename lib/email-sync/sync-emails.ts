@@ -317,6 +317,7 @@ export async function syncEmailsForConnection(
           .from('emails')
           .insert({
             user_id: connection.user_id,
+            connection_id: connection.id,
             ...emailDbFields,
             is_from_user: isFromUser, // Flag for learning from sent emails
           })
@@ -561,6 +562,7 @@ export async function syncEmailsForConnection(
             const { error: updateError } = await adminSupabase
               .from('inbox_items')
               .update({
+                connection_id: connection.id,
                 work_state: recipient.inferredWorkState,
                 work_title: processed.workTitle,
                 what_i_prepared: processed.whatIPrepared,
@@ -700,6 +702,7 @@ export async function syncEmailsForConnection(
             .from('inbox_items')
             .insert({
               user_id: recipient.userId,
+              connection_id: connection.id,
               source: 'email',
               source_id: storedEmail.id,
 

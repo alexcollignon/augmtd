@@ -17,19 +17,19 @@ import type { InboxItem } from '@/lib/types/inbox';
 interface InboxPageClientProps {
   initialUser: any;
   initialUserFullName?: string;
-  initialConnection: any | null;
+  initialHasConnection: boolean;
   initialInboxItems: any[];
 }
 
 export function InboxPageClient({
   initialUser,
   initialUserFullName,
-  initialConnection,
+  initialHasConnection,
   initialInboxItems,
 }: InboxPageClientProps) {
   const searchParams = useSearchParams();
   const [user] = useState(initialUser);
-  const [connection, setConnection] = useState(initialConnection);
+  const [hasConnection, setHasConnection] = useState(initialHasConnection);
   const [inboxItems, setInboxItems] = useState<InboxItem[]>(initialInboxItems);
   const [selectedItem, setSelectedItem] = useState<InboxItem | null>(null);
   const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
@@ -53,8 +53,8 @@ export function InboxPageClient({
 
   // Sync connection state
   useEffect(() => {
-    setConnection(initialConnection);
-  }, [initialConnection]);
+    setHasConnection(initialHasConnection);
+  }, [initialHasConnection]);
 
   // Fetch meetings (shared between top bar and calendar column)
   useEffect(() => {
@@ -81,7 +81,7 @@ export function InboxPageClient({
     const successParam = searchParams?.get('success');
     const justConnected = successParam === 'outlook_connected' || successParam === 'gmail_connected';
 
-    if (justConnected && connection) {
+    if (justConnected && hasConnection) {
       setIsSyncing(true);
       optimisticSyncTriggered.current = true;
       window.history.replaceState({}, '', '/inbox');
@@ -90,7 +90,7 @@ export function InboxPageClient({
         optimisticSyncTriggered.current = false;
       });
     }
-  }, [searchParams, connection]);
+  }, [searchParams, hasConnection]);
 
   // Poll for inbox items and sync status
   useEffect(() => {
@@ -164,7 +164,7 @@ export function InboxPageClient({
 
     fetchData().then(scheduleNext);
     return () => clearTimeout(timeoutId);
-  }, [user.id, connection]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [user.id, hasConnection]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const preparedItems = inboxItems.filter((item: any) => item.visual_section === 'prepared');
   const meetingAssistantItems = inboxItems.filter((item: any) => item.source === 'meeting');
@@ -214,7 +214,7 @@ export function InboxPageClient({
         )}
 
         {/* No connection */}
-        {!connection && (
+        {!hasConnection && (
           <div className="flex-1 flex items-center justify-center">
             <div className="text-center max-w-sm">
               <div className="w-14 h-14 mx-auto mb-4 bg-indigo-50 flex items-center justify-center">
@@ -235,7 +235,7 @@ export function InboxPageClient({
         )}
 
         {/* 3-column layout */}
-        {connection && (
+        {hasConnection && (
           <div className="flex-1 flex min-h-0 overflow-hidden">
             {/* Left: email list */}
             <div className="w-[272px] flex-shrink-0 border-r border-neutral-200 overflow-y-auto bg-white">

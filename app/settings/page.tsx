@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import SidebarNav from '@/components/sidebar-nav';
 import ConnectionCard from '@/components/settings/connection-card';
 import AttendeeConnectionCard from '@/components/settings/attendee-connection-card';
+import DataManagementSection from '@/components/settings/data-management-section';
 import IdentitySection from '@/components/settings/identity-section';
 import SettingsPageClient from './settings-page-client';
 import { getUserIdentity } from '@/lib/context/work-patterns-service';
@@ -25,8 +26,8 @@ export default async function SettingsPage() {
     .eq('user_id', user.id)
     .in('provider', ['gmail', 'outlook']);
 
-  const gmailConnection = connections?.find(c => c.provider === 'gmail');
-  const outlookConnection = connections?.find(c => c.provider === 'outlook');
+  const gmailConnections = connections?.filter(c => c.provider === 'gmail') ?? [];
+  const outlookConnections = connections?.filter(c => c.provider === 'outlook') ?? [];
 
   // Fetch profile data (name + attendee status)
   const { data: profile } = await supabase
@@ -72,20 +73,68 @@ export default async function SettingsPage() {
             <div className="bg-white border border-neutral-200 p-6 mb-6 shadow-sm">
               <h3 className="text-[15px] font-semibold text-neutral-900 mb-4">Email Connections</h3>
               <div className="space-y-3">
-                <ConnectionCard
-                  provider="gmail"
-                  connection={gmailConnection}
-                  connectUrl="/api/auth/gmail/connect"
-                  disconnectUrl="/api/auth/gmail/disconnect"
-                />
-                <ConnectionCard
-                  provider="outlook"
-                  connection={outlookConnection}
-                  connectUrl="/api/auth/outlook/connect"
-                  disconnectUrl="/api/auth/outlook/disconnect"
-                />
+                {/* Gmail */}
+                {gmailConnections.length === 0 ? (
+                  <ConnectionCard
+                    provider="gmail"
+                    connection={null}
+                    connectUrl="/api/auth/gmail/connect"
+                    disconnectUrl="/api/auth/gmail/disconnect"
+                  />
+                ) : (
+                  <div className="space-y-2">
+                    {gmailConnections.map(conn => (
+                      <ConnectionCard
+                        key={conn.id}
+                        provider="gmail"
+                        connection={conn}
+                        connectUrl="/api/auth/gmail/connect"
+                        disconnectUrl="/api/auth/gmail/disconnect"
+                      />
+                    ))}
+                    <a
+                      href="/api/auth/gmail/connect"
+                      className="flex items-center gap-2 px-3 py-2 text-[13px] text-neutral-600 hover:text-neutral-900 hover:bg-neutral-50 border border-dashed border-neutral-300 transition-colors"
+                    >
+                      <span className="text-[16px] leading-none">+</span>
+                      Add another Gmail account
+                    </a>
+                  </div>
+                )}
+
+                {/* Outlook */}
+                {outlookConnections.length === 0 ? (
+                  <ConnectionCard
+                    provider="outlook"
+                    connection={null}
+                    connectUrl="/api/auth/outlook/connect"
+                    disconnectUrl="/api/auth/outlook/disconnect"
+                  />
+                ) : (
+                  <div className="space-y-2">
+                    {outlookConnections.map(conn => (
+                      <ConnectionCard
+                        key={conn.id}
+                        provider="outlook"
+                        connection={conn}
+                        connectUrl="/api/auth/outlook/connect"
+                        disconnectUrl="/api/auth/outlook/disconnect"
+                      />
+                    ))}
+                    <a
+                      href="/api/auth/outlook/connect"
+                      className="flex items-center gap-2 px-3 py-2 text-[13px] text-neutral-600 hover:text-neutral-900 hover:bg-neutral-50 border border-dashed border-neutral-300 transition-colors"
+                    >
+                      <span className="text-[16px] leading-none">+</span>
+                      Add another Outlook account
+                    </a>
+                  </div>
+                )}
               </div>
             </div>
+
+            {/* Data Management Section */}
+            <DataManagementSection connections={connections ?? []} />
 
             {/* Meeting Transcription Section */}
             <div className="bg-white border border-neutral-200 p-6 mb-6 shadow-sm">

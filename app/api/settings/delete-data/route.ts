@@ -1,0 +1,171 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { createClient } from '@/lib/supabase/server';
+import { createClient as createServerClient } from '@supabase/supabase-js';
+
+export async function POST(request: NextRequest) {
+  // Auth check
+  const supabase = await createClient();
+  const { data: { user }, error: authError } = await supabase.auth.getUser();
+
+  if (authError || !user) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  const { connectionId } = await request.json();
+
+  if (!connectionId) {
+    return NextResponse.json({ error: 'connectionId required' }, { status: 400 });
+  }
+
+  // Verify ownership of specific connection
+  if (connectionId !== 'all') {
+    const { data: conn } = await supabase
+      .from('connections')
+      .select('id')
+      .eq('id', connectionId)
+      .eq('user_id', user.id)
+      .single();
+
+    if (!conn) {
+      return NextResponse.json({ error: 'Connection not found' }, { status: 404 });
+    }
+  }
+
+  const adminSupabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { auth: { autoRefreshToken: false, persistSession: false } }
+  );
+
+  const userId = user.id;
+  const isAll = connectionId === 'all';
+
+  try {
+    // 1. Delete attachment files from storage
+    await deleteAttachmentFiles(adminSupabase, userId, isAll ? null : connectionId);
+
+    // 2. Delete inbox_items (email-sourced, scoped to connection or all)
+    if (isAll) {
+      await adminSupabase.from('inbox_items').delete().eq('user_id', userId).eq('source', 'email');
+    } else {
+      await adminSupabase
+        .from('inbox_items')
+        .delete()
+        .eq('user_id', userId)
+        .eq('connection_id', connectionId);
+    }
+
+    // 3. Find calendar event IDs for this scope (needed for transcript deletion)
+    let calendarEventIds: string[] = [];
+    if (isAll) {
+      const { data } = await adminSupabase
+        .from('calendar_events')
+        .select('id')
+        .eq('user_id', userId);
+      calendarEventIds = (data || []).map(e => e.id);
+    } else {
+      const { data } = await adminSupabase
+        .from('calendar_events')
+        .select('id')
+        .eq('user_id', userId)
+        .eq('connection_id', connectionId);
+      calendarEventIds = (data || []).map(e => e.id);
+    }
+
+    // 4. Delete meeting inbox_items linked to those transcripts, then transcripts
+    if (calendarEventIds.length > 0) {
+      const { data: transcripts } = await adminSupabase
+        .from('meeting_transcripts')
+        .select('id')
+        .eq('user_id', userId)
+        .in('calendar_event_id', calendarEventIds);
+
+      const transcriptIds = (transcripts || []).map(t => t.id);
+
+      if (transcriptIds.length > 0) {
+        await adminSupabase
+          .from('inbox_items')
+          .delete()
+          .eq('user_id', userId)
+          .in('source_meeting_transcript_id', transcriptIds);
+
+        await adminSupabase
+          .from('meeting_transcripts')
+          .delete()
+          .eq('user_id', userId)
+          .in('id', transcriptIds);
+      }
+    }
+
+    // 5. Delete calendar_events
+    if (isAll) {
+      await adminSupabase.from('calendar_events').delete().eq('user_id', userId);
+    } else {
+      await adminSupabase
+        .from('calendar_events')
+        .delete()
+        .eq('user_id', userId)
+        .eq('connection_id', connectionId);
+    }
+
+    // 6. Delete emails
+    if (isAll) {
+      await adminSupabase.from('emails').delete().eq('user_id', userId);
+    } else {
+      await adminSupabase
+        .from('emails')
+        .delete()
+        .eq('user_id', userId)
+        .eq('connection_id', connectionId);
+    }
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error('[Delete Data] Error:', error);
+    return NextResponse.json({ error: 'Failed to delete data' }, { status: 500 });
+  }
+}
+
+async function deleteAttachmentFiles(
+  adminSupabase: ReturnType<typeof createServerClient<any, any, any>>,
+  userId: string,
+  connectionId: string | null
+) {
+  let emailIds: string[] = [];
+
+  if (connectionId === null) {
+    // All accounts: list every folder under userId/
+    const { data: folders } = await adminSupabase.storage
+      .from('email-attachments')
+      .list(userId);
+
+    emailIds = (folders || []).map((f: { name: string }) => f.name);
+  } else {
+    // Specific connection: get email IDs for that connection
+    const { data: emails } = await adminSupabase
+      .from('emails')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('connection_id', connectionId);
+
+    emailIds = (emails || []).map((e: { id: string }) => e.id);
+  }
+
+  if (emailIds.length === 0) return;
+
+  const allPaths: string[] = [];
+
+  for (const emailId of emailIds) {
+    const { data: files } = await adminSupabase.storage
+      .from('email-attachments')
+      .list(`${userId}/${emailId}`);
+
+    if (files && files.length > 0) {
+      allPaths.push(...files.map((f: { name: string }) => `${userId}/${emailId}/${f.name}`));
+    }
+  }
+
+  if (allPaths.length > 0) {
+    await adminSupabase.storage.from('email-attachments').remove(allPaths);
+  }
+}

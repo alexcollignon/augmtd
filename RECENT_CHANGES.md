@@ -1,3 +1,137 @@
+# Recent Changes — Phase 15: Multi-Account Per Provider + Data Management (Feb 23, 2026)
+
+## Summary
+
+Users can now connect multiple Gmail or Outlook inboxes from the same provider. Disconnect is account-specific (no longer nukes all connections for a provider). Settings renders one card per connected account with an "Add another account" link. A new Data Management section lets users permanently delete all synced data scoped to a specific connection or all accounts. A `connection_id` FK on `emails` and `inbox_items` makes per-account data scoping possible.
+
+---
+
+## 1. Account-Specific Disconnect
+
+**Before:** Disconnect routes deleted ALL connections for a provider (`DELETE WHERE user_id = X AND provider = 'gmail'`). Connecting a second Gmail and then disconnecting one would silently wipe both.
+
+**After:** Disconnect routes parse `connectionId` from `request.formData()` and delete by `id = connectionId AND user_id = user.id`. Missing `connectionId` returns an error rather than deleting anything.
+
+**Files:** `app/api/auth/gmail/disconnect/route.ts`, `app/api/auth/outlook/disconnect/route.ts`
+
+---
+
+## 2. ConnectionCard — Hidden connectionId Input
+
+The disconnect `<form>` in `ConnectionCard` now includes `<input type="hidden" name="connectionId" value={connection.id} />`. No other changes to the component.
+
+**File:** `components/settings/connection-card.tsx`
+
+---
+
+## 3. Settings Page — N Cards Per Provider + Add Account Link
+
+**Before:** `connections?.find(c => c.provider === 'gmail')` — one card per provider, any additional accounts invisible.
+
+**After:**
+- `gmailConnections = connections?.filter(c => c.provider === 'gmail') ?? []`
+- `outlookConnections = connections?.filter(c => c.provider === 'outlook') ?? []`
+- Zero accounts → existing "Not connected" card unchanged
+- 1+ accounts → one `<ConnectionCard>` per account, followed by an "Add another Gmail/Outlook account" dashed link
+
+**File:** `app/settings/page.tsx`
+
+---
+
+## 4. Inbox Page — Remove Hard Connection Limit
+
+**Before:** `.limit(1)` on connections query → `const connection = connections?.[0] || null` → passed as `initialConnection: any | null`.
+
+**After:** No `.limit(1)`. Selects only `id`. Computes `hasConnection = (connections?.length ?? 0) > 0`. Passes `initialHasConnection: boolean` to `InboxPageClient`.
+
+**Files:** `app/inbox/page.tsx`, `app/inbox/inbox-page-client.tsx`
+
+---
+
+## 5. InboxPageClient — hasConnection Boolean State
+
+Replaced `initialConnection: any | null` / `connection` state with `initialHasConnection: boolean` / `hasConnection`. All conditional checks (`!connection`, `connection &&`) and `useEffect` dependencies updated. Inbox shows the 3-column layout whenever at least one connection is active — works correctly with multiple accounts.
+
+**File:** `app/inbox/inbox-page-client.tsx`
+
+---
+
+## 6. connection_id FK on emails + inbox_items
+
+**Why:** Without a `connection_id` FK on `emails` and `inbox_items`, it was impossible to scope data deletion (or future per-account inbox filtering) to a specific connected account.
+
+**Migration** (`supabase/migrations/20260223_add_connection_id_to_emails_inbox_items.sql`):
+```sql
+ALTER TABLE emails ADD COLUMN IF NOT EXISTS connection_id UUID REFERENCES connections(id) ON DELETE SET NULL;
+ALTER TABLE inbox_items ADD COLUMN IF NOT EXISTS connection_id UUID REFERENCES connections(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_emails_connection_id ON emails(connection_id) WHERE connection_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_inbox_items_connection_id ON inbox_items(connection_id) WHERE connection_id IS NOT NULL;
+```
+
+Existing rows stay `NULL` — they are cleanable only via "all accounts" deletion. All rows from this point forward are populated.
+
+**Sync** (`lib/email-sync/sync-emails.ts`): `connection_id: connection.id` added to:
+1. Email `INSERT` (line ~318)
+2. Inbox item `INSERT` (new items)
+3. Inbox item `UPDATE` (existing thread updates — backfills `connection_id` on re-sync)
+
+---
+
+## 7. Data Management Section (Settings)
+
+New section in Settings allowing users to permanently delete all synced data scoped to a specific connection or all accounts at once.
+
+### UI — `components/settings/data-management-section.tsx` (new)
+
+- Dropdown: "All accounts" + each connected account by email address and provider
+- "Delete data" button → inline red confirmation panel
+- Confirmation shows scope label and "cannot be undone" warning
+- "Confirm delete" / "Cancel" buttons
+- Success/error feedback inline
+
+### API — `app/api/settings/delete-data/route.ts` (new)
+
+`POST { connectionId: 'all' | '<uuid>' }`
+
+Deletion order (avoids FK violations):
+1. Attachment files from `email-attachments` bucket (lists by email IDs for specific, by userId folder for all)
+2. Email-sourced `inbox_items` (by `connection_id` or `user_id`)
+3. `meeting_transcripts` linked to affected calendar events
+4. Meeting-sourced `inbox_items` linked to those transcripts
+5. `calendar_events` (by `connection_id` or `user_id`)
+6. `emails` (by `connection_id` or `user_id`)
+
+Ownership validation: specific `connectionId` is verified against `user_id` before proceeding.
+
+**Files:** `components/settings/data-management-section.tsx` (new), `app/api/settings/delete-data/route.ts` (new), `app/settings/page.tsx` (imports + renders `DataManagementSection`)
+
+---
+
+## Files Changed
+
+| File | Change |
+|---|---|
+| `app/api/auth/gmail/disconnect/route.ts` | Delete by `connectionId` from formData |
+| `app/api/auth/outlook/disconnect/route.ts` | Delete by `connectionId` from formData |
+| `components/settings/connection-card.tsx` | Hidden `connectionId` input in disconnect form |
+| `app/settings/page.tsx` | Filter-based N cards per provider, "Add account" link, DataManagementSection |
+| `app/inbox/page.tsx` | Remove `.limit(1)`, pass `initialHasConnection` |
+| `app/inbox/inbox-page-client.tsx` | `hasConnection` boolean state replaces `connection` object |
+| `lib/email-sync/sync-emails.ts` | `connection_id` in email insert + inbox_item insert/update |
+| `supabase/migrations/20260223_add_connection_id_to_emails_inbox_items.sql` | NEW — adds FK columns + indexes |
+| `app/api/settings/delete-data/route.ts` | NEW — scoped data deletion API |
+| `components/settings/data-management-section.tsx` | NEW — Data Management UI component |
+
+---
+
+## What's Out of Scope (Deferred)
+
+- Per-account inbox filtering / source badges on inbox items
+- Manual sync scoped to a single connection (sync by provider still syncs all accounts of that provider)
+- `connection_id` FK backfill for pre-existing rows (NULL rows only cleanable via "all accounts" delete)
+
+---
+
 # Recent Changes — Phase 14: Document Chat Ask/Edit Split + Attachment Context (Feb 22, 2026)
 
 ## Summary

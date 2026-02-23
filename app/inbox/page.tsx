@@ -19,16 +19,15 @@ export default async function PreparedWorkPage() {
     .eq('id', user.id)
     .single();
 
-  // Fetch connection
+  // Fetch connections
   const { data: connections } = await supabase
     .from('connections')
-    .select('*')
+    .select('id')
     .eq('user_id', user.id)
     .in('provider', ['gmail', 'outlook'])
-    .eq('status', 'active')
-    .limit(1);
+    .eq('status', 'active');
 
-  const connection = connections?.[0] || null;
+  const hasConnection = (connections?.length ?? 0) > 0;
 
   // Fetch inbox items
   const { data: inboxItems } = await supabase
@@ -44,7 +43,7 @@ export default async function PreparedWorkPage() {
     <InboxPageClient
       initialUser={user}
       initialUserFullName={profile?.full_name}
-      initialConnection={connection}
+      initialHasConnection={hasConnection}
       initialInboxItems={inboxItems || []}
     />
   );

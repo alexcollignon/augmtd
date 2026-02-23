@@ -13,12 +13,20 @@ export async function POST(request: NextRequest) {
       return NextResponse.redirect(`${origin}/settings?error=unauthorized`);
     }
 
-    // Delete Outlook connection
+    // Parse connectionId from form data
+    const formData = await request.formData();
+    const connectionId = formData.get('connectionId');
+
+    if (!connectionId) {
+      return NextResponse.redirect(`${origin}/settings?error=missing_connection_id`);
+    }
+
+    // Delete specific Outlook connection
     const { error: deleteError } = await supabase
       .from('connections')
       .delete()
-      .eq('user_id', user.id)
-      .eq('provider', 'outlook');
+      .eq('id', connectionId)
+      .eq('user_id', user.id);
 
     if (deleteError) {
       console.error('Error disconnecting Outlook:', deleteError);

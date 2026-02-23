@@ -179,6 +179,7 @@ export default function ConnectionCard({ provider, connection, connectUrl, disco
           {/* Disconnect */}
           <div className="pt-4 border-t border-neutral-200">
             <form action={disconnectUrl} method="POST">
+              <input type="hidden" name="connectionId" value={connection.id} />
               <button
                 type="submit"
                 className="w-full px-4 py-2.5 border border-red-200 text-red-600 hover:bg-red-50 font-semibold transition-colors text-[13px]"
