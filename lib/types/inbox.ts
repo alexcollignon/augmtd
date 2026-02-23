@@ -106,12 +106,37 @@ export interface DocContent {
   sections: DocSection[];
 }
 
+export interface PptxSlide {
+  title: string;
+  layout: 'title' | 'content';
+  bullets?: string[];
+  notes?: string;
+}
+export interface PptxContent {
+  title: string;
+  subtitle?: string;
+  slides: PptxSlide[];
+}
+
+export interface XlsxSheet {
+  name: string;
+  headers: string[];
+  rows: (string | number | null)[][];
+  summary?: string;
+}
+export interface XlsxContent {
+  title: string;
+  sheets: XlsxSheet[];
+}
+
+export type ArtifactContent = DocContent | PptxContent | XlsxContent;
+
 export interface DocumentArtifact {
   title: string;
   type: DeliverableType;
   generated_at: string; // ISO timestamp
   storage_path: string; // Path within work-artifacts bucket: "{userId}/{threadId}.docx"
-  content?: DocContent; // Full document content for in-panel preview
+  content?: ArtifactContent; // Full document content for in-panel preview
 }
 
 export interface InboxItem {

@@ -65,11 +65,24 @@ PLAN JSON STRUCTURE:
   ]
 }
 
+DELIVERABLE TYPE FORMAT MAPPING — output format always overrides subject matter:
+- User mentions "Excel", "spreadsheet", ".xlsx", "xls", "table" → deliverable_type: "spreadsheet"
+- User mentions "PowerPoint", "slides", "deck", "slideshow", ".pptx" → deliverable_type: "presentation"
+- User mentions "Word", "memo", "brief", "contract", "letter", ".docx" → deliverable_type: "document"
+- User mentions "email", "reply", "message" → deliverable_type: "email"
+- "analysis" with no format specified → deliverable_type: "analysis"
+- "report" with no format specified → deliverable_type: "report"
+Examples (format wins):
+- "financial analysis in Excel" → "spreadsheet" NOT "analysis"
+- "quarterly report in PowerPoint" → "presentation" NOT "report"
+- "budget breakdown as a spreadsheet" → "spreadsheet" NOT "document"
+When deliverable_type is "spreadsheet", step skills must use "excel_generator" or "data_analyzer" — never "word_generator".
+When deliverable_type is "presentation", step skills must use "powerpoint_generator" — never "word_generator".
+
 PLAN RULES:
 - Always emit the full updated plan JSON — never partial or null unless the request is completely off-topic
 - Update ALL relevant fields when something changes (e.g. changing to PowerPoint updates deliverable_type AND step skills AND toolsNeeded)
 - Max 6 steps
-- deliverable_type must match the actual format requested
 - If the workflow prompt mentions available attachments, include each as an input with status "provided" and set providedFilename to the exact filename — never ask the user to re-upload something already attached`;
 
 // POST /api/work/threads/[id]/messages — send a message and stream the AI response
@@ -233,6 +246,16 @@ export async function POST(
           if (planRaw && planRaw !== 'null') {
             try {
               const plan = JSON.parse(planRaw);
+              // Preserve provided-input state across follow-up planning messages
+              if (thread.plan?.inputs && plan.inputs) {
+                plan.inputs = plan.inputs.map((input: any) => {
+                  const existing = (thread.plan!.inputs || []).find((i: any) => i.id === input.id);
+                  if (existing?.status === 'provided') {
+                    return { ...input, status: 'provided', providedFilename: existing.providedFilename };
+                  }
+                  return input;
+                });
+              }
               await adminClient.from('work_threads').update({
                 plan,
                 updated_at: new Date().toISOString(),

@@ -1,78 +1,78 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import Anthropic from '@anthropic-ai/sdk';
-import {
-  Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType,
-} from 'docx';
-import { DocumentArtifact, DocContent } from '@/lib/types/inbox';
+import { DocumentArtifact, DeliverableType, ArtifactContent } from '@/lib/types/inbox';
+import { buildArtifactFile, getMimeType } from '@/lib/artifacts/builders';
 
 const ARTIFACT_SEPARATOR = '---ARTIFACT_UPDATE---';
 
-function buildDocx(content: DocContent): Promise<Buffer> {
-  const children: Paragraph[] = [];
-
-  children.push(
-    new Paragraph({
-      children: [new TextRun({ text: content.title, bold: true, size: 48, font: 'Arial' })],
-      alignment: AlignmentType.LEFT,
-      spacing: { after: 240 },
-    })
-  );
-
-  if (content.subtitle) {
-    children.push(
-      new Paragraph({
-        children: [new TextRun({ text: content.subtitle, size: 28, color: '666666', font: 'Arial' })],
-        spacing: { after: 480 },
-      })
-    );
+function buildEditSystemPrompt(type: DeliverableType, isAskMode: boolean): string {
+  if (isAskMode) {
+    return `You are a document assistant. Answer the user's question about the document or attached files in 2-4 sentences. Be specific and reference actual content when relevant.`;
   }
 
-  for (const section of content.sections) {
-    children.push(
-      new Paragraph({
-        text: section.heading,
-        heading: section.level === 1 ? HeadingLevel.HEADING_1 : HeadingLevel.HEADING_2,
-        spacing: { before: 360, after: 120 },
-      })
-    );
-    for (const para of section.paragraphs) {
-      children.push(
-        new Paragraph({
-          children: [new TextRun({ text: para, size: 24, font: 'Arial' })],
-          spacing: { after: 160 },
-        })
-      );
+  if (type === 'presentation') {
+    return `You are a presentation editor. Apply the edit instruction to the slides and respond in this exact format:
+
+[1 sentence describing what you changed]
+---ARTIFACT_UPDATE---
+[Complete updated PptxContent JSON]
+
+RULES: Only change what was asked — preserve all other slides, content, and structure exactly.
+
+JSON FORMAT:
+{
+  "title": "Presentation title",
+  "subtitle": "Optional subtitle",
+  "slides": [
+    { "title": "Slide title", "layout": "title", "bullets": [], "notes": "optional" },
+    { "title": "Slide title", "layout": "content", "bullets": ["Point 1", "Point 2"], "notes": "optional" }
+  ]
+}`;
+  }
+
+  if (type === 'spreadsheet') {
+    return `You are a spreadsheet editor. Apply the edit instruction to the data and respond in this exact format:
+
+[1 sentence describing what you changed]
+---ARTIFACT_UPDATE---
+[Complete updated XlsxContent JSON]
+
+RULES: Only change what was asked — preserve all other sheets and data exactly.
+
+JSON FORMAT:
+{
+  "title": "Spreadsheet title",
+  "sheets": [
+    {
+      "name": "Sheet name",
+      "headers": ["Col A", "Col B"],
+      "rows": [["val", 100], ["val2", 200]],
+      "summary": "optional"
     }
+  ]
+}`;
   }
 
-  const doc = new Document({
-    styles: {
-      paragraphStyles: [
-        {
-          id: 'Heading1', name: 'Heading 1', basedOn: 'Normal', next: 'Normal', quickFormat: true,
-          run: { size: 36, bold: true, font: 'Arial', color: '1a1a1a' },
-          paragraph: { spacing: { before: 360, after: 120 }, outlineLevel: 0 },
-        },
-        {
-          id: 'Heading2', name: 'Heading 2', basedOn: 'Normal', next: 'Normal', quickFormat: true,
-          run: { size: 28, bold: true, font: 'Arial', color: '333333' },
-          paragraph: { spacing: { before: 240, after: 80 }, outlineLevel: 1 },
-        },
-      ],
-    },
-    sections: [{
-      properties: {
-        page: {
-          size: { width: 12240, height: 15840 },
-          margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 },
-        },
-      },
-      children,
-    }],
-  });
+  // default: docx/report/analysis/email
+  return `You are a document editor. Apply the edit instruction to the document and respond in this exact format:
 
-  return Packer.toBuffer(doc);
+[1 sentence describing what you changed]
+---ARTIFACT_UPDATE---
+[Complete updated DocContent JSON]
+
+RULES: Only change what was asked — preserve all other sections, tone, and content exactly.
+
+JSON FORMAT:
+{
+  "title": "Document title",
+  "subtitle": "Optional subtitle",
+  "sections": [
+    { "heading": "Section heading", "level": 1, "paragraphs": ["Prose paragraph..."] }
+  ]
+}
+
+level 1 = major section, level 2 = subsection. Complete prose paragraphs only.`;
 }
 
 // POST /api/work/threads/[id]/edit-artifact — stream acknowledgment, regenerate doc with edit
@@ -113,6 +113,7 @@ export async function POST(
 
     const isAskMode = mode === 'ask';
     const artifact = thread.artifact as DocumentArtifact;
+    const type: DeliverableType = artifact.type;
     const contentJson = artifact.content ? JSON.stringify(artifact.content, null, 2) : null;
 
     const userAttachments = ((thread as any).user_attachments || []) as Array<{
@@ -124,32 +125,27 @@ export async function POST(
       .map((a) => `--- Attached file: ${a.filename} ---\n${a.extractedText}`)
       .join('\n\n');
 
-    const docContext = `${attachmentContext ? `REFERENCE FILES:\n${attachmentContext}\n\n` : ''}CURRENT DOCUMENT:\n${contentJson ?? `Title: ${artifact.title}\nType: ${artifact.type}`}`;
+    const docContext = `${attachmentContext ? `REFERENCE FILES:\n${attachmentContext}\n\n` : ''}CURRENT DOCUMENT:\n${contentJson ?? `Title: ${artifact.title}\nType: ${type}`}`;
 
-    const systemPrompt = isAskMode
-      ? `You are a document assistant. Answer the user's question about the document or attached files in 2-4 sentences. Be specific and reference actual content when relevant.`
-      : `You are a document editor. Apply the edit instruction to the document and respond in this exact format:
+    // Load conversation history so the AI remembers previous questions/answers
+    const { data: previousMessages } = await supabase
+      .from('work_messages')
+      .select('role, content')
+      .eq('thread_id', threadId)
+      .order('created_at', { ascending: true });
 
-[1 sentence describing what you changed]
----ARTIFACT_UPDATE---
-[Complete updated DocContent JSON]
+    // docContext goes into the system prompt (always the latest document state)
+    // so it doesn't bloat every message in the history
+    const systemPrompt = `${buildEditSystemPrompt(type, isAskMode)}\n\n${docContext}`;
 
-RULES: Only change what was asked — preserve all other sections, tone, and content exactly.
-
-JSON FORMAT:
-{
-  "title": "Document title",
-  "subtitle": "Optional subtitle",
-  "sections": [
-    { "heading": "Section heading", "level": 1, "paragraphs": ["Prose paragraph..."] }
-  ]
-}
-
-level 1 = major section, level 2 = subsection. Complete prose paragraphs only.`;
-
-    const userPrompt = isAskMode
-      ? `${docContext}\n\nQUESTION: ${instruction.trim()}`
-      : `${docContext}\n\nEDIT INSTRUCTION: ${instruction.trim()}`;
+    const historyMessages = (previousMessages || []).map((m: { role: string; content: string }) => ({
+      role: m.role as 'user' | 'assistant',
+      content: m.content,
+    }));
+    const anthropicMessages = [
+      ...historyMessages,
+      { role: 'user' as const, content: instruction.trim() },
+    ];
 
     const readable = new ReadableStream({
       async start(controller) {
@@ -161,7 +157,7 @@ level 1 = major section, level 2 = subsection. Complete prose paragraphs only.`;
             model: 'claude-haiku-4-5-20251001',
             max_tokens: isAskMode ? 1024 : 8000,
             system: systemPrompt,
-            messages: [{ role: 'user', content: userPrompt }],
+            messages: anthropicMessages,
           });
 
           const rawText = (completion.content[0] as { type: string; text: string })?.text ?? '';
@@ -179,8 +175,6 @@ level 1 = major section, level 2 = subsection. Complete prose paragraphs only.`;
               { thread_id: threadId, role: 'user', content: instruction.trim() },
               { thread_id: threadId, role: 'assistant', content: conversationalText },
             ]);
-            // Don't bump updated_at for ask-mode queries — it would make the document
-            // appear stale (updated_at > artifact.generated_at) on next load.
             await adminClient
               .from('work_threads')
               .update({ updated_at: artifact.generated_at })
@@ -204,15 +198,15 @@ level 1 = major section, level 2 = subsection. Complete prose paragraphs only.`;
             const firstBrace = rawContent.indexOf('{');
             const lastBrace = rawContent.lastIndexOf('}');
             if (firstBrace === -1 || lastBrace === -1) throw new Error('No JSON object in Haiku response');
-            const content = JSON.parse(rawContent.slice(firstBrace, lastBrace + 1)) as DocContent;
+            const content = JSON.parse(rawContent.slice(firstBrace, lastBrace + 1)) as ArtifactContent;
 
-            const buffer = await buildDocx(content);
+            const buffer = await buildArtifactFile(type, content);
 
             const storagePath = artifact.storage_path;
             await adminClient.storage
               .from('work-artifacts')
               .upload(storagePath, buffer, {
-                contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                contentType: getMimeType(type),
                 upsert: true,
               });
 
@@ -222,9 +216,6 @@ level 1 = major section, level 2 = subsection. Complete prose paragraphs only.`;
               content,
             };
 
-            // updated_at must equal generated_at — NOT new Date() — because generated_at
-            // is captured before buildDocx() which takes seconds. Using new Date() here
-            // would put updated_at > generated_at and trigger the stale-document banner.
             await adminClient
               .from('work_threads')
               .update({ artifact: updatedArtifact, updated_at: updatedArtifact.generated_at })

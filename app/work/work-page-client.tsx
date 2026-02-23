@@ -20,7 +20,7 @@ import {
   PaperClipIcon,
 } from '@heroicons/react/24/outline';
 import { WorkBlueprint } from '@/lib/types/work-blueprints';
-import { ExecutionPlan, DocumentArtifact } from '@/lib/types/inbox';
+import { ExecutionPlan, DocumentArtifact, DocContent, PptxContent, XlsxContent } from '@/lib/types/inbox';
 import OnboardingModal from '@/components/onboarding-modal';
 
 // ─── Markdown renderer ────────────────────────────────────────────────────────
@@ -250,7 +250,9 @@ function PlanPanel({
             <span className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce [animation-delay:150ms]" />
             <span className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce [animation-delay:300ms]" />
           </div>
-          <p className="text-[12px] text-indigo-700 font-medium">Building your document…</p>
+          <p className="text-[12px] text-indigo-700 font-medium">
+            Building your {plan.deliverable_type === 'presentation' ? 'presentation' : plan.deliverable_type === 'spreadsheet' ? 'spreadsheet' : 'document'}…
+          </p>
         </div>
       )}
 
@@ -466,28 +468,32 @@ function PlanPanel({
               Expected outputs
             </p>
             <div className="space-y-1.5">
-              {plan.outputs.map((output) => (
-                <div
-                  key={output.id}
-                  className="flex items-start gap-2.5 p-3 bg-green-50 border border-green-100"
-                >
-                  <CheckCircleIcon className="w-4 h-4 text-green-500 flex-shrink-0 mt-0.5" />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-[12px] font-medium text-neutral-900">{output.name}</p>
-                    <p className="text-[11px] text-neutral-600 mt-0.5">{output.description}</p>
-                    <span className="text-[10px] text-green-700 bg-green-100 px-1.5 py-0.5 mt-1 inline-block">
-                      {output.type.replace('_', ' ')}
-                    </span>
+              {plan.outputs.map((output) => {
+                const OutputIcon = getDeliverableIcon(plan.deliverable_type);
+                const fileExt = plan.deliverable_type === 'presentation' ? '.pptx' : plan.deliverable_type === 'spreadsheet' ? '.xlsx' : '.docx';
+                return (
+                  <div
+                    key={output.id}
+                    className="flex items-start gap-2.5 p-3 bg-neutral-50 border border-neutral-200"
+                  >
+                    <OutputIcon className="w-4 h-4 text-neutral-400 flex-shrink-0 mt-0.5" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[12px] font-medium text-neutral-900">{output.name}</p>
+                      <p className="text-[11px] text-neutral-600 mt-0.5">{output.description}</p>
+                      <span className="text-[10px] text-neutral-500 bg-neutral-200 px-1.5 py-0.5 mt-1 inline-block">
+                        {fileExt}
+                      </span>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}
       </div>
 
-      {/* Bottom CTA — docx only (document/report) */}
-      {workMode === 'planning' && threadId && (plan.deliverable_type === 'document' || plan.deliverable_type === 'report') && (
+      {/* Bottom CTA — all deliverable types */}
+      {workMode === 'planning' && threadId && ['document', 'report', 'analysis', 'presentation', 'spreadsheet', 'email'].includes(plan.deliverable_type) && (
         <div className="p-4 border-t border-neutral-100">
           {!artifact ? (
             /* First generation — no guard needed */
@@ -544,6 +550,100 @@ function PlanPanel({
   );
 }
 
+// ─── Artifact Preview Components ──────────────────────────────────────────────
+
+function DocPreview({ content }: { content: DocContent }) {
+  return (
+    <div className="max-w-2xl mx-auto bg-white shadow-sm border border-neutral-200 px-12 py-10 min-h-full">
+      <h1 className="text-[22px] font-bold text-neutral-900 leading-tight mb-1">
+        {content.title}
+      </h1>
+      {content.subtitle && (
+        <p className="text-[13px] text-neutral-500 mb-8">{content.subtitle}</p>
+      )}
+      {!content.subtitle && <div className="mb-8" />}
+      {content.sections.map((section, i) => (
+        <div key={i} className={section.level === 1 ? 'mt-8 first:mt-0' : 'mt-5'}>
+          {section.level === 1 ? (
+            <h2 className="text-[15px] font-bold text-neutral-900 mb-3 pb-1.5 border-b border-neutral-100">
+              {section.heading}
+            </h2>
+          ) : (
+            <h3 className="text-[13px] font-semibold text-neutral-800 mb-2">
+              {section.heading}
+            </h3>
+          )}
+          <div className="space-y-3">
+            {section.paragraphs.map((para, j) => (
+              <p key={j} className="text-[13px] text-neutral-700 leading-relaxed">
+                {para}
+              </p>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function PptxPreview({ content }: { content: PptxContent }) {
+  return (
+    <div className="max-w-2xl mx-auto space-y-3">
+      {content.slides.map((slide, i) => (
+        <div
+          key={i}
+          className={`p-4 border ${slide.layout === 'title' ? 'bg-indigo-50 border-indigo-100' : 'bg-white border-neutral-200'}`}
+        >
+          <p className="text-[14px] font-bold text-neutral-900 mb-2">{slide.title}</p>
+          {slide.bullets?.map((b, j) => (
+            <p key={j} className="text-[12px] text-neutral-700 flex gap-2">
+              <span className="text-neutral-400">·</span>{b}
+            </p>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function XlsxPreview({ content }: { content: XlsxContent }) {
+  const sheet = content.sheets[0];
+  if (!sheet) return null;
+  return (
+    <div className="max-w-2xl mx-auto">
+      <div className="overflow-x-auto">
+        <table className="w-full text-[12px] border-collapse">
+          <thead>
+            <tr>
+              {sheet.headers.map((h, i) => (
+                <th key={i} className="text-left p-2 bg-neutral-100 border border-neutral-200 font-semibold text-neutral-700">
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {sheet.rows.map((row, i) => (
+              <tr key={i} className={i % 2 === 0 ? 'bg-white' : 'bg-neutral-50'}>
+                {row.map((cell, j) => (
+                  <td key={j} className="p-2 border border-neutral-100 text-neutral-700">
+                    {cell ?? ''}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {content.sheets.length > 1 && (
+        <p className="text-[11px] text-neutral-400 mt-2">
+          + {content.sheets.length - 1} more sheet(s) in downloaded file
+        </p>
+      )}
+    </div>
+  );
+}
+
 // ─── Document Panel ───────────────────────────────────────────────────────────
 
 function DocumentPanel({
@@ -593,7 +693,7 @@ function DocumentPanel({
             className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 text-white text-[11px] font-semibold hover:bg-indigo-700 disabled:opacity-50 transition-colors"
           >
             <ArrowDownTrayIcon className="w-3.5 h-3.5" />
-            {isDownloading ? 'Downloading…' : 'Download .docx'}
+            {isDownloading ? 'Downloading…' : `Download .${artifact.type === 'presentation' ? 'pptx' : artifact.type === 'spreadsheet' ? 'xlsx' : 'docx'}`}
           </button>
         </div>
       </div>
@@ -601,39 +701,11 @@ function DocumentPanel({
       {/* Document preview */}
       <div className="flex-1 overflow-y-auto p-6">
         {artifact.content ? (
-          /* Paper */
-          <div className="max-w-2xl mx-auto bg-white shadow-sm border border-neutral-200 px-12 py-10 min-h-full">
-            {/* Title */}
-            <h1 className="text-[22px] font-bold text-neutral-900 leading-tight mb-1">
-              {artifact.content.title}
-            </h1>
-            {artifact.content.subtitle && (
-              <p className="text-[13px] text-neutral-500 mb-8">{artifact.content.subtitle}</p>
-            )}
-            {!artifact.content.subtitle && <div className="mb-8" />}
-
-            {/* Sections */}
-            {artifact.content.sections.map((section, i) => (
-              <div key={i} className={section.level === 1 ? 'mt-8 first:mt-0' : 'mt-5'}>
-                {section.level === 1 ? (
-                  <h2 className="text-[15px] font-bold text-neutral-900 mb-3 pb-1.5 border-b border-neutral-100">
-                    {section.heading}
-                  </h2>
-                ) : (
-                  <h3 className="text-[13px] font-semibold text-neutral-800 mb-2">
-                    {section.heading}
-                  </h3>
-                )}
-                <div className="space-y-3">
-                  {section.paragraphs.map((para, j) => (
-                    <p key={j} className="text-[13px] text-neutral-700 leading-relaxed">
-                      {para}
-                    </p>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
+          artifact.type === 'presentation'
+            ? <PptxPreview content={artifact.content as PptxContent} />
+            : artifact.type === 'spreadsheet'
+            ? <XlsxPreview content={artifact.content as XlsxContent} />
+            : <DocPreview content={artifact.content as DocContent} />
         ) : (
           /* Fallback for artifacts without content */
           <div className="max-w-2xl mx-auto bg-white shadow-sm border border-neutral-200 px-12 py-10 flex items-center justify-center min-h-64">
@@ -1010,7 +1082,8 @@ export function WorkPageClient({
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${artifact?.title ?? 'document'}.docx`;
+      const ext = artifact?.type === 'presentation' ? 'pptx' : artifact?.type === 'spreadsheet' ? 'xlsx' : 'docx';
+      a.download = `${artifact?.title ?? 'document'}.${ext}`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -1266,7 +1339,9 @@ export function WorkPageClient({
                             {relativeTime(thread.updated_at)}
                           </p>
                           {thread.artifact && (
-                            <span className="text-[9px] text-green-600 bg-green-50 px-1 py-px">docx</span>
+                            <span className="text-[9px] text-green-600 bg-green-50 px-1 py-px">
+                              {thread.artifact.type === 'presentation' ? 'pptx' : thread.artifact.type === 'spreadsheet' ? 'xlsx' : 'docx'}
+                            </span>
                           )}
                         </div>
                       </button>
@@ -1458,7 +1533,7 @@ export function WorkPageClient({
                     <span className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce [animation-delay:150ms]" />
                     <span className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce [animation-delay:300ms]" />
                   </div>
-                  <p className="text-[13px] text-neutral-500 font-medium">Generating your document…</p>
+                  <p className="text-[13px] text-neutral-500 font-medium">Generating your {activeThread?.plan?.deliverable_type === 'presentation' ? 'presentation' : activeThread?.plan?.deliverable_type === 'spreadsheet' ? 'spreadsheet' : 'document'}…</p>
                   <p className="text-[11px] text-neutral-400 mt-1">This may take a few seconds</p>
                 </div>
               </div>
@@ -1560,7 +1635,11 @@ export function WorkPageClient({
                       onKeyDown={handleArtifactKeyDown}
                       placeholder={docChatMode === 'ask'
                         ? 'Ask about the document or attached files…'
-                        : 'Describe your edit… e.g. "make the summary shorter"'}
+                        : artifact?.type === 'presentation'
+                        ? "Edit the presentation… (e.g., 'add a slide about risks')"
+                        : artifact?.type === 'spreadsheet'
+                        ? "Edit the spreadsheet… (e.g., 'add a totals row')"
+                        : "Edit the document… (e.g., 'make the summary shorter')"}
                       rows={1}
                       disabled={isEditingArtifact}
                       className="flex-1 text-[13px] text-neutral-900 placeholder-neutral-400 resize-none focus:outline-none border border-neutral-200 focus:border-indigo-400 px-3 py-2.5 max-h-32 disabled:opacity-50 leading-relaxed"

@@ -12,7 +12,8 @@ export async function extractTextFromAttachment(
 ): Promise<string | null> {
   try {
     if (mimeType === 'application/pdf') {
-      const { PDFParse } = await import('pdf-parse');
+      const imported = await import('pdf-parse');
+      const PDFParse = (imported as any).PDFParse ?? (imported as any).default?.PDFParse;
       const parser = new PDFParse({ data: buffer });
       const result = await parser.getText();
       return result.text || null;

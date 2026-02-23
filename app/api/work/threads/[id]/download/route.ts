@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { getFileExt, getMimeType } from '@/lib/artifacts/builders';
 
 // GET /api/work/threads/[id]/download — download generated .docx from Supabase Storage
 export async function GET(
@@ -50,11 +51,13 @@ export async function GET(
 
     const buffer = Buffer.from(await fileData.arrayBuffer());
     const safeTitle = (artifact.title || 'document').replace(/[^a-z0-9\s-_]/gi, '').trim() || 'document';
+    const ext = getFileExt(artifact.type);
+    const mime = getMimeType(artifact.type);
 
     return new Response(buffer, {
       headers: {
-        'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        'Content-Disposition': `attachment; filename="${safeTitle}.docx"`,
+        'Content-Type': mime,
+        'Content-Disposition': `attachment; filename="${safeTitle}.${ext}"`,
         'Content-Length': buffer.length.toString(),
       },
     });
