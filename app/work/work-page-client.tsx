@@ -120,6 +120,7 @@ interface WorkThread {
   status: string;
   created_at: string;
   updated_at: string;
+  auto_generated?: boolean;
 }
 
 interface WorkMessage {
@@ -136,7 +137,7 @@ interface WorkPageClientProps {
   blueprints: WorkBlueprint[];
   initialThreads: WorkThread[];
   initialActiveThreadId?: string | null;
-  initialWorkflowPrompt?: string | null;
+  initialView?: string | null;
 }
 
 const PLAN_SEPARATOR = '---PLAN_UPDATE---';
@@ -730,7 +731,7 @@ export function WorkPageClient({
   blueprints,
   initialThreads,
   initialActiveThreadId,
-  initialWorkflowPrompt,
+  initialView,
 }: WorkPageClientProps) {
   const [threads, setThreads] = useState<WorkThread[]>(initialThreads);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
@@ -748,9 +749,16 @@ export function WorkPageClient({
   const [editingTitle, setEditingTitle] = useState('');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
-  // Document states
-  const [workMode, setWorkMode] = useState<WorkMode>('planning');
-  const [artifact, setArtifact] = useState<DocumentArtifact | null>(null);
+  // Document states — initialize directly from server data when ?view=document to avoid flash
+  const initialThread = initialActiveThreadId
+    ? initialThreads.find((t) => t.id === initialActiveThreadId) ?? null
+    : null;
+  const [workMode, setWorkMode] = useState<WorkMode>(
+    initialView === 'document' && initialThread?.artifact ? 'document' : 'planning'
+  );
+  const [artifact, setArtifact] = useState<DocumentArtifact | null>(
+    initialView === 'document' && initialThread?.artifact ? initialThread.artifact : null
+  );
   const [isDownloading, setIsDownloading] = useState(false);
   const [artifactInput, setArtifactInput] = useState('');
   const [docChatMode, setDocChatMode] = useState<'ask' | 'edit'>('ask');
@@ -779,14 +787,7 @@ export function WorkPageClient({
   );
 
   useEffect(() => {
-    if (initialActiveThreadId && initialWorkflowPrompt) {
-      skipLoadRef.current = initialActiveThreadId;
-      setMessages([]);
-      setActiveThreadId(initialActiveThreadId);
-      // Remove ?prompt= from URL immediately so refreshing doesn't re-send the workflow prompt
-      window.history.replaceState(null, '', '/work');
-      sendMessage(initialWorkflowPrompt, initialActiveThreadId);
-    } else if (initialActiveThreadId) {
+    if (initialActiveThreadId) {
       setActiveThreadId(initialActiveThreadId);
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -806,16 +807,34 @@ export function WorkPageClient({
       if (!res.ok) return;
       const data = await res.json();
       setMessages(data.messages || []);
-      // Sync plan + artifact from server — always stay in planning mode
       if (data.thread) {
-        setThreads((prev) =>
-          prev.map((t) => t.id === threadId ? {
-            ...t,
-            plan: data.thread.plan ?? t.plan,
+        setThreads((prev) => {
+          const exists = prev.some((t) => t.id === threadId);
+          if (exists) {
+            return prev.map((t) => t.id === threadId ? {
+              ...t,
+              plan: data.thread.plan ?? t.plan,
+              artifact: data.thread.artifact ?? null,
+            } : t);
+          }
+          // Thread not in list (e.g. auto-generated, navigated to directly)
+          // Add it so activeThread resolves correctly; sidebar filters it out via auto_generated flag
+          return [...prev, {
+            id: threadId,
+            title: data.thread.title,
+            plan: data.thread.plan ?? null,
             artifact: data.thread.artifact ?? null,
-          } : t)
-        );
-        setArtifact(data.thread.artifact ?? null);
+            status: data.thread.status,
+            created_at: data.thread.created_at,
+            updated_at: data.thread.updated_at,
+            auto_generated: data.thread.auto_generated ?? false,
+          }];
+        });
+        const loadedArtifact = data.thread.artifact ?? null;
+        setArtifact(loadedArtifact);
+        if (loadedArtifact && initialView === 'document') {
+          setWorkMode('document');
+        }
       }
     } finally {
       setIsLoadingThread(false);
@@ -1341,6 +1360,12 @@ export function WorkPageClient({
                           {thread.artifact && (
                             <span className="text-[9px] text-green-600 bg-green-50 px-1 py-px">
                               {thread.artifact.type === 'presentation' ? 'pptx' : thread.artifact.type === 'spreadsheet' ? 'xlsx' : 'docx'}
+                            </span>
+                          )}
+                          {thread.auto_generated && (
+                            <span className="inline-flex items-center gap-0.5 text-[9px] text-indigo-500 bg-indigo-50 px-1 py-px">
+                              <SparklesIcon className="w-2.5 h-2.5" />
+                              inbox
                             </span>
                           )}
                         </div>

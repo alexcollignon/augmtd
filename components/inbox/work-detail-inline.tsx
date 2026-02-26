@@ -66,11 +66,9 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
     try {
       const response = await fetch(`/api/inbox/${item.id}/open-workflow`, { method: 'POST' });
       if (response.ok) {
-        const { threadId, workflowPrompt } = await response.json();
-        const url = workflowPrompt
-          ? `/work?thread=${threadId}&prompt=${encodeURIComponent(workflowPrompt)}`
-          : `/work?thread=${threadId}`;
-        window.location.href = url;
+        const { threadId } = await response.json();
+        const view = item.execution_status === 'ready' ? '&view=document' : '';
+        window.location.href = `/work?thread=${threadId}${view}`;
       } else {
         alert('Failed to open workflow. Please try again.');
       }
@@ -687,23 +685,48 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
                       Review & Send
                     </button>
                   )}
-                  <button
-                    onClick={handleOpenInWorkflows}
-                    disabled={isOpeningWorkflow}
-                    className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 text-[13px] font-semibold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm"
-                  >
-                    {isOpeningWorkflow ? (
-                      <>
-                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                        Opening...
-                      </>
-                    ) : (
-                      <>
-                        <ArrowTopRightOnSquareIcon className="w-4 h-4" />
-                        Open in Workflows
-                      </>
-                    )}
-                  </button>
+                  {item.execution_status === 'preparing' ? (
+                    <div className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 text-[13px] font-semibold bg-indigo-50 text-indigo-500 border border-indigo-200 cursor-default">
+                      <div className="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
+                      Preparing work…
+                    </div>
+                  ) : item.execution_status === 'ready' ? (
+                    <button
+                      onClick={handleOpenInWorkflows}
+                      disabled={isOpeningWorkflow}
+                      className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 text-[13px] font-semibold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm"
+                    >
+                      {isOpeningWorkflow ? (
+                        <>
+                          <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                          Opening…
+                        </>
+                      ) : (
+                        <>
+                          <ArrowTopRightOnSquareIcon className="w-4 h-4" />
+                          See prepared work
+                        </>
+                      )}
+                    </button>
+                  ) : (
+                    <button
+                      onClick={handleOpenInWorkflows}
+                      disabled={isOpeningWorkflow}
+                      className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 text-[13px] font-semibold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm"
+                    >
+                      {isOpeningWorkflow ? (
+                        <>
+                          <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                          Preparing plan…
+                        </>
+                      ) : (
+                        <>
+                          <ArrowTopRightOnSquareIcon className="w-4 h-4" />
+                          Open in Workflows
+                        </>
+                      )}
+                    </button>
+                  )}
                 </>
               )}
 

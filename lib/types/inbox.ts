@@ -13,7 +13,7 @@ export type ConfirmationStatus = 'pending' | 'confirmed' | 'rejected';
 
 export type ConfirmationAction = 'confirm_as_mine' | 'not_my_task';
 
-export type ExecutionStatus = 'queued' | 'running' | 'awaiting_approval' | 'completed' | 'failed' | 'cancelled';
+export type ExecutionStatus = 'queued' | 'preparing' | 'ready' | 'running' | 'awaiting_approval' | 'completed' | 'failed' | 'cancelled';
 
 export type DeliverableType = 'report' | 'presentation' | 'document' | 'email' | 'analysis' | 'spreadsheet';
 

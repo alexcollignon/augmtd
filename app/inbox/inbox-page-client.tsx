@@ -112,7 +112,10 @@ export function InboxPageClient({
         }
       }
 
-      if (items) setInboxItems(items);
+      if (items) {
+        setInboxItems(items);
+        setSelectedItem(prev => prev ? (items.find(i => i.id === prev.id) ?? prev) : null);
+      }
 
       const { data: connections, error: connectionsError } = await supabase
         .from('connections')
