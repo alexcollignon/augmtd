@@ -1095,6 +1095,20 @@ export const BLUEPRINT_LIBRARY: WorkBlueprint[] = [
   },
 
   // ========================================
+  // ACCOUNTING / FINANCE SKILLS
+  // ========================================
+  {
+    id: 'invoice-extract-classify',
+    name: 'Invoice Extraction & Classification',
+    description: 'Upload invoice files (PDF or images) and get a structured spreadsheet with all invoice data extracted and categorized automatically.',
+    category: 'operations',
+    deliverableType: 'spreadsheet',
+    estimatedTime: '2 minutes',
+    frequency: 'ad-hoc',
+    typicalDepartments: ['Finance', 'Operations', 'Other'],
+  },
+
+  // ========================================
   // GENERAL / CROSS-FUNCTIONAL BLUEPRINTS
   // ========================================
   {

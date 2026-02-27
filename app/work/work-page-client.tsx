@@ -1045,14 +1045,15 @@ export function WorkPageClient({
   const handleAttach = useCallback(async (inputId: string, threadId: string) => {
     const fileInput = document.createElement('input');
     fileInput.type = 'file';
-    fileInput.accept = '.pdf,.docx,.txt';
+    fileInput.multiple = true;
+    fileInput.accept = '.pdf,.docx,.txt,.jpg,.jpeg,.png,.webp,.zip';
     fileInput.onchange = async () => {
-      const file = fileInput.files?.[0];
-      if (!file) return;
+      const files = Array.from(fileInput.files || []);
+      if (files.length === 0) return;
       setUploadingInputId(inputId);
       try {
         const formData = new FormData();
-        formData.append('file', file);
+        for (const file of files) formData.append('file', file);
         formData.append('inputId', inputId);
         const res = await fetch(`/api/work/threads/${threadId}/attach`, {
           method: 'POST',

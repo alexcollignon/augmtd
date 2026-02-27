@@ -12,7 +12,7 @@ interface StepOutput {
 }
 
 async function executeStep(
-  step: { number: number; action: string; skill?: string; toolsNeeded?: string[] },
+  step: { number: number; action: string; skill?: string; options?: Record<string, unknown> },
   plan: any,
   previousOutputs: StepOutput[],
   attachmentContext: string,
@@ -23,10 +23,14 @@ async function executeStep(
     ? `\n\nPREVIOUS STEPS COMPLETED:\n${previousOutputs.map((s) => `Step ${s.stepNumber} — ${s.action}:\n${s.output}`).join('\n\n')}`
     : '';
 
+  const optionsContext = step.options && Object.keys(step.options).length > 0
+    ? `\nCONSTRAINTS: ${JSON.stringify(step.options)} — follow these exactly`
+    : '';
+
   const userPrompt = `OVERALL GOAL: ${plan.deliverable_description}
 DELIVERABLE TYPE: ${plan.deliverable_type}
 AUTHOR: ${userContext}
-${step.skill ? `SKILL: ${step.skill}` : ''}${step.toolsNeeded?.length ? `\nTOOLS: ${step.toolsNeeded.join(', ')}` : ''}
+${step.skill ? `SKILL: ${step.skill}` : ''}${optionsContext}
 
 YOUR TASK (Step ${step.number} of ${plan.steps?.length ?? '?'}): ${step.action}
 ${attachmentContext ? `\nSOURCE MATERIAL:\n${attachmentContext}` : ''}${previousContext}

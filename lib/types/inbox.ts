@@ -32,7 +32,7 @@ export interface UserConfirmation {
 export interface WorkflowInput {
   id: string;
   name: string;
-  type: 'data_source' | 'document' | 'context' | 'approval' | 'meeting_notes' | 'user_input';
+  type: 'file' | 'data_source' | 'document' | 'context' | 'approval' | 'meeting_notes' | 'user_input';
   description: string;
   required: boolean;
   examples?: string[];
@@ -57,6 +57,7 @@ export interface ExecutionStep {
   estimatedTime?: string; // Per-step time estimate
   toolsNeeded?: string[]; // Tools/systems required
   skill?: string; // Which skill/capability will execute this step
+  options?: Record<string, unknown>; // Skill-specific configuration populated by planning AI
   status: StepStatus;
   error?: string; // Error message if step failed
   started_at?: string;
