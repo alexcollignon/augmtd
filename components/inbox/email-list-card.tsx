@@ -9,6 +9,7 @@ interface EmailListCardProps {
   item: InboxItem;
   isSelected: boolean;
   onSelect: (item: InboxItem) => void;
+  compact?: boolean;
 }
 
 function formatTime(dateStr: string): string {
@@ -20,7 +21,7 @@ function formatTime(dateStr: string): string {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
-export default function EmailListCard({ item, isSelected, onSelect }: EmailListCardProps) {
+export default function EmailListCard({ item, isSelected, onSelect, compact = false }: EmailListCardProps) {
   const sourceData = item.source_data;
   const isBatch = (item as any).__isBatch === true;
   const batchCount = (item as any).__batchCount as number | undefined;
@@ -46,6 +47,40 @@ export default function EmailListCard({ item, isSelected, onSelect }: EmailListC
     || (typeof sourceData?.body === 'string' ? sourceData.body.slice(0, 120) : null)
     || '';
   const timeDisplay = sourceData?.received_at ? formatTime(sourceData.received_at as string) : '';
+
+  if (compact) {
+    return (
+      <button
+        onClick={() => onSelect(item)}
+        className={`w-full text-left relative border-b border-neutral-100 transition-colors ${
+          isSelected ? 'bg-indigo-50' : 'bg-white hover:bg-neutral-50'
+        }`}
+      >
+        <div className={`absolute left-0 top-0 bottom-0 w-[3px] ${accentColor}`} />
+        <div className="pl-4 pr-3 py-1.5">
+          <div className="flex items-baseline justify-between gap-2 mb-0.5">
+            <span className={`text-[12px] font-semibold truncate ${isSelected ? 'text-indigo-900' : 'text-neutral-900'}`}>
+              {fromDisplay}
+            </span>
+            {timeDisplay && (
+              <span className="text-[10px] text-neutral-400 flex-shrink-0">{timeDisplay}</span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <p className={`text-[11px] truncate flex-1 ${isSelected ? 'text-indigo-700 font-medium' : 'text-neutral-500'}`}>
+              {subjectDisplay}
+            </p>
+            {needsConfirm && (
+              <span className="text-[10px] text-amber-600 font-medium flex-shrink-0">Confirm?</span>
+            )}
+            {sourceData?.draft && (
+              <span className="text-[10px] text-violet-600 flex-shrink-0">Draft ready</span>
+            )}
+          </div>
+        </div>
+      </button>
+    );
+  }
 
   return (
     <button

@@ -8,6 +8,7 @@ interface EmailListChronologicalProps {
   items: InboxItem[];
   selectedId: string | null;
   onSelect: (item: InboxItem) => void;
+  compact?: boolean;
 }
 
 function getDateLabel(dateStr: string): string {
@@ -23,7 +24,7 @@ function getDateLabel(dateStr: string): string {
   return date.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
 }
 
-export default function EmailListChronological({ items, selectedId, onSelect }: EmailListChronologicalProps) {
+export default function EmailListChronological({ items, selectedId, onSelect, compact = false }: EmailListChronologicalProps) {
   const groups = useMemo(() => {
     const sorted = [...items].sort((a, b) => {
       const aTime = a.source_data?.received_at ? new Date(a.source_data.received_at as string).getTime() : 0;
@@ -51,7 +52,7 @@ export default function EmailListChronological({ items, selectedId, onSelect }: 
     <div>
       {groups.map(group => (
         <div key={group.label}>
-          <div className="px-3 py-2 bg-neutral-50 border-b border-neutral-100 sticky top-0 z-10">
+          <div className="h-8 flex items-center px-3 bg-neutral-50 border-b border-neutral-100 sticky top-0 z-10">
             <span className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide">
               {group.label}
             </span>
@@ -62,6 +63,7 @@ export default function EmailListChronological({ items, selectedId, onSelect }: 
               item={item}
               isSelected={selectedId === item.id}
               onSelect={onSelect}
+              compact={compact}
             />
           ))}
         </div>

@@ -10,6 +10,7 @@ interface EmailListSectionsProps {
   items: InboxItem[];
   selectedId: string | null;
   onSelect: (item: InboxItem) => void;
+  compact?: boolean;
 }
 
 const SECTIONS: Array<{ key: VisualSection; label: string; dotColor: string }> = [
@@ -18,7 +19,7 @@ const SECTIONS: Array<{ key: VisualSection; label: string; dotColor: string }> =
   { key: 'awareness', label: 'For Awareness', dotColor: 'bg-neutral-400' },
 ];
 
-export default function EmailListSections({ items, selectedId, onSelect }: EmailListSectionsProps) {
+export default function EmailListSections({ items, selectedId, onSelect, compact = false }: EmailListSectionsProps) {
   const [collapsed, setCollapsed] = useState<Set<VisualSection>>(new Set());
 
   const { batches, unbatched } = useMemo(() => batchInboxItems(items), [items]);
@@ -63,7 +64,7 @@ export default function EmailListSections({ items, selectedId, onSelect }: Email
           <div key={section.key}>
             <button
               onClick={() => toggle(section.key)}
-              className="w-full flex items-center justify-between px-3 py-2 bg-neutral-50 border-b border-neutral-100 hover:bg-neutral-100 transition-colors sticky top-0 z-10"
+              className="w-full h-8 flex items-center justify-between px-3 bg-neutral-50 border-b border-neutral-100 hover:bg-neutral-100 transition-colors sticky top-0 z-10"
             >
               <div className="flex items-center gap-2">
                 <div className={`w-1.5 h-1.5 rounded-full ${section.dotColor}`} />
@@ -84,6 +85,7 @@ export default function EmailListSections({ items, selectedId, onSelect }: Email
                 item={item}
                 isSelected={selectedId === item.id}
                 onSelect={onSelect}
+                compact={compact}
               />
             ))}
           </div>
