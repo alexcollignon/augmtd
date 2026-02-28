@@ -143,6 +143,44 @@ interface WorkPageClientProps {
 const PLAN_SEPARATOR = '---PLAN_UPDATE---';
 const ARTIFACT_SEPARATOR = '---ARTIFACT_UPDATE---';
 
+const MAX_ATTACH_BYTES = 10 * 1024 * 1024; // 10 MB — must match server
+const ATTACH_ACCEPT = '.pdf,.docx,.txt,.jpg,.jpeg,.png,.webp,.zip';
+const ATTACH_HINT = 'PDF, DOCX, TXT, images, ZIP · max 10 MB';
+
+const ATTACH_ALLOWED_MIME = new Set([
+  'application/pdf',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'text/plain',
+  'image/jpeg',
+  'image/jpg',
+  'image/png',
+  'image/webp',
+  'application/zip',
+  'application/x-zip-compressed',
+  'application/x-zip',
+]);
+
+function formatBytes(b: number): string {
+  return b < 1024 * 1024 ? `${Math.round(b / 1024)} KB` : `${(b / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function validateAttachFiles(files: File[]): { valid: File[]; errorMsg: string | null } {
+  const rejected: string[] = [];
+  const valid: File[] = [];
+  for (const f of files) {
+    const isZip = f.name.toLowerCase().endsWith('.zip');
+    if (f.size > MAX_ATTACH_BYTES) {
+      rejected.push(`${f.name} is ${formatBytes(f.size)} — max 10 MB`);
+    } else if (!isZip && !ATTACH_ALLOWED_MIME.has(f.type)) {
+      rejected.push(`${f.name} is not a supported type`);
+    } else {
+      valid.push(f);
+    }
+  }
+  const errorMsg = rejected.length > 0 ? rejected.join('; ') : null;
+  return { valid, errorMsg };
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function relativeTime(dateStr: string): string {
@@ -189,6 +227,8 @@ function PlanPanel({
   uploadingInputId,
   onRemoveAttachment,
   isDocumentStale,
+  attachErrorInputId,
+  attachErrorMsg,
 }: {
   plan: ExecutionPlan | null;
   isUpdating: boolean;
@@ -202,6 +242,8 @@ function PlanPanel({
   uploadingInputId?: string | null;
   onRemoveAttachment?: (inputId: string) => void;
   isDocumentStale?: boolean;
+  attachErrorInputId?: string | null;
+  attachErrorMsg?: string | null;
 }) {
   const isGenerating = workMode === 'generating';
   const [confirmingRegenerate, setConfirmingRegenerate] = useState(false);
@@ -407,8 +449,16 @@ function PlanPanel({
                             )}
                           </button>
                         )}
+                        {!isProvided && (
+                          <span className="text-[9px] text-neutral-400 leading-tight text-right">
+                            {ATTACH_HINT}
+                          </span>
+                        )}
                       </div>
                     </div>
+                    {attachErrorInputId === input.id && attachErrorMsg && (
+                      <p className="mt-1.5 text-[10px] text-red-500">{attachErrorMsg}</p>
+                    )}
                   </div>
                 );
               })}
@@ -766,6 +816,9 @@ export function WorkPageClient({
   const [isRebuildingDocument, setIsRebuildingDocument] = useState(false);
   const [editStreamText, setEditStreamText] = useState('');
   const [uploadingInputId, setUploadingInputId] = useState<string | null>(null);
+  const [attachErrorInputId, setAttachErrorInputId] = useState<string | null>(null);
+  const [attachErrorMsg, setAttachErrorMsg] = useState<string | null>(null);
+  const [entryFileError, setEntryFileError] = useState<string | null>(null);
 
   const planUpdatedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const skipLoadRef = useRef<string | null>(null);
@@ -1042,18 +1095,29 @@ export function WorkPageClient({
     }
   }, [isEditingArtifact, docChatMode]);
 
+  const showPlanAttachError = (inputId: string, msg: string) => {
+    setAttachErrorInputId(inputId);
+    setAttachErrorMsg(msg);
+    setTimeout(() => { setAttachErrorInputId(null); setAttachErrorMsg(null); }, 5000);
+  };
+
   const handleAttach = useCallback(async (inputId: string, threadId: string) => {
     const fileInput = document.createElement('input');
     fileInput.type = 'file';
     fileInput.multiple = true;
-    fileInput.accept = '.pdf,.docx,.txt,.jpg,.jpeg,.png,.webp,.zip';
+    fileInput.accept = ATTACH_ACCEPT;
     fileInput.onchange = async () => {
       const files = Array.from(fileInput.files || []);
       if (files.length === 0) return;
+
+      const { valid, errorMsg } = validateAttachFiles(files);
+      if (errorMsg) showPlanAttachError(inputId, errorMsg);
+      if (valid.length === 0) return;
+
       setUploadingInputId(inputId);
       try {
         const formData = new FormData();
-        for (const file of files) formData.append('file', file);
+        for (const file of valid) formData.append('file', file);
         formData.append('inputId', inputId);
         const res = await fetch(`/api/work/threads/${threadId}/attach`, {
           method: 'POST',
@@ -1061,7 +1125,7 @@ export function WorkPageClient({
         });
         if (!res.ok) {
           const err = await res.json();
-          alert(err.error || 'Failed to attach file');
+          showPlanAttachError(inputId, err.error || 'Failed to attach file');
           return;
         }
         const { plan: updatedPlan } = await res.json();
@@ -1069,13 +1133,13 @@ export function WorkPageClient({
           prev.map((t) => t.id === threadId ? { ...t, plan: updatedPlan } : t)
         );
       } catch {
-        alert('Failed to attach file');
+        showPlanAttachError(inputId, 'Failed to attach file');
       } finally {
         setUploadingInputId(null);
       }
     };
     fileInput.click();
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleRemoveAttachment = useCallback(async (inputId: string, threadId: string) => {
     try {
@@ -1143,27 +1207,26 @@ export function WorkPageClient({
       // Upload any attached files, then enrich the initial prompt with their metadata
       let enrichedPrompt = description;
       if (entryFiles.length > 0) {
-        await Promise.all(
-          entryFiles.map((file) => {
-            const formData = new FormData();
-            formData.append('file', file);
-            formData.append('inputId', file.name); // filename as stable sentinel
-            return fetch(`/api/work/threads/${newThread.id}/attach`, {
-              method: 'POST',
-              body: formData,
-            });
-          })
-        );
+        // All files go in a single request under one shared inputId so the plan
+        // treats them as one grouped input rather than one input per file.
+        const formData = new FormData();
+        for (const file of entryFiles) formData.append('file', file);
+        formData.append('inputId', 'entry-files');
+        await fetch(`/api/work/threads/${newThread.id}/attach`, {
+          method: 'POST',
+          body: formData,
+        });
         const fileMeta = entryFiles
           .map((f) => {
             const typeLabel = f.type.includes('pdf') ? 'PDF'
               : f.type.includes('wordprocessingml') ? 'Word document'
               : f.type === 'text/plain' ? 'text file'
+              : f.type.startsWith('image/') ? 'image'
               : 'file';
             return `- ${f.name} (${typeLabel}, ${Math.round(f.size / 1024)} KB)`;
           })
           .join('\n');
-        enrichedPrompt = `${description}\n\nAttached files (already provided — include each as an input with status "provided" in the plan):\n${fileMeta}`;
+        enrichedPrompt = `${description}\n\nAttached files (already provided — include ALL of these together as a single input with status "provided" in the plan):\n${fileMeta}`;
         setEntryFiles([]);
       }
 
@@ -1453,11 +1516,16 @@ export function WorkPageClient({
                       onClick={() => {
                         const input = document.createElement('input');
                         input.type = 'file';
-                        input.accept = '.pdf,.docx,.txt';
+                        input.accept = ATTACH_ACCEPT;
                         input.multiple = true;
                         input.onchange = () => {
                           const files = Array.from(input.files || []);
-                          if (files.length) setEntryFiles((prev) => [...prev, ...files]);
+                          const { valid, errorMsg } = validateAttachFiles(files);
+                          if (errorMsg) {
+                            setEntryFileError(errorMsg);
+                            setTimeout(() => setEntryFileError(null), 5000);
+                          }
+                          if (valid.length) setEntryFiles((prev) => [...prev, ...valid]);
                         };
                         input.click();
                       }}
@@ -1466,6 +1534,10 @@ export function WorkPageClient({
                       <PaperClipIcon className="w-3.5 h-3.5" />
                       Attach
                     </button>
+                    <span className="text-[10px] text-neutral-400">{ATTACH_HINT}</span>
+                    {entryFileError && (
+                      <span className="text-[10px] text-red-500">{entryFileError}</span>
+                    )}
                   </div>
                   <button
                     type="submit"
@@ -1544,6 +1616,8 @@ export function WorkPageClient({
               uploadingInputId={uploadingInputId}
               onRemoveAttachment={(inputId) => activeThreadId && handleRemoveAttachment(inputId, activeThreadId)}
               isDocumentStale={isDocumentStale}
+              attachErrorInputId={attachErrorInputId}
+              attachErrorMsg={attachErrorMsg}
             />
           )}
 
