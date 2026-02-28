@@ -42,8 +42,11 @@ export async function fetchUnreadEmails(
   try {
     const gmail = await getGmailClient(encryptedTokens);
 
-    // Search for recent emails (read and unread), only from Primary inbox
-    const query = `newer_than:${syncWindowDays}d -category:promotions -category:social -category:forums -category:updates -is:spam`;
+    // Search for recent emails in Primary inbox.
+    // Using category:primary targets what's actually in the Primary tab, rather than
+    // negative category exclusions which miss emails that have category labels but still
+    // appear in Primary (a common Gmail classifier edge case).
+    const query = `newer_than:${syncWindowDays}d category:primary -is:spam`;
 
     const response = await gmail.users.messages.list({
       userId: 'me',
