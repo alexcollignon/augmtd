@@ -42,13 +42,16 @@ export async function fetchUnreadEmails(
   try {
     const gmail = await getGmailClient(encryptedTokens);
 
-    // Search for recent emails (read and unread), only from Primary inbox
+    // Search for recent emails (read and unread), only from Primary inbox.
+    // Fetch a larger candidate pool (5x) because Gmail's messages.list returns
+    // results by relevance, not by date — without this, today's emails can be
+    // pushed out of the result set by older high-relevance emails.
     const query = `newer_than:${syncWindowDays}d -category:promotions -category:social -category:forums -category:updates -is:spam`;
 
     const response = await gmail.users.messages.list({
       userId: 'me',
       q: query,
-      maxResults,
+      maxResults: Math.min(maxResults * 5, 100),
     });
 
     const messages = response.data.messages || [];
@@ -65,7 +68,10 @@ export async function fetchUnreadEmails(
       })
     );
 
-    return fullMessages;
+    // Sort by internalDate DESC (newest first) and return only the requested count.
+    // This guarantees today's emails are always prioritised regardless of Gmail's ranking.
+    fullMessages.sort((a, b) => parseInt(b.internalDate) - parseInt(a.internalDate));
+    return fullMessages.slice(0, maxResults);
   } catch (error) {
     console.error('Error fetching Gmail messages:', error);
     throw error;
