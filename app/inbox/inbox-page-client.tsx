@@ -7,12 +7,15 @@ import Link from 'next/link';
 import SidebarNav from '@/components/sidebar-nav';
 import InboxTopBar from '@/components/inbox/inbox-top-bar';
 import EmailListSections from '@/components/inbox/email-list-sections';
+import EmailListChronological from '@/components/inbox/email-list-chronological';
 import WorkDetailInline from '@/components/inbox/work-detail-inline';
 import MeetingsColumn from '@/components/inbox/meetings-column';
 import OnboardingModal from '@/components/onboarding-modal';
-import { ArrowPathIcon, SparklesIcon } from '@heroicons/react/24/outline';
+import { ArrowPathIcon, SparklesIcon, ClockIcon } from '@heroicons/react/24/outline';
 import type { CalendarEvent } from '@/lib/types/meetings';
 import type { InboxItem } from '@/lib/types/inbox';
+
+type ViewMode = 'chronological' | 'smart';
 
 interface InboxPageClientProps {
   initialUser: any;
@@ -37,9 +40,21 @@ export function InboxPageClient({
   const [isCalendarOpen, setIsCalendarOpen] = useState(true);
   const [meetings, setMeetings] = useState<CalendarEvent[]>([]);
   const [meetingsLoading, setMeetingsLoading] = useState(true);
+  const [viewMode, setViewMode] = useState<ViewMode>('chronological');
 
   const optimisticSyncTriggered = useRef(false);
   const isSyncingRef = useRef(false);
+
+  // Restore persisted view preference after mount (avoids SSR hydration mismatch)
+  useEffect(() => {
+    const saved = localStorage.getItem('inboxViewMode') as ViewMode | null;
+    if (saved === 'smart' || saved === 'chronological') setViewMode(saved);
+  }, []);
+
+  const handleViewMode = (mode: ViewMode) => {
+    setViewMode(mode);
+    localStorage.setItem('inboxViewMode', mode);
+  };
 
   // Check actual context profile to decide whether to show onboarding
   useEffect(() => {
@@ -175,14 +190,11 @@ export function InboxPageClient({
   const handleItemConfirmed = (ids: string[], action: 'confirm_as_mine' | 'not_my_task') => {
     setInboxItems(prev => {
       if (action === 'confirm_as_mine') {
-        // Move confirmed items to 'prepared' section
         return prev.map(i => ids.includes(i.id) ? { ...i, visual_section: 'prepared' } : i);
       } else {
-        // Remove rejected items from the list
         return prev.filter(i => !ids.includes(i.id));
       }
     });
-    // Clear selection if the confirmed item was selected, or if it's a batch whose items are all actioned
     setSelectedItem(prev => {
       if (!prev) return null;
       if (ids.includes(prev.id)) return null;
@@ -241,21 +253,57 @@ export function InboxPageClient({
         {hasConnection && (
           <div className="flex-1 flex min-h-0 overflow-hidden">
             {/* Left: email list */}
-            <div className="w-[272px] flex-shrink-0 border-r border-neutral-200 overflow-y-auto bg-white">
-              {inboxItems.length === 0 && !isSyncing ? (
-                <div className="flex flex-col items-center justify-center h-full py-16 px-4 text-center">
-                  <p className="text-[13px] text-neutral-500 font-medium mb-1">All caught up!</p>
-                  <p className="text-[12px] text-neutral-400">
-                    New items will appear here after the next sync.
-                  </p>
-                </div>
-              ) : (
-                <EmailListSections
-                  items={inboxItems}
-                  selectedId={selectedItem?.id || null}
-                  onSelect={setSelectedItem}
-                />
-              )}
+            <div className="w-[272px] flex-shrink-0 border-r border-neutral-200 flex flex-col bg-white">
+
+              {/* View toggle */}
+              <div className="flex-shrink-0 flex items-center gap-1 px-2 py-2 border-b border-neutral-100">
+                <button
+                  onClick={() => handleViewMode('chronological')}
+                  className={`flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium rounded transition-colors ${
+                    viewMode === 'chronological'
+                      ? 'bg-neutral-900 text-white'
+                      : 'text-neutral-400 hover:text-neutral-700'
+                  }`}
+                >
+                  <ClockIcon className="w-3 h-3" />
+                  Latest
+                </button>
+                <button
+                  onClick={() => handleViewMode('smart')}
+                  className={`flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium rounded transition-colors ${
+                    viewMode === 'smart'
+                      ? 'bg-neutral-900 text-white'
+                      : 'text-neutral-400 hover:text-neutral-700'
+                  }`}
+                >
+                  <SparklesIcon className="w-3 h-3" />
+                  Smart
+                </button>
+              </div>
+
+              {/* Email list */}
+              <div className="flex-1 overflow-y-auto">
+                {inboxItems.length === 0 && !isSyncing ? (
+                  <div className="flex flex-col items-center justify-center h-full py-16 px-4 text-center">
+                    <p className="text-[13px] text-neutral-500 font-medium mb-1">All caught up!</p>
+                    <p className="text-[12px] text-neutral-400">
+                      New items will appear here after the next sync.
+                    </p>
+                  </div>
+                ) : viewMode === 'chronological' ? (
+                  <EmailListChronological
+                    items={inboxItems}
+                    selectedId={selectedItem?.id || null}
+                    onSelect={setSelectedItem}
+                  />
+                ) : (
+                  <EmailListSections
+                    items={inboxItems}
+                    selectedId={selectedItem?.id || null}
+                    onSelect={setSelectedItem}
+                  />
+                )}
+              </div>
             </div>
 
             {/* Middle: inline detail panel */}
