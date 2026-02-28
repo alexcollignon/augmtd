@@ -1116,19 +1116,47 @@ export function WorkPageClient({
 
       setUploadingInputId(inputId);
       try {
-        const formData = new FormData();
-        for (const file of valid) formData.append('file', file);
-        formData.append('inputId', inputId);
-        const res = await fetch(`/api/work/threads/${threadId}/attach`, {
+        // Step 1: Get presigned upload URLs (no file bytes sent to serverless fn)
+        const presignRes = await fetch(`/api/work/threads/${threadId}/attach/presign`, {
           method: 'POST',
-          body: formData,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            files: valid.map(f => ({ filename: f.name, mimeType: f.type, size: f.size })),
+            inputId,
+          }),
         });
-        if (!res.ok) {
-          const err = await res.json();
+        if (!presignRes.ok) {
+          const err = await presignRes.json();
+          showPlanAttachError(inputId, err.error || 'Failed to prepare upload');
+          return;
+        }
+        const { uploads } = await presignRes.json() as {
+          uploads: Array<{ storagePath: string; signedUrl: string; filename: string; mimeType: string; size: number }>;
+        };
+
+        // Step 2: Upload files directly to Supabase Storage (bypasses Vercel size limit)
+        await Promise.all(
+          uploads.map((upload, i) =>
+            fetch(upload.signedUrl, {
+              method: 'PUT',
+              headers: { 'Content-Type': valid[i].type || 'application/octet-stream' },
+              body: valid[i],
+            })
+          )
+        );
+
+        // Step 3: Confirm — server downloads, extracts text, updates plan
+        const confirmRes = await fetch(`/api/work/threads/${threadId}/attach/confirm`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ uploads, inputId }),
+        });
+        if (!confirmRes.ok) {
+          const err = await confirmRes.json();
           showPlanAttachError(inputId, err.error || 'Failed to attach file');
           return;
         }
-        const { plan: updatedPlan } = await res.json();
+        const { plan: updatedPlan } = await confirmRes.json();
         setThreads((prev) =>
           prev.map((t) => t.id === threadId ? { ...t, plan: updatedPlan } : t)
         );
@@ -1207,15 +1235,39 @@ export function WorkPageClient({
       // Upload any attached files, then enrich the initial prompt with their metadata
       let enrichedPrompt = description;
       if (entryFiles.length > 0) {
-        // All files go in a single request under one shared inputId so the plan
-        // treats them as one grouped input rather than one input per file.
-        const formData = new FormData();
-        for (const file of entryFiles) formData.append('file', file);
-        formData.append('inputId', 'entry-files');
-        await fetch(`/api/work/threads/${newThread.id}/attach`, {
-          method: 'POST',
-          body: formData,
-        });
+        // Presign → direct upload → confirm (same three-step flow as plan-mode attach)
+        // All files share one inputId so the plan gets one grouped input, not one per file.
+        try {
+          const presignRes = await fetch(`/api/work/threads/${newThread.id}/attach/presign`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              files: entryFiles.map(f => ({ filename: f.name, mimeType: f.type, size: f.size })),
+              inputId: 'entry-files',
+            }),
+          });
+          if (presignRes.ok) {
+            const { uploads } = await presignRes.json() as {
+              uploads: Array<{ storagePath: string; signedUrl: string; filename: string; mimeType: string; size: number }>;
+            };
+            await Promise.all(
+              uploads.map((upload, i) =>
+                fetch(upload.signedUrl, {
+                  method: 'PUT',
+                  headers: { 'Content-Type': entryFiles[i].type || 'application/octet-stream' },
+                  body: entryFiles[i],
+                })
+              )
+            );
+            await fetch(`/api/work/threads/${newThread.id}/attach/confirm`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ uploads, inputId: 'entry-files' }),
+            });
+          }
+        } catch {
+          // non-fatal — thread still created, prompt still sent
+        }
         const fileMeta = entryFiles
           .map((f) => {
             const typeLabel = f.type.includes('pdf') ? 'PDF'
