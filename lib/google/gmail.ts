@@ -37,16 +37,22 @@ export async function getGmailClient(encryptedTokens: string) {
 export async function fetchUnreadEmails(
   encryptedTokens: string,
   maxResults: number = 10,
-  syncWindowDays: number = 7
+  syncWindowDays: number = 7,
+  accountEmail?: string
 ): Promise<GmailMessage[]> {
   try {
     const gmail = await getGmailClient(encryptedTokens);
 
-    // Search for recent emails in Primary inbox.
-    // Using category:primary targets what's actually in the Primary tab, rather than
-    // negative category exclusions which miss emails that have category labels but still
-    // appear in Primary (a common Gmail classifier edge case).
-    const query = `newer_than:${syncWindowDays}d category:primary -is:spam`;
+    // Personal Gmail accounts (@gmail.com / @googlemail.com) use the tabbed inbox,
+    // so category:primary targets the Primary tab precisely.
+    // Google Workspace accounts don't have category tabs, so category:primary returns
+    // nothing — use in:inbox instead.
+    const isPersonalGmail = !accountEmail ||
+      accountEmail.endsWith('@gmail.com') ||
+      accountEmail.endsWith('@googlemail.com');
+    const query = isPersonalGmail
+      ? `newer_than:${syncWindowDays}d category:primary -is:spam`
+      : `newer_than:${syncWindowDays}d in:inbox -is:spam`;
 
     const response = await gmail.users.messages.list({
       userId: 'me',

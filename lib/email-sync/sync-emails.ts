@@ -238,7 +238,7 @@ export async function syncEmailsForConnection(
 
     let messages: any[];
     if (connection.provider === 'gmail') {
-      messages = await fetchGmailEmails(encryptedTokens, maxEmails, syncWindowDays);
+      messages = await fetchGmailEmails(encryptedTokens, maxEmails, syncWindowDays, connection.metadata?.email);
     } else if (connection.provider === 'outlook') {
       // Token refresh callback - updates database when tokens are refreshed
       const onTokenRefresh = async (newTokens: { accessToken: string; refreshToken: string; expiresOn: string }) => {
