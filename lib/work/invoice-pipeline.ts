@@ -117,6 +117,7 @@ export async function runInvoicePipeline(params: {
     generated_at: new Date().toISOString(),
     storage_path: storagePath,
     content,
+    source_data: invoices,
   };
 
   await adminClient

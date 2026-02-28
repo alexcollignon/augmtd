@@ -125,7 +125,11 @@ export async function POST(
       .map((a) => `--- Attached file: ${a.filename} ---\n${a.extractedText}`)
       .join('\n\n');
 
-    const docContext = `${attachmentContext ? `REFERENCE FILES:\n${attachmentContext}\n\n` : ''}CURRENT DOCUMENT:\n${contentJson ?? `Title: ${artifact.title}\nType: ${type}`}`;
+    const sourceDataContext = artifact.source_data
+      ? `SOURCE DATA (raw extraction from original files):\n${JSON.stringify(artifact.source_data, null, 2)}\n\n`
+      : '';
+
+    const docContext = `${sourceDataContext}${attachmentContext ? `REFERENCE FILES:\n${attachmentContext}\n\n` : ''}CURRENT DOCUMENT:\n${contentJson ?? `Title: ${artifact.title}\nType: ${type}`}`;
 
     // Load conversation history so the AI remembers previous questions/answers
     const { data: previousMessages } = await supabase

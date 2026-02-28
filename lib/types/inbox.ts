@@ -138,6 +138,7 @@ export interface DocumentArtifact {
   generated_at: string; // ISO timestamp
   storage_path: string; // Path within work-artifacts bucket: "{userId}/{threadId}.docx"
   content?: ArtifactContent; // Full document content for in-panel preview
+  source_data?: unknown; // Raw source material from automated skills (e.g. InvoiceData[]) — used as context in Ask/Edit
 }
 
 export interface InboxItem {
