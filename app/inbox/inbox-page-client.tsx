@@ -270,7 +270,7 @@ export function InboxPageClient({
                 <div className="flex items-center gap-1">
                   <button
                     onClick={() => handleViewMode('chronological')}
-                    className={`flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium rounded transition-colors ${
+                    className={`flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold transition-colors ${
                       viewMode === 'chronological'
                         ? 'bg-indigo-600 text-white'
                         : 'text-neutral-400 hover:text-neutral-700'
@@ -281,7 +281,7 @@ export function InboxPageClient({
                   </button>
                   <button
                     onClick={() => handleViewMode('smart')}
-                    className={`flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium rounded transition-colors ${
+                    className={`flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold transition-colors ${
                       viewMode === 'smart'
                         ? 'bg-indigo-600 text-white'
                         : 'text-neutral-400 hover:text-neutral-700'
