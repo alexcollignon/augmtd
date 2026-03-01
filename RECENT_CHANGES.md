@@ -1,3 +1,78 @@
+# Recent Changes — Phase 19: Composable Vision-OCR Skill Architecture (Mar 1, 2026)
+
+## Summary
+
+Replaced the monolithic `invoice-extract` automated skill with a composable two-step architecture: a generic `vision-ocr` skill (Step 1, reads any file type) followed by a standard generation skill (Step 2, produces any output format). The planning AI now reasons from the user's goal to compose the right pipeline — users no longer need to match the right skill to the right intent.
+
+---
+
+## 1. New `vision-ocr` Skill in `executeSteps`
+
+**Before:** `invoice-extract` was a special-cased skill that bypassed `runGeneratePipeline` entirely and ran its own hardcoded pipeline, always producing `.xlsx`. When a user said "analyze my invoices and draft an analysis", the planning AI would pick `data-analyzer` instead (wrong skill for image files) because `invoice-extract` was perceived as spreadsheet-only.
+
+**After:** `vision-ocr` is a generic Step 1 skill executed directly inside `executeSteps`. It downloads each attached file from storage, processes images via GPT-4o vision and PDFs via pdf-parse → Claude Haiku, and returns structured text. That output flows into the next step (excel-generator, word-generator, powerpoint-generator, etc.) as `previousOutputs` — the normal chaining mechanism.
+
+**Model split:**
+- Images (JPEG, PNG, WebP): `gpt-4o` (OpenAI) — better on difficult/real-world photos
+- PDFs: `claude-haiku-4-5-20251001` — text already extractable, vision not needed
+
+**`executeSteps` new signature:**
+```typescript
+executeSteps(plan, attachmentContext, userContext, anthropic, fileAttachments?, adminClient?)
+```
+`fileAttachments` carries `mimeType` and `storagePath` from `user_attachments`. When `step.skill === 'vision-ocr'` and files are present, `executeVisionOcrStep` is called. Otherwise falls through to normal step execution.
+
+---
+
+## 2. `runGeneratePipeline` — Extended `userAttachments`
+
+`GeneratePipelineParams.userAttachments` now includes `mimeType` and `storagePath` (previously only `filename` + `extractedText`). This is what enables `vision-ocr` to download and process the actual file bytes at step execution time.
+
+`generate/route.ts` now reads all four fields from `thread.user_attachments`. The `prepare-from-email` route is unaffected — it passes no `userAttachments`, so vision-ocr steps in background-prep plans gracefully return a placeholder and continue.
+
+---
+
+## 3. Removed Invoice-Specific Routing
+
+`generate/route.ts` previously had a special `isInvoiceSkill` block that detected `skill: 'invoice-extract'` in plan steps and routed to `runInvoicePipeline`. This block is gone. Everything goes through `runGeneratePipeline` — no more skill-specific routing in the generate endpoint.
+
+---
+
+## 4. Planning AI — `vision-ocr` Replaces `invoice-extract`
+
+**New `vision-ocr` skill entry:** Generic, domain-agnostic. Works for invoices, contracts, receipts, IDs, reports, anything. The action text is goal-driven and written by the planning AI based on what the user wants to produce — not a hardcoded extraction template.
+
+**Pairing examples:**
+- Invoice → spreadsheet: `vision-ocr` (extract vendor, date, amounts) → `excel-generator`
+- Invoice → analysis doc: `vision-ocr` (read invoices for key financial data) → `word-generator`
+- Contracts → summary: `vision-ocr` (extract parties, terms, risk flags) → `word-generator`
+- Receipts → expense report: `vision-ocr` (extract merchant, date, amount) → `excel-generator`
+
+**`data-analyzer` updated:** Now explicitly states it cannot read files and must not be used as Step 1 for file-upload tasks. This prevents the planning AI from choosing it for invoice image workflows.
+
+**Deliverable type rules updated:** "vision-ocr is always Step 1 — never the last step."
+
+---
+
+## 5. Deleted Files
+
+- `lib/skills/invoice-extractor.ts` — replaced by generic vision-ocr in generate-pipeline.ts
+- `lib/work/invoice-pipeline.ts` — replaced by composable multi-step plan via runGeneratePipeline
+
+---
+
+## Files Changed
+
+| File | Change |
+|------|--------|
+| `lib/work/generate-pipeline.ts` | Added `executeVisionOcrStep`, updated `executeSteps` signature + branching, extended `GeneratePipelineParams.userAttachments` |
+| `app/api/work/threads/[id]/generate/route.ts` | Removed invoice-extract routing block; full `userAttachments` (with mimeType + storagePath) passed to pipeline |
+| `lib/work/planning-ai.ts` | Replaced `invoice-extract` with `vision-ocr`; updated `data-analyzer` note; updated deliverable-type/skill mapping rules |
+| `lib/skills/invoice-extractor.ts` | **DELETED** |
+| `lib/work/invoice-pipeline.ts` | **DELETED** |
+
+---
+
 # Recent Changes — Phase 15: Multi-Account Per Provider + Data Management (Feb 23, 2026)
 
 ## Summary

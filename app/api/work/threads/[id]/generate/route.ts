@@ -68,6 +68,8 @@ export async function POST(
     }>;
     const userAttachments = ((thread as any).user_attachments || []) as Array<{
       filename: string;
+      mimeType: string;
+      storagePath: string;
       extractedText: string | null;
     }>;
 
@@ -79,31 +81,6 @@ export async function POST(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
-
-    // Route to invoice pipeline if plan has invoice-extract skill step
-    const isInvoiceSkill = Array.isArray(plan?.steps) &&
-      plan.steps.some((s: any) => s.skill === 'invoice-extract');
-
-    if (isInvoiceSkill) {
-      const { runInvoicePipeline } = await import('@/lib/work/invoice-pipeline');
-      const invoiceStep = plan.steps.find((s: any) => s.skill === 'invoice-extract');
-      const invoiceAttachments = ((thread as any).user_attachments || []) as Array<{
-        filename: string; mimeType: string; storagePath: string; extractedText: string | null;
-      }>;
-      const invoiceArtifact = await runInvoicePipeline({
-        userId: user.id,
-        threadId,
-        userAttachments: invoiceAttachments,
-        stepOptions: (invoiceStep?.options as Record<string, unknown>) ?? {},
-        adminClient,
-      });
-      invoiceArtifact.title = thread.title;
-      await adminClient
-        .from('work_threads')
-        .update({ artifact: invoiceArtifact, updated_at: new Date().toISOString() })
-        .eq('id', threadId);
-      return NextResponse.json({ artifact: invoiceArtifact });
-    }
 
     const artifact = await runGeneratePipeline({
       userId: user.id,

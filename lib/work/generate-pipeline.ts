@@ -1,7 +1,92 @@
 import Anthropic from '@anthropic-ai/sdk';
+import OpenAI from 'openai';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { DocumentArtifact, ArtifactContent, DocContent, PptxContent, XlsxContent, DeliverableType } from '@/lib/types/inbox';
 import { buildArtifactFile, getFileExt, getMimeType } from '@/lib/artifacts/builders';
+
+// ─── Vision-OCR step ──────────────────────────────────────────────────────────
+
+const IMAGE_MIME_TYPES = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/webp']);
+
+async function executeVisionOcrStep(
+  step: { number: number; action: string },
+  fileAttachments: Array<{ filename: string; mimeType: string; storagePath: string }>,
+  adminClient: SupabaseClient,
+  anthropic: Anthropic
+): Promise<string> {
+  const supported = fileAttachments.filter(
+    (a) => IMAGE_MIME_TYPES.has(a.mimeType) || a.mimeType === 'application/pdf'
+  );
+
+  if (supported.length === 0) {
+    return '(no supported files found — attach PDF or image files to use this step)';
+  }
+
+  const results: string[] = [];
+
+  for (const attachment of supported) {
+    const { data: blob, error } = await adminClient.storage
+      .from('email-attachments')
+      .download(attachment.storagePath);
+
+    if (error || !blob) {
+      console.error(`[VisionOCR] Download failed for ${attachment.filename}:`, error);
+      results.push(`--- ${attachment.filename} ---\n(failed to download file)`);
+      continue;
+    }
+
+    const buffer = Buffer.from(await blob.arrayBuffer());
+
+    if (IMAGE_MIME_TYPES.has(attachment.mimeType)) {
+      const base64 = buffer.toString('base64');
+      const mimeType = attachment.mimeType === 'image/jpg' ? 'image/jpeg' : attachment.mimeType;
+
+      const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+      const completion = await openai.chat.completions.create({
+        model: 'gpt-4o',
+        max_tokens: 1500,
+        messages: [
+          {
+            role: 'system',
+            content: 'You are a document reader. Extract and structure the information exactly as instructed. Be precise and thorough. Return only the extracted content — no commentary, no preamble.',
+          },
+          {
+            role: 'user',
+            content: [
+              { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64}` } },
+              { type: 'text', text: `File: ${attachment.filename}\n\n${step.action}` },
+            ],
+          },
+        ],
+      });
+      results.push(`--- ${attachment.filename} ---\n${completion.choices[0]?.message?.content ?? ''}`);
+    } else {
+      // PDF — extract text then process
+      try {
+        const imported = await import('pdf-parse');
+        const PDFParse = (imported as any).PDFParse ?? (imported as any).default?.PDFParse ?? (imported as any).default;
+        const parsed = await PDFParse(buffer);
+        const text = parsed.text?.slice(0, 8000) || '';
+
+        const completion = await anthropic.messages.create({
+          model: 'claude-haiku-4-5-20251001',
+          max_tokens: 1500,
+          system: 'You are a document reader. Extract and structure the information exactly as instructed. Be precise and thorough. Return only the extracted content — no commentary, no preamble.',
+          messages: [{
+            role: 'user',
+            content: `File: ${attachment.filename}\n\nDocument content:\n${text}\n\n${step.action}`,
+          }],
+        });
+        results.push(`--- ${attachment.filename} ---\n${(completion.content[0] as any).text}`);
+      } catch (err) {
+        console.error(`[VisionOCR] PDF parse failed for ${attachment.filename}:`, err);
+        results.push(`--- ${attachment.filename} ---\n(could not parse PDF content)`);
+      }
+    }
+  }
+
+  return results.join('\n\n');
+}
 
 // ─── Step execution ────────────────────────────────────────────────────────────
 
@@ -51,14 +136,23 @@ export async function executeSteps(
   plan: any,
   attachmentContext: string,
   userContext: string,
-  anthropic: Anthropic
+  anthropic: Anthropic,
+  fileAttachments?: Array<{ filename: string; mimeType: string; storagePath: string }>,
+  adminClient?: SupabaseClient
 ): Promise<StepOutput[]> {
   const steps = (plan.steps || []).slice(0, 4);
   const outputs: StepOutput[] = [];
 
   for (const step of steps) {
     try {
-      const output = await executeStep(step, plan, outputs, attachmentContext, userContext, anthropic);
+      let output: string;
+
+      if (step.skill === 'vision-ocr' && fileAttachments && fileAttachments.length > 0 && adminClient) {
+        output = await executeVisionOcrStep(step, fileAttachments, adminClient, anthropic);
+      } else {
+        output = await executeStep(step, plan, outputs, attachmentContext, userContext, anthropic);
+      }
+
       outputs.push({ stepNumber: step.number, action: step.action, output });
     } catch (err) {
       console.error(`[GeneratePipeline] Step ${step.number} failed:`, err);
@@ -248,7 +342,7 @@ export interface GeneratePipelineParams {
   threadId: string;
   plan: any;
   emailAttachments: Array<{ filename: string; extractedText: string | null }>;
-  userAttachments?: Array<{ filename: string; extractedText: string | null }>;
+  userAttachments?: Array<{ filename: string; mimeType: string; storagePath: string; extractedText: string | null }>;
   conversationContext: string;
   userContext: string;
   adminClient: SupabaseClient;
@@ -276,7 +370,14 @@ export async function runGeneratePipeline(params: GeneratePipelineParams): Promi
 
   const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-  const stepOutputs = await executeSteps(plan, attachmentContext, userContext, anthropic);
+  const stepOutputs = await executeSteps(
+    plan,
+    attachmentContext,
+    userContext,
+    anthropic,
+    userAttachments,
+    adminClient
+  );
 
   const { systemPrompt, userPrompt, maxTokens } = buildGeneratePrompt(type, plan, {
     deadlineLine,

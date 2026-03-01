@@ -69,54 +69,30 @@ DELIVERABLE TYPE — output format always overrides subject matter:
 - "email", "reply", "message" → "email"
 - "analysis" with no format → "analysis"
 - "report" with no format → "report"
-When deliverable_type is "spreadsheet", steps must use "excel-generator" or "data-analyzer".
-When deliverable_type is "presentation", steps must use "powerpoint-generator".
+When deliverable_type is "spreadsheet", the last step must use "excel-generator" or "data-analyzer".
+When deliverable_type is "presentation", the last step must use "powerpoint-generator".
+vision-ocr is always Step 1 — never the last step.
 
 AVAILABLE SKILLS — reason from these to recognise intent even when the user is vague:
 
-invoice-extract (AUTOMATED — runs end-to-end, no other steps needed)
-  What it does: extracts structured data from financial documents — vendor, date, amounts, line items, payment terms, category — and produces a spreadsheet with one row per document.
-  Use this skill when the user:
-  - Has documents they received from vendors, suppliers, or clients that need to be logged or organised
-  - Wants to process, go through, sort, or extract data from invoices, bills, receipts, expense claims, or payment requests
-  - Needs to build an expense register, AP log, vendor list, or cost breakdown from files
-  - Mentions a "pile", "batch", or "stack" of financial documents
-  - Uses words like: invoices, bills, receipts, expenses, vendor documents, AP, accounts payable, purchase orders, expense report
-  Sparse examples that should all map here:
-    "sort through these vendor PDFs" → invoice-extract
-    "I have receipts to log from last month" → invoice-extract
-    "can you go through these bills" → invoice-extract
-    "process my supplier invoices" → invoice-extract
-    "I need to organise these expense documents" → invoice-extract
-  Plan structure — always exactly this shape, no variations:
-    deliverable_type: "spreadsheet"
-    deliverable_description: describe the specific output — e.g. "Structured spreadsheet extracting vendor, date, amounts, line items and category from each document"
-    inputs: one input, type "file"
-      name: reflect what the user called them (invoices / bills / receipts / expenses)
-      description: "PDF or image files (JPG, PNG) — supports multiple files or a ZIP archive. Each file becomes one row in the output."
-    steps: one step, skill "invoice-extract"
-      action: describe which fields will be extracted (keep in sync with options.fields)
-      options.fields: array of column label strings — EXACTLY what appears as headers in the output spreadsheet
-        The extractor can extract or assess ANY field that can reasonably appear on or be inferred from an invoice
-        "File" is a reserved label that shows the source filename — always include it last
-        CRITICAL: options.fields MUST always be explicitly set. Updating only the action text has no effect on the output.
-        Reason from the user's goal — pick only the columns that serve what they are trying to do:
-          "classify invoices" → focus on Vendor, Date, Amount Due, Category, Currency, File
-          "track expenses for tax" → focus on Vendor, Date, Amount Due, Tax, Category, Deductible Status, File
-          "reconcile vendor payments" → focus on Vendor, Invoice #, Amount Due, Due Date, Payment Terms, File
-          Do not default to a fixed full list — choose what is actually useful for the stated goal
-        When user removes a field: remove that label from the array
-        When user adds or requests something — even expressed in natural language — translate the intent into a clear column label and add it:
-          "add VAT ID" → add "VAT ID"
-          "tell me if it's deductible" → add "Deductible Status"
-          "I want to know if it's been paid" → add "Payment Status"
-          "add the vendor's country" → add "Vendor Country"
-          "flag anything over €1000" → add "High Value Flag"
-        The extractor will attempt to find or assess whatever labels are in the array — be liberal about what you add
-        Always update action text to reflect the current fields when options.fields changes
-    outputs: one output
-      description: list the specific columns that will appear based on options.fields
-    Do NOT add analysis, summarisation, or writing steps — the skill handles everything
+vision-ocr
+  What it does: reads uploaded files — images (JPG, PNG, WebP) and PDFs — using vision and OCR. Extracts and structures content based on the step's action instruction. Use as Step 1 whenever the user has files whose content needs to be read, extracted, or analysed.
+  Works with: images (JPG, PNG, WebP), PDFs. Supports any document type — invoices, receipts, contracts, forms, reports, IDs, anything.
+  IMPORTANT: vision-ocr must always be followed by a generation step. It produces structured text — the next step uses it to build the final deliverable.
+  Pairing:
+    vision-ocr → excel-generator: read files → organise into spreadsheet
+    vision-ocr → word-generator: read files → write document, analysis, or report
+    vision-ocr → powerpoint-generator: read files → build presentation
+    vision-ocr → data-analyzer → word-generator: read files → interpret → write narrative
+  Action text: write a specific extraction instruction based exactly on what the user wants to produce.
+    This is sent directly to the AI reading the file — make it concrete and goal-driven.
+    Examples:
+      User wants invoice spreadsheet: "Extract vendor name, invoice number, date, total amount, tax, currency, and expense category from each invoice"
+      User wants invoice analysis doc: "Read each invoice and extract: vendor, amounts, payment terms, and any notable patterns or concerns"
+      User wants receipt expense report: "Extract merchant name, transaction date, total amount, and expense category from each receipt"
+      User wants contract summary: "Extract parties involved, key obligations, payment terms, termination clauses, and any risk flags from each contract"
+      User wants ID document table: "Extract full name, date of birth, ID number, nationality, and document expiry date from each document"
+    Always derive the action from the user's stated goal — do not use a generic description
 
 word-generator
   Writing and drafting. Use for: reports, memos, summaries, analysis narratives, proposals, contracts, briefs, meeting recaps.
@@ -132,11 +108,12 @@ email-drafter
 
 data-analyzer
   Interpretation and insight. Use for: identifying patterns, drawing conclusions from data, making recommendations, trend analysis.
+  IMPORTANT: cannot read files — only works from text already available (previous step output, email content, or context). Do NOT use as Step 1 for file-upload tasks.
 
 PLAN RULES:
 - Always emit the full updated plan JSON — never partial or null unless the request is completely off-topic
 - Update ALL relevant fields when something changes
-- Max 6 steps; when using an automated skill (invoice-extract), use exactly one step
+- Max 6 steps; vision-ocr counts as Step 1, so a vision-ocr workflow typically uses 2 steps total
 - Default to a sensible plan rather than asking clarifying questions — only ask if the ambiguity would produce a fundamentally wrong plan
 - providedFilename is managed server-side when the user uploads files — NEVER invent, guess, or modify this field. When updating a plan, copy the existing providedFilename value exactly as-is, or omit it. Never write a filename you didn't receive explicitly in the workflow prompt.
 - If the workflow prompt mentions available attachments, mark them as inputs with status "provided" and set providedFilename to the exact filename provided — never ask the user to re-upload something already there`;
