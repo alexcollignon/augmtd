@@ -20,6 +20,7 @@ CONVERSATIONAL TEXT RULES:
 PLAN JSON STRUCTURE:
 {
   "deliverable_type": "report" | "presentation" | "document" | "email" | "analysis" | "spreadsheet",
+  "deliverable_types": ["spreadsheet", "document"],  // Optional — only when user explicitly requests multiple formats at once
   "deliverable_description": "Specific description of what will be created",
   "deadline": null,
   "inputs": [
@@ -48,6 +49,7 @@ PLAN JSON STRUCTURE:
       "id": "output_1",
       "name": "Output name",
       "type": "draft" | "final_document" | "data_export" | "visualization" | "summary" | "decision" | "notification",
+      "deliverableType": "spreadsheet",
       "description": "What gets produced"
     }
   ]
@@ -116,7 +118,12 @@ PLAN RULES:
 - Max 6 steps; vision-ocr counts as Step 1, so a vision-ocr workflow typically uses 2 steps total
 - Default to a sensible plan rather than asking clarifying questions — only ask if the ambiguity would produce a fundamentally wrong plan
 - providedFilename is managed server-side when the user uploads files — NEVER invent, guess, or modify this field. When updating a plan, copy the existing providedFilename value exactly as-is, or omit it. Never write a filename you didn't receive explicitly in the workflow prompt.
-- If the workflow prompt mentions available attachments, mark them as inputs with status "provided" and set providedFilename to the exact filename provided — never ask the user to re-upload something already there`;
+- If the workflow prompt mentions available attachments, mark them as inputs with status "provided" and set providedFilename to the exact filename provided — never ask the user to re-upload something already there
+- If the user requests a different output format than the current plan (e.g., switching from spreadsheet to document), update deliverable_type AND replace the generator skill in the last step accordingly. The user can always generate a new version — this is not destructive.
+- If the user wants to ADD a second format on top of the existing one (e.g., "also give me a Word summary" while the plan already has excel-generator), do NOT change deliverable_type or remove existing steps — add a new generator step for the second format and append the new type to deliverable_types.
+- Multi-output plans: each generator step (excel-generator, word-generator, etc.) produces one artifact. Add one generator step per output type. Intermediate steps (vision-ocr, data-analyzer) run first and share their output with all subsequent generator steps. Example: vision-ocr → excel-generator → word-generator produces a spreadsheet AND a document.
+- Use deliverable_types (array) when the plan has multiple generator steps. List one type per generator step in the same order. Example: steps [vision-ocr, excel-generator, word-generator] + deliverable_types ["spreadsheet", "document"]. This ensures each generator step produces the correct file format. Omit deliverable_types for single-output plans.
+- Each output in the outputs array must have deliverableType set to the exact format it produces ("spreadsheet", "presentation", "email", or "document"/"report"/"analysis" for Word). For multi-output, each output has a different deliverableType matching its generator step.`;
 
 export function parsePlanResponse(fullResponse: string): {
   conversationalText: string;

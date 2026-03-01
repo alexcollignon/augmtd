@@ -66,6 +66,7 @@ export interface ExecutionStep {
 
 export interface ExecutionPlan {
   deliverable_type: DeliverableType;
+  deliverable_types?: DeliverableType[]; // Optional: multiple output formats to generate simultaneously
   deliverable_description: string; // What will be created (e.g., "Q1 Revenue Excel report with charts")
   deadline?: string; // ISO timestamp if there's a deadline
   estimated_time?: string; // Human-readable estimate (e.g., "5 minutes")
@@ -133,10 +134,11 @@ export interface XlsxContent {
 export type ArtifactContent = DocContent | PptxContent | XlsxContent;
 
 export interface DocumentArtifact {
+  id?: string; // UUID generated at creation time; optional for backward compat with legacy artifacts
   title: string;
   type: DeliverableType;
   generated_at: string; // ISO timestamp
-  storage_path: string; // Path within work-artifacts bucket: "{userId}/{threadId}.docx"
+  storage_path: string; // Path within work-artifacts bucket: "{userId}/{threadId}/{artifactId}.ext" (new) or "{userId}/{threadId}.ext" (legacy)
   content?: ArtifactContent; // Full document content for in-panel preview
   source_data?: unknown; // Raw source material from automated skills (e.g. InvoiceData[]) — used as context in Ask/Edit
 }

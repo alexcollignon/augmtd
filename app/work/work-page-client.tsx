@@ -117,6 +117,7 @@ interface WorkThread {
   title: string;
   plan: ExecutionPlan | null;
   artifact: DocumentArtifact | null;
+  artifacts?: DocumentArtifact[];
   status: string;
   created_at: string;
   updated_at: string;
@@ -246,12 +247,6 @@ function PlanPanel({
   attachErrorMsg?: string | null;
 }) {
   const isGenerating = workMode === 'generating';
-  const [confirmingRegenerate, setConfirmingRegenerate] = useState(false);
-
-  // Reset confirmation state whenever the stale flag clears (generation completed)
-  useEffect(() => {
-    if (!isDocumentStale) setConfirmingRegenerate(false);
-  }, [isDocumentStale]);
 
   if (!plan) {
     return (
@@ -282,6 +277,17 @@ function PlanPanel({
   }
 
   const Icon = getDeliverableIcon(plan.deliverable_type);
+
+  // Derive the output type for each generator step — more reliable than AI-set deliverableType
+  const generatorStepTypes: string[] = (plan.steps ?? [])
+    .filter((s: any) => ['excel-generator', 'word-generator', 'powerpoint-generator', 'email-drafter'].includes(s.skill))
+    .map((s: any) => {
+      if (s.skill === 'excel-generator') return 'spreadsheet';
+      if (s.skill === 'powerpoint-generator') return 'presentation';
+      if (s.skill === 'email-drafter') return 'email';
+      // word-generator: use plan's primary type only if it's a doc-like type; otherwise default to 'document'
+      return ['document', 'report', 'analysis'].includes(plan.deliverable_type) ? plan.deliverable_type : 'document';
+    });
 
   return (
     <div className="flex-1 overflow-y-auto border-r border-neutral-200 bg-white flex flex-col">
@@ -369,11 +375,15 @@ function PlanPanel({
             <p className="text-[14px] font-medium text-neutral-900 leading-snug">
               {plan.deliverable_description}
             </p>
-            <div className="flex items-center gap-3 mt-2">
-              <span className="text-[11px] text-indigo-600 bg-indigo-50 px-2 py-0.5 capitalize">
-                {plan.deliverable_type}
-              </span>
-            </div>
+            {(plan.deliverable_type || generatorStepTypes.length > 0) && (
+              <div className="flex items-center gap-3 mt-2">
+                <span className="text-[11px] text-indigo-600 bg-indigo-50 px-2 py-0.5 capitalize">
+                  {generatorStepTypes.length > 1
+                    ? generatorStepTypes.join(' + ')
+                    : plan.deliverable_type}
+                </span>
+              </div>
+            )}
           </div>
         </div>
 
@@ -519,9 +529,10 @@ function PlanPanel({
               Expected outputs
             </p>
             <div className="space-y-1.5">
-              {plan.outputs.map((output) => {
-                const OutputIcon = getDeliverableIcon(plan.deliverable_type);
-                const fileExt = plan.deliverable_type === 'presentation' ? '.pptx' : plan.deliverable_type === 'spreadsheet' ? '.xlsx' : '.docx';
+              {plan.outputs.map((output, idx) => {
+                const outputType = (output as any).deliverableType ?? generatorStepTypes[idx] ?? plan.deliverable_type;
+                const OutputIcon = getDeliverableIcon(outputType);
+                const fileExt = outputType === 'presentation' ? '.pptx' : outputType === 'spreadsheet' ? '.xlsx' : '.docx';
                 return (
                   <div
                     key={output.id}
@@ -543,58 +554,44 @@ function PlanPanel({
         )}
       </div>
 
-      {/* Bottom CTA — all deliverable types */}
-      {workMode === 'planning' && threadId && ['document', 'report', 'analysis', 'presentation', 'spreadsheet', 'email'].includes(plan.deliverable_type) && (
+      {/* Bottom CTA */}
+      {workMode === 'planning' && threadId && (
         <div className="p-4 border-t border-neutral-100">
-          {!artifact ? (
-            /* First generation — no guard needed */
-            <button
-              onClick={() => onGenerate(threadId)}
-              className="w-full px-4 py-2.5 bg-indigo-600 text-white text-[13px] font-semibold hover:bg-indigo-700 transition-colors flex items-center justify-center gap-2"
-            >
-              <SparklesIcon className="w-4 h-4" />
-              Generate {plan.deliverable_type}
-            </button>
-          ) : !isDocumentStale ? (
-            /* Document is current — just view it */
-            <button
-              onClick={onViewDocument}
-              className="w-full px-4 py-2.5 bg-indigo-600 text-white text-[13px] font-semibold hover:bg-indigo-700 transition-colors flex items-center justify-center gap-2"
-            >
-              <DocumentTextIcon className="w-4 h-4" />
-              View document
-            </button>
-          ) : confirmingRegenerate ? (
-            /* Confirmation step — replacing is destructive */
-            <div className="space-y-2">
-              <p className="text-[11px] text-neutral-500 text-center">
-                This will replace your current document. Manual edits will be lost.
-              </p>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => setConfirmingRegenerate(false)}
-                  className="flex-1 px-3 py-2 border border-neutral-200 text-neutral-600 text-[12px] font-medium hover:bg-neutral-50 transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={() => onGenerate(threadId)}
-                  className="flex-1 px-3 py-2 bg-red-500 text-white text-[12px] font-semibold hover:bg-red-600 transition-colors"
-                >
-                  Replace document
-                </button>
-              </div>
-            </div>
-          ) : (
-            /* Plan is stale — offer regeneration */
-            <button
-              onClick={() => setConfirmingRegenerate(true)}
-              className="w-full px-4 py-2.5 bg-amber-500 text-white text-[13px] font-semibold hover:bg-amber-600 transition-colors flex items-center justify-center gap-2"
-            >
-              <SparklesIcon className="w-4 h-4" />
-              Regenerate document
-            </button>
-          )}
+          {(() => {
+            const isMulti = generatorStepTypes.length > 1;
+            const generateLabel = isMulti
+              ? `Generate ${generatorStepTypes.join(' + ')}`
+              : `Generate ${plan.deliverable_type}`;
+            const newVersionLabel = isMulti ? 'Generate new versions' : 'Generate new version';
+            return !artifact ? (
+              /* First generation */
+              <button
+                onClick={() => onGenerate(threadId)}
+                className="w-full px-4 py-2.5 bg-indigo-600 text-white text-[13px] font-semibold hover:bg-indigo-700 transition-colors flex items-center justify-center gap-2"
+              >
+                <SparklesIcon className="w-4 h-4" />
+                {generateLabel}
+              </button>
+            ) : !isDocumentStale ? (
+              /* Document is current — just view it */
+              <button
+                onClick={onViewDocument}
+                className="w-full px-4 py-2.5 bg-indigo-600 text-white text-[13px] font-semibold hover:bg-indigo-700 transition-colors flex items-center justify-center gap-2"
+              >
+                <DocumentTextIcon className="w-4 h-4" />
+                View document
+              </button>
+            ) : (
+              /* Plan is stale — generate new version (appends, not destructive) */
+              <button
+                onClick={() => onGenerate(threadId)}
+                className="w-full px-4 py-2.5 bg-indigo-600 text-white text-[13px] font-semibold hover:bg-indigo-700 transition-colors flex items-center justify-center gap-2"
+              >
+                <SparklesIcon className="w-4 h-4" />
+                {newVersionLabel}
+              </button>
+            );
+          })()}
         </div>
       )}
     </div>
@@ -695,16 +692,96 @@ function XlsxPreview({ content }: { content: XlsxContent }) {
   );
 }
 
+// ─── Artifact Tab Strip ───────────────────────────────────────────────────────
+
+function ArtifactTabStrip({
+  artifacts,
+  selectedArtifactId,
+  onSelect,
+  onDelete,
+}: {
+  artifacts: DocumentArtifact[];
+  selectedArtifactId: string | null;
+  onSelect: (id: string) => void;
+  onDelete: (id: string) => void;
+}) {
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
+  if (artifacts.length <= 1) return null;
+
+  return (
+    <div className="flex items-center border-b border-neutral-200 bg-white flex-shrink-0 overflow-x-auto">
+      {artifacts.map((a, i) => {
+        const isActive = a.id
+          ? a.id === selectedArtifactId
+          : i === artifacts.length - 1 && !selectedArtifactId;
+        const Icon = getDeliverableIcon(a.type);
+        return (
+          <div
+            key={a.id ?? i}
+            className={`flex items-center gap-1.5 px-3 py-2 border-r border-neutral-200 flex-shrink-0 transition-colors ${
+              isActive ? 'bg-indigo-50' : 'bg-white hover:bg-neutral-50'
+            }`}
+          >
+            <button
+              onClick={() => a.id && onSelect(a.id)}
+              className={`flex items-center gap-1.5 min-w-0 ${isActive ? 'text-indigo-700' : 'text-neutral-600'}`}
+            >
+              <Icon className="w-3.5 h-3.5 flex-shrink-0" />
+              <span className="text-[11px] font-medium truncate max-w-[100px]">{a.title}</span>
+              <span className="text-[9px] text-neutral-400 flex-shrink-0">
+                {new Date(a.generated_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+              </span>
+            </button>
+            {confirmDeleteId === a.id ? (
+              <div className="flex items-center gap-1 ml-1 flex-shrink-0">
+                <button
+                  onClick={() => { if (a.id) { onDelete(a.id); } setConfirmDeleteId(null); }}
+                  className="text-[9px] text-red-600 hover:text-red-800 font-medium"
+                >
+                  Remove
+                </button>
+                <span className="text-[9px] text-neutral-300">/</span>
+                <button
+                  onClick={() => setConfirmDeleteId(null)}
+                  className="text-[9px] text-neutral-500 hover:text-neutral-700"
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={(e) => { e.stopPropagation(); if (a.id) setConfirmDeleteId(a.id); }}
+                className="ml-1 text-neutral-300 hover:text-neutral-500 transition-colors flex-shrink-0"
+              >
+                <XMarkIcon className="w-3 h-3" />
+              </button>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // ─── Document Panel ───────────────────────────────────────────────────────────
 
 function DocumentPanel({
   artifact,
+  artifacts,
+  selectedArtifactId,
+  onSelectArtifact,
+  onDeleteArtifact,
   onDownload,
   onRegenerate,
   isDownloading,
   isEditing,
 }: {
   artifact: DocumentArtifact;
+  artifacts: DocumentArtifact[];
+  selectedArtifactId: string | null;
+  onSelectArtifact: (id: string) => void;
+  onDeleteArtifact: (id: string) => void;
   onDownload: () => void;
   onRegenerate: () => void;
   isDownloading: boolean;
@@ -712,6 +789,14 @@ function DocumentPanel({
 }) {
   return (
     <div className="flex-1 flex flex-col border-r border-neutral-200 bg-neutral-100 min-w-0">
+      {/* Artifact tab strip — shown when multiple versions exist */}
+      <ArtifactTabStrip
+        artifacts={artifacts}
+        selectedArtifactId={selectedArtifactId}
+        onSelect={onSelectArtifact}
+        onDelete={onDeleteArtifact}
+      />
+
       {/* Editing banner */}
       {isEditing && (
         <div className="flex items-center gap-2 px-4 py-2.5 bg-indigo-50 border-b border-indigo-100 flex-shrink-0">
@@ -803,11 +888,20 @@ export function WorkPageClient({
   const initialThread = initialActiveThreadId
     ? initialThreads.find((t) => t.id === initialActiveThreadId) ?? null
     : null;
+  const initialArtifacts = (() => {
+    if (!initialThread) return [];
+    const arr = initialThread.artifacts ?? [];
+    if (arr.length > 0) return arr;
+    if (initialThread.artifact) return [initialThread.artifact];
+    return [];
+  })();
   const [workMode, setWorkMode] = useState<WorkMode>(
-    initialView === 'document' && initialThread?.artifact ? 'document' : 'planning'
+    initialView === 'document' && initialArtifacts.length > 0 ? 'document' : 'planning'
   );
-  const [artifact, setArtifact] = useState<DocumentArtifact | null>(
-    initialView === 'document' && initialThread?.artifact ? initialThread.artifact : null
+  const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(
+    initialView === 'document' && initialArtifacts.length > 0
+      ? (initialArtifacts[initialArtifacts.length - 1].id ?? null)
+      : null
   );
   const [isDownloading, setIsDownloading] = useState(false);
   const [artifactInput, setArtifactInput] = useState('');
@@ -830,13 +924,28 @@ export function WorkPageClient({
 
   const activeThread = threads.find((t) => t.id === activeThreadId) ?? null;
 
+  // Computed artifact list: prefer artifacts array, fall back to singular artifact (legacy)
+  const activeArtifacts: DocumentArtifact[] = (() => {
+    if (!activeThread) return [];
+    const arr = activeThread.artifacts ?? [];
+    if (arr.length > 0) return arr;
+    if (activeThread.artifact) return [activeThread.artifact];
+    return [];
+  })();
+
+  // Selected artifact: find by id, fall back to latest
+  const selectedArtifact: DocumentArtifact | null =
+    activeArtifacts.find((a) => a.id === selectedArtifactId)
+    ?? activeArtifacts[activeArtifacts.length - 1]
+    ?? null;
+
   // True when the plan/attachments have been modified after the last generation or edit.
-  // Both updated_at and artifact.generated_at are kept in sync by generate/edit callbacks,
-  // so a gap > 5 s reliably means a chat message or attach action happened in between.
+  // Uses the LATEST artifact (not selected) so the stale banner reflects new ungenerated changes.
+  const latestArtifact = activeArtifacts[activeArtifacts.length - 1] ?? null;
   const isDocumentStale = !!(
-    activeThread?.artifact &&
+    latestArtifact &&
     activeThread?.updated_at &&
-    new Date(activeThread.updated_at).getTime() - new Date(activeThread.artifact.generated_at).getTime() > 5000
+    new Date(activeThread.updated_at).getTime() - new Date(latestArtifact.generated_at).getTime() > 5000
   );
 
   useEffect(() => {
@@ -861,6 +970,12 @@ export function WorkPageClient({
       const data = await res.json();
       setMessages(data.messages || []);
       if (data.thread) {
+        const loadedArtifacts: DocumentArtifact[] = (() => {
+          const arr = (data.thread.artifacts ?? []) as DocumentArtifact[];
+          if (arr.length > 0) return arr;
+          if (data.thread.artifact) return [data.thread.artifact as DocumentArtifact];
+          return [];
+        })();
         setThreads((prev) => {
           const exists = prev.some((t) => t.id === threadId);
           if (exists) {
@@ -868,25 +983,30 @@ export function WorkPageClient({
               ...t,
               plan: data.thread.plan ?? t.plan,
               artifact: data.thread.artifact ?? null,
+              artifacts: (data.thread.artifacts ?? []) as DocumentArtifact[],
             } : t);
           }
           // Thread not in list (e.g. auto-generated, navigated to directly)
-          // Add it so activeThread resolves correctly; sidebar filters it out via auto_generated flag
           return [...prev, {
             id: threadId,
             title: data.thread.title,
             plan: data.thread.plan ?? null,
             artifact: data.thread.artifact ?? null,
+            artifacts: (data.thread.artifacts ?? []) as DocumentArtifact[],
             status: data.thread.status,
             created_at: data.thread.created_at,
             updated_at: data.thread.updated_at,
             auto_generated: data.thread.auto_generated ?? false,
           }];
         });
-        const loadedArtifact = data.thread.artifact ?? null;
-        setArtifact(loadedArtifact);
-        if (loadedArtifact && initialView === 'document') {
-          setWorkMode('document');
+        if (loadedArtifacts.length > 0) {
+          const latest = loadedArtifacts[loadedArtifacts.length - 1];
+          setSelectedArtifactId(latest.id ?? null);
+          if (initialView === 'document') {
+            setWorkMode('document');
+          }
+        } else {
+          setSelectedArtifactId(null);
         }
       }
     } finally {
@@ -904,7 +1024,7 @@ export function WorkPageClient({
     } else {
       // Reset when going back to entry view
       setWorkMode('planning');
-      setArtifact(null);
+      setSelectedArtifactId(null);
     }
   }, [activeThreadId, loadThread]);
 
@@ -1002,11 +1122,21 @@ export function WorkPageClient({
         return;
       }
       const data = await res.json();
-      const newArtifact: DocumentArtifact = data.artifact;
-      setArtifact(newArtifact);
+      const newArtifacts: DocumentArtifact[] = data.artifacts ?? (data.artifact ? [data.artifact] : []);
+      const latestArtifact = newArtifacts[newArtifacts.length - 1] ?? null;
+      setSelectedArtifactId(latestArtifact?.id ?? null);
       setWorkMode('document');
       setThreads((prev) =>
-        prev.map((t) => t.id === threadId ? { ...t, artifact: newArtifact, updated_at: newArtifact.generated_at } : t)
+        prev.map((t) => {
+          if (t.id !== threadId) return t;
+          const existingArtifacts = t.artifacts ?? [];
+          return {
+            ...t,
+            artifact: latestArtifact ?? t.artifact,
+            artifacts: [...existingArtifacts, ...newArtifacts],
+            updated_at: latestArtifact?.generated_at ?? t.updated_at,
+          };
+        })
       );
     } catch (err) {
       console.error('Generate error:', err);
@@ -1014,7 +1144,7 @@ export function WorkPageClient({
     }
   }, []);
 
-  const editArtifact = useCallback(async (instruction: string, threadId: string) => {
+  const editArtifact = useCallback(async (instruction: string, threadId: string, artifactId?: string) => {
     if (!instruction.trim() || isEditingArtifact) return;
 
     const isEditMode = docChatMode === 'edit';
@@ -1036,7 +1166,7 @@ export function WorkPageClient({
       const res = await fetch(`/api/work/threads/${threadId}/edit-artifact`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ instruction: instruction.trim(), mode: docChatMode }),
+        body: JSON.stringify({ instruction: instruction.trim(), mode: docChatMode, artifactId }),
       });
 
       if (!res.ok || !res.body) throw new Error('Edit failed');
@@ -1066,9 +1196,18 @@ export function WorkPageClient({
           const lastBrace = artifactRaw.lastIndexOf('}');
           if (firstBrace !== -1 && lastBrace !== -1) {
             const updatedArtifact = JSON.parse(artifactRaw.slice(firstBrace, lastBrace + 1)) as DocumentArtifact;
-            setArtifact(updatedArtifact);
             setThreads((prev) =>
-              prev.map((t) => t.id === threadId ? { ...t, artifact: updatedArtifact, updated_at: updatedArtifact.generated_at } : t)
+              prev.map((t) => {
+                if (t.id !== threadId) return t;
+                const arr = t.artifacts ?? [];
+                const updatedArray = arr.map((a) => a.id === updatedArtifact.id ? updatedArtifact : a);
+                return {
+                  ...t,
+                  artifact: updatedArtifact,
+                  artifacts: updatedArray,
+                  updated_at: updatedArtifact.generated_at,
+                };
+              })
             );
           }
         } catch {
@@ -1185,27 +1324,51 @@ export function WorkPageClient({
     }
   }, []);
 
-  const downloadDocument = useCallback(async (threadId: string) => {
+  const downloadDocument = useCallback(async (threadId: string, artifactToDownload: DocumentArtifact) => {
     setIsDownloading(true);
     try {
-      const res = await fetch(`/api/work/threads/${threadId}/download`);
+      const url = artifactToDownload.id
+        ? `/api/work/threads/${threadId}/download?artifactId=${artifactToDownload.id}`
+        : `/api/work/threads/${threadId}/download`;
+      const res = await fetch(url);
       if (!res.ok) throw new Error('Download failed');
       const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
+      const objectUrl = URL.createObjectURL(blob);
       const a = document.createElement('a');
-      a.href = url;
-      const ext = artifact?.type === 'presentation' ? 'pptx' : artifact?.type === 'spreadsheet' ? 'xlsx' : 'docx';
-      a.download = `${artifact?.title ?? 'document'}.${ext}`;
+      a.href = objectUrl;
+      const ext = artifactToDownload.type === 'presentation' ? 'pptx' : artifactToDownload.type === 'spreadsheet' ? 'xlsx' : 'docx';
+      a.download = `${artifactToDownload.title ?? 'document'}.${ext}`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      URL.revokeObjectURL(objectUrl);
     } catch (err) {
       console.error('Download error:', err);
     } finally {
       setIsDownloading(false);
     }
-  }, [artifact]);
+  }, []);
+
+  const handleDeleteArtifact = useCallback(async (artifactId: string, threadId: string) => {
+    try {
+      const res = await fetch(`/api/work/threads/${threadId}/artifacts/${artifactId}`, { method: 'DELETE' });
+      if (!res.ok) return;
+      const { artifacts: remaining } = await res.json() as { artifacts: DocumentArtifact[] };
+      setThreads((prev) =>
+        prev.map((t) => {
+          if (t.id !== threadId) return t;
+          const newLatest = remaining.length > 0 ? remaining[remaining.length - 1] : null;
+          return { ...t, artifacts: remaining, artifact: newLatest };
+        })
+      );
+      // Auto-switch to latest remaining (or null if none)
+      const newLatest = remaining.length > 0 ? remaining[remaining.length - 1] : null;
+      setSelectedArtifactId(newLatest?.id ?? null);
+      if (remaining.length === 0) setWorkMode('planning');
+    } catch {
+      console.error('Failed to delete artifact');
+    }
+  }, []);
 
   const startThread = useCallback(async (description: string) => {
     if (!description.trim() || isCreatingThread) return;
@@ -1230,7 +1393,7 @@ export function WorkPageClient({
       setMessages([]);
       setEntryInput('');
       setWorkMode('planning');
-      setArtifact(null);
+      setSelectedArtifactId(null);
 
       // Upload any attached files, then enrich the initial prompt with their metadata
       let enrichedPrompt = description;
@@ -1328,7 +1491,7 @@ export function WorkPageClient({
     if (activeThreadId === threadId) {
       setActiveThreadId(null);
       setWorkMode('planning');
-      setArtifact(null);
+      setSelectedArtifactId(null);
     }
     try {
       await fetch(`/api/work/threads/${threadId}`, { method: 'DELETE' });
@@ -1366,7 +1529,7 @@ export function WorkPageClient({
   const handleArtifactSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (activeThreadId && artifactInput.trim()) {
-      editArtifact(artifactInput, activeThreadId);
+      editArtifact(artifactInput, activeThreadId, selectedArtifact?.id);
     }
   };
 
@@ -1374,7 +1537,7 @@ export function WorkPageClient({
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       if (activeThreadId && artifactInput.trim() && !isEditingArtifact) {
-        editArtifact(artifactInput, activeThreadId);
+        editArtifact(artifactInput, activeThreadId, selectedArtifact?.id);
       }
     }
   };
@@ -1473,11 +1636,20 @@ export function WorkPageClient({
                           <p className="text-[10px] text-neutral-400">
                             {relativeTime(thread.updated_at)}
                           </p>
-                          {thread.artifact && (
-                            <span className="text-[9px] text-green-600 bg-green-50 px-1 py-px">
-                              {thread.artifact.type === 'presentation' ? 'pptx' : thread.artifact.type === 'spreadsheet' ? 'xlsx' : 'docx'}
-                            </span>
-                          )}
+                          {(() => {
+                            const arr = thread.artifacts ?? [];
+                            const latest = arr.length > 0 ? arr[arr.length - 1] : thread.artifact;
+                            if (!latest) return null;
+                            const ext = latest.type === 'presentation' ? 'pptx' : latest.type === 'spreadsheet' ? 'xlsx' : 'docx';
+                            return (
+                              <>
+                                <span className="text-[9px] text-green-600 bg-green-50 px-1 py-px">{ext}</span>
+                                {arr.length > 1 && (
+                                  <span className="text-[9px] text-indigo-600 bg-indigo-50 px-1 py-px">{arr.length}</span>
+                                )}
+                              </>
+                            );
+                          })()}
                           {thread.auto_generated && (
                             <span className="inline-flex items-center gap-0.5 text-[9px] text-indigo-500 bg-indigo-50 px-1 py-px">
                               <SparklesIcon className="w-2.5 h-2.5" />
@@ -1646,10 +1818,14 @@ export function WorkPageClient({
         /* ── Split view: left panel + right chat ── */
         <>
           {/* Left panel: plan or document */}
-          {workMode === 'document' && artifact ? (
+          {workMode === 'document' && selectedArtifact ? (
             <DocumentPanel
-              artifact={artifact}
-              onDownload={() => activeThreadId && downloadDocument(activeThreadId)}
+              artifact={selectedArtifact}
+              artifacts={activeArtifacts}
+              selectedArtifactId={selectedArtifactId}
+              onSelectArtifact={setSelectedArtifactId}
+              onDeleteArtifact={(artifactId) => activeThreadId && handleDeleteArtifact(artifactId, activeThreadId)}
+              onDownload={() => activeThreadId && selectedArtifact && downloadDocument(activeThreadId, selectedArtifact)}
               onRegenerate={() => setWorkMode('planning')}
               isDownloading={isDownloading}
               isEditing={isRebuildingDocument}
@@ -1662,7 +1838,7 @@ export function WorkPageClient({
               workMode={workMode}
               onGenerate={generateDocument}
               threadId={activeThreadId}
-              artifact={artifact}
+              artifact={selectedArtifact}
               onViewDocument={() => setWorkMode('document')}
               onAttach={(inputId) => activeThreadId && handleAttach(inputId, activeThreadId)}
               uploadingInputId={uploadingInputId}
@@ -1787,9 +1963,9 @@ export function WorkPageClient({
                       onKeyDown={handleArtifactKeyDown}
                       placeholder={docChatMode === 'ask'
                         ? 'Ask about the document or attached files…'
-                        : artifact?.type === 'presentation'
+                        : selectedArtifact?.type === 'presentation'
                         ? "Edit the presentation… (e.g., 'add a slide about risks')"
-                        : artifact?.type === 'spreadsheet'
+                        : selectedArtifact?.type === 'spreadsheet'
                         ? "Edit the spreadsheet… (e.g., 'add a totals row')"
                         : "Edit the document… (e.g., 'make the summary shorter')"}
                       rows={1}

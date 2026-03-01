@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
+import { randomUUID } from 'crypto';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { DocumentArtifact, ArtifactContent, DocContent, PptxContent, XlsxContent, DeliverableType } from '@/lib/types/inbox';
 import { buildArtifactFile, getFileExt, getMimeType } from '@/lib/artifacts/builders';
@@ -90,7 +91,7 @@ async function executeVisionOcrStep(
 
 // ─── Step execution ────────────────────────────────────────────────────────────
 
-interface StepOutput {
+export interface StepOutput {
   stepNumber: number;
   action: string;
   output: string;
@@ -335,7 +336,7 @@ export function parseAndValidateContent(type: DeliverableType, rawText: string):
   return content as DocContent;
 }
 
-// ─── Main pipeline function ────────────────────────────────────────────────────
+// ─── Main pipeline functions ───────────────────────────────────────────────────
 
 export interface GeneratePipelineParams {
   userId: string;
@@ -348,37 +349,50 @@ export interface GeneratePipelineParams {
   adminClient: SupabaseClient;
 }
 
-export async function runGeneratePipeline(params: GeneratePipelineParams): Promise<DocumentArtifact> {
-  const {
-    userId,
-    threadId,
-    plan,
-    emailAttachments,
-    userAttachments = [],
-    conversationContext,
-    userContext,
-    adminClient,
-  } = params;
-
-  const type: DeliverableType = plan.deliverable_type;
-  const deadlineLine = plan.deadline ? `\nDeadline: ${new Date(plan.deadline).toLocaleDateString()}` : '';
+/**
+ * Run only the intermediate steps (vision-ocr, data-analyzer, etc.) and return
+ * their outputs. Shared across all artifact types when generating multiple at once.
+ */
+export async function runPipelineSteps(params: {
+  plan: any;
+  emailAttachments: Array<{ filename: string; extractedText: string | null }>;
+  userAttachments?: Array<{ filename: string; mimeType: string; storagePath: string; extractedText: string | null }>;
+  userContext: string;
+  adminClient: SupabaseClient;
+  anthropic?: Anthropic;
+}): Promise<{ stepOutputs: StepOutput[]; attachmentContext: string }> {
+  const { plan, emailAttachments, userAttachments = [], userContext, adminClient } = params;
+  const anthropic = params.anthropic ?? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
   const attachmentContext = [...emailAttachments, ...userAttachments]
     .filter((a) => a.extractedText)
     .map((a) => `--- ${a.filename} ---\n${a.extractedText}`)
     .join('\n\n');
 
-  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  const stepOutputs = await executeSteps(plan, attachmentContext, userContext, anthropic, userAttachments, adminClient);
+  return { stepOutputs, attachmentContext };
+}
 
-  const stepOutputs = await executeSteps(
-    plan,
-    attachmentContext,
-    userContext,
-    anthropic,
-    userAttachments,
-    adminClient
-  );
+/**
+ * Assemble one artifact for a given type from pre-computed step outputs.
+ * Call this once per deliverable type when generating multiple artifacts in parallel.
+ */
+export async function assembleArtifactFromSteps(params: {
+  userId: string;
+  threadId: string;
+  type: DeliverableType;
+  plan: any;
+  stepOutputs: StepOutput[];
+  attachmentContext: string;
+  conversationContext: string;
+  userContext: string;
+  adminClient: SupabaseClient;
+  anthropic?: Anthropic;
+}): Promise<DocumentArtifact> {
+  const { userId, threadId, type, plan, stepOutputs, attachmentContext, conversationContext, userContext, adminClient } = params;
+  const anthropic = params.anthropic ?? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
+  const deadlineLine = plan.deadline ? `\nDeadline: ${new Date(plan.deadline).toLocaleDateString()}` : '';
   const { systemPrompt, userPrompt, maxTokens } = buildGeneratePrompt(type, plan, {
     deadlineLine,
     userContext,
@@ -397,31 +411,112 @@ export async function runGeneratePipeline(params: GeneratePipelineParams): Promi
   const rawText = (completion.content[0] as { type: string; text: string })?.text ?? '{}';
   const content = parseAndValidateContent(type, rawText);
 
+  const artifactId = randomUUID();
   const buffer = await buildArtifactFile(type, content);
   const ext = getFileExt(type);
-  const storagePath = `${userId}/${threadId}.${ext}`;
+  const storagePath = `${userId}/${threadId}/${artifactId}.${ext}`;
 
   const { error: uploadError } = await adminClient.storage
     .from('work-artifacts')
-    .upload(storagePath, buffer, {
-      contentType: getMimeType(type),
-      upsert: true,
-    });
+    .upload(storagePath, buffer, { contentType: getMimeType(type), upsert: false });
 
   if (uploadError) throw new Error(`Storage upload failed: ${uploadError.message}`);
 
-  const artifact: DocumentArtifact = {
+  return {
+    id: artifactId,
     title: plan.deliverable_description,
     type,
     generated_at: new Date().toISOString(),
     storage_path: storagePath,
     content,
   };
+}
 
-  await adminClient
-    .from('work_threads')
-    .update({ artifact, updated_at: new Date().toISOString() })
-    .eq('id', threadId);
+// ─── Full pipeline ─────────────────────────────────────────────────────────────
 
-  return artifact;
+// Skills that produce an artifact when encountered as a step
+const GENERATOR_SKILLS = new Set(['excel-generator', 'word-generator', 'powerpoint-generator', 'email-drafter']);
+
+/**
+ * Infer the DeliverableType for the nth generator step encountered in the plan.
+ * Respects plan.deliverable_types (ordered list) when present; falls back to
+ * plan.deliverable_type for the first generator, then skill-based inference.
+ */
+function inferTypeFromGeneratorStep(step: any, plan: any, generatorIndex: number): DeliverableType {
+  if (Array.isArray(plan.deliverable_types) && plan.deliverable_types[generatorIndex]) {
+    return plan.deliverable_types[generatorIndex] as DeliverableType;
+  }
+  if (generatorIndex === 0) return plan.deliverable_type as DeliverableType;
+  switch (step.skill) {
+    case 'excel-generator': return 'spreadsheet';
+    case 'powerpoint-generator': return 'presentation';
+    case 'email-drafter': return 'email';
+    default: return 'document';
+  }
+}
+
+/**
+ * Process all plan steps in order.
+ * - Intermediate steps (vision-ocr, data-analyzer) accumulate context passed to subsequent steps.
+ * - Generator steps (excel-generator, word-generator, etc.) each produce one artifact.
+ * Returns every artifact produced — one per generator step, or one from deliverable_type if the
+ * plan has no generator steps.
+ * DB write is intentionally omitted — callers handle appending to the artifacts array.
+ */
+export async function runFullPipeline(params: GeneratePipelineParams & { anthropic?: Anthropic }): Promise<DocumentArtifact[]> {
+  const { userId, threadId, plan, emailAttachments, userAttachments = [], conversationContext, userContext, adminClient } = params;
+  const anthropic = params.anthropic ?? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+  const attachmentContext = [...emailAttachments, ...(userAttachments)]
+    .filter((a) => a.extractedText)
+    .map((a) => `--- ${a.filename} ---\n${a.extractedText}`)
+    .join('\n\n');
+
+  const allSteps = (plan.steps || []).slice(0, 6);
+  const intermediateOutputs: StepOutput[] = [];
+  const artifacts: DocumentArtifact[] = [];
+  let generatorIndex = 0;
+
+  for (const step of allSteps) {
+    try {
+      if (GENERATOR_SKILLS.has(step.skill)) {
+        const type = inferTypeFromGeneratorStep(step, plan, generatorIndex++);
+        const artifact = await assembleArtifactFromSteps({
+          userId, threadId, type, plan,
+          stepOutputs: [...intermediateOutputs],
+          attachmentContext, conversationContext, userContext, adminClient, anthropic,
+        });
+        artifacts.push(artifact);
+      } else if (step.skill === 'vision-ocr' && userAttachments.length > 0 && adminClient) {
+        const output = await executeVisionOcrStep(step, userAttachments, adminClient, anthropic);
+        intermediateOutputs.push({ stepNumber: step.number, action: step.action, output });
+      } else {
+        const output = await executeStep(step, plan, intermediateOutputs, attachmentContext, userContext, anthropic);
+        intermediateOutputs.push({ stepNumber: step.number, action: step.action, output });
+      }
+    } catch (err) {
+      console.error(`[FullPipeline] Step ${step.number} (${step.skill}) failed:`, err);
+    }
+  }
+
+  // No generator steps in plan — assemble once using deliverable_type
+  if (artifacts.length === 0) {
+    const artifact = await assembleArtifactFromSteps({
+      userId, threadId, type: plan.deliverable_type, plan,
+      stepOutputs: intermediateOutputs, attachmentContext,
+      conversationContext, userContext, adminClient, anthropic,
+    });
+    artifacts.push(artifact);
+  }
+
+  return artifacts;
+}
+
+/**
+ * Single-artifact wrapper around runFullPipeline.
+ * Used by prepare-from-email (always produces one artifact).
+ */
+export async function runGeneratePipeline(params: GeneratePipelineParams): Promise<DocumentArtifact> {
+  const artifacts = await runFullPipeline(params);
+  return artifacts[0];
 }

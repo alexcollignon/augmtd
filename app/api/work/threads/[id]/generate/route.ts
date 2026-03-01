@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { DeliverableType } from '@/lib/types/inbox';
-import { runGeneratePipeline } from '@/lib/work/generate-pipeline';
+import { DocumentArtifact } from '@/lib/types/inbox';
+import { runFullPipeline } from '@/lib/work/generate-pipeline';
 
 // POST /api/work/threads/[id]/generate
 export async function POST(
@@ -55,7 +55,6 @@ export async function POST(
 
     const identity = identityProfile?.profile_data;
     const plan = thread.plan;
-    const type: DeliverableType = plan.deliverable_type;
 
     const conversationContext = (recentMessages || [])
       .reverse()
@@ -82,7 +81,8 @@ export async function POST(
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
 
-    const artifact = await runGeneratePipeline({
+    // Run all steps — intermediate steps feed into each generator step sequentially
+    const newArtifacts = await runFullPipeline({
       userId: user.id,
       threadId,
       plan,
@@ -93,14 +93,29 @@ export async function POST(
       adminClient,
     });
 
-    // Override title with thread title (not plan description)
-    artifact.title = thread.title;
+    // Override titles with thread title
+    newArtifacts.forEach((a) => { a.title = thread.title; });
+
+    // Append all new artifacts to the array
+    const { data: freshThread } = await adminClient
+      .from('work_threads')
+      .select('artifacts')
+      .eq('id', threadId)
+      .single();
+    const existingArtifacts = (freshThread?.artifacts as DocumentArtifact[]) || [];
+    const updatedArtifacts = [...existingArtifacts, ...newArtifacts];
+    const latestArtifact = updatedArtifacts[updatedArtifacts.length - 1];
+
     await adminClient
       .from('work_threads')
-      .update({ artifact, updated_at: new Date().toISOString() })
+      .update({
+        artifact: latestArtifact,
+        artifacts: updatedArtifacts,
+        updated_at: new Date().toISOString(),
+      })
       .eq('id', threadId);
 
-    return NextResponse.json({ artifact });
+    return NextResponse.json({ artifacts: newArtifacts, artifact: newArtifacts[newArtifacts.length - 1] });
   } catch (error) {
     console.error('[Generate] Error:', error);
     return NextResponse.json({ error: 'Failed to generate document' }, { status: 500 });

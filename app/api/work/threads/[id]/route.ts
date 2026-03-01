@@ -58,10 +58,10 @@ export async function DELETE(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Load artifact before deleting so we can clean up storage
+    // Load artifact(s) before deleting so we can clean up storage
     const { data: thread } = await supabase
       .from('work_threads')
-      .select('artifact')
+      .select('artifact, artifacts')
       .eq('id', threadId)
       .eq('user_id', user.id)
       .single();
@@ -74,14 +74,21 @@ export async function DELETE(
 
     if (error) throw error;
 
-    // Delete artifact file from storage if one exists
-    const storagePath = thread?.artifact?.storage_path;
-    if (storagePath) {
+    // Collect all storage paths from artifacts array + legacy singular artifact (deduped)
+    const allPaths = new Set<string>();
+    const artifactsArray = ((thread as any)?.artifacts as Array<{ storage_path?: string }>) || [];
+    for (const a of artifactsArray) {
+      if (a.storage_path) allPaths.add(a.storage_path);
+    }
+    const legacyPath = (thread as any)?.artifact?.storage_path;
+    if (legacyPath) allPaths.add(legacyPath);
+
+    if (allPaths.size > 0) {
       const adminClient = (await import('@supabase/supabase-js')).createClient(
         process.env.NEXT_PUBLIC_SUPABASE_URL!,
         process.env.SUPABASE_SERVICE_ROLE_KEY!
       );
-      await adminClient.storage.from('work-artifacts').remove([storagePath]);
+      await adminClient.storage.from('work-artifacts').remove([...allPaths]);
     }
 
     // Remove thread from work_patterns.recentWorkflows and recompute aggregates

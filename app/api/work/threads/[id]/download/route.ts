@@ -1,13 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { getFileExt, getMimeType } from '@/lib/artifacts/builders';
+import { DeliverableType } from '@/lib/types/inbox';
 
-// GET /api/work/threads/[id]/download — download generated .docx from Supabase Storage
+// GET /api/work/threads/[id]/download — download generated file from Supabase Storage
+// Optional query param: ?artifactId=<uuid> — download a specific version; defaults to latest
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id: threadId } = await params;
+  const artifactId = new URL(request.url).searchParams.get('artifactId');
 
   try {
     const supabase = await createClient();
@@ -16,10 +19,10 @@ export async function GET(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Verify thread belongs to user and has artifact
+    // Verify thread belongs to user
     const { data: thread, error: threadError } = await supabase
       .from('work_threads')
-      .select('id, title, artifact')
+      .select('id, title, artifact, artifacts')
       .eq('id', threadId)
       .eq('user_id', user.id)
       .single();
@@ -28,11 +31,20 @@ export async function GET(
       return NextResponse.json({ error: 'Thread not found' }, { status: 404 });
     }
 
-    if (!thread.artifact) {
-      return NextResponse.json({ error: 'No document generated yet' }, { status: 404 });
+    // Resolve artifact: specific id → latest in array → singular artifact (legacy)
+    const artifactsArray = ((thread as any).artifacts as Array<{ id?: string; storage_path: string; title: string; type: string }>) || [];
+    let artifact: { id?: string; storage_path: string; title: string; type: string } | null = null;
+    if (artifactId && artifactsArray.length > 0) {
+      artifact = artifactsArray.find((a) => a.id === artifactId) ?? artifactsArray[artifactsArray.length - 1];
+    } else if (artifactsArray.length > 0) {
+      artifact = artifactsArray[artifactsArray.length - 1];
+    } else {
+      artifact = (thread as any).artifact ?? null;
     }
 
-    const artifact = thread.artifact;
+    if (!artifact) {
+      return NextResponse.json({ error: 'No document generated yet' }, { status: 404 });
+    }
 
     // Download from Supabase Storage using service role
     const adminClient = (await import('@supabase/supabase-js')).createClient(
@@ -51,8 +63,8 @@ export async function GET(
 
     const buffer = Buffer.from(await fileData.arrayBuffer());
     const safeTitle = (artifact.title || 'document').replace(/[^a-z0-9\s-_]/gi, '').trim() || 'document';
-    const ext = getFileExt(artifact.type);
-    const mime = getMimeType(artifact.type);
+    const ext = getFileExt(artifact.type as DeliverableType);
+    const mime = getMimeType(artifact.type as DeliverableType);
 
     return new Response(buffer, {
       headers: {

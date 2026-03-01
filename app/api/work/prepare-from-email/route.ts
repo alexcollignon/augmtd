@@ -165,7 +165,7 @@ export async function POST(request: NextRequest) {
       extractedText: a.extractedText ?? null,
     }));
 
-    await runGeneratePipeline({
+    const artifact = await runGeneratePipeline({
       userId,
       threadId: thread.id,
       plan,
@@ -174,6 +174,23 @@ export async function POST(request: NextRequest) {
       userContext: userContextStr,
       adminClient,
     });
+
+    // Append to artifacts array
+    const { data: freshThread } = await adminClient
+      .from('work_threads')
+      .select('artifacts')
+      .eq('id', thread.id)
+      .single();
+    const existingArtifacts = (freshThread?.artifacts as typeof artifact[]) || [];
+    const updatedArtifacts = [...existingArtifacts, artifact];
+    await adminClient
+      .from('work_threads')
+      .update({
+        artifact,
+        artifacts: updatedArtifacts,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', thread.id);
 
     // Mark as ready
     await adminClient

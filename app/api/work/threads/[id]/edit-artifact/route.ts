@@ -91,7 +91,7 @@ export async function POST(
 
     const { data: thread, error: threadError } = await supabase
       .from('work_threads')
-      .select('id, title, plan, artifact, user_attachments')
+      .select('id, title, plan, artifact, artifacts, user_attachments')
       .eq('id', threadId)
       .eq('user_id', user.id)
       .single();
@@ -100,19 +100,25 @@ export async function POST(
       return NextResponse.json({ error: 'Thread not found' }, { status: 404 });
     }
 
-    if (!thread.artifact) {
-      return NextResponse.json({ error: 'No document to edit' }, { status: 400 });
-    }
-
     const body = await request.json();
-    const { instruction, mode = 'edit' } = body;
+    const { instruction, mode = 'edit', artifactId } = body;
 
     if (!instruction || typeof instruction !== 'string') {
       return NextResponse.json({ error: 'Instruction is required' }, { status: 400 });
     }
 
+    // Resolve artifact: find by artifactId in artifacts array, fall back to singular artifact (legacy)
+    const artifactsArray = ((thread as any).artifacts as DocumentArtifact[]) || [];
+    const resolvedArtifact: DocumentArtifact | null = artifactId
+      ? (artifactsArray.find((a) => a.id === artifactId) ?? (thread.artifact as DocumentArtifact | null))
+      : (artifactsArray.length > 0 ? artifactsArray[artifactsArray.length - 1] : (thread.artifact as DocumentArtifact | null));
+
+    if (!resolvedArtifact) {
+      return NextResponse.json({ error: 'No document to edit' }, { status: 400 });
+    }
+
     const isAskMode = mode === 'ask';
-    const artifact = thread.artifact as DocumentArtifact;
+    const artifact = resolvedArtifact;
     const type: DeliverableType = artifact.type;
     const contentJson = artifact.content ? JSON.stringify(artifact.content, null, 2) : null;
 
@@ -220,9 +226,22 @@ export async function POST(
               content,
             };
 
+            // Find-replace in artifacts array by id; keep singular artifact in sync
+            const currentArray = ((thread as any).artifacts as DocumentArtifact[]) || [];
+            const updatedArray = currentArray.length > 0
+              ? currentArray.map((a) => a.id === updatedArtifact.id ? updatedArtifact : a)
+              : currentArray;
+            const isLatest = updatedArray.length === 0 ||
+              updatedArray[updatedArray.length - 1]?.id === updatedArtifact.id ||
+              !updatedArtifact.id;
+
             await adminClient
               .from('work_threads')
-              .update({ artifact: updatedArtifact, updated_at: updatedArtifact.generated_at })
+              .update({
+                artifact: isLatest ? updatedArtifact : (thread.artifact as DocumentArtifact),
+                artifacts: updatedArray,
+                updated_at: updatedArtifact.generated_at,
+              })
               .eq('id', threadId);
 
             controller.enqueue(
