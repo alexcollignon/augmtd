@@ -2,91 +2,109 @@ import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import { randomUUID } from 'crypto';
 import { SupabaseClient } from '@supabase/supabase-js';
-import { DocumentArtifact, ArtifactContent, DocContent, PptxContent, XlsxContent, DeliverableType } from '@/lib/types/inbox';
+import { DocumentArtifact, ArtifactContent, DocContent, PptxContent, XlsxContent, EmailContent, DeliverableType } from '@/lib/types/inbox';
 import { buildArtifactFile, getFileExt, getMimeType } from '@/lib/artifacts/builders';
 
-// ─── Vision-OCR step ──────────────────────────────────────────────────────────
+// ─── Smart attachment context ──────────────────────────────────────────────────
+// Runs before any plan steps. Detects what files actually arrived and routes
+// accordingly — images → GPT-4o vision, Excel/CSV → SheetJS, everything else
+// with pre-extracted text → used directly. No skill declaration needed from the plan.
 
 const IMAGE_MIME_TYPES = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/webp']);
+const EXCEL_MIME_TYPES = new Set([
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.ms-excel',
+]);
 
-async function executeVisionOcrStep(
-  step: { number: number; action: string },
-  fileAttachments: Array<{ filename: string; mimeType: string; storagePath: string }>,
-  adminClient: SupabaseClient,
-  anthropic: Anthropic
-): Promise<string> {
-  const supported = fileAttachments.filter(
-    (a) => IMAGE_MIME_TYPES.has(a.mimeType) || a.mimeType === 'application/pdf'
+function isExcelOrCsv(filename: string, mimeType: string): boolean {
+  return (
+    EXCEL_MIME_TYPES.has(mimeType) ||
+    mimeType === 'text/csv' ||
+    filename.endsWith('.xlsx') ||
+    filename.endsWith('.xls') ||
+    filename.endsWith('.csv')
   );
+}
 
-  if (supported.length === 0) {
-    return '(no supported files found — attach PDF or image files to use this step)';
+async function buildSmartAttachmentContext(
+  emailAttachments: Array<{ filename: string; extractedText: string | null }>,
+  userAttachments: Array<{ filename: string; mimeType: string; storagePath: string; extractedText: string | null }>,
+  adminClient: SupabaseClient,
+): Promise<string> {
+  const parts: string[] = [];
+
+  // Email attachments — text only
+  for (const att of emailAttachments) {
+    if (att.extractedText) {
+      parts.push(`--- ${att.filename} ---\n${att.extractedText}`);
+    }
   }
 
-  const results: string[] = [];
-
-  for (const attachment of supported) {
-    const { data: blob, error } = await adminClient.storage
-      .from('email-attachments')
-      .download(attachment.storagePath);
-
-    if (error || !blob) {
-      console.error(`[VisionOCR] Download failed for ${attachment.filename}:`, error);
-      results.push(`--- ${attachment.filename} ---\n(failed to download file)`);
-      continue;
-    }
-
-    const buffer = Buffer.from(await blob.arrayBuffer());
-
-    if (IMAGE_MIME_TYPES.has(attachment.mimeType)) {
-      const base64 = buffer.toString('base64');
-      const mimeType = attachment.mimeType === 'image/jpg' ? 'image/jpeg' : attachment.mimeType;
-
-      const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-      const completion = await openai.chat.completions.create({
-        model: 'gpt-4o',
-        max_tokens: 1500,
-        messages: [
-          {
+  for (const att of userAttachments) {
+    if (att.extractedText) {
+      // Already extracted upstream (PDF, DOCX, TXT)
+      parts.push(`--- ${att.filename} ---\n${att.extractedText}`);
+    } else if (IMAGE_MIME_TYPES.has(att.mimeType)) {
+      // Image → GPT-4o vision via signed URL (avoids large base64 payloads for iPhone photos)
+      try {
+        const { data: urlData, error: urlError } = await adminClient.storage
+          .from('email-attachments')
+          .createSignedUrl(att.storagePath, 120);
+        if (urlError || !urlData?.signedUrl) {
+          console.error(`[SmartContext] Failed to create signed URL for ${att.filename}:`, urlError);
+          continue;
+        }
+        const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+        const completion = await openai.chat.completions.create({
+          model: 'gpt-4o',
+          max_tokens: 1500,
+          messages: [{
             role: 'system',
-            content: 'You are a document reader. Extract and structure the information exactly as instructed. Be precise and thorough. Return only the extracted content — no commentary, no preamble.',
-          },
-          {
+            content: 'You are a document data extractor. Extract every piece of text, number, and structured data visible in this image. Output only the raw extracted content — no commentary, no explanations, no apologies.',
+          }, {
             role: 'user',
             content: [
-              { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64}` } },
-              { type: 'text', text: `File: ${attachment.filename}\n\n${step.action}` },
+              { type: 'text', text: 'Extract all content from this document image:' },
+              { type: 'image_url', image_url: { url: urlData.signedUrl } },
             ],
-          },
-        ],
-      });
-      results.push(`--- ${attachment.filename} ---\n${completion.choices[0]?.message?.content ?? ''}`);
-    } else {
-      // PDF — extract text then process
-      try {
-        const imported = await import('pdf-parse');
-        const PDFParse = (imported as any).PDFParse ?? (imported as any).default?.PDFParse ?? (imported as any).default;
-        const parsed = await PDFParse(buffer);
-        const text = parsed.text?.slice(0, 8000) || '';
-
-        const completion = await anthropic.messages.create({
-          model: 'claude-haiku-4-5-20251001',
-          max_tokens: 1500,
-          system: 'You are a document reader. Extract and structure the information exactly as instructed. Be precise and thorough. Return only the extracted content — no commentary, no preamble.',
-          messages: [{
-            role: 'user',
-            content: `File: ${attachment.filename}\n\nDocument content:\n${text}\n\n${step.action}`,
           }],
         });
-        results.push(`--- ${attachment.filename} ---\n${(completion.content[0] as any).text}`);
+        const extracted = completion.choices[0]?.message?.content ?? '';
+        // Discard responses that indicate GPT-4o couldn't read the image
+        const looksLikeError = /\b(cannot|unable|can't|failed|unreadable|not able|sorry|apologize)\b/i.test(extracted.slice(0, 200));
+        if (extracted && !looksLikeError) {
+          parts.push(`--- ${att.filename} ---\n${extracted}`);
+        } else if (looksLikeError) {
+          console.error(`[SmartContext] OCR returned error response for ${att.filename}: ${extracted.slice(0, 100)}`);
+        }
       } catch (err) {
-        console.error(`[VisionOCR] PDF parse failed for ${attachment.filename}:`, err);
-        results.push(`--- ${attachment.filename} ---\n(could not parse PDF content)`);
+        console.error(`[SmartContext] Image OCR failed for ${att.filename}:`, err);
+      }
+    } else if (isExcelOrCsv(att.filename, att.mimeType)) {
+      // Excel / CSV → SheetJS
+      try {
+        const { data: blob, error } = await adminClient.storage
+          .from('email-attachments')
+          .download(att.storagePath);
+        if (error || !blob) {
+          console.error(`[SmartContext] Excel download failed for ${att.filename}:`, error);
+          continue;
+        }
+        const buffer = Buffer.from(await blob.arrayBuffer());
+        const XLSX = await import('xlsx');
+        const workbook = XLSX.read(buffer, { type: 'buffer' });
+        const sheetTexts = workbook.SheetNames.map((name: string) => {
+          const sheet = workbook.Sheets[name];
+          return `Sheet "${name}":\n${XLSX.utils.sheet_to_csv(sheet)}`;
+        });
+        parts.push(`--- ${att.filename} ---\n${sheetTexts.join('\n\n')}`);
+      } catch (err) {
+        console.error(`[SmartContext] Excel parse failed for ${att.filename}:`, err);
       }
     }
   }
 
-  return results.join('\n\n');
+  return parts.join('\n\n');
 }
 
 // ─── Step execution ────────────────────────────────────────────────────────────
@@ -138,22 +156,13 @@ export async function executeSteps(
   attachmentContext: string,
   userContext: string,
   anthropic: Anthropic,
-  fileAttachments?: Array<{ filename: string; mimeType: string; storagePath: string }>,
-  adminClient?: SupabaseClient
 ): Promise<StepOutput[]> {
   const steps = (plan.steps || []).slice(0, 4);
   const outputs: StepOutput[] = [];
 
   for (const step of steps) {
     try {
-      let output: string;
-
-      if (step.skill === 'vision-ocr' && fileAttachments && fileAttachments.length > 0 && adminClient) {
-        output = await executeVisionOcrStep(step, fileAttachments, adminClient, anthropic);
-      } else {
-        output = await executeStep(step, plan, outputs, attachmentContext, userContext, anthropic);
-      }
-
+      const output = await executeStep(step, plan, outputs, attachmentContext, userContext, anthropic);
       outputs.push({ stepNumber: step.number, action: step.action, output });
     } catch (err) {
       console.error(`[GeneratePipeline] Step ${step.number} failed:`, err);
@@ -185,10 +194,41 @@ export function buildGeneratePrompt(
     conversationContext: string;
     attachmentContext: string;
     stepOutputs: StepOutput[];
+    stepAction?: string;
   }
 ): { systemPrompt: string; userPrompt: string; maxTokens: number } {
-  const { deadlineLine, userContext, conversationContext, attachmentContext, stepOutputs } = context;
+  const { deadlineLine, userContext, conversationContext, attachmentContext, stepOutputs, stepAction } = context;
   const stepOutputsBlock = buildStepOutputsBlock(stepOutputs);
+
+  if (type === 'email') {
+    return {
+      systemPrompt: `You generate structured email content in JSON. Return ONLY valid JSON — no markdown, no explanation.
+
+JSON format:
+{
+  "to": "recipient@example.com or empty string if unknown",
+  "cc": "",
+  "subject": "Concise subject line",
+  "body": "Full email body — plain prose only, no bullet chars, no markdown. Use \\n\\n for paragraph breaks."
+}
+
+Rules:
+- Write naturally — this is a real email, not a document
+- Keep body concise and purposeful — no padding
+- Infer recipient and subject from context if possible, otherwise leave as empty string
+- Never use double quotes or special characters inside string values`,
+      userPrompt: `Draft a professional email.
+
+DELIVERABLE: ${plan.deliverable_description}${deadlineLine}
+${stepAction ? `SPECIFIC INSTRUCTION: ${stepAction}\n` : ''}AUTHOR: ${userContext}
+${stepOutputsBlock}
+${attachmentContext ? `\nSOURCE MATERIAL:\n${attachmentContext}` : ''}
+CONVERSATION CONTEXT: ${conversationContext || '(none)'}
+
+Return the JSON email structure.`,
+      maxTokens: 800,
+    };
+  }
 
   if (type === 'presentation') {
     return {
@@ -214,9 +254,9 @@ Rules:
       userPrompt: `Assemble a professional presentation.
 
 DELIVERABLE: ${plan.deliverable_description}${deadlineLine}
-AUTHOR: ${userContext}
+${stepAction ? `SPECIFIC INSTRUCTION: ${stepAction}\n` : ''}AUTHOR: ${userContext}
 ${stepOutputsBlock}
-${!stepOutputsBlock && attachmentContext ? `\nSOURCE MATERIAL:\n${attachmentContext}` : ''}
+${attachmentContext ? `\nSOURCE MATERIAL:\n${attachmentContext}` : ''}
 CONVERSATION CONTEXT: ${conversationContext || '(none)'}
 
 Return the JSON presentation structure.`,
@@ -252,9 +292,9 @@ Rules:
       userPrompt: `Assemble a professional spreadsheet.
 
 DELIVERABLE: ${plan.deliverable_description}${deadlineLine}
-AUTHOR: ${userContext}
+${stepAction ? `SPECIFIC INSTRUCTION: ${stepAction}\n` : ''}AUTHOR: ${userContext}
 ${stepOutputsBlock}
-${!stepOutputsBlock && attachmentContext ? `\nSOURCE MATERIAL:\n${attachmentContext}` : ''}
+${attachmentContext ? `\nSOURCE MATERIAL:\n${attachmentContext}` : ''}
 CONVERSATION CONTEXT: ${conversationContext || '(none)'}
 
 Return the JSON spreadsheet structure.`,
@@ -285,9 +325,9 @@ Rules:
     userPrompt: `Assemble a professional ${type} document.
 
 DELIVERABLE: ${plan.deliverable_description}${deadlineLine}
-AUTHOR: ${userContext}
+${stepAction ? `SPECIFIC INSTRUCTION: ${stepAction}\n` : ''}AUTHOR: ${userContext}
 ${stepOutputsBlock}
-${!stepOutputsBlock && attachmentContext ? `\nSOURCE MATERIAL:\n${attachmentContext}` : ''}
+${attachmentContext ? `\nSOURCE MATERIAL:\n${attachmentContext}` : ''}
 CONVERSATION CONTEXT: ${conversationContext || '(none)'}
 
 Return the JSON document structure.`,
@@ -324,6 +364,10 @@ export function parseAndValidateContent(type: DeliverableType, rawText: string):
   const raw = sanitizeJsonString(stripped.slice(firstBrace, lastBrace + 1));
   const content = JSON.parse(raw);
 
+  if (type === 'email') {
+    if (!content.subject || !content.body) throw new Error('Invalid email shape');
+    return content as EmailContent;
+  }
   if (type === 'presentation') {
     if (!content.title || !Array.isArray(content.slides)) throw new Error('Invalid presentation shape');
     return content as PptxContent;
@@ -350,8 +394,10 @@ export interface GeneratePipelineParams {
 }
 
 /**
- * Run only the intermediate steps (vision-ocr, data-analyzer, etc.) and return
- * their outputs. Shared across all artifact types when generating multiple at once.
+ * Run only the intermediate steps and return their outputs.
+ * Shared across all artifact types when generating multiple at once.
+ * Attachment context is built smartly — images are OCR'd, Excel files parsed —
+ * before any steps run.
  */
 export async function runPipelineSteps(params: {
   plan: any;
@@ -364,12 +410,8 @@ export async function runPipelineSteps(params: {
   const { plan, emailAttachments, userAttachments = [], userContext, adminClient } = params;
   const anthropic = params.anthropic ?? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-  const attachmentContext = [...emailAttachments, ...userAttachments]
-    .filter((a) => a.extractedText)
-    .map((a) => `--- ${a.filename} ---\n${a.extractedText}`)
-    .join('\n\n');
-
-  const stepOutputs = await executeSteps(plan, attachmentContext, userContext, anthropic, userAttachments, adminClient);
+  const attachmentContext = await buildSmartAttachmentContext(emailAttachments, userAttachments, adminClient);
+  const stepOutputs = await executeSteps(plan, attachmentContext, userContext, anthropic);
   return { stepOutputs, attachmentContext };
 }
 
@@ -388,8 +430,9 @@ export async function assembleArtifactFromSteps(params: {
   userContext: string;
   adminClient: SupabaseClient;
   anthropic?: Anthropic;
+  stepAction?: string;
 }): Promise<DocumentArtifact> {
-  const { userId, threadId, type, plan, stepOutputs, attachmentContext, conversationContext, userContext, adminClient } = params;
+  const { userId, threadId, type, plan, stepOutputs, attachmentContext, conversationContext, userContext, adminClient, stepAction } = params;
   const anthropic = params.anthropic ?? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
   const deadlineLine = plan.deadline ? `\nDeadline: ${new Date(plan.deadline).toLocaleDateString()}` : '';
@@ -399,6 +442,7 @@ export async function assembleArtifactFromSteps(params: {
     conversationContext,
     attachmentContext,
     stepOutputs,
+    stepAction,
   });
 
   const completion = await anthropic.messages.create({
@@ -412,6 +456,18 @@ export async function assembleArtifactFromSteps(params: {
   const content = parseAndValidateContent(type, rawText);
 
   const artifactId = randomUUID();
+
+  // Email artifacts store content in JSONB — no file to upload
+  if (type === 'email') {
+    return {
+      id: artifactId,
+      title: plan.deliverable_description,
+      type,
+      generated_at: new Date().toISOString(),
+      content,
+    };
+  }
+
   const buffer = await buildArtifactFile(type, content);
   const ext = getFileExt(type);
   const storagePath = `${userId}/${threadId}/${artifactId}.${ext}`;
@@ -438,26 +494,28 @@ export async function assembleArtifactFromSteps(params: {
 const GENERATOR_SKILLS = new Set(['excel-generator', 'word-generator', 'powerpoint-generator', 'email-drafter']);
 
 /**
- * Infer the DeliverableType for the nth generator step encountered in the plan.
- * Respects plan.deliverable_types (ordered list) when present; falls back to
- * plan.deliverable_type for the first generator, then skill-based inference.
+ * Infer the DeliverableType for a generator step.
+ * Skill takes priority — email-drafter always → email, excel-generator → spreadsheet, etc.
+ * For word-generator (which can produce multiple document-like types), fall back to
+ * deliverable_types[index] → deliverable_type → 'document'.
  */
 function inferTypeFromGeneratorStep(step: any, plan: any, generatorIndex: number): DeliverableType {
+  switch (step.skill) {
+    case 'email-drafter': return 'email';
+    case 'excel-generator': return 'spreadsheet';
+    case 'powerpoint-generator': return 'presentation';
+  }
+  // word-generator: use deliverable_types order if available, then deliverable_type
   if (Array.isArray(plan.deliverable_types) && plan.deliverable_types[generatorIndex]) {
     return plan.deliverable_types[generatorIndex] as DeliverableType;
   }
-  if (generatorIndex === 0) return plan.deliverable_type as DeliverableType;
-  switch (step.skill) {
-    case 'excel-generator': return 'spreadsheet';
-    case 'powerpoint-generator': return 'presentation';
-    case 'email-drafter': return 'email';
-    default: return 'document';
-  }
+  return (plan.deliverable_type as DeliverableType) ?? 'document';
 }
 
 /**
  * Process all plan steps in order.
- * - Intermediate steps (vision-ocr, data-analyzer) accumulate context passed to subsequent steps.
+ * - Attachment context is built upfront — images are OCR'd, Excel files parsed.
+ * - Intermediate steps accumulate context passed to subsequent steps.
  * - Generator steps (excel-generator, word-generator, etc.) each produce one artifact.
  * Returns every artifact produced — one per generator step, or one from deliverable_type if the
  * plan has no generator steps.
@@ -467,10 +525,8 @@ export async function runFullPipeline(params: GeneratePipelineParams & { anthrop
   const { userId, threadId, plan, emailAttachments, userAttachments = [], conversationContext, userContext, adminClient } = params;
   const anthropic = params.anthropic ?? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-  const attachmentContext = [...emailAttachments, ...(userAttachments)]
-    .filter((a) => a.extractedText)
-    .map((a) => `--- ${a.filename} ---\n${a.extractedText}`)
-    .join('\n\n');
+  // Smart pre-execution: detect file types and extract content before any step runs
+  const attachmentContext = await buildSmartAttachmentContext(emailAttachments, userAttachments, adminClient);
 
   const allSteps = (plan.steps || []).slice(0, 6);
   const intermediateOutputs: StepOutput[] = [];
@@ -485,12 +541,11 @@ export async function runFullPipeline(params: GeneratePipelineParams & { anthrop
           userId, threadId, type, plan,
           stepOutputs: [...intermediateOutputs],
           attachmentContext, conversationContext, userContext, adminClient, anthropic,
+          stepAction: step.action,
         });
         artifacts.push(artifact);
-      } else if (step.skill === 'vision-ocr' && userAttachments.length > 0 && adminClient) {
-        const output = await executeVisionOcrStep(step, userAttachments, adminClient, anthropic);
-        intermediateOutputs.push({ stepNumber: step.number, action: step.action, output });
       } else {
+        // Intermediate step — skill-free execution with pre-built attachment context
         const output = await executeStep(step, plan, intermediateOutputs, attachmentContext, userContext, anthropic);
         intermediateOutputs.push({ stepNumber: step.number, action: step.action, output });
       }
@@ -499,14 +554,29 @@ export async function runFullPipeline(params: GeneratePipelineParams & { anthrop
     }
   }
 
-  // No generator steps in plan — assemble once using deliverable_type
-  if (artifacts.length === 0) {
-    const artifact = await assembleArtifactFromSteps({
-      userId, threadId, type: plan.deliverable_type, plan,
-      stepOutputs: intermediateOutputs, attachmentContext,
-      conversationContext, userContext, adminClient, anthropic,
-    });
-    artifacts.push(artifact);
+  // Ensure every declared output type is produced.
+  // Covers two cases:
+  //   1. No generator steps at all → generate the primary deliverable_type
+  //   2. Planning AI declared deliverable_types but omitted a generator step for one of them
+  const producedTypes = new Set(artifacts.map((a) => a.type));
+  const declaredTypes: DeliverableType[] = Array.isArray(plan.deliverable_types) && plan.deliverable_types.length > 0
+    ? plan.deliverable_types as DeliverableType[]
+    : [plan.deliverable_type as DeliverableType];
+
+  for (const declaredType of declaredTypes) {
+    if (!producedTypes.has(declaredType)) {
+      try {
+        const artifact = await assembleArtifactFromSteps({
+          userId, threadId, type: declaredType, plan,
+          stepOutputs: intermediateOutputs, attachmentContext,
+          conversationContext, userContext, adminClient, anthropic,
+        });
+        artifacts.push(artifact);
+        producedTypes.add(declaredType);
+      } catch (err) {
+        console.error(`[FullPipeline] Fallback generation failed for type ${declaredType}:`, err);
+      }
+    }
   }
 
   return artifacts;

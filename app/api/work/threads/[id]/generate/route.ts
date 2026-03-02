@@ -93,8 +93,16 @@ export async function POST(
       adminClient,
     });
 
-    // Override titles with thread title
-    newArtifacts.forEach((a) => { a.title = thread.title; });
+    // Title each artifact: use the matching plan output name if available,
+    // fall back to plan.deliverable_description, then thread title.
+    const planOutputs: Array<{ name?: string; deliverableType?: string }> = (plan as any)?.outputs ?? [];
+    newArtifacts.forEach((a, i) => {
+      // Match by position first, then by deliverableType if available
+      const matchByType = planOutputs.find((o) => o.deliverableType === a.type);
+      const matchByIndex = planOutputs[i];
+      const output = matchByType ?? matchByIndex;
+      a.title = output?.name ?? (plan as any)?.deliverable_description ?? thread.title;
+    });
 
     // Append all new artifacts to the array
     const { data: freshThread } = await adminClient

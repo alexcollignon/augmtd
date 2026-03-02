@@ -20,7 +20,7 @@ import {
   PaperClipIcon,
 } from '@heroicons/react/24/outline';
 import { WorkBlueprint } from '@/lib/types/work-blueprints';
-import { ExecutionPlan, DocumentArtifact, DocContent, PptxContent, XlsxContent } from '@/lib/types/inbox';
+import { ExecutionPlan, DocumentArtifact, DocContent, PptxContent, XlsxContent, EmailContent } from '@/lib/types/inbox';
 import OnboardingModal from '@/components/onboarding-modal';
 
 // ─── Markdown renderer ────────────────────────────────────────────────────────
@@ -530,9 +530,14 @@ function PlanPanel({
             </p>
             <div className="space-y-1.5">
               {plan.outputs.map((output, idx) => {
-                const outputType = (output as any).deliverableType ?? generatorStepTypes[idx] ?? plan.deliverable_type;
+                const rawOutputType = (output as any).deliverableType;
+                const validTypes = new Set(['spreadsheet', 'presentation', 'email', 'document', 'report', 'analysis']);
+                const outputType = (rawOutputType && validTypes.has(rawOutputType) ? rawOutputType : null)
+                  ?? generatorStepTypes[idx]
+                  ?? (plan.deliverable_types as string[] | undefined)?.[idx]
+                  ?? plan.deliverable_type;
                 const OutputIcon = getDeliverableIcon(outputType);
-                const fileExt = outputType === 'presentation' ? '.pptx' : outputType === 'spreadsheet' ? '.xlsx' : '.docx';
+                const fileExt = outputType === 'presentation' ? '.pptx' : outputType === 'spreadsheet' ? '.xlsx' : outputType === 'email' ? 'Email' : '.docx';
                 return (
                   <div
                     key={output.id}
@@ -558,10 +563,16 @@ function PlanPanel({
       {workMode === 'planning' && threadId && (
         <div className="p-4 border-t border-neutral-100">
           {(() => {
-            const isMulti = generatorStepTypes.length > 1;
+            // Use all declared output types (from steps or deliverable_types) for button label
+            const allOutputTypes: string[] = generatorStepTypes.length > 0
+              ? generatorStepTypes
+              : Array.isArray(plan.deliverable_types) && plan.deliverable_types.length > 0
+                ? plan.deliverable_types as string[]
+                : [plan.deliverable_type];
+            const isMulti = allOutputTypes.length > 1;
             const generateLabel = isMulti
-              ? `Generate ${generatorStepTypes.join(' + ')}`
-              : `Generate ${plan.deliverable_type}`;
+              ? `Generate ${allOutputTypes.join(' + ')}`
+              : `Generate ${allOutputTypes[0] ?? plan.deliverable_type}`;
             const newVersionLabel = isMulti ? 'Generate new versions' : 'Generate new version';
             return !artifact ? (
               /* First generation */
@@ -610,7 +621,7 @@ function DocPreview({ content }: { content: DocContent }) {
         <p className="text-[13px] text-neutral-500 mb-8">{content.subtitle}</p>
       )}
       {!content.subtitle && <div className="mb-8" />}
-      {content.sections.map((section, i) => (
+      {(content.sections ?? []).map((section, i) => (
         <div key={i} className={section.level === 1 ? 'mt-8 first:mt-0' : 'mt-5'}>
           {section.level === 1 ? (
             <h2 className="text-[15px] font-bold text-neutral-900 mb-3 pb-1.5 border-b border-neutral-100">
@@ -622,7 +633,7 @@ function DocPreview({ content }: { content: DocContent }) {
             </h3>
           )}
           <div className="space-y-3">
-            {section.paragraphs.map((para, j) => (
+            {(section.paragraphs ?? []).map((para, j) => (
               <p key={j} className="text-[13px] text-neutral-700 leading-relaxed">
                 {para}
               </p>
@@ -637,7 +648,7 @@ function DocPreview({ content }: { content: DocContent }) {
 function PptxPreview({ content }: { content: PptxContent }) {
   return (
     <div className="max-w-2xl mx-auto space-y-3">
-      {content.slides.map((slide, i) => (
+      {(content.slides ?? []).map((slide, i) => (
         <div
           key={i}
           className={`p-4 border ${slide.layout === 'title' ? 'bg-indigo-50 border-indigo-100' : 'bg-white border-neutral-200'}`}
@@ -655,7 +666,7 @@ function PptxPreview({ content }: { content: PptxContent }) {
 }
 
 function XlsxPreview({ content }: { content: XlsxContent }) {
-  const sheet = content.sheets[0];
+  const sheet = (content.sheets ?? [])[0];
   if (!sheet) return null;
   return (
     <div className="max-w-2xl mx-auto">
@@ -766,6 +777,166 @@ function ArtifactTabStrip({
 
 // ─── Document Panel ───────────────────────────────────────────────────────────
 
+function EmailPreviewPanel({
+  artifact,
+  allArtifacts,
+  threadId,
+  userEmail,
+}: {
+  artifact: DocumentArtifact;
+  allArtifacts: DocumentArtifact[];
+  threadId: string;
+  userEmail: string;
+}) {
+  const emailContent = artifact.content as EmailContent | undefined;
+  const [emailTo, setEmailTo] = useState(emailContent?.to ?? '');
+  const [emailCc, setEmailCc] = useState(emailContent?.cc ?? '');
+  const [selectedAttachmentIds, setSelectedAttachmentIds] = useState<string[]>([]);
+  const [isSending, setIsSending] = useState(false);
+  const [sendSuccess, setSendSuccess] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
+
+  const nonEmailArtifacts = allArtifacts.filter((a) => a.type !== 'email' && a.storage_path);
+
+  const handleSend = async () => {
+    if (!emailTo.trim()) {
+      setSendError('Please enter a recipient');
+      setTimeout(() => setSendError(null), 5000);
+      return;
+    }
+    setIsSending(true);
+    setSendError(null);
+    try {
+      const res = await fetch(`/api/work/threads/${threadId}/send-email`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          artifactId: artifact.id,
+          to: emailTo.trim(),
+          cc: emailCc.trim() || undefined,
+          attachArtifactIds: selectedAttachmentIds,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Failed to send email');
+      }
+      setSendSuccess(true);
+    } catch (err) {
+      setSendError(err instanceof Error ? err.message : 'Failed to send email');
+      setTimeout(() => setSendError(null), 5000);
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  const toggleAttachment = (id: string) => {
+    setSelectedAttachmentIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  };
+
+  return (
+    <div className="flex-1 overflow-y-auto p-6">
+      <div className="max-w-2xl mx-auto bg-white shadow-sm border border-neutral-200">
+        {/* Header fields */}
+        <div className="divide-y divide-neutral-100 border-b border-neutral-200">
+          <div className="flex items-center px-5 py-2.5 gap-3">
+            <span className="text-[11px] text-neutral-400 w-10 flex-shrink-0">From</span>
+            <span className="text-[13px] text-neutral-500">{userEmail}</span>
+          </div>
+          <div className="flex items-center px-5 py-2.5 gap-3">
+            <label htmlFor="email-to" className="text-[11px] text-neutral-400 w-10 flex-shrink-0">To</label>
+            <input
+              id="email-to"
+              type="text"
+              value={emailTo}
+              onChange={(e) => { setEmailTo(e.target.value); setSendSuccess(false); }}
+              placeholder="recipient@example.com"
+              className="flex-1 text-[13px] text-neutral-900 placeholder-neutral-300 focus:outline-none"
+            />
+          </div>
+          <div className="flex items-center px-5 py-2.5 gap-3">
+            <label htmlFor="email-cc" className="text-[11px] text-neutral-400 w-10 flex-shrink-0">CC</label>
+            <input
+              id="email-cc"
+              type="text"
+              value={emailCc}
+              onChange={(e) => setEmailCc(e.target.value)}
+              placeholder="optional"
+              className="flex-1 text-[13px] text-neutral-900 placeholder-neutral-300 focus:outline-none"
+            />
+          </div>
+          <div className="flex items-center px-5 py-2.5 gap-3">
+            <span className="text-[11px] text-neutral-400 w-10 flex-shrink-0">Subj</span>
+            <span className="text-[13px] text-neutral-700 font-medium">{emailContent?.subject}</span>
+          </div>
+        </div>
+
+        {/* Body */}
+        <div className="px-5 py-5">
+          <pre className="text-[13px] text-neutral-800 whitespace-pre-wrap font-sans leading-relaxed">
+            {emailContent?.body}
+          </pre>
+        </div>
+
+        {/* Attachments */}
+        {nonEmailArtifacts.length > 0 && (
+          <div className="px-5 py-4 border-t border-neutral-100">
+            <p className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2.5">Attach files</p>
+            <div className="space-y-1.5">
+              {nonEmailArtifacts.map((a) => {
+                const ext = a.type === 'presentation' ? 'pptx' : a.type === 'spreadsheet' ? 'xlsx' : 'docx';
+                const checked = selectedAttachmentIds.includes(a.id ?? '');
+                return (
+                  <label
+                    key={a.id}
+                    className="flex items-center gap-2.5 cursor-pointer group"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => a.id && toggleAttachment(a.id)}
+                      className="w-3.5 h-3.5 accent-indigo-600"
+                    />
+                    <span className="text-[12px] text-neutral-600 group-hover:text-neutral-900 transition-colors">
+                      {(() => {
+                        const label = a.title ?? `document`;
+                        const short = label.length > 32 ? label.slice(0, 32).trimEnd() + '…' : label;
+                        return `${short}.${ext}`;
+                      })()}
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Send bar */}
+        <div className="px-5 py-3.5 border-t border-neutral-100 flex items-center justify-between gap-3">
+          <div>
+            {sendError && <p className="text-[11px] text-red-600">{sendError}</p>}
+            {sendSuccess && <p className="text-[11px] text-green-600 font-medium">Sent ✓</p>}
+          </div>
+          <button
+            onClick={handleSend}
+            disabled={isSending || sendSuccess}
+            className="flex items-center gap-1.5 px-4 py-1.5 bg-indigo-600 text-white text-[11px] font-semibold hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+          >
+            {isSending ? (
+              <span className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+            ) : (
+              <EnvelopeIcon className="w-3.5 h-3.5" />
+            )}
+            {isSending ? 'Sending…' : sendSuccess ? 'Sent ✓' : 'Send'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function DocumentPanel({
   artifact,
   artifacts,
@@ -776,6 +947,8 @@ function DocumentPanel({
   onRegenerate,
   isDownloading,
   isEditing,
+  threadId,
+  userEmail,
 }: {
   artifact: DocumentArtifact;
   artifacts: DocumentArtifact[];
@@ -786,7 +959,11 @@ function DocumentPanel({
   onRegenerate: () => void;
   isDownloading: boolean;
   isEditing: boolean;
+  threadId: string;
+  userEmail: string;
 }) {
+  const isEmail = artifact.type === 'email';
+
   return (
     <div className="flex-1 flex flex-col border-r border-neutral-200 bg-neutral-100 min-w-0">
       {/* Artifact tab strip — shown when multiple versions exist */}
@@ -823,36 +1000,47 @@ function DocumentPanel({
           >
             Revise plan
           </button>
-          <button
-            onClick={onDownload}
-            disabled={isDownloading}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 text-white text-[11px] font-semibold hover:bg-indigo-700 disabled:opacity-50 transition-colors"
-          >
-            <ArrowDownTrayIcon className="w-3.5 h-3.5" />
-            {isDownloading ? 'Downloading…' : `Download .${artifact.type === 'presentation' ? 'pptx' : artifact.type === 'spreadsheet' ? 'xlsx' : 'docx'}`}
-          </button>
+          {!isEmail && (
+            <button
+              onClick={onDownload}
+              disabled={isDownloading}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 text-white text-[11px] font-semibold hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+            >
+              <ArrowDownTrayIcon className="w-3.5 h-3.5" />
+              {isDownloading ? 'Downloading…' : `Download .${artifact.type === 'presentation' ? 'pptx' : artifact.type === 'spreadsheet' ? 'xlsx' : 'docx'}`}
+            </button>
+          )}
         </div>
       </div>
 
-      {/* Document preview */}
-      <div className="flex-1 overflow-y-auto p-6">
-        {artifact.content ? (
-          artifact.type === 'presentation'
-            ? <PptxPreview content={artifact.content as PptxContent} />
-            : artifact.type === 'spreadsheet'
-            ? <XlsxPreview content={artifact.content as XlsxContent} />
-            : <DocPreview content={artifact.content as DocContent} />
-        ) : (
-          /* Fallback for artifacts without content */
-          <div className="max-w-2xl mx-auto bg-white shadow-sm border border-neutral-200 px-12 py-10 flex items-center justify-center min-h-64">
-            <div className="text-center">
-              <CheckCircleIcon className="w-8 h-8 text-green-500 mx-auto mb-2" />
-              <p className="text-[13px] text-neutral-600">Document ready</p>
-              <p className="text-[11px] text-neutral-400 mt-1">Regenerate to see a preview</p>
+      {/* Document preview / Email preview */}
+      {isEmail ? (
+        <EmailPreviewPanel
+          artifact={artifact}
+          allArtifacts={artifacts}
+          threadId={threadId}
+          userEmail={userEmail}
+        />
+      ) : (
+        <div className="flex-1 overflow-y-auto p-6">
+          {artifact.content ? (
+            artifact.type === 'presentation'
+              ? <PptxPreview content={artifact.content as PptxContent} />
+              : artifact.type === 'spreadsheet'
+              ? <XlsxPreview content={artifact.content as XlsxContent} />
+              : <DocPreview content={artifact.content as DocContent} />
+          ) : (
+            /* Fallback for artifacts without content */
+            <div className="max-w-2xl mx-auto bg-white shadow-sm border border-neutral-200 px-12 py-10 flex items-center justify-center min-h-64">
+              <div className="text-center">
+                <CheckCircleIcon className="w-8 h-8 text-green-500 mx-auto mb-2" />
+                <p className="text-[13px] text-neutral-600">Document ready</p>
+                <p className="text-[11px] text-neutral-400 mt-1">Regenerate to see a preview</p>
+              </div>
             </div>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -1829,6 +2017,8 @@ export function WorkPageClient({
               onRegenerate={() => setWorkMode('planning')}
               isDownloading={isDownloading}
               isEditing={isRebuildingDocument}
+              threadId={activeThreadId!}
+              userEmail={userEmail}
             />
           ) : (
             <PlanPanel

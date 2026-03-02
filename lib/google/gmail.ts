@@ -198,6 +198,95 @@ function plainTextToHtml(text: string): string {
     .join('');
 }
 
+export interface EmailAttachment {
+  filename: string;
+  content: Buffer;
+  mimeType: string;
+}
+
+export async function sendGmailEmail(params: {
+  encryptedTokens: string;
+  to: string;
+  cc?: string;
+  subject: string;
+  body: string;
+  attachments?: EmailAttachment[];
+  gmailThreadId?: string;
+  inReplyTo?: string;
+  references?: string;
+}): Promise<string> {
+  const { encryptedTokens, to, cc, subject, body, attachments = [], gmailThreadId, inReplyTo, references } = params;
+
+  const gmail = await getGmailClient(encryptedTokens);
+  const htmlBody = plainTextToHtml(body);
+
+  let rawMessage: string;
+
+  if (attachments.length > 0) {
+    const boundary = `boundary_${randomId()}`;
+    const lines: string[] = [
+      `To: ${to}`,
+      ...(cc ? [`Cc: ${cc}`] : []),
+      `Subject: ${subject}`,
+      'MIME-Version: 1.0',
+      `Content-Type: multipart/mixed; boundary="${boundary}"`,
+      ...(inReplyTo ? [`In-Reply-To: ${inReplyTo}`] : []),
+      ...(references ? [`References: ${references}`] : []),
+      '',
+      `--${boundary}`,
+      'Content-Type: text/html; charset=utf-8',
+      'Content-Transfer-Encoding: base64',
+      '',
+      Buffer.from(htmlBody).toString('base64'),
+    ];
+
+    for (const att of attachments) {
+      lines.push(`--${boundary}`);
+      lines.push(`Content-Type: ${att.mimeType}; name="${att.filename}"`);
+      lines.push('Content-Transfer-Encoding: base64');
+      lines.push(`Content-Disposition: attachment; filename="${att.filename}"`);
+      lines.push('');
+      lines.push(att.content.toString('base64'));
+    }
+
+    lines.push(`--${boundary}--`);
+    rawMessage = lines.join('\r\n');
+  } else {
+    const lines: string[] = [
+      `To: ${to}`,
+      ...(cc ? [`Cc: ${cc}`] : []),
+      `Subject: ${subject}`,
+      'Content-Type: text/html; charset=utf-8',
+      'MIME-Version: 1.0',
+      ...(inReplyTo ? [`In-Reply-To: ${inReplyTo}`] : []),
+      ...(references ? [`References: ${references}`] : []),
+      '',
+      htmlBody,
+    ];
+    rawMessage = lines.join('\r\n');
+  }
+
+  const encodedMessage = Buffer.from(rawMessage)
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+
+  const response = await gmail.users.messages.send({
+    userId: 'me',
+    requestBody: {
+      raw: encodedMessage,
+      ...(gmailThreadId ? { threadId: gmailThreadId } : {}),
+    },
+  });
+
+  return response.data.id || '';
+}
+
+function randomId(): string {
+  return Math.random().toString(36).slice(2, 12);
+}
+
 export async function sendGmailReply(params: SendGmailReplyParams): Promise<string> {
   const { encryptedTokens, threadId, to, subject, body, inReplyTo, references } = params;
 

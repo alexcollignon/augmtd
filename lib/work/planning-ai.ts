@@ -39,7 +39,7 @@ PLAN JSON STRUCTURE:
     {
       "number": 1,
       "action": "Clear action description",
-      "skill": "invoice-extract" | "word-generator" | "excel-generator" | "powerpoint-generator" | "email-drafter" | "data-analyzer",
+      "skill": "word-generator" | "excel-generator" | "powerpoint-generator" | "email-drafter",  // only set on generator steps
       "options": {},
       "status": "pending"
     }
@@ -71,58 +71,65 @@ DELIVERABLE TYPE — output format always overrides subject matter:
 - "email", "reply", "message" → "email"
 - "analysis" with no format → "analysis"
 - "report" with no format → "report"
-When deliverable_type is "spreadsheet", the last step must use "excel-generator" or "data-analyzer".
-When deliverable_type is "presentation", the last step must use "powerpoint-generator".
-vision-ocr is always Step 1 — never the last step.
+The last step in the plan must always be a generator step with a skill tag.
 
-AVAILABLE SKILLS — reason from these to recognise intent even when the user is vague:
+PLAN STEPS — intermediate vs generator:
 
-vision-ocr
-  What it does: reads uploaded files — images (JPG, PNG, WebP) and PDFs — using vision and OCR. Extracts and structures content based on the step's action instruction. Use as Step 1 whenever the user has files whose content needs to be read, extracted, or analysed.
-  Works with: images (JPG, PNG, WebP), PDFs. Supports any document type — invoices, receipts, contracts, forms, reports, IDs, anything.
-  IMPORTANT: vision-ocr must always be followed by a generation step. It produces structured text — the next step uses it to build the final deliverable.
-  Pairing:
-    vision-ocr → excel-generator: read files → organise into spreadsheet
-    vision-ocr → word-generator: read files → write document, analysis, or report
-    vision-ocr → powerpoint-generator: read files → build presentation
-    vision-ocr → data-analyzer → word-generator: read files → interpret → write narrative
-  Action text: write a specific extraction instruction based exactly on what the user wants to produce.
-    This is sent directly to the AI reading the file — make it concrete and goal-driven.
-    Examples:
-      User wants invoice spreadsheet: "Extract vendor name, invoice number, date, total amount, tax, currency, and expense category from each invoice"
-      User wants invoice analysis doc: "Read each invoice and extract: vendor, amounts, payment terms, and any notable patterns or concerns"
-      User wants receipt expense report: "Extract merchant name, transaction date, total amount, and expense category from each receipt"
-      User wants contract summary: "Extract parties involved, key obligations, payment terms, termination clauses, and any risk flags from each contract"
-      User wants ID document table: "Extract full name, date of birth, ID number, nationality, and document expiry date from each document"
-    Always derive the action from the user's stated goal — do not use a generic description
+Intermediate steps describe the work to be done in plain language. Do NOT assign a skill to intermediate steps — the pipeline automatically handles file reading, OCR, and data extraction at runtime based on what files are actually uploaded.
+- Write specific, concrete action descriptions — what to extract, what to analyse, what to compare
+- Focus on intent: "Classify each invoice by expense category and flag deductible items" not "run OCR"
+- Never mention OCR, vision, file parsing, or extraction mechanisms — those are handled automatically
+
+Generator steps (last step per output) declare what to produce. These must have a skill tag:
 
 word-generator
   Writing and drafting. Use for: reports, memos, summaries, analysis narratives, proposals, contracts, briefs, meeting recaps.
+  Action text: describe what the document should cover and the angle — key sections, level of detail, intended reader. Be specific about what findings or insights to highlight.
+  Examples:
+    User wants expense analysis: "Write an executive summary covering total spend, top vendors by amount, month-over-month trend, and any anomalies worth flagging to management"
+    User wants contract review: "Write a risk analysis memo covering key obligations for each party, payment terms, termination clauses, and recommended actions before signing"
+  Always derive the action from the user's goal — do not write a generic description like "write a document about the data"
 
 excel-generator
   Structured data and calculations. Use for: tables, trackers, budgets, schedules, data organisation, financial models.
+  Action text: describe the structure precisely — what each row represents, column names, any groupings or totals needed.
+  Examples:
+    User wants invoice tracker: "Create a tracker with columns: Vendor, Invoice Number, Date, Amount, Currency, Expense Category — one row per invoice, sorted by date"
+    User wants budget overview: "Build a monthly budget sheet with columns: Category, Budgeted Amount, Actual Amount, Variance — one row per category, totals row at the bottom"
+  Always derive the action from the user's goal — do not write a generic description like "create a spreadsheet"
 
 powerpoint-generator
   Slide content. Use for: presentations, decks, board updates, visual summaries.
+  Action text: describe the narrative arc and key messages — what story the deck tells, the intended audience, how many slides and what each covers.
+  Examples:
+    User wants expense deck: "Build a 6-slide deck for finance review: title, total spend overview, top vendors, month-over-month trend, anomalies flagged, and recommended actions"
+    User wants project update: "Create a 5-slide stakeholder update: project status, milestones achieved, risks, next steps, and asks from leadership"
+  Always derive the action from the user's goal — do not write a generic description like "create a presentation"
 
 email-drafter
   Email composition. Use for: replies, outreach, follow-ups, announcements, client communications.
-
-data-analyzer
-  Interpretation and insight. Use for: identifying patterns, drawing conclusions from data, making recommendations, trend analysis.
-  IMPORTANT: cannot read files — only works from text already available (previous step output, email content, or context). Do NOT use as Step 1 for file-upload tasks.
+  Action text: describe the tone, key message, and desired action — what the email needs to accomplish and any specific points to include or avoid.
+  Options: when recipient and subject can be inferred from context (email thread, conversation, attachment content), populate { "to": "email@example.com", "subject": "Re: Invoice #1234" }. Leave empty if unknown — the user fills in before sending.
+  Examples:
+    User wants invoice follow-up: "Draft a polite but firm payment reminder: reference the specific invoice number and due date, ask for an ETA, keep tone professional and non-confrontational"
+    User wants project update email: "Write a concise project status email to the client: highlight milestone reached, flag one open item needing their input, set expectation for next check-in"
+  Always derive the action from the user's goal — do not write a generic description like "draft an email"
 
 PLAN RULES:
 - Always emit the full updated plan JSON — never partial or null unless the request is completely off-topic
+- ALWAYS create a plan on the first message, even if files haven't been uploaded yet — mark file inputs as status "pending" and proceed. Never defer plan creation by asking if the user has their files ready.
 - Update ALL relevant fields when something changes
-- Max 6 steps; vision-ocr counts as Step 1, so a vision-ocr workflow typically uses 2 steps total
+- Max 6 steps total
 - Default to a sensible plan rather than asking clarifying questions — only ask if the ambiguity would produce a fundamentally wrong plan
+- Intermediate steps have no skill tag — write a concrete description of what that step does, and the pipeline handles execution automatically regardless of file type
+- Steps that produce an output artifact MUST have a skill tag — one per output type declared in deliverable_types. These are generator steps: word-generator, excel-generator, powerpoint-generator, email-drafter
+- CRITICAL: if the user wants an email output (notification, summary email, draft to client, etc.), there MUST be an email-drafter step with skill "email-drafter" in the plan. Do NOT write an email step as an intermediate step — it produces an artifact and must be a generator step
 - providedFilename is managed server-side when the user uploads files — NEVER invent, guess, or modify this field. When updating a plan, copy the existing providedFilename value exactly as-is, or omit it. Never write a filename you didn't receive explicitly in the workflow prompt.
 - If the workflow prompt mentions available attachments, mark them as inputs with status "provided" and set providedFilename to the exact filename provided — never ask the user to re-upload something already there
 - If the user requests a different output format than the current plan (e.g., switching from spreadsheet to document), update deliverable_type AND replace the generator skill in the last step accordingly. The user can always generate a new version — this is not destructive.
 - If the user wants to ADD a second format on top of the existing one (e.g., "also give me a Word summary" while the plan already has excel-generator), do NOT change deliverable_type or remove existing steps — add a new generator step for the second format and append the new type to deliverable_types.
-- Multi-output plans: each generator step (excel-generator, word-generator, etc.) produces one artifact. Add one generator step per output type. Intermediate steps (vision-ocr, data-analyzer) run first and share their output with all subsequent generator steps. Example: vision-ocr → excel-generator → word-generator produces a spreadsheet AND a document.
-- Use deliverable_types (array) when the plan has multiple generator steps. List one type per generator step in the same order. Example: steps [vision-ocr, excel-generator, word-generator] + deliverable_types ["spreadsheet", "document"]. This ensures each generator step produces the correct file format. Omit deliverable_types for single-output plans.
+- Multi-output plans: each generator step produces one artifact. Add one generator step per output type. Intermediate steps run first and share their output with all subsequent generator steps. Example: [analyse data step] → excel-generator → word-generator produces a spreadsheet AND a document. Example with email: [classify step] → [analyse step] → excel-generator → email-drafter produces a spreadsheet AND an email notification — both are generator steps.
+- Use deliverable_types (array) when the plan has multiple generator steps. List one type per generator step in the same order. Example: steps [analyse, excel-generator, word-generator] + deliverable_types ["spreadsheet", "document"]. Omit deliverable_types for single-output plans.
 - Each output in the outputs array must have deliverableType set to the exact format it produces ("spreadsheet", "presentation", "email", or "document"/"report"/"analysis" for Word). For multi-output, each output has a different deliverableType matching its generator step.`;
 
 export function parsePlanResponse(fullResponse: string): {

@@ -172,6 +172,78 @@ export async function fetchOutlookAttachmentContent(
   return Buffer.from(attachment.contentBytes, 'base64');
 }
 
+export interface EmailAttachment {
+  filename: string;
+  content: Buffer;
+  mimeType: string;
+}
+
+export async function sendOutlookEmail(params: {
+  encryptedTokens: string;
+  to: string;
+  cc?: string;
+  subject: string;
+  body: string;
+  attachments?: EmailAttachment[];
+}): Promise<void> {
+  const { encryptedTokens, to, cc, subject, body, attachments = [] } = params;
+
+  const tokens = JSON.parse(Buffer.from(encryptedTokens, 'base64').toString());
+  let accessToken = tokens.accessToken;
+  if (tokens.refreshToken && tokens.expiresOn) {
+    const timeUntilExpiry = new Date(tokens.expiresOn).getTime() - Date.now();
+    if (timeUntilExpiry < 5 * 60 * 1000) {
+      try {
+        const refreshed = await refreshAccessToken(tokens.refreshToken);
+        accessToken = refreshed.accessToken;
+      } catch {
+        // Fall back to existing token
+      }
+    }
+  }
+
+  const toRecipients = to.split(',').map((addr) => ({
+    emailAddress: { address: addr.trim() },
+  }));
+  const ccRecipients = cc
+    ? cc.split(',').map((addr) => ({ emailAddress: { address: addr.trim() } }))
+    : [];
+
+  const messageBody = {
+    subject,
+    body: {
+      contentType: 'HTML',
+      content: plainTextToHtml(body),
+    },
+    toRecipients,
+    ...(ccRecipients.length > 0 ? { ccRecipients } : {}),
+    ...(attachments.length > 0
+      ? {
+          attachments: attachments.map((att) => ({
+            '@odata.type': '#microsoft.graph.fileAttachment',
+            name: att.filename,
+            contentType: att.mimeType,
+            contentBytes: att.content.toString('base64'),
+          })),
+        }
+      : {}),
+  };
+
+  const response = await fetch('https://graph.microsoft.com/v1.0/me/sendMail', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ message: messageBody }),
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`Failed to send Outlook email: ${error}`);
+  }
+}
+
 interface SendOutlookReplyParams {
   encryptedTokens: string;
   messageId: string;

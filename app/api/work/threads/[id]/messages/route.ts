@@ -165,6 +165,19 @@ export async function POST(
           if (planRaw && planRaw !== 'null') {
             try {
               const plan = JSON.parse(planRaw);
+              // Strip hallucinated providedFilenames — only filenames the server knows about are valid
+              const actualFilenames = new Set(
+                ((thread as any).user_attachments || []).map((a: any) => a.filename)
+              );
+              if (plan.inputs) {
+                plan.inputs = plan.inputs.map((input: any) => {
+                  if (input.providedFilename && !actualFilenames.has(input.providedFilename)) {
+                    const { providedFilename: _removed, ...rest } = input;
+                    return { ...rest, status: 'pending' };
+                  }
+                  return input;
+                });
+              }
               // Preserve provided-input state across follow-up planning messages
               if (thread.plan?.inputs && plan.inputs) {
                 plan.inputs = plan.inputs.map((input: any) => {

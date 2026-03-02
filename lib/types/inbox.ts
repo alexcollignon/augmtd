@@ -131,14 +131,21 @@ export interface XlsxContent {
   sheets: XlsxSheet[];
 }
 
-export type ArtifactContent = DocContent | PptxContent | XlsxContent;
+export interface EmailContent {
+  to: string;       // empty string if unknown
+  cc?: string;
+  subject: string;
+  body: string;     // plain prose, \n\n for paragraph breaks
+}
+
+export type ArtifactContent = DocContent | PptxContent | XlsxContent | EmailContent;
 
 export interface DocumentArtifact {
   id?: string; // UUID generated at creation time; optional for backward compat with legacy artifacts
   title: string;
   type: DeliverableType;
   generated_at: string; // ISO timestamp
-  storage_path: string; // Path within work-artifacts bucket: "{userId}/{threadId}/{artifactId}.ext" (new) or "{userId}/{threadId}.ext" (legacy)
+  storage_path?: string; // Path within work-artifacts bucket: "{userId}/{threadId}/{artifactId}.ext" (new) or "{userId}/{threadId}.ext" (legacy). Absent for email artifacts.
   content?: ArtifactContent; // Full document content for in-panel preview
   source_data?: unknown; // Raw source material from automated skills (e.g. InvoiceData[]) — used as context in Ask/Edit
 }
