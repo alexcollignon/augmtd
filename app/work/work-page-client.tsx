@@ -1364,10 +1364,14 @@ export function WorkPageClient({
         prev.map((t) => {
           if (t.id !== threadId) return t;
           const existingArtifacts = t.artifacts ?? [];
+          // Replace existing artifacts of the same type with the newly generated ones;
+          // keep types that weren't regenerated this time
+          const regeneratedTypes = new Set(newArtifacts.map((a) => a.type));
+          const kept = existingArtifacts.filter((a) => !regeneratedTypes.has(a.type));
           return {
             ...t,
             artifact: latestArtifact ?? t.artifact,
-            artifacts: [...existingArtifacts, ...newArtifacts],
+            artifacts: [...kept, ...newArtifacts],
             updated_at: latestArtifact?.generated_at ?? t.updated_at,
           };
         })

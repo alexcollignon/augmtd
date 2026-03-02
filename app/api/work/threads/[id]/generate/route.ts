@@ -104,14 +104,16 @@ export async function POST(
       a.title = output?.name ?? (plan as any)?.deliverable_description ?? thread.title;
     });
 
-    // Append all new artifacts to the array
+    // Merge: replace existing artifacts of the same type, keep the rest
     const { data: freshThread } = await adminClient
       .from('work_threads')
       .select('artifacts')
       .eq('id', threadId)
       .single();
     const existingArtifacts = (freshThread?.artifacts as DocumentArtifact[]) || [];
-    const updatedArtifacts = [...existingArtifacts, ...newArtifacts];
+    const regeneratedTypes = new Set(newArtifacts.map((a) => a.type));
+    const kept = existingArtifacts.filter((a) => !regeneratedTypes.has(a.type));
+    const updatedArtifacts = [...kept, ...newArtifacts];
     const latestArtifact = updatedArtifacts[updatedArtifacts.length - 1];
 
     await adminClient
