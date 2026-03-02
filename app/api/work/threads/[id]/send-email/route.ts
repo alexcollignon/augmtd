@@ -47,11 +47,12 @@ export async function POST(
     }
 
     const body = await request.json();
-    const { artifactId, to, cc, attachArtifactIds = [] } = body as {
+    const { artifactId, to, cc, attachArtifactIds = [], connectionId } = body as {
       artifactId: string;
       to?: string;
       cc?: string;
       attachArtifactIds?: string[];
+      connectionId?: string;
     };
 
     // Resolve artifact list (prefer artifacts array, fall back to legacy singular)
@@ -108,24 +109,34 @@ export async function POST(
       emailAttachments.push({ filename, content: buffer, mimeType });
     }
 
-    // Fetch an active email connection for this user
-    const { data: connection } = await adminClient
+    // Fetch the specified connection, or fall back to the latest active one
+    let connectionQuery = adminClient
       .from('connections')
-      .select('provider, encrypted_tokens')
+      .select('provider, metadata')
       .eq('user_id', user.id)
       .eq('status', 'active')
-      .in('provider', ['gmail', 'outlook'])
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .single();
+      .in('provider', ['gmail', 'outlook']);
+
+    if (connectionId) {
+      connectionQuery = connectionQuery.eq('id', connectionId);
+    } else {
+      connectionQuery = connectionQuery.order('created_at', { ascending: false }).limit(1);
+    }
+
+    const { data: connection } = await connectionQuery.single();
 
     if (!connection) {
       return NextResponse.json({ error: 'No active email connection found' }, { status: 422 });
     }
 
+    const encryptedTokens = (connection.metadata as any)?.tokens as string;
+    if (!encryptedTokens) {
+      return NextResponse.json({ error: 'Connection has no tokens' }, { status: 422 });
+    }
+
     if (connection.provider === 'gmail') {
       await sendGmailEmail({
-        encryptedTokens: connection.encrypted_tokens,
+        encryptedTokens,
         to: resolvedTo,
         cc: resolvedCc || undefined,
         subject: emailContent.subject,
@@ -134,7 +145,7 @@ export async function POST(
       });
     } else {
       await sendOutlookEmail({
-        encryptedTokens: connection.encrypted_tokens,
+        encryptedTokens,
         to: resolvedTo,
         cc: resolvedCc || undefined,
         subject: emailContent.subject,
@@ -143,7 +154,49 @@ export async function POST(
       });
     }
 
-    return NextResponse.json({ success: true });
+    const sentAt = new Date().toISOString();
+
+    // 1. Persist sent_at + sent_to on the artifact in work_threads.artifacts
+    const { data: freshThread } = await adminClient
+      .from('work_threads')
+      .select('artifacts, artifact')
+      .eq('id', threadId)
+      .single();
+
+    if (freshThread) {
+      const updatedArtifacts = (freshThread.artifacts as DocumentArtifact[] ?? []).map((a) =>
+        a.id === artifactId ? { ...a, sent_at: sentAt, sent_to: resolvedTo } : a
+      );
+      const latestArtifact = updatedArtifacts[updatedArtifacts.length - 1];
+      await adminClient
+        .from('work_threads')
+        .update({ artifacts: updatedArtifacts, artifact: latestArtifact })
+        .eq('id', threadId);
+    }
+
+    // 2. Log activity signal
+    await adminClient.from('learning_signals').insert({
+      user_id: user.id,
+      signal_type: 'email_sent',
+      signal_data: {
+        thread_id: threadId,
+        artifact_id: artifactId,
+        subject: emailContent.subject,
+        sent_to: resolvedTo,
+        provider: connection.provider,
+        sent_at: sentAt,
+      },
+    }).then(({ error }) => { if (error) console.error('[SendEmail] Signal log error:', error); });
+
+    // 3. Mark linked inbox item completed (if any)
+    await adminClient
+      .from('inbox_items')
+      .update({ execution_status: 'completed' })
+      .eq('work_thread_id', threadId)
+      .eq('user_id', user.id)
+      .then(({ error }) => { if (error) console.error('[SendEmail] Inbox update error:', error); });
+
+    return NextResponse.json({ success: true, sentAt, sentTo: resolvedTo });
   } catch (error) {
     console.error('[SendEmail] POST error:', error);
     return NextResponse.json(

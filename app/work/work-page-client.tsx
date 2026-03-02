@@ -781,20 +781,35 @@ function EmailPreviewPanel({
   artifact,
   allArtifacts,
   threadId,
-  userEmail,
+  onSent,
 }: {
   artifact: DocumentArtifact;
   allArtifacts: DocumentArtifact[];
   threadId: string;
-  userEmail: string;
+  onSent?: (artifactId: string, sentAt: string, sentTo: string) => void;
 }) {
   const emailContent = artifact.content as EmailContent | undefined;
   const [emailTo, setEmailTo] = useState(emailContent?.to ?? '');
   const [emailCc, setEmailCc] = useState(emailContent?.cc ?? '');
   const [selectedAttachmentIds, setSelectedAttachmentIds] = useState<string[]>([]);
   const [isSending, setIsSending] = useState(false);
-  const [sendSuccess, setSendSuccess] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
+  const [connections, setConnections] = useState<{ id: string; provider: string; email?: string }[]>([]);
+  const [selectedConnectionId, setSelectedConnectionId] = useState<string>('');
+  // Sent state — initialised from persisted artifact data so it survives page reload
+  const [localSentAt, setLocalSentAt] = useState<string | null>(artifact.sent_at ?? null);
+  const [localSentTo, setLocalSentTo] = useState<string | null>(artifact.sent_to ?? null);
+
+  useEffect(() => {
+    fetch('/api/connections')
+      .then((r) => r.json())
+      .then((data) => {
+        const conns = data.connections ?? [];
+        setConnections(conns);
+        if (conns.length > 0) setSelectedConnectionId(conns[0].id);
+      })
+      .catch(() => {});
+  }, []);
 
   const nonEmailArtifacts = allArtifacts.filter((a) => a.type !== 'email' && a.storage_path);
 
@@ -815,13 +830,19 @@ function EmailPreviewPanel({
           to: emailTo.trim(),
           cc: emailCc.trim() || undefined,
           attachArtifactIds: selectedAttachmentIds,
+          connectionId: selectedConnectionId || undefined,
         }),
       });
       if (!res.ok) {
         const data = await res.json();
         throw new Error(data.error || 'Failed to send email');
       }
-      setSendSuccess(true);
+      const data = await res.json();
+      const sentAt = data.sentAt as string;
+      const sentTo = data.sentTo as string;
+      setLocalSentAt(sentAt);
+      setLocalSentTo(sentTo);
+      if (artifact.id) onSent?.(artifact.id, sentAt, sentTo);
     } catch (err) {
       setSendError(err instanceof Error ? err.message : 'Failed to send email');
       setTimeout(() => setSendError(null), 5000);
@@ -843,7 +864,23 @@ function EmailPreviewPanel({
         <div className="divide-y divide-neutral-100 border-b border-neutral-200">
           <div className="flex items-center px-5 py-2.5 gap-3">
             <span className="text-[11px] text-neutral-400 w-10 flex-shrink-0">From</span>
-            <span className="text-[13px] text-neutral-500">{userEmail}</span>
+            {connections.length > 1 ? (
+              <select
+                value={selectedConnectionId}
+                onChange={(e) => setSelectedConnectionId(e.target.value)}
+                className="flex-1 text-[13px] text-neutral-700 focus:outline-none bg-transparent"
+              >
+                {connections.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.email ?? c.provider}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <span className="text-[13px] text-neutral-500">
+                {connections[0]?.email ?? connections[0]?.provider ?? '—'}
+              </span>
+            )}
           </div>
           <div className="flex items-center px-5 py-2.5 gap-3">
             <label htmlFor="email-to" className="text-[11px] text-neutral-400 w-10 flex-shrink-0">To</label>
@@ -851,7 +888,7 @@ function EmailPreviewPanel({
               id="email-to"
               type="text"
               value={emailTo}
-              onChange={(e) => { setEmailTo(e.target.value); setSendSuccess(false); }}
+              onChange={(e) => { setEmailTo(e.target.value); }}
               placeholder="recipient@example.com"
               className="flex-1 text-[13px] text-neutral-900 placeholder-neutral-300 focus:outline-none"
             />
@@ -917,19 +954,28 @@ function EmailPreviewPanel({
         <div className="px-5 py-3.5 border-t border-neutral-100 flex items-center justify-between gap-3">
           <div>
             {sendError && <p className="text-[11px] text-red-600">{sendError}</p>}
-            {sendSuccess && <p className="text-[11px] text-green-600 font-medium">Sent ✓</p>}
+            {localSentAt && !sendError && (
+              <p className="text-[11px] text-green-600 font-medium">
+                Sent {new Date(localSentAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                {localSentTo ? ` → ${localSentTo}` : ''}
+              </p>
+            )}
           </div>
           <button
             onClick={handleSend}
-            disabled={isSending || sendSuccess}
-            className="flex items-center gap-1.5 px-4 py-1.5 bg-indigo-600 text-white text-[11px] font-semibold hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+            disabled={isSending}
+            className={`flex items-center gap-1.5 px-4 py-1.5 text-[11px] font-semibold transition-colors ${
+              localSentAt
+                ? 'bg-neutral-100 text-neutral-500 hover:bg-neutral-200'
+                : 'bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50'
+            }`}
           >
             {isSending ? (
-              <span className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              <span className="w-3 h-3 border-2 border-current/30 border-t-current rounded-full animate-spin" />
             ) : (
               <EnvelopeIcon className="w-3.5 h-3.5" />
             )}
-            {isSending ? 'Sending…' : sendSuccess ? 'Sent ✓' : 'Send'}
+            {isSending ? 'Sending…' : localSentAt ? 'Send again' : 'Send'}
           </button>
         </div>
       </div>
@@ -948,7 +994,7 @@ function DocumentPanel({
   isDownloading,
   isEditing,
   threadId,
-  userEmail,
+  onArtifactSent,
 }: {
   artifact: DocumentArtifact;
   artifacts: DocumentArtifact[];
@@ -960,7 +1006,7 @@ function DocumentPanel({
   isDownloading: boolean;
   isEditing: boolean;
   threadId: string;
-  userEmail: string;
+  onArtifactSent?: (artifactId: string, sentAt: string, sentTo: string) => void;
 }) {
   const isEmail = artifact.type === 'email';
 
@@ -1019,7 +1065,7 @@ function DocumentPanel({
           artifact={artifact}
           allArtifacts={artifacts}
           threadId={threadId}
-          userEmail={userEmail}
+          onSent={onArtifactSent}
         />
       ) : (
         <div className="flex-1 overflow-y-auto p-6">
@@ -1828,11 +1874,16 @@ export function WorkPageClient({
                             const arr = thread.artifacts ?? [];
                             const latest = arr.length > 0 ? arr[arr.length - 1] : thread.artifact;
                             if (!latest) return null;
-                            const ext = latest.type === 'presentation' ? 'pptx' : latest.type === 'spreadsheet' ? 'xlsx' : 'docx';
+                            const ext = latest.type === 'presentation' ? 'pptx' : latest.type === 'spreadsheet' ? 'xlsx' : latest.type === 'email' ? 'email' : 'docx';
+                            const hasSent = arr.some((a) => a.sent_at);
                             return (
                               <>
-                                <span className="text-[9px] text-green-600 bg-green-50 px-1 py-px">{ext}</span>
-                                {arr.length > 1 && (
+                                {hasSent ? (
+                                  <span className="text-[9px] text-green-600 bg-green-50 px-1 py-px">✓ sent</span>
+                                ) : (
+                                  <span className="text-[9px] text-green-600 bg-green-50 px-1 py-px">{ext}</span>
+                                )}
+                                {arr.length > 1 && !hasSent && (
                                   <span className="text-[9px] text-indigo-600 bg-indigo-50 px-1 py-px">{arr.length}</span>
                                 )}
                               </>
@@ -2018,7 +2069,16 @@ export function WorkPageClient({
               isDownloading={isDownloading}
               isEditing={isRebuildingDocument}
               threadId={activeThreadId!}
-              userEmail={userEmail ?? ''}
+              onArtifactSent={(artifactId, sentAt, sentTo) => {
+                if (!activeThreadId) return;
+                setThreads((prev) => prev.map((t) => {
+                  if (t.id !== activeThreadId) return t;
+                  const updatedArtifacts = (t.artifacts ?? []).map((a) =>
+                    a.id === artifactId ? { ...a, sent_at: sentAt, sent_to: sentTo } : a
+                  );
+                  return { ...t, artifacts: updatedArtifacts };
+                }));
+              }}
             />
           ) : (
             <PlanPanel
