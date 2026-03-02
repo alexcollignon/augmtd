@@ -5,9 +5,28 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import { DocumentArtifact, ArtifactContent, DocContent, PptxContent, XlsxContent, EmailContent, DeliverableType } from '@/lib/types/inbox';
 import { buildArtifactFile, getFileExt, getMimeType } from '@/lib/artifacts/builders';
 
+// ─── Claude API retry helper ────────────────────────────────────────────────────
+// Anthropic Haiku can return 529 (Overloaded) under load. The SDK retries quickly
+// internally but gives up too fast. This wrapper adds one extra attempt with a
+// 5-second pause — enough to survive brief capacity spikes.
+async function claudeCreate(
+  anthropic: Anthropic,
+  params: Parameters<Anthropic['messages']['create']>[0],
+): Promise<Anthropic.Message> {
+  try {
+    return (await anthropic.messages.create(params)) as Anthropic.Message;
+  } catch (err: any) {
+    if (err?.status === 529 || err?.status === 500) {
+      await new Promise((r) => setTimeout(r, 5000));
+      return (await anthropic.messages.create(params)) as Anthropic.Message;
+    }
+    throw err;
+  }
+}
+
 // ─── Smart attachment context ──────────────────────────────────────────────────
 // Runs before any plan steps. Detects what files actually arrived and routes
-// accordingly — images → GPT-4o vision, Excel/CSV → SheetJS, everything else
+// accordingly — images → GPT-4o vision (signed URL), Excel/CSV → SheetJS, everything else
 // with pre-extracted text → used directly. No skill declaration needed from the plan.
 
 const IMAGE_MIME_TYPES = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/webp']);
@@ -45,7 +64,7 @@ async function buildSmartAttachmentContext(
       // Already extracted upstream (PDF, DOCX, TXT)
       parts.push(`--- ${att.filename} ---\n${att.extractedText}`);
     } else if (IMAGE_MIME_TYPES.has(att.mimeType)) {
-      // Image → GPT-4o vision via signed URL (avoids large base64 payloads for iPhone photos)
+      // Image → GPT-4o vision via signed URL (avoids Claude's 5MB base64 limit)
       try {
         const { data: urlData, error: urlError } = await adminClient.storage
           .from('email-attachments')
@@ -59,18 +78,15 @@ async function buildSmartAttachmentContext(
           model: 'gpt-4o',
           max_tokens: 1500,
           messages: [{
-            role: 'system',
-            content: 'You are a document data extractor. Extract every piece of text, number, and structured data visible in this image. Output only the raw extracted content — no commentary, no explanations, no apologies.',
-          }, {
             role: 'user',
             content: [
-              { type: 'text', text: 'Extract all content from this document image:' },
+              { type: 'text', text: 'Extract all text, numbers, and structured data visible in this document image. Output only the raw extracted content — no commentary, no explanations.' },
               { type: 'image_url', image_url: { url: urlData.signedUrl } },
             ],
           }],
         });
         const extracted = completion.choices[0]?.message?.content ?? '';
-        // Discard responses that indicate GPT-4o couldn't read the image
+        // Discard responses that indicate the model couldn't read the image
         const looksLikeError = /\b(cannot|unable|can't|failed|unreadable|not able|sorry|apologize)\b/i.test(extracted.slice(0, 200));
         if (extracted && !looksLikeError) {
           parts.push(`--- ${att.filename} ---\n${extracted}`);
@@ -141,7 +157,7 @@ ${attachmentContext ? `\nSOURCE MATERIAL:\n${attachmentContext}` : ''}${previous
 
 Execute this step thoroughly. Output the specific results, data, analysis, or content this step produces. Be concrete — actual numbers, actual text, actual structure. Do not explain what you are going to do, just do it.`;
 
-  const completion = await anthropic.messages.create({
+  const completion = await claudeCreate(anthropic, {
     model: 'claude-haiku-4-5-20251001',
     max_tokens: 1200,
     system: `You are executing a single step in a professional workflow for a ${userContext}. Perform the task described and output the results directly. No preamble, no meta-commentary — only the output of the work itself.`,
@@ -445,7 +461,7 @@ export async function assembleArtifactFromSteps(params: {
     stepAction,
   });
 
-  const completion = await anthropic.messages.create({
+  const completion = await claudeCreate(anthropic, {
     model: 'claude-haiku-4-5-20251001',
     max_tokens: maxTokens,
     system: systemPrompt,
