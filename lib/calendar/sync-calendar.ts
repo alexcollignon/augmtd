@@ -92,11 +92,17 @@ async function syncGmailCalendar(
   const oauth2Client = getOAuth2Client();
   oauth2Client.setCredentials(tokens);
 
-  // Refresh token if needed
-  if (tokens.expiry_date && tokens.expiry_date < Date.now()) {
+  // Refresh proactively within 5 minutes of expiry and persist to DB
+  if (tokens.expiry_date && tokens.expiry_date < Date.now() + 5 * 60 * 1000) {
     try {
       const { credentials } = await oauth2Client.refreshAccessToken();
       oauth2Client.setCredentials(credentials);
+      const newEncryptedTokens = Buffer.from(JSON.stringify(credentials)).toString('base64');
+      await supabase
+        .from('connections')
+        .update({ metadata: { ...connection.metadata, tokens: newEncryptedTokens } })
+        .eq('id', connection.id);
+      console.log(`✓ Updated refreshed Gmail tokens for connection ${connection.id}`);
     } catch (error) {
       console.error('[CalendarSync] Failed to refresh Gmail token:', error);
     }

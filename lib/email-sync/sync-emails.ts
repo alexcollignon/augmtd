@@ -238,7 +238,14 @@ export async function syncEmailsForConnection(
 
     let messages: any[];
     if (connection.provider === 'gmail') {
-      messages = await fetchGmailEmails(encryptedTokens, maxEmails, syncWindowDays, connection.metadata?.email);
+      const onGmailTokenRefresh = async (newEncryptedTokens: string) => {
+        await adminSupabase
+          .from('connections')
+          .update({ metadata: { ...connection.metadata, tokens: newEncryptedTokens } })
+          .eq('id', connection.id);
+        console.log(`✓ Updated refreshed Gmail tokens for connection ${connection.id}`);
+      };
+      messages = await fetchGmailEmails(encryptedTokens, maxEmails, syncWindowDays, connection.metadata?.email, onGmailTokenRefresh);
     } else if (connection.provider === 'outlook') {
       // Token refresh callback - updates database when tokens are refreshed
       const onTokenRefresh = async (newTokens: { accessToken: string; refreshToken: string; expiresOn: string }) => {

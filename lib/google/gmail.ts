@@ -17,18 +17,30 @@ export interface GmailMessage {
   internalDate: string;
 }
 
-export async function getGmailClient(encryptedTokens: string) {
-  // Decrypt tokens (simple base64 for now)
+export type GmailTokenRefreshCallback = (newEncryptedTokens: string) => Promise<void>;
+
+export async function getGmailClient(
+  encryptedTokens: string,
+  onTokenRefresh?: GmailTokenRefreshCallback,
+) {
   const tokens = JSON.parse(Buffer.from(encryptedTokens, 'base64').toString());
 
   const oauth2Client = getOAuth2Client();
   oauth2Client.setCredentials(tokens);
 
-  // Refresh token if needed
-  if (tokens.expiry_date && tokens.expiry_date < Date.now()) {
-    const { credentials } = await oauth2Client.refreshAccessToken();
-    oauth2Client.setCredentials(credentials);
-    // TODO: Update tokens in database
+  // Refresh proactively within 5 minutes of expiry (not just when already expired)
+  if (tokens.expiry_date && tokens.expiry_date < Date.now() + 5 * 60 * 1000) {
+    try {
+      const { credentials } = await oauth2Client.refreshAccessToken();
+      oauth2Client.setCredentials(credentials);
+      if (onTokenRefresh) {
+        const newEncryptedTokens = Buffer.from(JSON.stringify(credentials)).toString('base64');
+        await onTokenRefresh(newEncryptedTokens);
+      }
+    } catch (err) {
+      console.error('[Gmail] Token refresh failed:', err);
+      throw err;
+    }
   }
 
   return google.gmail({ version: 'v1', auth: oauth2Client });
@@ -38,10 +50,11 @@ export async function fetchUnreadEmails(
   encryptedTokens: string,
   maxResults: number = 10,
   syncWindowDays: number = 7,
-  accountEmail?: string
+  accountEmail?: string,
+  onTokenRefresh?: GmailTokenRefreshCallback,
 ): Promise<GmailMessage[]> {
   try {
-    const gmail = await getGmailClient(encryptedTokens);
+    const gmail = await getGmailClient(encryptedTokens, onTokenRefresh);
 
     // Personal Gmail accounts (@gmail.com / @googlemail.com) use the tabbed inbox,
     // so category:primary targets the Primary tab precisely.
