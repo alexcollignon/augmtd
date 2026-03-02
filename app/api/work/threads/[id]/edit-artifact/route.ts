@@ -213,6 +213,7 @@ export async function POST(
             const buffer = await buildArtifactFile(type, content);
 
             const storagePath = artifact.storage_path;
+            if (!storagePath) throw new Error('Artifact has no storage path');
             await adminClient.storage
               .from('work-artifacts')
               .upload(storagePath, buffer, {

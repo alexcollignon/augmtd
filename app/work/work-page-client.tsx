@@ -2018,7 +2018,7 @@ export function WorkPageClient({
               isDownloading={isDownloading}
               isEditing={isRebuildingDocument}
               threadId={activeThreadId!}
-              userEmail={userEmail}
+              userEmail={userEmail ?? ''}
             />
           ) : (
             <PlanPanel
