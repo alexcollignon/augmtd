@@ -46,16 +46,71 @@ function isExcelOrCsv(filename: string, mimeType: string): boolean {
 }
 
 async function buildSmartAttachmentContext(
-  emailAttachments: Array<{ filename: string; extractedText: string | null }>,
+  emailAttachments: Array<{ filename: string; mimeType?: string; storagePath?: string; extractedText: string | null }>,
   userAttachments: Array<{ filename: string; mimeType: string; storagePath: string; extractedText: string | null }>,
   adminClient: SupabaseClient,
 ): Promise<string> {
   const parts: string[] = [];
 
-  // Email attachments — text only
+  // Email attachments — use extractedText if available, otherwise fall through to image OCR / Excel parsing below
   for (const att of emailAttachments) {
     if (att.extractedText) {
       parts.push(`--- ${att.filename} ---\n${att.extractedText}`);
+    } else if (att.mimeType && att.storagePath) {
+      // Image → GPT-4o vision OCR
+      if (IMAGE_MIME_TYPES.has(att.mimeType)) {
+        try {
+          const { data: urlData, error: urlError } = await adminClient.storage
+            .from('email-attachments')
+            .createSignedUrl(att.storagePath, 120);
+          if (urlError || !urlData?.signedUrl) {
+            console.error(`[SmartContext] Failed to create signed URL for ${att.filename}:`, urlError);
+            continue;
+          }
+          const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+          const completion = await openai.chat.completions.create({
+            model: 'gpt-4o',
+            max_tokens: 1500,
+            messages: [{
+              role: 'user',
+              content: [
+                { type: 'text', text: 'Extract all text, numbers, and structured data visible in this document image. Output only the raw extracted content — no commentary, no explanations.' },
+                { type: 'image_url', image_url: { url: urlData.signedUrl } },
+              ],
+            }],
+          });
+          const extracted = completion.choices[0]?.message?.content ?? '';
+          const looksLikeError = /\b(cannot|unable|can't|failed|unreadable|not able|sorry|apologize)\b/i.test(extracted.slice(0, 200));
+          if (extracted && !looksLikeError) {
+            parts.push(`--- ${att.filename} ---\n${extracted}`);
+          } else if (looksLikeError) {
+            console.error(`[SmartContext] OCR returned error response for ${att.filename}: ${extracted.slice(0, 100)}`);
+          }
+        } catch (err) {
+          console.error(`[SmartContext] Image OCR failed for ${att.filename}:`, err);
+        }
+      } else if (isExcelOrCsv(att.filename, att.mimeType)) {
+        // Excel / CSV → SheetJS
+        try {
+          const { data: blob, error } = await adminClient.storage
+            .from('email-attachments')
+            .download(att.storagePath);
+          if (error || !blob) {
+            console.error(`[SmartContext] Excel download failed for ${att.filename}:`, error);
+            continue;
+          }
+          const buffer = Buffer.from(await blob.arrayBuffer());
+          const XLSX = await import('xlsx');
+          const workbook = XLSX.read(buffer, { type: 'buffer' });
+          const sheetTexts = workbook.SheetNames.map((name: string) => {
+            const sheet = workbook.Sheets[name];
+            return `Sheet "${name}":\n${XLSX.utils.sheet_to_csv(sheet)}`;
+          });
+          parts.push(`--- ${att.filename} ---\n${sheetTexts.join('\n\n')}`);
+        } catch (err) {
+          console.error(`[SmartContext] Excel parse failed for ${att.filename}:`, err);
+        }
+      }
     }
   }
 

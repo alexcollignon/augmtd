@@ -79,8 +79,11 @@ export async function POST(
         const storagePath = `${user.id}/${threadId}/${inputId}-${safeName}`;
         const { data, error } = await adminClient.storage
           .from('email-attachments')
-          .createSignedUploadUrl(storagePath);
-        if (error || !data) throw new Error(`Failed to create signed URL for ${f.filename}`);
+          .createSignedUploadUrl(storagePath, { upsert: true });
+        if (error || !data) {
+          console.error(`[Attach/Presign] Supabase error for ${f.filename}:`, JSON.stringify(error));
+          throw new Error(`Failed to create signed URL for ${f.filename}`);
+        }
         return {
           storagePath,
           signedUrl: data.signedUrl,

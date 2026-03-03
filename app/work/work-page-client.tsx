@@ -440,7 +440,23 @@ function PlanPanel({
                             e.g. {input.examples[0]}
                           </p>
                         )}
-                        {isProvided && input.providedFilename && (
+                        {isProvided && (input.providedFilenames?.length ?? 0) > 0 && (
+                          <div className="flex items-center gap-1 mt-1.5">
+                            <DocumentTextIcon className="w-3 h-3 text-green-600 flex-shrink-0" />
+                            <span className="text-[10px] text-green-700 truncate">
+                              {input.providedFilenames![0]}
+                              {input.providedFilenames!.length > 1 && ` + ${input.providedFilenames!.length - 1} more`}
+                            </span>
+                            <button
+                              onClick={() => onRemoveAttachment?.(input.id)}
+                              className="flex-shrink-0 ml-0.5 text-neutral-400 hover:text-red-500 transition-colors"
+                              title="Remove attachments"
+                            >
+                              <XMarkIcon className="w-3 h-3" />
+                            </button>
+                          </div>
+                        )}
+                        {isProvided && !input.providedFilenames?.length && input.providedFilename && (
                           <div className="flex items-center gap-1 mt-1.5">
                             <DocumentTextIcon className="w-3 h-3 text-green-600 flex-shrink-0" />
                             <span className="text-[10px] text-green-700 truncate">{input.providedFilename}</span>

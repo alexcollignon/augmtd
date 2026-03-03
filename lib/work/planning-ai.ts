@@ -31,7 +31,8 @@ PLAN JSON STRUCTURE:
       "description": "What is needed and why",
       "required": true,
       "status": "provided" | "pending",
-      "providedFilename": "filename.pdf",
+      "providedFilename": "filename.pdf",     // single file
+      "providedFilenames": ["file1.pdf", "file2.pdf"],  // multiple files grouped on one input
       "examples": ["Example 1"]
     }
   ],
@@ -124,8 +125,8 @@ PLAN RULES:
 - Intermediate steps have no skill tag — write a concrete description of what that step does, and the pipeline handles execution automatically regardless of file type
 - Steps that produce an output artifact MUST have a skill tag — one per output type declared in deliverable_types. These are generator steps: word-generator, excel-generator, powerpoint-generator, email-drafter
 - CRITICAL: if the user wants an email output (notification, summary email, draft to client, etc.), there MUST be an email-drafter step with skill "email-drafter" in the plan. Do NOT write an email step as an intermediate step — it produces an artifact and must be a generator step
-- providedFilename is managed server-side when the user uploads files — NEVER invent, guess, or modify this field. When updating a plan, copy the existing providedFilename value exactly as-is, or omit it. Never write a filename you didn't receive explicitly in the workflow prompt.
-- If the workflow prompt mentions available attachments, mark them as inputs with status "provided" and set providedFilename to the exact filename provided — never ask the user to re-upload something already there
+- providedFilename / providedFilenames are managed server-side — NEVER invent, guess, or modify these fields. When updating a plan, copy existing values exactly as-is, or omit them. Never write a filename you didn't receive explicitly in the workflow prompt.
+- If the workflow prompt mentions available attachments, mark them as inputs with status "provided". Use providedFilenames (array) when multiple files belong to one logical input (e.g. all email attachments → one input), or providedFilename (string) for a single file. Never ask the user to re-upload something already there.
 - If the user requests a different output format than the current plan (e.g., switching from spreadsheet to document), update deliverable_type AND replace the generator skill in the last step accordingly. The user can always generate a new version — this is not destructive.
 - If the user wants to ADD a second format on top of the existing one (e.g., "also give me a Word summary" while the plan already has excel-generator), do NOT change deliverable_type or remove existing steps — add a new generator step for the second format and append the new type to deliverable_types.
 - Multi-output plans: each generator step produces one artifact. Add one generator step per output type. Intermediate steps run first and share their output with all subsequent generator steps. Example: [analyse data step] → excel-generator → word-generator produces a spreadsheet AND a document. Example with email: [classify step] → [analyse step] → excel-generator → email-drafter produces a spreadsheet AND an email notification — both are generator steps.

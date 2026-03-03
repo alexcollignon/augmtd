@@ -63,6 +63,8 @@ export async function POST(
 
     const emailAttachments = (linkedItem?.source_data?.attachments || []) as Array<{
       filename: string;
+      mimeType: string;
+      storagePath: string;
       extractedText: string | null;
     }>;
     const userAttachments = ((thread as any).user_attachments || []) as Array<{

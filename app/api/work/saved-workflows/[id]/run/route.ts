@@ -5,8 +5,9 @@ import { SYSTEM_PROMPT, parsePlanResponse } from '@/lib/work/planning-ai';
 
 // POST /api/work/saved-workflows/[id]/run
 // Creates a new thread from a saved workflow with a pre-generated plan.
+// Accepts optional inboxItemId to inject email context into the plan prompt.
 export async function POST(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id: workflowId } = await params;
@@ -17,6 +18,9 @@ export async function POST(
     if (userError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+
+    const body = await request.json().catch(() => ({}));
+    const inboxItemId: string | undefined = body.inboxItemId;
 
     // Load the saved workflow (ownership check via user_id)
     const { data: workflow, error: workflowError } = await supabase
@@ -70,6 +74,61 @@ export async function POST(
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
 
+    // Optionally load inbox item source_data when running from an email
+    let emailContextBlock = '';
+    let attachmentMetaBlock = '';
+    let inboxItem: { id: string; source_data: any } | null = null;
+
+    if (inboxItemId) {
+      const { data: fetchedItem } = await supabase
+        .from('inbox_items')
+        .select('id, source_data')
+        .eq('id', inboxItemId)
+        .eq('user_id', user.id)
+        .single();
+
+      if (fetchedItem) {
+        inboxItem = fetchedItem;
+        const sd = fetchedItem.source_data || {};
+
+        // Build email body block (first 2000 chars)
+        const rawBody = (sd.body || '').slice(0, 2000);
+        const bodyTruncated = (sd.body || '').length > 2000 ? rawBody + '...' : rawBody;
+
+        emailContextBlock = `\nEmail context:\nFrom: ${sd.from_name ? `${sd.from_name} <${sd.from}>` : (sd.from || 'Unknown')}\nSubject: ${sd.subject || '(no subject)'}\n\n${bodyTruncated}`;
+
+        // Thread history (max 3, newest first, 500 chars each)
+        const history: any[] = Array.isArray(sd.thread_history) ? sd.thread_history : [];
+        if (history.length > 0) {
+          const sorted = [...history]
+            .sort((a, b) => new Date(b.received_at).getTime() - new Date(a.received_at).getTime())
+            .slice(0, 3);
+          const historyLines = sorted.map(entry => {
+            const date = new Date(entry.received_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+            const snippet = (entry.snippet || '').slice(0, 500);
+            return `[${date}] ${entry.from_name || entry.from || 'Unknown'}: ${snippet}`;
+          });
+          emailContextBlock += `\n\nThread history:\n${historyLines.join('\n')}`;
+        }
+
+        // Attachment metadata
+        const attachments: any[] = Array.isArray(sd.attachments) ? sd.attachments : [];
+        if (attachments.length > 0) {
+          const formatSize = (bytes: number) => {
+            if (bytes < 1024) return `${bytes} B`;
+            if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+            return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+          };
+          const attLines = attachments.map(att => {
+            const ext = (att.filename || '').split('.').pop()?.toUpperCase() || 'FILE';
+            return `- ${att.filename} (${ext}, ${formatSize(att.size || 0)})`;
+          });
+          const filenameList = attachments.map(att => att.filename).join('", "');
+          attachmentMetaBlock = `\n\nAvailable attachments (already provided):\n${attLines.join('\n')}\nGroup ALL these files into ONE single input in the plan with status "provided" and providedFilenames: ["${filenameList}"] — do NOT create a separate input per file.`;
+        }
+      }
+    }
+
     // Create the work thread linked to this saved workflow
     const { data: thread, error: threadError } = await adminClient
       .from('work_threads')
@@ -88,11 +147,25 @@ export async function POST(
       return NextResponse.json({ error: 'Failed to create workflow thread' }, { status: 500 });
     }
 
-    // Generate plan from the saved prompt.
-    // Append required output types so the AI doesn't drop generator steps during re-planning.
-    const promptWithTypes = workflow.deliverable_types.length > 0
-      ? `${workflow.prompt}\n\nRequired output formats: ${workflow.deliverable_types.join(', ')} — include one generator step for each.`
-      : workflow.prompt;
+    // Link the inbox item to the new thread so generate/route picks up email attachments
+    if (inboxItem) {
+      await adminClient
+        .from('inbox_items')
+        .update({ work_thread_id: thread.id })
+        .eq('id', inboxItem.id);
+    }
+
+    // Assemble prompt: workflow base + deliverable types + email context + attachments
+    const typesHint = workflow.deliverable_types.length > 0
+      ? `\n\nRequired output formats: ${workflow.deliverable_types.join(', ')} — include one generator step for each.`
+      : '';
+
+    const fullPrompt = `${workflow.prompt}${typesHint}${emailContextBlock}${attachmentMetaBlock}`;
+
+    // The user-facing message seed shows the workflow prompt (without injected context noise)
+    const userMessageContent = inboxItem
+      ? `${workflow.prompt}${typesHint}`
+      : fullPrompt;
 
     try {
       const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -100,7 +173,7 @@ export async function POST(
         model: 'gpt-4o-mini',
         messages: [
           { role: 'system', content: SYSTEM_PROMPT + userContextNote },
-          { role: 'user', content: promptWithTypes },
+          { role: 'user', content: fullPrompt },
         ],
         temperature: 0.4,
         max_tokens: 2500,
@@ -111,7 +184,7 @@ export async function POST(
 
       // Seed work_messages
       await adminClient.from('work_messages').insert([
-        { thread_id: thread.id, role: 'user', content: workflow.prompt },
+        { thread_id: thread.id, role: 'user', content: userMessageContent },
         { thread_id: thread.id, role: 'assistant', content: conversationalText },
       ]);
 
@@ -142,7 +215,7 @@ export async function POST(
         .eq('id', workflow.id);
 
       const messages = [
-        { id: `u-${Date.now()}`, role: 'user' as const, content: workflow.prompt, created_at: new Date().toISOString() },
+        { id: `u-${Date.now()}`, role: 'user' as const, content: userMessageContent, created_at: new Date().toISOString() },
         { id: `a-${Date.now()}`, role: 'assistant' as const, content: conversationalText, created_at: new Date().toISOString() },
       ];
 

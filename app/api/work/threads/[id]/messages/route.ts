@@ -165,15 +165,36 @@ export async function POST(
           if (planRaw && planRaw !== 'null') {
             try {
               const plan = JSON.parse(planRaw);
-              // Strip hallucinated providedFilenames — only filenames the server knows about are valid
+              // Strip hallucinated providedFilename(s) — only filenames the server knows about are valid.
+              // Include both user-uploaded files and email attachment filenames (for email-linked threads).
               const actualFilenames = new Set(
                 ((thread as any).user_attachments || []).map((a: any) => a.filename)
               );
+              // Also load email attachment filenames from the linked inbox item (if any)
+              const { data: linkedItem } = await supabase
+                .from('inbox_items')
+                .select('source_data')
+                .eq('work_thread_id', threadId)
+                .eq('user_id', user.id)
+                .maybeSingle();
+              for (const att of (linkedItem?.source_data?.attachments || [])) {
+                if (att.filename) actualFilenames.add(att.filename);
+              }
               if (plan.inputs) {
                 plan.inputs = plan.inputs.map((input: any) => {
+                  // Strip invalid single filename
                   if (input.providedFilename && !actualFilenames.has(input.providedFilename)) {
                     const { providedFilename: _removed, ...rest } = input;
                     return { ...rest, status: 'pending' };
+                  }
+                  // Strip invalid entries from providedFilenames array
+                  if (input.providedFilenames?.length) {
+                    const valid = input.providedFilenames.filter((f: string) => actualFilenames.has(f));
+                    if (valid.length === 0) {
+                      const { providedFilenames: _removed, ...rest } = input;
+                      return { ...rest, status: 'pending' };
+                    }
+                    return { ...input, providedFilenames: valid };
                   }
                   return input;
                 });
@@ -183,7 +204,12 @@ export async function POST(
                 plan.inputs = plan.inputs.map((input: any) => {
                   const existing = (thread.plan!.inputs || []).find((i: any) => i.id === input.id);
                   if (existing?.status === 'provided') {
-                    return { ...input, status: 'provided', providedFilename: existing.providedFilename };
+                    return {
+                      ...input,
+                      status: 'provided',
+                      ...(existing.providedFilename ? { providedFilename: existing.providedFilename } : {}),
+                      ...(existing.providedFilenames ? { providedFilenames: existing.providedFilenames } : {}),
+                    };
                   }
                   return input;
                 });

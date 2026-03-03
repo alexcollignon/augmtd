@@ -38,6 +38,7 @@ export interface WorkflowInput {
   examples?: string[];
   status?: 'provided' | 'pending';
   providedFilename?: string;
+  providedFilenames?: string[]; // multiple files on one input (e.g. all email attachments grouped)
 }
 
 export interface WorkflowOutput {

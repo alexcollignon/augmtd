@@ -14,21 +14,6 @@
 
 import { SupabaseClient } from '@supabase/supabase-js';
 
-// Fire-and-forget: trigger background work preparation for an executable inbox item
-function triggerWorkPreparation(inboxItemId: string, userId: string) {
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL
-    || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000');
-  fetch(`${baseUrl}/api/work/prepare-from-email`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-internal-secret': process.env.INTERNAL_API_SECRET || '',
-    },
-    body: JSON.stringify({ inboxItemId, userId }),
-  }).catch((err) => console.error('[Sync] Failed to trigger work preparation:', err));
-  // No await — moves on immediately
-}
-
 import {
   fetchUnreadEmails as fetchGmailEmails,
   parseGmailMessage,
@@ -666,9 +651,6 @@ export async function syncEmailsForConnection(
               result.errors.push(`Failed to update inbox item: ${updateError.message}`);
             } else {
               console.log(`       ✓ Updated inbox item`);
-              if (isExecutable) {
-                triggerWorkPreparation(existingInboxItem.id, recipient.userId);
-              }
             }
 
             continue; // Continue to next recipient
@@ -816,9 +798,6 @@ export async function syncEmailsForConnection(
           } else {
             result.inboxItemsCreated++;
             console.log(`       ✓ Created inbox item (${recipient.inferredWorkState})`);
-            if (isExecutable && newInboxItem?.id) {
-              triggerWorkPreparation(newInboxItem.id, recipient.userId);
-            }
           }
         } // End recipient loop
       } catch (emailError) {
