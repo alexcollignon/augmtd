@@ -112,6 +112,21 @@ export interface BlueprintGroup {
 }
 
 /**
+ * Saved Workflow — a reusable workflow shape saved from a completed thread.
+ * Stored in the saved_workflows DB table.
+ */
+export interface SavedWorkflow {
+  id: string;
+  name: string;
+  prompt: string;
+  deliverable_types: string[];
+  usage_count: number;
+  last_used_at?: string;
+  created_from_thread_id?: string;
+  created_at: string;
+}
+
+/**
  * Onboarding state
  */
 export interface OnboardingData {

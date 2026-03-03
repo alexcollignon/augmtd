@@ -3,7 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { WorkPageClient } from './work-page-client';
 import { getUserIdentity } from '@/lib/context/work-patterns-service';
 import { getBlueprintsForDepartment } from '@/lib/blueprints/blueprint-library';
-import { WorkBlueprint } from '@/lib/types/work-blueprints';
+import { WorkBlueprint, SavedWorkflow } from '@/lib/types/work-blueprints';
 
 export default async function WorkPage({
   searchParams,
@@ -36,14 +36,22 @@ export default async function WorkPage({
     blueprints = getBlueprintsForDepartment(identity.department);
   }
 
-  // Load existing work threads
-  const { data: threads } = await supabase
-    .from('work_threads')
-    .select('id, title, plan, artifact, artifacts, status, auto_generated, created_at, updated_at')
-    .eq('user_id', user.id)
-    .eq('status', 'active')
-    .order('updated_at', { ascending: false })
-    .limit(50);
+  // Load existing work threads + saved workflows in parallel
+  const [{ data: threads }, { data: savedWorkflowsData }] = await Promise.all([
+    supabase
+      .from('work_threads')
+      .select('id, title, plan, artifact, artifacts, status, auto_generated, saved_workflow_id, created_at, updated_at')
+      .eq('user_id', user.id)
+      .eq('status', 'active')
+      .order('updated_at', { ascending: false })
+      .limit(50),
+    supabase
+      .from('saved_workflows')
+      .select('id, name, prompt, deliverable_types, usage_count, last_used_at, created_from_thread_id, created_at')
+      .eq('user_id', user.id)
+      .order('last_used_at', { ascending: false, nullsFirst: false })
+      .limit(20),
+  ]);
 
   return (
     <WorkPageClient
@@ -54,6 +62,7 @@ export default async function WorkPage({
       initialThreads={threads || []}
       initialActiveThreadId={initialThreadId || null}
       initialView={initialView || null}
+      initialSavedWorkflows={(savedWorkflowsData as SavedWorkflow[]) || []}
     />
   );
 }

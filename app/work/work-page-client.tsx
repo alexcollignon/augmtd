@@ -18,8 +18,10 @@ import {
   XMarkIcon,
   ArrowDownTrayIcon,
   PaperClipIcon,
+  BookmarkIcon,
+  ChevronDownIcon,
 } from '@heroicons/react/24/outline';
-import { WorkBlueprint } from '@/lib/types/work-blueprints';
+import { WorkBlueprint, SavedWorkflow } from '@/lib/types/work-blueprints';
 import { ExecutionPlan, DocumentArtifact, DocContent, PptxContent, XlsxContent, EmailContent } from '@/lib/types/inbox';
 import OnboardingModal from '@/components/onboarding-modal';
 
@@ -122,6 +124,7 @@ interface WorkThread {
   created_at: string;
   updated_at: string;
   auto_generated?: boolean;
+  saved_workflow_id?: string;
 }
 
 interface WorkMessage {
@@ -139,6 +142,7 @@ interface WorkPageClientProps {
   initialThreads: WorkThread[];
   initialActiveThreadId?: string | null;
   initialView?: string | null;
+  initialSavedWorkflows: SavedWorkflow[];
 }
 
 const PLAN_SEPARATOR = '---PLAN_UPDATE---';
@@ -230,6 +234,15 @@ function PlanPanel({
   isDocumentStale,
   attachErrorInputId,
   attachErrorMsg,
+  savedWorkflowId,
+  onSaveWorkflow,
+  showSaveInput,
+  saveWorkflowName,
+  onSaveWorkflowNameChange,
+  onSaveWorkflowConfirm,
+  onCancelSave,
+  isSavingWorkflow,
+  onUpdateWorkflow,
 }: {
   plan: ExecutionPlan | null;
   isUpdating: boolean;
@@ -245,6 +258,15 @@ function PlanPanel({
   isDocumentStale?: boolean;
   attachErrorInputId?: string | null;
   attachErrorMsg?: string | null;
+  savedWorkflowId?: string;
+  onSaveWorkflow?: () => void;
+  showSaveInput?: boolean;
+  saveWorkflowName?: string;
+  onSaveWorkflowNameChange?: (name: string) => void;
+  onSaveWorkflowConfirm?: () => void;
+  onCancelSave?: () => void;
+  isSavingWorkflow?: boolean;
+  onUpdateWorkflow?: () => void;
 }) {
   const isGenerating = workMode === 'generating';
 
@@ -561,7 +583,7 @@ function PlanPanel({
 
       {/* Bottom CTA */}
       {workMode === 'planning' && threadId && (
-        <div className="p-4 border-t border-neutral-100">
+        <div className="p-4 border-t border-neutral-100 space-y-2">
           {(() => {
             // Use all declared output types (from steps or deliverable_types) for button label
             const allOutputTypes: string[] = generatorStepTypes.length > 0
@@ -603,6 +625,53 @@ function PlanPanel({
               </button>
             );
           })()}
+
+          {/* Save / Update workflow — secondary action */}
+          {savedWorkflowId ? (
+            <button
+              onClick={onUpdateWorkflow}
+              className="w-full flex items-center justify-center gap-1.5 text-[11px] text-neutral-400 hover:text-neutral-700 py-1 transition-colors"
+            >
+              <BookmarkIcon className="w-3 h-3" />
+              Update saved workflow
+            </button>
+          ) : showSaveInput ? (
+            <div className="flex items-center gap-1">
+              <input
+                type="text"
+                value={saveWorkflowName}
+                onChange={(e) => onSaveWorkflowNameChange?.(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && saveWorkflowName?.trim()) onSaveWorkflowConfirm?.();
+                  if (e.key === 'Escape') onCancelSave?.();
+                }}
+                placeholder="Name this workflow…"
+                autoFocus
+                className="flex-1 text-[12px] border border-neutral-300 focus:border-indigo-400 focus:outline-none px-2 py-1.5 bg-white"
+              />
+              <button
+                onClick={onSaveWorkflowConfirm}
+                disabled={!saveWorkflowName?.trim() || isSavingWorkflow}
+                className="text-[12px] text-white bg-indigo-600 hover:bg-indigo-700 px-3 py-1.5 disabled:opacity-40 transition-colors"
+              >
+                {isSavingWorkflow ? '…' : 'Save'}
+              </button>
+              <button
+                onClick={onCancelSave}
+                className="text-neutral-400 hover:text-neutral-600 p-1"
+              >
+                <XMarkIcon className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={onSaveWorkflow}
+              className="w-full flex items-center justify-center gap-1.5 text-[11px] text-neutral-400 hover:text-neutral-700 py-1 transition-colors"
+            >
+              <BookmarkIcon className="w-3 h-3" />
+              Save workflow
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -1101,6 +1170,7 @@ export function WorkPageClient({
   initialThreads,
   initialActiveThreadId,
   initialView,
+  initialSavedWorkflows,
 }: WorkPageClientProps) {
   const [threads, setThreads] = useState<WorkThread[]>(initialThreads);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
@@ -1117,6 +1187,14 @@ export function WorkPageClient({
   const [editingThreadId, setEditingThreadId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
+  // Saved workflows state
+  const [savedWorkflows, setSavedWorkflows] = useState<SavedWorkflow[]>(initialSavedWorkflows);
+  const [workflowsExpanded, setWorkflowsExpanded] = useState(true);
+  const [showSaveInput, setShowSaveInput] = useState(false);
+  const [saveWorkflowName, setSaveWorkflowName] = useState('');
+  const [isSavingWorkflow, setIsSavingWorkflow] = useState(false);
+  const [confirmDeleteWorkflowId, setConfirmDeleteWorkflowId] = useState<string | null>(null);
 
   // Document states — initialize directly from server data when ?view=document to avoid flash
   const initialThread = initialActiveThreadId
@@ -1691,6 +1769,93 @@ export function WorkPageClient({
     }
   }, [isCreatingThread, sendMessage, entryFiles]);
 
+  const runSavedWorkflow = useCallback(async (workflowId: string) => {
+    if (isCreatingThread) return;
+    setIsCreatingThread(true);
+    try {
+      const res = await fetch(`/api/work/saved-workflows/${workflowId}/run`, { method: 'POST' });
+      if (!res.ok) throw new Error('Failed to run workflow');
+      const { threadId, thread, messages: seeded } = await res.json();
+      setThreads((prev) => [thread, ...prev]);
+      setMessages(seeded || []);
+      skipLoadRef.current = threadId;
+      setActiveThreadId(threadId);
+      setWorkMode('planning');
+      setSelectedArtifactId(null);
+    } catch (err) {
+      console.error('Failed to run saved workflow:', err);
+    } finally {
+      setIsCreatingThread(false);
+    }
+  }, [isCreatingThread]);
+
+  const saveWorkflow = useCallback(async (name: string) => {
+    if (!activeThread || !name.trim()) return;
+    // Use the plan's deliverable_description — it's the AI's synthesis of all chat refinements.
+    // Falls back to the first user message if no plan exists yet.
+    const prompt = activeThread.plan?.deliverable_description
+      ?? messages.find((m) => m.role === 'user')?.content
+      ?? '';
+    if (!prompt) return;
+    const deliverableTypes = activeThread.plan?.deliverable_types as string[] | undefined
+      ?? (activeThread.plan?.deliverable_type ? [activeThread.plan.deliverable_type] : []);
+    setIsSavingWorkflow(true);
+    try {
+      const res = await fetch('/api/work/saved-workflows', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: name.trim(),
+          prompt,
+          deliverable_types: deliverableTypes,
+          created_from_thread_id: activeThread.id,
+        }),
+      });
+      if (!res.ok) throw new Error('Failed to save workflow');
+      const { savedWorkflow } = await res.json();
+      setSavedWorkflows((prev) => [savedWorkflow, ...prev]);
+      setShowSaveInput(false);
+      setSaveWorkflowName('');
+    } catch (err) {
+      console.error('Failed to save workflow:', err);
+    } finally {
+      setIsSavingWorkflow(false);
+    }
+  }, [activeThread, messages]);
+
+  const updateWorkflowTemplate = useCallback(async () => {
+    if (!activeThread?.saved_workflow_id) return;
+    const prompt = activeThread.plan?.deliverable_description
+      ?? messages.find((m) => m.role === 'user')?.content
+      ?? '';
+    if (!prompt) return;
+    try {
+      await fetch(`/api/work/saved-workflows/${activeThread.saved_workflow_id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt }),
+      });
+      // Update local state
+      setSavedWorkflows((prev) =>
+        prev.map((wf) =>
+          wf.id === activeThread.saved_workflow_id ? { ...wf, prompt } : wf
+        )
+      );
+    } catch (err) {
+      console.error('Failed to update workflow template:', err);
+    }
+  }, [activeThread, messages]);
+
+  const deleteWorkflow = useCallback(async (workflowId: string) => {
+    setConfirmDeleteWorkflowId(null);
+    setSavedWorkflows((prev) => prev.filter((wf) => wf.id !== workflowId));
+    try {
+      await fetch(`/api/work/saved-workflows/${workflowId}`, { method: 'DELETE' });
+    } catch (err) {
+      console.error('Failed to delete workflow:', err);
+    }
+  }, []);
+
   const startEditing = (thread: WorkThread) => {
     setEditingThreadId(thread.id);
     setEditingTitle(thread.title);
@@ -1799,6 +1964,60 @@ export function WorkPageClient({
         </div>
 
         <div className="flex-1 overflow-y-auto py-1">
+          {/* My Workflows section */}
+          {savedWorkflows.length > 0 && (
+            <div className="border-b border-neutral-100 pb-1">
+              <button
+                onClick={() => setWorkflowsExpanded((v) => !v)}
+                className="w-full flex items-center justify-between px-3 py-2 text-[10px] font-semibold tracking-wide text-neutral-400 hover:text-neutral-600 uppercase"
+              >
+                <span>My Workflows</span>
+                <ChevronDownIcon className={`w-3 h-3 transition-transform ${workflowsExpanded ? '' : '-rotate-90'}`} />
+              </button>
+              {workflowsExpanded && savedWorkflows.map((wf) => (
+                <div key={wf.id} className="group relative flex items-center">
+                  {confirmDeleteWorkflowId === wf.id ? (
+                    <div className="flex-1 px-3 py-2">
+                      <p className="text-[10px] text-red-600 mb-1">Delete this workflow?</p>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => deleteWorkflow(wf.id)}
+                          className="text-[10px] font-medium text-white bg-red-500 hover:bg-red-600 px-2 py-0.5 transition-colors"
+                        >
+                          Delete
+                        </button>
+                        <button
+                          onClick={() => setConfirmDeleteWorkflowId(null)}
+                          className="text-[10px] text-neutral-500 hover:text-neutral-700"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <button
+                        onClick={() => runSavedWorkflow(wf.id)}
+                        disabled={isCreatingThread}
+                        className="flex-1 min-w-0 flex items-center gap-2 px-3 py-1.5 hover:bg-neutral-50 text-left disabled:opacity-50"
+                      >
+                        <BookmarkIcon className="w-3 h-3 text-neutral-300 flex-shrink-0" />
+                        <span className="text-[12px] text-neutral-600 truncate">{wf.name}</span>
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setConfirmDeleteWorkflowId(wf.id); }}
+                        className="flex-shrink-0 p-1 pr-2 text-neutral-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                        title="Delete workflow"
+                      >
+                        <XMarkIcon className="w-3 h-3" />
+                      </button>
+                    </>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
           {threads.length === 0 ? (
             <p className="text-[11px] text-neutral-400 px-4 py-6 text-center leading-relaxed">
               Your work threads will appear here
@@ -2100,6 +2319,15 @@ export function WorkPageClient({
               isDocumentStale={isDocumentStale}
               attachErrorInputId={attachErrorInputId}
               attachErrorMsg={attachErrorMsg}
+              savedWorkflowId={activeThread?.saved_workflow_id}
+              onSaveWorkflow={() => setShowSaveInput(true)}
+              showSaveInput={showSaveInput}
+              saveWorkflowName={saveWorkflowName}
+              onSaveWorkflowNameChange={setSaveWorkflowName}
+              onSaveWorkflowConfirm={() => saveWorkflow(saveWorkflowName)}
+              onCancelSave={() => { setShowSaveInput(false); setSaveWorkflowName(''); }}
+              isSavingWorkflow={isSavingWorkflow}
+              onUpdateWorkflow={updateWorkflowTemplate}
             />
           )}
 
