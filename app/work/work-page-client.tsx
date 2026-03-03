@@ -1195,6 +1195,8 @@ export function WorkPageClient({
   const [saveWorkflowName, setSaveWorkflowName] = useState('');
   const [isSavingWorkflow, setIsSavingWorkflow] = useState(false);
   const [confirmDeleteWorkflowId, setConfirmDeleteWorkflowId] = useState<string | null>(null);
+  const [editingWorkflowId, setEditingWorkflowId] = useState<string | null>(null);
+  const [editingWorkflowName, setEditingWorkflowName] = useState('');
 
   // Document states — initialize directly from server data when ?view=document to avoid flash
   const initialThread = initialActiveThreadId
@@ -1846,6 +1848,24 @@ export function WorkPageClient({
     }
   }, [activeThread, messages]);
 
+  const renameWorkflow = useCallback(async (workflowId: string, name: string) => {
+    const trimmed = name.trim();
+    setEditingWorkflowId(null);
+    if (!trimmed) return;
+    setSavedWorkflows((prev) =>
+      prev.map((wf) => wf.id === workflowId ? { ...wf, name: trimmed } : wf)
+    );
+    try {
+      await fetch(`/api/work/saved-workflows/${workflowId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: trimmed }),
+      });
+    } catch (err) {
+      console.error('Failed to rename workflow:', err);
+    }
+  }, []);
+
   const deleteWorkflow = useCallback(async (workflowId: string) => {
     setConfirmDeleteWorkflowId(null);
     setSavedWorkflows((prev) => prev.filter((wf) => wf.id !== workflowId));
@@ -1976,7 +1996,21 @@ export function WorkPageClient({
               </button>
               {workflowsExpanded && savedWorkflows.map((wf) => (
                 <div key={wf.id} className="group relative flex items-center">
-                  {confirmDeleteWorkflowId === wf.id ? (
+                  {editingWorkflowId === wf.id ? (
+                    <div className="flex-1 flex items-center gap-1 px-2 py-1.5">
+                      <input
+                        autoFocus
+                        value={editingWorkflowName}
+                        onChange={(e) => setEditingWorkflowName(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') renameWorkflow(wf.id, editingWorkflowName);
+                          if (e.key === 'Escape') setEditingWorkflowId(null);
+                        }}
+                        onBlur={() => renameWorkflow(wf.id, editingWorkflowName)}
+                        className="flex-1 min-w-0 text-[12px] text-neutral-900 border border-indigo-300 focus:outline-none focus:border-indigo-500 px-2 py-0.5 bg-white"
+                      />
+                    </div>
+                  ) : confirmDeleteWorkflowId === wf.id ? (
                     <div className="flex-1 px-3 py-2">
                       <p className="text-[10px] text-red-600 mb-1">Delete this workflow?</p>
                       <div className="flex items-center gap-2">
@@ -2004,13 +2038,22 @@ export function WorkPageClient({
                         <BookmarkIcon className="w-3 h-3 text-neutral-300 flex-shrink-0" />
                         <span className="text-[12px] text-neutral-600 truncate">{wf.name}</span>
                       </button>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); setConfirmDeleteWorkflowId(wf.id); }}
-                        className="flex-shrink-0 p-1 pr-2 text-neutral-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
-                        title="Delete workflow"
-                      >
-                        <XMarkIcon className="w-3 h-3" />
-                      </button>
+                      <div className="flex-shrink-0 flex items-center pr-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setEditingWorkflowId(wf.id); setEditingWorkflowName(wf.name); setConfirmDeleteWorkflowId(null); }}
+                          className="p-1 text-neutral-300 hover:text-neutral-600 transition-colors"
+                          title="Rename"
+                        >
+                          <PencilIcon className="w-3 h-3" />
+                        </button>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setConfirmDeleteWorkflowId(wf.id); setEditingWorkflowId(null); }}
+                          className="p-1 text-neutral-300 hover:text-red-500 transition-colors"
+                          title="Delete"
+                        >
+                          <TrashIcon className="w-3 h-3" />
+                        </button>
+                      </div>
                     </>
                   )}
                 </div>
