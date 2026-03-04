@@ -1,7 +1,7 @@
 'use client';
 
 import Image from 'next/image';
-import { PaperClipIcon } from '@heroicons/react/24/outline';
+import { PaperClipIcon, CheckIcon } from '@heroicons/react/24/outline';
 import type { InboxItem } from '@/lib/types/inbox';
 import { needsConfirmation } from '@/lib/types/inbox';
 
@@ -10,6 +10,9 @@ interface EmailListCardProps {
   isSelected: boolean;
   onSelect: (item: InboxItem) => void;
   compact?: boolean;
+  isChecked?: boolean;
+  onToggleCheck?: (id: string) => void;
+  hasAnySelected?: boolean;
 }
 
 function formatTime(dateStr: string): string {
@@ -21,10 +24,8 @@ function formatTime(dateStr: string): string {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
-export default function EmailListCard({ item, isSelected, onSelect, compact = false }: EmailListCardProps) {
+export default function EmailListCard({ item, isSelected, onSelect, compact = false, isChecked = false, onToggleCheck, hasAnySelected = false }: EmailListCardProps) {
   const sourceData = item.source_data;
-  const isBatch = (item as any).__isBatch === true;
-  const batchCount = (item as any).__batchCount as number | undefined;
   const needsConfirm = needsConfirmation(item);
 
   const accentColor = needsConfirm
@@ -35,29 +36,45 @@ export default function EmailListCard({ item, isSelected, onSelect, compact = fa
     ? 'bg-amber-400'
     : 'bg-neutral-300';
 
-  const fromDisplay = isBatch && batchCount && batchCount > 1
-    ? `${batchCount} emails`
-    : sourceData?.from_name || sourceData?.from || 'Unknown';
-
-  const subjectDisplay = isBatch
-    ? item.work_title || sourceData?.subject || '(no subject)'
-    : sourceData?.subject || '(no subject)';
+  const fromDisplay = sourceData?.from_name || sourceData?.from || 'Unknown';
+  const subjectDisplay = sourceData?.subject || '(no subject)';
 
   const snippetDisplay = (typeof sourceData?.snippet === 'string' ? sourceData.snippet : null)
     || (typeof sourceData?.body === 'string' ? sourceData.body.slice(0, 120) : null)
     || '';
   const timeDisplay = sourceData?.received_at ? formatTime(sourceData.received_at as string) : '';
 
+  const checkboxVisible = isChecked || hasAnySelected;
+
+  // pointer-events-none when hidden so the invisible zone doesn't intercept card clicks
+  const Checkbox = (
+    <div
+      onClick={(e) => { e.stopPropagation(); onToggleCheck?.(item.id); }}
+      className={`absolute left-0 top-0 bottom-0 w-8 flex items-center justify-center z-10 transition-opacity cursor-pointer ${
+        checkboxVisible
+          ? 'opacity-100'
+          : 'opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto'
+      }`}
+    >
+      <div className={`w-3.5 h-3.5 border-2 flex items-center justify-center flex-shrink-0 ${
+        isChecked ? 'border-indigo-600 bg-indigo-600' : 'border-neutral-300 bg-white'
+      }`}>
+        {isChecked && <CheckIcon className="w-2.5 h-2.5 text-white" strokeWidth={3} />}
+      </div>
+    </div>
+  );
+
   if (compact) {
     return (
-      <button
+      <div
         onClick={() => onSelect(item)}
-        className={`w-full text-left relative border-b border-neutral-100 transition-colors ${
-          isSelected ? 'bg-indigo-50' : 'bg-white hover:bg-neutral-50'
+        className={`w-full text-left relative border-b border-neutral-100 transition-colors cursor-pointer group ${
+          isChecked ? 'bg-indigo-50/60' : isSelected ? 'bg-indigo-50' : 'bg-white hover:bg-neutral-50'
         }`}
       >
+        {Checkbox}
         <div className={`absolute left-0 top-0 bottom-0 w-[3px] ${accentColor}`} />
-        <div className="pl-4 pr-3 py-1.5">
+        <div className="pl-8 pr-3 py-1.5">
           <div className="flex items-baseline justify-between gap-2 mb-0.5">
             <span className={`text-[12px] font-semibold truncate ${isSelected ? 'text-indigo-900' : 'text-neutral-900'}`}>
               {fromDisplay}
@@ -78,21 +95,22 @@ export default function EmailListCard({ item, isSelected, onSelect, compact = fa
             )}
           </div>
         </div>
-      </button>
+      </div>
     );
   }
 
   return (
-    <button
+    <div
       onClick={() => onSelect(item)}
-      className={`w-full text-left relative border-b border-neutral-100 transition-colors ${
-        isSelected ? 'bg-indigo-50' : 'bg-white hover:bg-neutral-50'
+      className={`w-full text-left relative border-b border-neutral-100 transition-colors cursor-pointer group ${
+        isChecked ? 'bg-indigo-50/60' : isSelected ? 'bg-indigo-50' : 'bg-white hover:bg-neutral-50'
       }`}
     >
-      {/* Accent bar */}
+      {Checkbox}
+      {/* Accent bar — hidden when checkbox is visible to avoid overlap */}
       <div className={`absolute left-0 top-0 bottom-0 w-[3px] ${accentColor}`} />
 
-      <div className="pl-4 pr-3 py-3">
+      <div className="pl-8 pr-3 py-3">
         {/* Row 1: From + time */}
         <div className="flex items-baseline justify-between gap-2 mb-0.5">
           <span className={`text-[13px] font-semibold truncate ${isSelected ? 'text-indigo-900' : 'text-neutral-900'}`}>
@@ -140,6 +158,6 @@ export default function EmailListCard({ item, isSelected, onSelect, compact = fa
           )}
         </div>
       </div>
-    </button>
+    </div>
   );
 }

@@ -14,6 +14,7 @@ export default function ActivityLogRow({ item, onClick, isSelected }: ActivityLo
   const provider = sourceData?.provider || 'gmail';
   const wasCompleted = item.status === 'completed';
   const wasDismissed = item.status === 'dismissed';
+  const wasArchived = wasDismissed && !!sourceData?.archived_at;
   const wasModified = sourceData?.modified === true;
 
   // Format timestamp for log-like display
@@ -48,6 +49,8 @@ export default function ActivityLogRow({ item, onClick, isSelected }: ActivityLo
         return `Sent reply to ${recipient}`;
       }
       return item.work_title || 'Action completed';
+    } else if (wasArchived) {
+      return `Archived: ${item.work_title || 'Item'}`;
     } else if (wasDismissed) {
       return `Dismissed: ${item.work_title || 'Item'}`;
     } else {

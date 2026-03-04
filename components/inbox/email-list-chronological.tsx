@@ -9,6 +9,8 @@ interface EmailListChronologicalProps {
   selectedId: string | null;
   onSelect: (item: InboxItem) => void;
   compact?: boolean;
+  selectedIds?: Set<string>;
+  onToggleSelect?: (id: string) => void;
 }
 
 function getDateLabel(dateStr: string): string {
@@ -24,7 +26,8 @@ function getDateLabel(dateStr: string): string {
   return date.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
 }
 
-export default function EmailListChronological({ items, selectedId, onSelect, compact = false }: EmailListChronologicalProps) {
+export default function EmailListChronological({ items, selectedId, onSelect, compact = false, selectedIds, onToggleSelect }: EmailListChronologicalProps) {
+  const hasAnySelected = (selectedIds?.size ?? 0) > 0;
   const groups = useMemo(() => {
     const sorted = [...items].sort((a, b) => {
       const aTime = a.source_data?.received_at ? new Date(a.source_data.received_at as string).getTime() : 0;
@@ -64,6 +67,9 @@ export default function EmailListChronological({ items, selectedId, onSelect, co
               isSelected={selectedId === item.id}
               onSelect={onSelect}
               compact={compact}
+              isChecked={selectedIds?.has(item.id) ?? false}
+              onToggleCheck={onToggleSelect}
+              hasAnySelected={hasAnySelected}
             />
           ))}
         </div>

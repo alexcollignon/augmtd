@@ -3,7 +3,6 @@
 import { useState, useMemo } from 'react';
 import { ChevronDownIcon, ChevronUpIcon } from '@heroicons/react/24/outline';
 import type { InboxItem, VisualSection } from '@/lib/types/inbox';
-import { batchInboxItems } from '@/lib/utils/batch-inbox-items';
 import EmailListCard from './email-list-card';
 
 interface EmailListSectionsProps {
@@ -11,6 +10,8 @@ interface EmailListSectionsProps {
   selectedId: string | null;
   onSelect: (item: InboxItem) => void;
   compact?: boolean;
+  selectedIds?: Set<string>;
+  onToggleSelect?: (id: string) => void;
 }
 
 const SECTIONS: Array<{ key: VisualSection; label: string; dotColor: string }> = [
@@ -19,31 +20,18 @@ const SECTIONS: Array<{ key: VisualSection; label: string; dotColor: string }> =
   { key: 'awareness', label: 'For Awareness', dotColor: 'bg-neutral-400' },
 ];
 
-export default function EmailListSections({ items, selectedId, onSelect, compact = false }: EmailListSectionsProps) {
+export default function EmailListSections({ items, selectedId, onSelect, compact = false, selectedIds, onToggleSelect }: EmailListSectionsProps) {
+  const hasAnySelected = (selectedIds?.size ?? 0) > 0;
   const [collapsed, setCollapsed] = useState<Set<VisualSection>>(new Set());
 
-  const { batches, unbatched } = useMemo(() => batchInboxItems(items), [items]);
-
-  const allItems = useMemo(() => {
-    const batchItems = batches.map(batch => ({
-      ...batch.items[0],
-      id: batch.id,
-      work_title: batch.summary,
-      __isBatch: true,
-      __batchCount: batch.count,
-      __batchItems: batch.items,
-    } as InboxItem & { __isBatch: boolean; __batchCount: number; __batchItems: InboxItem[] }));
-    return [...unbatched, ...batchItems];
-  }, [batches, unbatched]);
-
   const bySection = useMemo(() => {
-    return allItems.reduce((acc, item) => {
+    return items.reduce((acc, item) => {
       const s = (item.visual_section || 'awareness') as VisualSection;
       if (!acc[s]) acc[s] = [];
       acc[s].push(item);
       return acc;
     }, {} as Record<VisualSection, InboxItem[]>);
-  }, [allItems]);
+  }, [items]);
 
   const toggle = (s: VisualSection) => {
     setCollapsed(prev => {
@@ -86,6 +74,9 @@ export default function EmailListSections({ items, selectedId, onSelect, compact
                 isSelected={selectedId === item.id}
                 onSelect={onSelect}
                 compact={compact}
+                isChecked={selectedIds?.has(item.id) ?? false}
+                onToggleCheck={onToggleSelect}
+                hasAnySelected={hasAnySelected}
               />
             ))}
           </div>

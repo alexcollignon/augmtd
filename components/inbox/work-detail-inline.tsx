@@ -14,12 +14,13 @@ import {
   ArrowTopRightOnSquareIcon,
   ChevronRightIcon,
   CheckIcon,
-  XMarkIcon,
   PaperAirplaneIcon,
   VideoCameraIcon,
   MapPinIcon,
   PaperClipIcon,
   ChevronDownIcon,
+  ArchiveBoxArrowDownIcon,
+  XMarkIcon,
 } from '@heroicons/react/24/outline';
 import type { InboxItem } from '@/lib/types/inbox';
 import { isExecutable, needsConfirmation } from '@/lib/types/inbox';
@@ -41,8 +42,8 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
   const [expandedEmails, setExpandedEmails] = useState<Record<number, boolean>>({});
   const [downloadingFile, setDownloadingFile] = useState<string | null>(null);
   const [isConfirming, setIsConfirming] = useState(false);
-  const [isBatchCompleting, setIsBatchCompleting] = useState(false);
-  const [isBatchDismissing, setIsBatchDismissing] = useState(false);
+  const [isArchiving, setIsArchiving] = useState(false);
+  const [archiveConfirmPending, setArchiveConfirmPending] = useState(false);
   const [savedWorkflows, setSavedWorkflows] = useState<SavedWorkflow[]>([]);
   const [workflowsLoaded, setWorkflowsLoaded] = useState(false);
   const [showWorkflowDropdown, setShowWorkflowDropdown] = useState(false);
@@ -64,8 +65,6 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
   const sourceData = item.source_data;
   const recipientContext = item.recipient_context;
   const executable = isExecutable(item);
-  const isBatch = (item as any).__isBatch === true;
-  const [batchItems, setBatchItems] = useState<InboxItem[]>((item as any).__batchItems || []);
 
   // Fetch saved workflows so all items can offer "Run a workflow" (overrides misclassification)
   useEffect(() => {
@@ -206,10 +205,9 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
   const handleConfirmation = async (confirmed: boolean) => {
     setIsConfirming(true);
     const action = confirmed ? 'confirm_as_mine' : 'not_my_task';
-    const ids = isBatch ? batchItems.map(b => b.id) : [item.id];
     try {
-      await Promise.all(ids.map(id => confirmItem(id, confirmed)));
-      onItemConfirmed?.(ids, action);
+      await confirmItem(item.id, confirmed);
+      onItemConfirmed?.([item.id], action);
     } catch {
       alert('Failed to update. Please try again.');
     } finally {
@@ -217,51 +215,17 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
     }
   };
 
-  const handleSingleItemConfirmation = async (id: string, confirmed: boolean) => {
-    const action = confirmed ? 'confirm_as_mine' : 'not_my_task';
-    setBatchItems(prev => prev.filter(b => b.id !== id));
+  const handleArchiveSource = async () => {
+    setIsArchiving(true);
     try {
-      await confirmItem(id, confirmed);
-      onItemConfirmed?.([id], action);
+      const res = await fetch(`/api/inbox/${item.id}/archive-source`, { method: 'POST' });
+      if (!res.ok) throw new Error('Archive failed');
+      toast.success('Email archived');
+      onItemConfirmed?.([item.id], 'not_my_task');
     } catch {
-      setBatchItems(prev => [...prev]); // revert on error isn't trivial, just let polling correct it
-      alert('Failed to update. Please try again.');
-    }
-  };
-
-  const handleBatchComplete = async () => {
-    setIsBatchCompleting(true);
-    try {
-      await Promise.all(batchItems.map(b =>
-        fetch(`/api/inbox/${b.id}/complete`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'reviewed' }),
-        })
-      ));
-      onItemConfirmed?.(batchItems.map(b => b.id), 'not_my_task');
-    } catch {
-      alert('Failed to complete items. Please try again.');
+      toast.error('Could not archive email');
     } finally {
-      setIsBatchCompleting(false);
-    }
-  };
-
-  const handleBatchDismiss = async () => {
-    setIsBatchDismissing(true);
-    try {
-      await Promise.all(batchItems.map(b =>
-        fetch(`/api/inbox/${b.id}/dismiss`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ reason: 'not_relevant' }),
-        })
-      ));
-      onItemConfirmed?.(batchItems.map(b => b.id), 'not_my_task');
-    } catch {
-      alert('Failed to dismiss items. Please try again.');
-    } finally {
-      setIsBatchDismissing(false);
+      setIsArchiving(false);
     }
   };
 
@@ -337,17 +301,12 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
         <h2 className="text-[17px] font-semibold text-neutral-900 leading-tight">
           {item.work_title || sourceData?.subject || 'Work Item'}
         </h2>
-        {!isBatch && (sourceData?.from_name || sourceData?.from) && (
+        {(sourceData?.from_name || sourceData?.from) && (
           <p className="text-[13px] text-neutral-500 mt-1">
             From {sourceData.from_name || sourceData.from}
             {sourceData.from_name && sourceData.from && (
               <span className="text-neutral-400 text-[12px]"> · {sourceData.from}</span>
             )}
-          </p>
-        )}
-        {isBatch && (
-          <p className="text-[13px] text-indigo-600 font-medium mt-1">
-            {batchItems.length} similar items
           </p>
         )}
       </div>
@@ -356,81 +315,34 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
       <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
 
         {/* Confirmation banner for suggested items */}
-        {(isBatch ? batchItems.some(b => needsConfirmation(b)) : needsConfirmation(item)) && (
+        {needsConfirmation(item) && (
           <div className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200">
             <CheckCircleIcon className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
             <div className="flex-1 min-w-0">
-              <p className="text-[13px] font-semibold text-amber-900">
-                {isBatch ? `AI suggested these ${batchItems.length} items` : 'AI suggested this work item'}
-              </p>
-              <p className="text-[12px] text-amber-700 mt-0.5">
-                {isBatch ? 'Use ✓ / ✗ on each item, or use the bulk actions below.' : 'Confirm if relevant to you, or dismiss.'}
-              </p>
-              {!isBatch && (
-                <div className="flex gap-2 mt-3">
-                  <button
-                    onClick={() => handleConfirmation(true)}
-                    disabled={isConfirming}
-                    className="px-4 py-1.5 text-[12px] font-semibold bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-50 transition-colors"
-                  >
-                    {isConfirming ? 'Saving...' : "Yes, it's mine"}
-                  </button>
-                  <button
-                    onClick={() => handleConfirmation(false)}
-                    disabled={isConfirming}
-                    className="px-4 py-1.5 text-[12px] font-semibold bg-white text-amber-800 border border-amber-300 hover:bg-amber-50 disabled:opacity-50 transition-colors"
-                  >
-                    Not mine
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Batch: list of items */}
-        {isBatch && (
-          <div>
-            <h3 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-3">
-              All Items ({batchItems.length})
-            </h3>
-            <div className="space-y-2">
-              {batchItems.map((bItem) => (
-                <div key={bItem.id} className="bg-neutral-50 border border-neutral-200 p-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="text-[13px] font-semibold text-neutral-900 mb-0.5">
-                        {bItem.source_data?.subject || 'No subject'}
-                      </p>
-                      <p className="text-[12px] text-neutral-500">
-                        {bItem.source_data?.from_name || bItem.source_data?.from || 'Unknown'}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-1 flex-shrink-0">
-                      <button
-                        onClick={() => handleSingleItemConfirmation(bItem.id, true)}
-                        title="Mine"
-                        className="w-7 h-7 flex items-center justify-center bg-green-50 border border-green-200 text-green-700 hover:bg-green-100 transition-colors"
-                      >
-                        <CheckIcon className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        onClick={() => handleSingleItemConfirmation(bItem.id, false)}
-                        title="Not mine"
-                        className="w-7 h-7 flex items-center justify-center bg-white border border-neutral-200 text-neutral-500 hover:bg-red-50 hover:border-red-200 hover:text-red-600 transition-colors"
-                      >
-                        <XMarkIcon className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ))}
+              <p className="text-[13px] font-semibold text-amber-900">AI suggested this work item</p>
+              <p className="text-[12px] text-amber-700 mt-0.5">Confirm if relevant to you, or dismiss.</p>
+              <div className="flex gap-2 mt-3">
+                <button
+                  onClick={() => handleConfirmation(true)}
+                  disabled={isConfirming}
+                  className="px-4 py-1.5 text-[12px] font-semibold bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-50 transition-colors"
+                >
+                  {isConfirming ? 'Saving...' : "Yes, it's mine"}
+                </button>
+                <button
+                  onClick={() => handleConfirmation(false)}
+                  disabled={isConfirming}
+                  className="px-4 py-1.5 text-[12px] font-semibold bg-white text-amber-800 border border-amber-300 hover:bg-amber-50 disabled:opacity-50 transition-colors"
+                >
+                  Not mine
+                </button>
+              </div>
             </div>
           </div>
         )}
 
         {/* Executable work */}
-        {!isBatch && executable && item.execution_plan && (
+        {executable && item.execution_plan && (
           <div className="space-y-5">
             {(sourceData?.from_name || sourceData?.from || item.why_matters) && (
               <div>
@@ -488,7 +400,7 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
         )}
 
         {/* What was prepared (non-executable) */}
-        {!isBatch && !executable && item.what_i_prepared && (
+        {!executable && item.what_i_prepared && (
           <div>
             <h3 className="text-[11px] font-semibold text-neutral-600 uppercase tracking-wide mb-2">
               What Was Prepared
@@ -500,7 +412,7 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
         )}
 
         {/* Meeting details */}
-        {!isBatch && hasMeetingData() && (
+        {hasMeetingData() && (
           <div>
             <h3 className="text-[11px] font-semibold text-neutral-600 uppercase tracking-wide mb-3">
               Meeting Details
@@ -543,7 +455,7 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
         )}
 
         {/* Key points */}
-        {!isBatch && sourceData?.keyPoints && sourceData.keyPoints.length > 0 && (
+        {sourceData?.keyPoints && sourceData.keyPoints.length > 0 && (
           <div>
             <h3 className="text-[11px] font-semibold text-neutral-600 uppercase tracking-wide mb-2">
               Key Points
@@ -560,7 +472,7 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
         )}
 
         {/* Draft reply */}
-        {!isBatch && sourceData?.draft && (
+        {sourceData?.draft && (
           <div>
             <h3 className="text-[11px] font-semibold text-neutral-600 uppercase tracking-wide mb-2">
               Prepared Reply
@@ -575,7 +487,7 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
         )}
 
         {/* Also on thread */}
-        {!isBatch && recipientContext?.otherRecipients && recipientContext.otherRecipients.length > 0 && (
+        {recipientContext?.otherRecipients && recipientContext.otherRecipients.length > 0 && (
           <div>
             <h3 className="text-[11px] font-semibold text-neutral-600 uppercase tracking-wide mb-2">
               Also on Thread
@@ -597,7 +509,7 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
         )}
 
         {/* Attachments */}
-        {!isBatch && sourceData?.attachments && sourceData.attachments.length > 0 && (
+        {sourceData?.attachments && sourceData.attachments.length > 0 && (
           <div>
             <h3 className="text-[11px] font-semibold text-neutral-600 uppercase tracking-wide mb-2">
               Attachments ({sourceData.attachments.length})
@@ -636,7 +548,7 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
         )}
 
         {/* Thread history — expandable cards */}
-        {!isBatch && sourceData?.thread_history && sourceData.thread_history.length > 0 && (
+        {sourceData?.thread_history && sourceData.thread_history.length > 0 && (
           <div>
             {sourceData.thread_history.length > 1 && (
               <h3 className="text-[11px] font-semibold text-neutral-600 uppercase tracking-wide mb-2">
@@ -705,26 +617,7 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
       {/* Actions footer */}
       <div className="flex-shrink-0 border-t border-neutral-200 bg-neutral-50 px-6 py-4">
         <div className="flex items-center gap-3">
-          {isBatch ? (
-            <>
-              <button
-                onClick={handleBatchComplete}
-                disabled={isBatchCompleting || isBatchDismissing}
-                className="flex-1 inline-flex items-center justify-center px-4 py-2.5 text-[13px] font-semibold bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm"
-              >
-                <CheckIcon className="w-4 h-4 mr-2" />
-                {isBatchCompleting ? 'Completing...' : 'Mark All Complete'}
-              </button>
-              <button
-                onClick={handleBatchDismiss}
-                disabled={isBatchCompleting || isBatchDismissing}
-                className="px-4 py-2.5 text-[13px] font-semibold text-neutral-700 hover:bg-neutral-200 disabled:opacity-50 transition-colors border border-neutral-300"
-              >
-                {isBatchDismissing ? 'Dismissing...' : 'Dismiss All'}
-              </button>
-            </>
-          ) : (
-            <>
+          <>
               {executable && (
                 <>
                   {sourceData?.draft && (
@@ -937,8 +830,42 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
               >
                 {isDismissing ? 'Dismissing...' : 'Dismiss'}
               </button>
-            </>
-          )}
+              {item.source === 'email' && sourceData?.provider && (
+                isArchiving ? (
+                  <div className="px-4 py-2.5 flex items-center gap-2 border border-indigo-200 bg-indigo-50 text-indigo-600">
+                    <div className="w-3.5 h-3.5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+                    <span className="text-[13px] font-semibold">Archiving…</span>
+                  </div>
+                ) : archiveConfirmPending ? (
+                  <div className="flex items-center gap-1.5 px-3 py-2 border border-indigo-300 bg-indigo-50">
+                    <ArchiveBoxArrowDownIcon className="w-3.5 h-3.5 text-indigo-500 flex-shrink-0" />
+                    <span className="text-[12px] font-semibold text-indigo-800">Archive?</span>
+                    <button
+                      onClick={() => { setArchiveConfirmPending(false); handleArchiveSource(); }}
+                      className="ml-1 w-6 h-6 flex items-center justify-center bg-indigo-600 text-white hover:bg-indigo-700 transition-colors flex-shrink-0"
+                      title="Confirm"
+                    >
+                      <CheckIcon className="w-3.5 h-3.5" strokeWidth={2.5} />
+                    </button>
+                    <button
+                      onClick={() => setArchiveConfirmPending(false)}
+                      className="w-6 h-6 flex items-center justify-center border border-neutral-300 text-neutral-500 hover:bg-neutral-100 transition-colors flex-shrink-0"
+                      title="Cancel"
+                    >
+                      <XMarkIcon className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setArchiveConfirmPending(true)}
+                    className="px-4 py-2.5 text-[13px] font-semibold text-neutral-600 hover:bg-neutral-100 transition-colors border border-neutral-300 flex items-center gap-2"
+                  >
+                    <ArchiveBoxArrowDownIcon className="w-4 h-4" />
+                    Archive
+                  </button>
+                )
+              )}
+          </>
         </div>
       </div>
 

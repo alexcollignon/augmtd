@@ -105,7 +105,7 @@ export async function fetchUnreadEmails(
   const dateString = dateFilter.toISOString();
 
   const messages = await client
-    .api('/me/messages')
+    .api('/me/mailFolders/inbox/messages')
     .filter(`receivedDateTime ge ${dateString}`)
     .top(maxResults)
     .select('id,conversationId,subject,bodyPreview,body,from,toRecipients,ccRecipients,receivedDateTime,internetMessageId,hasAttachments')
@@ -263,6 +263,16 @@ function plainTextToHtml(text: string): string {
   return paragraphs
     .map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`)
     .join('');
+}
+
+export async function archiveOutlookMessage(
+  encryptedTokens: string,
+  outlookMessageId: string,
+): Promise<void> {
+  const client = await getGraphClient(encryptedTokens);
+  await client
+    .api(`/me/messages/${outlookMessageId}/move`)
+    .post({ destinationId: 'archive' });
 }
 
 export async function sendOutlookReply(params: SendOutlookReplyParams): Promise<string> {

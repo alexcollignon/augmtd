@@ -300,6 +300,19 @@ function randomId(): string {
   return Math.random().toString(36).slice(2, 12);
 }
 
+export async function archiveGmailThread(
+  encryptedTokens: string,
+  threadId: string,
+  onTokenRefresh?: GmailTokenRefreshCallback,
+): Promise<void> {
+  const gmail = await getGmailClient(encryptedTokens, onTokenRefresh);
+  await gmail.users.threads.modify({
+    userId: 'me',
+    id: threadId,
+    requestBody: { removeLabelIds: ['INBOX'] },
+  });
+}
+
 export async function sendGmailReply(params: SendGmailReplyParams): Promise<string> {
   const { encryptedTokens, threadId, to, subject, body, inReplyTo, references } = params;
 
