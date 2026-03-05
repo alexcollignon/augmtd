@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { toast } from 'sonner';
 import {
   UserIcon,
@@ -18,9 +18,10 @@ import {
   VideoCameraIcon,
   MapPinIcon,
   PaperClipIcon,
-  ChevronDownIcon,
   ArchiveBoxArrowDownIcon,
   XMarkIcon,
+  SparklesIcon,
+  BookmarkIcon,
 } from '@heroicons/react/24/outline';
 import type { InboxItem } from '@/lib/types/inbox';
 import { isExecutable, needsConfirmation } from '@/lib/types/inbox';
@@ -44,10 +45,9 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
   const [isConfirming, setIsConfirming] = useState(false);
   const [isArchiving, setIsArchiving] = useState(false);
   const [archiveConfirmPending, setArchiveConfirmPending] = useState(false);
-  const [savedWorkflows, setSavedWorkflows] = useState<SavedWorkflow[]>([]);
-  const [workflowsLoaded, setWorkflowsLoaded] = useState(false);
-  const [showWorkflowDropdown, setShowWorkflowDropdown] = useState(false);
-  const workflowDropdownRef = useRef<HTMLDivElement>(null);
+  const [suggestedWorkflows, setSuggestedWorkflows] = useState<Array<Pick<SavedWorkflow, 'id' | 'name' | 'deliverable_types'> & { score: number }>>([]);
+  const [aiSuggestion, setAiSuggestion] = useState<string | null>(null);
+  const [isSuggesting, setIsSuggesting] = useState(false);
 
   if (!item) {
     return (
@@ -66,32 +66,24 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
   const recipientContext = item.recipient_context;
   const executable = isExecutable(item);
 
-  // Fetch saved workflows so all items can offer "Run a workflow" (overrides misclassification)
+  // Fetch ranked workflow suggestions + AI suggestion for this item
   useEffect(() => {
-    if (!item) return;
-    fetch('/api/work/saved-workflows')
+    if (!item?.id) return;
+    setIsSuggesting(true);
+    setAiSuggestion(null);
+    setSuggestedWorkflows([]);
+    fetch(`/api/inbox/${item.id}/suggest-workflows`, { method: 'POST' })
       .then(r => r.json())
-      .then(({ savedWorkflows: wf }) => {
-        setSavedWorkflows(wf ?? []);
-        setWorkflowsLoaded(true);
+      .then(({ rankedWorkflows, aiSuggestion: suggestion }) => {
+        setSuggestedWorkflows(rankedWorkflows ?? []);
+        setAiSuggestion(suggestion ?? null);
       })
-      .catch(() => setWorkflowsLoaded(true));
+      .catch(() => {})
+      .finally(() => setIsSuggesting(false));
   }, [item?.id]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Close dropdown when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (workflowDropdownRef.current && !workflowDropdownRef.current.contains(e.target as Node)) {
-        setShowWorkflowDropdown(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
 
   const handleRunWithWorkflow = async (workflowId: string) => {
     setIsOpeningWorkflow(true);
-    setShowWorkflowDropdown(false);
     try {
       const res = await fetch(`/api/work/saved-workflows/${workflowId}/run`, {
         method: 'POST',
@@ -612,215 +604,133 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
             </div>
           </div>
         )}
+
+        {/* Run a workflow — inline suggestion panel */}
+        <div>
+          <h3 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-3">
+            Run a workflow
+          </h3>
+
+          {isSuggesting ? (
+            <div className="space-y-2">
+              {[1, 2, 3].map(i => (
+                <div key={i} className="h-10 bg-neutral-100 animate-pulse" />
+              ))}
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {/* AI suggestion — only when API returned one */}
+              {aiSuggestion && (
+                <div className="p-3 bg-indigo-50 border border-indigo-200">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-start gap-2 flex-1 min-w-0">
+                      <SparklesIcon className="w-4 h-4 text-indigo-500 flex-shrink-0 mt-0.5" />
+                      <p className="text-[13px] text-indigo-900 leading-snug">{aiSuggestion}</p>
+                    </div>
+                    <button
+                      onClick={handleOpenInWorkflows}
+                      disabled={isOpeningWorkflow}
+                      className="flex-shrink-0 text-[12px] font-semibold text-indigo-600 hover:text-indigo-800 disabled:opacity-50 flex items-center gap-0.5 transition-colors"
+                    >
+                      Use this
+                      <ChevronRightIcon className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Ranked saved workflows */}
+              {suggestedWorkflows.map(wf => (
+                <button
+                  key={wf.id}
+                  onClick={() => handleRunWithWorkflow(wf.id)}
+                  disabled={isOpeningWorkflow}
+                  className="w-full flex items-center justify-between px-3 py-2.5 bg-white border border-neutral-200 hover:border-indigo-300 hover:bg-indigo-50/50 transition-colors group disabled:opacity-50 text-left"
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <BookmarkIcon className="w-3.5 h-3.5 text-neutral-400 flex-shrink-0" />
+                    <span className="text-[13px] font-medium text-neutral-900 group-hover:text-indigo-700 truncate">{wf.name}</span>
+                    {wf.deliverable_types.length > 0 && (
+                      <span className="text-[11px] text-neutral-400 flex-shrink-0">{wf.deliverable_types.join(' + ')}</span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0 ml-2">
+                    {wf.score >= 0.3 && (
+                      <span className="text-[11px] text-neutral-400">{Math.round(wf.score * 100)}%</span>
+                    )}
+                    <ChevronRightIcon className="w-3.5 h-3.5 text-neutral-300 group-hover:text-indigo-400 transition-colors" />
+                  </div>
+                </button>
+              ))}
+
+              {/* Start fresh — always available */}
+              <button
+                onClick={handleOpenInWorkflows}
+                disabled={isOpeningWorkflow}
+                className="w-full flex items-center justify-between px-3 py-2.5 text-neutral-500 hover:text-neutral-700 hover:bg-neutral-50 border border-dashed border-neutral-300 hover:border-neutral-400 transition-colors disabled:opacity-50"
+              >
+                <span className="text-[13px]">Start fresh</span>
+                <ArrowTopRightOnSquareIcon className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Actions footer */}
       <div className="flex-shrink-0 border-t border-neutral-200 bg-neutral-50 px-6 py-4">
         <div className="flex items-center gap-3">
           <>
-              {executable && (
-                <>
-                  {sourceData?.draft && (
-                    <button
-                      onClick={() => setShowDraftPreview(true)}
-                      className="flex-1 inline-flex items-center justify-center px-4 py-2.5 text-[13px] font-semibold bg-white text-indigo-700 border border-indigo-300 hover:bg-indigo-50 transition-all"
-                    >
-                      <PaperAirplaneIcon className="w-4 h-4 mr-2" />
-                      Review & Send
-                    </button>
-                  )}
-                  {item.execution_status === 'preparing' ? (
-                    <div className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 text-[13px] font-semibold bg-indigo-50 text-indigo-500 border border-indigo-200 cursor-default">
-                      <div className="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
-                      Preparing work…
-                    </div>
-                  ) : item.execution_status === 'ready' ? (
-                    <>
-                      <button
-                        onClick={handleOpenInWorkflows}
-                        disabled={isOpeningWorkflow}
-                        className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 text-[13px] font-semibold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm"
-                      >
-                        {isOpeningWorkflow ? (
-                          <>
-                            <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                            Opening…
-                          </>
-                        ) : (
-                          <>
-                            <ArrowTopRightOnSquareIcon className="w-4 h-4" />
-                            See prepared work
-                          </>
-                        )}
-                      </button>
-                      {workflowsLoaded && savedWorkflows.length > 0 && (
-                        <div className="relative flex-shrink-0" ref={workflowDropdownRef}>
-                          <button
-                            onClick={() => setShowWorkflowDropdown(v => !v)}
-                            disabled={isOpeningWorkflow}
-                            className="px-3 py-2.5 text-[13px] font-semibold text-neutral-700 hover:bg-neutral-200 disabled:opacity-50 transition-colors border border-neutral-300 flex items-center gap-1.5"
-                            title="Run a saved workflow"
-                          >
-                            Run workflow
-                            <ChevronDownIcon className="w-3.5 h-3.5" />
-                          </button>
-                          {showWorkflowDropdown && (
-                            <div className="absolute bottom-full right-0 mb-1 w-60 bg-white border border-neutral-200 shadow-lg z-10">
-                              {savedWorkflows.map(wf => (
-                                <button
-                                  key={wf.id}
-                                  onClick={() => handleRunWithWorkflow(wf.id)}
-                                  className="w-full text-left px-3 py-2.5 hover:bg-indigo-50 border-b border-neutral-100 last:border-b-0 group"
-                                >
-                                  <p className="text-[13px] font-medium text-neutral-900 group-hover:text-indigo-700 truncate">{wf.name}</p>
-                                  {wf.deliverable_types.length > 0 && (
-                                    <p className="text-[11px] text-neutral-400 mt-0.5">{wf.deliverable_types.join(' + ')}</p>
-                                  )}
-                                </button>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </>
-                  ) : workflowsLoaded && savedWorkflows.length > 0 ? (
-                    <div className="flex-1 flex gap-2">
-                      <div className="relative flex-1" ref={workflowDropdownRef}>
-                        <button
-                          onClick={() => setShowWorkflowDropdown(v => !v)}
-                          disabled={isOpeningWorkflow}
-                          className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 text-[13px] font-semibold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm"
-                        >
-                          {isOpeningWorkflow ? (
-                            <>
-                              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                              Preparing plan…
-                            </>
-                          ) : (
-                            <>
-                              Run a workflow
-                              <ChevronDownIcon className="w-3.5 h-3.5" />
-                            </>
-                          )}
-                        </button>
-                        {showWorkflowDropdown && (
-                          <div className="absolute bottom-full left-0 mb-1 w-64 bg-white border border-neutral-200 shadow-lg z-10">
-                            {savedWorkflows.map(wf => (
-                              <button
-                                key={wf.id}
-                                onClick={() => handleRunWithWorkflow(wf.id)}
-                                className="w-full text-left px-3 py-2.5 hover:bg-indigo-50 border-b border-neutral-100 last:border-b-0 group"
-                              >
-                                <p className="text-[13px] font-medium text-neutral-900 group-hover:text-indigo-700 truncate">{wf.name}</p>
-                                {wf.deliverable_types.length > 0 && (
-                                  <p className="text-[11px] text-neutral-400 mt-0.5">{wf.deliverable_types.join(' + ')}</p>
-                                )}
-                              </button>
-                            ))}
-                            <button
-                              onClick={() => { setShowWorkflowDropdown(false); handleOpenInWorkflows(); }}
-                              className="w-full text-left px-3 py-2.5 hover:bg-neutral-50 text-[13px] text-neutral-500 flex items-center gap-1.5"
-                            >
-                              <ArrowTopRightOnSquareIcon className="w-3.5 h-3.5" />
-                              Open fresh
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  ) : (
-                    <button
-                      onClick={handleOpenInWorkflows}
-                      disabled={isOpeningWorkflow}
-                      className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 text-[13px] font-semibold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm"
-                    >
-                      {isOpeningWorkflow ? (
-                        <>
-                          <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                          Preparing plan…
-                        </>
-                      ) : (
-                        <>
-                          <ArrowTopRightOnSquareIcon className="w-4 h-4" />
-                          Open in Workflows
-                        </>
-                      )}
-                    </button>
-                  )}
-                </>
+              {/* Preparing state */}
+              {executable && item.execution_status === 'preparing' && (
+                <div className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 text-[13px] font-semibold bg-indigo-50 text-indigo-500 border border-indigo-200 cursor-default">
+                  <div className="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
+                  Preparing work…
+                </div>
               )}
 
-              {!executable && (
-                <>
-                  {sourceData?.draft && (
-                    <button
-                      onClick={() => setShowDraftPreview(true)}
-                      className="flex-1 inline-flex items-center justify-center px-4 py-2.5 text-[13px] font-semibold bg-indigo-600 text-white hover:bg-indigo-700 transition-all shadow-sm"
-                    >
-                      <PaperAirplaneIcon className="w-4 h-4 mr-2" />
-                      Review & Send
-                    </button>
-                  )}
-                  {!sourceData?.draft && (
-                    <button
-                      onClick={handleComplete}
-                      disabled={isCompleting}
-                      className="flex-1 inline-flex items-center justify-center px-4 py-2.5 text-[13px] font-semibold bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm"
-                    >
-                      <CheckIcon className="w-4 h-4 mr-2" />
-                      {isCompleting ? 'Completing...' : 'Mark Complete'}
-                    </button>
-                  )}
-                  {workflowsLoaded && savedWorkflows.length > 0 ? (
-                    <div className="relative flex-shrink-0" ref={workflowDropdownRef}>
-                      <button
-                        onClick={() => setShowWorkflowDropdown(v => !v)}
-                        disabled={isOpeningWorkflow}
-                        className="px-3 py-2.5 text-[13px] font-semibold text-neutral-700 hover:bg-neutral-200 disabled:opacity-50 transition-colors border border-neutral-300 flex items-center gap-1.5"
-                        title="Run a saved workflow"
-                      >
-                        {isOpeningWorkflow ? <div className="w-3.5 h-3.5 border border-neutral-600 border-t-transparent rounded-full animate-spin" /> : 'Run workflow'}
-                        <ChevronDownIcon className="w-3.5 h-3.5" />
-                      </button>
-                      {showWorkflowDropdown && (
-                        <div className="absolute bottom-full right-0 mb-1 w-60 bg-white border border-neutral-200 shadow-lg z-10">
-                          {savedWorkflows.map(wf => (
-                            <button
-                              key={wf.id}
-                              onClick={() => handleRunWithWorkflow(wf.id)}
-                              className="w-full text-left px-3 py-2.5 hover:bg-indigo-50 border-b border-neutral-100 last:border-b-0 group"
-                            >
-                              <p className="text-[13px] font-medium text-neutral-900 group-hover:text-indigo-700 truncate">{wf.name}</p>
-                              {wf.deliverable_types.length > 0 && (
-                                <p className="text-[11px] text-neutral-400 mt-0.5">{wf.deliverable_types.join(' + ')}</p>
-                              )}
-                            </button>
-                          ))}
-                          <button
-                            onClick={() => { setShowWorkflowDropdown(false); handleOpenInWorkflows(); }}
-                            className="w-full text-left px-3 py-2.5 hover:bg-neutral-50 text-[13px] text-neutral-500 flex items-center gap-1.5"
-                          >
-                            <ArrowTopRightOnSquareIcon className="w-3.5 h-3.5" />
-                            Open fresh
-                          </button>
-                        </div>
-                      )}
-                    </div>
+              {/* Ready state — direct to prepared document */}
+              {executable && item.execution_status === 'ready' && (
+                <button
+                  onClick={handleOpenInWorkflows}
+                  disabled={isOpeningWorkflow}
+                  className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 text-[13px] font-semibold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm"
+                >
+                  {isOpeningWorkflow ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      Opening…
+                    </>
                   ) : (
-                    <button
-                      onClick={handleOpenInWorkflows}
-                      disabled={isOpeningWorkflow}
-                      className="px-3 py-2.5 text-[13px] font-semibold text-neutral-700 hover:bg-neutral-200 disabled:opacity-50 transition-colors border border-neutral-300 flex items-center gap-1.5"
-                    >
-                      {isOpeningWorkflow ? (
-                        <div className="w-3.5 h-3.5 border border-neutral-600 border-t-transparent rounded-full animate-spin" />
-                      ) : (
-                        <ArrowTopRightOnSquareIcon className="w-3.5 h-3.5" />
-                      )}
-                      Workflows
-                    </button>
+                    <>
+                      <ArrowTopRightOnSquareIcon className="w-4 h-4" />
+                      See prepared work
+                    </>
                   )}
-                </>
+                </button>
+              )}
+
+              {/* Draft reply — non-executable */}
+              {!executable && sourceData?.draft && (
+                <button
+                  onClick={() => setShowDraftPreview(true)}
+                  className="flex-1 inline-flex items-center justify-center px-4 py-2.5 text-[13px] font-semibold bg-indigo-600 text-white hover:bg-indigo-700 transition-all shadow-sm"
+                >
+                  <PaperAirplaneIcon className="w-4 h-4 mr-2" />
+                  Review & Send
+                </button>
+              )}
+
+              {/* Mark complete — non-executable, no draft */}
+              {!executable && !sourceData?.draft && (
+                <button
+                  onClick={handleComplete}
+                  disabled={isCompleting}
+                  className="flex-1 inline-flex items-center justify-center px-4 py-2.5 text-[13px] font-semibold bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm"
+                >
+                  <CheckIcon className="w-4 h-4 mr-2" />
+                  {isCompleting ? 'Completing...' : 'Mark Complete'}
+                </button>
               )}
 
               <button
