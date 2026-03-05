@@ -25,6 +25,7 @@ import {
 import { WorkBlueprint, SavedWorkflow } from '@/lib/types/work-blueprints';
 import { ExecutionPlan, DocumentArtifact, DocContent, PptxContent, XlsxContent, EmailContent } from '@/lib/types/inbox';
 import OnboardingModal from '@/components/onboarding-modal';
+import SaveWorkflowModal from '@/components/work/save-workflow-modal';
 
 // ─── Markdown renderer ────────────────────────────────────────────────────────
 
@@ -241,12 +242,6 @@ function PlanPanel({
   attachErrorMsg,
   savedWorkflowId,
   onSaveWorkflow,
-  showSaveInput,
-  saveWorkflowName,
-  onSaveWorkflowNameChange,
-  onSaveWorkflowConfirm,
-  onCancelSave,
-  isSavingWorkflow,
   onUpdateWorkflow,
 }: {
   plan: ExecutionPlan | null;
@@ -269,12 +264,6 @@ function PlanPanel({
   attachErrorMsg?: string | null;
   savedWorkflowId?: string;
   onSaveWorkflow?: () => void;
-  showSaveInput?: boolean;
-  saveWorkflowName?: string;
-  onSaveWorkflowNameChange?: (name: string) => void;
-  onSaveWorkflowConfirm?: () => void;
-  onCancelSave?: () => void;
-  isSavingWorkflow?: boolean;
   onUpdateWorkflow?: () => void;
 }) {
   const isGenerating = workMode === 'generating';
@@ -768,34 +757,6 @@ function PlanPanel({
               <BookmarkIcon className="w-3 h-3" />
               Update saved workflow
             </button>
-          ) : showSaveInput ? (
-            <div className="flex items-center gap-1">
-              <input
-                type="text"
-                value={saveWorkflowName}
-                onChange={(e) => onSaveWorkflowNameChange?.(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && saveWorkflowName?.trim()) onSaveWorkflowConfirm?.();
-                  if (e.key === 'Escape') onCancelSave?.();
-                }}
-                placeholder="Name this workflow…"
-                autoFocus
-                className="flex-1 text-[12px] border border-neutral-300 focus:border-indigo-400 focus:outline-none px-2 py-1.5 bg-white"
-              />
-              <button
-                onClick={onSaveWorkflowConfirm}
-                disabled={!saveWorkflowName?.trim() || isSavingWorkflow}
-                className="text-[12px] text-white bg-indigo-600 hover:bg-indigo-700 px-3 py-1.5 disabled:opacity-40 transition-colors"
-              >
-                {isSavingWorkflow ? '…' : 'Save'}
-              </button>
-              <button
-                onClick={onCancelSave}
-                className="text-neutral-400 hover:text-neutral-600 p-1"
-              >
-                <XMarkIcon className="w-3.5 h-3.5" />
-              </button>
-            </div>
           ) : (
             <button
               onClick={onSaveWorkflow}
@@ -1324,9 +1285,7 @@ export function WorkPageClient({
   // Saved workflows state
   const [savedWorkflows, setSavedWorkflows] = useState<SavedWorkflow[]>(initialSavedWorkflows);
   const [workflowsExpanded, setWorkflowsExpanded] = useState(true);
-  const [showSaveInput, setShowSaveInput] = useState(false);
-  const [saveWorkflowName, setSaveWorkflowName] = useState('');
-  const [isSavingWorkflow, setIsSavingWorkflow] = useState(false);
+  const [showSaveModal, setShowSaveModal] = useState(false);
   const [confirmDeleteWorkflowId, setConfirmDeleteWorkflowId] = useState<string | null>(null);
   const [editingWorkflowId, setEditingWorkflowId] = useState<string | null>(null);
   const [editingWorkflowName, setEditingWorkflowName] = useState('');
@@ -1493,7 +1452,7 @@ export function WorkPageClient({
       const res = await fetch(`/api/work/threads/${threadId}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: content.trim() }),
+        body: JSON.stringify({ content: content.trim(), mode: 'planning' }),
       });
 
       if (!res.ok || !res.body) throw new Error('Stream failed');
@@ -1969,39 +1928,25 @@ export function WorkPageClient({
     }
   }, [isCreatingThread]);
 
-  const saveWorkflow = useCallback(async (name: string) => {
-    if (!activeThread || !name.trim()) return;
-    // Use the plan's deliverable_description — it's the AI's synthesis of all chat refinements.
-    // Falls back to the first user message if no plan exists yet.
-    const prompt = activeThread.plan?.deliverable_description
-      ?? messages.find((m) => m.role === 'user')?.content
-      ?? '';
-    if (!prompt) return;
+  const saveWorkflow = useCallback(async (name: string, prompt: string) => {
+    if (!activeThread || !name.trim() || !prompt) return;
     const deliverableTypes = activeThread.plan?.deliverable_types as string[] | undefined
       ?? (activeThread.plan?.deliverable_type ? [activeThread.plan.deliverable_type] : []);
-    setIsSavingWorkflow(true);
-    try {
-      const res = await fetch('/api/work/saved-workflows', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: name.trim(),
-          prompt,
-          deliverable_types: deliverableTypes,
-          created_from_thread_id: activeThread.id,
-        }),
-      });
-      if (!res.ok) throw new Error('Failed to save workflow');
-      const { savedWorkflow } = await res.json();
-      setSavedWorkflows((prev) => [savedWorkflow, ...prev]);
-      setShowSaveInput(false);
-      setSaveWorkflowName('');
-    } catch (err) {
-      console.error('Failed to save workflow:', err);
-    } finally {
-      setIsSavingWorkflow(false);
-    }
-  }, [activeThread, messages]);
+    const res = await fetch('/api/work/saved-workflows', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: name.trim(),
+        prompt,
+        deliverable_types: deliverableTypes,
+        created_from_thread_id: activeThread.id,
+      }),
+    });
+    if (!res.ok) throw new Error('Failed to save workflow');
+    const { savedWorkflow } = await res.json();
+    setSavedWorkflows((prev) => [savedWorkflow, ...prev]);
+    setShowSaveModal(false);
+  }, [activeThread]);
 
   const updateWorkflowTemplate = useCallback(async () => {
     if (!activeThread?.saved_workflow_id) return;
@@ -2545,13 +2490,7 @@ export function WorkPageClient({
               attachErrorInputId={attachErrorInputId}
               attachErrorMsg={attachErrorMsg}
               savedWorkflowId={activeThread?.saved_workflow_id}
-              onSaveWorkflow={() => setShowSaveInput(true)}
-              showSaveInput={showSaveInput}
-              saveWorkflowName={saveWorkflowName}
-              onSaveWorkflowNameChange={setSaveWorkflowName}
-              onSaveWorkflowConfirm={() => saveWorkflow(saveWorkflowName)}
-              onCancelSave={() => { setShowSaveInput(false); setSaveWorkflowName(''); }}
-              isSavingWorkflow={isSavingWorkflow}
+              onSaveWorkflow={() => setShowSaveModal(true)}
               onUpdateWorkflow={updateWorkflowTemplate}
             />
           )}
@@ -2798,6 +2737,18 @@ export function WorkPageClient({
         onClose={() => setIsOnboardingOpen(false)}
         userEmail={userEmail}
         userFullName={userFullName}
+      />
+
+      <SaveWorkflowModal
+        isOpen={showSaveModal}
+        prompt={
+          activeThread?.plan?.deliverable_description
+          ?? messages.find((m) => m.role === 'user')?.content
+          ?? ''
+        }
+        defaultName=""
+        onSave={saveWorkflow}
+        onClose={() => setShowSaveModal(false)}
       />
     </div>
   );

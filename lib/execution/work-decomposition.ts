@@ -132,6 +132,17 @@ export async function decomposeWork(
 `;
     }
 
+    // KB context: surface relevant past work so AI writes better workflow_prompts
+    try {
+      const { searchKnowledge } = await import('@/lib/knowledge/indexer');
+      const kbQuery = [input.subject, input.content.slice(0, 500)].filter(Boolean).join(' ');
+      const kbResults = await searchKnowledge(userId, kbQuery, 3, supabase);
+      const relevant = kbResults.filter((r) => (r.similarity ?? 0) >= 0.35).slice(0, 2);
+      if (relevant.length > 0) {
+        contextPrompt += `Relevant past work in user's knowledge base:\n${relevant.map((r) => `- ${r.filename}`).join('\n')}\n\n`;
+      }
+    } catch { /* non-fatal */ }
+
     // 3. Build the decomposition prompt
     const prompt = `${contextPrompt}Work Request:
 ${input.subject ? `Subject: ${input.subject}\n` : ''}${input.from ? `From: ${input.from}\n` : ''}

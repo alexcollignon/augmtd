@@ -40,6 +40,7 @@ export async function POST(
 
     const body = await request.json();
     const { content } = body;
+    const mode = (body.mode as string) ?? 'planning';
 
     if (!content || typeof content !== 'string') {
       return NextResponse.json({ error: 'Content is required' }, { status: 400 });
@@ -111,10 +112,15 @@ export async function POST(
       ? `\n\nATTACHED FILES (reference material the user has uploaded — use these when answering questions about their content):\n${attachmentContext}`
       : '';
 
+    const currentModeNote =
+      `CURRENT MODE: PLANNING — Your role is to help the user structure and refine their work plan. ` +
+      `This conversation may include messages from other modes (ask, edit) — treat those as context only. ` +
+      `Focus on planning-related requests. Do not attempt to edit a document unless the user explicitly asks.\n\n`;
+
     const openaiMessages: OpenAI.Chat.ChatCompletionMessageParam[] = [
       {
         role: 'system',
-        content: SYSTEM_PROMPT + userContextNote + currentPlanNote + attachmentNote,
+        content: currentModeNote + SYSTEM_PROMPT + userContextNote + currentPlanNote + attachmentNote,
       },
       ...(messages || []).map((m) => ({
         role: m.role as 'user' | 'assistant',
@@ -223,60 +229,12 @@ export async function POST(
                 updated_at: new Date().toISOString(),
               }).eq('id', threadId);
 
-              // KB search — always runs: per-input (targeted) + global (broad context)
-              try {
-                const { searchKnowledge } = await import('@/lib/knowledge/indexer');
-                // Remove any kb-searcher step the model may have included
-                plan.steps = (plan.steps ?? []).filter((s: any) => s.skill !== 'kb-searcher');
-                plan.steps.forEach((s: any, i: number) => { s.number = i + 1; });
-                // Re-add manually accepted KB files from the previous plan (model doesn't know about them)
-                const prevAcceptedKb = (thread.plan?.inputs ?? []).filter((i: any) => i.fromKB && i.status === 'provided');
-                const newInputIds = new Set((plan.inputs ?? []).map((i: any) => i.id));
-                for (const kb of prevAcceptedKb) {
-                  if (!newInputIds.has(kb.id)) plan.inputs = [...(plan.inputs ?? []), kb];
-                }
-
-                // 1. Per-input search — targeted suggestion for each named input slot
-                const nonKbInputs = (plan.inputs ?? []).filter((i: any) => !i.fromKB && i.status !== 'provided');
-                await Promise.all(nonKbInputs.map(async (input: any) => {
-                  const query = `${input.name}: ${input.description}`;
-                  const results = await searchKnowledge(user.id, query, 3, adminClient);
-                  const top = results.find((r) => (r.similarity ?? 0) >= 0.4);
-                  if (top) {
-                    input.kbSuggestion = { fileId: top.id, filename: top.filename };
-                  } else {
-                    delete input.kbSuggestion;
-                  }
-                }));
-
-                // 2. Global search — always runs to surface broad context from KB
-                // Query = user message + deliverable description for maximum relevance
-                const globalQuery = [content.trim(), plan.deliverable_description].filter(Boolean).join(' — ');
-                const globalResults = await searchKnowledge(user.id, globalQuery, 8, adminClient);
-                const alreadySuggestedIds = new Set([
-                  ...(plan.inputs ?? []).filter((i: any) => i.fromKB).map((i: any) => i.kbFileId),
-                  ...(plan.inputs ?? []).filter((i: any) => (i as any).kbSuggestion).map((i: any) => (i as any).kbSuggestion.fileId),
-                ]);
-                const globalRelevant = globalResults
-                  .filter((r) => (r.similarity ?? 0) >= 0.35 && !alreadySuggestedIds.has(r.id))
-                  .slice(0, 3);
-                for (const r of globalRelevant) {
-                  plan.inputs = [...(plan.inputs ?? []), {
-                    id: `kb_global_${r.id}`,
-                    name: r.filename,
-                    type: 'context',
-                    description: 'From your knowledge base',
-                    required: false,
-                    status: 'pending',
-                    fromKB: true,
-                    kbFileId: r.id,
-                  }];
-                }
-
-                await adminClient.from('work_threads').update({ plan }).eq('id', threadId);
-              } catch (err) {
-                console.error('[WorkMessages] KB search failed:', err);
-              }
+              // KB enrichment — dual-pass via shared utility
+              const { enrichPlanWithKB } = await import('@/lib/knowledge/enrich-plan-with-kb');
+              const prevAcceptedKb = (thread.plan?.inputs ?? []).filter((i: any) => i.fromKB && i.status === 'provided');
+              const globalQuery = [content.trim(), plan.deliverable_description].filter(Boolean).join(' — ');
+              await enrichPlanWithKB(user.id, plan, globalQuery, adminClient, prevAcceptedKb);
+              await adminClient.from('work_threads').update({ plan }).eq('id', threadId);
 
               // Update work_patterns context profile from this thread's plan
               await updateWorkPatternsFromThread(

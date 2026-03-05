@@ -162,47 +162,85 @@ export async function POST(
 
     const fullPrompt = `${workflow.prompt}${typesHint}${emailContextBlock}${attachmentMetaBlock}`;
 
-    // The user-facing message seed shows the workflow prompt (without injected context noise)
-    const userMessageContent = inboxItem
+    // Standalone: use a neutral seed so the saved prompt doesn't anchor the AI when the user replies.
+    // Inbox: include the full prompt since email context is the real anchor.
+    const userMessageContent = inboxItemId
       ? `${workflow.prompt}${typesHint}`
-      : fullPrompt;
+      : `Run workflow: ${workflow.name}${typesHint}`;
 
     try {
       const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-      const completion = await openai.chat.completions.create({
-        model: 'gpt-4o-mini',
-        messages: [
-          { role: 'system', content: SYSTEM_PROMPT + userContextNote },
-          { role: 'user', content: fullPrompt },
-        ],
-        temperature: 0.4,
-        max_tokens: 2500,
-      });
 
-      const fullResponse = completion.choices[0]?.message?.content || '';
-      const { conversationalText, planRaw } = parsePlanResponse(fullResponse);
+      let conversationalText: string;
+      let savedPlan = null;
+
+      if (!inboxItemId) {
+        // Standalone run: no context available yet.
+        // Generate only a conversational opener asking for context — no plan JSON.
+        // The plan will be generated after the user's first reply via the messages route.
+        const CONTEXT_PROMPT =
+          `You are a work planning assistant. A user has triggered a saved workflow. ` +
+          `Do NOT generate a plan yet — you do not have enough context for this specific run. ` +
+          `Instead, write 1-2 sentences: briefly confirm what type of work you will produce, ` +
+          `then ask for BOTH: (1) who this is for (recipient, client, audience) AND (2) what specifically it should cover (topic, subject, goal, key points). ` +
+          `Combine both into one natural question — do not list them as bullet points. ` +
+          `Be direct and conversational. No step breakdowns.`;
+
+        const openerCompletion = await openai.chat.completions.create({
+          model: 'gpt-4o-mini',
+          messages: [
+            { role: 'system', content: CONTEXT_PROMPT + userContextNote },
+            { role: 'user', content: workflow.prompt },
+          ],
+          temperature: 0.5,
+          max_tokens: 150,
+        });
+        conversationalText = openerCompletion.choices[0]?.message?.content?.trim() || '';
+      } else {
+        // Inbox run: email provides context — generate a full plan immediately.
+        const completion = await openai.chat.completions.create({
+          model: 'gpt-4o-mini',
+          messages: [
+            { role: 'system', content: SYSTEM_PROMPT + userContextNote },
+            { role: 'user', content: fullPrompt },
+          ],
+          temperature: 0.4,
+          max_tokens: 2500,
+        });
+
+        const fullResponse = completion.choices[0]?.message?.content || '';
+        const parsed = parsePlanResponse(fullResponse);
+        conversationalText = parsed.conversationalText;
+
+        if (parsed.planRaw && parsed.planRaw !== 'null') {
+          try {
+            savedPlan = JSON.parse(parsed.planRaw);
+            await adminClient
+              .from('work_threads')
+              .update({ plan: savedPlan, updated_at: new Date().toISOString() })
+              .eq('id', thread.id);
+            thread.plan = savedPlan;
+            thread.updated_at = new Date().toISOString();
+          } catch {
+            // Plan parse failed — thread exists, user can still interact
+          }
+        }
+
+        // KB enrichment — email provides specific per-run context
+        if (savedPlan) {
+          const { enrichPlanWithKB } = await import('@/lib/knowledge/enrich-plan-with-kb');
+          const kbQuery = [emailContextBlock.slice(0, 800), workflow.prompt].filter(Boolean).join(' — ');
+          await enrichPlanWithKB(user.id, savedPlan, kbQuery, adminClient);
+          await adminClient.from('work_threads').update({ plan: savedPlan }).eq('id', thread.id);
+          thread.plan = savedPlan;
+        }
+      }
 
       // Seed work_messages
       await adminClient.from('work_messages').insert([
         { thread_id: thread.id, role: 'user', content: userMessageContent },
         { thread_id: thread.id, role: 'assistant', content: conversationalText },
       ]);
-
-      // Save the parsed plan
-      let savedPlan = null;
-      if (planRaw && planRaw !== 'null') {
-        try {
-          savedPlan = JSON.parse(planRaw);
-          await adminClient
-            .from('work_threads')
-            .update({ plan: savedPlan, updated_at: new Date().toISOString() })
-            .eq('id', thread.id);
-          thread.plan = savedPlan;
-          thread.updated_at = new Date().toISOString();
-        } catch {
-          // Plan parse failed — thread exists, user can still interact
-        }
-      }
 
       // Increment usage_count and set last_used_at
       await adminClient

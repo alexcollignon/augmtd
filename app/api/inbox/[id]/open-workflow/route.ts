@@ -37,16 +37,9 @@ export async function POST(
       return NextResponse.json({ threadId: item.work_thread_id });
     }
 
-    if (!item.execution_plan?.workflow_prompt) {
-      return NextResponse.json({ error: 'Item has no workflow prompt' }, { status: 400 });
-    }
-
-    const seed = item.execution_plan;
-    const title = item.work_title || seed.deliverable_description || 'Untitled workflow';
-
-    // Inject attachment metadata into the workflow prompt
+    const sd = item.source_data || {};
     const attachments: Array<{ filename: string; mimeType?: string; size?: number }> =
-      item.source_data?.attachments || [];
+      sd.attachments || [];
 
     const attachmentMeta = attachments.map((a) => {
       const typeLabel = a.mimeType?.includes('pdf') ? 'PDF'
@@ -57,9 +50,28 @@ export async function POST(
       return `- ${a.filename} (${typeLabel}${sizeLabel})`;
     }).join('\n');
 
-    const workflowPrompt = attachmentMeta
-      ? `${seed.workflow_prompt}\n\nAvailable attachments (already provided — include each as an input with status "provided" in the plan):\n${attachmentMeta}`
-      : seed.workflow_prompt;
+    const attachmentBlock = attachmentMeta
+      ? `\n\nAvailable attachments (already provided — include each as an input with status "provided" in the plan):\n${attachmentMeta}`
+      : '';
+
+    let basePrompt: string;
+    let title: string;
+
+    if (item.execution_plan?.workflow_prompt) {
+      const seed = item.execution_plan;
+      title = item.work_title || seed.deliverable_description || 'Untitled workflow';
+      basePrompt = seed.workflow_prompt;
+    } else {
+      // No execution plan (e.g. NOTED item, or "Open fresh" from non-executable item)
+      // Build a prompt from the email source data so the user lands on a useful planning thread
+      const subject = sd.subject || '(no subject)';
+      const from = sd.from_name ? `${sd.from_name} <${sd.from}>` : (sd.from || 'Unknown');
+      const bodySnippet = (sd.body || '').slice(0, 800);
+      title = item.work_title || subject || 'Untitled workflow';
+      basePrompt = `I received an email from ${from} with subject "${subject}".\n\n${bodySnippet ? `Email content:\n${bodySnippet}\n\n` : ''}Help me plan what to do with this.`;
+    }
+
+    const workflowPrompt = basePrompt + attachmentBlock;
 
     // Use service role client for writes that bypass RLS
     const adminClient = (await import('@supabase/supabase-js')).createClient(
@@ -153,6 +165,11 @@ export async function POST(
             .from('work_threads')
             .update({ plan, updated_at: new Date().toISOString() })
             .eq('id', thread.id);
+
+          // KB enrichment — workflowPrompt is already email-specific
+          const { enrichPlanWithKB } = await import('@/lib/knowledge/enrich-plan-with-kb');
+          await enrichPlanWithKB(user.id, plan, workflowPrompt, adminClient);
+          await adminClient.from('work_threads').update({ plan }).eq('id', thread.id);
         } catch {
           // Plan parse failed — leave plan as null, user can still interact
         }

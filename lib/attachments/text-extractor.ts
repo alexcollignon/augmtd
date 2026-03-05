@@ -47,6 +47,25 @@ export async function extractTextFromAttachment(
       return sheets.join('\n\n') || null;
     }
 
+    if (mimeType === 'application/vnd.openxmlformats-officedocument.presentationml.presentation') {
+      const JSZip = (await import('jszip')).default;
+      const zip = await JSZip.loadAsync(buffer);
+      const slideFiles = Object.keys(zip.files)
+        .filter((name) => /^ppt\/slides\/slide\d+\.xml$/.test(name))
+        .sort();
+      const slideTexts: string[] = [];
+      for (const slidePath of slideFiles) {
+        const xml = await zip.files[slidePath].async('text');
+        const text = xml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+        if (text) slideTexts.push(text);
+      }
+      return slideTexts.join('\n\n') || null;
+    }
+
+    if (mimeType === 'text/csv') {
+      return buffer.toString('utf-8');
+    }
+
     // Images, unsupported, etc.
     console.log(`[Attachments] Skipped unsupported MIME type: ${mimeType} (${filename})`);
     return null;

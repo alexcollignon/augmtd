@@ -144,7 +144,16 @@ export async function readDriveFile(
     return typeof res.data === 'string' ? res.data : String(res.data);
   }
 
-  // Google Slides and other Google native formats — skip
+  // Google Slides → export as plain text
+  if (mimeType === 'application/vnd.google-apps.presentation') {
+    const res = await drive.files.export(
+      { fileId, mimeType: 'text/plain' },
+      { responseType: 'text' }
+    );
+    return typeof res.data === 'string' ? res.data : String(res.data);
+  }
+
+  // Other Google native formats — skip
   if (mimeType.startsWith('application/vnd.google-apps.')) {
     console.log(`[GoogleDrive] Skipping unsupported Google native type: ${mimeType}`);
     return null;
