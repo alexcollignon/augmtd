@@ -113,12 +113,15 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
   const handleOpenInWorkflows = async (prompt?: string) => {
     setIsOpeningWorkflow(true);
     try {
-      const response = await fetch(`/api/inbox/${item.id}/open-workflow`, { method: 'POST' });
+      const response = await fetch(`/api/inbox/${item.id}/open-workflow`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(prompt ? { prompt } : {}),
+      });
       if (response.ok) {
         const { threadId } = await response.json();
         const view = item.execution_status === 'ready' ? '&view=document' : '';
-        const promptParam = prompt ? `&prompt=${encodeURIComponent(prompt)}` : '';
-        window.location.href = `/work?thread=${threadId}${view}${promptParam}`;
+        window.location.href = `/work?thread=${threadId}${view}`;
       } else {
         toast.error('Failed to open workflow. Please try again.');
       }
@@ -803,17 +806,17 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
               <>
                 {/* AI suggestion */}
                 {aiSuggestion && (
-                  <div className="p-3 bg-indigo-50 border border-indigo-200">
-                    <div className="flex items-start gap-2 mb-2">
-                      <SparklesIcon className="w-3.5 h-3.5 text-indigo-500 flex-shrink-0 mt-0.5" />
+                  <div className="border border-indigo-200 bg-indigo-50 overflow-hidden">
+                    <div className="flex items-start gap-2 px-3 pt-3 pb-2.5">
+                      <SparklesIcon className="w-3.5 h-3.5 text-indigo-400 flex-shrink-0 mt-0.5" />
                       <p className="text-[12.5px] text-indigo-900 leading-snug">{aiSuggestion}</p>
                     </div>
                     <button
                       onClick={() => { setShowWorkflowPanel(false); handleOpenInWorkflows(); }}
                       disabled={isOpeningWorkflow}
-                      className="ml-5 text-[12px] font-semibold text-indigo-600 hover:text-indigo-800 disabled:opacity-50 flex items-center gap-0.5 transition-colors"
+                      className="w-full flex items-center justify-center gap-1.5 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-[12px] font-semibold disabled:opacity-50 transition-colors"
                     >
-                      Use this
+                      Run this
                       <ChevronRightIcon className="w-3.5 h-3.5" />
                     </button>
                   </div>
@@ -845,18 +848,19 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
 
                 {/* Start fresh — custom prompt */}
                 <div className="border border-dashed border-neutral-300 mt-1">
-                  <input
-                    type="text"
+                  <textarea
+                    rows={2}
                     value={freshPrompt}
                     onChange={e => setFreshPrompt(e.target.value)}
                     onKeyDown={e => {
-                      if (e.key === 'Enter' && freshPrompt.trim()) {
+                      if (e.key === 'Enter' && !e.shiftKey && freshPrompt.trim()) {
+                        e.preventDefault();
                         setShowWorkflowPanel(false);
                         handleOpenInWorkflows(freshPrompt.trim());
                       }
                     }}
                     placeholder="What do you want to do with this email?"
-                    className="w-full px-3 py-2.5 text-[12.5px] text-neutral-700 placeholder:text-neutral-400 bg-transparent outline-none"
+                    className="w-full px-3 py-2.5 text-[12.5px] text-neutral-700 placeholder:text-neutral-400 bg-transparent outline-none resize-none leading-snug"
                   />
                   {freshPrompt.trim() && (
                     <div className="px-3 pb-2.5 flex justify-end">

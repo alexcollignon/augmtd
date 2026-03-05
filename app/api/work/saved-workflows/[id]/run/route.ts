@@ -226,6 +226,26 @@ export async function POST(
           }
         }
 
+        // Mark email-content inputs as provided — email body is already in planning context
+        if (savedPlan && Array.isArray(savedPlan.inputs)) {
+          let inputsUpdated = false;
+          for (const input of savedPlan.inputs) {
+            const text = `${input.name || ''} ${input.description || ''}`.toLowerCase();
+            if (
+              input.status !== 'provided' &&
+              text.includes('email') &&
+              (text.includes('content') || text.includes('body') || text.includes('context') || text.includes('information') || text.includes('thread'))
+            ) {
+              input.status = 'provided';
+              inputsUpdated = true;
+            }
+          }
+          if (inputsUpdated) {
+            await adminClient.from('work_threads').update({ plan: savedPlan }).eq('id', thread.id);
+            thread.plan = savedPlan;
+          }
+        }
+
         // KB enrichment — email provides specific per-run context
         if (savedPlan) {
           const { enrichPlanWithKB } = await import('@/lib/knowledge/enrich-plan-with-kb');
