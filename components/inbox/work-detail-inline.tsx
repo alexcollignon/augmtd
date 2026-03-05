@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { toast } from 'sonner';
 import {
   UserIcon,
@@ -22,6 +22,7 @@ import {
   XMarkIcon,
   SparklesIcon,
   BookmarkIcon,
+  PlayIcon,
 } from '@heroicons/react/24/outline';
 import type { InboxItem } from '@/lib/types/inbox';
 import { isExecutable, needsConfirmation } from '@/lib/types/inbox';
@@ -48,6 +49,10 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
   const [suggestedWorkflows, setSuggestedWorkflows] = useState<Array<Pick<SavedWorkflow, 'id' | 'name' | 'deliverable_types'> & { score: number }>>([]);
   const [aiSuggestion, setAiSuggestion] = useState<string | null>(null);
   const [isSuggesting, setIsSuggesting] = useState(false);
+  const [showWorkflowPanel, setShowWorkflowPanel] = useState(false);
+  const [panelTop, setPanelTop] = useState(0);
+  const [freshPrompt, setFreshPrompt] = useState('');
+  const rootRef = useRef<HTMLDivElement>(null);
 
   if (!item) {
     return (
@@ -72,6 +77,8 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
     setIsSuggesting(true);
     setAiSuggestion(null);
     setSuggestedWorkflows([]);
+    setFreshPrompt('');
+    setShowWorkflowPanel(false);
     fetch(`/api/inbox/${item.id}/suggest-workflows`, { method: 'POST' })
       .then(r => r.json())
       .then(({ rankedWorkflows, aiSuggestion: suggestion }) => {
@@ -103,19 +110,20 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
     }
   };
 
-  const handleOpenInWorkflows = async () => {
+  const handleOpenInWorkflows = async (prompt?: string) => {
     setIsOpeningWorkflow(true);
     try {
       const response = await fetch(`/api/inbox/${item.id}/open-workflow`, { method: 'POST' });
       if (response.ok) {
         const { threadId } = await response.json();
         const view = item.execution_status === 'ready' ? '&view=document' : '';
-        window.location.href = `/work?thread=${threadId}${view}`;
+        const promptParam = prompt ? `&prompt=${encodeURIComponent(prompt)}` : '';
+        window.location.href = `/work?thread=${threadId}${view}${promptParam}`;
       } else {
-        alert('Failed to open workflow. Please try again.');
+        toast.error('Failed to open workflow. Please try again.');
       }
     } catch {
-      alert('Failed to open workflow. Please try again.');
+      toast.error('Failed to open workflow. Please try again.');
     } finally {
       setIsOpeningWorkflow(false);
     }
@@ -287,7 +295,7 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
   };
 
   return (
-    <div className="flex flex-col h-full bg-white">
+    <div ref={rootRef} className="flex flex-col h-full bg-white">
       {/* Header */}
       <div className="flex-shrink-0 px-6 py-5 border-b border-neutral-100 bg-gradient-to-r from-indigo-50/50 to-white">
         <h2 className="text-[17px] font-semibold text-neutral-900 leading-tight">
@@ -605,76 +613,6 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
           </div>
         )}
 
-        {/* Run a workflow — inline suggestion panel */}
-        <div>
-          <h3 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-3">
-            Run a workflow
-          </h3>
-
-          {isSuggesting ? (
-            <div className="space-y-2">
-              {[1, 2, 3].map(i => (
-                <div key={i} className="h-10 bg-neutral-100 animate-pulse" />
-              ))}
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {/* AI suggestion — only when API returned one */}
-              {aiSuggestion && (
-                <div className="p-3 bg-indigo-50 border border-indigo-200">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex items-start gap-2 flex-1 min-w-0">
-                      <SparklesIcon className="w-4 h-4 text-indigo-500 flex-shrink-0 mt-0.5" />
-                      <p className="text-[13px] text-indigo-900 leading-snug">{aiSuggestion}</p>
-                    </div>
-                    <button
-                      onClick={handleOpenInWorkflows}
-                      disabled={isOpeningWorkflow}
-                      className="flex-shrink-0 text-[12px] font-semibold text-indigo-600 hover:text-indigo-800 disabled:opacity-50 flex items-center gap-0.5 transition-colors"
-                    >
-                      Use this
-                      <ChevronRightIcon className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* Ranked saved workflows */}
-              {suggestedWorkflows.map(wf => (
-                <button
-                  key={wf.id}
-                  onClick={() => handleRunWithWorkflow(wf.id)}
-                  disabled={isOpeningWorkflow}
-                  className="w-full flex items-center justify-between px-3 py-2.5 bg-white border border-neutral-200 hover:border-indigo-300 hover:bg-indigo-50/50 transition-colors group disabled:opacity-50 text-left"
-                >
-                  <div className="flex items-center gap-2 min-w-0">
-                    <BookmarkIcon className="w-3.5 h-3.5 text-neutral-400 flex-shrink-0" />
-                    <span className="text-[13px] font-medium text-neutral-900 group-hover:text-indigo-700 truncate">{wf.name}</span>
-                    {wf.deliverable_types.length > 0 && (
-                      <span className="text-[11px] text-neutral-400 flex-shrink-0">{wf.deliverable_types.join(' + ')}</span>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2 flex-shrink-0 ml-2">
-                    {wf.score >= 0.3 && (
-                      <span className="text-[11px] text-neutral-400">{Math.round(wf.score * 100)}%</span>
-                    )}
-                    <ChevronRightIcon className="w-3.5 h-3.5 text-neutral-300 group-hover:text-indigo-400 transition-colors" />
-                  </div>
-                </button>
-              ))}
-
-              {/* Start fresh — always available */}
-              <button
-                onClick={handleOpenInWorkflows}
-                disabled={isOpeningWorkflow}
-                className="w-full flex items-center justify-between px-3 py-2.5 text-neutral-500 hover:text-neutral-700 hover:bg-neutral-50 border border-dashed border-neutral-300 hover:border-neutral-400 transition-colors disabled:opacity-50"
-              >
-                <span className="text-[13px]">Start fresh</span>
-                <ArrowTopRightOnSquareIcon className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          )}
-        </div>
       </div>
 
       {/* Actions footer */}
@@ -692,7 +630,7 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
               {/* Ready state — direct to prepared document */}
               {executable && item.execution_status === 'ready' && (
                 <button
-                  onClick={handleOpenInWorkflows}
+                  onClick={() => handleOpenInWorkflows()}
                   disabled={isOpeningWorkflow}
                   className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 text-[13px] font-semibold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm"
                 >
@@ -732,6 +670,24 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
                   {isCompleting ? 'Completing...' : 'Mark Complete'}
                 </button>
               )}
+
+              <button
+                onClick={() => {
+                  if (!isOpeningWorkflow) {
+                    if (rootRef.current) setPanelTop(rootRef.current.getBoundingClientRect().top);
+                    setShowWorkflowPanel(true);
+                  }
+                }}
+                disabled={isOpeningWorkflow}
+                className="px-3 py-2.5 text-[13px] font-semibold text-neutral-700 hover:bg-neutral-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors border border-neutral-300 flex items-center gap-1.5"
+              >
+                {isOpeningWorkflow ? (
+                  <div className="w-3.5 h-3.5 border-2 border-neutral-500 border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <PlayIcon className="w-3.5 h-3.5" />
+                )}
+                Workflows
+              </button>
 
               <button
                 onClick={handleDismiss}
@@ -778,6 +734,147 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
           </>
         </div>
       </div>
+
+      {/* Backdrop — only when panel is open */}
+      {showWorkflowPanel && (
+        <div className="fixed inset-0 z-30" onClick={() => setShowWorkflowPanel(false)} />
+      )}
+
+      {/* Workflow suggestions panel — always in DOM, slides over calendar column */}
+      <div
+        className={`fixed right-0 bottom-0 w-[272px] z-40 bg-white border-l border-neutral-200 shadow-xl flex flex-col transition-[transform,opacity] duration-200 ease-in-out ${
+          showWorkflowPanel ? 'translate-x-0 opacity-100' : 'translate-x-full opacity-0 pointer-events-none'
+        }`}
+        style={{ top: panelTop }}
+      >
+          {/* Header */}
+          <div className="flex-shrink-0 flex items-center justify-between px-4 py-3 border-b border-neutral-200">
+            <div className="flex items-center gap-2">
+              <SparklesIcon className="w-4 h-4 text-indigo-500" />
+              <span className="text-[13px] font-semibold text-neutral-900">Run a workflow</span>
+            </div>
+            <button
+              onClick={() => setShowWorkflowPanel(false)}
+              className="text-neutral-400 hover:text-neutral-700 transition-colors"
+            >
+              <XMarkIcon className="w-4 h-4" />
+            </button>
+          </div>
+
+          {/* Content */}
+          <div className="flex-1 overflow-y-auto px-4 py-4 space-y-2">
+            {/* Active/existing thread for this item */}
+            {item.work_thread_id && (
+              <button
+                onClick={() => { window.location.href = `/work?thread=${item.work_thread_id}`; }}
+                className="w-full flex items-center justify-between px-3 py-2.5 bg-green-50 border border-green-300 hover:bg-green-100 transition-colors group text-left mb-1"
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className="w-2 h-2 rounded-full bg-green-500 flex-shrink-0" />
+                  <span className="text-[13px] font-medium text-green-900 truncate">Continue in Workflows</span>
+                </div>
+                <ChevronRightIcon className="w-3.5 h-3.5 text-green-500 flex-shrink-0 ml-2" />
+              </button>
+            )}
+
+            {isSuggesting ? (
+              <>
+                {/* Loading skeletons */}
+                <div className="p-3 border border-indigo-100 bg-indigo-50/50 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <div className="w-3.5 h-3.5 rounded bg-indigo-200 animate-pulse flex-shrink-0" />
+                    <div className="h-3 bg-indigo-200 animate-pulse rounded flex-1" />
+                  </div>
+                  <div className="h-3 bg-indigo-100 animate-pulse rounded w-3/4 ml-5" />
+                </div>
+                {[1, 2].map(i => (
+                  <div key={i} className="flex items-center gap-2 px-3 py-2.5 border border-neutral-200 bg-white">
+                    <div className="w-3.5 h-3.5 rounded bg-neutral-200 animate-pulse flex-shrink-0" />
+                    <div className="h-3 bg-neutral-200 animate-pulse rounded flex-1" />
+                    <div className="h-3 bg-neutral-100 animate-pulse rounded w-8 flex-shrink-0" />
+                  </div>
+                ))}
+                <div className="flex items-center justify-between px-3 py-2.5 border border-dashed border-neutral-200">
+                  <div className="h-3 bg-neutral-100 animate-pulse rounded w-16" />
+                  <div className="w-3.5 h-3.5 rounded bg-neutral-100 animate-pulse flex-shrink-0" />
+                </div>
+              </>
+            ) : (
+              <>
+                {/* AI suggestion */}
+                {aiSuggestion && (
+                  <div className="p-3 bg-indigo-50 border border-indigo-200">
+                    <div className="flex items-start gap-2 mb-2">
+                      <SparklesIcon className="w-3.5 h-3.5 text-indigo-500 flex-shrink-0 mt-0.5" />
+                      <p className="text-[12.5px] text-indigo-900 leading-snug">{aiSuggestion}</p>
+                    </div>
+                    <button
+                      onClick={() => { setShowWorkflowPanel(false); handleOpenInWorkflows(); }}
+                      disabled={isOpeningWorkflow}
+                      className="ml-5 text-[12px] font-semibold text-indigo-600 hover:text-indigo-800 disabled:opacity-50 flex items-center gap-0.5 transition-colors"
+                    >
+                      Use this
+                      <ChevronRightIcon className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
+
+                {/* Ranked saved workflows */}
+                {suggestedWorkflows.map(wf => (
+                  <button
+                    key={wf.id}
+                    onClick={() => { setShowWorkflowPanel(false); handleRunWithWorkflow(wf.id); }}
+                    disabled={isOpeningWorkflow}
+                    className="w-full flex items-center justify-between px-3 py-2.5 bg-white border border-neutral-200 hover:border-indigo-300 hover:bg-indigo-50/50 transition-colors group disabled:opacity-50 text-left"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <BookmarkIcon className="w-3.5 h-3.5 text-neutral-400 flex-shrink-0" />
+                      <span className="text-[13px] font-medium text-neutral-900 group-hover:text-indigo-700 truncate">{wf.name}</span>
+                    </div>
+                    <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
+                      {wf.deliverable_types.length > 0 && (
+                        <span className="text-[11px] text-neutral-400">{wf.deliverable_types.join('+')}</span>
+                      )}
+                      {wf.score >= 0.3 && (
+                        <span className="text-[11px] text-neutral-400">{Math.round(wf.score * 100)}%</span>
+                      )}
+                      <ChevronRightIcon className="w-3.5 h-3.5 text-neutral-300 group-hover:text-indigo-400 transition-colors" />
+                    </div>
+                  </button>
+                ))}
+
+                {/* Start fresh — custom prompt */}
+                <div className="border border-dashed border-neutral-300 mt-1">
+                  <input
+                    type="text"
+                    value={freshPrompt}
+                    onChange={e => setFreshPrompt(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' && freshPrompt.trim()) {
+                        setShowWorkflowPanel(false);
+                        handleOpenInWorkflows(freshPrompt.trim());
+                      }
+                    }}
+                    placeholder="What do you want to do with this email?"
+                    className="w-full px-3 py-2.5 text-[12.5px] text-neutral-700 placeholder:text-neutral-400 bg-transparent outline-none"
+                  />
+                  {freshPrompt.trim() && (
+                    <div className="px-3 pb-2.5 flex justify-end">
+                      <button
+                        onClick={() => { setShowWorkflowPanel(false); handleOpenInWorkflows(freshPrompt.trim()); }}
+                        disabled={isOpeningWorkflow}
+                        className="text-[12px] font-semibold text-indigo-600 hover:text-indigo-800 disabled:opacity-50 flex items-center gap-0.5 transition-colors"
+                      >
+                        Open
+                        <ArrowTopRightOnSquareIcon className="w-3 h-3 ml-0.5" />
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
 
       {sourceData?.draft && (
         <DraftPreviewModal

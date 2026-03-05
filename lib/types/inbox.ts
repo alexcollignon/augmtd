@@ -211,6 +211,9 @@ export interface InboxItem {
   status: string;
   needs_review: boolean;
 
+  // Linked work thread (set when user opens item in Workflows)
+  work_thread_id?: string | null;
+
   // Timestamps
   created_at: string;
   updated_at: string;

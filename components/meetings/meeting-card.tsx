@@ -1,18 +1,9 @@
 'use client';
 
 import { useState } from 'react';
-import {
-  CalendarIcon,
-  VideoCameraIcon,
-  MapPinIcon,
-} from '@heroicons/react/24/outline';
+import { VideoCameraIcon, MapPinIcon } from '@heroicons/react/24/outline';
 import type { CalendarEvent } from '@/lib/types/meetings';
-import {
-  formatMeetingTime,
-  calculateDuration,
-  getVIPAttendees,
-  isUserOrganizer,
-} from '@/lib/types/meetings';
+import { formatMeetingTime, calculateDuration, isUserOrganizer } from '@/lib/types/meetings';
 import MeetingDetailPanel from './meeting-detail-panel';
 
 interface MeetingCardProps {
@@ -23,50 +14,14 @@ interface MeetingCardProps {
 export default function MeetingCard({ event, userEmail }: MeetingCardProps) {
   const [showDetail, setShowDetail] = useState(false);
 
-  const { primary, secondary } = formatMeetingTime(event.start_time, event.end_time);
+  const { primary } = formatMeetingTime(event.start_time, event.end_time);
   const duration = calculateDuration(event.start_time, event.end_time);
-  const vipAttendees = getVIPAttendees(event.attendees);
   const isOrganizer = isUserOrganizer(event, userEmail);
 
-  // Status-based styling
-  const getStatusStyle = () => {
-    switch (event.meeting_status) {
-      case 'in_progress':
-        return {
-          borderColor: 'border-red-200',
-          hoverBorder: 'hover:border-red-300',
-          accentColor: 'bg-red-500',
-          badge: 'Happening now',
-          badgeColor: 'bg-red-100 text-red-700',
-        };
-      case 'starting_soon':
-        return {
-          borderColor: 'border-amber-200',
-          hoverBorder: 'hover:border-amber-300',
-          accentColor: 'bg-amber-500',
-          badge: null,
-          badgeColor: '',
-        };
-      case 'completed':
-        return {
-          borderColor: 'border-neutral-200',
-          hoverBorder: 'hover:border-neutral-300',
-          accentColor: 'bg-neutral-400',
-          badge: 'Completed',
-          badgeColor: 'bg-neutral-100 text-neutral-600',
-        };
-      default:
-        return {
-          borderColor: 'border-blue-100',
-          hoverBorder: 'hover:border-blue-200',
-          accentColor: 'bg-blue-500',
-          badge: null,
-          badgeColor: '',
-        };
-    }
-  };
-
-  const style = getStatusStyle();
+  const accentColor =
+    event.meeting_status === 'in_progress' ? 'bg-red-500' :
+    event.meeting_status === 'starting_soon' ? 'bg-amber-400' :
+    'bg-blue-400';
 
   const handleJoinMeeting = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -75,148 +30,63 @@ export default function MeetingCard({ event, userEmail }: MeetingCardProps) {
     }
   };
 
-  const handleGenerateFollowUp = async (e: React.MouseEvent) => {
-    e.stopPropagation();
-    // TODO: Implement follow-up generation
-    console.log('Generate follow-up for meeting:', event.id);
-  };
+  const attendeesLabel = event.attendees.length === 0
+    ? 'No attendees'
+    : event.attendees.length === 1
+    ? `1:1 · ${event.attendees[0].name || event.attendees[0].email}`
+    : `${event.attendees.length} attendees`;
 
   return (
     <>
       <article
         onClick={() => setShowDetail(true)}
-        className={`
-          group relative bg-white
-          border ${style.borderColor} ${style.hoverBorder}
-          hover:shadow-md
-          transition-all duration-150 cursor-pointer
-          overflow-hidden
-          mb-2
-        `}
+        className="group relative bg-white border border-neutral-100 hover:bg-neutral-50 transition-colors cursor-pointer overflow-hidden mb-2"
       >
         {/* Accent bar */}
-        <div className={`absolute left-0 top-0 bottom-0 w-[3px] ${style.accentColor}`} />
+        <div className={`absolute left-0 top-0 bottom-0 w-[3px] ${accentColor}`} />
 
-        {/* Main content */}
-        <div className="relative pl-4 pr-3 py-2.5">
-          {/* Header with icon and status badge */}
-          <div className="flex items-start justify-between gap-2 mb-1.5">
-            <div className="flex items-center gap-1.5 flex-1 min-w-0">
-              <CalendarIcon className="w-3.5 h-3.5 text-neutral-400 flex-shrink-0" />
-              <h3 className="text-[13px] font-semibold text-neutral-900 leading-tight truncate group-hover:text-blue-700 transition-colors">
-                {event.title}
-              </h3>
-            </div>
-
-            {style.badge && (
-              <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${style.badgeColor} whitespace-nowrap`}>
-                {style.badge}
+        <div className="pl-4 pr-3 py-2.5">
+          {/* Title row */}
+          <div className="flex items-start justify-between gap-2 mb-1">
+            <h3 className="text-[13px] font-semibold text-neutral-900 leading-tight truncate group-hover:text-indigo-700 transition-colors">
+              {event.title}
+            </h3>
+            {event.meeting_status === 'in_progress' && (
+              <span className="text-[10px] font-semibold text-red-600 bg-red-50 px-1.5 py-0.5 flex-shrink-0">
+                Now
               </span>
             )}
           </div>
 
-          {/* Time - Primary (bold) */}
-          <div className="text-[13px] font-medium text-neutral-900 mb-0.5">
-            {primary}
-          </div>
+          {/* Time */}
+          <p className="text-[12px] text-neutral-600 mb-1.5">
+            {primary} · {duration}min
+          </p>
 
-          {/* Time - Secondary (subtle) */}
-          <div className="text-[11px] text-neutral-500 mb-2">
-            {secondary} · {duration}min
-          </div>
-
-          {/* Attendees summary */}
-          <div className="flex items-center gap-1.5 text-[11px] text-neutral-600 mb-2">
-            <span className="truncate">
-              {event.attendees.length === 0 ? (
-                'No attendees'
-              ) : event.attendees.length === 1 ? (
-                `1:1 with ${event.attendees[0].name || event.attendees[0].email}`
-              ) : (
-                <>
-                  {event.attendees.length} attendees
-                  {vipAttendees.length > 0 && (
-                    <span className="text-violet-600 font-medium ml-1">
-                      ({vipAttendees.length} VIP)
-                    </span>
-                  )}
-                </>
+          {/* Meta row — attendees + icons */}
+          <div className="flex items-center justify-between text-[11px] text-neutral-400">
+            <span className="truncate">{attendeesLabel}</span>
+            <div className="flex items-center gap-2 flex-shrink-0 ml-2">
+              {isOrganizer && (
+                <span className="text-[10px] text-indigo-500 font-medium">Organizer</span>
               )}
-            </span>
-
-            {isOrganizer && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 font-medium whitespace-nowrap">
-                Organizer
-              </span>
-            )}
-          </div>
-
-          {/* Location/Link indicators */}
-          {(event.meeting_link || event.location) && (
-            <div className="flex items-center gap-2 text-[10px] text-neutral-500">
-              {event.meeting_link && (
-                <div className="flex items-center gap-1">
-                  <VideoCameraIcon className="w-3 h-3" />
-                  <span>Video call</span>
-                </div>
-              )}
-              {event.location && (
-                <div className="flex items-center gap-1">
-                  <MapPinIcon className="w-3 h-3" />
-                  <span className="truncate max-w-[120px]">{event.location}</span>
-                </div>
-              )}
+              {event.meeting_link && <VideoCameraIcon className="w-3 h-3" />}
+              {event.location && !event.meeting_link && <MapPinIcon className="w-3 h-3" />}
             </div>
-          )}
+          </div>
 
-          {/* Action buttons for different states */}
-          {event.meeting_link && event.meeting_status === 'starting_soon' && (
+          {/* Join button */}
+          {event.meeting_link && (event.meeting_status === 'starting_soon' || event.meeting_status === 'in_progress') && (
             <button
               onClick={handleJoinMeeting}
-              className="
-                mt-2 w-full
-                inline-flex items-center justify-center gap-1.5
-                px-3 py-1.5 rounded-md text-[12px] font-semibold
-                bg-blue-600 text-white
-                hover:bg-blue-700
-                transition-colors
-              "
+              className={`mt-2.5 w-full inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-[12px] font-semibold text-white transition-colors ${
+                event.meeting_status === 'in_progress'
+                  ? 'bg-red-600 hover:bg-red-700'
+                  : 'bg-indigo-600 hover:bg-indigo-700'
+              }`}
             >
               <VideoCameraIcon className="w-3.5 h-3.5" />
-              Join Meeting
-            </button>
-          )}
-
-          {event.meeting_link && event.meeting_status === 'in_progress' && (
-            <button
-              onClick={handleJoinMeeting}
-              className="
-                mt-2 w-full
-                inline-flex items-center justify-center gap-1.5
-                px-3 py-1.5 rounded-md text-[12px] font-semibold
-                bg-red-600 text-white
-                hover:bg-red-700
-                transition-colors
-                animate-pulse
-              "
-            >
-              <VideoCameraIcon className="w-3.5 h-3.5" />
-              Join Now
-            </button>
-          )}
-
-          {event.meeting_status === 'completed' && !event.meeting_metadata.follow_up_generated && (
-            <button
-              onClick={handleGenerateFollowUp}
-              className="
-                mt-2 w-full
-                px-3 py-1.5 rounded-md text-[11px] font-medium
-                text-neutral-700 hover:bg-neutral-100
-                border border-neutral-200
-                transition-colors
-              "
-            >
-              Generate follow-up →
+              {event.meeting_status === 'in_progress' ? 'Join Now' : 'Join Meeting'}
             </button>
           )}
         </div>

@@ -29,29 +29,29 @@ function MeetingSection({
   children: React.ReactNode;
 }) {
   return (
-    <div className="mb-4">
+    <div className="mb-3">
       <button
         onClick={canCollapse ? onToggle : undefined}
         disabled={!canCollapse}
-        className={`w-full flex items-center justify-between mb-2 ${canCollapse ? 'cursor-pointer hover:text-neutral-700' : 'cursor-default'} transition-colors`}
+        className={`w-full h-7 flex items-center justify-between px-1 mb-1 ${canCollapse ? 'cursor-pointer' : 'cursor-default'}`}
       >
-        <h3 className="text-[10px] font-semibold text-neutral-500 uppercase tracking-wide">
-          {title} ({count})
+        <h3 className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wider">
+          {title} <span className="text-neutral-300 font-normal">({count})</span>
         </h3>
         {canCollapse && (
           isCollapsed
-            ? <ChevronDownIcon className="w-3 h-3 text-neutral-400" />
-            : <ChevronUpIcon className="w-3 h-3 text-neutral-400" />
+            ? <ChevronDownIcon className="w-3 h-3 text-neutral-300" />
+            : <ChevronUpIcon className="w-3 h-3 text-neutral-300" />
         )}
       </button>
-      {!isCollapsed && <div className="space-y-0">{children}</div>}
+      {!isCollapsed && <div>{children}</div>}
     </div>
   );
 }
 
 export default function MeetingsColumn({ isOpen, onToggle, meetings, loading, userEmail }: MeetingsColumnProps) {
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(
-    new Set(['tomorrow', 'this_week'])
+    new Set(['completed', 'tomorrow', 'this_week'])
   );
 
   const toggleSection = (section: string) => {
@@ -72,12 +72,12 @@ export default function MeetingsColumn({ isOpen, onToggle, meetings, loading, us
     in_progress: meetings.filter(m => m.meeting_status === 'in_progress'),
     starting_soon: meetings.filter(m => m.meeting_status === 'starting_soon'),
     today: meetings.filter(m => {
-      if (m.meeting_status === 'in_progress' || m.meeting_status === 'starting_soon') return false;
+      if (m.meeting_status !== 'upcoming') return false;
       return new Date(m.start_time).toDateString() === now.toDateString();
     }),
     completed_recent: meetings.filter(m => {
       if (m.meeting_status !== 'completed') return false;
-      return (now.getTime() - new Date(m.end_time).getTime()) / 3600000 <= 24;
+      return new Date(m.end_time).toDateString() === now.toDateString();
     }),
     tomorrow: meetings.filter(m => {
       if (m.meeting_status !== 'upcoming') return false;
@@ -146,7 +146,7 @@ export default function MeetingsColumn({ isOpen, onToggle, meetings, loading, us
                 </MeetingSection>
               )}
               {grouped.completed_recent.length > 0 && (
-                <MeetingSection title="COMPLETED" count={grouped.completed_recent.length} isCollapsed={collapsedSections.has('completed')} onToggle={() => toggleSection('completed')}>
+                <MeetingSection title="COMPLETED TODAY" count={grouped.completed_recent.length} isCollapsed={collapsedSections.has('completed')} onToggle={() => toggleSection('completed')}>
                   {grouped.completed_recent.map(m => <MeetingCard key={m.id} event={m} userEmail={userEmail} />)}
                 </MeetingSection>
               )}

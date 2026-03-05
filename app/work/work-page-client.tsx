@@ -144,6 +144,7 @@ interface WorkPageClientProps {
   initialThreads: WorkThread[];
   initialActiveThreadId?: string | null;
   initialView?: string | null;
+  initialChatInput?: string | null;
   initialSavedWorkflows: SavedWorkflow[];
 }
 
@@ -1264,6 +1265,7 @@ export function WorkPageClient({
   initialThreads,
   initialActiveThreadId,
   initialView,
+  initialChatInput,
   initialSavedWorkflows,
 }: WorkPageClientProps) {
   const [threads, setThreads] = useState<WorkThread[]>(initialThreads);
@@ -1273,7 +1275,7 @@ export function WorkPageClient({
   const [isStreaming, setIsStreaming] = useState(false);
   const [isLoadingThread, setIsLoadingThread] = useState(false);
   const [planJustUpdated, setPlanJustUpdated] = useState(false);
-  const [chatInput, setChatInput] = useState('');
+  const [chatInput, setChatInput] = useState(initialChatInput ?? '');
   const [entryInput, setEntryInput] = useState('');
   const [entryFiles, setEntryFiles] = useState<File[]>([]);
   const [isCreatingThread, setIsCreatingThread] = useState(false);
