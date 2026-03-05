@@ -115,7 +115,7 @@ export async function getDriveFilesForIds(encryptedTokens: string, fileIds: stri
     })
   );
 
-  return results.filter((f): f is DriveItem => f !== null);
+  return results.filter((f) => f !== null) as DriveItem[];
 }
 
 export async function readDriveFile(
