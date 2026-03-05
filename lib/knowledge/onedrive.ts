@@ -109,7 +109,7 @@ export async function getOneDriveFilesForIds(encryptedTokens: string, fileIds: s
     })
   );
 
-  return results.filter((f): f is OneDriveItem => f !== null);
+  return results.filter((f) => f !== null) as OneDriveItem[];
 }
 
 export async function readOneDriveFile(encryptedTokens: string, fileId: string): Promise<Buffer> {
