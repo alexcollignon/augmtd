@@ -83,6 +83,25 @@ export async function POST(
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
 
+    // Inject accepted KB inputs as attachment context
+    const kbInputs = ((plan as any)?.inputs ?? []).filter((i: any) => i.fromKB && i.status === 'provided');
+    if (kbInputs.length > 0) {
+      const { data: kbFiles } = await adminClient
+        .from('knowledge_files')
+        .select('id, filename, extracted_text')
+        .in('id', kbInputs.map((i: any) => i.kbFileId));
+      for (const f of (kbFiles ?? [])) {
+        if (f.extracted_text) {
+          userAttachments.push({
+            filename: f.filename,
+            mimeType: 'text/plain',
+            storagePath: '',
+            extractedText: f.extracted_text,
+          });
+        }
+      }
+    }
+
     // Run all steps — intermediate steps feed into each generator step sequentially
     const newArtifacts = await runFullPipeline({
       userId: user.id,

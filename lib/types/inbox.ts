@@ -39,6 +39,9 @@ export interface WorkflowInput {
   status?: 'provided' | 'pending';
   providedFilename?: string;
   providedFilenames?: string[]; // multiple files on one input (e.g. all email attachments grouped)
+  fromKB?: true;
+  kbFileId?: string; // knowledge_files.id (UUID)
+  kbSuggestion?: { fileId: string; filename: string }; // pending KB suggestion for this input slot
 }
 
 export interface WorkflowOutput {

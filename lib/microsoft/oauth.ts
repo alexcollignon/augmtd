@@ -17,6 +17,7 @@ export const OUTLOOK_SCOPES = [
   'https://graph.microsoft.com/Mail.Send',
   'https://graph.microsoft.com/Calendars.Read',
   'https://graph.microsoft.com/User.Read',
+  'https://graph.microsoft.com/Files.Read.All',
   'offline_access',
 ];
 

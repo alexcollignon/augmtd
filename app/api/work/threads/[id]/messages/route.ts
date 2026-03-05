@@ -182,6 +182,10 @@ export async function POST(
               }
               if (plan.inputs) {
                 plan.inputs = plan.inputs.map((input: any) => {
+                  // AI must never set status: 'provided' — only the server can via actual file upload or KB accept
+                  if (input.status === 'provided' && !(input as any).fromKB) {
+                    input = { ...input, status: 'pending' };
+                  }
                   // Strip invalid single filename
                   if (input.providedFilename && !actualFilenames.has(input.providedFilename)) {
                     const { providedFilename: _removed, ...rest } = input;
@@ -218,6 +222,61 @@ export async function POST(
                 plan,
                 updated_at: new Date().toISOString(),
               }).eq('id', threadId);
+
+              // KB search — always runs: per-input (targeted) + global (broad context)
+              try {
+                const { searchKnowledge } = await import('@/lib/knowledge/indexer');
+                // Remove any kb-searcher step the model may have included
+                plan.steps = (plan.steps ?? []).filter((s: any) => s.skill !== 'kb-searcher');
+                plan.steps.forEach((s: any, i: number) => { s.number = i + 1; });
+                // Re-add manually accepted KB files from the previous plan (model doesn't know about them)
+                const prevAcceptedKb = (thread.plan?.inputs ?? []).filter((i: any) => i.fromKB && i.status === 'provided');
+                const newInputIds = new Set((plan.inputs ?? []).map((i: any) => i.id));
+                for (const kb of prevAcceptedKb) {
+                  if (!newInputIds.has(kb.id)) plan.inputs = [...(plan.inputs ?? []), kb];
+                }
+
+                // 1. Per-input search — targeted suggestion for each named input slot
+                const nonKbInputs = (plan.inputs ?? []).filter((i: any) => !i.fromKB && i.status !== 'provided');
+                await Promise.all(nonKbInputs.map(async (input: any) => {
+                  const query = `${input.name}: ${input.description}`;
+                  const results = await searchKnowledge(user.id, query, 3, adminClient);
+                  const top = results.find((r) => (r.similarity ?? 0) >= 0.4);
+                  if (top) {
+                    input.kbSuggestion = { fileId: top.id, filename: top.filename };
+                  } else {
+                    delete input.kbSuggestion;
+                  }
+                }));
+
+                // 2. Global search — always runs to surface broad context from KB
+                // Query = user message + deliverable description for maximum relevance
+                const globalQuery = [content.trim(), plan.deliverable_description].filter(Boolean).join(' — ');
+                const globalResults = await searchKnowledge(user.id, globalQuery, 8, adminClient);
+                const alreadySuggestedIds = new Set([
+                  ...(plan.inputs ?? []).filter((i: any) => i.fromKB).map((i: any) => i.kbFileId),
+                  ...(plan.inputs ?? []).filter((i: any) => (i as any).kbSuggestion).map((i: any) => (i as any).kbSuggestion.fileId),
+                ]);
+                const globalRelevant = globalResults
+                  .filter((r) => (r.similarity ?? 0) >= 0.35 && !alreadySuggestedIds.has(r.id))
+                  .slice(0, 3);
+                for (const r of globalRelevant) {
+                  plan.inputs = [...(plan.inputs ?? []), {
+                    id: `kb_global_${r.id}`,
+                    name: r.filename,
+                    type: 'context',
+                    description: 'From your knowledge base',
+                    required: false,
+                    status: 'pending',
+                    fromKB: true,
+                    kbFileId: r.id,
+                  }];
+                }
+
+                await adminClient.from('work_threads').update({ plan }).eq('id', threadId);
+              } catch (err) {
+                console.error('[WorkMessages] KB search failed:', err);
+              }
 
               // Update work_patterns context profile from this thread's plan
               await updateWorkPatternsFromThread(

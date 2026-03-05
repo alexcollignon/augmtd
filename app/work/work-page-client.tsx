@@ -19,6 +19,7 @@ import {
   ArrowDownTrayIcon,
   PaperClipIcon,
   BookmarkIcon,
+  BookOpenIcon,
   ChevronDownIcon,
 } from '@heroicons/react/24/outline';
 import { WorkBlueprint, SavedWorkflow } from '@/lib/types/work-blueprints';
@@ -231,6 +232,10 @@ function PlanPanel({
   onAttach,
   uploadingInputId,
   onRemoveAttachment,
+  onKBAccept,
+  onKBDismiss,
+  onKBManualAdd,
+  kbSearchThreadId,
   isDocumentStale,
   attachErrorInputId,
   attachErrorMsg,
@@ -255,6 +260,10 @@ function PlanPanel({
   onAttach?: (inputId: string) => void;
   uploadingInputId?: string | null;
   onRemoveAttachment?: (inputId: string) => void;
+  onKBAccept?: (inputId: string) => void;
+  onKBDismiss?: (inputId: string) => void;
+  onKBManualAdd?: (kbFileId: string, filename: string) => void;
+  kbSearchThreadId?: string | null;
   isDocumentStale?: boolean;
   attachErrorInputId?: string | null;
   attachErrorMsg?: string | null;
@@ -269,6 +278,26 @@ function PlanPanel({
   onUpdateWorkflow?: () => void;
 }) {
   const isGenerating = workMode === 'generating';
+  const [kbQuery, setKbQuery] = useState('');
+  const [kbSearchResults, setKbSearchResults] = useState<{ id: string; filename: string }[]>([]);
+  const [kbSearching, setKbSearching] = useState(false);
+  const kbSearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function handleKbQueryChange(val: string) {
+    setKbQuery(val);
+    if (kbSearchTimer.current) clearTimeout(kbSearchTimer.current);
+    if (!val.trim() || !kbSearchThreadId) { setKbSearchResults([]); return; }
+    kbSearchTimer.current = setTimeout(async () => {
+      setKbSearching(true);
+      try {
+        const res = await fetch(`/api/work/threads/${kbSearchThreadId}/kb-search?q=${encodeURIComponent(val)}`);
+        const { results } = await res.json();
+        setKbSearchResults(results ?? []);
+      } finally {
+        setKbSearching(false);
+      }
+    }, 400);
+  }
 
   if (!plan) {
     return (
@@ -410,14 +439,39 @@ function PlanPanel({
         </div>
 
         {/* Inputs */}
-        {plan.inputs && plan.inputs.length > 0 && (
+        {plan && (
           <div>
             <p className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wide mb-2">
               Inputs needed
             </p>
+            {plan.inputs && plan.inputs.length > 0 && (
             <div className="space-y-1.5">
               {plan.inputs.map((input) => {
                 const isProvided = input.status === 'provided';
+
+                // Accepted KB input — compact green row
+                if ((input as any).fromKB && isProvided) {
+                  return (
+                    <div key={input.id} className="flex items-center gap-2 px-2.5 py-1.5 border bg-green-50 border-green-100">
+                      <BookOpenIcon className="w-3 h-3 text-green-500 flex-shrink-0" />
+                      <span className="flex-1 min-w-0 text-[12px] text-neutral-700 truncate">{input.name}</span>
+                      <span className="text-[10.5px] text-green-600 flex-shrink-0">Included</span>
+                      <button onClick={() => onKBDismiss?.(input.id)} className="text-[10.5px] text-neutral-400 hover:text-red-500 flex-shrink-0">Remove</button>
+                    </div>
+                  );
+                }
+
+                // Pending KB input (global search result — no named input slot)
+                if ((input as any).fromKB && !isProvided) {
+                  return (
+                    <div key={input.id} className="flex items-center gap-2 px-2.5 py-1.5 border bg-indigo-50 border-indigo-100">
+                      <BookOpenIcon className="w-3 h-3 text-indigo-400 flex-shrink-0" />
+                      <span className="flex-1 min-w-0 text-[12px] text-neutral-700 truncate">{input.name}</span>
+                      <button onClick={() => onKBAccept?.(input.id)} className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 flex-shrink-0">Use</button>
+                      <button onClick={() => onKBDismiss?.(input.id)} className="text-[11px] text-neutral-400 hover:text-neutral-600 flex-shrink-0">✕</button>
+                    </div>
+                  );
+                }
                 return (
                   <div
                     key={input.id}
@@ -435,10 +489,20 @@ function PlanPanel({
                         <p className="text-[11px] text-neutral-600 mt-0.5 leading-relaxed">
                           {input.description}
                         </p>
-                        {input.examples && input.examples.length > 0 && !isProvided && (
+                        {input.examples && input.examples.length > 0 && !isProvided && !(input as any).kbSuggestion && (
                           <p className="text-[10px] text-neutral-400 mt-1">
                             e.g. {input.examples[0]}
                           </p>
+                        )}
+                        {/* Inline KB suggestion */}
+                        {(input as any).kbSuggestion && !isProvided && (
+                          <div className="flex items-center gap-1.5 mt-1.5">
+                            <BookOpenIcon className="w-3 h-3 text-indigo-400 flex-shrink-0" />
+                            <span className="text-[11px] text-neutral-600 truncate flex-1 min-w-0">{(input as any).kbSuggestion.filename}</span>
+                            <button onClick={() => onKBAccept?.(input.id)} className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 flex-shrink-0">Use</button>
+                            <span className="text-neutral-300">·</span>
+                            <button onClick={() => onKBDismiss?.(input.id)} className="text-[11px] text-neutral-400 hover:text-neutral-600 flex-shrink-0">Attach instead</button>
+                          </div>
                         )}
                         {isProvided && (input.providedFilenames?.length ?? 0) > 0 && (
                           <div className="flex items-center gap-1 mt-1.5">
@@ -471,14 +535,14 @@ function PlanPanel({
                         )}
                       </div>
 
-                      {/* Right: badge + attach button */}
+                      {/* Right: badge + attach button (hidden when KB suggestion pending) */}
                       <div className="flex-shrink-0 flex flex-col items-end gap-1.5">
                         <span className={`text-[10px] px-1.5 py-0.5 ${
                           isProvided ? 'text-green-700 bg-green-100' : 'text-blue-600 bg-blue-100'
                         }`}>
                           {isProvided ? 'provided' : input.type.replace('_', ' ')}
                         </span>
-                        {!isProvided && (
+                        {!isProvided && !(input as any).kbSuggestion && (
                           <button
                             onClick={() => onAttach?.(input.id)}
                             disabled={uploadingInputId === input.id}
@@ -497,7 +561,7 @@ function PlanPanel({
                             )}
                           </button>
                         )}
-                        {!isProvided && (
+                        {!isProvided && !(input as any).kbSuggestion && (
                           <span className="text-[9px] text-neutral-400 leading-tight text-right">
                             {ATTACH_HINT}
                           </span>
@@ -510,6 +574,59 @@ function PlanPanel({
                   </div>
                 );
               })}
+            </div>
+            )}
+
+            {/* KB search + attach — always available as input sources */}
+            <div className="mt-2 space-y-1.5">
+              {/* KB search */}
+              {kbSearchThreadId && (
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={kbQuery}
+                    onChange={(e) => handleKbQueryChange(e.target.value)}
+                    placeholder="Search knowledge base…"
+                    className="w-full text-[11.5px] px-2.5 py-1.5 border border-neutral-200 bg-white placeholder-neutral-400 focus:outline-none focus:border-indigo-300"
+                  />
+                  {kbSearching && (
+                    <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] text-neutral-400">…</span>
+                  )}
+                  {kbSearchResults.length > 0 && (
+                    <div className="mt-0.5 space-y-0.5">
+                      {kbSearchResults.map((r) => {
+                        const alreadyAdded = plan.inputs?.some((i: any) => i.kbFileId === r.id);
+                        return (
+                          <div key={r.id} className="flex items-center gap-2 px-2.5 py-1.5 bg-indigo-50 border border-indigo-100">
+                            <span className="flex-1 min-w-0 text-[11.5px] text-neutral-700 truncate">{r.filename}</span>
+                            {alreadyAdded ? (
+                              <span className="text-[10px] text-green-600 flex-shrink-0">Added</span>
+                            ) : (
+                              <button
+                                onClick={() => { onKBManualAdd?.(r.id, r.filename); setKbQuery(''); setKbSearchResults([]); }}
+                                className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 flex-shrink-0"
+                              >
+                                Add
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Attach files — only when no named file input exists */}
+              {!plan.inputs?.some((i) => !((i as any).fromKB)) && (
+                <button
+                  onClick={() => onAttach?.('__free_attach__')}
+                  className="w-full flex items-center gap-1.5 px-2.5 py-1.5 border border-dashed border-neutral-200 text-neutral-400 hover:border-indigo-300 hover:text-indigo-500 transition-colors"
+                >
+                  <PaperClipIcon className="w-3 h-3 flex-shrink-0" />
+                  <span className="text-[11.5px]">Attach files</span>
+                </button>
+              )}
             </div>
           </div>
         )}
@@ -1421,6 +1538,18 @@ export function WorkPageClient({
           if (planUpdatedTimerRef.current) clearTimeout(planUpdatedTimerRef.current);
           setPlanJustUpdated(true);
           planUpdatedTimerRef.current = setTimeout(() => setPlanJustUpdated(false), 2000);
+          // Always re-fetch after stream ends — server post-processes the plan
+          // (KB search, step renumbering) before closing the stream, so DB is already updated.
+          fetch(`/api/work/threads/${threadId}/messages`)
+            .then((r) => r.json())
+            .then(({ thread: freshThread }) => {
+              if (freshThread?.plan) {
+                setThreads((prev) =>
+                  prev.map((t) => t.id === threadId ? { ...t, plan: freshThread.plan } : t)
+                );
+              }
+            })
+            .catch(() => {});
         } catch {
           // plan parse failed
         }
@@ -1583,11 +1712,14 @@ export function WorkPageClient({
       const files = Array.from(fileInput.files || []);
       if (files.length === 0) return;
 
+      // Free attach — generate a unique inputId so each attach gets its own plan input
+      const resolvedInputId = inputId === '__free_attach__' ? `attach_${Date.now()}` : inputId;
+
       const { valid, errorMsg } = validateAttachFiles(files);
-      if (errorMsg) showPlanAttachError(inputId, errorMsg);
+      if (errorMsg) showPlanAttachError(resolvedInputId, errorMsg);
       if (valid.length === 0) return;
 
-      setUploadingInputId(inputId);
+      setUploadingInputId(resolvedInputId);
       try {
         // Step 1: Get presigned upload URLs (no file bytes sent to serverless fn)
         const presignRes = await fetch(`/api/work/threads/${threadId}/attach/presign`, {
@@ -1595,12 +1727,12 @@ export function WorkPageClient({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             files: valid.map(f => ({ filename: f.name, mimeType: f.type, size: f.size })),
-            inputId,
+            inputId: resolvedInputId,
           }),
         });
         if (!presignRes.ok) {
           const err = await presignRes.json();
-          showPlanAttachError(inputId, err.error || 'Failed to prepare upload');
+          showPlanAttachError(resolvedInputId, err.error || 'Failed to prepare upload');
           return;
         }
         const { uploads } = await presignRes.json() as {
@@ -1622,11 +1754,11 @@ export function WorkPageClient({
         const confirmRes = await fetch(`/api/work/threads/${threadId}/attach/confirm`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ uploads, inputId }),
+          body: JSON.stringify({ uploads, inputId: resolvedInputId }),
         });
         if (!confirmRes.ok) {
           const err = await confirmRes.json();
-          showPlanAttachError(inputId, err.error || 'Failed to attach file');
+          showPlanAttachError(resolvedInputId, err.error || 'Failed to attach file');
           return;
         }
         const { plan: updatedPlan } = await confirmRes.json();
@@ -1634,7 +1766,7 @@ export function WorkPageClient({
           prev.map((t) => t.id === threadId ? { ...t, plan: updatedPlan } : t)
         );
       } catch {
-        showPlanAttachError(inputId, 'Failed to attach file');
+        showPlanAttachError(resolvedInputId, 'Failed to attach file');
       } finally {
         setUploadingInputId(null);
       }
@@ -1656,6 +1788,36 @@ export function WorkPageClient({
     } catch {
       console.error('Failed to remove attachment');
     }
+  }, []);
+
+  const handleKBAccept = useCallback(async (inputId: string, threadId: string) => {
+    const res = await fetch(`/api/work/threads/${threadId}/kb-input`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ inputId, action: 'accept' }),
+    });
+    const { plan } = await res.json();
+    setThreads((prev) => prev.map((t) => t.id === threadId ? { ...t, plan } : t));
+  }, []);
+
+  const handleKBDismiss = useCallback(async (inputId: string, threadId: string) => {
+    const res = await fetch(`/api/work/threads/${threadId}/kb-input`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ inputId, action: 'dismiss' }),
+    });
+    const { plan } = await res.json();
+    setThreads((prev) => prev.map((t) => t.id === threadId ? { ...t, plan } : t));
+  }, []);
+
+  const handleKBManualAdd = useCallback(async (kbFileId: string, filename: string, threadId: string) => {
+    const res = await fetch(`/api/work/threads/${threadId}/kb-input`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'add', kbFileId, filename }),
+    });
+    const { plan } = await res.json();
+    setThreads((prev) => prev.map((t) => t.id === threadId ? { ...t, plan } : t));
   }, []);
 
   const downloadDocument = useCallback(async (threadId: string, artifactToDownload: DocumentArtifact) => {
@@ -2375,6 +2537,10 @@ export function WorkPageClient({
               onAttach={(inputId) => activeThreadId && handleAttach(inputId, activeThreadId)}
               uploadingInputId={uploadingInputId}
               onRemoveAttachment={(inputId) => activeThreadId && handleRemoveAttachment(inputId, activeThreadId)}
+              onKBAccept={(inputId) => activeThreadId && handleKBAccept(inputId, activeThreadId)}
+              onKBDismiss={(inputId) => activeThreadId && handleKBDismiss(inputId, activeThreadId)}
+              onKBManualAdd={(kbFileId, filename) => activeThreadId && handleKBManualAdd(kbFileId, filename, activeThreadId)}
+              kbSearchThreadId={activeThreadId}
               isDocumentStale={isDocumentStale}
               attachErrorInputId={attachErrorInputId}
               attachErrorMsg={attachErrorMsg}

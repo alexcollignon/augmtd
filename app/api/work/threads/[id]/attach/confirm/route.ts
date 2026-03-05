@@ -162,19 +162,34 @@ export async function POST(
       ...newAttachments,
     ];
 
-    // Mark plan input as "provided"
+    // Mark plan input as "provided", or add a new one if no input matches this inputId
     const fileCount = newAttachments.length;
     const providedFilename = fileCount === 1
       ? newAttachments[0].filename
       : `${newAttachments[0].filename} + ${fileCount - 1} more`;
 
     const plan = thread.plan as any;
-    if (plan?.inputs) {
-      plan.inputs = plan.inputs.map((input: { id: string }) =>
-        input.id === inputId
-          ? { ...input, status: 'provided', providedFilename }
-          : input
-      );
+    if (plan) {
+      plan.inputs = plan.inputs ?? [];
+      const matched = plan.inputs.some((input: { id: string }) => input.id === inputId);
+      if (matched) {
+        plan.inputs = plan.inputs.map((input: { id: string }) =>
+          input.id === inputId
+            ? { ...input, status: 'provided', providedFilename }
+            : input
+        );
+      } else {
+        // Free attach — add a new plan input dynamically
+        plan.inputs = [...plan.inputs, {
+          id: inputId,
+          name: providedFilename,
+          type: 'file',
+          description: 'Attached file',
+          required: false,
+          status: 'provided',
+          providedFilename,
+        }];
+      }
     }
 
     await adminClient

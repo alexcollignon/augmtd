@@ -13,6 +13,7 @@ export const GMAIL_SCOPES = [
   'https://www.googleapis.com/auth/calendar.readonly', // Read calendar events
   'https://www.googleapis.com/auth/userinfo.email',
   'https://www.googleapis.com/auth/userinfo.profile',
+  'https://www.googleapis.com/auth/drive.readonly', // Read Google Drive files
 ];
 
 export function getAuthUrl(state: string) {

@@ -38,7 +38,16 @@ export async function extractTextFromAttachment(
       return buffer.toString('utf-8');
     }
 
-    // Images, spreadsheets, etc.
+    if (mimeType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet') {
+      const XLSX = await import('xlsx');
+      const workbook = XLSX.read(buffer, { type: 'buffer' });
+      const sheets = workbook.SheetNames.map((name: string) => {
+        return `Sheet "${name}":\n${XLSX.utils.sheet_to_csv(workbook.Sheets[name])}`;
+      });
+      return sheets.join('\n\n') || null;
+    }
+
+    // Images, unsupported, etc.
     console.log(`[Attachments] Skipped unsupported MIME type: ${mimeType} (${filename})`);
     return null;
   } catch (err) {

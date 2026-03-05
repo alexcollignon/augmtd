@@ -7,6 +7,7 @@ import { usePathname } from 'next/navigation';
 import {
   InboxIcon,
   QueueListIcon,
+  BookOpenIcon,
   ClockIcon,
   Cog6ToothIcon,
   ArrowRightOnRectangleIcon,
@@ -25,6 +26,7 @@ export default function SidebarNav({ userEmail }: SidebarNavProps) {
   const navigation = [
     { name: 'Work Inbox', href: '/inbox', icon: InboxIcon },
     { name: 'Workflows', href: '/work', icon: QueueListIcon },
+    { name: 'Knowledge', href: '/knowledge', icon: BookOpenIcon },
   ];
 
   // Close popover on outside click
