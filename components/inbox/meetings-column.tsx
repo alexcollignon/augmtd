@@ -51,7 +51,7 @@ function MeetingSection({
 
 export default function MeetingsColumn({ isOpen, onToggle, meetings, loading, userEmail }: MeetingsColumnProps) {
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(
-    new Set(['completed', 'tomorrow', 'this_week'])
+    new Set(['completed', 'tomorrow', 'this_week', 'next_week'])
   );
 
   const toggleSection = (section: string) => {
@@ -67,6 +67,8 @@ export default function MeetingsColumn({ isOpen, onToggle, meetings, loading, us
   tomorrow.setDate(tomorrow.getDate() + 1);
   const nextWeek = new Date(now);
   nextWeek.setDate(nextWeek.getDate() + 7);
+  const twoWeeksOut = new Date(now);
+  twoWeeksOut.setDate(twoWeeksOut.getDate() + 14);
 
   const grouped = {
     in_progress: meetings.filter(m => m.meeting_status === 'in_progress'),
@@ -87,6 +89,11 @@ export default function MeetingsColumn({ isOpen, onToggle, meetings, loading, us
       if (m.meeting_status !== 'upcoming') return false;
       const start = new Date(m.start_time);
       return start > tomorrow && start < nextWeek && start.toDateString() !== tomorrow.toDateString();
+    }),
+    next_week: meetings.filter(m => {
+      if (m.meeting_status !== 'upcoming') return false;
+      const start = new Date(m.start_time);
+      return start >= nextWeek && start < twoWeeksOut;
     }),
   };
 
@@ -158,6 +165,11 @@ export default function MeetingsColumn({ isOpen, onToggle, meetings, loading, us
               {grouped.this_week.length > 0 && (
                 <MeetingSection title="THIS WEEK" count={grouped.this_week.length} isCollapsed={collapsedSections.has('this_week')} onToggle={() => toggleSection('this_week')}>
                   {grouped.this_week.map(m => <MeetingCard key={m.id} event={m} userEmail={userEmail} />)}
+                </MeetingSection>
+              )}
+              {grouped.next_week.length > 0 && (
+                <MeetingSection title="NEXT WEEK" count={grouped.next_week.length} isCollapsed={collapsedSections.has('next_week')} onToggle={() => toggleSection('next_week')}>
+                  {grouped.next_week.map(m => <MeetingCard key={m.id} event={m} userEmail={userEmail} />)}
                 </MeetingSection>
               )}
             </div>
