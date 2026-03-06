@@ -209,17 +209,30 @@ export async function POST(
                   return input;
                 });
               }
-              // Preserve provided-input state across follow-up planning messages
+              // Preserve provided-input state and user decisions across follow-up planning messages
               if (thread.plan?.inputs && plan.inputs) {
                 plan.inputs = plan.inputs.map((input: any) => {
                   const existing = (thread.plan!.inputs || []).find((i: any) => i.id === input.id);
-                  if (existing?.status === 'provided') {
+                  if (!existing) return input;
+                  if (existing.status === 'provided') {
                     return {
                       ...input,
                       status: 'provided',
+                      ...(existing.source_type ? { source_type: existing.source_type } : {}),
+                      ...(existing.fromKB ? { fromKB: true } : {}),
+                      ...(existing.kbFileId ? { kbFileId: existing.kbFileId } : {}),
+                      ...(existing.kbAccepted ? { kbAccepted: existing.kbAccepted } : {}),
                       ...(existing.providedFilename ? { providedFilename: existing.providedFilename } : {}),
                       ...(existing.providedFilenames ? { providedFilenames: existing.providedFilenames } : {}),
                     };
+                  }
+                  // Preserve in-progress KB collection (accepted but not yet confirmed)
+                  if (existing.kbAccepted?.length) {
+                    return { ...input, kbAccepted: existing.kbAccepted, dismissedKbFileIds: existing.dismissedKbFileIds };
+                  }
+                  // Preserve dismissed KB file IDs — prevents re-suggesting dismissed files after next message
+                  if (existing.dismissedKbFileIds?.length) {
+                    return { ...input, source_type: 'user_upload', dismissedKbFileIds: existing.dismissedKbFileIds };
                   }
                   return input;
                 });

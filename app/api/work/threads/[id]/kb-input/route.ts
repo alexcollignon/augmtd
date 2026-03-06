@@ -29,7 +29,7 @@ export async function PATCH(
     const body = await request.json();
     const { inputId, action, kbFileId, filename } = body as {
       inputId?: string;
-      action: 'accept' | 'dismiss' | 'add';
+      action: 'accept' | 'dismiss' | 'add' | 'link' | 'confirm';
       kbFileId?: string;
       filename?: string;
     };
@@ -56,36 +56,81 @@ export async function PATCH(
           description: 'From your knowledge base',
           required: false,
           status: 'provided',
-          fromKB: true,
+          fromKB: true,    // keeps generation pipeline injection working
+          fromContext: true, // UI routes to "additional context" section
           kbFileId,
         }];
       }
     } else if (action === 'accept') {
+      if (!inputId || !kbFileId) {
+        return NextResponse.json({ error: 'inputId and kbFileId are required for accept' }, { status: 400 });
+      }
       plan.inputs = plan.inputs.map((input: any) => {
         if (input.id !== inputId) return input;
-        // Accept inline kbSuggestion: mark input as KB-provided, clear suggestion
-        if (input.kbSuggestion) {
-          const { kbSuggestion, ...rest } = input;
-          return { ...rest, status: 'provided', fromKB: true, kbFileId: kbSuggestion.fileId };
+        if (input.kbSuggestions) {
+          const suggestion = (input.kbSuggestions as any[]).find((s: any) => s.fileId === kbFileId);
+          const remaining = (input.kbSuggestions as any[]).filter((s: any) => s.fileId !== kbFileId);
+          const accepted = [...(input.kbAccepted ?? []), ...(suggestion ? [suggestion] : [])];
+          // Mark as provided immediately on first Use — remaining suggestions stay for additional picks
+          const base = { ...input, status: 'provided', source_type: 'kb_found', fromKB: true, kbAccepted: accepted };
+          if (remaining.length === 0) {
+            const { kbSuggestions: _s, dismissedKbFileIds: _d, ...rest } = base;
+            return rest;
+          }
+          return { ...base, kbSuggestions: remaining };
         }
-        return { ...input, status: 'provided' };
+        // Standalone global KB card
+        return { ...input, status: 'provided', source_type: 'kb_found' };
+      });
+    } else if (action === 'confirm') {
+      // User explicitly finalizes their accepted KB files
+      if (!inputId) {
+        return NextResponse.json({ error: 'inputId is required for confirm' }, { status: 400 });
+      }
+      plan.inputs = plan.inputs.map((input: any) => {
+        if (input.id !== inputId) return input;
+        if (!input.kbAccepted?.length) return input;
+        const { kbSuggestions: _s, dismissedKbFileIds: _d, ...rest } = input;
+        return { ...rest, status: 'provided', source_type: 'kb_found', fromKB: true };
       });
     } else if (action === 'dismiss') {
+      if (!inputId || !kbFileId) {
+        return NextResponse.json({ error: 'inputId and kbFileId are required for dismiss' }, { status: 400 });
+      }
       plan.inputs = plan.inputs.map((input: any) => {
         if (input.id !== inputId) return input;
-        // Dismiss inline suggestion: just clear kbSuggestion, keep the input slot
-        if (input.kbSuggestion) {
-          const { kbSuggestion: _, ...rest } = input;
-          return rest;
+        if (input.kbSuggestions) {
+          const remaining = (input.kbSuggestions as any[]).filter((s: any) => s.fileId !== kbFileId);
+          const dismissed = [...(input.dismissedKbFileIds ?? []), kbFileId];
+          if (remaining.length === 0) {
+            const { kbSuggestions: _s, kbAccepted: _a, dismissedKbFileIds: _d, ...rest } = input;
+            if (input.kbAccepted?.length) {
+              // Some were accepted before — auto-finalize with those
+              return { ...rest, status: 'provided', source_type: 'kb_found', fromKB: true, kbAccepted: input.kbAccepted, dismissedKbFileIds: dismissed };
+            }
+            // All dismissed — revert to upload state
+            return { ...rest, source_type: 'user_upload', dismissedKbFileIds: dismissed };
+          }
+          return { ...input, kbSuggestions: remaining, dismissedKbFileIds: dismissed };
         }
         return input;
       }).filter((input: any) => {
-        // Remove standalone fromKB inputs (manual adds) when dismissed
+        // Remove standalone KB cards (global or manual context) when dismissed
         if (input.id !== inputId) return true;
-        return !input.fromKB;
+        return !input.id.startsWith('kb_');
+      });
+    } else if (action === 'link') {
+      // Directly bind a KB file to a named input slot (user manually selected from per-input search)
+      if (!inputId || !kbFileId || !filename) {
+        return NextResponse.json({ error: 'inputId, kbFileId and filename are required for link' }, { status: 400 });
+      }
+      plan.inputs = plan.inputs.map((input: any) => {
+        if (input.id !== inputId) return input;
+        const { kbSuggestion: _ks, ...rest } = input;
+        return { ...rest, status: 'provided', source_type: 'kb_found', fromKB: true, kbFileId, providedFilename: filename };
       });
     } else {
-      return NextResponse.json({ error: 'action must be accept, dismiss, or add' }, { status: 400 });
+      return NextResponse.json({ error: 'action must be accept, dismiss, add, link, or confirm' }, { status: 400 });
     }
 
     const adminClient = (await import('@supabase/supabase-js')).createClient(

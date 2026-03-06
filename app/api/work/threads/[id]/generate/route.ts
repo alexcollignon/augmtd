@@ -83,13 +83,17 @@ export async function POST(
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
 
-    // Inject accepted KB inputs as attachment context
-    const kbInputs = ((plan as any)?.inputs ?? []).filter((i: any) => i.fromKB && i.status === 'provided');
+    // Inject accepted KB inputs as attachment context (fromKB covers named + global; fromContext covers manual adds)
+    const kbInputs = ((plan as any)?.inputs ?? []).filter((i: any) => (i.fromKB || i.fromContext) && i.status === 'provided');
     if (kbInputs.length > 0) {
+      // Collect all KB file IDs — inputs with kbAccepted[] may reference multiple files
+      const kbFileIds = kbInputs.flatMap((i: any) =>
+        i.kbAccepted?.length ? i.kbAccepted.map((a: any) => a.fileId) : [i.kbFileId].filter(Boolean)
+      );
       const { data: kbFiles } = await adminClient
         .from('knowledge_files')
         .select('id, filename, extracted_text')
-        .in('id', kbInputs.map((i: any) => i.kbFileId));
+        .in('id', kbFileIds);
       for (const f of (kbFiles ?? [])) {
         if (f.extracted_text) {
           userAttachments.push({

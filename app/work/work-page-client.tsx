@@ -236,7 +236,9 @@ function PlanPanel({
   onRemoveAttachment,
   onKBAccept,
   onKBDismiss,
+  onKBConfirm,
   onKBManualAdd,
+  onKBLink,
   kbSearchThreadId,
   isDocumentStale,
   attachErrorInputId,
@@ -256,9 +258,11 @@ function PlanPanel({
   onAttach?: (inputId: string) => void;
   uploadingInputId?: string | null;
   onRemoveAttachment?: (inputId: string) => void;
-  onKBAccept?: (inputId: string) => void;
-  onKBDismiss?: (inputId: string) => void;
+  onKBAccept?: (inputId: string, kbFileId: string) => void;
+  onKBDismiss?: (inputId: string, kbFileId: string) => void;
+  onKBConfirm?: (inputId: string) => void;
   onKBManualAdd?: (kbFileId: string, filename: string) => void;
+  onKBLink?: (inputId: string, kbFileId: string, filename: string) => void;
   kbSearchThreadId?: string | null;
   isDocumentStale?: boolean;
   attachErrorInputId?: string | null;
@@ -273,6 +277,11 @@ function PlanPanel({
   const [kbSearching, setKbSearching] = useState(false);
   const kbSearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const [kbInputQueries, setKbInputQueries] = useState<Record<string, string>>({});
+  const [kbInputResults, setKbInputResults] = useState<Record<string, { id: string; filename: string }[]>>({});
+  const [kbInputSearching, setKbInputSearching] = useState<Record<string, boolean>>({});
+  const kbInputTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+
   function handleKbQueryChange(val: string) {
     setKbQuery(val);
     if (kbSearchTimer.current) clearTimeout(kbSearchTimer.current);
@@ -285,6 +294,25 @@ function PlanPanel({
         setKbSearchResults(results ?? []);
       } finally {
         setKbSearching(false);
+      }
+    }, 400);
+  }
+
+  function handleKbInputQueryChange(inputId: string, val: string) {
+    setKbInputQueries((prev) => ({ ...prev, [inputId]: val }));
+    if (kbInputTimers.current[inputId]) clearTimeout(kbInputTimers.current[inputId]);
+    if (!val.trim() || !kbSearchThreadId) {
+      setKbInputResults((prev) => ({ ...prev, [inputId]: [] }));
+      return;
+    }
+    kbInputTimers.current[inputId] = setTimeout(async () => {
+      setKbInputSearching((prev) => ({ ...prev, [inputId]: true }));
+      try {
+        const res = await fetch(`/api/work/threads/${kbSearchThreadId}/kb-search?q=${encodeURIComponent(val)}`);
+        const { results } = await res.json();
+        setKbInputResults((prev) => ({ ...prev, [inputId]: results ?? [] }));
+      } finally {
+        setKbInputSearching((prev) => ({ ...prev, [inputId]: false }));
       }
     }, 400);
   }
@@ -429,197 +457,268 @@ function PlanPanel({
         </div>
 
         {/* Inputs */}
-        {plan && (
-          <div>
-            <p className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wide mb-2">
-              Inputs needed
-            </p>
-            {plan.inputs && plan.inputs.length > 0 && (
-            <div className="space-y-1.5">
-              {plan.inputs.map((input) => {
-                const isProvided = input.status === 'provided';
+        {plan && (() => {
+          const namedInputs = (plan.inputs ?? []).filter((i: any) => !i.id?.startsWith('kb_') && !i.fromContext);
+          const contextInputs = (plan.inputs ?? []).filter((i: any) => i.id?.startsWith('kb_') || i.fromContext);
+          return (
+            <div>
+              <p className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wide mb-2">
+                Inputs needed
+              </p>
 
-                // Accepted KB input — compact green row
-                if ((input as any).fromKB && isProvided) {
-                  return (
-                    <div key={input.id} className="flex items-center gap-2 px-2.5 py-1.5 border bg-green-50 border-green-100">
-                      <BookOpenIcon className="w-3 h-3 text-green-500 flex-shrink-0" />
-                      <span className="flex-1 min-w-0 text-[12px] text-neutral-700 truncate">{input.name}</span>
-                      <span className="text-[10.5px] text-green-600 flex-shrink-0">Included</span>
-                      <button onClick={() => onKBDismiss?.(input.id)} className="text-[10.5px] text-neutral-400 hover:text-red-500 flex-shrink-0">Remove</button>
-                    </div>
-                  );
-                }
+              {/* ── Section 1: Named inputs ── */}
+              {namedInputs.length > 0 && (
+                <div className="space-y-1.5 mb-3">
+                  {namedInputs.map((input) => {
+                    const isProvided = input.status === 'provided';
+                    const kbSuggestions = (input as any).kbSuggestions as { fileId: string; filename: string }[] | undefined;
+                    const kbAccepted = (input as any).kbAccepted as { fileId: string; filename: string }[] | undefined;
+                    const isKBFound = !!kbSuggestions?.length || (!isProvided && !!kbAccepted?.length);
+                    const isFromKB = isProvided && (input as any).fromKB && (input as any).kbFileId;
 
-                // Pending KB input (global search result — no named input slot)
-                if ((input as any).fromKB && !isProvided) {
-                  return (
-                    <div key={input.id} className="flex items-center gap-2 px-2.5 py-1.5 border bg-indigo-50 border-indigo-100">
-                      <BookOpenIcon className="w-3 h-3 text-indigo-400 flex-shrink-0" />
-                      <span className="flex-1 min-w-0 text-[12px] text-neutral-700 truncate">{input.name}</span>
-                      <button onClick={() => onKBAccept?.(input.id)} className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 flex-shrink-0">Use</button>
-                      <button onClick={() => onKBDismiss?.(input.id)} className="text-[11px] text-neutral-400 hover:text-neutral-600 flex-shrink-0">✕</button>
-                    </div>
-                  );
-                }
-                return (
-                  <div
-                    key={input.id}
-                    className={`p-3 border ${isProvided ? 'bg-green-50 border-green-100' : 'bg-blue-50 border-blue-100'}`}
-                  >
-                    <div className="flex items-start gap-2">
-                      {/* Left: name + description + filename */}
-                      <div className="flex-1 min-w-0">
-                        <p className="text-[12px] font-medium text-neutral-900">
-                          {input.name}
-                          {input.required && !isProvided && (
-                            <span className="text-red-400 ml-1 text-[10px]">required</span>
+                    // Provided state (skip if still has pending suggestions to review)
+                    if (isProvided && !isKBFound) {
+                      const displayFile = input.providedFilenames?.[0] ?? input.providedFilename ?? input.name;
+                      const extraCount = (input.providedFilenames?.length ?? 0) > 1 ? input.providedFilenames!.length - 1 : 0;
+                      const isEmailProvided = (input as any).source_type === 'provided';
+                      return (
+                        <div key={input.id} className="flex items-center gap-2 px-2.5 py-2 border bg-green-50 border-green-100">
+                          {isFromKB
+                            ? <BookOpenIcon className="w-3 h-3 text-green-500 flex-shrink-0" />
+                            : <PaperClipIcon className="w-3 h-3 text-green-500 flex-shrink-0" />}
+                          <div className="flex-1 min-w-0">
+                            <p className="text-[11.5px] font-medium text-neutral-800 truncate">{input.name}</p>
+                            <p className="text-[10px] text-green-600 truncate">
+                              {displayFile}{extraCount > 0 ? ` + ${extraCount} more` : ''}
+                            </p>
+                          </div>
+                          {!isEmailProvided && (
+                            <button
+                              onClick={() => onRemoveAttachment?.(input.id)}
+                              className="flex-shrink-0 text-neutral-300 hover:text-red-400 transition-colors"
+                              title="Remove"
+                            >
+                              <XMarkIcon className="w-3 h-3" />
+                            </button>
                           )}
-                        </p>
-                        <p className="text-[11px] text-neutral-600 mt-0.5 leading-relaxed">
-                          {input.description}
-                        </p>
-                        {input.examples && input.examples.length > 0 && !isProvided && !(input as any).kbSuggestion && (
-                          <p className="text-[10px] text-neutral-400 mt-1">
-                            e.g. {input.examples[0]}
-                          </p>
-                        )}
-                        {/* Inline KB suggestion */}
-                        {(input as any).kbSuggestion && !isProvided && (
-                          <div className="flex items-center gap-1.5 mt-1.5">
-                            <BookOpenIcon className="w-3 h-3 text-indigo-400 flex-shrink-0" />
-                            <span className="text-[11px] text-neutral-600 truncate flex-1 min-w-0">{(input as any).kbSuggestion.filename}</span>
-                            <button onClick={() => onKBAccept?.(input.id)} className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 flex-shrink-0">Use</button>
-                            <span className="text-neutral-300">·</span>
-                            <button onClick={() => onKBDismiss?.(input.id)} className="text-[11px] text-neutral-400 hover:text-neutral-600 flex-shrink-0">Attach instead</button>
-                          </div>
-                        )}
-                        {isProvided && (input.providedFilenames?.length ?? 0) > 0 && (
-                          <div className="flex items-center gap-1 mt-1.5">
-                            <DocumentTextIcon className="w-3 h-3 text-green-600 flex-shrink-0" />
-                            <span className="text-[10px] text-green-700 truncate">
-                              {input.providedFilenames![0]}
-                              {input.providedFilenames!.length > 1 && ` + ${input.providedFilenames!.length - 1} more`}
-                            </span>
-                            <button
-                              onClick={() => onRemoveAttachment?.(input.id)}
-                              className="flex-shrink-0 ml-0.5 text-neutral-400 hover:text-red-500 transition-colors"
-                              title="Remove attachments"
-                            >
-                              <XMarkIcon className="w-3 h-3" />
-                            </button>
-                          </div>
-                        )}
-                        {isProvided && !input.providedFilenames?.length && input.providedFilename && (
-                          <div className="flex items-center gap-1 mt-1.5">
-                            <DocumentTextIcon className="w-3 h-3 text-green-600 flex-shrink-0" />
-                            <span className="text-[10px] text-green-700 truncate">{input.providedFilename}</span>
-                            <button
-                              onClick={() => onRemoveAttachment?.(input.id)}
-                              className="flex-shrink-0 ml-0.5 text-neutral-400 hover:text-red-500 transition-colors"
-                              title="Remove attachment"
-                            >
-                              <XMarkIcon className="w-3 h-3" />
-                            </button>
-                          </div>
-                        )}
-                      </div>
+                        </div>
+                      );
+                    }
 
-                      {/* Right: badge + attach button (hidden when KB suggestion pending) */}
-                      <div className="flex-shrink-0 flex flex-col items-end gap-1.5">
-                        <span className={`text-[10px] px-1.5 py-0.5 ${
-                          isProvided ? 'text-green-700 bg-green-100' : 'text-blue-600 bg-blue-100'
-                        }`}>
-                          {isProvided ? 'provided' : input.type.replace('_', ' ')}
-                        </span>
-                        {!isProvided && !(input as any).kbSuggestion && (
+                    // KB-first state — suggestions pending and/or files being collected
+                    if (isKBFound) {
+                      return (
+                        <div key={input.id} className="p-3 border border-indigo-100 bg-indigo-50">
+                          <p className="text-[12px] font-medium text-neutral-900 mb-0.5">{input.name}</p>
+                          <p className="text-[11px] text-neutral-500 mb-2 leading-relaxed">{input.description}</p>
+
+                          {/* Accepted files (green, no action needed) */}
+                          {kbAccepted && kbAccepted.length > 0 && (
+                            <div className="space-y-1 mb-2">
+                              {kbAccepted.map((a) => (
+                                <div key={a.fileId} className="flex items-center gap-2 px-2 py-1.5 bg-green-50 border border-green-100">
+                                  <BookOpenIcon className="w-3 h-3 text-green-500 flex-shrink-0" />
+                                  <span className="flex-1 min-w-0 text-[11.5px] text-neutral-700 truncate">{a.filename}</span>
+                                  <CheckIcon className="w-3 h-3 text-green-500 flex-shrink-0" />
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Remaining suggestions */}
+                          {kbSuggestions && kbSuggestions.length > 0 && (
+                            <div className="space-y-1 mb-2">
+                              {kbSuggestions.map((s) => (
+                                <div key={s.fileId} className="flex items-center gap-2 px-2 py-1.5 bg-white border border-indigo-100">
+                                  <BookOpenIcon className="w-3 h-3 text-indigo-400 flex-shrink-0" />
+                                  <span className="flex-1 min-w-0 text-[11.5px] text-neutral-700 truncate">{s.filename}</span>
+                                  <button
+                                    onClick={() => onKBAccept?.(input.id, s.fileId)}
+                                    className="flex-shrink-0 text-[11px] font-semibold text-white bg-indigo-600 hover:bg-indigo-700 px-2 py-0.5 transition-colors"
+                                  >
+                                    Use
+                                  </button>
+                                  <button
+                                    onClick={() => onKBDismiss?.(input.id, s.fileId)}
+                                    className="flex-shrink-0 text-[10.5px] text-neutral-400 hover:text-neutral-600"
+                                  >
+                                    <XMarkIcon className="w-3 h-3" />
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          <div className="flex items-center gap-3">
+                            <button
+                              onClick={() => onAttach?.(input.id)}
+                              disabled={uploadingInputId === input.id}
+                              className="inline-flex items-center gap-1 text-[10.5px] text-neutral-400 hover:text-neutral-600 disabled:opacity-50"
+                            >
+                              <PaperClipIcon className="w-2.5 h-2.5" />
+                              {uploadingInputId === input.id ? 'Attaching…' : 'Upload instead'}
+                            </button>
+                          </div>
+                          {attachErrorInputId === input.id && attachErrorMsg && (
+                            <p className="mt-1.5 text-[10px] text-red-500">{attachErrorMsg}</p>
+                          )}
+                        </div>
+                      );
+                    }
+
+                    // Upload state — no KB match
+                    return (
+                      <div key={input.id} className="p-3 border border-neutral-200 bg-neutral-50">
+                        <p className="text-[12px] font-medium text-neutral-900 mb-0.5">{input.name}</p>
+                        <p className="text-[11px] text-neutral-500 leading-relaxed mb-2">{input.description}</p>
+                        {input.examples && input.examples.length > 0 && (
+                          <p className="text-[10px] text-neutral-400 mb-2">e.g. {input.examples[0]}</p>
+                        )}
+                        {/* Per-input KB search */}
+                        {kbSearchThreadId && (
+                          <div className="mb-2">
+                            <div className="relative">
+                              <BookOpenIcon className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-neutral-400 pointer-events-none" />
+                              <input
+                                type="text"
+                                value={kbInputQueries[input.id] ?? ''}
+                                onChange={(e) => handleKbInputQueryChange(input.id, e.target.value)}
+                                placeholder="Search knowledge base…"
+                                className="w-full text-[11px] pl-6 pr-2.5 py-1.5 border border-neutral-200 bg-white placeholder-neutral-400 focus:outline-none focus:border-indigo-300"
+                              />
+                              {kbInputSearching[input.id] && (
+                                <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-neutral-400">…</span>
+                              )}
+                            </div>
+                            {(kbInputResults[input.id] ?? []).length > 0 && (
+                              <div className="mt-0.5 space-y-0.5">
+                                {(kbInputResults[input.id] ?? []).map((r) => (
+                                  <div key={r.id} className="flex items-center gap-2 px-2.5 py-1.5 bg-white border border-neutral-200">
+                                    <BookOpenIcon className="w-3 h-3 text-neutral-400 flex-shrink-0" />
+                                    <span className="flex-1 min-w-0 text-[11px] text-neutral-700 truncate">{r.filename}</span>
+                                    <button
+                                      onClick={() => {
+                                        onKBLink?.(input.id, r.id, r.filename);
+                                        setKbInputQueries((prev) => ({ ...prev, [input.id]: '' }));
+                                        setKbInputResults((prev) => ({ ...prev, [input.id]: [] }));
+                                      }}
+                                      className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 flex-shrink-0"
+                                    >
+                                      Use
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        <div className="flex items-center gap-2">
                           <button
                             onClick={() => onAttach?.(input.id)}
                             disabled={uploadingInputId === input.id}
-                            className="inline-flex items-center gap-1 text-[10px] text-blue-600 hover:text-blue-800 font-medium disabled:opacity-50"
+                            className="inline-flex items-center gap-1 text-[10.5px] text-neutral-600 hover:text-neutral-900 font-medium border border-neutral-300 bg-white hover:bg-neutral-50 px-2 py-1 disabled:opacity-50 transition-colors"
                           >
                             {uploadingInputId === input.id ? (
-                              <>
-                                <span className="w-2.5 h-2.5 border border-blue-400 border-t-transparent rounded-full animate-spin" />
-                                Attaching…
-                              </>
+                              <><span className="w-2.5 h-2.5 border border-neutral-400 border-t-transparent rounded-full animate-spin" />Attaching…</>
                             ) : (
-                              <>
-                                <PaperClipIcon className="w-2.5 h-2.5" />
-                                Attach
-                              </>
+                              <><PaperClipIcon className="w-2.5 h-2.5" />Attach file</>
                             )}
                           </button>
-                        )}
-                        {!isProvided && !(input as any).kbSuggestion && (
-                          <span className="text-[9px] text-neutral-400 leading-tight text-right">
-                            {ATTACH_HINT}
-                          </span>
+                          <span className="text-[9.5px] text-neutral-400">{ATTACH_HINT}</span>
+                        </div>
+                        {attachErrorInputId === input.id && attachErrorMsg && (
+                          <p className="mt-1.5 text-[10px] text-red-500">{attachErrorMsg}</p>
                         )}
                       </div>
-                    </div>
-                    {attachErrorInputId === input.id && attachErrorMsg && (
-                      <p className="mt-1.5 text-[10px] text-red-500">{attachErrorMsg}</p>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-            )}
-
-            {/* KB search + attach — always available as input sources */}
-            <div className="mt-2 space-y-1.5">
-              {/* KB search */}
-              {kbSearchThreadId && (
-                <div className="relative">
-                  <input
-                    type="text"
-                    value={kbQuery}
-                    onChange={(e) => handleKbQueryChange(e.target.value)}
-                    placeholder="Search knowledge base…"
-                    className="w-full text-[11.5px] px-2.5 py-1.5 border border-neutral-200 bg-white placeholder-neutral-400 focus:outline-none focus:border-indigo-300"
-                  />
-                  {kbSearching && (
-                    <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] text-neutral-400">…</span>
-                  )}
-                  {kbSearchResults.length > 0 && (
-                    <div className="mt-0.5 space-y-0.5">
-                      {kbSearchResults.map((r) => {
-                        const alreadyAdded = plan.inputs?.some((i: any) => i.kbFileId === r.id);
-                        return (
-                          <div key={r.id} className="flex items-center gap-2 px-2.5 py-1.5 bg-indigo-50 border border-indigo-100">
-                            <span className="flex-1 min-w-0 text-[11.5px] text-neutral-700 truncate">{r.filename}</span>
-                            {alreadyAdded ? (
-                              <span className="text-[10px] text-green-600 flex-shrink-0">Added</span>
-                            ) : (
-                              <button
-                                onClick={() => { onKBManualAdd?.(r.id, r.filename); setKbQuery(''); setKbSearchResults([]); }}
-                                className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 flex-shrink-0"
-                              >
-                                Add
-                              </button>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
+                    );
+                  })}
                 </div>
               )}
 
-              {/* Attach files — only when no named file input exists */}
-              {!plan.inputs?.some((i) => !((i as any).fromKB)) && (
-                <button
-                  onClick={() => onAttach?.('__free_attach__')}
-                  className="w-full flex items-center gap-1.5 px-2.5 py-1.5 border border-dashed border-neutral-200 text-neutral-400 hover:border-indigo-300 hover:text-indigo-500 transition-colors"
-                >
-                  <PaperClipIcon className="w-3 h-3 flex-shrink-0" />
-                  <span className="text-[11.5px]">Attach files</span>
-                </button>
-              )}
+              {/* ── Section 2: Additional context — always rendered ── */}
+              <div className={namedInputs.length > 0 ? 'pt-3 border-t border-neutral-100' : ''}>
+                <p className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wide mb-2">
+                  Additional context
+                </p>
+
+                {/* Accepted context files */}
+                {contextInputs.filter((i) => i.status === 'provided').length > 0 && (
+                  <div className="space-y-1 mb-2">
+                    {contextInputs.filter((i) => i.status === 'provided').map((input) => (
+                      <div key={input.id} className="flex items-center gap-2 px-2.5 py-1.5 border bg-green-50 border-green-100">
+                        <BookOpenIcon className="w-3 h-3 text-green-500 flex-shrink-0" />
+                        <span className="flex-1 min-w-0 text-[11.5px] text-neutral-700 truncate">{input.name}</span>
+                        <button onClick={() => onKBDismiss?.(input.id, (input as any).kbFileId)} className="text-[10.5px] text-neutral-400 hover:text-red-500 flex-shrink-0">✕</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Pending global KB suggestions */}
+                {contextInputs.filter((i) => i.status !== 'provided').length > 0 && (
+                  <div className="space-y-1 mb-2">
+                    {contextInputs.filter((i) => i.status !== 'provided').map((input) => (
+                      <div key={input.id} className="flex items-center gap-2 px-2.5 py-1.5 border bg-indigo-50 border-indigo-100">
+                        <BookOpenIcon className="w-3 h-3 text-indigo-400 flex-shrink-0" />
+                        <span className="flex-1 min-w-0 text-[11.5px] text-neutral-700 truncate">{input.name}</span>
+                        <button onClick={() => onKBAccept?.(input.id, (input as any).kbFileId)} className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 flex-shrink-0">Use</button>
+                        <button onClick={() => onKBDismiss?.(input.id, (input as any).kbFileId)} className="text-[10.5px] text-neutral-400 hover:text-neutral-600 flex-shrink-0">✕</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* KB search + attach — grouped */}
+                <div className="space-y-1">
+                  {kbSearchThreadId && (
+                    <div className="relative">
+                      <input
+                        type="text"
+                        value={kbQuery}
+                        onChange={(e) => handleKbQueryChange(e.target.value)}
+                        placeholder="Search knowledge base…"
+                        className="w-full text-[11.5px] px-2.5 py-1.5 border border-neutral-200 bg-white placeholder-neutral-400 focus:outline-none focus:border-indigo-300"
+                      />
+                      {kbSearching && (
+                        <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] text-neutral-400">…</span>
+                      )}
+                      {kbSearchResults.length > 0 && (
+                        <div className="mt-0.5 space-y-0.5">
+                          {kbSearchResults.map((r) => {
+                            const alreadyAdded = plan.inputs?.some((i: any) => i.kbFileId === r.id);
+                            return (
+                              <div key={r.id} className="flex items-center gap-2 px-2.5 py-1.5 bg-white border border-neutral-200">
+                                <BookOpenIcon className="w-3 h-3 text-neutral-400 flex-shrink-0" />
+                                <span className="flex-1 min-w-0 text-[11.5px] text-neutral-700 truncate">{r.filename}</span>
+                                {alreadyAdded ? (
+                                  <span className="text-[10px] text-green-600 flex-shrink-0">Added</span>
+                                ) : (
+                                  <button
+                                    onClick={() => { onKBManualAdd?.(r.id, r.filename); setKbQuery(''); setKbSearchResults([]); }}
+                                    className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 flex-shrink-0"
+                                  >
+                                    Add
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  <button
+                    onClick={() => onAttach?.('__free_attach__')}
+                    className="w-full flex items-center gap-1.5 px-2.5 py-1.5 border border-dashed border-neutral-200 text-neutral-500 hover:border-indigo-300 hover:text-indigo-500 transition-colors"
+                  >
+                    <PaperClipIcon className="w-3 h-3 flex-shrink-0" />
+                    <span className="text-[11.5px]">Attach additional file</span>
+                  </button>
+                </div>
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* Steps */}
         {plan.steps && plan.steps.length > 0 && (
@@ -1751,21 +1850,21 @@ export function WorkPageClient({
     }
   }, []);
 
-  const handleKBAccept = useCallback(async (inputId: string, threadId: string) => {
+  const handleKBAccept = useCallback(async (inputId: string, kbFileId: string, threadId: string) => {
     const res = await fetch(`/api/work/threads/${threadId}/kb-input`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ inputId, action: 'accept' }),
+      body: JSON.stringify({ inputId, action: 'accept', kbFileId }),
     });
     const { plan } = await res.json();
     setThreads((prev) => prev.map((t) => t.id === threadId ? { ...t, plan } : t));
   }, []);
 
-  const handleKBDismiss = useCallback(async (inputId: string, threadId: string) => {
+  const handleKBDismiss = useCallback(async (inputId: string, kbFileId: string, threadId: string) => {
     const res = await fetch(`/api/work/threads/${threadId}/kb-input`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ inputId, action: 'dismiss' }),
+      body: JSON.stringify({ inputId, action: 'dismiss', kbFileId }),
     });
     const { plan } = await res.json();
     setThreads((prev) => prev.map((t) => t.id === threadId ? { ...t, plan } : t));
@@ -1776,6 +1875,26 @@ export function WorkPageClient({
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'add', kbFileId, filename }),
+    });
+    const { plan } = await res.json();
+    setThreads((prev) => prev.map((t) => t.id === threadId ? { ...t, plan } : t));
+  }, []);
+
+  const handleKBLink = useCallback(async (inputId: string, kbFileId: string, filename: string, threadId: string) => {
+    const res = await fetch(`/api/work/threads/${threadId}/kb-input`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'link', inputId, kbFileId, filename }),
+    });
+    const { plan } = await res.json();
+    setThreads((prev) => prev.map((t) => t.id === threadId ? { ...t, plan } : t));
+  }, []);
+
+  const handleKBConfirm = useCallback(async (inputId: string, threadId: string) => {
+    const res = await fetch(`/api/work/threads/${threadId}/kb-input`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'confirm', inputId }),
     });
     const { plan } = await res.json();
     setThreads((prev) => prev.map((t) => t.id === threadId ? { ...t, plan } : t));
@@ -2484,9 +2603,11 @@ export function WorkPageClient({
               onAttach={(inputId) => activeThreadId && handleAttach(inputId, activeThreadId)}
               uploadingInputId={uploadingInputId}
               onRemoveAttachment={(inputId) => activeThreadId && handleRemoveAttachment(inputId, activeThreadId)}
-              onKBAccept={(inputId) => activeThreadId && handleKBAccept(inputId, activeThreadId)}
-              onKBDismiss={(inputId) => activeThreadId && handleKBDismiss(inputId, activeThreadId)}
+              onKBAccept={(inputId, kbFileId) => activeThreadId && handleKBAccept(inputId, kbFileId, activeThreadId)}
+              onKBDismiss={(inputId, kbFileId) => activeThreadId && handleKBDismiss(inputId, kbFileId, activeThreadId)}
               onKBManualAdd={(kbFileId, filename) => activeThreadId && handleKBManualAdd(kbFileId, filename, activeThreadId)}
+              onKBLink={(inputId, kbFileId, filename) => activeThreadId && handleKBLink(inputId, kbFileId, filename, activeThreadId)}
+              onKBConfirm={(inputId) => activeThreadId && handleKBConfirm(inputId, activeThreadId)}
               kbSearchThreadId={activeThreadId}
               isDocumentStale={isDocumentStale}
               attachErrorInputId={attachErrorInputId}

@@ -37,11 +37,16 @@ export interface WorkflowInput {
   required: boolean;
   examples?: string[];
   status?: 'provided' | 'pending';
+  // Derived source type — never set by AI, always assigned server-side
+  source_type?: 'provided' | 'kb_found' | 'user_upload';
   providedFilename?: string;
   providedFilenames?: string[]; // multiple files on one input (e.g. all email attachments grouped)
-  fromKB?: true;
+  fromKB?: true;    // accepted KB file (named input or global) — used by generation pipeline
+  fromContext?: true; // manual KB search addition → goes to "additional context" section
   kbFileId?: string; // knowledge_files.id (UUID)
-  kbSuggestion?: { fileId: string; filename: string }; // pending KB suggestion for this input slot
+  kbSuggestions?: { fileId: string; filename: string }[]; // pending KB suggestions for this input slot
+  kbAccepted?: { fileId: string; filename: string }[];   // accepted KB files not yet confirmed
+  dismissedKbFileIds?: string[]; // fileIds user dismissed — KB enrichment won't re-suggest these
 }
 
 export interface WorkflowOutput {

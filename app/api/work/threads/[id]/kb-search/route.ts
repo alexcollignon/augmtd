@@ -20,10 +20,10 @@ export async function GET(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Verify thread belongs to user
+    // Verify thread belongs to user and load plan to build exclusion list
     const { data: thread } = await supabase
       .from('work_threads')
-      .select('id')
+      .select('id, plan')
       .eq('id', threadId)
       .eq('user_id', user.id)
       .single();
@@ -32,6 +32,13 @@ export async function GET(
       return NextResponse.json({ error: 'Thread not found' }, { status: 404 });
     }
 
+    // Exclude files already accepted anywhere in this plan
+    const usedFileIds = new Set<string>(
+      ((thread as any).plan?.inputs ?? [])
+        .filter((i: any) => i.kbFileId && i.status === 'provided')
+        .map((i: any) => i.kbFileId as string)
+    );
+
     const adminClient = (await import('@supabase/supabase-js')).createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY!
@@ -39,7 +46,7 @@ export async function GET(
 
     const { searchKnowledge } = await import('@/lib/knowledge/indexer');
     const results = await searchKnowledge(user.id, q, 8, adminClient);
-    const relevant = results.filter((r) => (r.similarity ?? 0) >= 0.25);
+    const relevant = results.filter((r) => (r.similarity ?? 0) >= 0.25 && !usedFileIds.has(r.id));
 
     return NextResponse.json({
       results: relevant.map((r) => ({ id: r.id, filename: r.filename })),

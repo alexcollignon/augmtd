@@ -6,21 +6,34 @@ import { DocumentArtifact, ArtifactContent, DocContent, PptxContent, XlsxContent
 import { buildArtifactFile, getFileExt, getMimeType } from '@/lib/artifacts/builders';
 
 // ─── Claude API retry helper ────────────────────────────────────────────────────
-// Anthropic Haiku can return 529 (Overloaded) under load. The SDK retries quickly
-// internally but gives up too fast. This wrapper adds one extra attempt with a
-// 5-second pause — enough to survive brief capacity spikes.
+// Retries on 529 (overloaded), 500 (server error), and 429 (rate limited).
+// 429: reads retry-after header, caps wait at 30s, retries up to 3 times.
+// 529/500: single retry after 5s (brief capacity spike).
 async function claudeCreate(
   anthropic: Anthropic,
   params: Parameters<Anthropic['messages']['create']>[0],
 ): Promise<Anthropic.Message> {
-  try {
-    return (await anthropic.messages.create(params)) as Anthropic.Message;
-  } catch (err: any) {
-    if (err?.status === 529 || err?.status === 500) {
-      await new Promise((r) => setTimeout(r, 5000));
+  const MAX_429_RETRIES = 3;
+  let attempt = 0;
+
+  while (true) {
+    try {
       return (await anthropic.messages.create(params)) as Anthropic.Message;
+    } catch (err: any) {
+      if (err?.status === 529 || err?.status === 500) {
+        await new Promise((r) => setTimeout(r, 5000));
+        return (await anthropic.messages.create(params)) as Anthropic.Message;
+      }
+      if (err?.status === 429 && attempt < MAX_429_RETRIES) {
+        attempt++;
+        const retryAfter = parseInt(err?.headers?.['retry-after'] ?? '0', 10);
+        const waitMs = Math.min(retryAfter > 0 ? retryAfter * 1000 : 15000, 30000);
+        console.warn(`[claudeCreate] 429 rate limited — waiting ${waitMs / 1000}s (attempt ${attempt}/${MAX_429_RETRIES})`);
+        await new Promise((r) => setTimeout(r, waitMs));
+        continue;
+      }
+      throw err;
     }
-    throw err;
   }
 }
 

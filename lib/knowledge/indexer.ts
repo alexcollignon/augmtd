@@ -195,13 +195,13 @@ export async function indexSource(
               provider_file_id: file.id,
               filename: file.name,
               mime_type: file.mimeType,
-              extracted_text: extractedText,
+              extracted_text: extractedText ? extractedText.replace(/\u0000/g, '') : null,
               embedding: embedding ? JSON.stringify(embedding) : null,
               size_bytes: file.size,
               last_modified_at: modifiedAt,
               indexed_at: new Date().toISOString(),
             },
-            { onConflict: 'source_id,provider_file_id' }
+            { onConflict: 'user_id,provider_file_id' }
           );
 
         if (upsertError) {
