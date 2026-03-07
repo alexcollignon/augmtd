@@ -5,7 +5,6 @@ import { createClient } from '@/lib/supabase/client';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import SidebarNav from '@/components/sidebar-nav';
-import InboxTopBar from '@/components/inbox/inbox-top-bar';
 import EmailListSections from '@/components/inbox/email-list-sections';
 import EmailListChronological from '@/components/inbox/email-list-chronological';
 import WorkDetailInline from '@/components/inbox/work-detail-inline';
@@ -273,15 +272,6 @@ export function InboxPageClient({
       <SidebarNav userEmail={user?.email} />
 
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-        {/* Top bar — always visible */}
-        <InboxTopBar
-          preparedItems={preparedItems}
-          meetings={meetings}
-          meetingAssistantItems={meetingAssistantItems}
-          onSelectItem={setSelectedItem}
-          firstName={initialUserFullName?.split(' ')[0] || null}
-        />
-
         {/* Syncing banner */}
         {isSyncing && (
           <div className="flex-shrink-0 flex items-center gap-3 px-4 py-2.5 bg-indigo-50 border-b border-indigo-100">

@@ -265,6 +265,27 @@ function plainTextToHtml(text: string): string {
     .join('');
 }
 
+export async function listOutlookFolders(
+  encryptedTokens: string,
+): Promise<{ id: string; name: string }[]> {
+  const client = await getGraphClient(encryptedTokens);
+  const SKIP_WELL_KNOWN = new Set(['inbox', 'sentitems', 'deleteditems', 'drafts', 'junkemail', 'archive', 'outbox']);
+  const res = await client.api('/me/mailFolders').select('id,displayName,wellKnownName').top(50).get();
+  return (res.value ?? [])
+    .filter((f: any) => !SKIP_WELL_KNOWN.has((f.wellKnownName ?? '').toLowerCase()))
+    .map((f: any) => ({ id: f.id, name: f.displayName }))
+    .sort((a: any, b: any) => a.name.localeCompare(b.name));
+}
+
+export async function moveOutlookMessageToFolder(
+  encryptedTokens: string,
+  outlookMessageId: string,
+  folderId: string,
+): Promise<void> {
+  const client = await getGraphClient(encryptedTokens);
+  await client.api(`/me/messages/${outlookMessageId}/move`).post({ destinationId: folderId });
+}
+
 export async function archiveOutlookMessage(
   encryptedTokens: string,
   outlookMessageId: string,

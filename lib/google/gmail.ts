@@ -300,6 +300,31 @@ function randomId(): string {
   return Math.random().toString(36).slice(2, 12);
 }
 
+export async function listGmailLabels(
+  encryptedTokens: string,
+): Promise<{ id: string; name: string }[]> {
+  const gmail = await getGmailClient(encryptedTokens);
+  const res = await gmail.users.labels.list({ userId: 'me' });
+  const SKIP = new Set(['INBOX', 'SENT', 'TRASH', 'SPAM', 'DRAFT', 'UNREAD', 'STARRED', 'IMPORTANT', 'CATEGORY_PERSONAL', 'CATEGORY_SOCIAL', 'CATEGORY_PROMOTIONS', 'CATEGORY_UPDATES', 'CATEGORY_FORUMS']);
+  return (res.data.labels ?? [])
+    .filter(l => l.type === 'user' && l.id && l.name && !SKIP.has(l.id))
+    .map(l => ({ id: l.id!, name: l.name! }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export async function moveGmailThreadToLabel(
+  encryptedTokens: string,
+  threadId: string,
+  labelId: string,
+): Promise<void> {
+  const gmail = await getGmailClient(encryptedTokens);
+  await gmail.users.threads.modify({
+    userId: 'me',
+    id: threadId,
+    requestBody: { addLabelIds: [labelId], removeLabelIds: ['INBOX'] },
+  });
+}
+
 export async function archiveGmailThread(
   encryptedTokens: string,
   threadId: string,

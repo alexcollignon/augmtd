@@ -41,20 +41,20 @@ export async function POST(
       );
     }
 
-    // Get user's email connection
-    const { data: connection, error: connError } = await supabase
-      .from('connections')
-      .select('*')
-      .eq('user_id', user.id)
-      .eq('provider', sourceData.provider)
-      .eq('status', 'active')
-      .single();
+    // Get user's email connection — prefer connection_id FK, fallback to provider lookup
+    let connection: any = null;
+    if (item.connection_id) {
+      const { data } = await supabase.from('connections').select('*').eq('id', item.connection_id).eq('user_id', user.id).single();
+      connection = data;
+    }
+    if (!connection) {
+      const { data } = await supabase.from('connections').select('*').eq('user_id', user.id).eq('provider', sourceData.provider).eq('status', 'active').single();
+      connection = data;
+    }
 
-    if (connError || !connection) {
-      return NextResponse.json(
-        { error: 'Email connection not found' },
-        { status: 404 }
-      );
+    if (!connection) {
+      console.error('[SendReply] No connection found for item', id, 'provider:', sourceData.provider);
+      return NextResponse.json({ error: 'Email connection not found' }, { status: 404 });
     }
 
     // Use custom message if provided, otherwise use AI draft body

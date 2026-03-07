@@ -3,12 +3,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { toast } from 'sonner';
 import {
-  UserIcon,
-  DocumentTextIcon,
-  PresentationChartBarIcon,
-  DocumentChartBarIcon,
-  DocumentIcon,
-  MagnifyingGlassIcon,
   EnvelopeIcon,
   CalendarIcon,
   ArrowTopRightOnSquareIcon,
@@ -19,6 +13,8 @@ import {
   MapPinIcon,
   PaperClipIcon,
   ArchiveBoxArrowDownIcon,
+  FolderArrowDownIcon,
+  PencilIcon,
   XMarkIcon,
   SparklesIcon,
   BookmarkIcon,
@@ -39,13 +35,17 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
   const [isOpeningWorkflow, setIsOpeningWorkflow] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [isCompleting, setIsCompleting] = useState(false);
-  const [isDismissing, setIsDismissing] = useState(false);
   const [showDraftPreview, setShowDraftPreview] = useState(false);
   const [expandedEmails, setExpandedEmails] = useState<Record<number, boolean>>({});
   const [downloadingFile, setDownloadingFile] = useState<string | null>(null);
   const [isConfirming, setIsConfirming] = useState(false);
   const [isArchiving, setIsArchiving] = useState(false);
   const [archiveConfirmPending, setArchiveConfirmPending] = useState(false);
+  const [showMoveMenu, setShowMoveMenu] = useState(false);
+  const [folders, setFolders] = useState<{ id: string; name: string }[] | null>(null);
+  const [isLoadingFolders, setIsLoadingFolders] = useState(false);
+  const [isMoving, setIsMoving] = useState(false);
+  const moveMenuRef = useRef<HTMLDivElement>(null);
   const [suggestedWorkflows, setSuggestedWorkflows] = useState<Array<Pick<SavedWorkflow, 'id' | 'name' | 'deliverable_types'> & { score: number }>>([]);
   const [aiSuggestion, setAiSuggestion] = useState<string | null>(null);
   const [isSuggesting, setIsSuggesting] = useState(false);
@@ -70,6 +70,25 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
   const sourceData = item.source_data;
   const recipientContext = item.recipient_context;
   const executable = isExecutable(item);
+
+  // Reset folder state when item changes
+  useEffect(() => {
+    setShowMoveMenu(false);
+    setFolders(null);
+    setExpandedEmails({});
+  }, [item?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Close move menu on outside click
+  useEffect(() => {
+    if (!showMoveMenu) return;
+    const handler = (e: MouseEvent) => {
+      if (moveMenuRef.current && !moveMenuRef.current.contains(e.target as Node)) {
+        setShowMoveMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showMoveMenu]);
 
   // Fetch ranked workflow suggestions + AI suggestion for this item
   useEffect(() => {
@@ -174,25 +193,41 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
     }
   };
 
-  const handleDismiss = async () => {
-    setIsDismissing(true);
+  const handleOpenMoveMenu = async () => {
+    setShowMoveMenu(true);
+    if (folders !== null) return;
+    setIsLoadingFolders(true);
     try {
-      const response = await fetch(`/api/inbox/${item.id}/dismiss`, {
+      const res = await fetch(`/api/inbox/${item.id}/email-folders`);
+      const data = await res.json();
+      setFolders(res.ok ? (data.folders ?? []) : []);
+    } catch {
+      setFolders([]);
+    } finally {
+      setIsLoadingFolders(false);
+    }
+  };
+
+  const handleMoveToFolder = async (folderId: string, folderName: string) => {
+    setIsMoving(true);
+    setShowMoveMenu(false);
+    try {
+      const res = await fetch(`/api/inbox/${item.id}/move-to-folder`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reason: 'not_relevant' }),
+        body: JSON.stringify({ folderId, folderName }),
       });
-      const data = await response.json();
-      if (response.ok) {
-        toast.success('Item dismissed');
+      if (res.ok) {
+        toast.success(`Moved to ${folderName}`);
         onItemConfirmed?.([item.id], 'not_my_task');
       } else {
-        toast.error(data.error || 'Failed to dismiss item. Please try again.');
+        const data = await res.json();
+        toast.error(data.error || 'Failed to move email');
       }
     } catch {
-      toast.error('Failed to dismiss item. Please try again.');
+      toast.error('Failed to move email');
     } finally {
-      setIsDismissing(false);
+      setIsMoving(false);
     }
   };
 
@@ -230,12 +265,6 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
     } finally {
       setIsArchiving(false);
     }
-  };
-
-  const formatFileSize = (bytes: number) => {
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
 
   const handleDownloadAttachment = async (filename: string) => {
@@ -300,7 +329,7 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
   return (
     <div ref={rootRef} className="flex flex-col h-full bg-white">
       {/* Header */}
-      <div className="flex-shrink-0 px-6 py-5 border-b border-neutral-100 bg-gradient-to-r from-indigo-50/50 to-white">
+      <div className="flex-shrink-0 px-6 py-4 border-b border-neutral-100">
         <h2 className="text-[17px] font-semibold text-neutral-900 leading-tight">
           {item.work_title || sourceData?.subject || 'Work Item'}
         </h2>
@@ -315,7 +344,7 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
       </div>
 
       {/* Scrollable content */}
-      <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
+      <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
 
         {/* Confirmation banner for suggested items */}
         {needsConfirmation(item) && (
@@ -344,80 +373,34 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
           </div>
         )}
 
-        {/* Executable work */}
-        {executable && item.execution_plan && (
-          <div className="space-y-5">
-            {(sourceData?.from_name || sourceData?.from || item.why_matters) && (
-              <div>
-                <h3 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2">
-                  Requested by
-                </h3>
-                <div className="flex items-start gap-3 p-3 bg-neutral-50 border border-neutral-200">
-                  <UserIcon className="w-4 h-4 text-neutral-400 flex-shrink-0 mt-0.5" />
-                  <div>
-                    <p className="text-[13px] font-medium text-neutral-900">
-                      {sourceData?.from_name || sourceData?.from || 'Unknown'}
-                    </p>
-                    {item.why_matters && (
-                      <p className="text-[12px] text-neutral-600 mt-0.5">{item.why_matters}</p>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            <div>
-              <h3 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2">
-                What will be created
-              </h3>
-              <div className="flex items-start gap-3 p-4 bg-white border border-neutral-300">
-                <div className="flex-shrink-0 w-9 h-9 bg-indigo-50 border border-indigo-100 flex items-center justify-center">
-                  {item.execution_plan.deliverable_type === 'report' && <DocumentTextIcon className="w-5 h-5 text-indigo-600" />}
-                  {item.execution_plan.deliverable_type === 'presentation' && <PresentationChartBarIcon className="w-5 h-5 text-indigo-600" />}
-                  {item.execution_plan.deliverable_type === 'spreadsheet' && <DocumentChartBarIcon className="w-5 h-5 text-indigo-600" />}
-                  {item.execution_plan.deliverable_type === 'document' && <DocumentIcon className="w-5 h-5 text-indigo-600" />}
-                  {item.execution_plan.deliverable_type === 'analysis' && <MagnifyingGlassIcon className="w-5 h-5 text-indigo-600" />}
-                  {item.execution_plan.deliverable_type === 'email' && <EnvelopeIcon className="w-5 h-5 text-indigo-600" />}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <span className="text-[10px] uppercase tracking-wide text-indigo-600 font-semibold">
-                    {item.execution_plan.deliverable_type}
-                  </span>
-                  <p className="text-[14px] text-neutral-900 leading-relaxed mt-0.5">
-                    {item.execution_plan.deliverable_description}
-                  </p>
-                  {item.execution_plan.deadline && (
-                    <span className="inline-flex items-center gap-1 mt-2 text-[11px] text-orange-600 font-medium">
-                      <CalendarIcon className="w-3.5 h-3.5" />
-                      Due {new Date(item.execution_plan.deadline).toLocaleDateString()}
-                    </span>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            <p className="text-[12px] text-neutral-500">
-              Open in Workflows to build and refine a step-by-step plan.
-            </p>
-          </div>
+        {/* Summary — non-executable: what was prepared */}
+        {!executable && item.what_i_prepared && (
+          <p className="text-[14px] text-neutral-800 leading-relaxed">{item.what_i_prepared}</p>
         )}
 
-        {/* What was prepared (non-executable) */}
-        {!executable && item.what_i_prepared && (
-          <div>
-            <h3 className="text-[11px] font-semibold text-neutral-600 uppercase tracking-wide mb-2">
-              What Was Prepared
-            </h3>
-            <p className="text-[14px] text-neutral-900 leading-relaxed">
-              {item.what_i_prepared}
-            </p>
+        {/* What will be created — compact inline for executable */}
+        {executable && item.execution_plan && (
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-[10px] uppercase tracking-wide text-indigo-600 font-semibold px-1.5 py-0.5 bg-indigo-50 border border-indigo-100">
+                {item.execution_plan.deliverable_type}
+              </span>
+              <span className="text-[13px] text-neutral-700">{item.execution_plan.deliverable_description}</span>
+              {item.execution_plan.deadline && (
+                <span className="text-[11px] text-orange-500 font-medium flex items-center gap-1">
+                  <CalendarIcon className="w-3.5 h-3.5" />
+                  Due {new Date(item.execution_plan.deadline).toLocaleDateString()}
+                </span>
+              )}
+            </div>
+            <p className="text-[12px] text-neutral-400">Open in Workflows to build a step-by-step plan.</p>
           </div>
         )}
 
         {/* Meeting details */}
         {hasMeetingData() && (
           <div>
-            <h3 className="text-[11px] font-semibold text-neutral-600 uppercase tracking-wide mb-3">
+            <h3 className="text-[11px] font-medium text-neutral-400 uppercase tracking-wide mb-2">
               Meeting Details
             </h3>
             <div className="bg-indigo-50 border border-indigo-200 p-4 space-y-3">
@@ -460,13 +443,13 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
         {/* Key points */}
         {sourceData?.keyPoints && sourceData.keyPoints.length > 0 && (
           <div>
-            <h3 className="text-[11px] font-semibold text-neutral-600 uppercase tracking-wide mb-2">
+            <h3 className="text-[11px] font-medium text-neutral-400 uppercase tracking-wide mb-2">
               Key Points
             </h3>
-            <ul className="space-y-2">
+            <ul className="space-y-1.5">
               {sourceData.keyPoints.map((point: string, i: number) => (
                 <li key={i} className="flex items-start text-[13px] text-neutral-700">
-                  <span className="text-indigo-600 mr-2 font-bold flex-shrink-0">•</span>
+                  <span className="text-indigo-500 mr-2 font-bold flex-shrink-0">·</span>
                   <span>{point}</span>
                 </li>
               ))}
@@ -477,11 +460,11 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
         {/* Draft reply */}
         {sourceData?.draft && (
           <div>
-            <h3 className="text-[11px] font-semibold text-neutral-600 uppercase tracking-wide mb-2">
+            <h3 className="text-[11px] font-medium text-neutral-400 uppercase tracking-wide mb-2">
               Prepared Reply
             </h3>
-            <div className="relative bg-gradient-to-br from-indigo-50 to-violet-50 border border-indigo-200 p-4">
-              <div className="absolute left-0 top-0 bottom-0 w-[2px] bg-indigo-500" />
+            <div className="relative bg-neutral-50 border border-neutral-200 p-4">
+              <div className="absolute left-0 top-0 bottom-0 w-[2px] bg-indigo-400" />
               <p className="pl-3 text-[13px] text-neutral-800 leading-relaxed whitespace-pre-wrap">
                 {typeof sourceData.draft === 'string' ? sourceData.draft : sourceData.draft.body}
               </p>
@@ -489,76 +472,13 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
           </div>
         )}
 
-        {/* Also on thread */}
-        {recipientContext?.otherRecipients && recipientContext.otherRecipients.length > 0 && (
-          <div>
-            <h3 className="text-[11px] font-semibold text-neutral-600 uppercase tracking-wide mb-2">
-              Also on Thread
-            </h3>
-            <div className="flex flex-wrap gap-2">
-              {recipientContext.otherRecipients.slice(0, 5).map((email, i) => (
-                <span key={i} className="inline-flex items-center px-3 py-1.5 text-[12px] bg-neutral-100 text-neutral-700 border border-neutral-200">
-                  <UserIcon className="w-3 h-3 mr-1.5" />
-                  {email}
-                </span>
-              ))}
-              {recipientContext.otherRecipients.length > 5 && (
-                <span className="inline-flex items-center px-3 py-1.5 text-[12px] text-neutral-500">
-                  +{recipientContext.otherRecipients.length - 5} more
-                </span>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Attachments */}
-        {sourceData?.attachments && sourceData.attachments.length > 0 && (
-          <div>
-            <h3 className="text-[11px] font-semibold text-neutral-600 uppercase tracking-wide mb-2">
-              Attachments ({sourceData.attachments.length})
-            </h3>
-            <div className="space-y-1.5">
-              {sourceData.attachments.map((att: { filename: string; mimeType: string; size: number; storagePath: string }, i: number) => (
-                <div
-                  key={i}
-                  className="flex items-center justify-between px-3 py-2 bg-neutral-50 border border-neutral-200"
-                >
-                  <div className="flex items-center gap-2 min-w-0">
-                    <PaperClipIcon className="w-4 h-4 text-neutral-400 flex-shrink-0" />
-                    <span className="text-[13px] text-neutral-800 truncate">
-                      {att.filename}
-                    </span>
-                    <span className="text-[11px] text-neutral-400 flex-shrink-0">
-                      {formatFileSize(att.size)}
-                    </span>
-                  </div>
-                  <button
-                    onClick={() => handleDownloadAttachment(att.filename)}
-                    disabled={downloadingFile === att.filename}
-                    className="flex-shrink-0 ml-3 text-[12px] font-medium text-indigo-600 hover:text-indigo-800 disabled:opacity-50 flex items-center gap-1"
-                  >
-                    {downloadingFile === att.filename ? (
-                      <div className="w-3 h-3 border border-indigo-600 border-t-transparent rounded-full animate-spin" />
-                    ) : (
-                      <ArrowTopRightOnSquareIcon className="w-3.5 h-3.5" />
-                    )}
-                    Download
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Thread history — expandable cards */}
+        {/* Thread history — expandable, latest auto-expanded, no snippet when collapsed */}
         {sourceData?.thread_history && sourceData.thread_history.length > 0 && (
           <div>
-            {sourceData.thread_history.length > 1 && (
-              <h3 className="text-[11px] font-semibold text-neutral-600 uppercase tracking-wide mb-2">
-                Thread History
-              </h3>
-            )}
-            <div className="space-y-2">
+            <h3 className="text-[11px] font-medium text-neutral-400 uppercase tracking-wide mb-2">
+              Thread
+            </h3>
+            <div className="space-y-1.5">
               {sourceData.thread_history.slice(0, 5).map((msg: any, i: number) => {
                 const isLast = i === Math.min(sourceData.thread_history.length, 5) - 1;
                 const body = isLast && sourceData.body ? sourceData.body : msg.snippet;
@@ -567,18 +487,18 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
                 return (
                   <div
                     key={i}
-                    className={`border text-[12px] ${isLast ? 'border-neutral-300 bg-white' : 'border-neutral-200 bg-neutral-50'}`}
+                    className={`border text-[12px] ${isLast ? 'border-neutral-200 bg-white' : 'border-neutral-100 bg-neutral-50/50'}`}
                   >
                     <button
                       onClick={() => setExpandedEmails(prev => ({ ...prev, [i]: !prev[i] }))}
-                      className="w-full flex items-center justify-between px-3 py-2.5 text-left"
+                      className="w-full flex items-center justify-between px-3 py-2 text-left"
                     >
                       <div className="flex items-center gap-2 min-w-0">
-                        <span className="font-medium text-neutral-900 truncate">
+                        <span className={`font-medium truncate ${isLast ? 'text-neutral-900' : 'text-neutral-600'}`}>
                           {msg.from_name || msg.from}
                         </span>
                         {isLast && sourceData.thread_history.length > 1 && (
-                          <span className="flex-shrink-0 text-[10px] font-medium text-neutral-400 uppercase tracking-wide">
+                          <span className="flex-shrink-0 text-[10px] font-medium text-indigo-400 uppercase tracking-wide">
                             Latest
                           </span>
                         )}
@@ -592,12 +512,6 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
                         />
                       </div>
                     </button>
-
-                    {!isExpanded && (
-                      <p className="px-3 pb-2.5 text-neutral-500 line-clamp-2 text-[12px]">
-                        {msg.snippet}
-                      </p>
-                    )}
 
                     {isExpanded && (
                       <div className="px-3 pb-3 border-t border-neutral-100 pt-2.5">
@@ -616,12 +530,45 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
           </div>
         )}
 
+        {/* Attachments — chips */}
+        {sourceData?.attachments && sourceData.attachments.length > 0 && (
+          <div>
+            <h3 className="text-[11px] font-medium text-neutral-400 uppercase tracking-wide mb-2">
+              Attachments
+            </h3>
+            <div className="flex flex-wrap gap-2">
+              {sourceData.attachments.map((att: { filename: string; mimeType: string; size: number; storagePath: string }, i: number) => (
+                <button
+                  key={i}
+                  onClick={() => handleDownloadAttachment(att.filename)}
+                  disabled={downloadingFile === att.filename}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[12px] bg-neutral-100 hover:bg-neutral-200 border border-neutral-200 text-neutral-700 transition-colors disabled:opacity-50 max-w-[200px]"
+                >
+                  <PaperClipIcon className="w-3 h-3 text-neutral-400 flex-shrink-0" />
+                  <span className="truncate">{att.filename}</span>
+                  {downloadingFile === att.filename && (
+                    <div className="w-3 h-3 border border-neutral-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Also on thread — inline */}
+        {recipientContext?.otherRecipients && recipientContext.otherRecipients.length > 0 && (
+          <p className="text-[12px] text-neutral-400">
+            Also on thread: {recipientContext.otherRecipients.slice(0, 3).join(', ')}
+            {recipientContext.otherRecipients.length > 3 && ` +${recipientContext.otherRecipients.length - 3} more`}
+          </p>
+        )}
+
       </div>
 
       {/* Actions footer */}
       <div className="flex-shrink-0 border-t border-neutral-200 bg-neutral-50 px-6 py-4">
         <div className="flex items-center gap-3">
-          <>
+          <div className="flex items-center gap-3 flex-1">
               {/* Preparing state */}
               {executable && item.execution_status === 'preparing' && (
                 <div className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 text-[13px] font-semibold bg-indigo-50 text-indigo-500 border border-indigo-200 cursor-default">
@@ -651,15 +598,30 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
                 </button>
               )}
 
-              {/* Draft reply — non-executable */}
+              {/* Draft reply — split button: instant send | edit & review */}
               {!executable && sourceData?.draft && (
-                <button
-                  onClick={() => setShowDraftPreview(true)}
-                  className="flex-1 inline-flex items-center justify-center px-4 py-2.5 text-[13px] font-semibold bg-indigo-600 text-white hover:bg-indigo-700 transition-all shadow-sm"
-                >
-                  <PaperAirplaneIcon className="w-4 h-4 mr-2" />
-                  Review & Send
-                </button>
+                <div className="flex-1 flex">
+                  <button
+                    onClick={() => handleSendReply()}
+                    disabled={isSending}
+                    className="flex-1 inline-flex items-center justify-center px-4 py-2.5 text-[13px] font-semibold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 transition-all shadow-sm"
+                  >
+                    {isSending ? (
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
+                    ) : (
+                      <PaperAirplaneIcon className="w-4 h-4 mr-2" />
+                    )}
+                    {isSending ? 'Sending…' : 'Send'}
+                  </button>
+                  <button
+                    onClick={() => setShowDraftPreview(true)}
+                    disabled={isSending}
+                    className="px-3 py-2.5 bg-indigo-700 text-white hover:bg-indigo-800 disabled:opacity-50 transition-all shadow-sm border-l border-indigo-500"
+                    title="Review & edit before sending"
+                  >
+                    <PencilIcon className="w-4 h-4" />
+                  </button>
+                </div>
               )}
 
               {/* Mark complete — non-executable, no draft */}
@@ -674,31 +636,47 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
                 </button>
               )}
 
-              <button
-                onClick={() => {
-                  if (!isOpeningWorkflow) {
-                    if (rootRef.current) setPanelTop(rootRef.current.getBoundingClientRect().top);
-                    setShowWorkflowPanel(true);
-                  }
-                }}
-                disabled={isOpeningWorkflow}
-                className="px-3 py-2.5 text-[13px] font-semibold text-neutral-700 hover:bg-neutral-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors border border-neutral-300 flex items-center gap-1.5"
-              >
-                {isOpeningWorkflow ? (
-                  <div className="w-3.5 h-3.5 border-2 border-neutral-500 border-t-transparent rounded-full animate-spin" />
-                ) : (
-                  <PlayIcon className="w-3.5 h-3.5" />
-                )}
-                Workflows
-              </button>
-
-              <button
-                onClick={handleDismiss}
-                disabled={isDismissing}
-                className="px-4 py-2.5 text-[13px] font-semibold text-neutral-700 hover:bg-neutral-200 disabled:opacity-50 transition-colors border border-neutral-300"
-              >
-                {isDismissing ? 'Dismissing...' : 'Dismiss'}
-              </button>
+              {/* Move to folder */}
+              {item.source === 'email' && sourceData?.provider ? (
+                <div className="relative" ref={moveMenuRef}>
+                  <button
+                    onClick={handleOpenMoveMenu}
+                    disabled={isMoving}
+                    className="px-4 py-2.5 text-[13px] font-semibold text-neutral-700 hover:bg-neutral-100 disabled:opacity-50 transition-colors border border-neutral-300 flex items-center gap-1.5"
+                  >
+                    {isMoving ? (
+                      <div className="w-3.5 h-3.5 border-2 border-neutral-400 border-t-transparent rounded-full animate-spin" />
+                    ) : (
+                      <FolderArrowDownIcon className="w-3.5 h-3.5" />
+                    )}
+                    Move to
+                  </button>
+                  {showMoveMenu && (
+                    <div className="absolute bottom-full mb-1 right-0 bg-white border border-neutral-200 shadow-lg min-w-[180px] z-50">
+                      {isLoadingFolders ? (
+                        <div className="px-4 py-3 text-[12px] text-neutral-400 flex items-center gap-2">
+                          <div className="w-3 h-3 border-2 border-neutral-300 border-t-transparent rounded-full animate-spin" />
+                          Loading folders…
+                        </div>
+                      ) : !folders?.length ? (
+                        <p className="px-4 py-3 text-[12px] text-neutral-400">No folders found</p>
+                      ) : (
+                        <div className="max-h-52 overflow-y-auto">
+                          {folders.map(f => (
+                            <button
+                              key={f.id}
+                              onClick={() => handleMoveToFolder(f.id, f.name)}
+                              className="w-full text-left px-4 py-2.5 text-[13px] text-neutral-700 hover:bg-neutral-50 transition-colors border-b border-neutral-100 last:border-b-0"
+                            >
+                              {f.name}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ) : null}
               {item.source === 'email' && sourceData?.provider && (
                 isArchiving ? (
                   <div className="px-4 py-2.5 flex items-center gap-2 border border-indigo-200 bg-indigo-50 text-indigo-600">
@@ -734,7 +712,26 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
                   </button>
                 )
               )}
-          </>
+          </div>
+
+              {/* Workflows — always on the right */}
+              <button
+                onClick={() => {
+                  if (!isOpeningWorkflow) {
+                    if (rootRef.current) setPanelTop(rootRef.current.getBoundingClientRect().top);
+                    setShowWorkflowPanel(true);
+                  }
+                }}
+                disabled={isOpeningWorkflow}
+                className="flex-shrink-0 px-3 py-2.5 text-[13px] font-semibold text-indigo-600 hover:bg-indigo-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors border border-indigo-200 flex items-center gap-1.5"
+              >
+                {isOpeningWorkflow ? (
+                  <div className="w-3.5 h-3.5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <PlayIcon className="w-3.5 h-3.5" />
+                )}
+                Workflows
+              </button>
         </div>
       </div>
 
