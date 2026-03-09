@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import OpenAI from 'openai';
 import { updateWorkPatternsFromThread } from '@/lib/context/work-patterns-service';
-import { SYSTEM_PROMPT, parsePlanResponse } from '@/lib/work/planning-ai';
+import { buildSystemPrompt, parsePlanResponse } from '@/lib/work/planning-ai';
+import { buildToolRegistry } from '@/lib/mcp/registry';
 
 let openaiClient: OpenAI | null = null;
 function getOpenAI(): OpenAI {
@@ -117,10 +118,20 @@ export async function POST(
       `This conversation may include messages from other modes (ask, edit) — treat those as context only. ` +
       `Focus on planning-related requests. Do not attempt to edit a document unless the user explicitly asks.\n\n`;
 
+    // Build dynamic tool registry based on user's active connections
+    const toolRegistry = await buildToolRegistry(user.id, supabase);
+    const systemPrompt = buildSystemPrompt(toolRegistry);
+
+    // On the very first message (no existing plan), inject a strong reminder that a plan is required now.
+    const isFirstMessage = !thread.plan;
+    const firstMessageNote = isFirstMessage
+      ? '\n\nFIRST MESSAGE — you MUST emit a complete plan JSON after ---PLAN_UPDATE--- right now. Do not ask clarifying questions first. Make sensible assumptions and generate the plan immediately.'
+      : '';
+
     const openaiMessages: OpenAI.Chat.ChatCompletionMessageParam[] = [
       {
         role: 'system',
-        content: currentModeNote + SYSTEM_PROMPT + userContextNote + currentPlanNote + attachmentNote,
+        content: currentModeNote + systemPrompt + userContextNote + currentPlanNote + attachmentNote + firstMessageNote,
       },
       ...(messages || []).map((m) => ({
         role: m.role as 'user' | 'assistant',

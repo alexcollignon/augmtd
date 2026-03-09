@@ -1,7 +1,7 @@
 'use client';
 
 import Image from 'next/image';
-import { PaperClipIcon, CheckIcon } from '@heroicons/react/24/outline';
+import { PaperClipIcon, CheckIcon, EnvelopeIcon } from '@heroicons/react/24/outline';
 import type { InboxItem } from '@/lib/types/inbox';
 import { needsConfirmation } from '@/lib/types/inbox';
 
@@ -91,7 +91,7 @@ export default function EmailListCard({ item, isSelected, onSelect, compact = fa
               <span className="text-[10px] text-amber-600 font-medium flex-shrink-0">Confirm?</span>
             )}
             {sourceData?.draft && (
-              <span className="text-[10px] text-violet-600 flex-shrink-0">Draft ready</span>
+              <EnvelopeIcon className="w-3 h-3 text-violet-600 flex-shrink-0" />
             )}
           </div>
         </div>

@@ -65,7 +65,11 @@ export interface ExecutionStep {
   outputs?: string[]; // IDs of outputs produced by this step
   estimatedTime?: string; // Per-step time estimate
   toolsNeeded?: string[]; // Tools/systems required
-  skill?: string; // Which skill/capability will execute this step
+  skill?: string; // Legacy — backward compat with existing plans
+  tool?: string; // MCP tool ID e.g. 'generators__word', 'gmail__send_reply'
+  tool_parameters?: Record<string, unknown>; // Tool-specific parameters set by planning AI
+  requires_approval?: boolean; // Pause execution at this step and wait for user confirmation
+  approval_message?: string; // Plain-language description: "About to send reply to john@client.com"
   options?: Record<string, unknown>; // Skill-specific configuration populated by planning AI
   status: StepStatus;
   error?: string; // Error message if step failed

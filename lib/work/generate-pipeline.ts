@@ -4,6 +4,10 @@ import { randomUUID } from 'crypto';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { DocumentArtifact, ArtifactContent, DocContent, PptxContent, XlsxContent, EmailContent, DeliverableType } from '@/lib/types/inbox';
 import { buildArtifactFile, getFileExt, getMimeType } from '@/lib/artifacts/builders';
+import { invokeTool } from '@/lib/mcp/client';
+import { DOCX_SKILL } from '@/lib/skills/docx';
+import { PPTX_SKILL } from '@/lib/skills/pptx';
+import { XLSX_SKILL } from '@/lib/skills/xlsx';
 
 // ─── Claude API retry helper ────────────────────────────────────────────────────
 // Retries on 529 (overloaded), 500 (server error), and 429 (rate limited).
@@ -316,25 +320,22 @@ Return the JSON email structure.`,
 
   if (type === 'presentation') {
     return {
-      systemPrompt: `You generate structured presentation content in JSON. Return ONLY valid JSON — no markdown, no explanation. Keep total JSON under 3000 characters.
+      systemPrompt: `You generate structured presentation content in JSON. Return ONLY valid JSON — no markdown, no explanation. Keep total JSON under 3500 characters.
 
 JSON format:
 {
   "title": "Presentation title",
   "subtitle": "Optional subtitle",
   "slides": [
-    { "title": "Slide title", "layout": "title", "bullets": [], "notes": "optional" },
-    { "title": "Slide title", "layout": "content", "bullets": ["Concise point", "Another point"], "notes": "optional" }
+    { "title": "Slide title", "layout": "title", "bullets": [] },
+    { "title": "Slide title", "layout": "content", "bullets": ["Concise point", "Another point"] }
   ]
 }
 
-Rules:
-- First slide layout must be "title" with empty bullets array
-- All other slides use layout "content" with 3-5 bullets each (under 8 words per bullet — no filler words)
-- 5-7 slides maximum — do not over-generate
-- Derive content from the work completed below — do not copy source material verbatim
-- Never use double quotes or special characters inside string values
-- Omit "notes" field entirely to save space`,
+${PPTX_SKILL}
+
+- Omit "notes" field entirely to save space
+- Never use double quotes or special characters inside string values`,
       userPrompt: `Assemble a professional presentation.
 
 DELIVERABLE: ${plan.deliverable_description}${deadlineLine}
@@ -350,7 +351,7 @@ Return the JSON presentation structure.`,
 
   if (type === 'spreadsheet') {
     return {
-      systemPrompt: `You generate structured spreadsheet content in JSON. Return ONLY valid JSON — no markdown, no explanation. Keep total JSON under 3000 characters.
+      systemPrompt: `You generate structured spreadsheet content in JSON. Return ONLY valid JSON — no markdown, no explanation. Keep total JSON under 3500 characters.
 
 JSON format:
 {
@@ -359,18 +360,14 @@ JSON format:
     {
       "name": "Sheet name",
       "headers": ["Column A", "Column B", "Column C"],
-      "rows": [["value", 100, null], ["value2", 200, "note"]],
-      "summary": "Optional summary of this sheet"
+      "rows": [["value", 100, null], ["value2", 200, "note"]]
     }
   ]
 }
 
-Rules:
-- 1-2 sheets maximum
-- Headers must be short (1-3 words each)
-- Row values are strings, numbers, or null (for empty cells) — keep string values under 20 characters
-- Use actual data from the work completed below — do not copy source material verbatim
-- 5-12 rows per sheet maximum
+${XLSX_SKILL}
+
+- Row values are strings, numbers, or null only — never booleans or objects
 - Never use double quotes or special characters inside string values
 - Omit "summary" field to save space`,
       userPrompt: `Assemble a professional spreadsheet.
@@ -387,24 +384,23 @@ Return the JSON spreadsheet structure.`,
   }
 
   return {
-    systemPrompt: `You generate structured document content in JSON. Return ONLY valid JSON — no markdown, no explanation. Keep total JSON under 3000 characters.
+    systemPrompt: `You generate structured document content in JSON. Return ONLY valid JSON — no markdown, no explanation. Keep total JSON under 4000 characters.
 
 JSON format:
 {
   "title": "Document title",
   "subtitle": "Optional subtitle or date",
   "sections": [
-    { "heading": "Section heading", "level": 1, "paragraphs": ["Full paragraph text..."] }
+    { "heading": "Section heading", "level": 1, "paragraphs": ["Full paragraph text..."] },
+    { "heading": "Sub-section", "level": 2, "paragraphs": ["- Bullet item one", "- Bullet item two", "Prose paragraph."] }
   ]
 }
 
-Rules:
-- level 1 = major section only (no subsections)
-- Exactly 1 paragraph per section, maximum 2 sentences — be concise
+${DOCX_SKILL}
+
+- level 1 = major section heading, level 2 = sub-section (use sparingly)
+- paragraphs array: each string is one paragraph OR one "- item" bullet line — mix freely within a section
 - Be specific — use actual data and findings from the work completed, not generic statements
-- 4-5 sections maximum
-- No bullet characters in paragraph text — write full prose
-- Do not copy source material verbatim — synthesize and summarize
 - Never use double quotes or special characters inside string values`,
     userPrompt: `Assemble a professional ${type} document.
 
@@ -475,6 +471,12 @@ export interface GeneratePipelineParams {
   conversationContext: string;
   userContext: string;
   adminClient: SupabaseClient;
+  toolRegistry?: import('@/lib/mcp/types').MCPTool[]; // passed by routes but not used by pipeline yet
+}
+
+export interface PipelineResult {
+  artifacts: DocumentArtifact[];
+  paused?: { stepNumber: number; approvalMessage?: string };
 }
 
 /**
@@ -574,22 +576,67 @@ export async function assembleArtifactFromSteps(params: {
 
 // ─── Full pipeline ─────────────────────────────────────────────────────────────
 
-// Skills that produce an artifact when encountered as a step
+// Skills that produce an artifact when encountered as a step (legacy format)
 const GENERATOR_SKILLS = new Set(['excel-generator', 'word-generator', 'powerpoint-generator', 'email-drafter']);
+
+// Generator tool IDs in the new MCP format
+const GENERATOR_TOOL_IDS = new Set(['generators__word', 'generators__xlsx', 'generators__pptx', 'generators__email_draft']);
+
+// Backward-compat mapping: legacy skill → MCP tool ID
+export const SKILL_TO_TOOL: Record<string, string> = {
+  'word-generator': 'generators__word',
+  'excel-generator': 'generators__xlsx',
+  'powerpoint-generator': 'generators__pptx',
+  'email-drafter': 'generators__email_draft',
+};
+
+// MCP tool ID → DeliverableType (for new-format steps)
+const TOOL_TO_TYPE: Record<string, string> = {
+  'generators__word': 'document',
+  'generators__xlsx': 'spreadsheet',
+  'generators__pptx': 'presentation',
+  'generators__email_draft': 'email',
+};
+
+/**
+ * Resolve the canonical MCP tool ID for a step, supporting both legacy skill and new tool fields.
+ */
+function resolveToolId(step: { skill?: string; tool?: string }): string | null {
+  if (step.tool) return step.tool;
+  if (step.skill) return SKILL_TO_TOOL[step.skill] ?? null;
+  return null;
+}
+
+/**
+ * Returns true if this step produces an artifact (generator step).
+ * Supports both legacy skill field and new tool field.
+ */
+function isGeneratorStep(step: { skill?: string; tool?: string }): boolean {
+  if (step.tool) return GENERATOR_TOOL_IDS.has(step.tool);
+  if (step.skill) return GENERATOR_SKILLS.has(step.skill);
+  return false;
+}
 
 /**
  * Infer the DeliverableType for a generator step.
- * Skill takes priority — email-drafter always → email, excel-generator → spreadsheet, etc.
- * For word-generator (which can produce multiple document-like types), fall back to
- * deliverable_types[index] → deliverable_type → 'document'.
+ * Supports both legacy skill field and new MCP tool field.
+ * For word-generator / generators__word (which can produce multiple document-like types),
+ * falls back to deliverable_types[index] → deliverable_type → 'document'.
  */
 function inferTypeFromGeneratorStep(step: any, plan: any, generatorIndex: number): DeliverableType {
+  // New MCP tool format takes priority
+  if (step.tool && TOOL_TO_TYPE[step.tool]) {
+    const toolType = TOOL_TO_TYPE[step.tool];
+    // generators__word needs the same fallback as word-generator below
+    if (toolType !== 'document') return toolType as DeliverableType;
+  }
+  // Legacy skill format
   switch (step.skill) {
     case 'email-drafter': return 'email';
     case 'excel-generator': return 'spreadsheet';
     case 'powerpoint-generator': return 'presentation';
   }
-  // word-generator: use deliverable_types order if available, then deliverable_type
+  // word-generator / generators__word: use deliverable_types order if available, then deliverable_type
   if (Array.isArray(plan.deliverable_types) && plan.deliverable_types[generatorIndex]) {
     return plan.deliverable_types[generatorIndex] as DeliverableType;
   }
@@ -605,7 +652,7 @@ function inferTypeFromGeneratorStep(step: any, plan: any, generatorIndex: number
  * plan has no generator steps.
  * DB write is intentionally omitted — callers handle appending to the artifacts array.
  */
-export async function runFullPipeline(params: GeneratePipelineParams & { anthropic?: Anthropic }): Promise<DocumentArtifact[]> {
+export async function runFullPipeline(params: GeneratePipelineParams & { anthropic?: Anthropic }): Promise<PipelineResult> {
   const { userId, threadId, plan, emailAttachments, userAttachments = [], conversationContext, userContext, adminClient } = params;
   const anthropic = params.anthropic ?? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -619,22 +666,41 @@ export async function runFullPipeline(params: GeneratePipelineParams & { anthrop
 
   for (const step of allSteps) {
     try {
-      if (GENERATOR_SKILLS.has(step.skill)) {
-        const type = inferTypeFromGeneratorStep(step, plan, generatorIndex++);
-        const artifact = await assembleArtifactFromSteps({
+      // Approval gate: pause execution and notify the thread
+      if (step.requires_approval) {
+        await adminClient.from('work_threads').update({
+          execution_status: 'awaiting_approval',
+          plan: { ...plan, pending_approval_step: step.number },
+        }).eq('id', threadId);
+        return { artifacts, paused: { stepNumber: step.number, approvalMessage: step.approval_message } };
+      }
+
+      const toolId = resolveToolId(step);
+
+      if (toolId) {
+        const generatorStep = isGeneratorStep(step);
+        const type = generatorStep ? inferTypeFromGeneratorStep(step, plan, generatorIndex++) : undefined;
+        const result = await invokeTool(toolId, {
           userId, threadId, type, plan,
           stepOutputs: [...intermediateOutputs],
-          attachmentContext, conversationContext, userContext, adminClient, anthropic,
-          stepAction: step.action,
-        });
-        artifacts.push(artifact);
+          attachmentContext, conversationContext, userContext,
+          adminClient, anthropic, stepAction: step.action,
+        }, {});
+        if (!result.success) {
+          console.error(`[FullPipeline] Tool ${toolId} failed:`, result.error);
+        } else if (generatorStep) {
+          artifacts.push(result.data as DocumentArtifact);
+        } else {
+          // Action tool — add result to intermediate context for subsequent steps
+          intermediateOutputs.push({ stepNumber: step.number, action: step.action, output: JSON.stringify(result.data) });
+        }
       } else {
-        // Intermediate step — skill-free execution with pre-built attachment context
+        // No tool — intermediate step executed by Claude
         const output = await executeStep(step, plan, intermediateOutputs, attachmentContext, userContext, anthropic);
         intermediateOutputs.push({ stepNumber: step.number, action: step.action, output });
       }
     } catch (err) {
-      console.error(`[FullPipeline] Step ${step.number} (${step.skill}) failed:`, err);
+      console.error(`[FullPipeline] Step ${step.number} (${step.skill ?? step.tool}) failed:`, err);
     }
   }
 
@@ -663,7 +729,7 @@ export async function runFullPipeline(params: GeneratePipelineParams & { anthrop
     }
   }
 
-  return artifacts;
+  return { artifacts };
 }
 
 /**
@@ -671,6 +737,6 @@ export async function runFullPipeline(params: GeneratePipelineParams & { anthrop
  * Used by prepare-from-email (always produces one artifact).
  */
 export async function runGeneratePipeline(params: GeneratePipelineParams): Promise<DocumentArtifact> {
-  const artifacts = await runFullPipeline(params);
+  const { artifacts } = await runFullPipeline(params);
   return artifacts[0];
 }

@@ -281,6 +281,7 @@ function PlanPanel({
   const [kbInputResults, setKbInputResults] = useState<Record<string, { id: string; filename: string }[]>>({});
   const [kbInputSearching, setKbInputSearching] = useState<Record<string, boolean>>({});
   const kbInputTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const [kbInputLinked, setKbInputLinked] = useState<Record<string, Set<string>>>({});
 
   function handleKbQueryChange(val: string) {
     setKbQuery(val);
@@ -592,22 +593,31 @@ function PlanPanel({
                             </div>
                             {(kbInputResults[input.id] ?? []).length > 0 && (
                               <div className="mt-0.5 space-y-0.5">
-                                {(kbInputResults[input.id] ?? []).map((r) => (
-                                  <div key={r.id} className="flex items-center gap-2 px-2.5 py-1.5 bg-white border border-neutral-200">
-                                    <BookOpenIcon className="w-3 h-3 text-neutral-400 flex-shrink-0" />
-                                    <span className="flex-1 min-w-0 text-[11px] text-neutral-700 truncate">{r.filename}</span>
-                                    <button
-                                      onClick={() => {
-                                        onKBLink?.(input.id, r.id, r.filename);
-                                        setKbInputQueries((prev) => ({ ...prev, [input.id]: '' }));
-                                        setKbInputResults((prev) => ({ ...prev, [input.id]: [] }));
-                                      }}
-                                      className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 flex-shrink-0"
-                                    >
-                                      Use
-                                    </button>
-                                  </div>
-                                ))}
+                                {(kbInputResults[input.id] ?? []).map((r) => {
+                                  const alreadyLinked = kbInputLinked[input.id]?.has(r.id) || (input.kbAccepted ?? []).some((a: any) => a.fileId === r.id);
+                                  return (
+                                    <div key={r.id} className="flex items-center gap-2 px-2.5 py-1.5 bg-white border border-neutral-200">
+                                      <BookOpenIcon className="w-3 h-3 text-neutral-400 flex-shrink-0" />
+                                      <span className="flex-1 min-w-0 text-[11px] text-neutral-700 truncate">{r.filename}</span>
+                                      {alreadyLinked ? (
+                                        <span className="text-[10px] text-green-600 flex-shrink-0">Added</span>
+                                      ) : (
+                                        <button
+                                          onClick={() => {
+                                            onKBLink?.(input.id, r.id, r.filename);
+                                            setKbInputLinked((prev) => ({
+                                              ...prev,
+                                              [input.id]: new Set([...(prev[input.id] ?? []), r.id]),
+                                            }));
+                                          }}
+                                          className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 flex-shrink-0"
+                                        >
+                                          Use
+                                        </button>
+                                      )}
+                                    </div>
+                                  );
+                                })}
                               </div>
                             )}
                           </div>
@@ -685,7 +695,11 @@ function PlanPanel({
                       {kbSearchResults.length > 0 && (
                         <div className="mt-0.5 space-y-0.5">
                           {kbSearchResults.map((r) => {
-                            const alreadyAdded = plan.inputs?.some((i: any) => i.kbFileId === r.id);
+                            const alreadyAdded = plan.inputs?.some((i: any) =>
+                              i.kbFileId === r.id ||
+                              (i.kbSuggestions ?? []).some((s: any) => s.fileId === r.id) ||
+                              (i.kbAccepted ?? []).some((a: any) => a.fileId === r.id)
+                            );
                             return (
                               <div key={r.id} className="flex items-center gap-2 px-2.5 py-1.5 bg-white border border-neutral-200">
                                 <BookOpenIcon className="w-3 h-3 text-neutral-400 flex-shrink-0" />
@@ -694,7 +708,7 @@ function PlanPanel({
                                   <span className="text-[10px] text-green-600 flex-shrink-0">Added</span>
                                 ) : (
                                   <button
-                                    onClick={() => { onKBManualAdd?.(r.id, r.filename); setKbQuery(''); setKbSearchResults([]); }}
+                                    onClick={() => { onKBManualAdd?.(r.id, r.filename); }}
                                     className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 flex-shrink-0"
                                   >
                                     Add

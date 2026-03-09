@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { DocumentArtifact } from '@/lib/types/inbox';
 import { runFullPipeline } from '@/lib/work/generate-pipeline';
+import { buildToolRegistry } from '@/lib/mcp/registry';
 
 // POST /api/work/threads/[id]/generate
 export async function POST(
@@ -106,8 +107,11 @@ export async function POST(
       }
     }
 
+    // Build tool registry for this user (informs pipeline of available tools)
+    const toolRegistry = await buildToolRegistry(user.id, supabase);
+
     // Run all steps — intermediate steps feed into each generator step sequentially
-    const newArtifacts = await runFullPipeline({
+    const pipelineResult = await runFullPipeline({
       userId: user.id,
       threadId,
       plan,
@@ -116,7 +120,19 @@ export async function POST(
       conversationContext,
       userContext,
       adminClient,
+      toolRegistry,
     });
+
+    // If a step requires approval, pipeline paused — return early
+    if (pipelineResult.paused) {
+      return NextResponse.json({
+        paused: true,
+        stepNumber: pipelineResult.paused.stepNumber,
+        approvalMessage: pipelineResult.paused.approvalMessage,
+      });
+    }
+
+    const newArtifacts = pipelineResult.artifacts;
 
     // Title each artifact: use the matching plan output name if available,
     // fall back to plan.deliverable_description, then thread title.

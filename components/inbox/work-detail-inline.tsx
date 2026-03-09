@@ -341,6 +341,12 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
             )}
           </p>
         )}
+        {recipientContext?.otherRecipients && recipientContext.otherRecipients.length > 0 && (
+          <p className="text-[11px] text-neutral-400 mt-0.5">
+            Also on thread: {recipientContext.otherRecipients.slice(0, 3).join(', ')}
+            {recipientContext.otherRecipients.length > 3 && ` +${recipientContext.otherRecipients.length - 3} more`}
+          </p>
+        )}
       </div>
 
       {/* Scrollable content */}
@@ -373,9 +379,14 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
           </div>
         )}
 
-        {/* Summary — non-executable: what was prepared */}
+        {/* Summary — what was prepared / what sender is requesting */}
         {!executable && item.what_i_prepared && (
-          <p className="text-[14px] text-neutral-800 leading-relaxed">{item.what_i_prepared}</p>
+          <div>
+            <h3 className="text-[11px] font-medium text-neutral-400 uppercase tracking-wide mb-2">
+              Summary
+            </h3>
+            <p className="text-[13px] text-neutral-800 leading-relaxed">{item.what_i_prepared}</p>
+          </div>
         )}
 
         {/* What will be created — compact inline for executable */}
@@ -555,13 +566,6 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
           </div>
         )}
 
-        {/* Also on thread — inline */}
-        {recipientContext?.otherRecipients && recipientContext.otherRecipients.length > 0 && (
-          <p className="text-[12px] text-neutral-400">
-            Also on thread: {recipientContext.otherRecipients.slice(0, 3).join(', ')}
-            {recipientContext.otherRecipients.length > 3 && ` +${recipientContext.otherRecipients.length - 3} more`}
-          </p>
-        )}
 
       </div>
 
