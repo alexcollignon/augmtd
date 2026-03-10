@@ -106,8 +106,8 @@ export default function MeetingsColumn({ isOpen, onToggle, meetings, loading, us
       {/* Toggle button */}
       <button
         onClick={onToggle}
-        className={`flex-shrink-0 flex items-center border-b border-neutral-200 hover:bg-neutral-50 transition-colors ${
-          isOpen ? 'justify-between px-4 py-3' : 'justify-center py-3'
+        className={`flex-shrink-0 h-10 flex items-center border-b border-neutral-200 hover:bg-neutral-50 transition-colors ${
+          isOpen ? 'justify-between px-4' : 'justify-center'
         }`}
         title={isOpen ? 'Hide calendar' : 'Show calendar'}
       >

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
@@ -8,9 +8,10 @@ import SidebarNav from '@/components/sidebar-nav';
 import EmailListSections from '@/components/inbox/email-list-sections';
 import EmailListChronological from '@/components/inbox/email-list-chronological';
 import WorkDetailInline from '@/components/inbox/work-detail-inline';
+import InboxChatView from '@/components/inbox/inbox-chat-view';
 import MeetingsColumn from '@/components/inbox/meetings-column';
 import OnboardingModal from '@/components/onboarding-modal';
-import { ArrowPathIcon, SparklesIcon, ClockIcon, Bars3Icon, QueueListIcon, ArchiveBoxArrowDownIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import { ArrowPathIcon, SparklesIcon, ClockIcon, Bars3Icon, QueueListIcon, ArchiveBoxArrowDownIcon, XMarkIcon, MagnifyingGlassIcon } from '@heroicons/react/24/outline';
 import { toast } from 'sonner';
 import type { CalendarEvent } from '@/lib/types/meetings';
 import type { InboxItem } from '@/lib/types/inbox';
@@ -47,6 +48,18 @@ export function InboxPageClient({
   const [isBulkArchiving, setIsBulkArchiving] = useState(false);
   const [isBulkDismissing, setIsBulkDismissing] = useState(false);
   const [bulkArchiveConfirmPending, setBulkArchiveConfirmPending] = useState(false);
+
+  // Search state (client-side filter on left list)
+  const [searchQuery, setSearchQuery] = useState('');
+
+  // Chat / Ask state
+  const [isChatOpen, setIsChatOpen] = useState(false);
+  const [chatInput, setChatInput] = useState('');
+  const [chatHistory, setChatHistory] = useState<Array<{ role: 'user' | 'assistant'; content: string }>>([]);
+  const [chatStreaming, setChatStreaming] = useState(false);
+  const [streamingContent, setStreamingContent] = useState('');
+  const chatInputRef = useRef<HTMLInputElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   const optimisticSyncTriggered = useRef(false);
   const isSyncingRef = useRef(false);
@@ -200,6 +213,20 @@ export function InboxPageClient({
   const preparedItems = inboxItems.filter((item: any) => item.visual_section === 'prepared');
   const meetingAssistantItems = inboxItems.filter((item: any) => item.source === 'meeting');
 
+  const filteredItems = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return inboxItems;
+    return inboxItems.filter(item => {
+      const sd = (item as any).source_data;
+      return (
+        (sd?.from_name || '').toLowerCase().includes(q) ||
+        (sd?.from || '').toLowerCase().includes(q) ||
+        (sd?.subject || '').toLowerCase().includes(q) ||
+        (sd?.snippet || '').toLowerCase().includes(q)
+      );
+    });
+  }, [inboxItems, searchQuery]);
+
   const handleItemConfirmed = (ids: string[], action: 'confirm_as_mine' | 'not_my_task') => {
     setInboxItems(prev => {
       if (action === 'confirm_as_mine') {
@@ -267,6 +294,78 @@ export function InboxPageClient({
     }
   };
 
+  const handleSelectItem = (item: InboxItem) => {
+    setSelectedItem(item);
+    if (isChatOpen) closeChat();
+  };
+
+  const handleChatAction = useCallback(async (type: string, itemId: string) => {
+    if (type === 'archive') {
+      const res = await fetch(`/api/inbox/${itemId}/archive-source`, { method: 'POST' });
+      if (!res.ok) throw new Error('Archive failed');
+      setInboxItems(prev => prev.filter(i => i.id !== itemId));
+      setSelectedItem(prev => (prev?.id === itemId ? null : prev));
+    } else if (type === 'open') {
+      const item = inboxItems.find(i => i.id === itemId);
+      if (item) handleSelectItem(item);
+    } else if (type === 'workflow') {
+      const item = inboxItems.find(i => i.id === itemId);
+      if (item) handleSelectItem(item);
+    }
+  }, [inboxItems]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const openChat = () => {
+    setIsChatOpen(true);
+    setTimeout(() => chatInputRef.current?.focus(), 50);
+  };
+
+  const closeChat = () => {
+    setIsChatOpen(false);
+    setChatInput('');
+    setChatHistory([]);
+  };
+
+  const sendChatMessage = useCallback(async (message: string) => {
+    if (!message.trim() || chatStreaming) return;
+    const userMessage = message.trim();
+    setChatInput('');
+    setChatHistory(prev => [...prev, { role: 'user', content: userMessage }]);
+    setChatStreaming(true);
+    setStreamingContent('');
+
+    try {
+      const res = await fetch('/api/inbox/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: userMessage,
+          history: chatHistory,
+        }),
+      });
+
+      if (!res.ok || !res.body) throw new Error('Chat request failed');
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let full = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunk = decoder.decode(value, { stream: true });
+        full += chunk;
+        setStreamingContent(full);
+      }
+
+      setChatHistory(prev => [...prev, { role: 'assistant', content: full }]);
+    } catch {
+      setChatHistory(prev => [...prev, { role: 'assistant', content: 'Something went wrong. Please try again.' }]);
+    } finally {
+      setChatStreaming(false);
+      setStreamingContent('');
+    }
+  }, [chatHistory, chatStreaming]);
+
   return (
     <div className="flex h-screen bg-white overflow-hidden">
       <SidebarNav userEmail={user?.email} />
@@ -310,7 +409,7 @@ export function InboxPageClient({
             <div className="w-[272px] flex-shrink-0 border-r border-neutral-200 flex flex-col bg-white">
 
               {/* View + density toggles */}
-              <div className="flex-shrink-0 flex items-center justify-between px-2 py-2 border-b border-neutral-100">
+              <div className="flex-shrink-0 h-10 flex items-center justify-between px-2 border-b border-neutral-100">
                 {/* View mode */}
                 <div className="flex items-center gap-1">
                   <button
@@ -440,20 +539,25 @@ export function InboxPageClient({
                       New items will appear here after the next sync.
                     </p>
                   </div>
+                ) : filteredItems.length === 0 && searchQuery ? (
+                  <div className="flex flex-col items-center justify-center h-full py-16 px-4 text-center">
+                    <p className="text-[13px] text-neutral-500 font-medium mb-1">No results</p>
+                    <p className="text-[12px] text-neutral-400">Try a different search term</p>
+                  </div>
                 ) : viewMode === 'chronological' ? (
                   <EmailListChronological
-                    items={inboxItems}
+                    items={filteredItems}
                     selectedId={selectedItem?.id || null}
-                    onSelect={setSelectedItem}
+                    onSelect={handleSelectItem}
                     compact={density === 'compact'}
                     selectedIds={selectedIds}
                     onToggleSelect={handleToggleSelect}
                   />
                 ) : (
                   <EmailListSections
-                    items={inboxItems}
+                    items={filteredItems}
                     selectedId={selectedItem?.id || null}
-                    onSelect={setSelectedItem}
+                    onSelect={handleSelectItem}
                     compact={density === 'compact'}
                     selectedIds={selectedIds}
                     onToggleSelect={handleToggleSelect}
@@ -462,9 +566,71 @@ export function InboxPageClient({
               </div>
             </div>
 
-            {/* Middle: inline detail panel */}
-            <div className="flex-1 min-w-0 overflow-hidden flex flex-col">
-              <WorkDetailInline key={selectedItem?.id ?? 'empty'} item={selectedItem} onItemConfirmed={handleItemConfirmed} />
+            {/* Middle: search header + detail/chat */}
+            <div className="flex-1 min-w-0 overflow-hidden flex flex-col border-r border-neutral-200">
+              {/* Middle header — search + ask */}
+              <div className="flex-shrink-0 h-10 flex items-center gap-1 px-3 border-b border-neutral-200 bg-white">
+                {/* Search */}
+                <MagnifyingGlassIcon className="w-3.5 h-3.5 text-neutral-400 flex-shrink-0" />
+                <input
+                  ref={searchInputRef}
+                  type="text"
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Escape') {
+                      setSearchQuery('');
+                      searchInputRef.current?.blur();
+                    }
+                  }}
+                  placeholder="Search inbox..."
+                  className="flex-1 text-[12px] text-neutral-700 placeholder-neutral-400 bg-transparent outline-none min-w-0"
+                />
+                {searchQuery && (
+                  <button
+                    onClick={() => setSearchQuery('')}
+                    className="flex-shrink-0 p-0.5 text-neutral-400 hover:text-neutral-600 transition-colors"
+                  >
+                    <XMarkIcon className="w-3.5 h-3.5" />
+                  </button>
+                )}
+
+                {/* Divider */}
+                <div className="w-px h-4 bg-neutral-200 mx-1 flex-shrink-0" />
+
+                {/* Ask AI toggle */}
+                <button
+                  onClick={() => isChatOpen ? closeChat() : openChat()}
+                  title="Ask AI"
+                  className={`flex-shrink-0 flex items-center gap-1.5 px-2 py-1 text-[11px] font-semibold transition-colors ${
+                    isChatOpen
+                      ? 'bg-indigo-600 text-white'
+                      : 'text-neutral-400 hover:text-neutral-700'
+                  }`}
+                >
+                  <SparklesIcon className="w-3 h-3" />
+                  Ask
+                </button>
+              </div>
+
+              {isChatOpen ? (
+                <InboxChatView
+                  history={chatHistory}
+                  streamingContent={streamingContent}
+                  isStreaming={chatStreaming}
+                  inboxItems={inboxItems}
+                  onSelectItem={item => { setSelectedItem(item); closeChat(); }}
+                  onSendMessage={sendChatMessage}
+                  onAction={handleChatAction}
+                  chatInput={chatInput}
+                  onChatInputChange={setChatInput}
+                  chatInputRef={chatInputRef}
+                />
+              ) : (
+                <div className="flex-1 min-h-0">
+                  <WorkDetailInline key={selectedItem?.id ?? 'empty'} item={selectedItem} onItemConfirmed={handleItemConfirmed} />
+                </div>
+              )}
             </div>
 
             {/* Right: calendar column */}
