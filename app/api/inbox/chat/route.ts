@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import OpenAI from 'openai';
+import { getSystemClient } from '@/lib/ai/factory';
 import { buildInboxSnapshot, formatSnapshotForPrompt } from '@/lib/inbox/chat-context';
 
 const SYSTEM_PROMPT = `You are an intelligent inbox assistant for a professional email tool called AUGMTD.
@@ -29,11 +29,7 @@ ACTION:{"type":"open","itemId":"uuid","label":"Open the email from Sarah about t
 
 Only suggest actions when the user clearly wants to do something (e.g. "archive this", "clean up", "open that email", "show me"). Do not suggest actions for every response.`;
 
-let openaiClient: OpenAI | null = null;
-function getOpenAI(): OpenAI {
-  if (!openaiClient) openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-  return openaiClient;
-}
+const { client: openaiClient, model: chatModel } = getSystemClient('conversation');
 
 export async function POST(request: NextRequest) {
   try {
@@ -60,9 +56,8 @@ export async function POST(request: NextRequest) {
       .replace('{{INBOX_SNAPSHOT}}', snapshotText || 'No active inbox items.')
       .replace('{{TODAY}}', today);
 
-    const openai = getOpenAI();
-    const stream = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
+    const stream = await openaiClient.chat.completions.create({
+      model: chatModel,
       messages: [
         { role: 'system', content: systemPrompt },
         ...history,

@@ -5,12 +5,10 @@
  * that indicate work impact and cognitive cost.
  */
 
-import OpenAI from 'openai';
+import { getSystemClient } from '@/lib/ai/factory';
 import type { WorkSignals, SignalPatternKey } from '@/lib/types/recipient-detection';
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+const { client: openai, model: defaultModel } = getSystemClient('classification');
 
 // ==========================================
 // MAIN DETECTION FUNCTION
@@ -35,7 +33,7 @@ export async function detectWorkSignals(
 
   try {
     const response = await openai.chat.completions.create({
-      model: 'gpt-4o-mini', // Fast and cost-effective
+      model: defaultModel, // Fast and cost-effective
       messages: [
         {
           role: 'system',

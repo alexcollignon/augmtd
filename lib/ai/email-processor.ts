@@ -1,9 +1,7 @@
-import OpenAI from 'openai';
+import { getSystemClient } from '@/lib/ai/factory';
 import type { UserContextProfile } from '@/lib/types/user-context';
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY!,
-});
+const { client: openai, model: defaultModel } = getSystemClient('classification');
 
 /**
  * Calendar context for email processing
@@ -946,7 +944,7 @@ Respond ONLY with valid JSON matching the structure above.`;
 
   try {
     const response = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
+      model: defaultModel,
       messages: [
         {
           role: 'system',

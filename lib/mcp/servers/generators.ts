@@ -88,7 +88,6 @@ export const generatorsServer: MCPServer = {
         conversationContext: params.conversationContext as string,
         userContext: params.userContext as string,
         adminClient: params.adminClient as import('@supabase/supabase-js').SupabaseClient,
-        anthropic: params.anthropic as import('@anthropic-ai/sdk').default | undefined,
         stepAction: params.stepAction as string | undefined,
       })
       return { success: true, data: artifact }

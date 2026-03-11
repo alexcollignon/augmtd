@@ -1,23 +1,31 @@
 import { SupabaseClient } from '@supabase/supabase-js'
 import { ContextSource, ContextResult } from './types'
-import { searchKnowledge } from '@/lib/knowledge/indexer'
+import { searchKnowledgeGrouped } from '@/lib/knowledge/search'
 
-const SNIPPET_LENGTH = 400
+// Max chars injected per file into generation context.
+// 3 chunks × ~3200 chars = ~9600 chars max per file, capped here for safety.
+const MAX_CONTEXT_CHARS = 10000
 
 export const kbContextSource: ContextSource = {
   type: 'kb',
   label: 'Knowledge Base',
 
   async search(userId: string, query: string, limit: number, adminClient: SupabaseClient): Promise<ContextResult[]> {
-    const files = await searchKnowledge(userId, query, limit, adminClient)
-    return files.map((f) => ({
-      id: f.id,
-      filename: f.filename,
-      snippet: (f.extracted_text ?? '').slice(0, SNIPPET_LENGTH).replace(/\n+/g, ' ').trim(),
-      similarity: f.similarity ?? 0,
+    const groups = await searchKnowledgeGrouped(userId, query, limit, adminClient, {
+      maxChunksPerFile: 3,
+      threshold: 0.15,
+    })
+
+    return groups.map((g) => ({
+      id: g.fileId,
+      filename: g.filename,
+      // Snippet: best chunk content truncated — shown to LLM for assignment
+      snippet: g.chunks[0]?.content.slice(0, 400).replace(/\n+/g, ' ').trim() ?? '',
+      similarity: g.similarity,
       sourceType: 'kb',
       sourceLabel: 'Knowledge Base',
-      extractedText: f.extracted_text,
+      // extractedText: top chunks joined (not full file) — injected into generation
+      extractedText: g.contextText.slice(0, MAX_CONTEXT_CHARS),
     }))
   },
 }

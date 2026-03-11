@@ -9,20 +9,10 @@
  */
 
 import { SupabaseClient } from '@supabase/supabase-js';
-import OpenAI from 'openai';
+import { getSystemClient } from '@/lib/ai/factory';
 import type { WorkflowSeed, DeliverableType } from '@/lib/types/inbox';
 
-// Lazy-load OpenAI client
-let openaiClient: OpenAI | null = null;
-
-function getOpenAIClient(): OpenAI {
-  if (!openaiClient) {
-    openaiClient = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY,
-    });
-  }
-  return openaiClient;
-}
+const { client: openai, model: defaultModel } = getSystemClient('classification');
 
 interface DecompositionInput {
   source_type: 'email' | 'manual' | 'workflow';
@@ -181,9 +171,8 @@ Examples of non-executable work:
 Return ONLY the JSON object or null, no other text.`;
 
     // 4. Call OpenAI to generate execution plan
-    const openai = getOpenAIClient();
     const completion = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
+      model: defaultModel,
       messages: [
         {
           role: 'system',

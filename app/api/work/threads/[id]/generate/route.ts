@@ -85,24 +85,56 @@ export async function POST(
     );
 
     // Inject accepted KB inputs as attachment context (fromKB covers named + global; fromContext covers manual adds)
+    // Uses chunk-based injection (top 3 chunks per file, with citation headers) instead of full extracted_text.
+    // Falls back to extracted_text for files not yet chunked (pre-Phase 36 index).
     const kbInputs = ((plan as any)?.inputs ?? []).filter((i: any) => (i.fromKB || i.fromContext) && i.status === 'provided');
     if (kbInputs.length > 0) {
-      // Collect all KB file IDs — inputs with kbAccepted[] may reference multiple files
-      const kbFileIds = kbInputs.flatMap((i: any) =>
+      const kbFileIds: string[] = kbInputs.flatMap((i: any) =>
         i.kbAccepted?.length ? i.kbAccepted.map((a: any) => a.fileId) : [i.kbFileId].filter(Boolean)
       );
-      const { data: kbFiles } = await adminClient
-        .from('knowledge_files')
-        .select('id, filename, extracted_text')
-        .in('id', kbFileIds);
-      for (const f of (kbFiles ?? [])) {
-        if (f.extracted_text) {
-          userAttachments.push({
-            filename: f.filename,
-            mimeType: 'text/plain',
-            storagePath: '',
-            extractedText: f.extracted_text,
-          });
+
+      // Fetch top 3 chunks per file (reading order) with citation headers
+      const { data: chunks } = await adminClient
+        .from('knowledge_chunks')
+        .select('file_id, chunk_index, heading, content, knowledge_files(filename)')
+        .in('file_id', kbFileIds)
+        .order('chunk_index', { ascending: true });
+
+      const chunksByFile = new Map<string, Array<{ chunk_index: number; heading: string | null; content: string; filename: string }>>();
+      for (const c of (chunks ?? [])) {
+        const filename = (c.knowledge_files as any)?.filename ?? c.file_id;
+        const existing = chunksByFile.get(c.file_id) ?? [];
+        if (existing.length < 3) {
+          existing.push({ chunk_index: c.chunk_index, heading: c.heading, content: c.content, filename });
+          chunksByFile.set(c.file_id, existing);
+        }
+      }
+
+      const MAX_KB_CHARS = 10000;
+
+      for (const fileId of kbFileIds) {
+        const fileChunks = chunksByFile.get(fileId);
+
+        if (fileChunks && fileChunks.length > 0) {
+          // Chunk-based injection with citation headers
+          const filename = fileChunks[0].filename;
+          const contextText = fileChunks
+            .map((c) => {
+              const section = c.heading ?? `part ${c.chunk_index + 1}`;
+              return `[${filename} § ${section}]\n${c.content}`;
+            })
+            .join('\n\n');
+          userAttachments.push({ filename, mimeType: 'text/plain', storagePath: '', extractedText: contextText.slice(0, MAX_KB_CHARS) });
+        } else {
+          // Fallback: file not yet chunked — use full extracted_text
+          const { data: kbFile } = await adminClient
+            .from('knowledge_files')
+            .select('filename, extracted_text')
+            .eq('id', fileId)
+            .single();
+          if (kbFile?.extracted_text) {
+            userAttachments.push({ filename: kbFile.filename, mimeType: 'text/plain', storagePath: '', extractedText: kbFile.extracted_text.slice(0, MAX_KB_CHARS) });
+          }
         }
       }
     }

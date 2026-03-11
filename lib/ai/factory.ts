@@ -1,0 +1,191 @@
+import OpenAI from 'openai'
+import type { Chat } from 'openai/resources'
+import { SupabaseClient } from '@supabase/supabase-js'
+import type { TaskType, TierType, ModelEndpoint, TenantConfig, ResolvedClient } from './types'
+import { TIER_DEFAULTS } from './defaults'
+
+// ─── Tenant config cache ────────────────────────────────────────────────────────
+// Module-level cache — persists for the lifetime of the server process.
+// TTL: 5 minutes. Prevents a DB hit on every AI call.
+
+const configCache = new Map<string, { config: TenantConfig; expiresAt: number }>()
+const CONFIG_TTL_MS = 5 * 60 * 1000
+
+async function getTenantConfig(userId: string, supabase: SupabaseClient): Promise<TenantConfig> {
+  const cached = configCache.get(userId)
+  if (cached && cached.expiresAt > Date.now()) return cached.config
+
+  const { data } = await supabase
+    .from('tenant_configs')
+    .select('tier, model_overrides, endpoints, encrypted_api_keys, audit_logging, model_version_pinning')
+    .eq('user_id', userId)
+    .maybeSingle()
+
+  const config: TenantConfig = {
+    userId,
+    tier: (data?.tier as TierType) ?? 'standard',
+    modelOverrides: data?.model_overrides ?? {},
+    endpoints: data?.endpoints ?? {},
+    encryptedApiKeys: data?.encrypted_api_keys ?? {},
+    auditLogging: data?.audit_logging ?? false,
+    modelVersionPinning: data?.model_version_pinning ?? false,
+  }
+
+  configCache.set(userId, { config, expiresAt: Date.now() + CONFIG_TTL_MS })
+  return config
+}
+
+// ─── OpenAI client cache ────────────────────────────────────────────────────────
+// One client instance per unique endpoint. Reused across requests.
+
+const clientCache = new Map<string, OpenAI>()
+
+function buildClient(endpoint: ModelEndpoint, config: TenantConfig): OpenAI {
+  const cacheKey = endpoint.baseURL ?? endpoint.provider
+
+  if (!clientCache.has(cacheKey)) {
+    const apiKey = resolveApiKey(endpoint, config)
+    const defaultHeaders: Record<string, string> = {}
+
+    if (endpoint.provider === 'anthropic') {
+      // Anthropic's OpenAI-compatible endpoint requires this header
+      defaultHeaders['anthropic-version'] = '2023-06-01'
+      defaultHeaders['x-api-key'] = apiKey
+    }
+
+    if (endpoint.provider === 'azure_openai' && endpoint.apiVersion) {
+      defaultHeaders['api-key'] = apiKey
+    }
+
+    clientCache.set(cacheKey, new OpenAI({
+      apiKey,
+      baseURL: endpoint.baseURL,
+      defaultHeaders: Object.keys(defaultHeaders).length > 0 ? defaultHeaders : undefined,
+      defaultQuery: endpoint.provider === 'azure_openai' && endpoint.apiVersion
+        ? { 'api-version': endpoint.apiVersion }
+        : undefined,
+    }))
+  }
+
+  return clientCache.get(cacheKey)!
+}
+
+function resolveApiKey(endpoint: ModelEndpoint, config: TenantConfig): string {
+  // Private client/on-prem: use tenant's own API key if provided
+  if (config.encryptedApiKeys?.ai) return config.encryptedApiKeys.ai
+
+  // Provider-specific platform keys
+  switch (endpoint.provider) {
+    case 'anthropic':     return process.env.ANTHROPIC_API_KEY ?? ''
+    case 'azure_openai':  return process.env.AZURE_OPENAI_API_KEY ?? process.env.OPENAI_API_KEY ?? ''
+    case 'openai_compatible': return process.env.AUGMTD_AI_KEY ?? process.env.OPENAI_API_KEY ?? ''
+    default:              return process.env.OPENAI_API_KEY ?? ''
+  }
+}
+
+// ─── Endpoint resolution ────────────────────────────────────────────────────────
+// Merges tier default with tenant overrides and dynamic endpoints.
+
+function resolveEndpoint(task: TaskType, config: TenantConfig): ModelEndpoint {
+  const tierDefault = TIER_DEFAULTS[config.tier][task]
+  const override = config.modelOverrides?.[task] ?? {}
+
+  // Merge: override wins over tier default
+  const endpoint: ModelEndpoint = { ...tierDefault, ...override }
+
+  // For private tiers without a baked-in baseURL, inject from tenant endpoints config
+  if (!endpoint.baseURL && config.endpoints?.ai) {
+    endpoint.baseURL = endpoint.model.includes('bge') || endpoint.model.includes('embed')
+      ? (config.endpoints.embeddings ?? config.endpoints.ai)
+      : config.endpoints.ai
+  }
+
+  return endpoint
+}
+
+// ─── Public API ─────────────────────────────────────────────────────────────────
+
+/**
+ * Returns a configured OpenAI-SDK client and model name for the given task.
+ * Respects the user's tier and any per-task model overrides.
+ *
+ * All providers (OpenAI, Anthropic, Azure, private) are accessed through the
+ * OpenAI SDK — they all expose OpenAI-compatible endpoints.
+ *
+ * Usage:
+ *   const { client, model } = await getAIClient(userId, 'planning', supabase)
+ *   const res = await client.chat.completions.create({ model, messages, ... })
+ */
+export async function getAIClient(
+  userId: string,
+  task: TaskType,
+  supabase: SupabaseClient
+): Promise<ResolvedClient> {
+  const config = await getTenantConfig(userId, supabase)
+  const endpoint = resolveEndpoint(task, config)
+  const client = buildClient(endpoint, config)
+  return { client, model: endpoint.model, endpoint }
+}
+
+/**
+ * System-level client — for server jobs (cron, background sync) where there
+ * is no user context. Always uses platform defaults (standard tier).
+ */
+export function getSystemClient(task: TaskType): ResolvedClient {
+  const endpoint = TIER_DEFAULTS['standard'][task]
+  const fakeConfig: TenantConfig = {
+    userId: 'system',
+    tier: 'standard',
+    modelOverrides: {},
+    endpoints: {},
+    encryptedApiKeys: {},
+    auditLogging: false,
+    modelVersionPinning: false,
+  }
+  const client = buildClient(endpoint, fakeConfig)
+  return { client, model: endpoint.model, endpoint }
+}
+
+/**
+ * Invalidate cached config for a user — call after updating tenant_configs.
+ */
+export function invalidateTenantConfig(userId: string): void {
+  configCache.delete(userId)
+}
+
+// ─── AI completion helper ───────────────────────────────────────────────────────
+
+/**
+ * Wraps OpenAI chat completions with retry logic for rate limits and server errors.
+ * Use this instead of calling client.chat.completions.create() directly.
+ *
+ * 429: reads retry-after header, waits up to 30s, retries up to 3 times.
+ * 529/500: single retry after 5s (transient capacity spike).
+ */
+export async function aiCreate(
+  client: OpenAI,
+  params: Omit<Parameters<OpenAI['chat']['completions']['create']>[0], 'stream'> & { stream?: false }
+): Promise<OpenAI.Chat.ChatCompletion> {
+  const MAX_429_RETRIES = 3
+  let attempt = 0
+
+  while (true) {
+    try {
+      return await client.chat.completions.create({ ...params, stream: false }) as OpenAI.Chat.ChatCompletion
+    } catch (err: any) {
+      if (err?.status === 529 || err?.status === 500) {
+        await new Promise((r) => setTimeout(r, 5000))
+        return await client.chat.completions.create({ ...params, stream: false }) as OpenAI.Chat.ChatCompletion
+      }
+      if (err?.status === 429 && attempt < MAX_429_RETRIES) {
+        attempt++
+        const retryAfter = parseInt(err?.headers?.['retry-after'] ?? '0', 10)
+        const waitMs = Math.min(retryAfter > 0 ? retryAfter * 1000 : 15000, 30000)
+        console.warn(`[aiCreate] 429 rate limited — waiting ${waitMs / 1000}s (attempt ${attempt}/${MAX_429_RETRIES})`)
+        await new Promise((r) => setTimeout(r, waitMs))
+        continue
+      }
+      throw err
+    }
+  }
+}

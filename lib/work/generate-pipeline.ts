@@ -1,6 +1,6 @@
-import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import { randomUUID } from 'crypto';
+import { getAIClient, getSystemClient, aiCreate } from '@/lib/ai/factory';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { DocumentArtifact, ArtifactContent, DocContent, PptxContent, XlsxContent, EmailContent, DeliverableType } from '@/lib/types/inbox';
 import { buildArtifactFile, getFileExt, getMimeType } from '@/lib/artifacts/builders';
@@ -8,38 +8,6 @@ import { invokeTool } from '@/lib/mcp/client';
 import { DOCX_SKILL } from '@/lib/skills/docx';
 import { PPTX_SKILL } from '@/lib/skills/pptx';
 import { XLSX_SKILL } from '@/lib/skills/xlsx';
-
-// ─── Claude API retry helper ────────────────────────────────────────────────────
-// Retries on 529 (overloaded), 500 (server error), and 429 (rate limited).
-// 429: reads retry-after header, caps wait at 30s, retries up to 3 times.
-// 529/500: single retry after 5s (brief capacity spike).
-async function claudeCreate(
-  anthropic: Anthropic,
-  params: Parameters<Anthropic['messages']['create']>[0],
-): Promise<Anthropic.Message> {
-  const MAX_429_RETRIES = 3;
-  let attempt = 0;
-
-  while (true) {
-    try {
-      return (await anthropic.messages.create(params)) as Anthropic.Message;
-    } catch (err: any) {
-      if (err?.status === 529 || err?.status === 500) {
-        await new Promise((r) => setTimeout(r, 5000));
-        return (await anthropic.messages.create(params)) as Anthropic.Message;
-      }
-      if (err?.status === 429 && attempt < MAX_429_RETRIES) {
-        attempt++;
-        const retryAfter = parseInt(err?.headers?.['retry-after'] ?? '0', 10);
-        const waitMs = Math.min(retryAfter > 0 ? retryAfter * 1000 : 15000, 30000);
-        console.warn(`[claudeCreate] 429 rate limited — waiting ${waitMs / 1000}s (attempt ${attempt}/${MAX_429_RETRIES})`);
-        await new Promise((r) => setTimeout(r, waitMs));
-        continue;
-      }
-      throw err;
-    }
-  }
-}
 
 // ─── Smart attachment context ──────────────────────────────────────────────────
 // Runs before any plan steps. Detects what files actually arrived and routes
@@ -84,9 +52,9 @@ async function buildSmartAttachmentContext(
             console.error(`[SmartContext] Failed to create signed URL for ${att.filename}:`, urlError);
             continue;
           }
-          const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-          const completion = await openai.chat.completions.create({
-            model: 'gpt-4o',
+          const { client: ocrClient, model: ocrModel } = getSystemClient('ocr');
+          const completion = await ocrClient.chat.completions.create({
+            model: ocrModel,
             max_tokens: 1500,
             messages: [{
               role: 'user',
@@ -145,9 +113,9 @@ async function buildSmartAttachmentContext(
           console.error(`[SmartContext] Failed to create signed URL for ${att.filename}:`, urlError);
           continue;
         }
-        const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-        const completion = await openai.chat.completions.create({
-          model: 'gpt-4o',
+        const { client: ocrClient, model: ocrModel } = getSystemClient('ocr');
+        const completion = await ocrClient.chat.completions.create({
+          model: ocrModel,
           max_tokens: 1500,
           messages: [{
             role: 'user',
@@ -209,7 +177,8 @@ async function executeStep(
   previousOutputs: StepOutput[],
   attachmentContext: string,
   userContext: string,
-  anthropic: Anthropic
+  client: OpenAI,
+  model: string,
 ): Promise<string> {
   const previousContext = previousOutputs.length > 0
     ? `\n\nPREVIOUS STEPS COMPLETED:\n${previousOutputs.map((s) => `Step ${s.stepNumber} — ${s.action}:\n${s.output}`).join('\n\n')}`
@@ -229,28 +198,31 @@ ${attachmentContext ? `\nSOURCE MATERIAL:\n${attachmentContext}` : ''}${previous
 
 Execute this step thoroughly. Output the specific results, data, analysis, or content this step produces. Be concrete — actual numbers, actual text, actual structure. Do not explain what you are going to do, just do it.`;
 
-  const completion = await claudeCreate(anthropic, {
-    model: 'claude-haiku-4-5-20251001',
+  const completion = await aiCreate(client, {
+    model,
     max_tokens: 1200,
-    system: `You are executing a single step in a professional workflow for a ${userContext}. Perform the task described and output the results directly. No preamble, no meta-commentary — only the output of the work itself.`,
-    messages: [{ role: 'user', content: userPrompt }],
+    messages: [
+      { role: 'system', content: `You are executing a single step in a professional workflow for a ${userContext}. Perform the task described and output the results directly. No preamble, no meta-commentary — only the output of the work itself. When drawing on source material sections, cite inline as [Source: filename § section].` },
+      { role: 'user', content: userPrompt },
+    ],
   });
 
-  return (completion.content[0] as { type: string; text: string })?.text ?? '';
+  return completion.choices[0]?.message?.content ?? '';
 }
 
 export async function executeSteps(
   plan: any,
   attachmentContext: string,
   userContext: string,
-  anthropic: Anthropic,
+  client: OpenAI,
+  model: string,
 ): Promise<StepOutput[]> {
   const steps = (plan.steps || []).slice(0, 4);
   const outputs: StepOutput[] = [];
 
   for (const step of steps) {
     try {
-      const output = await executeStep(step, plan, outputs, attachmentContext, userContext, anthropic);
+      const output = await executeStep(step, plan, outputs, attachmentContext, userContext, client, model);
       outputs.push({ stepNumber: step.number, action: step.action, output });
     } catch (err) {
       console.error(`[GeneratePipeline] Step ${step.number} failed:`, err);
@@ -401,7 +373,8 @@ ${DOCX_SKILL}
 - level 1 = major section heading, level 2 = sub-section (use sparingly)
 - paragraphs array: each string is one paragraph OR one "- item" bullet line — mix freely within a section
 - Be specific — use actual data and findings from the work completed, not generic statements
-- Never use double quotes or special characters inside string values`,
+- Never use double quotes or special characters inside string values
+- When citing specific source material sections, write [Source: filename § section] inline`,
     userPrompt: `Assemble a professional ${type} document.
 
 DELIVERABLE: ${plan.deliverable_description}${deadlineLine}
@@ -491,13 +464,12 @@ export async function runPipelineSteps(params: {
   userAttachments?: Array<{ filename: string; mimeType: string; storagePath: string; extractedText: string | null }>;
   userContext: string;
   adminClient: SupabaseClient;
-  anthropic?: Anthropic;
 }): Promise<{ stepOutputs: StepOutput[]; attachmentContext: string }> {
   const { plan, emailAttachments, userAttachments = [], userContext, adminClient } = params;
-  const anthropic = params.anthropic ?? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  const { client, model } = getSystemClient('generation');
 
   const attachmentContext = await buildSmartAttachmentContext(emailAttachments, userAttachments, adminClient);
-  const stepOutputs = await executeSteps(plan, attachmentContext, userContext, anthropic);
+  const stepOutputs = await executeSteps(plan, attachmentContext, userContext, client, model);
   return { stepOutputs, attachmentContext };
 }
 
@@ -515,11 +487,10 @@ export async function assembleArtifactFromSteps(params: {
   conversationContext: string;
   userContext: string;
   adminClient: SupabaseClient;
-  anthropic?: Anthropic;
   stepAction?: string;
 }): Promise<DocumentArtifact> {
   const { userId, threadId, type, plan, stepOutputs, attachmentContext, conversationContext, userContext, adminClient, stepAction } = params;
-  const anthropic = params.anthropic ?? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  const { client, model } = getSystemClient('generation');
 
   const deadlineLine = plan.deadline ? `\nDeadline: ${new Date(plan.deadline).toLocaleDateString()}` : '';
   const { systemPrompt, userPrompt, maxTokens } = buildGeneratePrompt(type, plan, {
@@ -531,14 +502,16 @@ export async function assembleArtifactFromSteps(params: {
     stepAction,
   });
 
-  const completion = await claudeCreate(anthropic, {
-    model: 'claude-haiku-4-5-20251001',
+  const completion = await aiCreate(client, {
+    model,
     max_tokens: maxTokens,
-    system: systemPrompt,
-    messages: [{ role: 'user', content: userPrompt }],
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt },
+    ],
   });
 
-  const rawText = (completion.content[0] as { type: string; text: string })?.text ?? '{}';
+  const rawText = completion.choices[0]?.message?.content ?? '{}';
   const content = parseAndValidateContent(type, rawText);
 
   const artifactId = randomUUID();
@@ -652,9 +625,9 @@ function inferTypeFromGeneratorStep(step: any, plan: any, generatorIndex: number
  * plan has no generator steps.
  * DB write is intentionally omitted — callers handle appending to the artifacts array.
  */
-export async function runFullPipeline(params: GeneratePipelineParams & { anthropic?: Anthropic }): Promise<PipelineResult> {
+export async function runFullPipeline(params: GeneratePipelineParams): Promise<PipelineResult> {
   const { userId, threadId, plan, emailAttachments, userAttachments = [], conversationContext, userContext, adminClient } = params;
-  const anthropic = params.anthropic ?? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  const { client, model } = getSystemClient('generation');
 
   // Smart pre-execution: detect file types and extract content before any step runs
   const attachmentContext = await buildSmartAttachmentContext(emailAttachments, userAttachments, adminClient);
@@ -684,7 +657,7 @@ export async function runFullPipeline(params: GeneratePipelineParams & { anthrop
           userId, threadId, type, plan,
           stepOutputs: [...intermediateOutputs],
           attachmentContext, conversationContext, userContext,
-          adminClient, anthropic, stepAction: step.action,
+          adminClient, stepAction: step.action,
         }, {});
         if (!result.success) {
           console.error(`[FullPipeline] Tool ${toolId} failed:`, result.error);
@@ -696,7 +669,7 @@ export async function runFullPipeline(params: GeneratePipelineParams & { anthrop
         }
       } else {
         // No tool — intermediate step executed by Claude
-        const output = await executeStep(step, plan, intermediateOutputs, attachmentContext, userContext, anthropic);
+        const output = await executeStep(step, plan, intermediateOutputs, attachmentContext, userContext, client, model);
         intermediateOutputs.push({ stepNumber: step.number, action: step.action, output });
       }
     } catch (err) {
@@ -719,7 +692,7 @@ export async function runFullPipeline(params: GeneratePipelineParams & { anthrop
         const artifact = await assembleArtifactFromSteps({
           userId, threadId, type: declaredType, plan,
           stepOutputs: intermediateOutputs, attachmentContext,
-          conversationContext, userContext, adminClient, anthropic,
+          conversationContext, userContext, adminClient,
         });
         artifacts.push(artifact);
         producedTypes.add(declaredType);

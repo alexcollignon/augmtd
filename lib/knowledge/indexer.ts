@@ -1,4 +1,5 @@
-import OpenAI from 'openai';
+import { getSystemClient, aiCreate } from '@/lib/ai/factory';
+import Anthropic from '@anthropic-ai/sdk';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { extractTextFromAttachment } from '@/lib/attachments/text-extractor';
 import { listDriveContents, readDriveFile, getDriveFilesForIds, DriveItem } from './google-drive';
@@ -6,12 +7,20 @@ import { listOneDriveContents, readOneDriveFile, getOneDriveFilesForIds, OneDriv
 
 const MAX_FILES_PER_SYNC = 300;
 
+// Images and PDFs are now handled by OCR / Claude fallback — not skipped.
+// Only skip formats that carry no useful text: video, audio, vector graphics.
 const SKIP_MIME_TYPES = new Set([
-  'image/jpeg', 'image/jpg', 'image/png', 'image/webp',
   'image/gif', 'image/bmp', 'image/tiff', 'image/svg+xml',
   'video/mp4', 'video/mpeg', 'video/quicktime', 'video/webm',
   'audio/mpeg', 'audio/mp4', 'audio/ogg', 'audio/wav',
 ]);
+
+// Image types that can be OCR'd via GPT-4o vision
+const OCR_IMAGE_TYPES = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/webp']);
+
+// ~800 tokens ≈ 3200 chars. Overlap prevents cutting context at boundaries.
+const CHUNK_SIZE = 3200;
+const CHUNK_OVERLAP = 300;
 
 export interface KnowledgeFile {
   id: string;
@@ -27,13 +36,278 @@ export interface KnowledgeFile {
   similarity?: number;
 }
 
+// ─── Embedding ──────────────────────────────────────────────────────────────
+
+// multilingual-e5-large-instruct (Together AI) has a 514 token (~2000 char) context limit.
+// text-embedding-3-small (OpenAI) supports 8191 tokens (~32000 chars).
+// Cap conservatively at 2000 chars for the short-context model.
+const EMBED_MAX_CHARS = 2000
+
 export async function embedText(text: string): Promise<number[]> {
-  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-  const res = await openai.embeddings.create({
-    model: 'text-embedding-3-small',
-    input: text.slice(0, 8000), // stay within token limits
+  const { client, model } = getSystemClient('embeddings');
+  const res = await client.embeddings.create({
+    model,
+    input: text.slice(0, EMBED_MAX_CHARS),
   });
   return res.data[0].embedding;
+}
+
+/** Embed multiple texts in a single API call. Much faster than sequential calls. */
+async function embedTexts(texts: string[]): Promise<number[][]> {
+  if (texts.length === 0) return [];
+  const { client, model } = getSystemClient('embeddings');
+  const res = await client.embeddings.create({
+    model,
+    input: texts.map((t) => t.slice(0, EMBED_MAX_CHARS)),
+  });
+  // OpenAI returns embeddings in the same order as inputs
+  return res.data.sort((a, b) => a.index - b.index).map((d) => d.embedding);
+}
+
+// ─── Chunking ───────────────────────────────────────────────────────────────
+
+interface Chunk {
+  heading: string | null;
+  content: string;
+}
+
+/**
+ * Detect whether a short line looks like a section heading.
+ * Matches: markdown headings, numbered sections, legal/contract headers (ALL CAPS).
+ */
+function detectHeading(line: string): string | null {
+  const t = line.trim();
+  if (!t || t.length > 100) return null;
+  if (/^#{1,4}\s/.test(t)) return t.replace(/^#+\s*/, '');
+  if (/^(Article|Section|Chapter|Part|Schedule|Exhibit|Annex)\s+\d/i.test(t)) return t;
+  if (/^\d+(\.\d+)*\s+[A-Z]/.test(t)) return t;  // "1.2 Definitions"
+  if (/^[A-Z][A-Z\s\-–]{3,49}$/.test(t)) return t; // "DEFINITIONS", "LIABILITY CAP"
+  return null;
+}
+
+/**
+ * Split extracted text into semantically coherent chunks.
+ * Splits at section boundaries first, then at paragraph boundaries if chunks are too large.
+ * Each chunk carries the heading of the section it belongs to.
+ */
+export function chunkText(text: string, _filename: string): Chunk[] {
+  if (!text) return [];
+  if (text.length <= CHUNK_SIZE) return [{ heading: null, content: text }];
+
+  const paragraphs = text.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean);
+  const chunks: Chunk[] = [];
+  let currentContent = '';
+  let currentHeading: string | null = null;
+  let lastHeading: string | null = null;
+  let prevTail = '';
+
+  const flush = () => {
+    const full = (prevTail + (prevTail ? '\n\n' : '') + currentContent).trim();
+    if (full) chunks.push({ heading: currentHeading, content: full });
+    prevTail = currentContent.slice(-CHUNK_OVERLAP);
+    currentContent = '';
+  };
+
+  for (const para of paragraphs) {
+    const firstLine = para.split('\n')[0];
+    const heading = para.split('\n').length <= 2 ? detectHeading(firstLine) : null;
+
+    if (heading) {
+      lastHeading = heading;
+      // Flush if we have meaningful content, then start fresh under new heading
+      if (currentContent.length >= CHUNK_SIZE * 0.3) {
+        flush();
+        currentHeading = lastHeading;
+      }
+      currentContent += (currentContent ? '\n\n' : '') + para;
+      continue;
+    }
+
+    const addition = (currentContent ? '\n\n' : '') + para;
+
+    if (currentContent.length + addition.length > CHUNK_SIZE && currentContent.length > 0) {
+      flush();
+      currentHeading = lastHeading;
+      currentContent = para;
+    } else {
+      currentContent += addition;
+    }
+  }
+
+  if (currentContent.trim()) flush();
+
+  return chunks.length > 0 ? chunks : [{ heading: null, content: text.slice(0, CHUNK_SIZE) }];
+}
+
+function buildContextHeader(filename: string, heading: string | null, chunkIndex: number): string {
+  const section = heading ?? `part ${chunkIndex + 1}`;
+  return `[Document: ${filename} | Section: ${section}]`;
+}
+
+// ─── Summary generation ──────────────────────────────────────────────────────
+
+/**
+ * Generate a 2-3 sentence summary of a document at index time.
+ * Non-blocking — returns null on any error.
+ */
+async function generateSummary(extractedText: string, filename: string): Promise<string | null> {
+  try {
+    const { client, model } = getSystemClient('summarization');
+    const res = await aiCreate(client, {
+      model,
+      messages: [{
+        role: 'user',
+        content: `Summarize this document in 2-3 sentences. State what it is, who it involves, and key facts or dates.\n\nFilename: ${filename}\n\nContent:\n${extractedText.slice(0, 6000)}`,
+      }],
+      max_tokens: 150,
+    });
+    return res.choices[0]?.message?.content?.trim() ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// ─── OCR + PDF extraction ────────────────────────────────────────────────────
+
+/** GPT-4o vision OCR for image files (JPEG, PNG, WebP). Buffer sent as base64. */
+async function extractImageWithOCR(buffer: Buffer, mimeType: string, filename: string): Promise<string | null> {
+  try {
+    const base64 = buffer.toString('base64');
+    const { client, model } = getSystemClient('ocr');
+    const res = await client.chat.completions.create({
+      model,
+      max_tokens: 2000,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Extract all text visible in this image. Output only the raw text — no commentary, no explanations.' },
+          { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64}` } },
+        ],
+      }],
+    });
+    const text = res.choices[0]?.message?.content ?? '';
+    const isError = /\b(cannot|unable|can't|failed|unreadable|not able|sorry|apologize)\b/i.test(text.slice(0, 200));
+    return !isError && text ? text : null;
+  } catch (err) {
+    console.error(`[Indexer] Image OCR failed for ${filename}:`, err);
+    return null;
+  }
+}
+
+/**
+ * PDF text extraction with scanned-document fallback.
+ * 1. Try pdf-parse (fast, works for text-based PDFs).
+ * 2. If yield is low (likely scanned), fall back based on OCR provider:
+ *    - anthropic:  Claude native PDF reading (base64 document block — Anthropic-only API)
+ *    - all others: render first N pages to PNG via pdfjs-dist + canvas → vision OCR
+ *      Works for all private/on-prem tiers (pixtral, llama-vision, gpt-4o, etc.)
+ */
+async function extractPdfWithFallback(buffer: Buffer, filename: string): Promise<string | null> {
+  const pdfText = await extractTextFromAttachment(buffer, 'application/pdf', filename) ?? '';
+
+  const isLikelyScanned = pdfText.length < 200 && buffer.length > 10000;
+  if (!isLikelyScanned) return pdfText || null;
+
+  const { client: ocrClient, model: ocrModel, endpoint } = getSystemClient('ocr');
+
+  if (endpoint.provider === 'anthropic') {
+    // Anthropic: native PDF document block (best quality, handles all pages in one call)
+    const sizeMB = buffer.length / (1024 * 1024);
+    if (sizeMB > 4.5) {
+      console.warn(`[Indexer] ${filename} is ${sizeMB.toFixed(1)}MB — too large for Claude fallback`);
+      return pdfText || null;
+    }
+    try {
+      console.log(`[Indexer] Low text yield for ${filename} — trying Claude native PDF OCR`);
+      const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+      const base64 = buffer.toString('base64');
+      const res = await anthropic.messages.create({
+        model: ocrModel,
+        max_tokens: 4000,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } } as any,
+            { type: 'text', text: 'Extract all text from this document. Output only the raw text content — no commentary.' },
+          ],
+        }],
+      });
+      const extracted = (res.content[0] as any)?.text ?? '';
+      return extracted || pdfText || null;
+    } catch (err) {
+      console.error(`[Indexer] Claude PDF fallback failed for ${filename}:`, err);
+      return pdfText || null;
+    }
+  }
+
+  // Non-Anthropic: render pages to PNG → vision OCR via factory ocr model
+  try {
+    console.log(`[Indexer] Low text yield for ${filename} — rendering pages for vision OCR (${endpoint.provider})`);
+    const pageImages = await renderPdfToImages(buffer, { maxPages: 3 });
+    if (pageImages.length === 0) return pdfText || null;
+
+    const parts: string[] = [];
+    for (const { base64, mimeType, pageNum } of pageImages) {
+      const res = await ocrClient.chat.completions.create({
+        model: ocrModel,
+        max_tokens: 2000,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'text', text: `Extract all text visible on page ${pageNum} of this document. Output only the raw text — no commentary.` },
+            { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64}` } },
+          ],
+        }],
+      });
+      const text = res.choices[0]?.message?.content ?? '';
+      const isError = /\b(cannot|unable|can't|failed|unreadable|not able|sorry)\b/i.test(text.slice(0, 200));
+      if (text && !isError) parts.push(text);
+    }
+    const extracted = parts.join('\n\n');
+    return extracted || pdfText || null;
+  } catch (err) {
+    console.error(`[Indexer] Vision PDF fallback failed for ${filename}:`, err);
+    return pdfText || null;
+  }
+}
+
+/**
+ * Render the first N pages of a PDF buffer to PNG images using pdfjs-dist + canvas.
+ * Returns base64-encoded PNG buffers suitable for vision model input.
+ */
+async function renderPdfToImages(
+  buffer: Buffer,
+  { maxPages = 3, scale = 2.0 }: { maxPages?: number; scale?: number } = {}
+): Promise<Array<{ base64: string; mimeType: string; pageNum: number }>> {
+  const { createCanvas } = await import('canvas')
+  const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs') as any
+
+  // Disable worker (Node.js — no worker thread needed)
+  pdfjsLib.GlobalWorkerOptions.workerSrc = ''
+
+  const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(buffer) })
+  const pdf = await loadingTask.promise
+  const numPages = Math.min(pdf.numPages, maxPages)
+  const results: Array<{ base64: string; mimeType: string; pageNum: number }> = []
+
+  for (let i = 1; i <= numPages; i++) {
+    const page = await pdf.getPage(i)
+    const viewport = page.getViewport({ scale })
+    const canvas = createCanvas(viewport.width, viewport.height)
+    const context = canvas.getContext('2d') as any
+
+    await page.render({ canvasContext: context, viewport }).promise
+    const base64 = canvas.toBuffer('image/png').toString('base64')
+    results.push({ base64, mimeType: 'image/png', pageNum: i })
+  }
+
+  return results
+}
+
+// ─── File utilities ──────────────────────────────────────────────────────────
+
+function getModifiedAt(file: DriveItem | OneDriveItem): string | null {
+  return 'modifiedTime' in file ? file.modifiedTime : (file as OneDriveItem).lastModifiedDateTime;
 }
 
 async function extractTextFromFile(
@@ -42,18 +316,14 @@ async function extractTextFromFile(
   filename: string
 ): Promise<string | null> {
   if (content === null) return null;
-
-  // Google Docs / Sheets already come back as plain text/CSV strings
-  if (typeof content === 'string') {
-    return content.trim() || null;
-  }
-
-  // PDF, DOCX, TXT, XLSX — reuse existing extractor
+  // Google Docs / Sheets come back as plain text strings
+  if (typeof content === 'string') return content.trim() || null;
+  // Image files — GPT-4o vision OCR
+  if (OCR_IMAGE_TYPES.has(mimeType)) return extractImageWithOCR(content, mimeType, filename);
+  // PDFs — pdf-parse with Claude fallback for scanned documents
+  if (mimeType === 'application/pdf') return extractPdfWithFallback(content, filename);
+  // All other formats (DOCX, XLSX, PPTX, TXT, CSV) — existing extractor
   return extractTextFromAttachment(content, mimeType, filename);
-}
-
-function getModifiedAt(file: DriveItem | OneDriveItem): string | null {
-  return 'modifiedTime' in file ? file.modifiedTime : (file as OneDriveItem).lastModifiedDateTime;
 }
 
 async function collectAllFiles(
@@ -85,11 +355,12 @@ async function collectAllFiles(
   return files.concat(...nested);
 }
 
+// ─── Index source ────────────────────────────────────────────────────────────
+
 export async function indexSource(
   sourceId: string,
   adminClient: SupabaseClient
 ): Promise<{ indexed: number; errors: number }> {
-  // Load source
   const { data: source, error: sourceError } = await adminClient
     .from('knowledge_sources')
     .select('*')
@@ -101,7 +372,6 @@ export async function indexSource(
     return { indexed: 0, errors: 1 };
   }
 
-  // Load the specific connection stored on the source, or fall back to first active
   const providerMap: Record<string, string> = { google_drive: 'gmail', onedrive: 'outlook' };
   const connectionProvider = providerMap[source.provider];
 
@@ -126,7 +396,6 @@ export async function indexSource(
     return { indexed: 0, errors: 1 };
   }
 
-  // Mark as indexing
   await adminClient
     .from('knowledge_sources')
     .update({ status: 'indexing', updated_at: new Date().toISOString() })
@@ -136,7 +405,6 @@ export async function indexSource(
   let errors = 0;
 
   try {
-    // 1. Collect files — specific IDs or entire folder tree
     let allFiles: (DriveItem | OneDriveItem)[];
     if (source.file_ids?.length) {
       allFiles = source.provider === 'google_drive'
@@ -146,16 +414,13 @@ export async function indexSource(
       allFiles = await collectAllFiles(source.provider, encryptedTokens, source.folder_id);
     }
 
-    // 2. Filter non-indexable MIME types
     const indexable = allFiles.filter((f) => !SKIP_MIME_TYPES.has(f.mimeType));
 
-    // 3. Cap at MAX_FILES_PER_SYNC
     if (indexable.length > MAX_FILES_PER_SYNC) {
       console.warn(`[Indexer] Source ${sourceId} has ${indexable.length} files — truncating to ${MAX_FILES_PER_SYNC}`);
     }
     const files = indexable.slice(0, MAX_FILES_PER_SYNC);
 
-    // 4. Load existing file map for incremental sync
     const { data: existing } = await adminClient
       .from('knowledge_files')
       .select('provider_file_id, last_modified_at')
@@ -164,14 +429,15 @@ export async function indexSource(
 
     for (const file of files) {
       try {
-        // 5. Skip unchanged files
         const modifiedAt = getModifiedAt(file);
+
+        // Skip unchanged files (chunks already exist from previous index)
         if (modifiedAt && existingMap.get(file.id) === modifiedAt) {
           indexed++;
           continue;
         }
 
-        // 6. Download → extract → embed → upsert
+        // Download + extract
         let content: Buffer | string | null = null;
         if (source.provider === 'google_drive') {
           content = await readDriveFile(encryptedTokens, file.id, file.mimeType);
@@ -180,13 +446,19 @@ export async function indexSource(
         }
 
         const extractedText = await extractTextFromFile(content, file.mimeType, file.name);
+        const cleanText = extractedText ? extractedText.replace(/\u0000/g, '') : null;
 
-        let embedding: number[] | null = null;
-        if (extractedText && extractedText.length > 10) {
-          embedding = await embedText(extractedText);
+        // Generate document summary (non-blocking)
+        const summary = cleanText ? await generateSummary(cleanText, file.name) : null;
+
+        // Embed whole-file text for backward compat (existing search_knowledge_files RPC)
+        let fileEmbedding: number[] | null = null;
+        if (cleanText && cleanText.length > 10) {
+          fileEmbedding = await embedText(cleanText);
         }
 
-        const { error: upsertError } = await adminClient
+        // Upsert file row — get ID back for chunk FK
+        const { data: fileRows, error: upsertError } = await adminClient
           .from('knowledge_files')
           .upsert(
             {
@@ -195,28 +467,63 @@ export async function indexSource(
               provider_file_id: file.id,
               filename: file.name,
               mime_type: file.mimeType,
-              extracted_text: extractedText ? extractedText.replace(/\u0000/g, '') : null,
-              embedding: embedding ? JSON.stringify(embedding) : null,
+              extracted_text: cleanText,
+              embedding: fileEmbedding ? JSON.stringify(fileEmbedding) : null,
+              summary,
               size_bytes: file.size,
               last_modified_at: modifiedAt,
               indexed_at: new Date().toISOString(),
             },
             { onConflict: 'user_id,provider_file_id' }
-          );
+          )
+          .select('id');
 
-        if (upsertError) {
+        if (upsertError || !fileRows?.[0]) {
           console.error(`[Indexer] Upsert failed for ${file.name}:`, upsertError);
           errors++;
-        } else {
-          indexed++;
+          continue;
         }
+
+        const fileId = fileRows[0].id;
+
+        // Build chunks and embed them in one batch API call
+        if (cleanText && cleanText.length > 10) {
+          const chunks = chunkText(cleanText, file.name);
+          const headers = chunks.map((c, i) => buildContextHeader(file.name, c.heading, i));
+          const textsToEmbed = chunks.map((c, i) => headers[i] + '\n' + c.content);
+
+          const embeddings = await embedTexts(textsToEmbed);
+
+          // Delete stale chunks for this file before re-inserting
+          await adminClient.from('knowledge_chunks').delete().eq('file_id', fileId);
+
+          const chunkRows = chunks.map((c, i) => ({
+            file_id: fileId,
+            user_id: source.user_id,
+            chunk_index: i,
+            heading: c.heading,
+            content: c.content,
+            context_header: headers[i],
+            embedding: JSON.stringify(embeddings[i]),
+          }));
+
+          const { error: chunkError } = await adminClient
+            .from('knowledge_chunks')
+            .insert(chunkRows);
+
+          if (chunkError) {
+            console.error(`[Indexer] Chunk insert failed for ${file.name}:`, chunkError);
+            // Non-fatal: file-level data already saved
+          }
+        }
+
+        indexed++;
       } catch (fileErr) {
         console.error(`[Indexer] Failed to index ${file.name}:`, fileErr);
         errors++;
       }
     }
 
-    // Update source status
     await adminClient
       .from('knowledge_sources')
       .update({
@@ -238,6 +545,9 @@ export async function indexSource(
   return { indexed, errors };
 }
 
+// ─── Search ──────────────────────────────────────────────────────────────────
+
+/** Legacy whole-file vector search. Kept for backward compat. */
 export async function searchKnowledge(
   userId: string,
   query: string,

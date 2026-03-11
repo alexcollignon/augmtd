@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import Anthropic from '@anthropic-ai/sdk';
+import { getAIClient, aiCreate } from '@/lib/ai/factory';
 import { DocumentArtifact, DeliverableType, ArtifactContent } from '@/lib/types/inbox';
 import { buildArtifactFile, getMimeType } from '@/lib/artifacts/builders';
 
@@ -162,15 +162,17 @@ export async function POST(
         const encoder = new TextEncoder();
 
         try {
-          const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-          const completion = await anthropic.messages.create({
-            model: 'claude-haiku-4-5-20251001',
+          const { client, model } = await getAIClient(user.id, 'generation', supabase);
+          const completion = await aiCreate(client, {
+            model,
             max_tokens: isAskMode ? 1024 : 8000,
-            system: systemPrompt,
-            messages: anthropicMessages,
+            messages: [
+              { role: 'system', content: systemPrompt },
+              ...anthropicMessages,
+            ],
           });
 
-          const rawText = (completion.content[0] as { type: string; text: string })?.text ?? '';
+          const rawText = completion.choices[0]?.message?.content ?? '';
 
           const adminClient = (await import('@supabase/supabase-js')).createClient(
             process.env.NEXT_PUBLIC_SUPABASE_URL!,

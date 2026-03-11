@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import OpenAI from 'openai';
+import { getSystemClient, aiCreate } from '@/lib/ai/factory';
 
 export async function POST(req: NextRequest) {
   try {
@@ -15,9 +15,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'prompt required' }, { status: 400 });
     }
 
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
+    const { client, model } = getSystemClient('summarization');
+    const completion = await aiCreate(client, {
+      model,
       max_tokens: 100,
       messages: [
         {

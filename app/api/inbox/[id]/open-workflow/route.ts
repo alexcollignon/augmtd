@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import OpenAI from 'openai';
+import { getSystemClient, aiCreate } from '@/lib/ai/factory';
 import { SYSTEM_PROMPT, parsePlanResponse } from '@/lib/work/planning-ai';
 
 // POST /api/inbox/[id]/open-workflow
@@ -150,9 +150,9 @@ export async function POST(
         userContextNote += `\n\nMost-used skills: ${workPatterns.commonSkills.join(', ')}`;
       }
 
-      const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-      const completion = await openai.chat.completions.create({
-        model: 'gpt-4o-mini',
+      const { client, model } = getSystemClient('planning');
+      const completion = await aiCreate(client, {
+        model,
         messages: [
           { role: 'system', content: SYSTEM_PROMPT + userContextNote },
           { role: 'user', content: workflowPrompt },

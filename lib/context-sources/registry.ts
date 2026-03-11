@@ -1,5 +1,5 @@
 import { SupabaseClient } from '@supabase/supabase-js'
-import OpenAI from 'openai'
+import { getSystemClient, aiCreate } from '@/lib/ai/factory'
 import { ContextSource, ContextResult } from './types'
 import { kbContextSource } from './kb'
 
@@ -141,12 +141,11 @@ export async function enrichPlanWithContext(
         `Reply ONLY with a compact JSON object mapping each letter to a slot number or "context". Example: {"A":"1","B":"context","C":"2"}`;
 
       try {
-        const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-        const res = await openai.chat.completions.create({
-          model: 'gpt-4o-mini',
+        const { client, model } = getSystemClient('assignment');
+        const res = await aiCreate(client, {
+          model,
           messages: [{ role: 'user', content: prompt }],
           max_tokens: 120,
-          temperature: 0,
         });
 
         const raw = (res.choices[0]?.message?.content ?? '{}')

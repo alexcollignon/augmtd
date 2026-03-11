@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import OpenAI from 'openai';
+import { getSystemClient, aiCreate } from '@/lib/ai/factory';
 
 function cosineSimilarity(a: number[], b: number[]): number {
   let dot = 0, magA = 0, magB = 0;
@@ -57,7 +57,7 @@ export async function POST(
       return NextResponse.json({ rankedWorkflows: savedWorkflows.map(wf => ({ ...wf, score: 0 })), aiSuggestion: null });
     }
 
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const { client: embedClient, model: embedModel } = getSystemClient('embeddings');
 
     let rankedWorkflows: Array<(typeof savedWorkflows)[0] & { score: number }> = [];
     let topScore = 0;
@@ -65,8 +65,8 @@ export async function POST(
     if (savedWorkflows.length > 0) {
       // Batch embed email + all workflow prompts in one call
       const inputs = [emailQuery, ...savedWorkflows.map(wf => wf.prompt)];
-      const embeddingRes = await openai.embeddings.create({
-        model: 'text-embedding-3-small',
+      const embeddingRes = await embedClient.embeddings.create({
+        model: embedModel,
         input: inputs,
       });
       const embeddings = embeddingRes.data.map(d => d.embedding);
@@ -82,8 +82,9 @@ export async function POST(
     // AI suggestion: when no workflows exist, or best match is weak
     let aiSuggestion: string | null = null;
     if (savedWorkflows.length === 0 || topScore < 0.3) {
-      const completion = await openai.chat.completions.create({
-        model: 'gpt-4o-mini',
+      const { client: assignClient, model: assignModel } = getSystemClient('assignment');
+      const completion = await aiCreate(assignClient, {
+        model: assignModel,
         max_tokens: 60,
         messages: [
           {

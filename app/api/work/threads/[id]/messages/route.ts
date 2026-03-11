@@ -1,17 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import OpenAI from 'openai';
+import { getAIClient } from '@/lib/ai/factory';
 import { updateWorkPatternsFromThread } from '@/lib/context/work-patterns-service';
 import { buildSystemPrompt, parsePlanResponse } from '@/lib/work/planning-ai';
 import { buildToolRegistry } from '@/lib/mcp/registry';
-
-let openaiClient: OpenAI | null = null;
-function getOpenAI(): OpenAI {
-  if (!openaiClient) {
-    openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-  }
-  return openaiClient;
-}
 
 // POST /api/work/threads/[id]/messages — send a message and stream the AI response
 export async function POST(
@@ -128,7 +120,7 @@ export async function POST(
       ? '\n\nFIRST MESSAGE — you MUST emit a complete plan JSON after ---PLAN_UPDATE--- right now. Do not ask clarifying questions first. Make sensible assumptions and generate the plan immediately.'
       : '';
 
-    const openaiMessages: OpenAI.Chat.ChatCompletionMessageParam[] = [
+    const openaiMessages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
       {
         role: 'system',
         content: currentModeNote + systemPrompt + userContextNote + currentPlanNote + attachmentNote + firstMessageNote,
@@ -139,9 +131,9 @@ export async function POST(
       })),
     ];
 
-    const openai = getOpenAI();
-    const stream = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
+    const { client, model } = await getAIClient(user.id, 'planning', supabase);
+    const stream = await client.chat.completions.create({
+      model,
       messages: openaiMessages,
       temperature: 0.4,
       max_tokens: 2500,

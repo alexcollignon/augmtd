@@ -60,6 +60,9 @@ export default function SidebarNav({ userEmail }: SidebarNavProps) {
           <span className="text-[13px] font-bold tracking-widest text-neutral-900 uppercase">
             AUGMTD
           </span>
+          <span className="text-[9px] font-semibold tracking-wider text-neutral-400 uppercase border border-neutral-200 rounded px-1 py-0.5 leading-none">
+            beta
+          </span>
         </Link>
       </div>
 

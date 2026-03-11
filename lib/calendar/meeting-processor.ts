@@ -6,9 +6,9 @@
  */
 
 import { SupabaseClient } from '@supabase/supabase-js';
-import OpenAI from 'openai';
+import { getSystemClient } from '@/lib/ai/factory';
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const { client: openai, model: defaultModel } = getSystemClient('summarization');
 
 interface CalendarEvent {
   id: string;
@@ -265,7 +265,7 @@ Keep it concise and actionable. Use bullet points.`;
 
   try {
     const response = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
+      model: defaultModel,
       messages: [
         {
           role: 'system',

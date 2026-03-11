@@ -6,19 +6,9 @@
 
 import { SupabaseClient } from '@supabase/supabase-js';
 import { createAttendeeBot, getAttendeeBot, getAttendeeBotTranscript, isSupportedMeetingUrl } from './client';
-import OpenAI from 'openai';
+import { getSystemClient } from '@/lib/ai/factory';
 
-// Lazy-load OpenAI client to avoid initialization errors when env vars not loaded
-let openaiClient: OpenAI | null = null;
-
-function getOpenAIClient(): OpenAI {
-  if (!openaiClient) {
-    openaiClient = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY,
-    });
-  }
-  return openaiClient;
-}
+const { client: openai, model: defaultModel } = getSystemClient('summarization');
 
 interface ExtractedActionItem {
   action: string;
@@ -501,9 +491,8 @@ Rules:
 
 Return ONLY the JSON array, no other text.`;
 
-    const openai = getOpenAIClient();
     const completion = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
+      model: defaultModel,
       messages: [
         {
           role: 'system',

@@ -5,7 +5,7 @@
  * based on multiple factors: position, mention, learned behavior, relationship.
  */
 
-import OpenAI from 'openai';
+import { getSystemClient } from '@/lib/ai/factory';
 import type {
   RecipientRole,
   RecipientContext,
@@ -19,9 +19,7 @@ import { detectWorkSignals, encodeSignalPattern } from './signal-detector';
 import { inferWorkState, calculatePriority } from './work-state-mapper';
 import { analyzeBodyContent, applyBodyBoost } from './body-analyzer';
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+const { client: openai, model: defaultModel } = getSystemClient('classification');
 
 // ==========================================
 // TYPES
@@ -209,7 +207,7 @@ async function detectRolesWithAI(
 
   try {
     const response = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
+      model: defaultModel,
       messages: [
         {
           role: 'system',

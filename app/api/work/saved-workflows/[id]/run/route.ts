@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import OpenAI from 'openai';
+import { getSystemClient, aiCreate } from '@/lib/ai/factory';
 import { SYSTEM_PROMPT, parsePlanResponse } from '@/lib/work/planning-ai';
 
 // POST /api/work/saved-workflows/[id]/run
@@ -169,7 +169,7 @@ export async function POST(
       : `Run workflow: ${workflow.name}${typesHint}`;
 
     try {
-      const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+      const { client, model } = getSystemClient('planning');
 
       let conversationalText: string;
       let savedPlan = null;
@@ -186,8 +186,8 @@ export async function POST(
           `Combine both into one natural question — do not list them as bullet points. ` +
           `Be direct and conversational. No step breakdowns.`;
 
-        const openerCompletion = await openai.chat.completions.create({
-          model: 'gpt-4o-mini',
+        const openerCompletion = await aiCreate(client, {
+          model,
           messages: [
             { role: 'system', content: CONTEXT_PROMPT + userContextNote },
             { role: 'user', content: workflow.prompt },
@@ -198,8 +198,8 @@ export async function POST(
         conversationalText = openerCompletion.choices[0]?.message?.content?.trim() || '';
       } else {
         // Inbox run: email provides context — generate a full plan immediately.
-        const completion = await openai.chat.completions.create({
-          model: 'gpt-4o-mini',
+        const completion = await aiCreate(client, {
+          model,
           messages: [
             { role: 'system', content: SYSTEM_PROMPT + userContextNote },
             { role: 'user', content: fullPrompt },

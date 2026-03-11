@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import OpenAI from 'openai';
+import { getSystemClient, aiCreate } from '@/lib/ai/factory';
 import { SYSTEM_PROMPT, parsePlanResponse } from '@/lib/work/planning-ai';
 import { runGeneratePipeline } from '@/lib/work/generate-pipeline';
 
@@ -123,10 +123,10 @@ export async function POST(request: NextRequest) {
       .update({ work_thread_id: thread.id })
       .eq('id', inboxItemId);
 
-    // Generate plan via GPT-4o-mini
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-    const planCompletion = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
+    // Generate plan
+    const { client, model } = getSystemClient('planning');
+    const planCompletion = await aiCreate(client, {
+      model,
       messages: [
         { role: 'system', content: SYSTEM_PROMPT + userContextNote },
         { role: 'user', content: workflowPrompt },
