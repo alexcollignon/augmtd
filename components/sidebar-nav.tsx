@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname } from 'next/navigation';
@@ -12,6 +12,8 @@ import {
   Cog6ToothIcon,
   ArrowRightOnRectangleIcon,
   ChevronUpIcon,
+  LockClosedIcon,
+  GlobeAltIcon,
 } from '@heroicons/react/24/outline';
 
 interface SidebarNavProps {
@@ -23,11 +25,39 @@ export default function SidebarNav({ userEmail }: SidebarNavProps) {
   const [showUserMenu, setShowUserMenu] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
+  // Tier toggle state
+  const [tier, setTier] = useState<'standard' | 'private_shared' | null>(null);
+  const [tierLoading, setTierLoading] = useState(false);
+
   const navigation = [
     { name: 'Work Inbox', href: '/inbox', icon: InboxIcon },
     { name: 'Workflows', href: '/work', icon: QueueListIcon },
     { name: 'Knowledge', href: '/knowledge', icon: BookOpenIcon },
   ];
+
+  // Load current tier on mount
+  useEffect(() => {
+    fetch('/api/settings/tier')
+      .then((r) => r.json())
+      .then((d) => setTier(d.tier ?? 'standard'))
+      .catch(() => setTier('standard'));
+  }, []);
+
+  const toggleTier = useCallback(async () => {
+    if (tierLoading || tier === null) return;
+    const next = tier === 'standard' ? 'private_shared' : 'standard';
+    setTierLoading(true);
+    try {
+      const res = await fetch('/api/settings/tier', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tier: next }),
+      });
+      if (res.ok) setTier(next);
+    } finally {
+      setTierLoading(false);
+    }
+  }, [tier, tierLoading]);
 
   // Close popover on outside click
   useEffect(() => {
@@ -43,6 +73,7 @@ export default function SidebarNav({ userEmail }: SidebarNavProps) {
   }, [showUserMenu]);
 
   const userInitial = userEmail?.[0]?.toUpperCase() ?? '?';
+  const isPrivate = tier === 'private_shared';
 
   return (
     <div className="flex h-screen w-52 flex-col bg-white border-r border-neutral-200 flex-shrink-0">
@@ -64,6 +95,33 @@ export default function SidebarNav({ userEmail }: SidebarNavProps) {
             beta
           </span>
         </Link>
+      </div>
+
+      {/* Tier toggle */}
+      <div className="px-4 py-2 border-b border-neutral-100">
+        <button
+          onClick={toggleTier}
+          disabled={tierLoading || tier === null}
+          title={isPrivate ? 'Switch to Public AI' : 'Switch to Private AI'}
+          className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded text-[11px] font-medium transition-all duration-300 ${
+            isPrivate
+              ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+              : 'bg-neutral-50 text-neutral-500 hover:bg-neutral-100 hover:text-neutral-700'
+          } ${tierLoading ? 'opacity-50 cursor-wait' : 'cursor-pointer'}`}
+        >
+          {isPrivate ? (
+            <LockClosedIcon className="w-3.5 h-3.5 flex-shrink-0 text-emerald-500" />
+          ) : (
+            <GlobeAltIcon className="w-3.5 h-3.5 flex-shrink-0 text-neutral-400" />
+          )}
+          <span className="flex-1 text-left">
+            {isPrivate ? 'Private AI' : 'Public AI'}
+          </span>
+          {/* Toggle pill */}
+          <div className={`relative w-7 h-4 rounded-full transition-all duration-300 flex-shrink-0 ${isPrivate ? 'bg-emerald-400' : 'bg-neutral-200'}`}>
+            <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow-sm transition-transform duration-300 ${isPrivate ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
+          </div>
+        </button>
       </div>
 
       {/* Navigation */}
