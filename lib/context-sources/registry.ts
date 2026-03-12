@@ -1,5 +1,5 @@
 import { SupabaseClient } from '@supabase/supabase-js'
-import { getSystemClient, aiCreate } from '@/lib/ai/factory'
+import { getAIClient, aiCreate } from '@/lib/ai/factory'
 import { ContextSource, ContextResult } from './types'
 import { kbContextSource } from './kb'
 
@@ -141,7 +141,7 @@ export async function enrichPlanWithContext(
         `Reply ONLY with a compact JSON object mapping each letter to a slot number or "context". Example: {"A":"1","B":"context","C":"2"}`;
 
       try {
-        const { client, model } = getSystemClient('assignment');
+        const { client, model } = await getAIClient(userId, 'assignment', adminClient);
         const res = await aiCreate(client, {
           model,
           messages: [{ role: 'user', content: prompt }],

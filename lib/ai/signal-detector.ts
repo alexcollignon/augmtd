@@ -5,10 +5,8 @@
  * that indicate work impact and cognitive cost.
  */
 
-import { getSystemClient } from '@/lib/ai/factory';
+import OpenAI from 'openai';
 import type { WorkSignals, SignalPatternKey } from '@/lib/types/recipient-detection';
-
-const { client: openai, model: defaultModel } = getSystemClient('classification');
 
 // ==========================================
 // MAIN DETECTION FUNCTION
@@ -21,8 +19,10 @@ export async function detectWorkSignals(
   emailBody: string,
   emailSubject: string,
   recipientEmail: string,
-  recipientPosition: 'to' | 'cc' | 'bcc'
+  recipientPosition: 'to' | 'cc' | 'bcc',
+  resolvedClient: { client: OpenAI; model: string }
 ): Promise<WorkSignals> {
+  const { client: openai, model: defaultModel } = resolvedClient;
 
   const prompt = buildSignalDetectionPrompt(
     emailBody,
@@ -263,7 +263,8 @@ export function decodeSignalPattern(pattern: SignalPatternKey): string[] {
 export async function detectSignalsBatch(
   emailBody: string,
   emailSubject: string,
-  recipients: Array<{ email: string; position: 'to' | 'cc' | 'bcc' }>
+  recipients: Array<{ email: string; position: 'to' | 'cc' | 'bcc' }>,
+  resolvedClient: { client: OpenAI; model: string }
 ): Promise<Record<string, WorkSignals>> {
 
   // For now, detect individually (can optimize later with batched prompts)
@@ -274,7 +275,8 @@ export async function detectSignalsBatch(
       emailBody,
       emailSubject,
       recipient.email,
-      recipient.position
+      recipient.position,
+      resolvedClient
     );
   }
 

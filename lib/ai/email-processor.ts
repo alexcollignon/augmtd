@@ -1,7 +1,6 @@
-import { getSystemClient } from '@/lib/ai/factory';
+import { getAIClient } from '@/lib/ai/factory';
+import { SupabaseClient } from '@supabase/supabase-js';
 import type { UserContextProfile } from '@/lib/types/user-context';
-
-const { client: openai, model: defaultModel } = getSystemClient('classification');
 
 /**
  * Calendar context for email processing
@@ -375,7 +374,9 @@ function formatCalendarContext(calendarContext: CalendarContext | undefined): st
 /**
  * Main processing function - detects signals and determines work state
  */
-export async function processEmail(email: EmailData): Promise<ProcessedEmail> {
+export async function processEmail(email: EmailData, supabase: SupabaseClient): Promise<ProcessedEmail> {
+  const { client: openai, model: defaultModel } = await getAIClient(email.user_id!, 'classification', supabase);
+
   // Format user context if available (learned communication style)
   const userContextSection = formatUserContext(email.user_context, email.from_address);
 
@@ -1012,9 +1013,9 @@ Respond ONLY with valid JSON matching the structure above.`;
  * Legacy function for backward compatibility - now just calls processEmail
  * TODO: Remove after migration
  */
-export async function checkIfActionable(email: EmailData): Promise<{ isActionable: boolean; reasoning: string }> {
+export async function checkIfActionable(email: EmailData, supabase: SupabaseClient): Promise<{ isActionable: boolean; reasoning: string }> {
   try {
-    const processed = await processEmail(email);
+    const processed = await processEmail(email, supabase);
     return {
       isActionable: processed.workState === 'work_prepared' ||
                     processed.workState === 'action_required' ||

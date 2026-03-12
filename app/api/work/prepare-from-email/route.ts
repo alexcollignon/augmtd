@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getSystemClient, aiCreate } from '@/lib/ai/factory';
+import { getAIClient, aiCreate } from '@/lib/ai/factory';
 import { SYSTEM_PROMPT, parsePlanResponse } from '@/lib/work/planning-ai';
 import { runGeneratePipeline } from '@/lib/work/generate-pipeline';
 
@@ -124,7 +124,7 @@ export async function POST(request: NextRequest) {
       .eq('id', inboxItemId);
 
     // Generate plan
-    const { client, model } = getSystemClient('planning');
+    const { client, model } = await getAIClient(userId, 'planning', adminClient);
     const planCompletion = await aiCreate(client, {
       model,
       messages: [

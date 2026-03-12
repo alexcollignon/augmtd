@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { getSystemClient } from '@/lib/ai/factory';
+import { getAIClient } from '@/lib/ai/factory';
 import { buildInboxSnapshot, formatSnapshotForPrompt } from '@/lib/inbox/chat-context';
 
 const SYSTEM_PROMPT = `You are an intelligent inbox assistant for a professional email tool called AUGMTD.
@@ -29,8 +29,6 @@ ACTION:{"type":"open","itemId":"uuid","label":"Open the email from Sarah about t
 
 Only suggest actions when the user clearly wants to do something (e.g. "archive this", "clean up", "open that email", "show me"). Do not suggest actions for every response.`;
 
-const { client: openaiClient, model: chatModel } = getSystemClient('conversation');
-
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createClient();
@@ -38,6 +36,8 @@ export async function POST(request: NextRequest) {
     if (error || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+
+    const { client: openaiClient, model: chatModel } = await getAIClient(user.id, 'conversation', supabase);
 
     const body = await request.json();
     const { message, history = [] } = body as {

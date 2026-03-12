@@ -1,4 +1,4 @@
-import { getSystemClient, aiCreate } from '@/lib/ai/factory';
+import { getAIClient, aiCreate } from '@/lib/ai/factory';
 import Anthropic from '@anthropic-ai/sdk';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { extractTextFromAttachment } from '@/lib/attachments/text-extractor';
@@ -43,8 +43,8 @@ export interface KnowledgeFile {
 // Cap conservatively at 2000 chars for the short-context model.
 const EMBED_MAX_CHARS = 2000
 
-export async function embedText(text: string): Promise<number[]> {
-  const { client, model } = getSystemClient('embeddings');
+export async function embedText(text: string, userId: string, supabase: SupabaseClient): Promise<number[]> {
+  const { client, model } = await getAIClient(userId, 'embeddings', supabase);
   const res = await client.embeddings.create({
     model,
     input: text.slice(0, EMBED_MAX_CHARS),
@@ -53,9 +53,9 @@ export async function embedText(text: string): Promise<number[]> {
 }
 
 /** Embed multiple texts in a single API call. Much faster than sequential calls. */
-async function embedTexts(texts: string[]): Promise<number[][]> {
+async function embedTexts(texts: string[], userId: string, supabase: SupabaseClient): Promise<number[][]> {
   if (texts.length === 0) return [];
-  const { client, model } = getSystemClient('embeddings');
+  const { client, model } = await getAIClient(userId, 'embeddings', supabase);
   const res = await client.embeddings.create({
     model,
     input: texts.map((t) => t.slice(0, EMBED_MAX_CHARS)),
@@ -150,9 +150,9 @@ function buildContextHeader(filename: string, heading: string | null, chunkIndex
  * Generate a 2-3 sentence summary of a document at index time.
  * Non-blocking — returns null on any error.
  */
-async function generateSummary(extractedText: string, filename: string): Promise<string | null> {
+async function generateSummary(extractedText: string, filename: string, userId: string, supabase: SupabaseClient): Promise<string | null> {
   try {
-    const { client, model } = getSystemClient('summarization');
+    const { client, model } = await getAIClient(userId, 'summarization', supabase);
     const res = await aiCreate(client, {
       model,
       messages: [{
@@ -170,10 +170,10 @@ async function generateSummary(extractedText: string, filename: string): Promise
 // ─── OCR + PDF extraction ────────────────────────────────────────────────────
 
 /** GPT-4o vision OCR for image files (JPEG, PNG, WebP). Buffer sent as base64. */
-async function extractImageWithOCR(buffer: Buffer, mimeType: string, filename: string): Promise<string | null> {
+async function extractImageWithOCR(buffer: Buffer, mimeType: string, filename: string, userId: string, supabase: SupabaseClient): Promise<string | null> {
   try {
     const base64 = buffer.toString('base64');
-    const { client, model } = getSystemClient('ocr');
+    const { client, model } = await getAIClient(userId, 'ocr', supabase);
     const res = await client.chat.completions.create({
       model,
       max_tokens: 2000,
@@ -202,13 +202,13 @@ async function extractImageWithOCR(buffer: Buffer, mimeType: string, filename: s
  *    - all others: render first N pages to PNG via pdfjs-dist + canvas → vision OCR
  *      Works for all private/on-prem tiers (pixtral, llama-vision, gpt-4o, etc.)
  */
-async function extractPdfWithFallback(buffer: Buffer, filename: string): Promise<string | null> {
+async function extractPdfWithFallback(buffer: Buffer, filename: string, userId: string, supabase: SupabaseClient): Promise<string | null> {
   const pdfText = await extractTextFromAttachment(buffer, 'application/pdf', filename) ?? '';
 
   const isLikelyScanned = pdfText.length < 200 && buffer.length > 10000;
   if (!isLikelyScanned) return pdfText || null;
 
-  const { client: ocrClient, model: ocrModel, endpoint } = getSystemClient('ocr');
+  const { client: ocrClient, model: ocrModel, endpoint } = await getAIClient(userId, 'ocr', supabase);
 
   if (endpoint.provider === 'anthropic') {
     // Anthropic: native PDF document block (best quality, handles all pages in one call)
@@ -313,15 +313,17 @@ function getModifiedAt(file: DriveItem | OneDriveItem): string | null {
 async function extractTextFromFile(
   content: Buffer | string | null,
   mimeType: string,
-  filename: string
+  filename: string,
+  userId: string,
+  supabase: SupabaseClient
 ): Promise<string | null> {
   if (content === null) return null;
   // Google Docs / Sheets come back as plain text strings
   if (typeof content === 'string') return content.trim() || null;
   // Image files — GPT-4o vision OCR
-  if (OCR_IMAGE_TYPES.has(mimeType)) return extractImageWithOCR(content, mimeType, filename);
+  if (OCR_IMAGE_TYPES.has(mimeType)) return extractImageWithOCR(content, mimeType, filename, userId, supabase);
   // PDFs — pdf-parse with Claude fallback for scanned documents
-  if (mimeType === 'application/pdf') return extractPdfWithFallback(content, filename);
+  if (mimeType === 'application/pdf') return extractPdfWithFallback(content, filename, userId, supabase);
   // All other formats (DOCX, XLSX, PPTX, TXT, CSV) — existing extractor
   return extractTextFromAttachment(content, mimeType, filename);
 }
@@ -445,16 +447,16 @@ export async function indexSource(
           content = await readOneDriveFile(encryptedTokens, file.id);
         }
 
-        const extractedText = await extractTextFromFile(content, file.mimeType, file.name);
+        const extractedText = await extractTextFromFile(content, file.mimeType, file.name, source.user_id, adminClient);
         const cleanText = extractedText ? extractedText.replace(/\u0000/g, '') : null;
 
         // Generate document summary (non-blocking)
-        const summary = cleanText ? await generateSummary(cleanText, file.name) : null;
+        const summary = cleanText ? await generateSummary(cleanText, file.name, source.user_id, adminClient) : null;
 
         // Embed whole-file text for backward compat (existing search_knowledge_files RPC)
         let fileEmbedding: number[] | null = null;
         if (cleanText && cleanText.length > 10) {
-          fileEmbedding = await embedText(cleanText);
+          fileEmbedding = await embedText(cleanText, source.user_id, adminClient);
         }
 
         // Upsert file row — get ID back for chunk FK
@@ -492,7 +494,7 @@ export async function indexSource(
           const headers = chunks.map((c, i) => buildContextHeader(file.name, c.heading, i));
           const textsToEmbed = chunks.map((c, i) => headers[i] + '\n' + c.content);
 
-          const embeddings = await embedTexts(textsToEmbed);
+          const embeddings = await embedTexts(textsToEmbed, source.user_id, adminClient);
 
           // Delete stale chunks for this file before re-inserting
           await adminClient.from('knowledge_chunks').delete().eq('file_id', fileId);
@@ -554,7 +556,7 @@ export async function searchKnowledge(
   limit: number,
   adminClient: SupabaseClient
 ): Promise<KnowledgeFile[]> {
-  const queryEmbedding = await embedText(query);
+  const queryEmbedding = await embedText(query, userId, adminClient);
 
   const { data, error } = await adminClient.rpc('search_knowledge_files', {
     p_user_id: userId,

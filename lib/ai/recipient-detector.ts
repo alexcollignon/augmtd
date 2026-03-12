@@ -5,7 +5,8 @@
  * based on multiple factors: position, mention, learned behavior, relationship.
  */
 
-import { getSystemClient } from '@/lib/ai/factory';
+import { getAIClient } from '@/lib/ai/factory';
+import { SupabaseClient } from '@supabase/supabase-js';
 import type {
   RecipientRole,
   RecipientContext,
@@ -18,8 +19,6 @@ import type {
 import { detectWorkSignals, encodeSignalPattern } from './signal-detector';
 import { inferWorkState, calculatePriority } from './work-state-mapper';
 import { analyzeBodyContent, applyBodyBoost } from './body-analyzer';
-
-const { client: openai, model: defaultModel } = getSystemClient('classification');
 
 // ==========================================
 // TYPES
@@ -53,8 +52,15 @@ interface UserInSystem {
 export async function analyzeRecipients(
   email: Email,
   usersInSystem: UserInSystem[],
-  senderContext?: { importance: number; relationshipType?: string }
+  senderContext?: { importance: number; relationshipType?: string },
+  userId?: string,
+  supabase?: SupabaseClient
 ): Promise<RecipientAnalysis> {
+  // Resolve AI client — falls back to standard tier if userId/supabase not provided
+  const { getSystemClient } = await import('@/lib/ai/factory');
+  const resolvedClient = userId && supabase
+    ? await getAIClient(userId, 'classification', supabase)
+    : getSystemClient('classification');
 
   // 1. Get all recipients
   const allRecipients = [
@@ -87,7 +93,7 @@ export async function analyzeRecipients(
   const isTeamEmail = isTeamAddress(email.to);
 
   // 6. Use AI to detect roles for each recipient
-  const aiRoleDetection = await detectRolesWithAI(email, recipientsInSystem, senderContext);
+  const aiRoleDetection = await detectRolesWithAI(email, recipientsInSystem, senderContext, resolvedClient);
 
   // 6. For each recipient, calculate full context
   const recipientContexts: Array<RecipientContext & {
@@ -106,7 +112,8 @@ export async function analyzeRecipients(
       email.body,
       email.subject,
       recipient.email,
-      recipient.position
+      recipient.position,
+      resolvedClient
     );
 
     // Infer work state from signals
@@ -200,8 +207,11 @@ interface AIRoleDetection {
 async function detectRolesWithAI(
   email: Email,
   recipients: Array<{ email: string; position: EmailPosition; userName: string | null }>,
-  senderContext?: { importance: number; relationshipType?: string }
+  senderContext?: { importance: number; relationshipType?: string },
+  resolvedClient?: { client: any; model: string }
 ): Promise<AIRoleDetection[]> {
+  const { getSystemClient } = await import('@/lib/ai/factory');
+  const { client: openai, model: defaultModel } = resolvedClient ?? getSystemClient('classification');
 
   const prompt = buildRoleDetectionPrompt(email, recipients, senderContext);
 

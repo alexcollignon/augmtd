@@ -6,9 +6,7 @@
 
 import { SupabaseClient } from '@supabase/supabase-js';
 import { createAttendeeBot, getAttendeeBot, getAttendeeBotTranscript, isSupportedMeetingUrl } from './client';
-import { getSystemClient } from '@/lib/ai/factory';
-
-const { client: openai, model: defaultModel } = getSystemClient('summarization');
+import { getAIClient } from '@/lib/ai/factory';
 
 interface ExtractedActionItem {
   action: string;
@@ -415,6 +413,8 @@ async function extractActionItemsWithAI(
   supabase: SupabaseClient
 ): Promise<ExtractedActionItem[]> {
   try {
+    const { client: openai, model: defaultModel } = await getAIClient(userId, 'summarization', supabase);
+
     // Load user profiles for context
     const { data: profiles } = await supabase
       .from('profiles')

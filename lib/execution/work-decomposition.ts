@@ -9,10 +9,8 @@
  */
 
 import { SupabaseClient } from '@supabase/supabase-js';
-import { getSystemClient } from '@/lib/ai/factory';
+import { getAIClient } from '@/lib/ai/factory';
 import type { WorkflowSeed, DeliverableType } from '@/lib/types/inbox';
-
-const { client: openai, model: defaultModel } = getSystemClient('classification');
 
 interface DecompositionInput {
   source_type: 'email' | 'manual' | 'workflow';
@@ -90,6 +88,8 @@ export async function decomposeWork(
   supabase: SupabaseClient
 ): Promise<WorkflowSeed | null> {
   try {
+    const { client: openai, model: defaultModel } = await getAIClient(userId, 'classification', supabase);
+
     // 1. Load user context profiles
     const userContext = await loadUserContext(userId, supabase);
 

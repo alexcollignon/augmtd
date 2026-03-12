@@ -452,7 +452,9 @@ export async function syncEmailsForConnection(
             email: u.email,
             fullName: u.full_name || undefined,
           })),
-          senderContext
+          senderContext,
+          connection.user_id,
+          adminSupabase
         );
 
         console.log(`✓ Found ${recipientAnalysis.recipients.length} recipients in system`);
@@ -539,7 +541,7 @@ export async function syncEmailsForConnection(
               user_context: userContext,
               calendar_context: calendarContext,
               is_forwarded: isForwarded,
-            });
+            }, adminSupabase);
 
             // Work Decomposition (Layer 2): Check if this is executable work
             let executionPlan = null;
@@ -678,7 +680,7 @@ export async function syncEmailsForConnection(
             user_context: userContext, // NEW: Personalize based on learned style
             calendar_context: calendarContext, // NEW: Schedule-aware processing
             is_forwarded: isForwarded,
-          });
+          }, adminSupabase);
 
           // Work Decomposition (Layer 2): Check if this is executable work
           let executionPlan = null;

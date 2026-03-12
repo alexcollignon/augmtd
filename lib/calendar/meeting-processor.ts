@@ -6,9 +6,7 @@
  */
 
 import { SupabaseClient } from '@supabase/supabase-js';
-import { getSystemClient } from '@/lib/ai/factory';
-
-const { client: openai, model: defaultModel } = getSystemClient('summarization');
+import { getAIClient } from '@/lib/ai/factory';
 
 interface CalendarEvent {
   id: string;
@@ -114,7 +112,7 @@ export async function processMeetingsForUser(
       const context = await buildMeetingContext(event, userEmail, supabase);
 
       // Generate meeting prep
-      const prep = await generateMeetingPrep(context);
+      const prep = await generateMeetingPrep(context, userId, supabase);
 
       // Store prep in calendar_event metadata (not in inbox_items)
       // Meetings now live in sidebar, prep shown in detail panel
@@ -219,11 +217,12 @@ async function buildMeetingContext(
 /**
  * Generate meeting prep using AI
  */
-async function generateMeetingPrep(context: MeetingContext): Promise<{
+async function generateMeetingPrep(context: MeetingContext, userId: string, supabase: SupabaseClient): Promise<{
   title: string;
   agenda: string;
   context: string;
 }> {
+  const { client: openai, model: defaultModel } = await getAIClient(userId, 'summarization', supabase);
   const { event, isOrganizer, attendeeRelationships, recentEmailThreads, hoursUntilMeeting } = context;
 
   // Build context summary

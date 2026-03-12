@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { getSystemClient, aiCreate } from '@/lib/ai/factory';
+import { getAIClient, aiCreate } from '@/lib/ai/factory';
 
 function cosineSimilarity(a: number[], b: number[]): number {
   let dot = 0, magA = 0, magB = 0;
@@ -57,7 +57,7 @@ export async function POST(
       return NextResponse.json({ rankedWorkflows: savedWorkflows.map(wf => ({ ...wf, score: 0 })), aiSuggestion: null });
     }
 
-    const { client: embedClient, model: embedModel } = getSystemClient('embeddings');
+    const { client: embedClient, model: embedModel } = await getAIClient(user.id, 'embeddings', supabase);
 
     let rankedWorkflows: Array<(typeof savedWorkflows)[0] & { score: number }> = [];
     let topScore = 0;
@@ -82,7 +82,7 @@ export async function POST(
     // AI suggestion: when no workflows exist, or best match is weak
     let aiSuggestion: string | null = null;
     if (savedWorkflows.length === 0 || topScore < 0.3) {
-      const { client: assignClient, model: assignModel } = getSystemClient('assignment');
+      const { client: assignClient, model: assignModel } = await getAIClient(user.id, 'assignment', supabase);
       const completion = await aiCreate(assignClient, {
         model: assignModel,
         max_tokens: 60,

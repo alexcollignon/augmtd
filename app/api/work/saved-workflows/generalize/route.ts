@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { getSystemClient, aiCreate } from '@/lib/ai/factory';
+import { getAIClient, aiCreate } from '@/lib/ai/factory';
 
 export async function POST(req: NextRequest) {
   try {
@@ -15,7 +15,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'prompt required' }, { status: 400 });
     }
 
-    const { client, model } = getSystemClient('summarization');
+    const { client, model } = await getAIClient(user.id, 'summarization', supabase);
     const completion = await aiCreate(client, {
       model,
       max_tokens: 100,

@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 import { randomUUID } from 'crypto';
-import { getAIClient, getSystemClient, aiCreate } from '@/lib/ai/factory';
+import { getAIClient, aiCreate } from '@/lib/ai/factory';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { DocumentArtifact, ArtifactContent, DocContent, PptxContent, XlsxContent, EmailContent, DeliverableType } from '@/lib/types/inbox';
 import { buildArtifactFile, getFileExt, getMimeType } from '@/lib/artifacts/builders';
@@ -34,6 +34,7 @@ async function buildSmartAttachmentContext(
   emailAttachments: Array<{ filename: string; mimeType?: string; storagePath?: string; extractedText: string | null }>,
   userAttachments: Array<{ filename: string; mimeType: string; storagePath: string; extractedText: string | null }>,
   adminClient: SupabaseClient,
+  userId: string,
 ): Promise<string> {
   const parts: string[] = [];
 
@@ -52,7 +53,7 @@ async function buildSmartAttachmentContext(
             console.error(`[SmartContext] Failed to create signed URL for ${att.filename}:`, urlError);
             continue;
           }
-          const { client: ocrClient, model: ocrModel } = getSystemClient('ocr');
+          const { client: ocrClient, model: ocrModel } = await getAIClient(userId, 'ocr', adminClient);
           const completion = await ocrClient.chat.completions.create({
             model: ocrModel,
             max_tokens: 1500,
@@ -113,7 +114,7 @@ async function buildSmartAttachmentContext(
           console.error(`[SmartContext] Failed to create signed URL for ${att.filename}:`, urlError);
           continue;
         }
-        const { client: ocrClient, model: ocrModel } = getSystemClient('ocr');
+        const { client: ocrClient, model: ocrModel } = await getAIClient(userId, 'ocr', adminClient);
         const completion = await ocrClient.chat.completions.create({
           model: ocrModel,
           max_tokens: 1500,
@@ -464,11 +465,12 @@ export async function runPipelineSteps(params: {
   userAttachments?: Array<{ filename: string; mimeType: string; storagePath: string; extractedText: string | null }>;
   userContext: string;
   adminClient: SupabaseClient;
+  userId: string;
 }): Promise<{ stepOutputs: StepOutput[]; attachmentContext: string }> {
-  const { plan, emailAttachments, userAttachments = [], userContext, adminClient } = params;
-  const { client, model } = getSystemClient('generation');
+  const { plan, emailAttachments, userAttachments = [], userContext, adminClient, userId } = params;
+  const { client, model } = await getAIClient(userId, 'generation', adminClient);
 
-  const attachmentContext = await buildSmartAttachmentContext(emailAttachments, userAttachments, adminClient);
+  const attachmentContext = await buildSmartAttachmentContext(emailAttachments, userAttachments, adminClient, userId);
   const stepOutputs = await executeSteps(plan, attachmentContext, userContext, client, model);
   return { stepOutputs, attachmentContext };
 }
@@ -490,7 +492,7 @@ export async function assembleArtifactFromSteps(params: {
   stepAction?: string;
 }): Promise<DocumentArtifact> {
   const { userId, threadId, type, plan, stepOutputs, attachmentContext, conversationContext, userContext, adminClient, stepAction } = params;
-  const { client, model } = getSystemClient('generation');
+  const { client, model } = await getAIClient(userId, 'generation', adminClient);
 
   const deadlineLine = plan.deadline ? `\nDeadline: ${new Date(plan.deadline).toLocaleDateString()}` : '';
   const { systemPrompt, userPrompt, maxTokens } = buildGeneratePrompt(type, plan, {
@@ -627,10 +629,10 @@ function inferTypeFromGeneratorStep(step: any, plan: any, generatorIndex: number
  */
 export async function runFullPipeline(params: GeneratePipelineParams): Promise<PipelineResult> {
   const { userId, threadId, plan, emailAttachments, userAttachments = [], conversationContext, userContext, adminClient } = params;
-  const { client, model } = getSystemClient('generation');
+  const { client, model } = await getAIClient(userId, 'generation', adminClient);
 
   // Smart pre-execution: detect file types and extract content before any step runs
-  const attachmentContext = await buildSmartAttachmentContext(emailAttachments, userAttachments, adminClient);
+  const attachmentContext = await buildSmartAttachmentContext(emailAttachments, userAttachments, adminClient, userId);
 
   const allSteps = (plan.steps || []).slice(0, 6);
   const intermediateOutputs: StepOutput[] = [];

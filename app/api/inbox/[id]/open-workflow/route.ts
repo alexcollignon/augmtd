@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { getSystemClient, aiCreate } from '@/lib/ai/factory';
+import { getAIClient, aiCreate } from '@/lib/ai/factory';
 import { SYSTEM_PROMPT, parsePlanResponse } from '@/lib/work/planning-ai';
 
 // POST /api/inbox/[id]/open-workflow
@@ -150,7 +150,7 @@ export async function POST(
         userContextNote += `\n\nMost-used skills: ${workPatterns.commonSkills.join(', ')}`;
       }
 
-      const { client, model } = getSystemClient('planning');
+      const { client, model } = await getAIClient(user.id, 'planning', supabase);
       const completion = await aiCreate(client, {
         model,
         messages: [

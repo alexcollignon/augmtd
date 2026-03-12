@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { getSystemClient, aiCreate } from '@/lib/ai/factory';
+import { getAIClient, aiCreate } from '@/lib/ai/factory';
 import { SYSTEM_PROMPT, parsePlanResponse } from '@/lib/work/planning-ai';
 
 // POST /api/work/saved-workflows/[id]/run
@@ -169,7 +169,7 @@ export async function POST(
       : `Run workflow: ${workflow.name}${typesHint}`;
 
     try {
-      const { client, model } = getSystemClient('planning');
+      const { client, model } = await getAIClient(user.id, 'planning', supabase);
 
       let conversationalText: string;
       let savedPlan = null;
