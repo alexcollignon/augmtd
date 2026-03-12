@@ -124,6 +124,7 @@ export async function getAIClient(
   const config = await getTenantConfig(userId, supabase)
   const endpoint = resolveEndpoint(task, config)
   const client = buildClient(endpoint, config)
+  console.log(`[AI] task=${task} tier=${config.tier} model=${endpoint.model} user=${userId.slice(0, 8)}`)
   return { client, model: endpoint.model, endpoint }
 }
 
