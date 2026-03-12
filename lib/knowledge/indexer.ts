@@ -44,10 +44,11 @@ export interface KnowledgeFile {
 const EMBED_MAX_CHARS = 2000
 
 export async function embedText(text: string, userId: string, supabase: SupabaseClient): Promise<number[]> {
-  const { client, model } = await getAIClient(userId, 'embeddings', supabase);
+  const { client, model, endpoint } = await getAIClient(userId, 'embeddings', supabase);
   const res = await client.embeddings.create({
     model,
     input: text.slice(0, EMBED_MAX_CHARS),
+    ...(endpoint.dimensions ? { dimensions: endpoint.dimensions } : {}),
   });
   return res.data[0].embedding;
 }
@@ -55,10 +56,11 @@ export async function embedText(text: string, userId: string, supabase: Supabase
 /** Embed multiple texts in a single API call. Much faster than sequential calls. */
 async function embedTexts(texts: string[], userId: string, supabase: SupabaseClient): Promise<number[][]> {
   if (texts.length === 0) return [];
-  const { client, model } = await getAIClient(userId, 'embeddings', supabase);
+  const { client, model, endpoint } = await getAIClient(userId, 'embeddings', supabase);
   const res = await client.embeddings.create({
     model,
     input: texts.map((t) => t.slice(0, EMBED_MAX_CHARS)),
+    ...(endpoint.dimensions ? { dimensions: endpoint.dimensions } : {}),
   });
   // OpenAI returns embeddings in the same order as inputs
   return res.data.sort((a, b) => a.index - b.index).map((d) => d.embedding);

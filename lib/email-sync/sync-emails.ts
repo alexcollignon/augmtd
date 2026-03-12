@@ -14,6 +14,16 @@
 
 import { SupabaseClient } from '@supabase/supabase-js';
 
+// Postgres rejects \u0000 (null bytes) in text columns — strip recursively from any value
+function stripNulls(v: unknown): unknown {
+  if (typeof v === 'string') return v.replace(/\u0000/g, '');
+  if (Array.isArray(v)) return v.map(stripNulls);
+  if (v !== null && typeof v === 'object') {
+    return Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, val]) => [k, stripNulls(val)]));
+  }
+  return v;
+}
+
 import {
   fetchUnreadEmails as fetchGmailEmails,
   parseGmailMessage,
@@ -710,7 +720,7 @@ export async function syncEmailsForConnection(
           // Create inbox item for this recipient
           const { data: newInboxItem, error: inboxError } = await adminSupabase
             .from('inbox_items')
-            .insert({
+            .insert(stripNulls({
               user_id: recipient.userId,
               connection_id: connection.id,
               source: 'email',
@@ -790,7 +800,7 @@ export async function syncEmailsForConnection(
               priority: processed.priority,
               status: 'pending',
               needs_review: true
-            })
+            }) as Record<string, unknown>)
             .select('id')
             .single();
 

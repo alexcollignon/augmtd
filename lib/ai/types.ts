@@ -35,6 +35,7 @@ export interface ModelEndpoint {
   baseURL?: string        // Override base URL (required for azure, openai_compatible)
   apiVersion?: string     // Azure: '2024-02-01'
   maxTokensDefault?: number
+  dimensions?: number     // Embeddings output dimension (OpenAI supports truncation via this param)
 }
 
 // ─── Tenant config ──────────────────────────────────────────────────────────────

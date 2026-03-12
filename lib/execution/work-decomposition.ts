@@ -10,6 +10,7 @@
 
 import { SupabaseClient } from '@supabase/supabase-js';
 import { getAIClient } from '@/lib/ai/factory';
+import { parseModelJSON } from '@/lib/ai/parse-json';
 import type { WorkflowSeed, DeliverableType } from '@/lib/types/inbox';
 
 interface DecompositionInput {
@@ -201,10 +202,10 @@ Return ONLY the JSON object or null, no other text.`;
       return null;
     }
 
-    const seed = JSON.parse(response) as WorkflowSeed;
+    const seed = parseModelJSON<WorkflowSeed | null>(response, null);
 
     // Validate the seed has required fields
-    if (!seed.deliverable_type || !seed.workflow_prompt) {
+    if (!seed || !seed.deliverable_type || !seed.workflow_prompt) {
       console.error('[WorkDecomposition] Invalid workflow seed structure');
       return null;
     }

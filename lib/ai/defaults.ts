@@ -19,7 +19,7 @@ export const TIER_DEFAULTS: Record<TierType, Record<TaskType, ModelEndpoint>> = 
                      baseURL: 'https://api.anthropic.com/v1' },
     summarization: { provider: 'openai',     model: 'gpt-4o-mini' },
     classification:{ provider: 'openai',     model: 'gpt-4o-mini' },
-    embeddings:    { provider: 'openai',     model: 'text-embedding-3-small' },
+    embeddings:    { provider: 'openai',     model: 'text-embedding-3-small', dimensions: 1024 },
     ocr:           { provider: 'openai',     model: 'gpt-4o' },
     assignment:    { provider: 'openai',     model: 'gpt-4o-mini' },
     conversation:  { provider: 'openai',     model: 'gpt-4o-mini' },
@@ -33,32 +33,30 @@ export const TIER_DEFAULTS: Record<TierType, Record<TaskType, ModelEndpoint>> = 
     generation:    { provider: 'azure_openai', model: 'gpt-4o-mini', apiVersion: '2024-02-01' },
     summarization: { provider: 'azure_openai', model: 'gpt-4o-mini', apiVersion: '2024-02-01' },
     classification:{ provider: 'azure_openai', model: 'gpt-4o-mini', apiVersion: '2024-02-01' },
-    embeddings:    { provider: 'azure_openai', model: 'text-embedding-3-small', apiVersion: '2024-02-01' },
+    embeddings:    { provider: 'azure_openai', model: 'text-embedding-3-small', apiVersion: '2024-02-01', dimensions: 1024 },
     ocr:           { provider: 'azure_openai', model: 'gpt-4o', apiVersion: '2024-02-01' },
     assignment:    { provider: 'azure_openai', model: 'gpt-4o-mini', apiVersion: '2024-02-01' },
     conversation:  { provider: 'azure_openai', model: 'gpt-4o-mini', apiVersion: '2024-02-01' },
   },
 
   // ── Private shared — Together AI (fully private, no data leaves to OpenAI/Anthropic)
-  // DeepSeek-V3.1 for quality-critical tasks, Llama-3.1-8B for fast/cheap tasks.
-  // Single provider (Together AI) — one API key, one baseURL for all chat tasks.
-  // Embeddings: multilingual-e5-large-instruct (only private option on Together AI).
-  //   Note: 514 token context limit — embedding input is capped in indexer.ts.
-  //   Upgrade path: swap to self-hosted bge-m3 on Modal when retrieval quality matters.
+  // DeepSeek-V3.1 for planning/generation. Llama-3.3-70B for classification/summarization/assignment.
+  // Qwen3-VL-8B for OCR (32B not serverless on Together AI). multilingual-e5 for embeddings (514 token limit).
+  // Upgrade paths: OCR → Qwen3-VL-32B (needs dedicated endpoint). Embeddings → bge-large (flaky serverless).
   private_shared: {
     planning:      { provider: 'openai_compatible', model: 'deepseek-ai/DeepSeek-V3.1',
                      baseURL: 'https://api.together.xyz/v1' },
     generation:    { provider: 'openai_compatible', model: 'deepseek-ai/DeepSeek-V3.1',
                      baseURL: 'https://api.together.xyz/v1' },
-    summarization: { provider: 'openai_compatible', model: 'meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo',
+    summarization: { provider: 'openai_compatible', model: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
                      baseURL: 'https://api.together.xyz/v1' },
-    classification:{ provider: 'openai_compatible', model: 'meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo',
+    classification:{ provider: 'openai_compatible', model: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
                      baseURL: 'https://api.together.xyz/v1' },
     embeddings:    { provider: 'openai_compatible', model: 'intfloat/multilingual-e5-large-instruct',
                      baseURL: 'https://api.together.xyz/v1' },
     ocr:           { provider: 'openai_compatible', model: 'Qwen/Qwen3-VL-8B-Instruct',
                      baseURL: 'https://api.together.xyz/v1' },
-    assignment:    { provider: 'openai_compatible', model: 'meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo',
+    assignment:    { provider: 'openai_compatible', model: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
                      baseURL: 'https://api.together.xyz/v1' },
     conversation:  { provider: 'openai_compatible', model: 'mistralai/Mistral-Small-24B-Instruct-2501',
                      baseURL: 'https://api.together.xyz/v1' },

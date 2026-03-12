@@ -1,4 +1,5 @@
 import { getAIClient } from '@/lib/ai/factory';
+import { parseModelJSON } from '@/lib/ai/parse-json';
 import { SupabaseClient } from '@supabase/supabase-js';
 import type { UserContextProfile } from '@/lib/types/user-context';
 
@@ -960,7 +961,8 @@ Respond ONLY with valid JSON matching the structure above.`;
       temperature: 0.4,
     });
 
-    const result = JSON.parse(response.choices[0].message.content || '{}');
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const result: any = parseModelJSON(response.choices[0].message.content, {});
 
     // Validate and return with defaults
     return {
