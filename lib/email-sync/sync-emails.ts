@@ -95,7 +95,7 @@ async function processAttachmentsForEmail(params: {
       }));
     } catch (err) {
       console.error(`[Attachments] Failed to list Outlook attachments for email ${emailId}:`, err);
-      return results;
+      return { attachments: results, hasCalendarInvite: false };
     }
   }
 
