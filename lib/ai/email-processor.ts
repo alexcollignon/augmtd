@@ -47,6 +47,9 @@ export interface EmailData {
   user_context?: UserContextProfile; // Learned user behavior patterns
   calendar_context?: CalendarContext; // Calendar availability and meeting preferences
   is_forwarded?: boolean; // Whether this email was forwarded to the user
+  recipient_position?: 'to' | 'cc'; // The user's position on this email
+  recipient_email?: string;          // The user's own email address
+  recipient_name?: string;           // The user's full name — used to ground the draft identity
 }
 
 /**
@@ -392,9 +395,26 @@ export async function processEmail(email: EmailData, supabase: SupabaseClient): 
     ? `\nNote: This email was forwarded to you. You were not in the original thread.\nThis represents work being delegated to you — treat it as an assignment, not a reply.\n`
     : '';
 
+  // CC note — user is not the primary recipient
+  const ccNote = email.recipient_position === 'cc'
+    ? `\nNote: You were CC'd on this email — you are NOT a primary TO recipient. ` +
+      `Only prepare a draft or action if: (a) ${email.recipient_email || 'the user'}'s email or name ` +
+      `is explicitly mentioned in the body requiring a specific response, ` +
+      `(b) the content clearly delegates work to you specifically, or ` +
+      `(c) you are a named decision-maker for this item. ` +
+      `Otherwise classify as NOTED (awareness only) with canBePreparedViaEmail = false and no draft.\n`
+    : '';
+
+  // Identity block — must be first in the prompt to prevent name adoption from thread
+  const identityBlock = `IDENTITY: You are preparing work on behalf of ${email.recipient_name || 'the user'}${email.recipient_email ? ` <${email.recipient_email}>` : ''}.
+When drafting a reply, always write AS this person and sign with their name (${email.recipient_name || 'the user'}).
+NEVER adopt or use any other name found in the email thread as the sender or signatory.
+
+`;
+
   const prompt = `You are a work preparation AI. Your job is to detect OBLIGATIONS and prepare WORK, not classify emails.
 
-${userContextSection}${calendarContextSection}${forwardedNote}${threadContextSection}CURRENT EMAIL (the one requiring your response):
+${identityBlock}${userContextSection}${calendarContextSection}${forwardedNote}${ccNote}${threadContextSection}CURRENT EMAIL (the one requiring your response):
 From: ${email.from_name} <${email.from_address}>
 Subject: ${email.subject}
 Received: ${new Date(email.received_at).toLocaleString()}

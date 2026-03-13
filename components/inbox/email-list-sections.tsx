@@ -3,7 +3,7 @@
 import { useState, useMemo } from 'react';
 import { ChevronDownIcon, ChevronUpIcon } from '@heroicons/react/24/outline';
 import type { InboxItem, VisualSection } from '@/lib/types/inbox';
-import EmailListCard from './email-list-card';
+import SmartTaskCard from './smart-task-card';
 
 interface EmailListSectionsProps {
   items: InboxItem[];
@@ -68,7 +68,7 @@ export default function EmailListSections({ items, selectedId, onSelect, compact
             </button>
 
             {!isCollapsed && sectionItems.map(item => (
-              <EmailListCard
+              <SmartTaskCard
                 key={item.id}
                 item={item}
                 isSelected={selectedId === item.id}

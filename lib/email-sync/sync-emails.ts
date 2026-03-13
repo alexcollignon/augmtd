@@ -582,7 +582,15 @@ export async function syncEmailsForConnection(
               user_context: userContext,
               calendar_context: calendarContext,
               is_forwarded: isForwarded,
+              recipient_position: recipient.position === 'to' || recipient.position === 'cc' ? recipient.position : undefined,
+              recipient_email: recipient.email,
+              recipient_name: recipient.fullName || undefined,
             }, adminSupabase);
+
+            // CC cap: CC recipients are capped at 'suggested' — never silently appear as 'prepared'
+            const effectiveVisualSection = recipient.position === 'cc' && visualSection === 'prepared'
+              ? 'suggested'
+              : visualSection;
 
             // Work Decomposition (Layer 2): Check if this is executable work
             let executionPlan = null;
@@ -620,10 +628,10 @@ export async function syncEmailsForConnection(
                 why_matters: processed.whyMatters,
 
                 // NEW: Visual section for UX
-                visual_section: visualSection,
+                visual_section: effectiveVisualSection,
 
                 // NEW: User confirmation (initialize for suggested items)
-                user_confirmation: visualSection === 'suggested' ? {
+                user_confirmation: effectiveVisualSection === 'suggested' ? {
                   status: 'pending',
                 } : null,
 
@@ -719,10 +727,18 @@ export async function syncEmailsForConnection(
             body: storedEmail.body,
             received_at: storedEmail.received_at,
             thread_context: threadEmailsForNew || [],
-            user_context: userContext, // NEW: Personalize based on learned style
-            calendar_context: calendarContext, // NEW: Schedule-aware processing
+            user_context: userContext,
+            calendar_context: calendarContext,
             is_forwarded: isForwarded,
+            recipient_position: recipient.position === 'to' || recipient.position === 'cc' ? recipient.position : undefined,
+            recipient_email: recipient.email,
+            recipient_name: recipient.fullName || undefined,
           }, adminSupabase);
+
+          // CC cap: CC recipients are capped at 'suggested' — never silently appear as 'prepared'
+          const effectiveVisualSectionNew = recipient.position === 'cc' && visualSection === 'prepared'
+            ? 'suggested'
+            : visualSection;
 
           // Work Decomposition (Layer 2): Check if this is executable work
           let executionPlan = null;
@@ -765,10 +781,10 @@ export async function syncEmailsForConnection(
               why_matters: processed.whyMatters,
 
               // NEW: Visual section for UX
-              visual_section: visualSection,
+              visual_section: effectiveVisualSectionNew,
 
               // NEW: User confirmation (initialize for suggested items)
-              user_confirmation: visualSection === 'suggested' ? {
+              user_confirmation: effectiveVisualSectionNew === 'suggested' ? {
                 status: 'pending',
               } : null,
 
