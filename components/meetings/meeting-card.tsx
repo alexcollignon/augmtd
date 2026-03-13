@@ -24,7 +24,7 @@ export default function MeetingCard({ event, userEmail, onRefresh }: MeetingCard
     (a) => a.self || a.email?.toLowerCase() === userEmail?.toLowerCase()
   );
   // Normalize Outlook raw values: 'none' → needsAction, 'tentativelyaccepted' → tentative
-  const rawStatus = selfAttendee?.status ?? selfAttendee?.responseStatus ?? 'needsAction';
+  const rawStatus: string = selfAttendee?.status ?? selfAttendee?.responseStatus ?? 'needsAction';
   const rsvpStatus: string = isOrganizer ? 'accepted'
     : rawStatus === 'none' ? 'needsAction'
     : rawStatus === 'tentativelyaccepted' ? 'tentative'
