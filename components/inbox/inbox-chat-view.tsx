@@ -4,7 +4,7 @@ import React, { useEffect, useRef, useState, RefObject } from 'react';
 import type { InboxItem } from '@/lib/types/inbox';
 import EmailListCard from './email-list-card';
 import MeetingProposalCard from './meeting-proposal-card';
-import { PaperAirplaneIcon, DocumentTextIcon } from '@heroicons/react/24/outline';
+import { PaperAirplaneIcon, DocumentTextIcon, PaperClipIcon, XMarkIcon } from '@heroicons/react/24/outline';
 
 interface ChatMessage {
   role: 'user' | 'assistant';
@@ -36,18 +36,35 @@ interface InboxChatViewProps {
   chatInput: string;
   onChatInputChange: (val: string) => void;
   chatInputRef: RefObject<HTMLInputElement | null>;
+  chatSources: string[];
+  onSourcesChange: (sources: string[]) => void;
+  attachedFiles: Array<{ filename: string; extractedText: string }>;
+  onFileAttach: (file: File) => void;
+  onRemoveFile: (filename: string) => void;
+  isAttaching: boolean;
 }
 
 const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 const ACTION_RE = /ACTION:\{[^}]+\}/g;
 const MEETING_RE = /MEETING_SUGGESTION:(\{.+\})/;
 
+const SOURCE_OPTIONS = [
+  { id: 'inbox', label: 'Inbox' },
+  { id: 'kb', label: 'Knowledge Base' },
+  { id: 'calendar', label: 'Calendar' },
+];
+
+const QUICK_PROMPTS = [
+  "What's pending in my inbox?",
+  "Any emails waiting on a reply?",
+  "Summarize my recent emails",
+];
+
 /** Strip ACTION, MEETING_SUGGESTION and KB_REFS tokens and return parsed results */
 function parseContent(raw: string): { text: string; actions: ParsedAction[]; meetingSuggestion: MeetingSuggestion | null } {
   const actions: ParsedAction[] = [];
   let meetingSuggestion: MeetingSuggestion | null = null;
 
-  // Parse MEETING_SUGGESTION before stripping
   const meetingMatch = raw.match(MEETING_RE);
   if (meetingMatch) {
     try {
@@ -251,21 +268,6 @@ function MessageContent({
   );
 }
 
-const SUGGESTION_CATEGORIES = [
-  {
-    label: 'Overview',
-    items: ['Summarize my inbox today', 'What needs my attention right now?'],
-  },
-  {
-    label: 'Find',
-    items: ['Show me emails from this week', 'Any emails about invoices or payments?', 'Emails waiting on a reply?'],
-  },
-  {
-    label: 'Documents',
-    items: ['Do I have any contract or NDA templates?', 'Find anything related to deadlines this week'],
-  },
-];
-
 export default function InboxChatView({
   history,
   streamingContent,
@@ -277,8 +279,15 @@ export default function InboxChatView({
   chatInput,
   onChatInputChange,
   chatInputRef,
+  chatSources,
+  onSourcesChange,
+  attachedFiles,
+  onFileAttach,
+  onRemoveFile,
+  isAttaching,
 }: InboxChatViewProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -290,27 +299,65 @@ export default function InboxChatView({
     if (chatInput.trim() && !isStreaming) onSendMessage(chatInput);
   };
 
+  const allActive = chatSources.length === SOURCE_OPTIONS.length;
+
+  const toggleSource = (id: string) => {
+    if (allActive) {
+      onSourcesChange([id]);
+    } else if (chatSources.includes(id)) {
+      const next = chatSources.filter(s => s !== id);
+      onSourcesChange(next.length === 0 ? SOURCE_OPTIONS.map(s => s.id) : next);
+    } else {
+      const next = [...chatSources, id];
+      onSourcesChange(next.length === SOURCE_OPTIONS.length ? SOURCE_OPTIONS.map(s => s.id) : next);
+    }
+  };
+
+  const showFileChips = attachedFiles.length > 0 || isAttaching;
+
   return (
     <div className="flex-1 min-h-0 flex flex-col">
-      {/* Messages area */}
+      {/* Zone 1 — Source chips */}
+      <div className="flex-shrink-0 flex items-center gap-1.5 px-3 py-2 border-b border-neutral-100 bg-white">
+        <button
+          onClick={() => onSourcesChange(SOURCE_OPTIONS.map(s => s.id))}
+          className={`text-[11px] font-semibold px-2.5 py-1 transition-colors ${
+            allActive
+              ? 'bg-indigo-600 text-white'
+              : 'bg-neutral-100 text-neutral-500 hover:bg-neutral-200'
+          }`}
+        >
+          All
+        </button>
+        {SOURCE_OPTIONS.map(opt => (
+          <button
+            key={opt.id}
+            onClick={() => toggleSource(opt.id)}
+            className={`text-[11px] font-semibold px-2.5 py-1 transition-colors ${
+              !allActive && chatSources.includes(opt.id)
+                ? 'bg-indigo-100 text-indigo-700'
+                : 'bg-neutral-100 text-neutral-500 hover:bg-neutral-200'
+            }`}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Zone 2 — Messages area */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
         {isEmpty ? (
           <div className="flex flex-col items-center justify-center h-full py-12 text-center gap-4">
-            <p className="text-[13px] text-neutral-400">Ask about your emails or documents</p>
-            <div className="flex flex-col gap-4 w-full max-w-xs">
-              {SUGGESTION_CATEGORIES.map(cat => (
-                <div key={cat.label} className="flex flex-col gap-1.5">
-                  <p className="text-[10px] font-medium text-neutral-400 uppercase tracking-wide px-0.5">{cat.label}</p>
-                  {cat.items.map(s => (
-                    <button
-                      key={s}
-                      onClick={() => onSendMessage(s)}
-                      className="text-left px-3 py-2 text-[12px] text-neutral-600 border border-neutral-200 hover:border-indigo-300 hover:text-indigo-700 hover:bg-indigo-50/40 transition-colors"
-                    >
-                      {s}
-                    </button>
-                  ))}
-                </div>
+            <p className="text-[12px] text-neutral-400 font-medium">Try asking...</p>
+            <div className="flex flex-col gap-2 w-full max-w-xs">
+              {QUICK_PROMPTS.map(prompt => (
+                <button
+                  key={prompt}
+                  onClick={() => onSendMessage(prompt)}
+                  className="text-left px-3 py-2 text-[12px] text-neutral-600 border border-neutral-200 hover:border-indigo-300 hover:text-indigo-700 hover:bg-indigo-50/40 transition-colors"
+                >
+                  {prompt}
+                </button>
               ))}
             </div>
           </div>
@@ -360,25 +407,74 @@ export default function InboxChatView({
         <div ref={bottomRef} />
       </div>
 
-      {/* Input bar — always at bottom */}
-      <div className="flex-shrink-0 flex items-center gap-2 px-3 py-2.5 border-t border-neutral-200 bg-white">
-        <input
-          ref={chatInputRef}
-          type="text"
-          value={chatInput}
-          onChange={e => onChatInputChange(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter') handleSubmit(); }}
-          placeholder="Ask about your inbox..."
-          disabled={isStreaming}
-          className="flex-1 text-[12px] text-neutral-700 placeholder-neutral-400 bg-transparent outline-none min-w-0 disabled:opacity-50"
-        />
-        <button
-          onClick={handleSubmit}
-          disabled={!chatInput.trim() || isStreaming}
-          className="flex-shrink-0 p-1 text-indigo-600 hover:text-indigo-800 disabled:text-neutral-300 transition-colors"
-        >
-          <PaperAirplaneIcon className="w-4 h-4" />
-        </button>
+      {/* Zone 3 — Input bar */}
+      <div className="flex-shrink-0 border-t border-neutral-200 bg-white">
+        {/* File chips sub-row */}
+        {showFileChips && (
+          <div className="flex flex-wrap gap-1.5 px-3 pt-2.5">
+            {attachedFiles.map(f => (
+              <span
+                key={f.filename}
+                className="inline-flex items-center gap-1 px-2 py-1 bg-indigo-50 border border-indigo-200 text-[11px] text-indigo-700 max-w-[160px]"
+              >
+                <DocumentTextIcon className="w-3 h-3 flex-shrink-0" />
+                <span className="truncate">{f.filename}</span>
+                <button
+                  onClick={() => onRemoveFile(f.filename)}
+                  className="flex-shrink-0 ml-0.5 text-indigo-400 hover:text-indigo-700 transition-colors"
+                >
+                  <XMarkIcon className="w-3 h-3" />
+                </button>
+              </span>
+            ))}
+            {isAttaching && (
+              <span className="inline-flex items-center gap-1.5 px-2 py-1 bg-neutral-50 border border-neutral-200 text-[11px] text-neutral-500">
+                <div className="w-3 h-3 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+                Extracting...
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* Input row */}
+        <div className="flex items-center gap-2 px-3 py-3">
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isStreaming || isAttaching}
+            title="Attach file"
+            className="flex-shrink-0 p-1 text-neutral-400 hover:text-neutral-700 disabled:opacity-30 transition-colors"
+          >
+            <PaperClipIcon className="w-4 h-4" />
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".pdf,.docx,.txt,.csv,.xlsx,.pptx"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) onFileAttach(file);
+              e.target.value = '';
+            }}
+          />
+          <input
+            ref={chatInputRef}
+            type="text"
+            value={chatInput}
+            onChange={e => onChatInputChange(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') handleSubmit(); }}
+            placeholder="Ask about your inbox..."
+            disabled={isStreaming}
+            className="flex-1 text-[12px] text-neutral-700 placeholder-neutral-400 bg-transparent outline-none min-w-0 disabled:opacity-50"
+          />
+          <button
+            onClick={handleSubmit}
+            disabled={!chatInput.trim() || isStreaming}
+            className="flex-shrink-0 p-1 text-indigo-600 hover:text-indigo-800 disabled:text-neutral-300 transition-colors"
+          >
+            <PaperAirplaneIcon className="w-4 h-4" />
+          </button>
+        </div>
       </div>
     </div>
   );

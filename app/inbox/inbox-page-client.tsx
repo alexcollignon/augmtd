@@ -58,6 +58,9 @@ export function InboxPageClient({
   const [chatHistory, setChatHistory] = useState<Array<{ role: 'user' | 'assistant'; content: string }>>([]);
   const [chatStreaming, setChatStreaming] = useState(false);
   const [streamingContent, setStreamingContent] = useState('');
+  const [chatSources, setChatSources] = useState<string[]>(['inbox', 'kb', 'calendar']);
+  const [attachedFiles, setAttachedFiles] = useState<Array<{ filename: string; extractedText: string }>>([]);
+  const [isAttaching, setIsAttaching] = useState(false);
   const chatInputRef = useRef<HTMLInputElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
@@ -324,11 +327,31 @@ export function InboxPageClient({
     setIsChatOpen(false);
     setChatInput('');
     setChatHistory([]);
+    setAttachedFiles([]);
   };
+
+  const handleFileAttach = useCallback(async (file: File) => {
+    setIsAttaching(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const res = await fetch('/api/inbox/chat/attach', { method: 'POST', body: fd });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Upload failed');
+      setAttachedFiles(prev => [...prev, { filename: data.filename, extractedText: data.extractedText }]);
+    } catch (err: any) {
+      toast.error(err.message || 'Could not extract text from this file type');
+    } finally {
+      setIsAttaching(false);
+    }
+  }, []);
 
   const sendChatMessage = useCallback(async (message: string) => {
     if (!message.trim() || chatStreaming) return;
     const userMessage = message.trim();
+    const fileContext = attachedFiles.length
+      ? attachedFiles.map(f => `=== ${f.filename} ===\n${f.extractedText}`).join('\n\n')
+      : undefined;
     setChatInput('');
     setChatHistory(prev => [...prev, { role: 'user', content: userMessage }]);
     setChatStreaming(true);
@@ -341,6 +364,8 @@ export function InboxPageClient({
         body: JSON.stringify({
           message: userMessage,
           history: chatHistory,
+          sources: chatSources,
+          ...(fileContext ? { fileContext } : {}),
         }),
       });
 
@@ -364,8 +389,9 @@ export function InboxPageClient({
     } finally {
       setChatStreaming(false);
       setStreamingContent('');
+      setAttachedFiles([]);
     }
-  }, [chatHistory, chatStreaming]);
+  }, [chatHistory, chatStreaming, chatSources, attachedFiles]);
 
   return (
     <div className="flex h-screen bg-white overflow-hidden">
@@ -603,14 +629,14 @@ export function InboxPageClient({
                 <button
                   onClick={() => isChatOpen ? closeChat() : openChat()}
                   title="Ask AI"
-                  className={`flex-shrink-0 flex items-center gap-1.5 px-2 py-1 text-[11px] font-semibold transition-colors ${
+                  className={`flex-shrink-0 flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold border transition-colors ${
                     isChatOpen
-                      ? 'bg-indigo-600 text-white'
-                      : 'text-neutral-400 hover:text-neutral-700'
+                      ? 'bg-indigo-600 border-indigo-600 text-white'
+                      : 'border-indigo-400 text-indigo-500 hover:bg-indigo-50'
                   }`}
                 >
                   <SparklesIcon className="w-3 h-3" />
-                  Ask
+                  Ask AI
                 </button>
               </div>
 
@@ -626,6 +652,12 @@ export function InboxPageClient({
                   chatInput={chatInput}
                   onChatInputChange={setChatInput}
                   chatInputRef={chatInputRef}
+                  chatSources={chatSources}
+                  onSourcesChange={setChatSources}
+                  attachedFiles={attachedFiles}
+                  onFileAttach={handleFileAttach}
+                  onRemoveFile={(filename) => setAttachedFiles(prev => prev.filter(f => f.filename !== filename))}
+                  isAttaching={isAttaching}
                 />
               ) : (
                 <div className="flex-1 min-h-0">

@@ -13,7 +13,7 @@ export const kbContextSource: ContextSource = {
   async search(userId: string, query: string, limit: number, adminClient: SupabaseClient): Promise<ContextResult[]> {
     const groups = await searchKnowledgeGrouped(userId, query, limit, adminClient, {
       maxChunksPerFile: 3,
-      threshold: 0.15,
+      threshold: 0.1,
     })
 
     return groups.map((g) => ({

@@ -5,6 +5,7 @@ import { updateWorkPatternsFromThread } from '@/lib/context/work-patterns-servic
 import { buildSystemPrompt, parsePlanResponse } from '@/lib/work/planning-ai';
 import { buildToolRegistry } from '@/lib/mcp/registry';
 import { buildKBContext } from '@/lib/knowledge/build-kb-context';
+import { buildUserContextBlock } from '@/lib/context/build-user-context';
 
 // POST /api/work/threads/[id]/messages — send a message and stream the AI response
 export async function POST(
@@ -54,41 +55,6 @@ export async function POST(
       .eq('thread_id', threadId)
       .order('created_at', { ascending: true });
 
-    // Load user context for personalization
-    const [{ data: identityProfile }, { data: workPatternsProfile }] = await Promise.all([
-      supabase
-        .from('context_profiles')
-        .select('profile_data')
-        .eq('user_id', user.id)
-        .eq('profile_type', 'identity')
-        .single(),
-      supabase
-        .from('context_profiles')
-        .select('profile_data')
-        .eq('user_id', user.id)
-        .eq('profile_type', 'work_patterns')
-        .single(),
-    ]);
-
-    const identity = identityProfile?.profile_data;
-    const workPatterns = workPatternsProfile?.profile_data;
-
-    let userContextNote = identity
-      ? `\n\nUser context: ${identity.jobRole || ''} ${identity.department ? `in ${identity.department}` : ''}`.trim()
-      : '';
-
-    // Inject only anonymised patterns — never specific names/clients from other threads
-    if (workPatterns?.deliverableTypes && Object.keys(workPatterns.deliverableTypes).length > 0) {
-      const typesSummary = Object.entries(workPatterns.deliverableTypes as Record<string, number>)
-        .sort((a, b) => b[1] - a[1])
-        .map(([type, count]) => `${type} (${count}x)`)
-        .join(', ');
-      userContextNote += `\n\nDeliverable types this user typically creates: ${typesSummary}`;
-    }
-    if (workPatterns?.commonSkills?.length) {
-      userContextNote += `\n\nMost-used skills: ${workPatterns.commonSkills.join(', ')}`;
-    }
-
     // Build messages for OpenAI
     const currentPlanNote = thread.plan
       ? `\n\nCURRENT PLAN STATE (update this precisely — change only what the user's message affects, preserve everything else):\n${JSON.stringify(thread.plan, null, 2)}`
@@ -117,14 +83,16 @@ export async function POST(
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
 
-    const [toolRegistry, kbContext] = await Promise.all([
+    const [toolRegistry, kbContext, userContextBlock] = await Promise.all([
       buildToolRegistry(user.id, supabase),
-      buildKBContext(user.id, content, adminClient, { fileLimit: 4, maxChunksPerFile: 2, threshold: 0.2 }),
+      buildKBContext(user.id, content, adminClient, { fileLimit: 6, maxChunksPerFile: 3, threshold: 0.2, maxTotalChars: 12000 }),
+      buildUserContextBlock(user.id, supabase),
     ]);
     const systemPrompt = buildSystemPrompt(toolRegistry);
 
-    const kbContextNote = kbContext
-      ? `\n\nKNOWLEDGE BASE CONTEXT (from user's indexed files — reference when planning):\n${kbContext}`
+    const userContextNote = userContextBlock ? `\n\n${userContextBlock}` : '';
+    const kbContextNote = kbContext.context
+      ? `\n\nKNOWLEDGE BASE CONTEXT (from user's indexed files — reference when planning):\n${kbContext.context}`
       : '';
 
     // On the very first message (no existing plan), inject a strong reminder that a plan is required now.

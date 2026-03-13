@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAIClient, aiCreate } from '@/lib/ai/factory';
 import { SYSTEM_PROMPT, parsePlanResponse } from '@/lib/work/planning-ai';
 import { runGeneratePipeline } from '@/lib/work/generate-pipeline';
+import { buildUserContextBlock } from '@/lib/context/build-user-context';
 
 // POST /api/work/prepare-from-email
 // Internal endpoint — authenticated via x-internal-secret header.
@@ -45,43 +46,9 @@ export async function POST(request: NextRequest) {
       throw new Error('Inbox item not found or missing workflow prompt');
     }
 
-    // Load user context profiles
-    const [{ data: identityProfile }, { data: workPatternsProfile }] = await Promise.all([
-      adminClient
-        .from('context_profiles')
-        .select('profile_data')
-        .eq('user_id', userId)
-        .eq('profile_type', 'identity')
-        .single(),
-      adminClient
-        .from('context_profiles')
-        .select('profile_data')
-        .eq('user_id', userId)
-        .eq('profile_type', 'work_patterns')
-        .single(),
-    ]);
-
-    const identity = identityProfile?.profile_data;
-    const workPatterns = workPatternsProfile?.profile_data;
-
-    const userContextStr = identity
-      ? `${identity.jobRole || 'Professional'}${identity.department ? ` at ${identity.department}` : ''}`
-      : 'Professional';
-
-    let userContextNote = identity
-      ? `\n\nUser context: ${identity.jobRole || ''} ${identity.department ? `in ${identity.department}` : ''}`.trim()
-      : '';
-
-    if (workPatterns?.deliverableTypes && Object.keys(workPatterns.deliverableTypes).length > 0) {
-      const typesSummary = Object.entries(workPatterns.deliverableTypes as Record<string, number>)
-        .sort((a, b) => b[1] - a[1])
-        .map(([type, count]) => `${type} (${count}x)`)
-        .join(', ');
-      userContextNote += `\n\nDeliverable types this user typically creates: ${typesSummary}`;
-    }
-    if (workPatterns?.commonSkills?.length) {
-      userContextNote += `\n\nMost-used skills: ${workPatterns.commonSkills.join(', ')}`;
-    }
+    // Load full user context block
+    const userContextBlock = await buildUserContextBlock(userId, adminClient);
+    const userContextNote = userContextBlock ? `\n\n${userContextBlock}` : '';
 
     // Build workflow prompt with attachment metadata
     const seed = item.execution_plan;
@@ -171,7 +138,7 @@ export async function POST(request: NextRequest) {
       plan,
       emailAttachments,
       conversationContext: `user: ${workflowPrompt}\nassistant: ${conversationalText}`,
-      userContext: userContextStr,
+      userContext: userContextBlock || 'Professional',
       adminClient,
     });
 

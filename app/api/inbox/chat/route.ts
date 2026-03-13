@@ -5,9 +5,12 @@ import { buildInboxSnapshot, formatSnapshotForPrompt } from '@/lib/inbox/chat-co
 import { buildKBContext } from '@/lib/knowledge/build-kb-context';
 import { getCalendarContext } from '@/lib/calendar/calendar-context';
 import { formatCalendarContextForChat } from '@/lib/calendar/format-calendar-context';
+import { buildUserContextBlock } from '@/lib/context/build-user-context';
 
 const SYSTEM_PROMPT = `You are an intelligent assistant for a professional email tool called AUGMTD.
 You help users search and understand their emails, answer questions using their indexed documents, and help with scheduling.
+
+{{USER_CONTEXT}}
 
 {{KB_CONTEXT}}
 
@@ -24,6 +27,7 @@ Rules:
 - Do not make up emails that aren't in the inbox snapshot above
 - Dates: today is {{TODAY}}
 - Use the calendar above when answering scheduling questions. Propose conflict-free times based on the user's actual calendar.
+- If the user has attached a document (shown as [Attached document content: ...]), answer using it as primary context.
 - If you used content from the knowledge base in your answer, append exactly one line at the very end: KB_REFS:filename1.pdf|filename2.pdf (pipe-separated, exact filenames as shown in the KB headers above). Do not append KB_REFS if you did not use the knowledge base.
 
 When you want to suggest an action on an email, append it at the very end of your response using this exact format (one per line, no extra text after):
@@ -48,9 +52,11 @@ export async function POST(request: NextRequest) {
     const { client: openaiClient, model: chatModel } = await getAIClient(user.id, 'conversation', supabase);
 
     const body = await request.json();
-    const { message, history = [] } = body as {
+    const { message, history = [], sources, fileContext } = body as {
       message: string;
       history: Array<{ role: 'user' | 'assistant'; content: string }>;
+      sources?: string[];
+      fileContext?: string;
     };
 
     if (!message?.trim()) {
@@ -62,26 +68,51 @@ export async function POST(request: NextRequest) {
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
 
-    const [snapshot, kbContext, calendarCtx] = await Promise.all([
-      buildInboxSnapshot(user.id, message, supabase),
-      buildKBContext(user.id, message, adminClient, { fileLimit: 3, maxChunksPerFile: 2, threshold: 0.2 }),
-      getCalendarContext(user.id, supabase),
+    const activeSources = sources?.length ? sources : ['inbox', 'kb', 'calendar'];
+
+    const [snapshot, kbContext, calendarCtx, userContextBlock, indexedFilesResult] = await Promise.all([
+      activeSources.includes('inbox')
+        ? buildInboxSnapshot(user.id, message, supabase)
+        : Promise.resolve([]),
+      activeSources.includes('kb')
+        ? buildKBContext(user.id, message, adminClient, { fileLimit: 6, maxChunksPerFile: 3, threshold: 0.2, maxTotalChars: 12000 })
+        : Promise.resolve({ context: '', filenames: [] }),
+      activeSources.includes('calendar')
+        ? getCalendarContext(user.id, supabase)
+        : Promise.resolve({ upcomingMeetings: [], availability: undefined }),
+      buildUserContextBlock(user.id, supabase),
+      activeSources.includes('kb')
+        ? supabase.from('knowledge_files').select('filename').eq('user_id', user.id)
+        : Promise.resolve({ data: [] }),
     ]);
     const snapshotText = formatSnapshotForPrompt(snapshot);
     const calendarText = formatCalendarContextForChat(calendarCtx);
     const today = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+
+    // Build KB section: file inventory (all indexed filenames) + semantic excerpts
+    const allFiles = (indexedFilesResult as any).data as Array<{ filename: string }> | null;
+    const inventoryLine = allFiles?.length
+      ? `YOUR INDEXED FILES (${allFiles.length} total): ${allFiles.map(f => f.filename).join(', ')}\n\n`
+      : '';
+    const kbSection = inventoryLine + (kbContext.context || '');
+
     const systemPrompt = SYSTEM_PROMPT
+      .replace('{{USER_CONTEXT}}', userContextBlock || '')
       .replace('{{INBOX_SNAPSHOT}}', snapshotText || 'No active inbox items.')
       .replace('{{TODAY}}', today)
-      .replace('{{KB_CONTEXT}}', kbContext.context)
+      .replace('{{KB_CONTEXT}}', kbSection)
       .replace('{{CALENDAR_CONTEXT}}', calendarText || '');
+
+    const userContent = fileContext
+      ? `[Attached document content:\n${fileContext}\n]\n\n${message}`
+      : message;
 
     const stream = await openaiClient.chat.completions.create({
       model: chatModel,
       messages: [
         { role: 'system', content: systemPrompt },
         ...history,
-        { role: 'user', content: message },
+        { role: 'user', content: userContent },
       ],
       temperature: 0.3,
       max_tokens: 700,

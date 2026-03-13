@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { DocumentArtifact } from '@/lib/types/inbox';
 import { runFullPipeline } from '@/lib/work/generate-pipeline';
 import { buildToolRegistry } from '@/lib/mcp/registry';
+import { buildUserContextBlock } from '@/lib/context/build-user-context';
 
 // POST /api/work/threads/[id]/generate
 export async function POST(
@@ -33,7 +34,7 @@ export async function POST(
       return NextResponse.json({ error: 'Thread has no plan yet' }, { status: 400 });
     }
 
-    const [{ data: recentMessages }, { data: linkedItem }, { data: identityProfile }] = await Promise.all([
+    const [{ data: recentMessages }, { data: linkedItem }, userContextBlock] = await Promise.all([
       supabase
         .from('work_messages')
         .select('role, content')
@@ -46,15 +47,9 @@ export async function POST(
         .eq('work_thread_id', threadId)
         .eq('user_id', user.id)
         .maybeSingle(),
-      supabase
-        .from('context_profiles')
-        .select('profile_data')
-        .eq('user_id', user.id)
-        .eq('profile_type', 'identity')
-        .single(),
+      buildUserContextBlock(user.id, supabase),
     ]);
 
-    const identity = identityProfile?.profile_data;
     const plan = thread.plan;
 
     const conversationContext = (recentMessages || [])
@@ -75,9 +70,7 @@ export async function POST(
       extractedText: string | null;
     }>;
 
-    const userContext = identity
-      ? `${identity.jobRole || 'Professional'}${identity.department ? ` at ${identity.department}` : ''}`
-      : 'Professional';
+    const userContext = userContextBlock || 'Professional';
 
     const adminClient = (await import('@supabase/supabase-js')).createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,

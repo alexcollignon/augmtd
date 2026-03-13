@@ -71,7 +71,12 @@ export async function enrichPlanWithContext(
 
     const sources = getContextSources();
     const SEARCH_LIMIT = 20;
-    const SIMILARITY_THRESHOLD = 0.2;
+
+    // multilingual-e5 (private_shared tier) produces lower cosine similarities than OpenAI —
+    // use a lower threshold so semantically relevant files aren't filtered out.
+    const { data: tierData } = await adminClient
+      .from('tenant_configs').select('tier').eq('user_id', userId).maybeSingle();
+    const SIMILARITY_THRESHOLD = (tierData?.tier ?? 'standard') === 'private_shared' ? 0.1 : 0.2;
 
     // Run all queries × all sources in parallel
     const allSearchResults = await Promise.all(
