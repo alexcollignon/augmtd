@@ -98,24 +98,25 @@ export function InboxPageClient({
   }, [initialHasConnection]);
 
   // Fetch meetings (shared between top bar and calendar column)
-  useEffect(() => {
-    const fetchMeetings = async () => {
-      try {
-        const res = await fetch('/api/meetings');
-        if (res.ok) {
-          const data = await res.json();
-          setMeetings(data.meetings || []);
-        }
-      } catch {
-        // non-fatal
-      } finally {
-        setMeetingsLoading(false);
+  const fetchMeetings = useCallback(async () => {
+    try {
+      const res = await fetch('/api/meetings');
+      if (res.ok) {
+        const data = await res.json();
+        setMeetings(data.meetings || []);
       }
-    };
+    } catch {
+      // non-fatal
+    } finally {
+      setMeetingsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
     fetchMeetings();
     const interval = setInterval(fetchMeetings, 60000);
     return () => clearInterval(interval);
-  }, []);
+  }, [fetchMeetings]);
 
   // Trigger initial sync after connecting
   useEffect(() => {
@@ -628,7 +629,7 @@ export function InboxPageClient({
                 />
               ) : (
                 <div className="flex-1 min-h-0">
-                  <WorkDetailInline key={selectedItem?.id ?? 'empty'} item={selectedItem} onItemConfirmed={handleItemConfirmed} />
+                  <WorkDetailInline key={selectedItem?.id ?? 'empty'} item={selectedItem} onItemConfirmed={handleItemConfirmed} onRefreshMeetings={fetchMeetings} />
                 </div>
               )}
             </div>
@@ -640,6 +641,7 @@ export function InboxPageClient({
               meetings={meetings}
               loading={meetingsLoading}
               userEmail={user?.email || ''}
+              onRefresh={fetchMeetings}
             />
           </div>
         )}

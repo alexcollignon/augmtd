@@ -11,6 +11,7 @@ interface MeetingsColumnProps {
   meetings: CalendarEvent[];
   loading: boolean;
   userEmail: string;
+  onRefresh?: () => void;
 }
 
 function MeetingSection({
@@ -49,9 +50,9 @@ function MeetingSection({
   );
 }
 
-export default function MeetingsColumn({ isOpen, onToggle, meetings, loading, userEmail }: MeetingsColumnProps) {
+export default function MeetingsColumn({ isOpen, onToggle, meetings, loading, userEmail, onRefresh }: MeetingsColumnProps) {
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(
-    new Set(['completed', 'tomorrow', 'this_week', 'next_week'])
+    new Set(['completed', 'next_week'])
   );
 
   const toggleSection = (section: string) => {
@@ -65,10 +66,15 @@ export default function MeetingsColumn({ isOpen, onToggle, meetings, loading, us
   const now = new Date();
   const tomorrow = new Date(now);
   tomorrow.setDate(tomorrow.getDate() + 1);
-  const nextWeek = new Date(now);
-  nextWeek.setDate(nextWeek.getDate() + 7);
-  const twoWeeksOut = new Date(now);
-  twoWeeksOut.setDate(twoWeeksOut.getDate() + 14);
+
+  // End of this calendar week = start of next Sunday (Sun=0 → 7 days, else 7-dayOfWeek)
+  const daysToSunday = now.getDay() === 0 ? 7 : 7 - now.getDay();
+  const endOfWeek = new Date(now);
+  endOfWeek.setDate(now.getDate() + daysToSunday);
+  endOfWeek.setHours(0, 0, 0, 0);
+
+  const endOfNextWeek = new Date(endOfWeek);
+  endOfNextWeek.setDate(endOfWeek.getDate() + 7);
 
   const grouped = {
     in_progress: meetings.filter(m => m.meeting_status === 'in_progress'),
@@ -88,12 +94,12 @@ export default function MeetingsColumn({ isOpen, onToggle, meetings, loading, us
     this_week: meetings.filter(m => {
       if (m.meeting_status !== 'upcoming') return false;
       const start = new Date(m.start_time);
-      return start > tomorrow && start < nextWeek && start.toDateString() !== tomorrow.toDateString();
+      return start > tomorrow && start < endOfWeek && start.toDateString() !== tomorrow.toDateString();
     }),
     next_week: meetings.filter(m => {
       if (m.meeting_status !== 'upcoming') return false;
       const start = new Date(m.start_time);
-      return start >= nextWeek && start < twoWeeksOut;
+      return start >= endOfWeek && start < endOfNextWeek;
     }),
   };
 
@@ -139,37 +145,37 @@ export default function MeetingsColumn({ isOpen, onToggle, meetings, loading, us
             <div>
               {grouped.in_progress.length > 0 && (
                 <MeetingSection title="HAPPENING NOW" count={grouped.in_progress.length} isCollapsed={false} onToggle={() => {}} canCollapse={false}>
-                  {grouped.in_progress.map(m => <MeetingCard key={m.id} event={m} userEmail={userEmail} />)}
+                  {grouped.in_progress.map(m => <MeetingCard key={m.id} event={m} userEmail={userEmail} onRefresh={onRefresh} />)}
                 </MeetingSection>
               )}
               {grouped.starting_soon.length > 0 && (
                 <MeetingSection title="STARTING SOON" count={grouped.starting_soon.length} isCollapsed={false} onToggle={() => {}} canCollapse={false}>
-                  {grouped.starting_soon.map(m => <MeetingCard key={m.id} event={m} userEmail={userEmail} />)}
+                  {grouped.starting_soon.map(m => <MeetingCard key={m.id} event={m} userEmail={userEmail} onRefresh={onRefresh} />)}
                 </MeetingSection>
               )}
               {grouped.today.length > 0 && (
                 <MeetingSection title="TODAY" count={grouped.today.length} isCollapsed={collapsedSections.has('today')} onToggle={() => toggleSection('today')}>
-                  {grouped.today.map(m => <MeetingCard key={m.id} event={m} userEmail={userEmail} />)}
+                  {grouped.today.map(m => <MeetingCard key={m.id} event={m} userEmail={userEmail} onRefresh={onRefresh} />)}
                 </MeetingSection>
               )}
               {grouped.completed_recent.length > 0 && (
                 <MeetingSection title="COMPLETED TODAY" count={grouped.completed_recent.length} isCollapsed={collapsedSections.has('completed')} onToggle={() => toggleSection('completed')}>
-                  {grouped.completed_recent.map(m => <MeetingCard key={m.id} event={m} userEmail={userEmail} />)}
+                  {grouped.completed_recent.map(m => <MeetingCard key={m.id} event={m} userEmail={userEmail} onRefresh={onRefresh} />)}
                 </MeetingSection>
               )}
               {grouped.tomorrow.length > 0 && (
                 <MeetingSection title="TOMORROW" count={grouped.tomorrow.length} isCollapsed={collapsedSections.has('tomorrow')} onToggle={() => toggleSection('tomorrow')}>
-                  {grouped.tomorrow.map(m => <MeetingCard key={m.id} event={m} userEmail={userEmail} />)}
+                  {grouped.tomorrow.map(m => <MeetingCard key={m.id} event={m} userEmail={userEmail} onRefresh={onRefresh} />)}
                 </MeetingSection>
               )}
               {grouped.this_week.length > 0 && (
                 <MeetingSection title="THIS WEEK" count={grouped.this_week.length} isCollapsed={collapsedSections.has('this_week')} onToggle={() => toggleSection('this_week')}>
-                  {grouped.this_week.map(m => <MeetingCard key={m.id} event={m} userEmail={userEmail} />)}
+                  {grouped.this_week.map(m => <MeetingCard key={m.id} event={m} userEmail={userEmail} onRefresh={onRefresh} />)}
                 </MeetingSection>
               )}
               {grouped.next_week.length > 0 && (
                 <MeetingSection title="NEXT WEEK" count={grouped.next_week.length} isCollapsed={collapsedSections.has('next_week')} onToggle={() => toggleSection('next_week')}>
-                  {grouped.next_week.map(m => <MeetingCard key={m.id} event={m} userEmail={userEmail} />)}
+                  {grouped.next_week.map(m => <MeetingCard key={m.id} event={m} userEmail={userEmail} onRefresh={onRefresh} />)}
                 </MeetingSection>
               )}
             </div>

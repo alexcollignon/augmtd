@@ -123,6 +123,13 @@ export async function POST(request: NextRequest) {
         .eq('connection_id', connectionId);
     }
 
+    // 7. Delete knowledge base data (user-scoped, not connection-scoped — only on full wipe)
+    if (isAll) {
+      await adminSupabase.from('knowledge_chunks').delete().eq('user_id', userId);
+      await adminSupabase.from('knowledge_files').delete().eq('user_id', userId);
+      await adminSupabase.from('knowledge_sources').delete().eq('user_id', userId);
+    }
+
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('[Delete Data] Error:', error);

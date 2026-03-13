@@ -4,6 +4,7 @@ import { getAIClient } from '@/lib/ai/factory';
 import { updateWorkPatternsFromThread } from '@/lib/context/work-patterns-service';
 import { buildSystemPrompt, parsePlanResponse } from '@/lib/work/planning-ai';
 import { buildToolRegistry } from '@/lib/mcp/registry';
+import { buildKBContext } from '@/lib/knowledge/build-kb-context';
 
 // POST /api/work/threads/[id]/messages — send a message and stream the AI response
 export async function POST(
@@ -111,8 +112,20 @@ export async function POST(
       `Focus on planning-related requests. Do not attempt to edit a document unless the user explicitly asks.\n\n`;
 
     // Build dynamic tool registry based on user's active connections
-    const toolRegistry = await buildToolRegistry(user.id, supabase);
+    const adminClient = (await import('@supabase/supabase-js')).createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    );
+
+    const [toolRegistry, kbContext] = await Promise.all([
+      buildToolRegistry(user.id, supabase),
+      buildKBContext(user.id, content, adminClient, { fileLimit: 4, maxChunksPerFile: 2, threshold: 0.2 }),
+    ]);
     const systemPrompt = buildSystemPrompt(toolRegistry);
+
+    const kbContextNote = kbContext
+      ? `\n\nKNOWLEDGE BASE CONTEXT (from user's indexed files — reference when planning):\n${kbContext}`
+      : '';
 
     // On the very first message (no existing plan), inject a strong reminder that a plan is required now.
     const isFirstMessage = !thread.plan;
@@ -123,7 +136,7 @@ export async function POST(
     const openaiMessages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
       {
         role: 'system',
-        content: currentModeNote + systemPrompt + userContextNote + currentPlanNote + attachmentNote + firstMessageNote,
+        content: currentModeNote + systemPrompt + userContextNote + kbContextNote + currentPlanNote + attachmentNote + firstMessageNote,
       },
       ...(messages || []).map((m) => ({
         role: m.role as 'user' | 'assistant',
@@ -159,11 +172,6 @@ export async function POST(
           const { conversationalText, planRaw } = parsePlanResponse(fullResponse);
 
           // Save assistant message (conversational part only)
-          const adminClient = (await import('@supabase/supabase-js')).createClient(
-            process.env.NEXT_PUBLIC_SUPABASE_URL!,
-            process.env.SUPABASE_SERVICE_ROLE_KEY!
-          );
-
           await adminClient.from('work_messages').insert({
             thread_id: threadId,
             role: 'assistant',

@@ -1,6 +1,7 @@
 'use client';
 
 import { Fragment, useState, useEffect } from 'react';
+import { toast } from 'sonner';
 import { Dialog, Transition } from '@headlessui/react';
 import {
   XMarkIcon,
@@ -20,6 +21,60 @@ import {
   isUserOrganizer,
 } from '@/lib/types/meetings';
 import { createClient } from '@/lib/supabase/client';
+import RsvpButtons from '@/components/inbox/rsvp-buttons';
+
+/** Renders the subset of markdown the AI uses in meeting prep: ## headings, **bold**, - lists */
+function PrepMarkdown({ text }: { text: string }) {
+  const lines = text.split('\n');
+  const elements: React.ReactNode[] = [];
+  let listItems: string[] = [];
+
+  const flushList = (key: string) => {
+    if (listItems.length === 0) return;
+    elements.push(
+      <ul key={key} className="space-y-1 mb-3">
+        {listItems.map((item, i) => (
+          <li key={i} className="flex items-start gap-2 text-[13px] text-neutral-700 leading-relaxed">
+            <span className="text-indigo-400 font-bold flex-shrink-0 mt-0.5">·</span>
+            <span dangerouslySetInnerHTML={{ __html: renderInline(item) }} />
+          </li>
+        ))}
+      </ul>
+    );
+    listItems = [];
+  };
+
+  const renderInline = (s: string) =>
+    s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+
+  lines.forEach((line, i) => {
+    const h2 = line.match(/^##\s+(.+)/);
+    const h3 = line.match(/^###\s+(.+)/);
+    const bullet = line.match(/^[-*]\s+(.+)/);
+
+    if (h2 || h3) {
+      flushList(`list-${i}`);
+      elements.push(
+        <h4 key={i} className={`font-semibold text-neutral-900 mb-1.5 ${h2 ? 'text-[13px] mt-4 first:mt-0' : 'text-[12px] mt-3'}`}>
+          {h2 ? h2[1] : h3![1]}
+        </h4>
+      );
+    } else if (bullet) {
+      listItems.push(bullet[1]);
+    } else if (line.trim() === '') {
+      flushList(`list-${i}`);
+    } else {
+      flushList(`list-${i}`);
+      elements.push(
+        <p key={i} className="text-[13px] text-neutral-700 leading-relaxed mb-2"
+          dangerouslySetInnerHTML={{ __html: renderInline(line) }} />
+      );
+    }
+  });
+  flushList('list-end');
+
+  return <div>{elements}</div>;
+}
 
 interface TranscriptSegment {
   speaker: string;
@@ -40,6 +95,7 @@ interface MeetingDetailPanelProps {
   userEmail: string;
   isOpen: boolean;
   onClose: () => void;
+  onRefresh?: () => void;
 }
 
 export default function MeetingDetailPanel({
@@ -47,6 +103,7 @@ export default function MeetingDetailPanel({
   userEmail,
   isOpen,
   onClose,
+  onRefresh,
 }: MeetingDetailPanelProps) {
   const { primary } = formatMeetingTime(event.start_time, event.end_time);
   const duration = calculateDuration(event.start_time, event.end_time);
@@ -269,19 +326,15 @@ export default function MeetingDetailPanel({
 
                           {prep.agenda && (
                             <div className="mb-4">
-                              <h4 className="text-sm font-semibold text-neutral-900 mb-2">Agenda</h4>
-                              <div className="text-sm text-neutral-700 whitespace-pre-wrap">
-                                {prep.agenda}
-                              </div>
+                              <h4 className="text-[11px] font-medium text-neutral-500 uppercase tracking-wide mb-2">Agenda</h4>
+                              <PrepMarkdown text={prep.agenda} />
                             </div>
                           )}
 
                           {prep.context && (
                             <div>
-                              <h4 className="text-sm font-semibold text-neutral-900 mb-2">Context</h4>
-                              <p className="text-sm text-neutral-700">
-                                {prep.context}
-                              </p>
+                              <h4 className="text-[11px] font-medium text-neutral-500 uppercase tracking-wide mb-2">Context</h4>
+                              <PrepMarkdown text={prep.context} />
                             </div>
                           )}
                         </div>
@@ -348,16 +401,29 @@ export default function MeetingDetailPanel({
                       {/* Description */}
                       {event.description && (
                         <div className="border-t border-neutral-200 pt-6">
-                          <h4 className="text-sm font-semibold text-neutral-900 mb-2">Description</h4>
-                          <div className="text-sm text-neutral-700 whitespace-pre-wrap">
-                            {event.description}
-                          </div>
+                          <h4 className="text-[11px] font-medium text-neutral-500 uppercase tracking-wide mb-2">Description</h4>
+                          <PrepMarkdown text={event.description} />
                         </div>
                       )}
                     </div>
 
                     {/* Footer - Fixed */}
-                    <div className="border-t border-neutral-200 bg-neutral-50 px-6 py-4">
+                    <div className="border-t border-neutral-200 bg-neutral-50 px-6 py-4 space-y-3">
+                      {/* RSVP */}
+                      <div>
+                        <p className="text-[11px] font-medium text-neutral-500 uppercase tracking-wide mb-2">Your response</p>
+                        <RsvpButtons
+                          itemId={event.id}
+                          attendees={event.attendees}
+                          userEmail={userEmail}
+                          onDismiss={(response) => {
+                            const labels: Record<string, string> = { accepted: 'Meeting accepted', tentative: 'Marked as maybe', declined: 'Meeting declined' };
+                            toast.success(labels[response] ?? 'RSVP updated');
+                            onClose();
+                            onRefresh?.();
+                          }}
+                        />
+                      </div>
                       <div className="flex items-center gap-3">
                         <button
                           onClick={onClose}

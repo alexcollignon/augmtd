@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { getAIClient, aiCreate } from '@/lib/ai/factory';
 import { DocumentArtifact, DeliverableType, ArtifactContent } from '@/lib/types/inbox';
 import { buildArtifactFile, getMimeType } from '@/lib/artifacts/builders';
+import { buildKBContext } from '@/lib/knowledge/build-kb-context';
 
 const ARTIFACT_SEPARATOR = '---ARTIFACT_UPDATE---';
 
@@ -135,7 +136,20 @@ export async function POST(
       ? `SOURCE DATA (raw extraction from original files):\n${JSON.stringify(artifact.source_data, null, 2)}\n\n`
       : '';
 
-    const docContext = `${sourceDataContext}${attachmentContext ? `REFERENCE FILES:\n${attachmentContext}\n\n` : ''}CURRENT DOCUMENT:\n${contentJson ?? `Title: ${artifact.title}\nType: ${type}`}`;
+    const adminClient = (await import('@supabase/supabase-js')).createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    );
+
+    const kbContext = isAskMode
+      ? await buildKBContext(user.id, instruction, adminClient, { fileLimit: 4, maxChunksPerFile: 3, threshold: 0.15 })
+      : '';
+
+    const kbContextBlock = isAskMode && kbContext
+      ? `KNOWLEDGE BASE:\n${kbContext}\n\n`
+      : '';
+
+    const docContext = `${sourceDataContext}${kbContextBlock}${attachmentContext ? `REFERENCE FILES:\n${attachmentContext}\n\n` : ''}CURRENT DOCUMENT:\n${contentJson ?? `Title: ${artifact.title}\nType: ${type}`}`;
 
     // Load conversation history so the AI remembers previous questions/answers
     const { data: previousMessages } = await supabase
@@ -173,11 +187,6 @@ export async function POST(
           });
 
           const rawText = completion.choices[0]?.message?.content ?? '';
-
-          const adminClient = (await import('@supabase/supabase-js')).createClient(
-            process.env.NEXT_PUBLIC_SUPABASE_URL!,
-            process.env.SUPABASE_SERVICE_ROLE_KEY!
-          );
 
           if (isAskMode) {
             const conversationalText = rawText.trim();

@@ -40,13 +40,21 @@ export async function getCalendarContext(
       };
     }
 
-    // 2. Get upcoming meetings (next 7 days)
+    // 2. Get user's email to detect self in attendees
+    const { data: userProfile } = await supabase
+      .from('profiles')
+      .select('email')
+      .eq('id', userId)
+      .single();
+    const userEmail = userProfile?.email?.toLowerCase();
+
+    // 3. Get upcoming meetings (next 7 days)
     const now = new Date();
     const sevenDaysLater = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
 
     const { data: upcomingMeetings } = await supabase
       .from('calendar_events')
-      .select('title, start_time, end_time, attendees')
+      .select('title, start_time, end_time, attendees, organizer')
       .eq('user_id', userId)
       .eq('status', 'confirmed')
       .gte('start_time', now.toISOString())
@@ -55,30 +63,45 @@ export async function getCalendarContext(
       .limit(10);
 
     if (upcomingMeetings && upcomingMeetings.length > 0) {
-      context.upcomingMeetings = upcomingMeetings.map(meeting => ({
-        title: meeting.title,
-        start_time: meeting.start_time,
-        end_time: meeting.end_time,
-        attendees: meeting.attendees.map((a: any) => a.email || a.name).filter(Boolean),
-      }));
+      context.upcomingMeetings = upcomingMeetings.map(meeting => {
+        // Determine user's own RSVP status for this event
+        const selfAttendee = (meeting.attendees as any[]).find(
+          (a: any) => userEmail && a.email?.toLowerCase() === userEmail
+        );
+        const isOrganizer = userEmail && meeting.organizer?.toLowerCase() === userEmail;
+        const rsvpStatus: string = isOrganizer ? 'accepted' : (selfAttendee?.status ?? selfAttendee?.responseStatus ?? 'needsAction');
+
+        return {
+          title: meeting.title,
+          start_time: meeting.start_time,
+          end_time: meeting.end_time,
+          attendees: (meeting.attendees as any[]).map((a: any) => a.email || a.name).filter(Boolean),
+          rsvpStatus,
+        };
+      });
     }
 
-    // 3. Calculate availability (find next free slot and detailed busy periods)
+    // 4. Calculate availability — only accepted/organizer events block time
     if (upcomingMeetings && upcomingMeetings.length > 0) {
-      const busyPeriods = upcomingMeetings.map(m => ({
+      const acceptedMeetings = (context.upcomingMeetings ?? []).filter(
+        m => (m as any).rsvpStatus === 'accepted'
+      );
+
+      const busyPeriods = acceptedMeetings.map(m => ({
         start: m.start_time,
         end: m.end_time,
       }));
 
       context.availability = {
         busyPeriods,
-        nextAvailableSlot: findNextAvailableSlot(now, upcomingMeetings),
+        nextAvailableSlot: acceptedMeetings.length > 0
+          ? findNextAvailableSlot(now, acceptedMeetings)
+          : 'No confirmed meetings — fully available',
       };
     } else {
-      // No meetings = fully available
       context.availability = {
         busyPeriods: [],
-        nextAvailableSlot: 'No upcoming meetings - fully available',
+        nextAvailableSlot: 'No upcoming meetings — fully available',
       };
     }
 

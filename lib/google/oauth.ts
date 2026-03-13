@@ -10,7 +10,7 @@ export function getOAuth2Client() {
 
 export const GMAIL_SCOPES = [
   'https://www.googleapis.com/auth/gmail.modify', // Read, send, and modify emails
-  'https://www.googleapis.com/auth/calendar.readonly', // Read calendar events
+  'https://www.googleapis.com/auth/calendar.events', // Read and write calendar events
   'https://www.googleapis.com/auth/userinfo.email',
   'https://www.googleapis.com/auth/userinfo.profile',
   'https://www.googleapis.com/auth/drive.readonly', // Read Google Drive files

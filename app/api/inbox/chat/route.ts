@@ -2,32 +2,40 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { getAIClient } from '@/lib/ai/factory';
 import { buildInboxSnapshot, formatSnapshotForPrompt } from '@/lib/inbox/chat-context';
+import { buildKBContext } from '@/lib/knowledge/build-kb-context';
+import { getCalendarContext } from '@/lib/calendar/calendar-context';
+import { formatCalendarContextForChat } from '@/lib/calendar/format-calendar-context';
 
-const SYSTEM_PROMPT = `You are an intelligent inbox assistant for a professional email tool called AUGMTD.
-You help users search, understand, and act on their emails using natural language.
+const SYSTEM_PROMPT = `You are an intelligent assistant for a professional email tool called AUGMTD.
+You help users search and understand their emails, answer questions using their indexed documents, and help with scheduling.
+
+{{KB_CONTEXT}}
+
+{{CALENDAR_CONTEXT}}
 
 Here is the user's current inbox (most recent first):
 {{INBOX_SNAPSHOT}}
 
-Your capabilities:
-1. SEARCH — find specific emails by sender, subject, content, or date
-2. ANSWER — answer questions about email content or inbox status
-3. SUMMARIZE — summarize the inbox or specific items
-4. ACTION — suggest archiving an email or opening it when the user wants to act
-
 Rules:
+- Answer questions using BOTH the knowledge base above AND the inbox — whichever is relevant
+- When KB documents are relevant to the question, summarize their content directly — do not say you can't find something if it appears in the knowledge base
 - When you reference a specific email, include its ID in square brackets like this: [uuid] — the UI will render it as an email card
-- Be concise — 1-3 sentences unless a detailed summary is requested
 - If you find multiple matching emails, list them one per line with their [id]
-- If you can't find something, say so clearly
 - Do not make up emails that aren't in the inbox snapshot above
 - Dates: today is {{TODAY}}
+- Use the calendar above when answering scheduling questions. Propose conflict-free times based on the user's actual calendar.
+- If you used content from the knowledge base in your answer, append exactly one line at the very end: KB_REFS:filename1.pdf|filename2.pdf (pipe-separated, exact filenames as shown in the KB headers above). Do not append KB_REFS if you did not use the knowledge base.
 
 When you want to suggest an action on an email, append it at the very end of your response using this exact format (one per line, no extra text after):
 ACTION:{"type":"archive","itemId":"uuid","label":"Archive the invoice from KPMG?"}
 ACTION:{"type":"open","itemId":"uuid","label":"Open the email from Sarah about the proposal?"}
 
-Only suggest actions when the user clearly wants to do something (e.g. "archive this", "clean up", "open that email", "show me"). Do not suggest actions for every response.`;
+Only suggest actions when the user clearly wants to do something (e.g. "archive this", "clean up", "open that email", "show me"). Do not suggest actions for every response.
+
+When scheduling a meeting makes sense given the conversation (e.g. user wants to set up a call, email discusses meeting), propose one using this format appended at the very end (one line, after any ACTION lines):
+MEETING_SUGGESTION:{"title":"Intro call","duration_minutes":30,"attendees":["alice@example.com"],"proposed_times":["2026-03-14T14:00:00","2026-03-15T10:00:00"],"notes":"Quick intro to discuss the proposal"}
+
+Only emit MEETING_SUGGESTION when the user is clearly trying to schedule something. Proposed times must not conflict with the calendar above.`;
 
 export async function POST(request: NextRequest) {
   try {
@@ -49,12 +57,24 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Message required' }, { status: 400 });
     }
 
-    const snapshot = await buildInboxSnapshot(user.id, message, supabase);
+    const adminClient = (await import('@supabase/supabase-js')).createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    );
+
+    const [snapshot, kbContext, calendarCtx] = await Promise.all([
+      buildInboxSnapshot(user.id, message, supabase),
+      buildKBContext(user.id, message, adminClient, { fileLimit: 3, maxChunksPerFile: 2, threshold: 0.2 }),
+      getCalendarContext(user.id, supabase),
+    ]);
     const snapshotText = formatSnapshotForPrompt(snapshot);
+    const calendarText = formatCalendarContextForChat(calendarCtx);
     const today = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
     const systemPrompt = SYSTEM_PROMPT
       .replace('{{INBOX_SNAPSHOT}}', snapshotText || 'No active inbox items.')
-      .replace('{{TODAY}}', today);
+      .replace('{{TODAY}}', today)
+      .replace('{{KB_CONTEXT}}', kbContext.context)
+      .replace('{{CALENDAR_CONTEXT}}', calendarText || '');
 
     const stream = await openaiClient.chat.completions.create({
       model: chatModel,
@@ -64,7 +84,7 @@ export async function POST(request: NextRequest) {
         { role: 'user', content: message },
       ],
       temperature: 0.3,
-      max_tokens: 600,
+      max_tokens: 700,
       stream: true,
     });
 

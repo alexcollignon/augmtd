@@ -50,7 +50,7 @@ export default function DataManagementSection({ connections }: DataManagementSec
     <div className="bg-white border border-neutral-200 p-6 mb-6 shadow-sm">
       <h3 className="text-[15px] font-semibold text-neutral-900 mb-1">Data Management</h3>
       <p className="text-[13px] text-neutral-500 mb-4">
-        Permanently delete synced data — emails, calendar events, meeting transcripts, and attachments.
+        Permanently delete synced data — emails, calendar events, meeting transcripts, attachments, and knowledge base files.
       </p>
 
       {result === 'success' && (
@@ -97,8 +97,8 @@ export default function DataManagementSection({ connections }: DataManagementSec
             Delete all synced data for {selectedLabel}?
           </p>
           <p className="text-[12px] text-red-600 mb-3">
-            This will permanently remove all emails, calendar events, meeting transcripts, and
-            attachment files. This cannot be undone.
+            This will permanently remove all emails, calendar events, meeting transcripts, attachment files
+            {selectedScope === 'all' ? ', and knowledge base files' : ''}. This cannot be undone.
           </p>
           <div className="flex items-center gap-2">
             <button

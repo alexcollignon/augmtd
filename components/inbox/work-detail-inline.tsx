@@ -19,19 +19,23 @@ import {
   SparklesIcon,
   BookmarkIcon,
   PlayIcon,
+  QuestionMarkCircleIcon,
 } from '@heroicons/react/24/outline';
 import type { InboxItem } from '@/lib/types/inbox';
 import { isExecutable, needsConfirmation } from '@/lib/types/inbox';
 import { CheckCircleIcon } from '@heroicons/react/24/outline';
 import DraftPreviewModal from './draft-preview-modal';
+import RsvpButtons from './rsvp-buttons';
+import { createClient } from '@/lib/supabase/client';
 import type { SavedWorkflow } from '@/lib/types/work-blueprints';
 
 interface WorkDetailInlineProps {
   item: InboxItem | null;
   onItemConfirmed?: (ids: string[], action: 'confirm_as_mine' | 'not_my_task') => void;
+  onRefreshMeetings?: () => void;
 }
 
-export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailInlineProps) {
+export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeetings }: WorkDetailInlineProps) {
   const [isOpeningWorkflow, setIsOpeningWorkflow] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [isCompleting, setIsCompleting] = useState(false);
@@ -53,6 +57,70 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
   const [panelTop, setPanelTop] = useState(0);
   const [freshPrompt, setFreshPrompt] = useState('');
   const rootRef = useRef<HTMLDivElement>(null);
+  const [linkedCalEvent, setLinkedCalEvent] = useState<{ id: string; attendees: any[] } | null>(null);
+  const [rsvpLoading, setRsvpLoading] = useState<string | null>(null); // which response is loading
+  const [pendingRsvp, setPendingRsvp] = useState<'accepted' | 'tentative' | 'declined' | null>(null); // awaiting send confirmation
+
+  // Look up matching calendar event — by time range first, then by title from invite subject
+  useEffect(() => {
+    setLinkedCalEvent(null);
+    setPendingRsvp(null);
+    if (!item) return;
+
+    const lookup = async () => {
+      const sd = item.source_data as any;
+      const supabase = createClient();
+
+      // 0. Direct lookup by calendar_event_id stored at sync time (language-independent)
+      if (sd?.calendar_event_id) {
+        const { data } = await supabase
+          .from('calendar_events')
+          .select('id, attendees')
+          .eq('id', sd.calendar_event_id)
+          .maybeSingle();
+        if (data) { setLinkedCalEvent(data); return; }
+      }
+
+      const startTime = sd?.start_time || sd?.calendar_event?.start_time;
+      const subject: string = sd?.subject || '';
+
+      // 1. Try time-range lookup
+      if (startTime) {
+        const rangeStart = new Date(new Date(startTime).getTime() - 30 * 60 * 1000).toISOString();
+        const rangeEnd = new Date(new Date(startTime).getTime() + 30 * 60 * 1000).toISOString();
+        const { data } = await supabase
+          .from('calendar_events')
+          .select('id, attendees')
+          .gte('start_time', rangeStart)
+          .lte('start_time', rangeEnd)
+          .eq('status', 'confirmed')
+          .limit(1)
+          .maybeSingle();
+        if (data) { setLinkedCalEvent(data); return; }
+      }
+
+      // 2. Fall back to title-based lookup from subject
+      // Gmail: "Convite: Title @ date", Outlook: "Convite: Title - sáb. 14 mar..."
+      if (subject) {
+        const match =
+          subject.match(/^(?:Convite|Invitation|Updated invitation|Invite|Convidado|Actualizado):\s*(.+?)\s*@\s*/i) ||
+          subject.match(/^(?:Convite|Invitation|Updated invitation|Invite|Convidado|Actualizado):\s*(.+?)\s+-\s+(?:dom|seg|ter|qua|qui|sex|sáb|sun|mon|tue|wed|thu|fri|sat|\d)/i);
+        if (match) {
+          const title = match[1].trim();
+          const { data } = await supabase
+            .from('calendar_events')
+            .select('id, attendees')
+            .ilike('title', title)
+            .eq('status', 'confirmed')
+            .limit(1)
+            .maybeSingle();
+          if (data) setLinkedCalEvent(data);
+        }
+      }
+    };
+
+    lookup();
+  }, [item?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!item) {
     return (
@@ -154,13 +222,13 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
   const handleSendReply = async (customMessage?: string) => {
     setIsSending(true);
     try {
-      const response = await fetch(`/api/inbox/${item.id}/send-reply`, {
+      const res = await fetch(`/api/inbox/${item.id}/send-reply`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ customMessage }),
       });
-      if (response.ok) {
-        toast.success('Reply sent successfully');
+      if (res.ok) {
+        toast.success('Reply sent');
         onItemConfirmed?.([item.id], 'not_my_task');
       } else {
         toast.error('Failed to send reply. Please try again.');
@@ -169,6 +237,79 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
       toast.error('Failed to send reply. Please try again.');
     } finally {
       setIsSending(false);
+    }
+  };
+
+  // RSVP + optionally send the AI draft if its intent matches the chosen response.
+  // E.g. user clicks Decline → RSVP decline + send the prepared decline email.
+  // If the draft was written for a different intent, we RSVP but skip the email.
+  const inferDraftIntent = (): 'accepted' | 'declined' | null => {
+    const title = item.work_title?.toLowerCase() ?? '';
+    if (title.includes('declin') || title.includes('recus') || title.includes('reject')) return 'declined';
+    if (title.includes('accept') || title.includes('confirm') || title.includes('attend') || title.includes('aceitar')) return 'accepted';
+    return null;
+  };
+
+  const handleRsvpWithReply = async (response: 'accepted' | 'tentative' | 'declined', sendEmail: boolean) => {
+    if (!linkedCalEvent || rsvpLoading) return;
+    setPendingRsvp(null);
+    setRsvpLoading(response);
+
+    // 1. RSVP (always)
+    try {
+      const res = await fetch(`/api/meetings/${linkedCalEvent.id}/rsvp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ response }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setRsvpLoading(null);
+        toast.error(data?.error === 'calendar_scope_required' ? 'Calendar write access needed. Reconnect to RSVP.' : 'Failed to update RSVP');
+        return;
+      }
+    } catch {
+      setRsvpLoading(null);
+      toast.error('Failed to update RSVP');
+      return;
+    }
+
+    // 2. Send draft if requested
+    let emailSent = false;
+    if (sendEmail && sourceData?.draft) {
+      try {
+        const res = await fetch(`/api/inbox/${item.id}/send-reply`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        });
+        emailSent = res.ok;
+      } catch {
+        // Email failure is non-fatal — RSVP already succeeded
+      }
+    }
+
+    const labels: Record<string, string> = { accepted: 'Meeting accepted', tentative: 'Marked as maybe', declined: 'Meeting declined' };
+    toast.success(emailSent ? `${labels[response]} · Reply sent` : (labels[response] ?? 'RSVP updated'));
+    onRefreshMeetings?.();
+    if (item) onItemConfirmed?.([item.id], 'not_my_task');
+  };
+
+  // Called from DraftPreviewModal when user edits and picks an RSVP response
+  const handleSendWithRsvp = async (customMessage: string, rsvp: 'accepted' | 'tentative' | 'declined') => {
+    if (!linkedCalEvent) return;
+    // Send email first
+    await handleSendReply(customMessage || undefined);
+    // Then RSVP (best-effort, non-blocking since send already happened)
+    try {
+      await fetch(`/api/meetings/${linkedCalEvent.id}/rsvp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ response: rsvp }),
+      });
+      onRefreshMeetings?.();
+    } catch {
+      // RSVP failure is non-fatal
     }
   };
 
@@ -573,8 +714,88 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
       <div className="flex-shrink-0 border-t border-neutral-200 bg-neutral-50 px-6 py-4">
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-3 flex-1">
+
+              {/* Calendar invite */}
+              {linkedCalEvent && (
+                <div className="flex-1 flex items-center gap-2">
+                  {pendingRsvp ? (
+                    // Confirmation row — "Send reply too?"
+                    <>
+                      <span className="text-[12px] text-neutral-500 flex-shrink-0">Send reply too?</span>
+                      <button
+                        onClick={() => handleRsvpWithReply(pendingRsvp, true)}
+                        disabled={!!rsvpLoading}
+                        className="flex-1 inline-flex items-center justify-center gap-1.5 px-4 py-2.5 text-[13px] font-semibold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-60 disabled:cursor-not-allowed transition-all shadow-sm"
+                      >
+                        {rsvpLoading
+                          ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                          : <PaperAirplaneIcon className="w-4 h-4" />
+                        }
+                        {rsvpLoading ? 'Sending…' : `${({ accepted: 'Accept', tentative: 'Maybe', declined: 'Decline' })[pendingRsvp]} + Send`}
+                      </button>
+                      <button
+                        onClick={() => handleRsvpWithReply(pendingRsvp, false)}
+                        disabled={!!rsvpLoading}
+                        className="flex-1 inline-flex items-center justify-center gap-1.5 px-4 py-2.5 text-[13px] font-semibold border border-neutral-300 bg-white text-neutral-700 hover:border-neutral-400 hover:bg-neutral-50 disabled:opacity-60 disabled:cursor-not-allowed transition-all shadow-sm"
+                      >
+                        Just {({ accepted: 'accept', tentative: 'maybe', declined: 'decline' })[pendingRsvp]}
+                      </button>
+                      <button
+                        onClick={() => setPendingRsvp(null)}
+                        disabled={!!rsvpLoading}
+                        className="px-3 py-2.5 border border-neutral-300 bg-white text-neutral-400 hover:text-neutral-600 hover:bg-neutral-50 disabled:opacity-60 transition-all"
+                        title="Cancel"
+                      >
+                        <XMarkIcon className="w-4 h-4" />
+                      </button>
+                    </>
+                  ) : (
+                    // Default RSVP row
+                    <>
+                      {(['accepted', 'tentative', 'declined'] as const).map((val) => {
+                        const labels = { accepted: 'Accept', tentative: 'Maybe', declined: 'Decline' };
+                        const icons = { accepted: CheckIcon, tentative: QuestionMarkCircleIcon, declined: XMarkIcon };
+                        const Icon = icons[val];
+                        const isThisLoading = rsvpLoading === val;
+                        return (
+                          <button
+                            key={val}
+                            onClick={() => {
+                              // If draft exists, show confirmation — else fire directly
+                              if (sourceData?.draft) {
+                                setPendingRsvp(val);
+                              } else {
+                                handleRsvpWithReply(val, false);
+                              }
+                            }}
+                            disabled={!!rsvpLoading || isSending}
+                            className="flex-1 inline-flex items-center justify-center gap-1.5 px-4 py-2.5 text-[13px] font-semibold border border-neutral-300 bg-white text-neutral-700 hover:border-neutral-400 hover:bg-neutral-50 disabled:opacity-60 disabled:cursor-not-allowed transition-all shadow-sm"
+                          >
+                            {isThisLoading
+                              ? <div className="w-4 h-4 border-2 border-neutral-400 border-t-transparent rounded-full animate-spin" />
+                              : <Icon className="w-4 h-4" />
+                            }
+                            {isThisLoading ? 'Sending…' : labels[val]}
+                          </button>
+                        );
+                      })}
+                      {sourceData?.draft && (
+                        <button
+                          onClick={() => setShowDraftPreview(true)}
+                          disabled={!!rsvpLoading || isSending}
+                          className="px-3 py-2.5 border border-neutral-300 bg-white text-neutral-500 hover:border-neutral-400 hover:bg-neutral-50 disabled:opacity-60 transition-all shadow-sm"
+                          title="Edit reply before sending"
+                        >
+                          <PencilIcon className="w-4 h-4" />
+                        </button>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
+
               {/* Preparing state */}
-              {executable && item.execution_status === 'preparing' && (
+              {!linkedCalEvent && executable && item.execution_status === 'preparing' && (
                 <div className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 text-[13px] font-semibold bg-indigo-50 text-indigo-500 border border-indigo-200 cursor-default">
                   <div className="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
                   Preparing work…
@@ -582,7 +803,7 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
               )}
 
               {/* Ready state — direct to prepared document */}
-              {executable && item.execution_status === 'ready' && (
+              {!linkedCalEvent && executable && item.execution_status === 'ready' && (
                 <button
                   onClick={() => handleOpenInWorkflows()}
                   disabled={isOpeningWorkflow}
@@ -603,7 +824,7 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
               )}
 
               {/* Draft reply — split button: instant send | edit & review */}
-              {!executable && sourceData?.draft && (
+              {!linkedCalEvent && !executable && sourceData?.draft && (
                 <div className="flex-1 flex">
                   <button
                     onClick={() => handleSendReply()}
@@ -629,7 +850,7 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
               )}
 
               {/* Mark complete — non-executable, no draft */}
-              {!executable && !sourceData?.draft && (
+              {!linkedCalEvent && !executable && !sourceData?.draft && (
                 <button
                   onClick={handleComplete}
                   disabled={isCompleting}
@@ -641,7 +862,7 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
               )}
 
               {/* Move to folder */}
-              {item.source === 'email' && sourceData?.provider ? (
+              {!linkedCalEvent && item.source === 'email' && sourceData?.provider ? (
                 <div className="relative" ref={moveMenuRef}>
                   <button
                     onClick={handleOpenMoveMenu}
@@ -681,7 +902,7 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
                   )}
                 </div>
               ) : null}
-              {item.source === 'email' && sourceData?.provider && (
+              {!linkedCalEvent && item.source === 'email' && sourceData?.provider && (
                 isArchiving ? (
                   <div className="px-4 py-2.5 flex items-center gap-2 border border-indigo-200 bg-indigo-50 text-indigo-600">
                     <div className="w-3.5 h-3.5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
@@ -889,6 +1110,7 @@ export default function WorkDetailInline({ item, onItemConfirmed }: WorkDetailIn
           subject={sourceData.subject || 'Re: (no subject)'}
           to={sourceData.from || 'Unknown'}
           onSend={handleSendReply}
+          onSendWithRsvp={linkedCalEvent ? handleSendWithRsvp : undefined}
         />
       )}
     </div>

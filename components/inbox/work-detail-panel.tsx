@@ -1,6 +1,7 @@
 'use client';
 
-import { Fragment, useState } from 'react';
+import { Fragment, useState, useEffect, useCallback } from 'react';
+import { toast } from 'sonner';
 import { Dialog, Transition } from '@headlessui/react';
 import {
   XMarkIcon,
@@ -25,6 +26,8 @@ import type { InboxItem } from '@/lib/types/inbox';
 import { isExecutable } from '@/lib/types/inbox';
 import RecipientContextDisplay from './recipient-context-display';
 import DraftPreviewModal from './draft-preview-modal';
+import RsvpButtons from './rsvp-buttons';
+import { createClient } from '@/lib/supabase/client';
 
 interface WorkDetailPanelProps {
   item: InboxItem;
@@ -51,6 +54,84 @@ export default function WorkDetailPanel({ item, isOpen, onClose, batchItems }: W
   const [showDraftPreview, setShowDraftPreview] = useState(false);
   const [expandedEmails, setExpandedEmails] = useState<Record<number, boolean>>({});
   const [downloadingFile, setDownloadingFile] = useState<string | null>(null);
+  const [linkedCalEvent, setLinkedCalEvent] = useState<{ id: string; attendees: any[] } | null>(null);
+
+  const RSVP_LABELS: Record<string, string> = {
+    accepted: 'Meeting accepted',
+    tentative: 'Marked as maybe',
+    declined: 'Meeting declined',
+  };
+
+  const handleRsvpDismiss = useCallback(async (response: string) => {
+    toast.success(RSVP_LABELS[response] ?? 'RSVP updated');
+    try {
+      await fetch(`/api/inbox/${currentItem.id}/complete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'reviewed' }),
+      });
+    } catch { /* non-fatal */ }
+    handleClose();
+  }, [currentItem.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Look up matching calendar event — by time range, or by title extracted from invite subject
+  useEffect(() => {
+    setLinkedCalEvent(null);
+
+    const lookup = async () => {
+      const sd = item.source_data as any;
+      const supabase = createClient();
+
+      // 0. Direct lookup by calendar_event_id stored at sync time (language-independent)
+      if (sd?.calendar_event_id) {
+        const { data } = await supabase
+          .from('calendar_events')
+          .select('id, attendees')
+          .eq('id', sd.calendar_event_id)
+          .maybeSingle();
+        if (data) { setLinkedCalEvent(data); return; }
+      }
+
+      const startTime = sd?.start_time || sd?.calendar_event?.start_time;
+      const subject: string = sd?.subject || '';
+
+      // 1. Try time-range lookup
+      if (startTime) {
+        const rangeStart = new Date(new Date(startTime).getTime() - 30 * 60 * 1000).toISOString();
+        const rangeEnd = new Date(new Date(startTime).getTime() + 30 * 60 * 1000).toISOString();
+        const { data } = await supabase
+          .from('calendar_events')
+          .select('id, attendees')
+          .gte('start_time', rangeStart)
+          .lte('start_time', rangeEnd)
+          .eq('status', 'confirmed')
+          .limit(1)
+          .maybeSingle();
+        if (data) { setLinkedCalEvent(data); return; }
+      }
+
+      // 2. Fall back to title-based lookup from subject
+      // Gmail: "Convite: Title @ date", Outlook: "Convite: Title - sáb. 14 mar..."
+      if (subject) {
+        const match =
+          subject.match(/^(?:Convite|Invitation|Updated invitation|Invite|Convidado|Actualizado):\s*(.+?)\s*@\s*/i) ||
+          subject.match(/^(?:Convite|Invitation|Updated invitation|Invite|Convidado|Actualizado):\s*(.+?)\s+-\s+(?:dom|seg|ter|qua|qui|sex|sáb|sun|mon|tue|wed|thu|fri|sat|\d)/i);
+        if (match) {
+          const title = match[1].trim();
+          const { data } = await supabase
+            .from('calendar_events')
+            .select('id, attendees')
+            .ilike('title', title)
+            .eq('status', 'confirmed')
+            .limit(1)
+            .maybeSingle();
+          if (data) setLinkedCalEvent(data);
+        }
+      }
+    };
+
+    lookup();
+  }, [item.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggleEmail = (idx: number) =>
     setExpandedEmails(prev => ({ ...prev, [idx]: !prev[idx] }));
@@ -610,6 +691,32 @@ export default function WorkDetailPanel({ item, isOpen, onClose, batchItems }: W
                                 </p>
                               </div>
                             )}
+                          </div>
+                          {linkedCalEvent && (
+                            <div className="mt-3 pt-3 border-t border-indigo-200">
+                              <p className="text-[11px] font-medium text-indigo-600 uppercase tracking-wide mb-2">Your response</p>
+                              <RsvpButtons
+                                itemId={linkedCalEvent.id}
+                                attendees={linkedCalEvent.attendees}
+                                onDismiss={handleRsvpDismiss}
+                              />
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* RSVP for calendar invite emails (no structured meeting data, but matched by subject) */}
+                      {!isBatch && !hasMeetingData() && linkedCalEvent && (
+                        <div>
+                          <h3 className="text-[11px] font-semibold text-neutral-600 uppercase tracking-wide mb-3">
+                            Your Response
+                          </h3>
+                          <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
+                            <RsvpButtons
+                              itemId={linkedCalEvent.id}
+                              attendees={linkedCalEvent.attendees}
+                              onDismiss={handleClose}
+                            />
                           </div>
                         </div>
                       )}

@@ -70,7 +70,7 @@ async function processAttachmentsForEmail(params: {
   parsedEmail: ReturnType<typeof parseGmailMessage> | ReturnType<typeof parseOutlookMessage>;
   outlookInternalId?: string;
   adminSupabase: SupabaseClient;
-}): Promise<ProcessedAttachment[]> {
+}): Promise<{ attachments: ProcessedAttachment[]; hasCalendarInvite: boolean }> {
   const { emailId, userId, provider, encryptedTokens, parsedEmail, outlookInternalId, adminSupabase } = params;
   const results: ProcessedAttachment[] = [];
 
@@ -99,9 +99,19 @@ async function processAttachmentsForEmail(params: {
     }
   }
 
-  console.log(`[Attachments] Processing ${attachmentList.length} attachments for email ${emailId}`);
+  const hasCalendarInvite = attachmentList.some(
+    (a) => a.mimeType?.includes('calendar') || a.mimeType === 'application/ics' || a.filename?.toLowerCase().endsWith('.ics')
+  );
+
+  console.log(`[Attachments] Processing ${attachmentList.length} attachments for email ${emailId}${hasCalendarInvite ? ' (calendar invite)' : ''}`);
 
   for (const att of attachmentList) {
+    // Skip calendar/ICS files — presence already captured in hasCalendarInvite above,
+    // and Supabase Storage rejects application/ics (415 Unsupported Media Type)
+    if (att.mimeType?.includes('calendar') || att.mimeType === 'application/ics' || att.filename?.toLowerCase().endsWith('.ics')) {
+      continue;
+    }
+
     try {
       // Download attachment content
       let buffer: Buffer;
@@ -144,7 +154,7 @@ async function processAttachmentsForEmail(params: {
     }
   }
 
-  return results;
+  return { attachments: results, hasCalendarInvite };
 }
 
 export interface SyncResult {
@@ -356,9 +366,10 @@ export async function syncEmailsForConnection(
           ((parsed as any).hasAttachments === true);
 
         let processedAttachments: ProcessedAttachment[] = [];
+        let calendarEventId: string | null = null;
 
         if (hasAttachments) {
-          processedAttachments = await processAttachmentsForEmail({
+          const attResult = await processAttachmentsForEmail({
             emailId: storedEmail.id,
             userId: connection.user_id,
             provider: connection.provider as 'gmail' | 'outlook',
@@ -367,6 +378,26 @@ export async function syncEmailsForConnection(
             outlookInternalId: (parsed as any).outlookInternalId,
             adminSupabase,
           });
+          processedAttachments = attResult.attachments;
+
+          // If this is a calendar invite email, find the matching calendar event
+          // by organizer (= email sender) + future start time — language-independent
+          if (attResult.hasCalendarInvite && storedEmail.from_address) {
+            const { data: calEvent } = await adminSupabase
+              .from('calendar_events')
+              .select('id')
+              .eq('user_id', connection.user_id)
+              .ilike('organizer', storedEmail.from_address)
+              .gte('start_time', storedEmail.received_at ?? new Date().toISOString())
+              .eq('status', 'confirmed')
+              .order('start_time', { ascending: true })
+              .limit(1)
+              .maybeSingle();
+            calendarEventId = calEvent?.id ?? null;
+            if (calendarEventId) {
+              console.log(`[CalendarInvite] Linked email to calendar_event ${calendarEventId}`);
+            }
+          }
         }
 
         // Check if email is from the user (already determined and stored)
@@ -627,6 +658,7 @@ export async function syncEmailsForConnection(
                     : storedEmail.body,
                   received_at: emailForProcessing.received_at,
                   provider: connection.provider,
+                  calendar_event_id: calendarEventId || undefined,
                   isForwarded,
                   thread_history: threadEmails?.map(e => ({
                     from: e.from_address,
@@ -769,6 +801,7 @@ export async function syncEmailsForConnection(
                 body: storedEmail.body,
                 received_at: storedEmail.received_at,
                 provider: connection.provider,
+                calendar_event_id: calendarEventId || undefined,
                 isForwarded,
                 thread_history: threadEmailsForNew?.map(e => ({
                   from: e.from_address,

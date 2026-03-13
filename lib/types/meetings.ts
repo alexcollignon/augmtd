@@ -15,6 +15,8 @@ export interface MeetingAttendee {
   email: string;
   name?: string;
   status?: 'accepted' | 'declined' | 'tentative' | 'needsAction';
+  responseStatus?: 'accepted' | 'declined' | 'tentative' | 'needsAction';
+  self?: boolean;
   isVIP?: boolean;
   importance?: number;
 }

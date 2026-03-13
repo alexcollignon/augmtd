@@ -5,7 +5,11 @@ import { Dialog, Transition } from '@headlessui/react';
 import {
   XMarkIcon,
   PaperAirplaneIcon,
+  CheckIcon,
+  QuestionMarkCircleIcon,
 } from '@heroicons/react/24/outline';
+
+type RsvpValue = 'accepted' | 'tentative' | 'declined';
 
 interface DraftPreviewModalProps {
   isOpen: boolean;
@@ -14,6 +18,8 @@ interface DraftPreviewModalProps {
   subject: string;
   to: string;
   onSend: (message: string) => Promise<void>;
+  // When set, replaces "Send Email" with RSVP+send buttons
+  onSendWithRsvp?: (message: string, rsvp: RsvpValue) => Promise<void>;
 }
 
 export default function DraftPreviewModal({
@@ -23,6 +29,7 @@ export default function DraftPreviewModal({
   subject,
   to,
   onSend,
+  onSendWithRsvp,
 }: DraftPreviewModalProps) {
   const [message, setMessage] = useState(() => String(draft || ''));
   const [isSending, setIsSending] = useState(false);
@@ -49,6 +56,19 @@ export default function DraftPreviewModal({
     setIsSending(true);
     try {
       await onSend(isEdited ? messageStr : '');
+      onClose();
+    } catch (error) {
+      console.error('Send failed:', error);
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  const handleSendWithRsvp = async (rsvp: RsvpValue) => {
+    if (!onSendWithRsvp) return;
+    setIsSending(true);
+    try {
+      await onSendWithRsvp(isEdited ? messageStr : '', rsvp);
       onClose();
     } catch (error) {
       console.error('Send failed:', error);
@@ -189,34 +209,45 @@ export default function DraftPreviewModal({
                     </div>
 
                     {/* Actions */}
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2">
                       <button
                         onClick={onClose}
                         disabled={isSending}
-                        className="
-                          px-5 py-2.5 text-[13px] font-semibold
-                          text-neutral-700 hover:bg-neutral-200 border border-neutral-300
-                          disabled:opacity-50 disabled:cursor-not-allowed
-                          transition-colors
-                        "
+                        className="px-5 py-2.5 text-[13px] font-semibold text-neutral-700 hover:bg-neutral-200 border border-neutral-300 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                       >
                         Cancel
                       </button>
-                      <button
-                        onClick={handleSend}
-                        disabled={isSending || !messageStr.trim()}
-                        className="
-                          inline-flex items-center justify-center gap-2
-                          px-6 py-2.5 text-[13px] font-semibold
-                          bg-indigo-600 text-white
-                          hover:bg-indigo-700
-                          disabled:opacity-50 disabled:cursor-not-allowed
-                          transition-all shadow-sm hover:shadow
-                        "
-                      >
-                        <PaperAirplaneIcon className="w-4 h-4" />
-                        {isSending ? 'Sending...' : 'Send Email'}
-                      </button>
+
+                      {onSendWithRsvp ? (
+                        // Invite flow — RSVP + send in one click
+                        <>
+                          {([
+                            { rsvp: 'accepted' as RsvpValue, label: 'Accept & Send', Icon: CheckIcon, cls: 'bg-green-600 hover:bg-green-700' },
+                            { rsvp: 'tentative' as RsvpValue, label: 'Maybe & Send', Icon: QuestionMarkCircleIcon, cls: 'bg-amber-500 hover:bg-amber-600' },
+                            { rsvp: 'declined' as RsvpValue, label: 'Decline & Send', Icon: XMarkIcon, cls: 'bg-red-500 hover:bg-red-600' },
+                          ]).map(({ rsvp, label, Icon, cls }) => (
+                            <button
+                              key={rsvp}
+                              onClick={() => handleSendWithRsvp(rsvp)}
+                              disabled={isSending || !messageStr.trim()}
+                              className={`inline-flex items-center justify-center gap-1.5 px-4 py-2.5 text-[13px] font-semibold text-white ${cls} disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm`}
+                            >
+                              <Icon className="w-4 h-4" />
+                              {isSending ? 'Sending…' : label}
+                            </button>
+                          ))}
+                        </>
+                      ) : (
+                        // Regular email flow
+                        <button
+                          onClick={handleSend}
+                          disabled={isSending || !messageStr.trim()}
+                          className="inline-flex items-center justify-center gap-2 px-6 py-2.5 text-[13px] font-semibold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm hover:shadow"
+                        >
+                          <PaperAirplaneIcon className="w-4 h-4" />
+                          {isSending ? 'Sending...' : 'Send Email'}
+                        </button>
+                      )}
                     </div>
                   </div>
                 </div>
