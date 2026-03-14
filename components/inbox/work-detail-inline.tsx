@@ -562,9 +562,9 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
         ) : null}
 
         {/* Latest email body */}
-        {sourceData?.body && (() => {
-          const raw = sourceData.body as string;
-          const isHtml = /<[a-z][\s\S]*>/i.test(raw);
+        {(sourceData?.html_body || sourceData?.body) && (() => {
+          const raw = (sourceData.html_body || sourceData.body) as string;
+          const isHtml = !!sourceData.html_body || /<[a-z][\s\S]*>/i.test(raw);
 
           // Sanitise HTML: strip head/style/script, extract body content
           const sanitiseHtml = (html: string): string => {

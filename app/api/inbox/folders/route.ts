@@ -22,13 +22,26 @@ export async function GET() {
     const results = await Promise.all(
       connections.map(async conn => {
         try {
-          const folders =
-            conn.provider === 'gmail'
-              ? await listGmailAllFolders(conn.metadata.tokens)
-              : await listOutlookAllFolders(conn.metadata.tokens);
+          let folders;
+          if (conn.provider === 'gmail') {
+            folders = await listGmailAllFolders(conn.metadata.tokens);
+          } else {
+            // Pass token refresh callback so Outlook tokens are persisted after refresh
+            folders = await listOutlookAllFolders(
+              conn.metadata.tokens,
+              async (newTokens) => {
+                const newEncrypted = Buffer.from(JSON.stringify(newTokens)).toString('base64');
+                await supabase
+                  .from('connections')
+                  .update({ metadata: { ...conn.metadata, tokens: newEncrypted } })
+                  .eq('id', conn.id);
+              },
+            );
+          }
           return { connectionId: conn.id, provider: conn.provider, folders };
-        } catch {
-          return { connectionId: conn.id, provider: conn.provider, folders: [] };
+        } catch (err) {
+          console.error(`[Folders] Failed to list folders for ${conn.provider} connection ${conn.id}:`, err);
+          return { connectionId: conn.id, provider: conn.provider, folders: [], error: String(err) };
         }
       })
     );

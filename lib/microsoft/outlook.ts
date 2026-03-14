@@ -116,11 +116,22 @@ export async function fetchUnreadEmails(
 }
 
 export function parseOutlookMessage(message: OutlookMessage) {
-  // Extract plain text from HTML body if needed
+  // Preserve the original HTML body for rendering; also produce a plain-text version for AI
+  const htmlBody = message.body.contentType === 'html' ? message.body.content : null;
   let bodyText = message.body.content;
   if (message.body.contentType === 'html') {
-    // Simple HTML strip (in production, use a proper HTML parser)
-    bodyText = bodyText.replace(/<[^>]*>/g, '').trim();
+    // Convert to plain text preserving line breaks for AI processing
+    bodyText = bodyText
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/p>/gi, '\n\n')
+      .replace(/<\/div>/gi, '\n')
+      .replace(/<[^>]*>/g, '')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
   }
 
   // Extract recipient addresses
@@ -135,6 +146,7 @@ export function parseOutlookMessage(message: OutlookMessage) {
     cc_addresses,
     subject: message.subject || '(No subject)',
     body: bodyText || message.bodyPreview || '',
+    html_body: htmlBody,
     received_at: new Date(message.receivedDateTime).toISOString(),
     thread_id: message.conversationId, // Outlook conversation ID for threading
     hasAttachments: message.hasAttachments || false,
@@ -266,31 +278,52 @@ function plainTextToHtml(text: string): string {
     .join('');
 }
 
+// Resolve system folder IDs by fetching via well-known path names (Graph v1.0 doesn't expose
+// wellKnownName as a property, but does support well-known names as URL path segments).
+const WELL_KNOWN_FOLDER_NAMES = ['inbox', 'sentitems', 'deleteditems', 'drafts', 'junkemail', 'archive'];
+
+async function getSystemFolderIds(client: Client): Promise<Set<string>> {
+  const ids = new Set<string>();
+  await Promise.allSettled(
+    WELL_KNOWN_FOLDER_NAMES.map(async name => {
+      try {
+        const f = await client.api(`/me/mailFolders/${name}`).select('id').get();
+        if (f?.id) ids.add(f.id);
+      } catch {
+        // folder might not exist for this account
+      }
+    })
+  );
+  return ids;
+}
+
 export async function listOutlookFolders(
   encryptedTokens: string,
 ): Promise<{ id: string; name: string }[]> {
   const client = await getGraphClient(encryptedTokens);
-  const SKIP_WELL_KNOWN = new Set(['inbox', 'sentitems', 'deleteditems', 'drafts', 'junkemail', 'archive', 'outbox']);
-  const res = await client.api('/me/mailFolders').select('id,displayName,wellKnownName').top(50).get();
+  const systemIds = await getSystemFolderIds(client);
+  const res = await client.api('/me/mailFolders').select('id,displayName').top(50).get();
   return (res.value ?? [])
-    .filter((f: any) => !SKIP_WELL_KNOWN.has((f.wellKnownName ?? '').toLowerCase()))
+    .filter((f: any) => !systemIds.has(f.id))
     .map((f: any) => ({ id: f.id, name: f.displayName }))
     .sort((a: any, b: any) => a.name.localeCompare(b.name));
 }
 
-const OUTLOOK_SYSTEM_FOLDERS = new Set(['inbox', 'sentitems', 'deleteditems', 'drafts', 'junkemail', 'archive']);
-
 export async function listOutlookAllFolders(
   encryptedTokens: string,
+  onTokenRefresh?: TokenRefreshCallback,
 ): Promise<{ id: string; name: string; isSystem: boolean }[]> {
-  const client = await getGraphClient(encryptedTokens);
-  const res = await client.api('/me/mailFolders').select('id,displayName,wellKnownName').top(50).get();
-  const all = (res.value ?? []) as Array<{ id: string; displayName: string; wellKnownName?: string }>;
+  const client = await getGraphClient(encryptedTokens, onTokenRefresh);
+  const [res, systemIds] = await Promise.all([
+    client.api('/me/mailFolders').select('id,displayName').top(50).get(),
+    getSystemFolderIds(client),
+  ]);
+  const all = (res.value ?? []) as Array<{ id: string; displayName: string }>;
   const system = all
-    .filter(f => OUTLOOK_SYSTEM_FOLDERS.has((f.wellKnownName ?? '').toLowerCase()))
+    .filter(f => systemIds.has(f.id))
     .map(f => ({ id: f.id, name: f.displayName, isSystem: true }));
   const user = all
-    .filter(f => !OUTLOOK_SYSTEM_FOLDERS.has((f.wellKnownName ?? '').toLowerCase()))
+    .filter(f => !systemIds.has(f.id))
     .map(f => ({ id: f.id, name: f.displayName, isSystem: false }))
     .sort((a, b) => a.name.localeCompare(b.name));
   return [...system, ...user];

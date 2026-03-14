@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { CalendarIcon, ClockIcon, UserGroupIcon, CheckIcon } from '@heroicons/react/24/outline';
 
 interface MeetingSuggestion {
@@ -11,8 +11,15 @@ interface MeetingSuggestion {
   notes?: string;
 }
 
+interface Connection {
+  id: string;
+  provider: string;
+  email?: string;
+}
+
 interface MeetingProposalCardProps {
   suggestion: MeetingSuggestion;
+  connectionId?: string | null;
 }
 
 type CardState = 'idle' | 'sending' | 'sent' | 'error';
@@ -39,11 +46,33 @@ function addMinutes(isoString: string, minutes: number): string {
   }
 }
 
-export default function MeetingProposalCard({ suggestion }: MeetingProposalCardProps) {
+function providerLabel(provider: string): string {
+  return provider === 'gmail' ? 'Google' : 'Outlook';
+}
+
+export default function MeetingProposalCard({ suggestion, connectionId }: MeetingProposalCardProps) {
   const [selectedTime, setSelectedTime] = useState(suggestion.proposed_times[0] ?? '');
   const [state, setState] = useState<CardState>('idle');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [scopeProvider, setScopeProvider] = useState<string | null>(null);
+  const [connections, setConnections] = useState<Connection[]>([]);
+  const [selectedConnId, setSelectedConnId] = useState<string | null>(connectionId ?? null);
+
+  useEffect(() => {
+    fetch('/api/connections')
+      .then(r => r.json())
+      .then(data => {
+        const conns: Connection[] = data.connections ?? [];
+        setConnections(conns);
+        // Default to the passed connectionId if valid, else first connection
+        if (connectionId && conns.some(c => c.id === connectionId)) {
+          setSelectedConnId(connectionId);
+        } else if (conns.length > 0) {
+          setSelectedConnId(conns[0].id);
+        }
+      })
+      .catch(() => {});
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSend = async () => {
     if (!selectedTime) return;
@@ -65,6 +94,7 @@ export default function MeetingProposalCard({ suggestion }: MeetingProposalCardP
           timezone,
           attendees: suggestion.attendees,
           notes: suggestion.notes,
+          ...(selectedConnId ? { connectionId: selectedConnId } : {}),
         }),
       });
 
@@ -133,6 +163,35 @@ export default function MeetingProposalCard({ suggestion }: MeetingProposalCardP
         </div>
       )}
 
+      {/* Send from — radio selector, shown whenever connections are loaded */}
+      {connections.length > 0 && state !== 'sent' && (
+        <div className="space-y-1">
+          <p className="text-[11px] text-indigo-600 uppercase tracking-wide font-medium">Send from</p>
+          <div className="flex flex-col gap-1.5">
+            {connections.map(conn => (
+              <label
+                key={conn.id}
+                className="flex items-center gap-2 cursor-pointer"
+              >
+                <input
+                  type="radio"
+                  name="meeting-connection"
+                  value={conn.id}
+                  checked={selectedConnId === conn.id}
+                  onChange={() => setSelectedConnId(conn.id)}
+                  disabled={state === 'sending'}
+                  className="accent-indigo-600"
+                />
+                <span className="text-[12px] text-indigo-800">
+                  {providerLabel(conn.provider)}
+                  {conn.email && <span className="text-indigo-500 ml-1">({conn.email})</span>}
+                </span>
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Action area */}
       {state === 'sent' ? (
         <div className="flex items-center gap-1.5 text-green-700 font-medium">
@@ -153,7 +212,7 @@ export default function MeetingProposalCard({ suggestion }: MeetingProposalCardP
           )}
           <button
             onClick={handleSend}
-            disabled={!selectedTime || state === 'sending'}
+            disabled={!selectedTime || !selectedConnId || state === 'sending'}
             className="px-4 py-1.5 bg-indigo-600 text-white text-[12px] font-medium hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             {state === 'sending' ? 'Sending…' : 'Send invitation'}

@@ -371,6 +371,7 @@ export function InboxPageClient({
     keyPoints: (selectedItem as any).source_data?.keyPoints,
     body: (selectedItem as any).source_data?.body,
     itemType: (selectedItem as any).item_type ?? null,
+    connectionId: (selectedItem as any).connection_id ?? null,
   } : null;
 
   const handleChatAction = useCallback(async (type: string, itemId: string) => {

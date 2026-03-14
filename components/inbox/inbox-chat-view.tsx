@@ -57,7 +57,7 @@ interface InboxChatViewProps {
   replyDraft?: string;
   onUpdateReplyDraft?: (body: string) => void;
   emailChipActive?: boolean;
-  emailChipData?: { subject?: string; from?: string; fromName?: string; itemType?: string | null };
+  emailChipData?: { subject?: string; from?: string; fromName?: string; itemType?: string | null; connectionId?: string | null };
   onDismissEmailChip?: () => void;
   onClose?: () => void;
 }
@@ -334,6 +334,7 @@ function MessageContent({
   onUseAsReply,
   mode,
   onUpdateReplyDraft,
+  connectionId,
 }: {
   content: string;
   inboxItems: InboxItem[];
@@ -344,6 +345,7 @@ function MessageContent({
   onUseAsReply?: (body: string) => void;
   mode?: 'inbox' | 'compose' | 'reply';
   onUpdateReplyDraft?: (body: string) => void;
+  connectionId?: string | null;
 }) {
   const kbSources = parseKBSources(content);
   const { text, actions, meetingSuggestion, updateDraft, replyDraft, openCompose } = parseContent(content);
@@ -375,7 +377,7 @@ function MessageContent({
           ))}
         </div>
       )}
-      {meetingSuggestion && <MeetingProposalCard suggestion={meetingSuggestion} />}
+      {meetingSuggestion && <MeetingProposalCard suggestion={meetingSuggestion} connectionId={connectionId} />}
       {updateDraft && (
         <div className="mt-2 px-2 py-1 text-[11px] text-green-700 bg-green-50 border border-green-200 inline-flex items-center gap-1">
           Draft updated ✓
@@ -569,6 +571,7 @@ export default function InboxChatView({
                       onUseAsReply={onUseAsReply}
                       mode={mode}
                       onUpdateReplyDraft={onUpdateReplyDraft}
+                      connectionId={emailChipData?.connectionId}
                     />
                   </div>
                 )}
@@ -589,6 +592,7 @@ export default function InboxChatView({
                       onUseAsReply={onUseAsReply}
                       mode={mode}
                       onUpdateReplyDraft={onUpdateReplyDraft}
+                      connectionId={emailChipData?.connectionId}
                     />
                   ) : (
                     <span className="flex items-center gap-1 text-neutral-400">

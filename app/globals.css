@@ -27,7 +27,8 @@ body {
   word-break: break-word;
 }
 .email-body-html p { margin: 0 0 0.75em; }
-.email-body-html br + br { display: none; }
+.email-body-html div { margin-bottom: 0.5em; }
+.email-body-html div:empty { margin: 0; }
 .email-body-html a { color: #4f46e5; text-decoration: underline; }
 .email-body-html img { max-width: 100%; height: auto; display: block; }
 .email-body-html table { border-collapse: collapse; max-width: 100%; font-size: inherit; }
