@@ -2,8 +2,9 @@
 
 import { useState, useMemo } from 'react';
 import { ChevronDownIcon, ChevronUpIcon } from '@heroicons/react/24/outline';
-import type { InboxItem, VisualSection } from '@/lib/types/inbox';
-import SmartTaskCard from './smart-task-card';
+import type { InboxItem, ItemType } from '@/lib/types/inbox';
+import { SMART_VIEW_TYPES } from '@/lib/types/inbox';
+import EmailListCard from './email-list-card';
 
 interface EmailListSectionsProps {
   items: InboxItem[];
@@ -14,26 +15,28 @@ interface EmailListSectionsProps {
   onToggleSelect?: (id: string) => void;
 }
 
-const SECTIONS: Array<{ key: VisualSection; label: string; dotColor: string }> = [
-  { key: 'prepared', label: 'Prepared', dotColor: 'bg-indigo-500' },
-  { key: 'suggested', label: 'Suggested', dotColor: 'bg-amber-500' },
-  { key: 'awareness', label: 'For Awareness', dotColor: 'bg-neutral-400' },
+const SECTIONS: Array<{ key: ItemType; label: string }> = [
+  { key: 'reply',    label: 'Reply Needed' },
+  { key: 'decision', label: 'Decision' },
+  { key: 'meeting',  label: 'Meeting' },
+  { key: 'review',   label: 'Review' },
 ];
 
 export default function EmailListSections({ items, selectedId, onSelect, compact = false, selectedIds, onToggleSelect }: EmailListSectionsProps) {
   const hasAnySelected = (selectedIds?.size ?? 0) > 0;
-  const [collapsed, setCollapsed] = useState<Set<VisualSection>>(new Set());
+  const [collapsed, setCollapsed] = useState<Set<ItemType>>(new Set());
 
   const bySection = useMemo(() => {
     return items.reduce((acc, item) => {
-      const s = (item.visual_section || 'awareness') as VisualSection;
-      if (!acc[s]) acc[s] = [];
-      acc[s].push(item);
+      const t = item.item_type as ItemType;
+      if (!SMART_VIEW_TYPES.includes(t)) return acc;
+      if (!acc[t]) acc[t] = [];
+      acc[t].push(item);
       return acc;
-    }, {} as Record<VisualSection, InboxItem[]>);
+    }, {} as Record<ItemType, InboxItem[]>);
   }, [items]);
 
-  const toggle = (s: VisualSection) => {
+  const toggle = (s: ItemType) => {
     setCollapsed(prev => {
       const next = new Set(prev);
       next.has(s) ? next.delete(s) : next.add(s);
@@ -55,7 +58,6 @@ export default function EmailListSections({ items, selectedId, onSelect, compact
               className="w-full h-8 flex items-center justify-between px-3 bg-neutral-50 border-b border-neutral-100 hover:bg-neutral-100 transition-colors sticky top-0 z-10"
             >
               <div className="flex items-center gap-2">
-                <div className={`w-1.5 h-1.5 rounded-full ${section.dotColor}`} />
                 <span className="text-[11px] font-semibold text-neutral-600 uppercase tracking-wide">
                   {section.label}
                 </span>
@@ -68,7 +70,7 @@ export default function EmailListSections({ items, selectedId, onSelect, compact
             </button>
 
             {!isCollapsed && sectionItems.map(item => (
-              <SmartTaskCard
+              <EmailListCard
                 key={item.id}
                 item={item}
                 isSelected={selectedId === item.id}

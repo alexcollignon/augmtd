@@ -67,15 +67,15 @@ export default function MeetingCard({ event, userEmail, onRefresh }: MeetingCard
     <>
       <article
         onClick={() => setShowDetail(true)}
-        className={`group relative bg-white border border-neutral-100 hover:bg-neutral-50 transition-colors cursor-pointer overflow-hidden mb-2 ${cardOpacity}`}
+        className={`group relative bg-white border border-neutral-100 hover:bg-neutral-50 transition-colors cursor-pointer overflow-hidden mb-1.5 ${cardOpacity}`}
       >
         {/* Accent bar */}
         <div className={`absolute left-0 top-0 bottom-0 w-[3px] ${accentColor}`} />
 
-        <div className="pl-4 pr-3 py-2.5">
+        <div className="pl-4 pr-3 py-2">
           {/* Title row */}
-          <div className="flex items-start justify-between gap-2 mb-1">
-            <h3 className="text-[13px] font-semibold text-neutral-900 leading-tight truncate group-hover:text-indigo-700 transition-colors">
+          <div className="flex items-start justify-between gap-2 mb-0.5">
+            <h3 className="text-[12px] font-semibold text-neutral-900 leading-tight truncate group-hover:text-indigo-700 transition-colors">
               {event.title}
             </h3>
             {event.meeting_status === 'in_progress' && (
@@ -86,41 +86,42 @@ export default function MeetingCard({ event, userEmail, onRefresh }: MeetingCard
           </div>
 
           {/* Time */}
-          <p className="text-[12px] text-neutral-600 mb-1.5">
+          <p className="text-[11px] text-neutral-500 mb-1">
             {primary} · {duration}min
           </p>
 
-          {/* Meta row — attendees + RSVP badge + icons */}
+          {/* Meta row — attendees + RSVP badge + join button + icons */}
           <div className="flex items-center justify-between text-[11px] text-neutral-400">
             <span className="truncate">{attendeesLabel}</span>
             <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
-              {rsvpBadge && (
-                <span className={`text-[10px] font-medium px-1.5 py-0.5 border ${rsvpBadge.className}`}>
-                  {rsvpBadge.label}
-                </span>
+              {event.meeting_link && (event.meeting_status === 'starting_soon' || event.meeting_status === 'in_progress') ? (
+                <button
+                  onClick={handleJoinMeeting}
+                  className={`inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-semibold text-white transition-colors ${
+                    event.meeting_status === 'in_progress'
+                      ? 'bg-red-600 hover:bg-red-700'
+                      : 'bg-indigo-600 hover:bg-indigo-700'
+                  }`}
+                >
+                  <VideoCameraIcon className="w-2.5 h-2.5" />
+                  {event.meeting_status === 'in_progress' ? 'Join' : 'Join'}
+                </button>
+              ) : (
+                <>
+                  {rsvpBadge && (
+                    <span className={`text-[10px] font-medium px-1.5 py-0.5 border ${rsvpBadge.className}`}>
+                      {rsvpBadge.label}
+                    </span>
+                  )}
+                  {isOrganizer && (
+                    <span className="text-[10px] text-indigo-500 font-medium">Organizer</span>
+                  )}
+                  {event.meeting_link && <VideoCameraIcon className="w-3 h-3" />}
+                  {event.location && !event.meeting_link && <MapPinIcon className="w-3 h-3" />}
+                </>
               )}
-              {isOrganizer && (
-                <span className="text-[10px] text-indigo-500 font-medium">Organizer</span>
-              )}
-              {event.meeting_link && <VideoCameraIcon className="w-3 h-3" />}
-              {event.location && !event.meeting_link && <MapPinIcon className="w-3 h-3" />}
             </div>
           </div>
-
-          {/* Join button */}
-          {event.meeting_link && (event.meeting_status === 'starting_soon' || event.meeting_status === 'in_progress') && (
-            <button
-              onClick={handleJoinMeeting}
-              className={`mt-2.5 w-full inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-[12px] font-semibold text-white transition-colors ${
-                event.meeting_status === 'in_progress'
-                  ? 'bg-red-600 hover:bg-red-700'
-                  : 'bg-indigo-600 hover:bg-indigo-700'
-              }`}
-            >
-              <VideoCameraIcon className="w-3.5 h-3.5" />
-              {event.meeting_status === 'in_progress' ? 'Join Now' : 'Join Meeting'}
-            </button>
-          )}
         </div>
       </article>
 

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { sendGmailReply } from '@/lib/google/gmail';
+import { sendGmailReply, EmailAttachment } from '@/lib/google/gmail';
 import { sendOutlookReply } from '@/lib/microsoft/outlook';
 
 export async function POST(
@@ -16,7 +16,12 @@ export async function POST(
     }
 
     const { id } = await params;
-    const { customMessage } = await request.json();
+    const { customMessage, attachments: rawAttachments } = await request.json();
+    const attachments: EmailAttachment[] = (rawAttachments || []).map((a: { filename: string; content: string; mimeType: string }) => ({
+      filename: a.filename,
+      content: Buffer.from(a.content, 'base64'),
+      mimeType: a.mimeType,
+    }));
 
     // Get inbox item with draft
     const { data: item, error: fetchError } = await supabase
@@ -34,12 +39,6 @@ export async function POST(
     }
 
     const sourceData = item.source_data;
-    if (!sourceData?.draft) {
-      return NextResponse.json(
-        { error: 'No draft available for this item' },
-        { status: 400 }
-      );
-    }
 
     // Get user's email connection — prefer connection_id FK, fallback to provider lookup
     let connection: any = null;
@@ -73,6 +72,7 @@ export async function POST(
         body: messageBody,
         inReplyTo: sourceData.message_id,
         references: sourceData.references,
+        attachments,
       });
     } else if (sourceData.provider === 'outlook') {
       // Graph API needs the internal Outlook ID (not the RFC 2822 internet message ID).
@@ -92,6 +92,7 @@ export async function POST(
         encryptedTokens: connection.metadata.tokens,
         messageId: outlookMessageId,
         body: messageBody,
+        attachments,
       });
     } else {
       return NextResponse.json(

@@ -18,3 +18,23 @@ body {
     text-wrap: balance;
   }
 }
+
+/* Scoped styles for rendered HTML email bodies */
+.email-body-html {
+  font-size: 13px;
+  line-height: 1.6;
+  color: #404040;
+  word-break: break-word;
+}
+.email-body-html p { margin: 0 0 0.75em; }
+.email-body-html br + br { display: none; }
+.email-body-html a { color: #4f46e5; text-decoration: underline; }
+.email-body-html img { max-width: 100%; height: auto; display: block; }
+.email-body-html table { border-collapse: collapse; max-width: 100%; font-size: inherit; }
+.email-body-html td, .email-body-html th { padding: 4px 8px; vertical-align: top; }
+.email-body-html h1, .email-body-html h2, .email-body-html h3 { font-weight: 600; margin: 0.5em 0 0.25em; }
+.email-body-html ul, .email-body-html ol { padding-left: 1.25em; margin: 0 0 0.75em; }
+.email-body-html li { margin-bottom: 0.2em; }
+.email-body-html blockquote { border-left: 3px solid #e5e7eb; padding-left: 0.75em; margin: 0.5em 0; color: #737373; }
+/* Hide tracking pixels and zero-size images */
+.email-body-html img[width="1"], .email-body-html img[height="1"] { display: none; }

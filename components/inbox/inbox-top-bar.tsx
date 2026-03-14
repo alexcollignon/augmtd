@@ -80,14 +80,19 @@ function FixedDropdown({ anchorRect, visible, children }: DropdownProps) {
 
 const getAccent = (item: InboxItem) =>
   item.execution_status === 'ready' ? 'border-l-indigo-500' :
-  item.source_data?.draft ? 'border-l-violet-400' :
-  item.visual_section === 'suggested' ? 'border-l-amber-400' : 'border-l-neutral-300';
+  item.item_type === 'reply' ? 'border-l-indigo-400' :
+  item.item_type === 'meeting' ? 'border-l-blue-400' :
+  item.item_type === 'decision' ? 'border-l-orange-400' :
+  item.item_type === 'review' ? 'border-l-violet-400' :
+  'border-l-neutral-300';
 
 const getBadge = (item: InboxItem) =>
   item.execution_status === 'ready' ? { text: 'See work', color: 'text-indigo-500' } :
-  item.source_data?.draft ? { text: 'Draft ready', color: 'text-violet-500' } :
-  item.visual_section === 'suggested' ? { text: 'Confirm?', color: 'text-amber-500' } :
-  { text: 'Prepared', color: 'text-neutral-400' };
+  item.item_type === 'reply' ? { text: 'Reply', color: 'text-indigo-500' } :
+  item.item_type === 'meeting' ? { text: 'Meeting', color: 'text-blue-500' } :
+  item.item_type === 'decision' ? { text: 'Decide', color: 'text-orange-500' } :
+  item.item_type === 'review' ? { text: 'Review', color: 'text-violet-500' } :
+  { text: 'Action', color: 'text-neutral-400' };
 
 // ─── Single task chip ─────────────────────────────────────────────────────────
 

@@ -38,9 +38,9 @@ import {
 import { extractTextFromAttachment } from '@/lib/attachments/text-extractor';
 import { processEmail } from '@/lib/ai/email-processor';
 import { analyzeRecipients, shouldCreateInboxItem, getSuggestionLevel, getSuggestionLabel } from '@/lib/ai/recipient-detector';
-import { getVisualSection } from '@/lib/types/inbox';
 import { analyzeSentEmail } from '@/lib/context/sent-email-analyzer';
 import { getCalendarContext } from '@/lib/calendar/calendar-context';
+import { buildUserContextBlock } from '@/lib/context/build-user-context';
 import type { UserContextProfile } from '@/lib/types/user-context';
 import { decomposeEmailWork } from '@/lib/execution/work-decomposition';
 
@@ -282,8 +282,13 @@ export async function syncEmailsForConnection(
 
     console.log(`Fetched ${messages.length} ${connection.provider} emails for user ${connection.user_id}`);
 
-    // Fetch user context for personalized AI processing (creates if doesn't exist)
-    const userContext = await getUserContext(connection.user_id, adminSupabase);
+    // Fetch user context, calendar context, and identity block in parallel
+    const [userContext, calendarContext, userContextBlock] = await Promise.all([
+      getUserContext(connection.user_id, adminSupabase),
+      getCalendarContext(connection.user_id, adminSupabase),
+      buildUserContextBlock(connection.user_id, adminSupabase),
+    ]);
+
     if (userContext) {
       const confidence = Math.round(userContext.confidenceMetrics.overallScore * 100);
       if (confidence > 0) {
@@ -294,9 +299,9 @@ export async function syncEmailsForConnection(
     } else {
       console.log(`⚠ Failed to load/create user context - AI will use generic prompts`);
     }
-
-    // Fetch calendar context for scheduling-aware email processing
-    const calendarContext = await getCalendarContext(connection.user_id, adminSupabase);
+    if (userContextBlock) {
+      console.log(`✓ Loaded identity context block`);
+    }
     const meetingsCount = calendarContext.upcomingMeetings?.length || 0;
     const hasPatterns = !!calendarContext.meetingBehavior;
     const hasMeetings = meetingsCount > 0;
@@ -531,12 +536,10 @@ export async function syncEmailsForConnection(
             continue;
           }
 
-          // Calculate suggestion level and visual section for UX
           const suggestionLevel = getSuggestionLevel(recipient.responsibilityConfidence);
           const suggestionLabel = getSuggestionLabel(suggestionLevel);
-          const visualSection = getVisualSection(suggestionLevel);
 
-          console.log(`   ✓ Creating item for ${recipient.email} (${recipient.detectedRole}, ${suggestionLabel} → ${visualSection})`);
+          console.log(`   ✓ Creating item for ${recipient.email} (${recipient.detectedRole}, ${suggestionLabel})`);
 
           // Check if inbox item already exists for this thread + user
           const { data: existingInboxItem } = await adminSupabase
@@ -584,13 +587,8 @@ export async function syncEmailsForConnection(
               is_forwarded: isForwarded,
               recipient_position: recipient.position === 'to' || recipient.position === 'cc' ? recipient.position : undefined,
               recipient_email: recipient.email,
-              recipient_name: recipient.fullName || undefined,
+              user_context_block: userContextBlock || undefined,
             }, adminSupabase);
-
-            // CC cap: CC recipients are capped at 'suggested' — never silently appear as 'prepared'
-            const effectiveVisualSection = recipient.position === 'cc' && visualSection === 'prepared'
-              ? 'suggested'
-              : visualSection;
 
             // Work Decomposition (Layer 2): Check if this is executable work
             let executionPlan = null;
@@ -626,14 +624,7 @@ export async function syncEmailsForConnection(
                 work_title: processed.workTitle,
                 what_i_prepared: processed.whatIPrepared,
                 why_matters: processed.whyMatters,
-
-                // NEW: Visual section for UX
-                visual_section: effectiveVisualSection,
-
-                // NEW: User confirmation (initialize for suggested items)
-                user_confirmation: effectiveVisualSection === 'suggested' ? {
-                  status: 'pending',
-                } : null,
+                item_type: processed.itemType,
 
                 // NEW: Recipient context
                 recipient_context: {
@@ -732,13 +723,8 @@ export async function syncEmailsForConnection(
             is_forwarded: isForwarded,
             recipient_position: recipient.position === 'to' || recipient.position === 'cc' ? recipient.position : undefined,
             recipient_email: recipient.email,
-            recipient_name: recipient.fullName || undefined,
+            user_context_block: userContextBlock || undefined,
           }, adminSupabase);
-
-          // CC cap: CC recipients are capped at 'suggested' — never silently appear as 'prepared'
-          const effectiveVisualSectionNew = recipient.position === 'cc' && visualSection === 'prepared'
-            ? 'suggested'
-            : visualSection;
 
           // Work Decomposition (Layer 2): Check if this is executable work
           let executionPlan = null;
@@ -779,14 +765,7 @@ export async function syncEmailsForConnection(
               work_title: processed.workTitle,
               what_i_prepared: processed.whatIPrepared,
               why_matters: processed.whyMatters,
-
-              // NEW: Visual section for UX
-              visual_section: effectiveVisualSectionNew,
-
-              // NEW: User confirmation (initialize for suggested items)
-              user_confirmation: effectiveVisualSectionNew === 'suggested' ? {
-                status: 'pending',
-              } : null,
+              item_type: processed.itemType,
 
               // NEW: Recipient context
               recipient_context: {

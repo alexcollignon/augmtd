@@ -25,7 +25,6 @@ import {
 import type { InboxItem } from '@/lib/types/inbox';
 import { isExecutable } from '@/lib/types/inbox';
 import RecipientContextDisplay from './recipient-context-display';
-import DraftPreviewModal from './draft-preview-modal';
 import RsvpButtons from './rsvp-buttons';
 import { createClient } from '@/lib/supabase/client';
 
@@ -51,7 +50,6 @@ export default function WorkDetailPanel({ item, isOpen, onClose, batchItems }: W
   const [isCompleting, setIsCompleting] = useState(false);
   const [isDismissing, setIsDismissing] = useState(false);
   const [isOpeningWorkflow, setIsOpeningWorkflow] = useState(false);
-  const [showDraftPreview, setShowDraftPreview] = useState(false);
   const [expandedEmails, setExpandedEmails] = useState<Record<number, boolean>>({});
   const [downloadingFile, setDownloadingFile] = useState<string | null>(null);
   const [linkedCalEvent, setLinkedCalEvent] = useState<{ id: string; attendees: any[] } | null>(null);
@@ -252,29 +250,6 @@ export default function WorkDetailPanel({ item, isOpen, onClose, batchItems }: W
       alert('Failed to open workflow. Please try again.');
     } finally {
       setIsOpeningWorkflow(false);
-    }
-  };
-
-  const handleSendReply = async (customMessage?: string) => {
-    setIsSending(true);
-    try {
-      const response = await fetch(`/api/inbox/${item.id}/send-reply`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ customMessage }),
-      });
-
-      if (response.ok) {
-        window.location.reload();
-      } else {
-        console.error('Failed to send reply');
-        alert('Failed to send reply. Please try again.');
-      }
-    } catch (error) {
-      console.error('Send reply error:', error);
-      alert('Failed to send reply. Please try again.');
-    } finally {
-      setIsSending(false);
     }
   };
 
@@ -855,7 +830,10 @@ export default function WorkDetailPanel({ item, isOpen, onClose, batchItems }: W
                                     </div>
                                     <div className="flex items-center gap-2 flex-shrink-0 ml-2">
                                       <span className="text-neutral-400">
-                                        {new Date(msg.received_at).toLocaleDateString()}
+                                        {new Date(msg.received_at).toLocaleString('en-US', {
+                                          month: 'short', day: 'numeric',
+                                          hour: 'numeric', minute: '2-digit', hour12: true,
+                                        })}
                                       </span>
                                       <ChevronRightIcon
                                         className={`w-3.5 h-3.5 text-neutral-400 transition-transform duration-150 ${isExpanded ? 'rotate-90' : ''}`}
@@ -920,15 +898,6 @@ export default function WorkDetailPanel({ item, isOpen, onClose, batchItems }: W
                           {/* Executable work — draft reply (if any) + open in Workflows */}
                           {isExecutable(item) && (
                             <>
-                              {sourceData?.draft && (
-                                <button
-                                  onClick={() => setShowDraftPreview(true)}
-                                  className="flex-1 inline-flex items-center justify-center px-4 py-2.5 text-[13px] font-semibold bg-white text-indigo-700 border border-indigo-300 hover:bg-indigo-50 transition-all"
-                                >
-                                  <PaperAirplaneIcon className="w-4 h-4 mr-2" />
-                                  Review & Send
-                                </button>
-                              )}
                               <button
                                 onClick={handleOpenInWorkflows}
                                 disabled={isOpeningWorkflow}
@@ -952,15 +921,6 @@ export default function WorkDetailPanel({ item, isOpen, onClose, batchItems }: W
                           {/* Regular work actions */}
                           {!isExecutable(item) && (
                             <>
-                              {sourceData?.draft && (
-                                <button
-                                  onClick={() => setShowDraftPreview(true)}
-                                  className="flex-1 inline-flex items-center justify-center px-4 py-2.5 text-[13px] font-semibold bg-indigo-600 text-white hover:bg-indigo-700 transition-all shadow-sm hover:shadow"
-                                >
-                                  <PaperAirplaneIcon className="w-4 h-4 mr-2" />
-                                  Review & Send
-                                </button>
-                              )}
                               {!sourceData?.draft && (
                                 <button
                                   onClick={handleComplete}
@@ -992,17 +952,6 @@ export default function WorkDetailPanel({ item, isOpen, onClose, batchItems }: W
           </div>
         </div>
 
-        {/* Draft Preview Modal */}
-        {sourceData?.draft && (
-          <DraftPreviewModal
-            isOpen={showDraftPreview}
-            onClose={() => setShowDraftPreview(false)}
-            draft={typeof sourceData.draft === 'string' ? sourceData.draft : sourceData.draft.body}
-            subject={sourceData.subject || 'Re: (no subject)'}
-            to={sourceData.from || 'Unknown'}
-            onSend={handleSendReply}
-          />
-        )}
       </Dialog>
     </Transition>
   );

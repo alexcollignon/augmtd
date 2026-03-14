@@ -11,7 +11,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { title, startTime, endTime, timezone, attendees, notes, connectionId } = body as {
+    const { title, startTime, endTime, timezone, attendees, notes, connectionId, includeMeetLink } = body as {
       title: string;
       startTime: string;
       endTime: string;
@@ -19,10 +19,17 @@ export async function POST(request: NextRequest) {
       attendees: string[];
       notes?: string;
       connectionId?: string;
+      includeMeetLink?: boolean;
     };
 
     if (!title || !startTime || !endTime || !timezone || !attendees?.length) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
+    }
+
+    // Filter out non-email attendees (names without @) to prevent provider errors
+    const validAttendees = attendees.filter((a: string) => a.includes('@'));
+    if (validAttendees.length === 0) {
+      return NextResponse.json({ error: 'No valid attendee email addresses provided' }, { status: 400 });
     }
 
     // Get the user's active connection
@@ -71,7 +78,9 @@ export async function POST(request: NextRequest) {
         const result = await sendGmailInvite({
           encryptedTokens,
           onTokenRefresh: onGoogleTokenRefresh,
-          title, startTime, endTime, timezone, attendees, notes,
+          title, startTime, endTime, timezone, notes,
+          attendees: validAttendees,
+          includeMeetLink: includeMeetLink !== false,
         });
         eventId = result.eventId;
         meetLink = result.meetLink;
@@ -79,7 +88,9 @@ export async function POST(request: NextRequest) {
         const result = await sendOutlookInvite({
           encryptedTokens,
           onTokenRefresh: onOutlookTokenRefresh,
-          title, startTime, endTime, timezone, attendees, notes,
+          title, startTime, endTime, timezone, notes,
+          attendees: validAttendees,
+          includeMeetLink: includeMeetLink !== false,
         });
         eventId = result.eventId;
       }
@@ -102,7 +113,7 @@ export async function POST(request: NextRequest) {
       is_all_day: false,
       status: 'confirmed',
       provider: connection.provider,
-      attendees: attendees.map((email) => ({ email, responseStatus: 'needsAction' })),
+      attendees: validAttendees.map((email: string) => ({ email, responseStatus: 'needsAction' })),
       metadata: meetLink ? { meetLink } : {},
     }, { onConflict: 'user_id,event_id,provider' });
 

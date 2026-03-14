@@ -17,6 +17,7 @@ interface GoogleInviteParams {
   timezone: string;
   attendees: string[];
   notes?: string;
+  includeMeetLink?: boolean;
 }
 
 interface OutlookInviteParams {
@@ -28,12 +29,13 @@ interface OutlookInviteParams {
   timezone: string;
   attendees: string[];
   notes?: string;
+  includeMeetLink?: boolean;
 }
 
 export async function sendGmailInvite(
   params: GoogleInviteParams
 ): Promise<{ eventId: string; meetLink?: string }> {
-  const { encryptedTokens, onTokenRefresh, title, startTime, endTime, timezone, attendees, notes } = params;
+  const { encryptedTokens, onTokenRefresh, title, startTime, endTime, timezone, attendees, notes, includeMeetLink = true } = params;
 
   const tokens = JSON.parse(Buffer.from(encryptedTokens, 'base64').toString());
   const oauth2Client = getOAuth2Client();
@@ -58,19 +60,21 @@ export async function sendGmailInvite(
     response = await calendar.events.insert({
       calendarId: 'primary',
       sendUpdates: 'all',
-      conferenceDataVersion: 1,
+      conferenceDataVersion: includeMeetLink ? 1 : 0,
       requestBody: {
         summary: title,
         description: notes,
         start: { dateTime: startTime, timeZone: timezone },
         end: { dateTime: endTime, timeZone: timezone },
         attendees: attendees.map((email) => ({ email })),
-        conferenceData: {
-          createRequest: {
-            requestId: Math.random().toString(36).slice(2),
-            conferenceSolutionKey: { type: 'hangoutsMeet' },
+        ...(includeMeetLink ? {
+          conferenceData: {
+            createRequest: {
+              requestId: Math.random().toString(36).slice(2),
+              conferenceSolutionKey: { type: 'hangoutsMeet' },
+            },
           },
-        },
+        } : {}),
       },
     });
   } catch (err: any) {
@@ -90,7 +94,7 @@ export async function sendGmailInvite(
 export async function sendOutlookInvite(
   params: OutlookInviteParams
 ): Promise<{ eventId: string }> {
-  const { encryptedTokens, onTokenRefresh, title, startTime, endTime, timezone, attendees, notes } = params;
+  const { encryptedTokens, onTokenRefresh, title, startTime, endTime, timezone, attendees, notes, includeMeetLink = true } = params;
 
   let graphClient: any;
   try {
@@ -113,7 +117,7 @@ export async function sendOutlookInvite(
         emailAddress: { address: email, name: email },
         type: 'required',
       })),
-      isOnlineMeeting: true,
+      isOnlineMeeting: includeMeetLink,
     });
   } catch (err: any) {
     if (err?.statusCode === 403 || err?.code === 403) {

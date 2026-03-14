@@ -4,7 +4,7 @@ import React, { useEffect, useRef, useState, RefObject } from 'react';
 import type { InboxItem } from '@/lib/types/inbox';
 import EmailListCard from './email-list-card';
 import MeetingProposalCard from './meeting-proposal-card';
-import { PaperAirplaneIcon, DocumentTextIcon, PaperClipIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import { PaperAirplaneIcon, DocumentTextIcon, PaperClipIcon, XMarkIcon, EnvelopeIcon } from '@heroicons/react/24/outline';
 
 interface ChatMessage {
   role: 'user' | 'assistant';
@@ -25,6 +25,13 @@ interface MeetingSuggestion {
   notes?: string;
 }
 
+interface ComposeDraft {
+  to: string;
+  cc: string;
+  subject: string;
+  body: string;
+}
+
 interface InboxChatViewProps {
   history: ChatMessage[];
   streamingContent: string;
@@ -42,15 +49,29 @@ interface InboxChatViewProps {
   onFileAttach: (file: File) => void;
   onRemoveFile: (filename: string) => void;
   isAttaching: boolean;
+  composeDraft?: ComposeDraft;
+  onUpdateComposeDraft?: (fields: Partial<ComposeDraft>) => void;
+  onOpenCompose?: (draft: Partial<ComposeDraft>) => void;
+  onUseAsReply?: (body: string) => void;
+  mode?: 'inbox' | 'compose' | 'reply';
+  replyDraft?: string;
+  onUpdateReplyDraft?: (body: string) => void;
+  emailChipActive?: boolean;
+  emailChipData?: { subject?: string; from?: string; fromName?: string; itemType?: string | null };
+  onDismissEmailChip?: () => void;
+  onClose?: () => void;
 }
 
 const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 const ACTION_RE = /ACTION:\{[^}]+\}/g;
 const MEETING_RE = /MEETING_SUGGESTION:(\{.+\})/;
+const UPDATE_DRAFT_RE = /UPDATE_DRAFT:(\{[\s\S]+?\})/;
+const REPLY_DRAFT_RE = /REPLY_DRAFT:(\{[\s\S]+?\})/;
+const OPEN_COMPOSE_RE = /OPEN_COMPOSE:(\{[\s\S]+?\})/;
 
 const SOURCE_OPTIONS = [
   { id: 'inbox', label: 'Inbox' },
-  { id: 'kb', label: 'Knowledge Base' },
+  { id: 'kb', label: 'KB' },
   { id: 'calendar', label: 'Calendar' },
 ];
 
@@ -60,17 +81,108 @@ const QUICK_PROMPTS = [
   "Summarize my recent emails",
 ];
 
-/** Strip ACTION, MEETING_SUGGESTION and KB_REFS tokens and return parsed results */
-function parseContent(raw: string): { text: string; actions: ParsedAction[]; meetingSuggestion: MeetingSuggestion | null } {
+const EMAIL_PROMPTS_BY_TYPE: Record<string, string[]> = {
+  meeting: [
+    "Check my availability",
+    "Draft an acceptance reply",
+    "Who else is attending?",
+    "Find relevant docs",
+  ],
+  reply: [
+    "What are they asking?",
+    "Draft a reply",
+    "How should I respond?",
+    "Find relevant docs",
+  ],
+  decision: [
+    "Summarize the decision needed",
+    "Draft a reply",
+    "Find relevant docs",
+    "What context do I have on this?",
+  ],
+  review: [
+    "Summarize what to review",
+    "Draft feedback reply",
+    "Find relevant docs",
+    "Any related docs in my KB?",
+  ],
+  fyi: [
+    "Summarize this",
+    "Is any action needed?",
+    "Find related docs",
+    "Draft a reply",
+  ],
+  notification: [
+    "Summarize this notification",
+    "Is any action needed?",
+    "Find related docs",
+    "Draft a reply",
+  ],
+  default: [
+    "Summarize what they're asking",
+    "Draft a reply",
+    "Find relevant docs",
+    "Check my availability",
+  ],
+};
+
+function getEmailPrompts(itemType?: string | null): string[] {
+  if (itemType && itemType in EMAIL_PROMPTS_BY_TYPE) return EMAIL_PROMPTS_BY_TYPE[itemType];
+  return EMAIL_PROMPTS_BY_TYPE.default;
+}
+
+const COMPOSE_START_PROMPTS = [
+  "Help me draft an email",
+  "Write a follow-up email",
+  "Draft a cold outreach",
+  "Write a thank you note",
+];
+
+const COMPOSE_REFINE_PROMPTS = [
+  "Make it more concise",
+  "Make it more formal",
+  "Suggest a subject line",
+  "Add a professional closing",
+];
+
+const REPLY_PROMPTS = [
+  "Make it more formal",
+  "Make it shorter",
+  "Add a professional closing",
+  "Check my availability",
+];
+
+/** Strip all structured tokens and return parsed results */
+function parseContent(raw: string): {
+  text: string;
+  actions: ParsedAction[];
+  meetingSuggestion: MeetingSuggestion | null;
+  updateDraft: Partial<ComposeDraft> | null;
+  replyDraft: { body: string } | null;
+  openCompose: Partial<ComposeDraft> | null;
+} {
   const actions: ParsedAction[] = [];
   let meetingSuggestion: MeetingSuggestion | null = null;
 
   const meetingMatch = raw.match(MEETING_RE);
   if (meetingMatch) {
-    try {
-      meetingSuggestion = JSON.parse(meetingMatch[1]) as MeetingSuggestion;
-    } catch { /* ignore */ }
+    try { meetingSuggestion = JSON.parse(meetingMatch[1]) as MeetingSuggestion; } catch { /* ignore */ }
   }
+
+  const updateDraftMatch = raw.match(UPDATE_DRAFT_RE);
+  const updateDraft = updateDraftMatch
+    ? (() => { try { return JSON.parse(updateDraftMatch[1]); } catch { return null; } })()
+    : null;
+
+  const replyDraftMatch = raw.match(REPLY_DRAFT_RE);
+  const replyDraft = replyDraftMatch
+    ? (() => { try { return JSON.parse(replyDraftMatch[1]); } catch { return null; } })()
+    : null;
+
+  const openComposeMatch = raw.match(OPEN_COMPOSE_RE);
+  const openCompose = openComposeMatch
+    ? (() => { try { return JSON.parse(openComposeMatch[1]); } catch { return null; } })()
+    : null;
 
   const text = raw
     .replace(ACTION_RE, (match) => {
@@ -83,9 +195,14 @@ function parseContent(raw: string): { text: string; actions: ParsedAction[]; mee
     })
     .replace(/\nMEETING_SUGGESTION:\{.+\}/g, '')
     .replace(/MEETING_SUGGESTION:\{.+\}/g, '')
+    .replace(UPDATE_DRAFT_RE, '')
+    .replace(REPLY_DRAFT_RE, '')
+    .replace(OPEN_COMPOSE_RE, '')
     .replace(/\nKB_REFS:[^\n]*/g, '')
+    .replace(/^INTENT DETECTION:\s*\w+\s*\n?/im, '')
+    .replace(/^---+\s*$/gm, '')
     .trim();
-  return { text, actions, meetingSuggestion };
+  return { text, actions, meetingSuggestion, updateDraft, replyDraft, openCompose };
 }
 
 /** Extract KB filenames from the AI-emitted KB_REFS token */
@@ -212,15 +329,30 @@ function MessageContent({
   inboxItems,
   onSelectItem,
   onAction,
+  onUpdateComposeDraft,
+  onOpenCompose,
+  onUseAsReply,
+  mode,
+  onUpdateReplyDraft,
 }: {
   content: string;
   inboxItems: InboxItem[];
   onSelectItem: (item: InboxItem) => void;
   onAction: (type: string, itemId: string) => Promise<void>;
+  onUpdateComposeDraft?: (fields: Partial<ComposeDraft>) => void;
+  onOpenCompose?: (draft: Partial<ComposeDraft>) => void;
+  onUseAsReply?: (body: string) => void;
+  mode?: 'inbox' | 'compose' | 'reply';
+  onUpdateReplyDraft?: (body: string) => void;
 }) {
   const kbSources = parseKBSources(content);
-  const { text, actions, meetingSuggestion } = parseContent(content);
+  const { text, actions, meetingSuggestion, updateDraft, replyDraft, openCompose } = parseContent(content);
   const parts = splitOnRefs(text);
+
+  useEffect(() => {
+    if (updateDraft && onUpdateComposeDraft) onUpdateComposeDraft(updateDraft);
+    if (openCompose && onOpenCompose) onOpenCompose(openCompose);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div>
@@ -232,24 +364,41 @@ function MessageContent({
         if (!item) return null;
         return (
           <div key={i} className="mt-2 mb-1 border border-neutral-200 overflow-hidden">
-            <EmailListCard
-              item={item}
-              isSelected={false}
-              onSelect={onSelectItem}
-              compact
-            />
+            <EmailListCard item={item} isSelected={false} onSelect={onSelectItem} compact />
           </div>
         );
       })}
-      {actions.length > 0 && (
+      {actions.length > 0 && mode !== 'reply' && (
         <div className="flex flex-col gap-1 mt-1">
           {actions.map((a, i) => (
             <ActionChip key={i} action={a} onAction={onAction} />
           ))}
         </div>
       )}
-      {meetingSuggestion && (
-        <MeetingProposalCard suggestion={meetingSuggestion} />
+      {meetingSuggestion && <MeetingProposalCard suggestion={meetingSuggestion} />}
+      {updateDraft && (
+        <div className="mt-2 px-2 py-1 text-[11px] text-green-700 bg-green-50 border border-green-200 inline-flex items-center gap-1">
+          Draft updated ✓
+        </div>
+      )}
+      {replyDraft?.body && mode !== 'reply' && (
+        <button
+          onClick={() => onUseAsReply?.(replyDraft.body)}
+          className="mt-2 px-3 py-1.5 text-[12px] font-semibold text-white bg-indigo-600 hover:bg-indigo-700 transition-colors inline-flex items-center gap-1.5"
+        >
+          <PaperAirplaneIcon className="w-3.5 h-3.5" />
+          Use as reply →
+        </button>
+      )}
+      {replyDraft?.body && mode === 'reply' && (
+        <div className="mt-2 px-2 py-1 text-[11px] text-indigo-700 bg-indigo-50 border border-indigo-200 inline-flex items-center gap-1">
+          Draft updated ✓
+        </div>
+      )}
+      {openCompose && (
+        <div className="mt-2 px-2 py-1 text-[11px] text-indigo-700 bg-indigo-50 border border-indigo-200 inline-flex items-center gap-1">
+          Compose opened ✓
+        </div>
       )}
       {kbSources.length > 0 && (
         <div className="flex flex-wrap gap-1.5 mt-3 pt-3 border-t border-neutral-100">
@@ -285,6 +434,17 @@ export default function InboxChatView({
   onFileAttach,
   onRemoveFile,
   isAttaching,
+  composeDraft,
+  onUpdateComposeDraft,
+  onOpenCompose,
+  onUseAsReply,
+  mode,
+  replyDraft,
+  onUpdateReplyDraft,
+  emailChipActive,
+  emailChipData,
+  onDismissEmailChip,
+  onClose,
 }: InboxChatViewProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -317,8 +477,8 @@ export default function InboxChatView({
 
   return (
     <div className="flex-1 min-h-0 flex flex-col">
-      {/* Zone 1 — Source chips */}
-      <div className="flex-shrink-0 flex items-center gap-1.5 px-3 py-2 border-b border-neutral-100 bg-white">
+      {/* Zone 1 — Source chips (always) + close */}
+      <div className="flex-shrink-0 h-10 flex items-center gap-1.5 px-3 border-b border-neutral-100 bg-white">
         <button
           onClick={() => onSourcesChange(SOURCE_OPTIONS.map(s => s.id))}
           className={`text-[11px] font-semibold px-2.5 py-1 transition-colors ${
@@ -342,7 +502,30 @@ export default function InboxChatView({
             {opt.label}
           </button>
         ))}
+        <div className="flex-1" />
+        {onClose && (
+          <button onClick={onClose} className="flex-shrink-0 p-0.5 text-neutral-400 hover:text-neutral-700 transition-colors">
+            <XMarkIcon className="w-3.5 h-3.5" />
+          </button>
+        )}
       </div>
+
+      {/* Email context chip */}
+      {emailChipActive && emailChipData && (
+        <div className="flex-shrink-0 flex items-center gap-2 px-3 py-1.5 bg-indigo-50 border-b border-indigo-100">
+          <EnvelopeIcon className="w-3 h-3 text-indigo-400 flex-shrink-0" />
+          <span className="text-[11px] text-indigo-700 font-medium truncate flex-1 min-w-0">
+            {emailChipData.fromName || emailChipData.from} — {emailChipData.subject}
+          </span>
+          <button
+            onClick={onDismissEmailChip}
+            className="flex-shrink-0 text-indigo-400 hover:text-indigo-700 transition-colors"
+            title="Remove email context"
+          >
+            <XMarkIcon className="w-3 h-3" />
+          </button>
+        </div>
+      )}
 
       {/* Zone 2 — Messages area */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
@@ -350,7 +533,12 @@ export default function InboxChatView({
           <div className="flex flex-col items-center justify-center h-full py-12 text-center gap-4">
             <p className="text-[12px] text-neutral-400 font-medium">Try asking...</p>
             <div className="flex flex-col gap-2 w-full max-w-xs">
-              {QUICK_PROMPTS.map(prompt => (
+              {(mode === 'reply'
+                ? REPLY_PROMPTS
+                : composeDraft !== undefined
+                  ? (composeDraft.body?.trim() ? COMPOSE_REFINE_PROMPTS : COMPOSE_START_PROMPTS)
+                  : emailChipActive ? getEmailPrompts(emailChipData?.itemType) : QUICK_PROMPTS
+              ).map(prompt => (
                 <button
                   key={prompt}
                   onClick={() => onSendMessage(prompt)}
@@ -376,6 +564,11 @@ export default function InboxChatView({
                       inboxItems={inboxItems}
                       onSelectItem={onSelectItem}
                       onAction={onAction}
+                      onUpdateComposeDraft={onUpdateComposeDraft}
+                      onOpenCompose={onOpenCompose}
+                      onUseAsReply={onUseAsReply}
+                      mode={mode}
+                      onUpdateReplyDraft={onUpdateReplyDraft}
                     />
                   </div>
                 )}
@@ -391,6 +584,11 @@ export default function InboxChatView({
                       inboxItems={inboxItems}
                       onSelectItem={onSelectItem}
                       onAction={onAction}
+                      onUpdateComposeDraft={onUpdateComposeDraft}
+                      onOpenCompose={onOpenCompose}
+                      onUseAsReply={onUseAsReply}
+                      mode={mode}
+                      onUpdateReplyDraft={onUpdateReplyDraft}
                     />
                   ) : (
                     <span className="flex items-center gap-1 text-neutral-400">
@@ -463,7 +661,7 @@ export default function InboxChatView({
             value={chatInput}
             onChange={e => onChatInputChange(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter') handleSubmit(); }}
-            placeholder="Ask about your inbox..."
+            placeholder={mode === 'reply' ? "Edit draft or ask a question..." : composeDraft !== undefined ? (composeDraft.body?.trim() ? "Refine your draft..." : "What would you like to write?") : emailChipActive ? "Ask about this email..." : "Ask about your inbox..."}
             disabled={isStreaming}
             className="flex-1 text-[12px] text-neutral-700 placeholder-neutral-400 bg-transparent outline-none min-w-0 disabled:opacity-50"
           />

@@ -7,7 +7,17 @@
  * - Learning signals
  */
 
-export type VisualSection = 'prepared' | 'suggested' | 'awareness';
+export type VisualSection = 'prepared' | 'suggested' | 'awareness'; // @deprecated
+
+export type ItemType = 'reply' | 'decision' | 'meeting' | 'review' | 'fyi' | 'notification';
+
+/** Item types shown in Smart view (require action from user) */
+export const SMART_VIEW_TYPES: ItemType[] = ['reply', 'decision', 'meeting', 'review'];
+
+/** Is this item shown in Smart view? */
+export function isActionItem(item: InboxItem): boolean {
+  return item.item_type != null && SMART_VIEW_TYPES.includes(item.item_type as ItemType);
+}
 
 export type ConfirmationStatus = 'pending' | 'confirmed' | 'rejected';
 
@@ -177,10 +187,13 @@ export interface InboxItem {
   what_i_prepared: string | null;
   why_matters: string | null;
 
-  // NEW: Visual section (auto-calculated from suggestionLevel)
+  // Semantic type for Smart view filtering and display
+  item_type: ItemType | null;
+
+  // @deprecated — kept for DB compat, no longer written
   visual_section: VisualSection | null;
 
-  // NEW: User confirmation
+  // @deprecated — kept for DB compat, no longer written
   user_confirmation: UserConfirmation | null;
 
   // Recipient context

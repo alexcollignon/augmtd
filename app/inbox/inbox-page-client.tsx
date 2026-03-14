@@ -11,13 +11,29 @@ import WorkDetailInline from '@/components/inbox/work-detail-inline';
 import InboxChatView from '@/components/inbox/inbox-chat-view';
 import MeetingsColumn from '@/components/inbox/meetings-column';
 import OnboardingModal from '@/components/onboarding-modal';
-import { ArrowPathIcon, SparklesIcon, ClockIcon, Bars3Icon, QueueListIcon, ArchiveBoxArrowDownIcon, XMarkIcon, MagnifyingGlassIcon } from '@heroicons/react/24/outline';
+import { ArrowPathIcon, SparklesIcon, ClockIcon, Bars3Icon, QueueListIcon, ArchiveBoxArrowDownIcon, XMarkIcon, MagnifyingGlassIcon, PencilSquareIcon, CalendarIcon, FolderIcon, FolderOpenIcon, EnvelopeIcon } from '@heroicons/react/24/outline';
+import ComposePanel from '@/components/inbox/compose-panel';
 import { toast } from 'sonner';
 import type { CalendarEvent } from '@/lib/types/meetings';
 import type { InboxItem } from '@/lib/types/inbox';
 
-type ViewMode = 'chronological' | 'smart';
+type ViewMode = 'chronological' | 'smart' | 'browse';
 type Density = 'normal' | 'compact';
+
+interface FolderConnection {
+  connectionId: string;
+  provider: string;
+  folders: { id: string; name: string; isSystem: boolean }[];
+}
+
+interface FolderEmail {
+  id: string;
+  subject: string;
+  from: string;
+  fromName: string;
+  date: string;
+  snippet: string;
+}
 
 interface InboxPageClientProps {
   initialUser: any;
@@ -39,7 +55,6 @@ export function InboxPageClient({
   const [selectedItem, setSelectedItem] = useState<InboxItem | null>(null);
   const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
-  const [isCalendarOpen, setIsCalendarOpen] = useState(true);
   const [meetings, setMeetings] = useState<CalendarEvent[]>([]);
   const [meetingsLoading, setMeetingsLoading] = useState(true);
   const [viewMode, setViewMode] = useState<ViewMode>('chronological');
@@ -52,8 +67,27 @@ export function InboxPageClient({
   // Search state (client-side filter on left list)
   const [searchQuery, setSearchQuery] = useState('');
 
+  // Folder browser state
+  const [folderConnections, setFolderConnections] = useState<FolderConnection[]>([]);
+  const [folderConnectionsLoading, setFolderConnectionsLoading] = useState(false);
+  const [selectedFolderConn, setSelectedFolderConn] = useState<string | null>(null);
+  const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
+  const [folderEmails, setFolderEmails] = useState<FolderEmail[]>([]);
+  const [folderEmailsLoading, setFolderEmailsLoading] = useState(false);
+
+  // Right panel + compose state
+  const [rightPanel, setRightPanel] = useState<'calendar' | 'chat' | null>('calendar');
+  const [composeMode, setComposeMode] = useState(false);
+  const [composeDraft, setComposeDraft] = useState({ to: '', cc: '', subject: '', body: '' });
+  // AI-drafted reply flow
+  const [pendingReplyDraft, setPendingReplyDraft] = useState<string | null>(null);
+  const [replyIsOpen, setReplyIsOpen] = useState(false);
+  const [replyBody, setReplyBody] = useState('');
+  const autoFiredReplyRef = useRef(false);
+  // Email context chip
+  const [chipDismissed, setChipDismissed] = useState(false);
+
   // Chat / Ask state
-  const [isChatOpen, setIsChatOpen] = useState(false);
   const [chatInput, setChatInput] = useState('');
   const [chatHistory, setChatHistory] = useState<Array<{ role: 'user' | 'assistant'; content: string }>>([]);
   const [chatStreaming, setChatStreaming] = useState(false);
@@ -77,7 +111,32 @@ export function InboxPageClient({
 
   const handleViewMode = (mode: ViewMode) => {
     setViewMode(mode);
-    localStorage.setItem('inboxViewMode', mode);
+    if (mode !== 'browse') localStorage.setItem('inboxViewMode', mode);
+    if (mode === 'browse' && folderConnections.length === 0 && !folderConnectionsLoading) {
+      setFolderConnectionsLoading(true);
+      fetch('/api/inbox/folders')
+        .then(r => r.json())
+        .then(data => {
+          setFolderConnections(data.connections ?? []);
+          setFolderConnectionsLoading(false);
+        })
+        .catch(() => setFolderConnectionsLoading(false));
+    }
+  };
+
+  const handleSelectFolder = (connectionId: string, folderId: string) => {
+    if (selectedFolderConn === connectionId && selectedFolderId === folderId) return;
+    setSelectedFolderConn(connectionId);
+    setSelectedFolderId(folderId);
+    setFolderEmails([]);
+    setFolderEmailsLoading(true);
+    fetch(`/api/inbox/folder-emails?connectionId=${encodeURIComponent(connectionId)}&folderId=${encodeURIComponent(folderId)}`)
+      .then(r => r.json())
+      .then(data => {
+        setFolderEmails(data.emails ?? []);
+        setFolderEmailsLoading(false);
+      })
+      .catch(() => setFolderEmailsLoading(false));
   };
 
   const handleDensity = (d: Density) => {
@@ -214,7 +273,7 @@ export function InboxPageClient({
     return () => clearTimeout(timeoutId);
   }, [user.id, hasConnection]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const preparedItems = inboxItems.filter((item: any) => item.visual_section === 'prepared');
+  const preparedItems = inboxItems.filter((item: any) => ['reply', 'decision', 'meeting', 'review'].includes(item.item_type));
   const meetingAssistantItems = inboxItems.filter((item: any) => item.source === 'meeting');
 
   const filteredItems = useMemo(() => {
@@ -231,14 +290,8 @@ export function InboxPageClient({
     });
   }, [inboxItems, searchQuery]);
 
-  const handleItemConfirmed = (ids: string[], action: 'confirm_as_mine' | 'not_my_task') => {
-    setInboxItems(prev => {
-      if (action === 'confirm_as_mine') {
-        return prev.map(i => ids.includes(i.id) ? { ...i, visual_section: 'prepared' } : i);
-      } else {
-        return prev.filter(i => !ids.includes(i.id));
-      }
-    });
+  const handleItemConfirmed = (ids: string[], _action: 'confirm_as_mine' | 'not_my_task') => {
+    setInboxItems(prev => prev.filter(i => !ids.includes(i.id)));
     setSelectedItem(prev => {
       if (!prev) return null;
       if (ids.includes(prev.id)) return null;
@@ -300,8 +353,25 @@ export function InboxPageClient({
 
   const handleSelectItem = (item: InboxItem) => {
     setSelectedItem(item);
-    if (isChatOpen) closeChat();
+    setComposeMode(false);
+    setChipDismissed(false);
+    setRightPanel('chat');
+    setPendingReplyDraft(null);
+    setReplyBody('');
+    setReplyIsOpen(false);
+    autoFiredReplyRef.current = false;
   };
+
+  const emailChipActive = !!selectedItem && !chipDismissed && rightPanel === 'chat' && !composeMode;
+  const emailChipData = selectedItem ? {
+    subject: (selectedItem as any).source_data?.subject,
+    from: (selectedItem as any).source_data?.from_address || (selectedItem as any).source_data?.from,
+    fromName: (selectedItem as any).source_data?.from_name,
+    summary: (selectedItem as any).source_data?.summary,
+    keyPoints: (selectedItem as any).source_data?.keyPoints,
+    body: (selectedItem as any).source_data?.body,
+    itemType: (selectedItem as any).item_type ?? null,
+  } : null;
 
   const handleChatAction = useCallback(async (type: string, itemId: string) => {
     if (type === 'archive') {
@@ -319,16 +389,47 @@ export function InboxPageClient({
   }, [inboxItems]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const openChat = () => {
-    setIsChatOpen(true);
+    setRightPanel('chat');
     setTimeout(() => chatInputRef.current?.focus(), 50);
   };
 
   const closeChat = () => {
-    setIsChatOpen(false);
+    setRightPanel('calendar');
     setChatInput('');
     setChatHistory([]);
     setAttachedFiles([]);
+    setComposeMode(false);
+    setComposeDraft({ to: '', cc: '', subject: '', body: '' });
   };
+
+  const handleOpenCompose = useCallback((draft: Partial<{ to: string; cc: string; subject: string; body: string }>) => {
+    setComposeDraft(prev => ({ ...prev, ...draft }));
+    setComposeMode(true);
+    setRightPanel('chat');
+  }, []);
+
+  const handleUseAsReply = useCallback((body: string) => {
+    setPendingReplyDraft(body);
+  }, []);
+
+  const handleReplyOpenChange = useCallback((open: boolean) => {
+    setReplyIsOpen(open);
+    if (open) setRightPanel('chat');
+  }, []);
+
+  const handleUpdateReplyDraft = useCallback((body: string) => {
+    setReplyBody(body);
+    setReplyIsOpen(true);
+  }, []);
+
+  // Auto-fire "Draft a reply" the first time reply box opens for an email
+  useEffect(() => {
+    if (replyIsOpen && !autoFiredReplyRef.current && chatHistory.length === 0) {
+      autoFiredReplyRef.current = true;
+      const timer = setTimeout(() => sendChatMessage('Draft a reply to this email'), 150);
+      return () => clearTimeout(timer);
+    }
+  }, [replyIsOpen]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleFileAttach = useCallback(async (file: File) => {
     setIsAttaching(true);
@@ -365,7 +466,11 @@ export function InboxPageClient({
           message: userMessage,
           history: chatHistory,
           sources: chatSources,
+          mode: composeMode ? 'compose' : replyIsOpen ? 'reply' : 'inbox',
+          ...(composeMode && composeDraft.body ? { composeDraft } : {}),
+          ...(replyIsOpen ? { replyDraft: replyBody } : {}),
           ...(fileContext ? { fileContext } : {}),
+          ...(emailChipActive && emailChipData ? { emailContext: emailChipData } : {}),
         }),
       });
 
@@ -384,6 +489,24 @@ export function InboxPageClient({
       }
 
       setChatHistory(prev => [...prev, { role: 'assistant', content: full }]);
+
+      // Extract REPLY_DRAFT token — open reply box if not already open, else update in place
+      try {
+        const m = full.match(/REPLY_DRAFT:(\{[\s\S]+?\})/);
+        if (m) {
+          const parsed = JSON.parse(m[1]);
+          if (parsed?.body) {
+            if (replyIsOpen) {
+              // Box already open — just update the body
+              setReplyBody(parsed.body);
+            } else {
+              // Box not open — use pendingReplyDraft to trigger WorkDetailInline's open+fill effect
+              setPendingReplyDraft(parsed.body);
+              autoFiredReplyRef.current = true;
+            }
+          }
+        }
+      } catch {}
     } catch {
       setChatHistory(prev => [...prev, { role: 'assistant', content: 'Something went wrong. Please try again.' }]);
     } finally {
@@ -391,7 +514,7 @@ export function InboxPageClient({
       setStreamingContent('');
       setAttachedFiles([]);
     }
-  }, [chatHistory, chatStreaming, chatSources, attachedFiles]);
+  }, [chatHistory, chatStreaming, chatSources, attachedFiles, composeMode, composeDraft, replyIsOpen, replyBody, emailChipActive, emailChipData]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="flex h-screen bg-white overflow-hidden">
@@ -436,42 +559,37 @@ export function InboxPageClient({
             <div className="w-[272px] flex-shrink-0 border-r border-neutral-200 flex flex-col bg-white">
 
               {/* View + density toggles */}
-              <div className="flex-shrink-0 h-10 flex items-center justify-between px-2 border-b border-neutral-100">
-                {/* View mode */}
-                <div className="flex items-center gap-1">
-                  <button
-                    onClick={() => handleViewMode('chronological')}
-                    className={`flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold transition-colors ${
-                      viewMode === 'chronological'
-                        ? 'bg-indigo-600 text-white'
-                        : 'text-neutral-400 hover:text-neutral-700'
-                    }`}
-                  >
-                    <ClockIcon className="w-3 h-3" />
-                    Latest
-                  </button>
-                  <button
-                    onClick={() => handleViewMode('smart')}
-                    className={`flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold transition-colors ${
-                      viewMode === 'smart'
-                        ? 'bg-indigo-600 text-white'
-                        : 'text-neutral-400 hover:text-neutral-700'
-                    }`}
-                  >
-                    <SparklesIcon className="w-3 h-3" />
-                    Smart
-                  </button>
+              <div className="flex-shrink-0 flex items-center justify-between pl-3 pr-1.5 border-b border-neutral-100 h-10">
+                {/* Segmented view tabs */}
+                <div className="flex items-center h-full gap-0.5">
+                  {(['chronological', 'smart', 'browse'] as const).map((key) => {
+                    const labels = { chronological: 'Latest', smart: 'Smart', browse: 'Browse' };
+                    return (
+                      <button
+                        key={key}
+                        onClick={() => handleViewMode(key)}
+                        className={`relative px-2.5 h-full text-[12px] font-medium transition-colors ${
+                          viewMode === key
+                            ? 'text-indigo-600'
+                            : 'text-neutral-400 hover:text-neutral-600'
+                        }`}
+                      >
+                        {labels[key]}
+                        {viewMode === key && (
+                          <span className="absolute bottom-0 left-0 right-0 h-[2px] bg-indigo-500" />
+                        )}
+                      </button>
+                    );
+                  })}
                 </div>
 
-                {/* Density toggle */}
+                {/* Density + sync */}
                 <div className="flex items-center gap-0.5">
                   <button
                     onClick={() => handleDensity('normal')}
                     title="Normal"
-                    className={`p-1 rounded transition-colors ${
-                      density === 'normal'
-                        ? 'text-indigo-600'
-                        : 'text-neutral-300 hover:text-neutral-500'
+                    className={`p-1.5 transition-colors ${
+                      density === 'normal' ? 'text-neutral-500' : 'text-neutral-300 hover:text-neutral-500'
                     }`}
                   >
                     <QueueListIcon className="w-3.5 h-3.5" />
@@ -479,13 +597,23 @@ export function InboxPageClient({
                   <button
                     onClick={() => handleDensity('compact')}
                     title="Compact"
-                    className={`p-1 rounded transition-colors ${
-                      density === 'compact'
-                        ? 'text-indigo-600'
-                        : 'text-neutral-300 hover:text-neutral-500'
+                    className={`p-1.5 transition-colors ${
+                      density === 'compact' ? 'text-neutral-500' : 'text-neutral-300 hover:text-neutral-500'
                     }`}
                   >
                     <Bars3Icon className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (isSyncing) return;
+                      setIsSyncing(true);
+                      fetch('/api/connections/sync', { method: 'POST' }).catch(() => setIsSyncing(false));
+                    }}
+                    disabled={isSyncing}
+                    title={isSyncing ? 'Syncing…' : 'Sync inbox'}
+                    className="p-1.5 transition-colors text-neutral-300 hover:text-neutral-500 disabled:opacity-50"
+                  >
+                    <ArrowPathIcon className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
                   </button>
                 </div>
               </div>
@@ -557,7 +685,85 @@ export function InboxPageClient({
                 </div>
               )}
 
-              {/* Email list */}
+              {/* Email list / folder browser */}
+              {viewMode === 'browse' ? (
+                <div className="flex-1 flex min-h-0 overflow-hidden">
+                  {/* Folder sidebar */}
+                  <div className="w-[110px] flex-shrink-0 border-r border-neutral-100 overflow-y-auto bg-neutral-50">
+                    {folderConnectionsLoading ? (
+                      <div className="flex items-center justify-center py-8">
+                        <div className="w-4 h-4 border-2 border-neutral-300 border-t-transparent rounded-full animate-spin" />
+                      </div>
+                    ) : folderConnections.length === 0 ? (
+                      <p className="text-[11px] text-neutral-400 px-3 py-4">No folders found</p>
+                    ) : (
+                      folderConnections.map(conn => (
+                        <div key={conn.connectionId}>
+                          {folderConnections.length > 1 && (
+                            <div className="px-2 pt-3 pb-1">
+                              <span className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wide">
+                                {conn.provider}
+                              </span>
+                            </div>
+                          )}
+                          {conn.folders.map(folder => (
+                            <button
+                              key={folder.id}
+                              onClick={() => handleSelectFolder(conn.connectionId, folder.id)}
+                              className={`w-full flex items-center gap-1.5 px-2 py-1.5 text-left text-[11px] transition-colors ${
+                                selectedFolderConn === conn.connectionId && selectedFolderId === folder.id
+                                  ? 'bg-indigo-50 text-indigo-700 font-semibold'
+                                  : 'text-neutral-600 hover:bg-neutral-100'
+                              }`}
+                            >
+                              {selectedFolderConn === conn.connectionId && selectedFolderId === folder.id
+                                ? <FolderOpenIcon className="w-3 h-3 flex-shrink-0" />
+                                : <FolderIcon className="w-3 h-3 flex-shrink-0" />
+                              }
+                              <span className="truncate">{folder.name}</span>
+                            </button>
+                          ))}
+                        </div>
+                      ))
+                    )}
+                  </div>
+
+                  {/* Folder email list */}
+                  <div className="flex-1 overflow-y-auto">
+                    {!selectedFolderId ? (
+                      <div className="flex flex-col items-center justify-center h-full py-12 px-3 text-center">
+                        <FolderIcon className="w-6 h-6 text-neutral-300 mb-2" />
+                        <p className="text-[11px] text-neutral-400">Select a folder</p>
+                      </div>
+                    ) : folderEmailsLoading ? (
+                      <div className="flex items-center justify-center py-12">
+                        <div className="w-4 h-4 border-2 border-neutral-300 border-t-transparent rounded-full animate-spin" />
+                      </div>
+                    ) : folderEmails.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center h-full py-12 px-3 text-center">
+                        <EnvelopeIcon className="w-6 h-6 text-neutral-300 mb-2" />
+                        <p className="text-[11px] text-neutral-400">No emails</p>
+                      </div>
+                    ) : (
+                      folderEmails.map(email => (
+                        <div
+                          key={email.id}
+                          className="px-2 py-2 border-b border-neutral-100 hover:bg-neutral-50 cursor-default"
+                        >
+                          <p className="text-[11px] font-semibold text-neutral-800 truncate">
+                            {email.fromName || email.from}
+                          </p>
+                          <p className="text-[11px] text-neutral-600 truncate">{email.subject}</p>
+                          <p className="text-[10px] text-neutral-400 truncate mt-0.5">{email.snippet}</p>
+                          <p className="text-[10px] text-neutral-300 mt-0.5">
+                            {email.date ? new Date(email.date).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true }) : ''}
+                          </p>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              ) : (
               <div className="flex-1 overflow-y-auto">
                 {inboxItems.length === 0 && !isSyncing ? (
                   <div className="flex flex-col items-center justify-center h-full py-16 px-4 text-center">
@@ -591,11 +797,12 @@ export function InboxPageClient({
                   />
                 )}
               </div>
+              )}
             </div>
 
-            {/* Middle: search header + detail/chat */}
+            {/* Middle: search header + detail/compose */}
             <div className="flex-1 min-w-0 overflow-hidden flex flex-col border-r border-neutral-200">
-              {/* Middle header — search + ask */}
+              {/* Middle header — search + ask + compose */}
               <div className="flex-shrink-0 h-10 flex items-center gap-1 px-3 border-b border-neutral-200 bg-white">
                 {/* Search */}
                 <MagnifyingGlassIcon className="w-3.5 h-3.5 text-neutral-400 flex-shrink-0" />
@@ -627,10 +834,17 @@ export function InboxPageClient({
 
                 {/* Ask AI toggle */}
                 <button
-                  onClick={() => isChatOpen ? closeChat() : openChat()}
+                  onClick={() => {
+                    if (rightPanel === 'chat' && !composeMode) {
+                      setRightPanel('calendar');
+                    } else {
+                      setComposeMode(false);
+                      openChat();
+                    }
+                  }}
                   title="Ask AI"
                   className={`flex-shrink-0 flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold border transition-colors ${
-                    isChatOpen
+                    rightPanel === 'chat' && !composeMode
                       ? 'bg-indigo-600 border-indigo-600 text-white'
                       : 'border-indigo-400 text-indigo-500 hover:bg-indigo-50'
                   }`}
@@ -638,15 +852,98 @@ export function InboxPageClient({
                   <SparklesIcon className="w-3 h-3" />
                   Ask AI
                 </button>
+
+                {/* Compose button */}
+                <button
+                  onClick={() => {
+                    setComposeMode(true);
+                    setRightPanel('chat');
+                    setTimeout(() => chatInputRef.current?.focus(), 50);
+                  }}
+                  title="Compose new email"
+                  className={`flex-shrink-0 flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold border transition-colors ${
+                    composeMode
+                      ? 'bg-indigo-600 border-indigo-600 text-white'
+                      : 'border-neutral-300 text-neutral-500 hover:bg-neutral-50'
+                  }`}
+                >
+                  <PencilSquareIcon className="w-3 h-3" />
+                  Compose
+                </button>
+
+                {/* Calendar toggle */}
+                <button
+                  onClick={() => setRightPanel(rightPanel === 'calendar' ? null : 'calendar')}
+                  title="Toggle calendar"
+                  className={`flex-shrink-0 flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold border transition-colors ${
+                    rightPanel === 'calendar'
+                      ? 'bg-neutral-100 border-neutral-300 text-neutral-700'
+                      : 'border-neutral-300 text-neutral-500 hover:bg-neutral-50'
+                  }`}
+                >
+                  <CalendarIcon className="w-3 h-3" />
+                  Calendar
+                </button>
               </div>
 
-              {isChatOpen ? (
+              {composeMode ? (
+                <ComposePanel
+                  draft={composeDraft}
+                  onChange={(fields) => setComposeDraft(prev => ({ ...prev, ...fields }))}
+                  onDiscard={closeChat}
+                  onSent={closeChat}
+                />
+              ) : (
+                <div className="flex-1 min-h-0">
+                  <WorkDetailInline
+                    key={selectedItem?.id ?? 'empty'}
+                    item={selectedItem}
+                    onItemConfirmed={handleItemConfirmed}
+                    onRefreshMeetings={fetchMeetings}
+                    pendingReplyDraft={pendingReplyDraft}
+                    onReplySent={(itemId) => {
+                      setPendingReplyDraft(null);
+                      setReplyBody('');
+                      setReplyIsOpen(false);
+                      handleItemConfirmed([itemId], 'not_my_task');
+                    }}
+                    replyBody={replyBody}
+                    onReplyBodyChange={setReplyBody}
+                    onReplyOpenChange={handleReplyOpenChange}
+                  />
+                </div>
+              )}
+            </div>
+
+            {/* Right: calendar OR chat */}
+            {rightPanel === 'calendar' && (
+              <MeetingsColumn
+                isOpen={true}
+                onToggle={() => setRightPanel(null)}
+                meetings={meetings}
+                loading={meetingsLoading}
+                userEmail={user?.email || ''}
+                onRefresh={fetchMeetings}
+              />
+            )}
+            {rightPanel === 'chat' && (
+              <div className="w-[340px] flex-shrink-0 border-l border-neutral-200 flex flex-col">
                 <InboxChatView
+                  composeDraft={composeMode ? composeDraft : undefined}
+                  onUpdateComposeDraft={composeMode
+                    ? (fields) => setComposeDraft(prev => ({ ...prev, ...fields }))
+                    : undefined}
+                  onOpenCompose={handleOpenCompose}
+                  onUseAsReply={handleUseAsReply}
+                  emailChipActive={emailChipActive}
+                  emailChipData={emailChipData ?? undefined}
+                  onDismissEmailChip={() => setChipDismissed(true)}
+                  onClose={closeChat}
                   history={chatHistory}
                   streamingContent={streamingContent}
                   isStreaming={chatStreaming}
                   inboxItems={inboxItems}
-                  onSelectItem={item => { setSelectedItem(item); closeChat(); }}
+                  onSelectItem={item => { setSelectedItem(item); setComposeMode(false); }}
                   onSendMessage={sendChatMessage}
                   onAction={handleChatAction}
                   chatInput={chatInput}
@@ -658,23 +955,12 @@ export function InboxPageClient({
                   onFileAttach={handleFileAttach}
                   onRemoveFile={(filename) => setAttachedFiles(prev => prev.filter(f => f.filename !== filename))}
                   isAttaching={isAttaching}
+                  mode={composeMode ? 'compose' : replyIsOpen ? 'reply' : 'inbox'}
+                  replyDraft={replyIsOpen ? replyBody : undefined}
+                  onUpdateReplyDraft={handleUpdateReplyDraft}
                 />
-              ) : (
-                <div className="flex-1 min-h-0">
-                  <WorkDetailInline key={selectedItem?.id ?? 'empty'} item={selectedItem} onItemConfirmed={handleItemConfirmed} onRefreshMeetings={fetchMeetings} />
-                </div>
-              )}
-            </div>
-
-            {/* Right: calendar column */}
-            <MeetingsColumn
-              isOpen={isCalendarOpen}
-              onToggle={() => setIsCalendarOpen(o => !o)}
-              meetings={meetings}
-              loading={meetingsLoading}
-              userEmail={user?.email || ''}
-              onRefresh={fetchMeetings}
-            />
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -685,6 +971,7 @@ export function InboxPageClient({
         userEmail={user?.email}
         userFullName={initialUserFullName}
       />
+
     </div>
   );
 }

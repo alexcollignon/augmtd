@@ -1,20 +1,20 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { toast } from 'sonner';
 import {
   EnvelopeIcon,
   CalendarIcon,
   ArrowTopRightOnSquareIcon,
+  ArrowUturnLeftIcon,
+  PaperAirplaneIcon,
   ChevronRightIcon,
   CheckIcon,
-  PaperAirplaneIcon,
   VideoCameraIcon,
   MapPinIcon,
   PaperClipIcon,
   ArchiveBoxArrowDownIcon,
   FolderArrowDownIcon,
-  PencilIcon,
   XMarkIcon,
   SparklesIcon,
   BookmarkIcon,
@@ -22,27 +22,43 @@ import {
   QuestionMarkCircleIcon,
 } from '@heroicons/react/24/outline';
 import type { InboxItem } from '@/lib/types/inbox';
-import { isExecutable, needsConfirmation } from '@/lib/types/inbox';
-import { CheckCircleIcon } from '@heroicons/react/24/outline';
-import DraftPreviewModal from './draft-preview-modal';
+import { isExecutable } from '@/lib/types/inbox';
+
 import RsvpButtons from './rsvp-buttons';
+import KbFilePicker from './kb-file-picker';
 import { createClient } from '@/lib/supabase/client';
 import type { SavedWorkflow } from '@/lib/types/work-blueprints';
+
+interface PendingAttachment {
+  filename: string;
+  content: string; // base64
+  mimeType: string;
+}
 
 interface WorkDetailInlineProps {
   item: InboxItem | null;
   onItemConfirmed?: (ids: string[], action: 'confirm_as_mine' | 'not_my_task') => void;
   onRefreshMeetings?: () => void;
+  pendingReplyDraft?: string | null;
+  onReplySent?: (itemId: string) => void;
+  replyBody: string;
+  onReplyBodyChange: (body: string) => void;
+  onReplyOpenChange?: (open: boolean) => void;
 }
 
-export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeetings }: WorkDetailInlineProps) {
+export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeetings, pendingReplyDraft, onReplySent, replyBody, onReplyBodyChange, onReplyOpenChange }: WorkDetailInlineProps) {
   const [isOpeningWorkflow, setIsOpeningWorkflow] = useState(false);
-  const [isSending, setIsSending] = useState(false);
-  const [isCompleting, setIsCompleting] = useState(false);
-  const [showDraftPreview, setShowDraftPreview] = useState(false);
   const [expandedEmails, setExpandedEmails] = useState<Record<number, boolean>>({});
   const [downloadingFile, setDownloadingFile] = useState<string | null>(null);
-  const [isConfirming, setIsConfirming] = useState(false);
+  const [replyOpen, setReplyOpen] = useState(false);
+  const [isSendingReply, setIsSendingReply] = useState(false);
+  const [replyAttachments, setReplyAttachments] = useState<PendingAttachment[]>([]);
+  const [showAttachMenu, setShowAttachMenu] = useState(false);
+  const [kbPickerOpen, setKbPickerOpen] = useState(false);
+  const replyBoxRef = useRef<HTMLDivElement>(null);
+  const replyTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const attachFileInputRef = useRef<HTMLInputElement>(null);
+
   const [isArchiving, setIsArchiving] = useState(false);
   const [archiveConfirmPending, setArchiveConfirmPending] = useState(false);
   const [showMoveMenu, setShowMoveMenu] = useState(false);
@@ -59,12 +75,10 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
   const rootRef = useRef<HTMLDivElement>(null);
   const [linkedCalEvent, setLinkedCalEvent] = useState<{ id: string; attendees: any[] } | null>(null);
   const [rsvpLoading, setRsvpLoading] = useState<string | null>(null); // which response is loading
-  const [pendingRsvp, setPendingRsvp] = useState<'accepted' | 'tentative' | 'declined' | null>(null); // awaiting send confirmation
 
   // Look up matching calendar event — by time range first, then by title from invite subject
   useEffect(() => {
     setLinkedCalEvent(null);
-    setPendingRsvp(null);
     if (!item) return;
 
     const lookup = async () => {
@@ -139,12 +153,33 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
   const recipientContext = item.recipient_context;
   const executable = isExecutable(item);
 
-  // Reset folder state when item changes
+  // Reset folder + reply state when item changes
   useEffect(() => {
     setShowMoveMenu(false);
     setFolders(null);
     setExpandedEmails({});
+    setReplyOpen(false);
+    onReplyBodyChange('');
+    onReplyOpenChange?.(false);
   }, [item?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Open + fill reply box when a pending draft arrives from chat (Use as reply path)
+  useEffect(() => {
+    if (pendingReplyDraft != null) {
+      onReplyBodyChange(pendingReplyDraft);
+      setReplyOpen(true);
+      onReplyOpenChange?.(true);
+      setTimeout(() => replyBoxRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 50);
+    }
+  }, [pendingReplyDraft]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Auto-resize reply textarea as content grows
+  useEffect(() => {
+    const el = replyTextareaRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 400)}px`;
+  }, [replyBody]);
 
   // Close move menu on outside click
   useEffect(() => {
@@ -219,43 +254,9 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
     }
   };
 
-  const handleSendReply = async (customMessage?: string) => {
-    setIsSending(true);
-    try {
-      const res = await fetch(`/api/inbox/${item.id}/send-reply`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ customMessage }),
-      });
-      if (res.ok) {
-        toast.success('Reply sent');
-        onItemConfirmed?.([item.id], 'not_my_task');
-      } else {
-        toast.error('Failed to send reply. Please try again.');
-      }
-    } catch {
-      toast.error('Failed to send reply. Please try again.');
-    } finally {
-      setIsSending(false);
-    }
-  };
-
-  // RSVP + optionally send the AI draft if its intent matches the chosen response.
-  // E.g. user clicks Decline → RSVP decline + send the prepared decline email.
-  // If the draft was written for a different intent, we RSVP but skip the email.
-  const inferDraftIntent = (): 'accepted' | 'declined' | null => {
-    const title = item.work_title?.toLowerCase() ?? '';
-    if (title.includes('declin') || title.includes('recus') || title.includes('reject')) return 'declined';
-    if (title.includes('accept') || title.includes('confirm') || title.includes('attend') || title.includes('aceitar')) return 'accepted';
-    return null;
-  };
-
-  const handleRsvpWithReply = async (response: 'accepted' | 'tentative' | 'declined', sendEmail: boolean) => {
+  const handleRsvpWithReply = async (response: 'accepted' | 'tentative' | 'declined', _sendEmail: boolean) => {
     if (!linkedCalEvent || rsvpLoading) return;
-    setPendingRsvp(null);
     setRsvpLoading(response);
-
-    // 1. RSVP (always)
     try {
       const res = await fetch(`/api/meetings/${linkedCalEvent.id}/rsvp`, {
         method: 'POST',
@@ -273,64 +274,61 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
       toast.error('Failed to update RSVP');
       return;
     }
-
-    // 2. Send draft if requested
-    let emailSent = false;
-    if (sendEmail && sourceData?.draft) {
-      try {
-        const res = await fetch(`/api/inbox/${item.id}/send-reply`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({}),
-        });
-        emailSent = res.ok;
-      } catch {
-        // Email failure is non-fatal — RSVP already succeeded
-      }
-    }
-
     const labels: Record<string, string> = { accepted: 'Meeting accepted', tentative: 'Marked as maybe', declined: 'Meeting declined' };
-    toast.success(emailSent ? `${labels[response]} · Reply sent` : (labels[response] ?? 'RSVP updated'));
+    toast.success(labels[response] ?? 'RSVP updated');
     onRefreshMeetings?.();
     if (item) onItemConfirmed?.([item.id], 'not_my_task');
   };
 
-  // Called from DraftPreviewModal when user edits and picks an RSVP response
-  const handleSendWithRsvp = async (customMessage: string, rsvp: 'accepted' | 'tentative' | 'declined') => {
-    if (!linkedCalEvent) return;
-    // Send email first
-    await handleSendReply(customMessage || undefined);
-    // Then RSVP (best-effort, non-blocking since send already happened)
-    try {
-      await fetch(`/api/meetings/${linkedCalEvent.id}/rsvp`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ response: rsvp }),
-      });
-      onRefreshMeetings?.();
-    } catch {
-      // RSVP failure is non-fatal
-    }
-  };
+  const handleLocalFileAttach = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    const results = await Promise.all(files.map(async (file) => {
+      const arrayBuffer = await file.arrayBuffer();
+      const bytes = new Uint8Array(arrayBuffer);
+      let binary = '';
+      for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+      const content = btoa(binary);
+      return { filename: file.name, content, mimeType: file.type || 'application/octet-stream' };
+    }));
+    setReplyAttachments(prev => [...prev, ...results]);
+    e.target.value = '';
+  }, []);
 
-  const handleComplete = async () => {
-    setIsCompleting(true);
+  const handleKbAttach = useCallback(async (selected: { id: string; filename: string }[]) => {
+    setKbPickerOpen(false);
+    const results = await Promise.all(selected.map(async ({ id, filename }) => {
+      try {
+        const res = await fetch(`/api/kb/attachment?fileId=${id}`);
+        if (!res.ok) { toast.error(`Failed to load ${filename}`); return null; }
+        return await res.json() as PendingAttachment;
+      } catch {
+        toast.error(`Failed to load ${filename}`);
+        return null;
+      }
+    }));
+    setReplyAttachments(prev => [...prev, ...(results.filter(Boolean) as PendingAttachment[])]);
+  }, []);
+
+  const handleSendReply = async () => {
+    if (!item || !replyBody.trim()) return;
+    setIsSendingReply(true);
     try {
-      const response = await fetch(`/api/inbox/${item.id}/complete`, {
+      const res = await fetch(`/api/inbox/${item.id}/send-reply`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'reviewed' }),
+        body: JSON.stringify({ customMessage: replyBody, attachments: replyAttachments }),
       });
-      if (response.ok) {
-        toast.success('Marked as complete');
-        onItemConfirmed?.([item.id], 'not_my_task');
-      } else {
-        toast.error('Failed to complete item. Please try again.');
-      }
+      if (!res.ok) throw new Error('Send failed');
+      toast.success('Reply sent');
+      setReplyOpen(false);
+      onReplyOpenChange?.(false);
+      onReplyBodyChange('');
+      setReplyAttachments([]);
+      onReplySent?.(item.id);
     } catch {
-      toast.error('Failed to complete item. Please try again.');
+      toast.error('Could not send reply');
     } finally {
-      setIsCompleting(false);
+      setIsSendingReply(false);
     }
   };
 
@@ -372,27 +370,6 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
     }
   };
 
-  const confirmItem = async (id: string, confirmed: boolean) => {
-    const action = confirmed ? 'confirm_as_mine' : 'not_my_task';
-    await fetch(`/api/inbox/${id}/confirm`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action }),
-    });
-  };
-
-  const handleConfirmation = async (confirmed: boolean) => {
-    setIsConfirming(true);
-    const action = confirmed ? 'confirm_as_mine' : 'not_my_task';
-    try {
-      await confirmItem(item.id, confirmed);
-      onItemConfirmed?.([item.id], action);
-    } catch {
-      alert('Failed to update. Please try again.');
-    } finally {
-      setIsConfirming(false);
-    }
-  };
 
   const handleArchiveSource = async () => {
     setIsArchiving(true);
@@ -493,43 +470,6 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
       {/* Scrollable content */}
       <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
 
-        {/* Confirmation banner for suggested items */}
-        {needsConfirmation(item) && (
-          <div className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200">
-            <CheckCircleIcon className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
-            <div className="flex-1 min-w-0">
-              <p className="text-[13px] font-semibold text-amber-900">AI suggested this work item</p>
-              <p className="text-[12px] text-amber-700 mt-0.5">Confirm if relevant to you, or dismiss.</p>
-              <div className="flex gap-2 mt-3">
-                <button
-                  onClick={() => handleConfirmation(true)}
-                  disabled={isConfirming}
-                  className="px-4 py-1.5 text-[12px] font-semibold bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-50 transition-colors"
-                >
-                  {isConfirming ? 'Saving...' : "Yes, it's mine"}
-                </button>
-                <button
-                  onClick={() => handleConfirmation(false)}
-                  disabled={isConfirming}
-                  className="px-4 py-1.5 text-[12px] font-semibold bg-white text-amber-800 border border-amber-300 hover:bg-amber-50 disabled:opacity-50 transition-colors"
-                >
-                  Not mine
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Summary — what was prepared / what sender is requesting */}
-        {!executable && item.what_i_prepared && (
-          <div>
-            <h3 className="text-[11px] font-medium text-neutral-400 uppercase tracking-wide mb-2">
-              Summary
-            </h3>
-            <p className="text-[13px] text-neutral-800 leading-relaxed">{item.what_i_prepared}</p>
-          </div>
-        )}
-
         {/* What will be created — compact inline for executable */}
         {executable && item.execution_plan && (
           <div className="space-y-1.5">
@@ -592,86 +532,117 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
           </div>
         )}
 
-        {/* Key points */}
-        {sourceData?.keyPoints && sourceData.keyPoints.length > 0 && (
-          <div>
-            <h3 className="text-[11px] font-medium text-neutral-400 uppercase tracking-wide mb-2">
-              Key Points
-            </h3>
-            <ul className="space-y-1.5">
-              {sourceData.keyPoints.map((point: string, i: number) => (
-                <li key={i} className="flex items-start text-[13px] text-neutral-700">
-                  <span className="text-indigo-500 mr-2 font-bold flex-shrink-0">·</span>
-                  <span>{point}</span>
-                </li>
-              ))}
-            </ul>
+        {/* Summary + Key Points — 2-column layout */}
+        {(!executable && item.what_i_prepared) || (sourceData?.keyPoints?.length > 0) ? (
+          <div className="grid grid-cols-2 gap-4">
+            {!executable && item.what_i_prepared && (
+              <div>
+                <h3 className="text-[11px] font-medium text-neutral-400 uppercase tracking-wide mb-2">
+                  Summary
+                </h3>
+                <p className="text-[13px] text-neutral-700 leading-relaxed">{item.what_i_prepared}</p>
+              </div>
+            )}
+            {sourceData?.keyPoints && sourceData.keyPoints.length > 0 && (
+              <div>
+                <h3 className="text-[11px] font-medium text-neutral-400 uppercase tracking-wide mb-2">
+                  Key Points
+                </h3>
+                <ul className="space-y-1.5">
+                  {sourceData.keyPoints.map((point: string, i: number) => (
+                    <li key={i} className="flex items-start text-[13px] text-neutral-700">
+                      <span className="text-indigo-500 mr-2 font-bold flex-shrink-0">·</span>
+                      <span>{point}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
-        )}
+        ) : null}
 
-        {/* Draft reply */}
-        {sourceData?.draft && (
-          <div>
-            <h3 className="text-[11px] font-medium text-neutral-400 uppercase tracking-wide mb-2">
-              Prepared Reply
-            </h3>
-            <div className="relative bg-neutral-50 border border-neutral-200 p-4">
-              <div className="absolute left-0 top-0 bottom-0 w-[2px] bg-indigo-400" />
-              <p className="pl-3 text-[13px] text-neutral-800 leading-relaxed whitespace-pre-wrap">
-                {typeof sourceData.draft === 'string' ? sourceData.draft : sourceData.draft.body}
-              </p>
+        {/* Latest email body */}
+        {sourceData?.body && (() => {
+          const raw = sourceData.body as string;
+          const isHtml = /<[a-z][\s\S]*>/i.test(raw);
+
+          // Sanitise HTML: strip head/style/script, extract body content
+          const sanitiseHtml = (html: string): string => {
+            let h = html;
+            h = h.replace(/<head[\s\S]*?<\/head>/gi, '');
+            h = h.replace(/<style[\s\S]*?<\/style>/gi, '');
+            h = h.replace(/<script[\s\S]*?<\/script>/gi, '');
+            const bodyMatch = h.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+            if (bodyMatch) h = bodyMatch[1];
+            return h.slice(0, 8000);
+          };
+
+          return (
+            <div className="border border-neutral-100 bg-white overflow-hidden">
+              <div className="flex items-baseline justify-between px-4 pt-3 pb-2 border-b border-neutral-100">
+                <span className="text-[13px] font-semibold text-neutral-800 truncate">
+                  {sourceData.from_name || sourceData.from || 'Unknown'}
+                </span>
+                {sourceData.received_at && (
+                  <span className="text-[11px] text-neutral-400 flex-shrink-0 ml-3">
+                    {new Date(sourceData.received_at).toLocaleString('en-US', {
+                      month: 'short', day: 'numeric',
+                      hour: 'numeric', minute: '2-digit', hour12: true,
+                    })}
+                  </span>
+                )}
+              </div>
+              {isHtml ? (
+                <div
+                  className="px-4 py-3 email-body-html overflow-x-auto max-h-[500px] overflow-y-auto"
+                  dangerouslySetInnerHTML={{ __html: sanitiseHtml(raw) }}
+                />
+              ) : (
+                <div className="px-4 py-3 text-[13px] text-neutral-700 leading-relaxed whitespace-pre-wrap break-words max-h-[500px] overflow-y-auto">
+                  {stripHtml(raw).trim()}
+                </div>
+              )}
             </div>
-          </div>
-        )}
+          );
+        })()}
 
-        {/* Thread history — expandable, latest auto-expanded, no snippet when collapsed */}
-        {sourceData?.thread_history && sourceData.thread_history.length > 0 && (
+        {/* Thread — older messages only, all collapsed */}
+        {sourceData?.thread_history && sourceData.thread_history.length > 1 && (
           <div>
             <h3 className="text-[11px] font-medium text-neutral-400 uppercase tracking-wide mb-2">
               Thread
             </h3>
-            <div className="space-y-1.5">
-              {sourceData.thread_history.slice(0, 5).map((msg: any, i: number) => {
-                const isLast = i === Math.min(sourceData.thread_history.length, 5) - 1;
-                const body = isLast && sourceData.body ? sourceData.body : msg.snippet;
+            <div className="space-y-1">
+              {sourceData.thread_history.slice(0, sourceData.thread_history.length - 1).slice(0, 8).map((msg: any, i: number) => {
                 const isExpanded = !!expandedEmails[i];
-
                 return (
-                  <div
-                    key={i}
-                    className={`border text-[12px] ${isLast ? 'border-neutral-200 bg-white' : 'border-neutral-100 bg-neutral-50/50'}`}
-                  >
+                  <div key={i} className="border border-neutral-100 bg-neutral-50/50 text-[12px]">
                     <button
                       onClick={() => setExpandedEmails(prev => ({ ...prev, [i]: !prev[i] }))}
                       className="w-full flex items-center justify-between px-3 py-2 text-left"
                     >
-                      <div className="flex items-center gap-2 min-w-0">
-                        <span className={`font-medium truncate ${isLast ? 'text-neutral-900' : 'text-neutral-600'}`}>
-                          {msg.from_name || msg.from}
-                        </span>
-                        {isLast && sourceData.thread_history.length > 1 && (
-                          <span className="flex-shrink-0 text-[10px] font-medium text-indigo-400 uppercase tracking-wide">
-                            Latest
-                          </span>
-                        )}
-                      </div>
+                      <span className="font-medium text-neutral-600 truncate">
+                        {msg.from_name || msg.from}
+                      </span>
                       <div className="flex items-center gap-2 flex-shrink-0 ml-2">
                         <span className="text-neutral-400">
-                          {new Date(msg.received_at).toLocaleDateString()}
+                          {new Date(msg.received_at).toLocaleString('en-US', {
+                            month: 'short', day: 'numeric',
+                            hour: 'numeric', minute: '2-digit', hour12: true,
+                          })}
                         </span>
                         <ChevronRightIcon
                           className={`w-3.5 h-3.5 text-neutral-400 transition-transform duration-150 ${isExpanded ? 'rotate-90' : ''}`}
                         />
                       </div>
                     </button>
-
                     {isExpanded && (
                       <div className="px-3 pb-3 border-t border-neutral-100 pt-2.5">
                         {msg.subject && msg.subject !== sourceData.subject && (
                           <p className="text-neutral-400 text-[11px] mb-2">{msg.subject}</p>
                         )}
                         <p className="text-[12px] text-neutral-700 leading-relaxed whitespace-pre-wrap">
-                          {body}
+                          {msg.snippet}
                         </p>
                       </div>
                     )}
@@ -707,6 +678,118 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
           </div>
         )}
 
+        {/* Inline reply composer */}
+        {replyOpen && item.source === 'email' && (
+          <div ref={replyBoxRef} className="border border-neutral-200 bg-white">
+            <div className="flex items-center justify-between px-4 pt-3 pb-2 border-b border-neutral-100">
+              <span className="text-[12px] font-semibold text-neutral-600 flex items-center gap-1.5">
+                <ArrowUturnLeftIcon className="w-3.5 h-3.5" />
+                Reply to {sourceData?.from_name || sourceData?.from || 'sender'}
+              </span>
+              <button
+                onClick={() => { setReplyOpen(false); onReplyOpenChange?.(false); onReplyBodyChange(''); }}
+                className="text-neutral-400 hover:text-neutral-600 transition-colors"
+              >
+                <XMarkIcon className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="px-4 pt-3 pb-2">
+              <textarea
+                ref={replyTextareaRef}
+                value={replyBody}
+                onChange={e => onReplyBodyChange(e.target.value)}
+                autoFocus
+                style={{ minHeight: '120px', maxHeight: '400px' }}
+                className="w-full text-[13px] text-neutral-800 border-0 outline-none resize-none placeholder:text-neutral-400 leading-relaxed overflow-y-auto"
+                placeholder="Write your reply…"
+              />
+            </div>
+            {/* Attachment chips */}
+            {replyAttachments.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 px-4 pb-2">
+                {replyAttachments.map((att, i) => (
+                  <span key={i} className="inline-flex items-center gap-1 px-2 py-0.5 bg-neutral-100 rounded text-[11px] text-neutral-700">
+                    <PaperClipIcon className="w-3 h-3 flex-shrink-0" />
+                    <span className="max-w-[140px] truncate">{att.filename}</span>
+                    <button
+                      onClick={() => setReplyAttachments(prev => prev.filter((_, j) => j !== i))}
+                      className="hover:text-red-500 transition-colors ml-0.5"
+                    >
+                      <XMarkIcon className="w-3 h-3" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+
+            {/* Hidden file input */}
+            <input
+              ref={attachFileInputRef}
+              type="file"
+              multiple
+              className="hidden"
+              onChange={handleLocalFileAttach}
+            />
+
+            <div className="flex items-center justify-between gap-2 px-4 pb-3">
+              {/* Attach button */}
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setShowAttachMenu(v => !v)}
+                  className="p-1.5 rounded text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100 transition-colors"
+                  title="Attach file"
+                >
+                  <PaperClipIcon className="w-4 h-4" />
+                </button>
+                {showAttachMenu && (
+                  <div className="absolute bottom-9 left-0 w-52 bg-white border border-neutral-200 rounded-lg shadow-lg z-10 py-1">
+                    <button
+                      onClick={() => { attachFileInputRef.current?.click(); setShowAttachMenu(false); }}
+                      className="w-full text-left px-3 py-2 text-[12px] text-neutral-700 hover:bg-neutral-50"
+                    >
+                      Upload a file
+                    </button>
+                    <button
+                      onClick={() => { setKbPickerOpen(true); setShowAttachMenu(false); }}
+                      className="w-full text-left px-3 py-2 text-[12px] text-neutral-700 hover:bg-neutral-50"
+                    >
+                      From knowledge base
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => { setReplyOpen(false); onReplyOpenChange?.(false); onReplyBodyChange(''); setReplyAttachments([]); }}
+                  disabled={isSendingReply}
+                  className="px-3 py-1.5 text-[12px] font-medium text-neutral-500 hover:text-neutral-700 disabled:opacity-50 transition-colors"
+                >
+                  Discard
+                </button>
+                <button
+                  onClick={handleSendReply}
+                  disabled={isSendingReply || !replyBody.trim()}
+                  className="inline-flex items-center gap-1.5 px-4 py-1.5 text-[12px] font-semibold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  {isSendingReply
+                    ? <><div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />Sending…</>
+                    : <><PaperAirplaneIcon className="w-3.5 h-3.5" />Send</>
+                  }
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* KB file picker modal */}
+        {kbPickerOpen && (
+          <KbFilePicker
+            onSelect={handleKbAttach}
+            onClose={() => setKbPickerOpen(false)}
+          />
+        )}
 
       </div>
 
@@ -718,79 +801,26 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
               {/* Calendar invite */}
               {linkedCalEvent && (
                 <div className="flex-1 flex items-center gap-2">
-                  {pendingRsvp ? (
-                    // Confirmation row — "Send reply too?"
-                    <>
-                      <span className="text-[12px] text-neutral-500 flex-shrink-0">Send reply too?</span>
+                  {(['accepted', 'tentative', 'declined'] as const).map((val) => {
+                    const labels = { accepted: 'Accept', tentative: 'Maybe', declined: 'Decline' };
+                    const icons = { accepted: CheckIcon, tentative: QuestionMarkCircleIcon, declined: XMarkIcon };
+                    const Icon = icons[val];
+                    const isThisLoading = rsvpLoading === val;
+                    return (
                       <button
-                        onClick={() => handleRsvpWithReply(pendingRsvp, true)}
-                        disabled={!!rsvpLoading}
-                        className="flex-1 inline-flex items-center justify-center gap-1.5 px-4 py-2.5 text-[13px] font-semibold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-60 disabled:cursor-not-allowed transition-all shadow-sm"
-                      >
-                        {rsvpLoading
-                          ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                          : <PaperAirplaneIcon className="w-4 h-4" />
-                        }
-                        {rsvpLoading ? 'Sending…' : `${({ accepted: 'Accept', tentative: 'Maybe', declined: 'Decline' })[pendingRsvp]} + Send`}
-                      </button>
-                      <button
-                        onClick={() => handleRsvpWithReply(pendingRsvp, false)}
+                        key={val}
+                        onClick={() => handleRsvpWithReply(val, false)}
                         disabled={!!rsvpLoading}
                         className="flex-1 inline-flex items-center justify-center gap-1.5 px-4 py-2.5 text-[13px] font-semibold border border-neutral-300 bg-white text-neutral-700 hover:border-neutral-400 hover:bg-neutral-50 disabled:opacity-60 disabled:cursor-not-allowed transition-all shadow-sm"
                       >
-                        Just {({ accepted: 'accept', tentative: 'maybe', declined: 'decline' })[pendingRsvp]}
+                        {isThisLoading
+                          ? <div className="w-4 h-4 border-2 border-neutral-400 border-t-transparent rounded-full animate-spin" />
+                          : <Icon className="w-4 h-4" />
+                        }
+                        {isThisLoading ? 'Sending…' : labels[val]}
                       </button>
-                      <button
-                        onClick={() => setPendingRsvp(null)}
-                        disabled={!!rsvpLoading}
-                        className="px-3 py-2.5 border border-neutral-300 bg-white text-neutral-400 hover:text-neutral-600 hover:bg-neutral-50 disabled:opacity-60 transition-all"
-                        title="Cancel"
-                      >
-                        <XMarkIcon className="w-4 h-4" />
-                      </button>
-                    </>
-                  ) : (
-                    // Default RSVP row
-                    <>
-                      {(['accepted', 'tentative', 'declined'] as const).map((val) => {
-                        const labels = { accepted: 'Accept', tentative: 'Maybe', declined: 'Decline' };
-                        const icons = { accepted: CheckIcon, tentative: QuestionMarkCircleIcon, declined: XMarkIcon };
-                        const Icon = icons[val];
-                        const isThisLoading = rsvpLoading === val;
-                        return (
-                          <button
-                            key={val}
-                            onClick={() => {
-                              // If draft exists, show confirmation — else fire directly
-                              if (sourceData?.draft) {
-                                setPendingRsvp(val);
-                              } else {
-                                handleRsvpWithReply(val, false);
-                              }
-                            }}
-                            disabled={!!rsvpLoading || isSending}
-                            className="flex-1 inline-flex items-center justify-center gap-1.5 px-4 py-2.5 text-[13px] font-semibold border border-neutral-300 bg-white text-neutral-700 hover:border-neutral-400 hover:bg-neutral-50 disabled:opacity-60 disabled:cursor-not-allowed transition-all shadow-sm"
-                          >
-                            {isThisLoading
-                              ? <div className="w-4 h-4 border-2 border-neutral-400 border-t-transparent rounded-full animate-spin" />
-                              : <Icon className="w-4 h-4" />
-                            }
-                            {isThisLoading ? 'Sending…' : labels[val]}
-                          </button>
-                        );
-                      })}
-                      {sourceData?.draft && (
-                        <button
-                          onClick={() => setShowDraftPreview(true)}
-                          disabled={!!rsvpLoading || isSending}
-                          className="px-3 py-2.5 border border-neutral-300 bg-white text-neutral-500 hover:border-neutral-400 hover:bg-neutral-50 disabled:opacity-60 transition-all shadow-sm"
-                          title="Edit reply before sending"
-                        >
-                          <PencilIcon className="w-4 h-4" />
-                        </button>
-                      )}
-                    </>
-                  )}
+                    );
+                  })}
                 </div>
               )}
 
@@ -823,41 +853,18 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
                 </button>
               )}
 
-              {/* Draft reply — split button: instant send | edit & review */}
-              {!linkedCalEvent && !executable && sourceData?.draft && (
-                <div className="flex-1 flex">
-                  <button
-                    onClick={() => handleSendReply()}
-                    disabled={isSending}
-                    className="flex-1 inline-flex items-center justify-center px-4 py-2.5 text-[13px] font-semibold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 transition-all shadow-sm"
-                  >
-                    {isSending ? (
-                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
-                    ) : (
-                      <PaperAirplaneIcon className="w-4 h-4 mr-2" />
-                    )}
-                    {isSending ? 'Sending…' : 'Send'}
-                  </button>
-                  <button
-                    onClick={() => setShowDraftPreview(true)}
-                    disabled={isSending}
-                    className="px-3 py-2.5 bg-indigo-700 text-white hover:bg-indigo-800 disabled:opacity-50 transition-all shadow-sm border-l border-indigo-500"
-                    title="Review & edit before sending"
-                  >
-                    <PencilIcon className="w-4 h-4" />
-                  </button>
-                </div>
-              )}
-
-              {/* Mark complete — non-executable, no draft */}
-              {!linkedCalEvent && !executable && !sourceData?.draft && (
+              {/* Reply */}
+              {!linkedCalEvent && item.source === 'email' && (
                 <button
-                  onClick={handleComplete}
-                  disabled={isCompleting}
-                  className="flex-1 inline-flex items-center justify-center px-4 py-2.5 text-[13px] font-semibold bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm"
+                  onClick={() => {
+                    setReplyOpen(true);
+                    onReplyOpenChange?.(true);
+                    setTimeout(() => replyBoxRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 50);
+                  }}
+                  className="flex items-center gap-1.5 px-4 py-2.5 text-[13px] font-semibold text-indigo-600 border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 transition-colors"
                 >
-                  <CheckIcon className="w-4 h-4 mr-2" />
-                  {isCompleting ? 'Completing...' : 'Mark Complete'}
+                  <ArrowUturnLeftIcon className="w-3.5 h-3.5" />
+                  Reply
                 </button>
               )}
 
@@ -1102,17 +1109,6 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
           </div>
         </div>
 
-      {sourceData?.draft && (
-        <DraftPreviewModal
-          isOpen={showDraftPreview}
-          onClose={() => setShowDraftPreview(false)}
-          draft={typeof sourceData.draft === 'string' ? sourceData.draft : sourceData.draft.body}
-          subject={sourceData.subject || 'Re: (no subject)'}
-          to={sourceData.from || 'Unknown'}
-          onSend={handleSendReply}
-          onSendWithRsvp={linkedCalEvent ? handleSendWithRsvp : undefined}
-        />
-      )}
     </div>
   );
 }

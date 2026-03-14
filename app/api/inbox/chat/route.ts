@@ -16,13 +16,15 @@ You help users search and understand their emails, answer questions using their 
 
 {{CALENDAR_CONTEXT}}
 
+{{FOCUSED_EMAIL}}
+
 Here is the user's current inbox (most recent first):
 {{INBOX_SNAPSHOT}}
 
 Rules:
 - Answer questions using BOTH the knowledge base above AND the inbox — whichever is relevant
 - When KB documents are relevant to the question, summarize their content directly — do not say you can't find something if it appears in the knowledge base
-- When you reference a specific email, include its ID in square brackets like this: [uuid] — the UI will render it as an email card
+- When you reference a specific email, include its ID in square brackets like this: [uuid] — the UI will render it as an email card. ONLY use [uuid] when the user explicitly asked about a specific email. NEVER attach [uuid] to calendar events, meeting descriptions, or scheduling answers.
 - If you find multiple matching emails, list them one per line with their [id]
 - Do not make up emails that aren't in the inbox snapshot above
 - Dates: today is {{TODAY}}
@@ -30,16 +32,36 @@ Rules:
 - If the user has attached a document (shown as [Attached document content: ...]), answer using it as primary context.
 - If you used content from the knowledge base in your answer, append exactly one line at the very end: KB_REFS:filename1.pdf|filename2.pdf (pipe-separated, exact filenames as shown in the KB headers above). Do not append KB_REFS if you did not use the knowledge base.
 
-When you want to suggest an action on an email, append it at the very end of your response using this exact format (one per line, no extra text after):
-ACTION:{"type":"archive","itemId":"uuid","label":"Archive the invoice from KPMG?"}
-ACTION:{"type":"open","itemId":"uuid","label":"Open the email from Sarah about the proposal?"}
+TOKEN RULES — emit only the appropriate token(s) at the very end of your response, after all text:
 
-Only suggest actions when the user clearly wants to do something (e.g. "archive this", "clean up", "open that email", "show me"). Do not suggest actions for every response.
+ACTION:{"type":"archive","itemId":"uuid","label":"..."}
+→ User wants to archive an email. Only when intent is clear.
 
-When scheduling a meeting makes sense given the conversation (e.g. user wants to set up a call, email discusses meeting), propose one using this format appended at the very end (one line, after any ACTION lines):
-MEETING_SUGGESTION:{"title":"Intro call","duration_minutes":30,"attendees":["alice@example.com"],"proposed_times":["2026-03-14T14:00:00","2026-03-15T10:00:00"],"notes":"Quick intro to discuss the proposal"}
+ACTION:{"type":"open","itemId":"uuid","label":"..."}
+→ User wants to navigate to / read a specific email. NOT for sending or replying.
 
-Only emit MEETING_SUGGESTION when the user is clearly trying to schedule something. Proposed times must not conflict with the calendar above.`;
+MEETING_SUGGESTION:{"title":"...","duration_minutes":30,"attendees":["email@example.com"],"proposed_times":["2026-03-14T14:00:00"],"notes":"..."}
+→ User clearly wants to schedule a meeting. Times must not conflict with the calendar above.
+  CRITICAL: attendees must be valid email addresses (e.g. "alex@company.com"), never names.
+  If a FOCUSED EMAIL is shown, use the sender's email address as the attendee.
+  If the email address is unknown, omit the attendee rather than using a name.
+
+OPEN_COMPOSE:{"to":"...","subject":"...","body":"..."}
+→ User wants to write or send a NEW email to someone not in their inbox.
+  Only emit when you have at least a recipient. Do not combine with ACTION or MEETING_SUGGESTION.
+
+REPLY_DRAFT:{"body":"..."}
+→ REQUIRED when user asks to draft, write, or suggest a reply to an email.
+  Triggers: "draft a reply", "reply to X", "write a response", "suggest a reply", "how should I respond", etc.
+  ALWAYS emit this token — do NOT write the reply as plain text prose.
+  Write a short intro sentence first (e.g. "Here's a draft:"), then emit the token on the next line.
+  If a FOCUSED EMAIL is shown above, reply to that one. Otherwise use the inbox snapshot.
+  Body must be the complete reply text only — no subject line.
+  Format: greeting line, blank line, body paragraphs separated by blank lines, blank line, sign-off on its own line then name on the next line. Use \\n for newlines. No extra commas.
+  Do not combine with OPEN_COMPOSE.
+
+UPDATE_DRAFT:{"subject":"...","body":"..."}
+→ User is composing a new email (compose panel is open) and wants to refine it. Only in compose mode.`;
 
 export async function POST(request: NextRequest) {
   try {
@@ -52,11 +74,22 @@ export async function POST(request: NextRequest) {
     const { client: openaiClient, model: chatModel } = await getAIClient(user.id, 'conversation', supabase);
 
     const body = await request.json();
-    const { message, history = [], sources, fileContext } = body as {
+    const { message, history = [], sources, fileContext, mode, composeDraft, emailContext, replyDraft } = body as {
       message: string;
       history: Array<{ role: 'user' | 'assistant'; content: string }>;
       sources?: string[];
       fileContext?: string;
+      mode?: 'inbox' | 'compose' | 'reply';
+      composeDraft?: { to: string; cc: string; subject: string; body: string };
+      replyDraft?: string;
+      emailContext?: {
+        subject?: string;
+        from?: string;
+        fromName?: string;
+        summary?: string;
+        keyPoints?: string[];
+        body?: string;
+      };
     };
 
     if (!message?.trim()) {
@@ -71,7 +104,7 @@ export async function POST(request: NextRequest) {
     const activeSources = sources?.length ? sources : ['inbox', 'kb', 'calendar'];
 
     const [snapshot, kbContext, calendarCtx, userContextBlock, indexedFilesResult] = await Promise.all([
-      activeSources.includes('inbox')
+      activeSources.includes('inbox') && mode !== 'reply'
         ? buildInboxSnapshot(user.id, message, supabase)
         : Promise.resolve([]),
       activeSources.includes('kb')
@@ -96,28 +129,83 @@ export async function POST(request: NextRequest) {
       : '';
     const kbSection = inventoryLine + (kbContext.context || '');
 
-    const systemPrompt = SYSTEM_PROMPT
+    // Build focused email block when user has a specific email open in context
+    const focusedEmailBlock = emailContext
+      ? `FOCUSED EMAIL — the user is currently working on this email. When they say "this email", "it", "them", or "draft a reply", refer to this:
+From: ${emailContext.fromName ? `${emailContext.fromName} <${emailContext.from}>` : emailContext.from}
+Subject: ${emailContext.subject || '(no subject)'}${emailContext.summary ? `\nSummary: ${emailContext.summary}` : ''}${emailContext.keyPoints?.length ? `\nKey points:\n${emailContext.keyPoints.map(p => `- ${p}`).join('\n')}` : ''}${emailContext.body ? `\nBody:\n${emailContext.body.slice(0, 2000)}${emailContext.body.length > 2000 ? '\n[...truncated]' : ''}` : ''}`
+      : '';
+
+    let systemPrompt = SYSTEM_PROMPT
       .replace('{{USER_CONTEXT}}', userContextBlock || '')
       .replace('{{INBOX_SNAPSHOT}}', snapshotText || 'No active inbox items.')
+      .replace('{{FOCUSED_EMAIL}}', focusedEmailBlock)
       .replace('{{TODAY}}', today)
       .replace('{{KB_CONTEXT}}', kbSection)
       .replace('{{CALENDAR_CONTEXT}}', calendarText || '');
+
+    // Compose mode addendum
+    if (mode === 'compose' && composeDraft) {
+      systemPrompt += `\n\nThe user is composing a new outgoing email. Current draft:
+  To: ${composeDraft.to || '(empty)'}
+  Subject: ${composeDraft.subject || '(empty)'}
+  Body: ${composeDraft.body || '(empty)'}
+
+Help improve tone, length, subject, clarity. When providing a full revision emit UPDATE_DRAFT at the very end. Only emit UPDATE_DRAFT for complete rewrites, not commentary.`;
+    }
+
+    // Reply mode addendum
+    if (mode === 'reply') {
+      systemPrompt += `\n\nThe user has the reply box open. Current draft:
+${replyDraft?.trim() || '(empty — not yet drafted)'}
+
+REPLY MODE — follow exactly:
+1. Silently decide if the user wants to EDIT the draft or ask a QUERY. Do NOT write "INTENT DETECTION" or any label — this classification is internal only.
+
+2. If EDIT intent (change, improve, rewrite, shorten, formalize, adjust tone, etc.) → write a single short acknowledgment sentence (e.g. "Made it more casual:" or "Here's a shorter version:"), then on the next line emit REPLY_DRAFT:{"body":"..."}. The body must be the complete revised reply text.
+
+3. If QUERY intent (asking a question, checking calendar, etc.) → respond normally as a helpful assistant. Do NOT emit REPLY_DRAFT.
+
+4. EMAIL BODY FORMAT — all reply drafts must follow this structure:
+   "Hi Alex,\\n\\nThank you for reaching out...\\n\\nBest regards,\\nAlexandre"
+   Rules: greeting on first line, blank line between each paragraph, sign-off on its own line, name on the line after.
+   Use \\n for newlines inside the JSON string. Never add extra commas.
+
+5. CRITICAL: Never emit ACTION, OPEN_COMPOSE, or UPDATE_DRAFT in reply mode. MEETING_SUGGESTION is allowed only for QUERY intents about scheduling.`;
+    }
 
     const userContent = fileContext
       ? `[Attached document content:\n${fileContext}\n]\n\n${message}`
       : message;
 
-    const stream = await openaiClient.chat.completions.create({
+    const chatParams = {
       model: chatModel,
       messages: [
-        { role: 'system', content: systemPrompt },
+        { role: 'system' as const, content: systemPrompt },
         ...history,
-        { role: 'user', content: userContent },
+        { role: 'user' as const, content: userContent },
       ],
       temperature: 0.3,
-      max_tokens: 700,
-      stream: true,
-    });
+      max_tokens: mode === 'reply' ? 1200 : 700,
+      stream: true as const,
+    };
+
+    let stream;
+    let attempts = 0;
+    while (true) {
+      try {
+        stream = await openaiClient.chat.completions.create(chatParams);
+        break;
+      } catch (err: any) {
+        const retryable = err?.status === 503 || err?.status === 429 || err?.status === 529;
+        if (retryable && attempts < 2) {
+          attempts++;
+          await new Promise(r => setTimeout(r, 1000 * attempts));
+        } else {
+          throw err;
+        }
+      }
+    }
 
     const readable = new ReadableStream({
       async start(controller) {

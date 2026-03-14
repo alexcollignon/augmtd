@@ -1,9 +1,9 @@
 'use client';
 
 import Image from 'next/image';
-import { PaperClipIcon, CheckIcon, EnvelopeIcon } from '@heroicons/react/24/outline';
+import { PaperClipIcon, CheckIcon } from '@heroicons/react/24/outline';
 import type { InboxItem } from '@/lib/types/inbox';
-import { needsConfirmation } from '@/lib/types/inbox';
+
 
 interface EmailListCardProps {
   item: InboxItem;
@@ -26,14 +26,8 @@ function formatTime(dateStr: string): string {
 
 export default function EmailListCard({ item, isSelected, onSelect, compact = false, isChecked = false, onToggleCheck, hasAnySelected = false }: EmailListCardProps) {
   const sourceData = item.source_data;
-  const needsConfirm = needsConfirmation(item);
-
-  const accentColor = needsConfirm
-    ? 'bg-amber-400'
-    : item.visual_section === 'prepared'
+  const accentColor = item.visual_section === 'prepared'
     ? 'bg-indigo-500'
-    : item.visual_section === 'suggested'
-    ? 'bg-amber-400'
     : 'bg-neutral-300';
 
   const fromDisplay = sourceData?.from_name || sourceData?.from || 'Unknown';
@@ -87,12 +81,6 @@ export default function EmailListCard({ item, isSelected, onSelect, compact = fa
             <p className={`text-[11px] truncate flex-1 ${isSelected ? 'text-indigo-700 font-medium' : 'text-neutral-500'}`}>
               {subjectDisplay}
             </p>
-            {needsConfirm && (
-              <span className="text-[10px] text-amber-600 font-medium flex-shrink-0">Confirm?</span>
-            )}
-            {sourceData?.draft && (
-              <EnvelopeIcon className="w-3 h-3 text-violet-600 flex-shrink-0" />
-            )}
           </div>
         </div>
       </div>
@@ -143,12 +131,6 @@ export default function EmailListCard({ item, isSelected, onSelect, compact = fa
               height={10}
               className="opacity-30"
             />
-          )}
-          {needsConfirm && (
-            <span className="text-[10px] text-amber-600 font-medium">Confirm?</span>
-          )}
-          {sourceData?.draft && (
-            <span className="text-[10px] text-violet-600">Draft ready</span>
           )}
           {sourceData?.attachments?.length > 0 && (
             <span className="inline-flex items-center gap-0.5 text-neutral-400">

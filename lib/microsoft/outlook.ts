@@ -248,6 +248,7 @@ interface SendOutlookReplyParams {
   encryptedTokens: string;
   messageId: string;
   body: string;
+  attachments?: import('@/lib/google/gmail').EmailAttachment[];
 }
 
 /**
@@ -277,6 +278,55 @@ export async function listOutlookFolders(
     .sort((a: any, b: any) => a.name.localeCompare(b.name));
 }
 
+const OUTLOOK_SYSTEM_FOLDERS = new Set(['inbox', 'sentitems', 'deleteditems', 'drafts', 'junkemail', 'archive']);
+
+export async function listOutlookAllFolders(
+  encryptedTokens: string,
+): Promise<{ id: string; name: string; isSystem: boolean }[]> {
+  const client = await getGraphClient(encryptedTokens);
+  const res = await client.api('/me/mailFolders').select('id,displayName,wellKnownName').top(50).get();
+  const all = (res.value ?? []) as Array<{ id: string; displayName: string; wellKnownName?: string }>;
+  const system = all
+    .filter(f => OUTLOOK_SYSTEM_FOLDERS.has((f.wellKnownName ?? '').toLowerCase()))
+    .map(f => ({ id: f.id, name: f.displayName, isSystem: true }));
+  const user = all
+    .filter(f => !OUTLOOK_SYSTEM_FOLDERS.has((f.wellKnownName ?? '').toLowerCase()))
+    .map(f => ({ id: f.id, name: f.displayName, isSystem: false }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  return [...system, ...user];
+}
+
+export interface FolderEmailSummary {
+  id: string;
+  subject: string;
+  from: string;
+  fromName: string;
+  date: string;
+  snippet: string;
+}
+
+export async function listOutlookFolderEmails(
+  encryptedTokens: string,
+  folderId: string,
+  maxResults = 25,
+): Promise<FolderEmailSummary[]> {
+  const client = await getGraphClient(encryptedTokens);
+  const res = await client
+    .api(`/me/mailFolders/${folderId}/messages`)
+    .select('id,subject,from,receivedDateTime,bodyPreview')
+    .top(maxResults)
+    .orderby('receivedDateTime desc')
+    .get();
+  return (res.value ?? []).map((m: any) => ({
+    id: m.id,
+    subject: m.subject || '(no subject)',
+    from: m.from?.emailAddress?.address ?? '',
+    fromName: m.from?.emailAddress?.name ?? m.from?.emailAddress?.address ?? '',
+    date: m.receivedDateTime,
+    snippet: m.bodyPreview ?? '',
+  }));
+}
+
 export async function moveOutlookMessageToFolder(
   encryptedTokens: string,
   outlookMessageId: string,
@@ -297,7 +347,7 @@ export async function archiveOutlookMessage(
 }
 
 export async function sendOutlookReply(params: SendOutlookReplyParams): Promise<string> {
-  const { encryptedTokens, messageId, body } = params;
+  const { encryptedTokens, messageId, body, attachments = [] } = params;
 
   // Decode tokens and refresh if needed (mirrors getGraphClient logic)
   const tokens = JSON.parse(Buffer.from(encryptedTokens, 'base64').toString());
@@ -329,6 +379,14 @@ export async function sendOutlookReply(params: SendOutlookReplyParams): Promise<
             contentType: 'HTML',
             content: plainTextToHtml(body),
           },
+          ...(attachments.length > 0 ? {
+            attachments: attachments.map(att => ({
+              '@odata.type': '#microsoft.graph.fileAttachment',
+              name: att.filename,
+              contentType: att.mimeType,
+              contentBytes: att.content.toString('base64'),
+            })),
+          } : {}),
         },
       }),
     }

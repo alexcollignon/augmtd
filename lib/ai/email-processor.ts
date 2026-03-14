@@ -49,7 +49,7 @@ export interface EmailData {
   is_forwarded?: boolean; // Whether this email was forwarded to the user
   recipient_position?: 'to' | 'cc'; // The user's position on this email
   recipient_email?: string;          // The user's own email address
-  recipient_name?: string;           // The user's full name — used to ground the draft identity
+  user_context_block?: string;       // Pre-built identity+context block from buildUserContextBlock()
 }
 
 /**
@@ -78,7 +78,6 @@ export interface EmailSignals {
 
   // COMPLEXITY SIGNALS
   requiresJudgment: boolean; // Approval, choice, risk assessment
-  canBePreparedViaEmail: boolean; // Can AI draft EMAIL REPLY that COMPLETES the task?
   needsExternalInput: boolean; // Blocked on someone else?
 
   // MECHANICAL SIGNALS (auto-handleable)
@@ -120,11 +119,6 @@ export interface ProcessedEmail {
 
   // PREPARED OUTPUT (conditional on work state)
   preparedOutput: {
-    draft?: {
-      subject: string;
-      body: string;
-      tone: 'professional' | 'friendly' | 'formal';
-    };
     analysis?: {
       options: string[];
       risks: string[];
@@ -151,6 +145,9 @@ export interface ProcessedEmail {
     };
   };
 
+  // SEMANTIC TYPE — drives Smart view filtering
+  itemType: string; // 'reply' | 'decision' | 'meeting' | 'review' | 'fyi' | 'notification'
+
   // METADATA
   summary: string; // One-line summary
   keyPoints: string[]; // 2-4 bullet points
@@ -169,9 +166,9 @@ function truncateText(text: string, maxLength: number): string {
 }
 
 /**
- * Helper function to format user context for AI prompt
+ * @deprecated No longer used — draft generation removed
  */
-function formatUserContext(
+function _formatUserContext(
   userContext: UserContextProfile | undefined,
   senderEmail: string
 ): string {
@@ -381,9 +378,6 @@ function formatCalendarContext(calendarContext: CalendarContext | undefined): st
 export async function processEmail(email: EmailData, supabase: SupabaseClient): Promise<ProcessedEmail> {
   const { client: openai, model: defaultModel } = await getAIClient(email.user_id!, 'classification', supabase);
 
-  // Format user context if available (learned communication style)
-  const userContextSection = formatUserContext(email.user_context, email.from_address);
-
   // Format thread context if available
   const threadContextSection = formatThreadContext(email.thread_context);
 
@@ -405,16 +399,14 @@ export async function processEmail(email: EmailData, supabase: SupabaseClient): 
       `Otherwise classify as NOTED (awareness only) with canBePreparedViaEmail = false and no draft.\n`
     : '';
 
-  // Identity block — must be first in the prompt to prevent name adoption from thread
-  const identityBlock = `IDENTITY: You are preparing work on behalf of ${email.recipient_name || 'the user'}${email.recipient_email ? ` <${email.recipient_email}>` : ''}.
-When drafting a reply, always write AS this person and sign with their name (${email.recipient_name || 'the user'}).
-NEVER adopt or use any other name found in the email thread as the sender or signatory.
-
-`;
+  // Identity + context block — must be first in the prompt to prevent name adoption from thread
+  const contextBlockSection = email.user_context_block
+    ? `${email.user_context_block}\n\nCRITICAL: You are preparing work FOR the person described above.${email.recipient_email ? ` Their email is <${email.recipient_email}>.` : ''}\nWhen drafting replies, always write AS them and sign with their name.\nNEVER adopt any other name found in the email thread as the sender or signatory.\n\n`
+    : `IDENTITY: You are preparing work on behalf of the user${email.recipient_email ? ` <${email.recipient_email}>` : ''}.\nWhen drafting a reply, always write AS this person.\nNEVER adopt or use any other name found in the email thread as the sender or signatory.\n\n`;
 
   const prompt = `You are a work preparation AI. Your job is to detect OBLIGATIONS and prepare WORK, not classify emails.
 
-${identityBlock}${userContextSection}${calendarContextSection}${forwardedNote}${ccNote}${threadContextSection}CURRENT EMAIL (the one requiring your response):
+${contextBlockSection}${calendarContextSection}${forwardedNote}${ccNote}${threadContextSection}CURRENT EMAIL (the one requiring your response):
 From: ${email.from_name} <${email.from_address}>
 Subject: ${email.subject}
 Received: ${new Date(email.received_at).toLocaleString()}
@@ -458,8 +450,6 @@ Ask: "WHERE is this task executed?"
 
 COMPLEXITY SIGNALS:
 - requiresJudgment: Needs decision, approval, or choice with meaningful consequences?
-- canBePreparedViaEmail: Can AI draft EMAIL REPLY that COMPLETES the task?
-  INVARIANT: If executionTarget !== 'email', then canBePreparedViaEmail = false
 - needsExternalInput: Blocked on external dependency (waiting for someone else)?
 
 MECHANICAL SIGNALS (positive anchors for classification):
@@ -498,28 +488,26 @@ CRITICAL: Use ACTION DOMAIN to determine correct work state.
 
 Based on signals, classify into ONE work state:
 
-1. WORK_PREPARED (Judgment Now - Via Email)
-   Email reply is the action. Prepare a complete draft response.
+1. WORK_PREPARED (Reply Needed - Via Email)
+   Email reply is the action.
 
    Typical characteristics:
    ✓ executionTarget = 'email' (completed by REPLYING)
-   ✓ canBePreparedViaEmail = true
    ✓ Requires human judgment or meaningful human touch
    ✓ NOT a confirmation/notification/receipt
    ✓ Sender can receive replies (usually not from no-reply@ addresses)
 
    Common examples:
-   - "Can you send me the report?" → Draft reply with report or plan to send
-   - "When can we meet?" → Draft reply proposing times
-   - "What's your opinion on this?" → Draft reply with thoughts
-   - Question from colleague/client → Draft helpful response
+   - "Can you send me the report?" → reply needed
+   - "When can we meet?" → reply needed
+   - "What's your opinion on this?" → reply needed
+   - Question from colleague/client → reply needed
 
    Consider context:
    - If sender is automated (no-reply@, billing@), usually can't receive replies
    - If action is external (click link, update settings), not an email reply task
-   - Focus on: Can I complete this by sending an email reply?
 
-   → Action: Prepare draft reply that COMPLETES the task
+   → Action: Surface for user to reply (no draft generated)
 
 2. ACTION_REQUIRED (Execution - Prevent Downside)
    POSITIVE RULE: hasOneObviousAction + executionTarget='external' + !requiresJudgment
@@ -593,6 +581,25 @@ Based on signals, classify into ONE work state:
 
    → Action: Track and resurface when ready
 
+4b. STEP 2B: CLASSIFY ITEM TYPE
+
+Assign one itemType based on what this email requires:
+- "reply": needs a conversational response from you (executionTarget='email', direct question/request from a human sender)
+- "decision": needs you to approve, choose, or authorize (requiresJudgment=true, or explicit approval language)
+- "meeting": scheduling request, calendar invite, RSVP needed (hasMeetingReference=true or isTimebound=true)
+- "review": document, proposal, contract, or attachment for you to read/give feedback on
+- "fyi": CC'd, informational, waiting on others — no action from you (workState='noted' or 'waiting')
+- "notification": automated receipt, system alert, marketing, mechanical confirmation (workState='noise', isAutomatedSender=true, or isMechanicalConfirmation=true)
+
+Priority order (use the FIRST that applies):
+1. workState='noise' OR isMechanicalConfirmation OR (isAutomatedSender AND isNotification) → "notification"
+2. hasMeetingReference OR isTimebound → "meeting"
+3. requiresJudgment OR hasExplicitApprovalRequest → "decision"
+4. hasAttachmentNeedingReview → "review"
+5. executionTarget='email' AND sender is human → "reply"
+6. workState='waiting' OR workState='noted' → "fyi"
+7. default → "fyi"
+
 5. NOTED (Awareness Only - NO Consequences)
    STRICT: If consequences exist, NOTED is INVALID
 
@@ -643,23 +650,7 @@ Based on signals, classify into ONE work state:
 STEP 3: PREPARE THE WORK
 
 For WORK_PREPARED:
-- Draft a complete reply (subject, body, tone)
-  CRITICAL: If USER'S COMMUNICATION STYLE is provided, MATCH IT EXACTLY:
-  * Use their typical greetings (e.g., "Hey" vs "Dear" vs "Hi there")
-  * Match their formality level (very formal → somewhat formal → neutral → casual → very casual)
-  * Apply their signature style if provided
-  * Adopt their tone preferences (formal, casual, friendly, technical, direct)
-  * Use their common phrases naturally
-  * Match their typical email length
-  * Match emoji usage (frequently/occasionally/rarely)
-  * If relationship context shows high importance sender, adjust tone appropriately
-
-  IMPORTANT: If thread context is provided, USE IT to write contextual replies:
-  * Reference previous messages when relevant
-  * Don't repeat what was already said
-  * Build on previous commitments or statements
-  * Acknowledge prior exchanges if appropriate
-  * Understand the full conversation arc before drafting
+- No draft is generated. The user will reply using the AI chat assistant.
 - Extract next steps/action items
 - Prepare calendar event if meeting mentioned
 - Extract structured data (people, companies, amounts, dates, links)
@@ -689,10 +680,11 @@ Create user-facing text (OUTCOME-CENTRIC, NOT EMAIL-CENTRIC):
 - whatIPrepared: ACTIONABLE GUIDANCE - What the user should do next
   CRITICAL: Be specific and action-oriented, not just descriptive
 
-  For WORK_PREPARED (has draft):
-    GOOD: "Review and send the prepared response confirming availability"
-    BAD: "Draft reply" | "Response prepared"
-    Pattern: "Review and send [specific content]" OR "Edit and send [specific content]"
+  For WORK_PREPARED:
+    GOOD: "Reply confirming availability — use chat to draft your response"
+    GOOD: "Respond to the pricing question — context loaded in chat"
+    BAD: "Reply needed" | "Draft reply"
+    Pattern: "[What to reply about] — use chat to draft your response"
 
   For ACTION_REQUIRED (no draft):
     GOOD: "Click the verification link in the email to activate your account"
@@ -714,7 +706,7 @@ Create user-facing text (OUTCOME-CENTRIC, NOT EMAIL-CENTRIC):
     Pattern: "[What to review] and mark complete - no action needed"
 
   Examples by state:
-  - work_prepared: "Review the prepared decline and send, or edit if you want to soften the tone"
+  - work_prepared: "Reply to their scheduling request — use chat to draft your response"
   - action_required (mechanical): "Click the confirmation link to verify your email address"
   - action_required (operational): "Update your payment method in Stripe to avoid service suspension"
   - decision_required: "Review the budget proposal and approve or request changes by Friday"
@@ -752,7 +744,6 @@ OUTPUT FORMAT (JSON):
     "hasActionLinks": false,
     "mentionsExternalSystem": false,
     "requiresJudgment": false,
-    "canBePreparedViaEmail": true,
     "needsExternalInput": false,
     "isMechanicalConfirmation": false,
     "isNotification": false,
@@ -763,11 +754,6 @@ OUTPUT FORMAT (JSON):
   },
 
   "preparedOutput": {
-    "draft": {
-      "subject": "Re: Response to your web enquiry...",
-      "body": "Dear Tea,\\n\\nThank you for reaching out...",
-      "tone": "professional"
-    },
     "nextSteps": [
       {
         "description": "Send reply to schedule call",
@@ -790,6 +776,8 @@ OUTPUT FORMAT (JSON):
       "links": ["https://..."]
     }
   },
+
+  "itemType": "meeting",
 
   "summary": "Tea wants to discuss exhibiting at 4YFN26",
   "keyPoints": [
@@ -826,7 +814,6 @@ EXAMPLE 2 - Mechanical Confirmation (ACTION_REQUIRED):
     "hasActionLinks": true,
     "mentionsExternalSystem": true,
     "requiresJudgment": false,
-    "canBePreparedViaEmail": false,
     "needsExternalInput": false,
     "isMechanicalConfirmation": true,  // ← CRITICAL: Enables batching in UI
     "isNotification": false,
@@ -882,7 +869,6 @@ EXAMPLE 3 - Payment Failure (ACTION_REQUIRED - Operational):
     "hasActionLinks": true,
     "mentionsExternalSystem": true,
     "requiresJudgment": false,
-    "canBePreparedViaEmail": false,
     "needsExternalInput": false,
     "isMechanicalConfirmation": false,  // Operational, not mechanical (high stakes)
     "isNotification": false,
@@ -923,16 +909,13 @@ CRITICAL RULES:
 
    DOMAINS ARE PLACES. DECISIONS ARE MENTAL STATES.
 
-2. INVARIANT: If executionTarget !== 'email', then canBePreparedViaEmail = false
-   - Prevents hallucinated drafts for external actions
-
-3. WORK_PREPARED guideline: executionTarget should be 'email' and sender should be able to receive replies
+2. WORK_PREPARED guideline: executionTarget should be 'email' and sender should be able to receive replies
    - Only if email reply COMPLETES the task
    - "Can you send report?" → executionTarget='email' → Usually WORK_PREPARED
    - "Update payment" → executionTarget='external' → Usually ACTION_REQUIRED
    - Consider: automated senders (no-reply@) typically can't receive replies
 
-4. POSITIVE RULE for ACTION_REQUIRED:
+3. POSITIVE RULE for ACTION_REQUIRED:
    IF hasOneObviousAction = true
    AND executionTarget = 'external'
    AND requiresJudgment = false
@@ -940,29 +923,40 @@ CRITICAL RULES:
 
    This is a strong positive anchor. Use it.
 
-5. For executionTarget = 'external' + high consequences:
+4. For executionTarget = 'external' + high consequences:
    "Multiple viable options with tradeoffs?"
    - YES → DECISION_REQUIRED (choice)
    - NO → ACTION_REQUIRED (execution)
 
-6. WAITING must NOT have downside risk before unblocked:
+5. WAITING must NOT have downside risk before unblocked:
    "If ignoring causes harm before new input, NOT WAITING"
 
-7. NOTED must have ZERO consequences:
+6. NOTED must have ZERO consequences:
    "If consequences exist, NOTED is invalid"
 
-8. Priority bands (enforce these):
+7. Priority bands (enforce these):
    - 80-100: Immediate downside or exec decision
    - 50-79: Important but not urgent
    - 20-49: Awareness / monitoring
    - <20: Noise
 
-9. Other rules:
+8. Other rules:
    - Confidence = certainty about signals + work state (0-100)
    - If marketing/promotional → NOISE
    - When uncertain between NOTED/NOISE → NOTED
 
 Respond ONLY with valid JSON matching the structure above.`;
+
+  function deriveItemType(result: any): string {
+    const s = result.signals || {};
+    const ws = result.workState || 'noted';
+    if (ws === 'noise' || s.isMechanicalConfirmation || (s.isAutomatedSender && s.isNotification)) return 'notification';
+    if (s.hasMeetingReference || s.isTimebound) return 'meeting';
+    if (ws === 'decision_required' || s.hasExplicitApprovalRequest || s.requiresJudgment) return 'decision';
+    if (s.hasAttachmentNeedingReview) return 'review';
+    if (s.executionTarget === 'email' || ws === 'work_prepared') return 'reply';
+    return 'fyi';
+  }
 
   try {
     const response = await openai.chat.completions.create({
@@ -986,6 +980,7 @@ Respond ONLY with valid JSON matching the structure above.`;
 
     // Validate and return with defaults
     return {
+      itemType: result.itemType || deriveItemType(result),
       workState: result.workState || 'noted',
       workTitle: result.workTitle || email.subject || 'Review email',
       whatIPrepared: result.whatIPrepared || 'Summary for awareness',
@@ -1006,7 +1001,6 @@ Respond ONLY with valid JSON matching the structure above.`;
         hasActionLinks: false,
         mentionsExternalSystem: false,
         requiresJudgment: false,
-        canBePreparedViaEmail: true,
         needsExternalInput: false,
         isMechanicalConfirmation: false,
         isNotification: false,

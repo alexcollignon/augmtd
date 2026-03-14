@@ -194,6 +194,7 @@ interface SendGmailReplyParams {
   body: string;
   inReplyTo?: string;
   references?: string;
+  attachments?: EmailAttachment[];
 }
 
 /**
@@ -312,6 +313,75 @@ export async function listGmailLabels(
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
+// Returns all folders including system ones (for folder browser)
+const GMAIL_SYSTEM_LABEL_NAMES: Record<string, string> = {
+  INBOX: 'Inbox', SENT: 'Sent', TRASH: 'Trash', SPAM: 'Spam', DRAFT: 'Drafts',
+  STARRED: 'Starred', IMPORTANT: 'Important',
+};
+
+export async function listGmailAllFolders(
+  encryptedTokens: string,
+): Promise<{ id: string; name: string; isSystem: boolean }[]> {
+  const gmail = await getGmailClient(encryptedTokens);
+  const res = await gmail.users.labels.list({ userId: 'me' });
+  const HIDE = new Set(['UNREAD', 'CATEGORY_PERSONAL', 'CATEGORY_SOCIAL', 'CATEGORY_PROMOTIONS', 'CATEGORY_UPDATES', 'CATEGORY_FORUMS']);
+  const labels = res.data.labels ?? [];
+  const system = labels
+    .filter(l => l.id && GMAIL_SYSTEM_LABEL_NAMES[l.id!] && !HIDE.has(l.id!))
+    .map(l => ({ id: l.id!, name: GMAIL_SYSTEM_LABEL_NAMES[l.id!], isSystem: true }));
+  const user = labels
+    .filter(l => l.type === 'user' && l.id && l.name && !HIDE.has(l.id!))
+    .map(l => ({ id: l.id!, name: l.name!, isSystem: false }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  return [...system, ...user];
+}
+
+export interface FolderEmailSummary {
+  id: string;
+  subject: string;
+  from: string;
+  fromName: string;
+  date: string;
+  snippet: string;
+}
+
+export async function listGmailFolderEmails(
+  encryptedTokens: string,
+  labelId: string,
+  maxResults = 25,
+): Promise<FolderEmailSummary[]> {
+  const gmail = await getGmailClient(encryptedTokens);
+  const listRes = await gmail.users.messages.list({ userId: 'me', labelIds: [labelId], maxResults });
+  const messages = listRes.data.messages ?? [];
+  if (!messages.length) return [];
+
+  const details = await Promise.all(
+    messages.map(m =>
+      gmail.users.messages.get({
+        userId: 'me',
+        id: m.id!,
+        format: 'metadata',
+        metadataHeaders: ['From', 'Subject', 'Date'],
+      })
+    )
+  );
+
+  return details.map(res => {
+    const headers = res.data.payload?.headers ?? [];
+    const get = (name: string) => headers.find((h: any) => h.name === name)?.value ?? '';
+    const fromRaw = get('From');
+    const nameMatch = fromRaw.match(/^"?([^"<]+)"?\s*</);
+    return {
+      id: res.data.id!,
+      subject: get('Subject') || '(no subject)',
+      from: fromRaw.replace(/.*<(.+)>.*/, '$1').trim() || fromRaw,
+      fromName: nameMatch ? nameMatch[1].trim() : fromRaw,
+      date: get('Date'),
+      snippet: res.data.snippet ?? '',
+    };
+  });
+}
+
 export async function moveGmailThreadToLabel(
   encryptedTokens: string,
   threadId: string,
@@ -339,47 +409,64 @@ export async function archiveGmailThread(
 }
 
 export async function sendGmailReply(params: SendGmailReplyParams): Promise<string> {
-  const { encryptedTokens, threadId, to, subject, body, inReplyTo, references } = params;
+  const { encryptedTokens, threadId, to, subject, body, inReplyTo, references, attachments = [] } = params;
 
   const gmail = await getGmailClient(encryptedTokens);
 
   const htmlBody = plainTextToHtml(body);
+  const subjectLine = subject.startsWith('Re:') ? subject : `Re: ${subject}`;
 
-  // Build email message in RFC 2822 format
-  const messageParts = [
-    `To: ${to}`,
-    `Subject: ${subject.startsWith('Re:') ? subject : `Re: ${subject}`}`,
-    'Content-Type: text/html; charset=utf-8',
-    'MIME-Version: 1.0',
-  ];
+  let rawMessage: string;
 
-  // Add threading headers
-  if (inReplyTo) {
-    messageParts.push(`In-Reply-To: ${inReplyTo}`);
+  if (attachments.length > 0) {
+    const boundary = `boundary_${randomId()}`;
+    const lines: string[] = [
+      `To: ${to}`,
+      `Subject: ${subjectLine}`,
+      'MIME-Version: 1.0',
+      `Content-Type: multipart/mixed; boundary="${boundary}"`,
+      ...(inReplyTo ? [`In-Reply-To: ${inReplyTo}`] : []),
+      ...(references ? [`References: ${references}`] : []),
+      '',
+      `--${boundary}`,
+      'Content-Type: text/html; charset=utf-8',
+      'Content-Transfer-Encoding: base64',
+      '',
+      Buffer.from(htmlBody).toString('base64'),
+    ];
+    for (const att of attachments) {
+      lines.push(`--${boundary}`);
+      lines.push(`Content-Type: ${att.mimeType}; name="${att.filename}"`);
+      lines.push('Content-Transfer-Encoding: base64');
+      lines.push(`Content-Disposition: attachment; filename="${att.filename}"`);
+      lines.push('');
+      lines.push(att.content.toString('base64'));
+    }
+    lines.push(`--${boundary}--`);
+    rawMessage = lines.join('\r\n');
+  } else {
+    const messageParts = [
+      `To: ${to}`,
+      `Subject: ${subjectLine}`,
+      'Content-Type: text/html; charset=utf-8',
+      'MIME-Version: 1.0',
+      ...(inReplyTo ? [`In-Reply-To: ${inReplyTo}`] : []),
+      ...(references ? [`References: ${references}`] : []),
+      '',
+      htmlBody,
+    ];
+    rawMessage = messageParts.join('\r\n');
   }
-  if (references) {
-    messageParts.push(`References: ${references}`);
-  }
 
-  messageParts.push('');
-  messageParts.push(htmlBody);
-
-  const message = messageParts.join('\r\n');
-
-  // Encode in base64url format
-  const encodedMessage = Buffer.from(message)
+  const encodedMessage = Buffer.from(rawMessage)
     .toString('base64')
     .replace(/\+/g, '-')
     .replace(/\//g, '_')
     .replace(/=+$/, '');
 
-  // Send the email
   const response = await gmail.users.messages.send({
     userId: 'me',
-    requestBody: {
-      raw: encodedMessage,
-      threadId: threadId,
-    },
+    requestBody: { raw: encodedMessage, threadId },
   });
 
   return response.data.id || '';
