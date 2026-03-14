@@ -360,6 +360,9 @@ export function InboxPageClient({
     setReplyBody('');
     setReplyIsOpen(false);
     autoFiredReplyRef.current = false;
+    setChatHistory([]);
+    setChatInput('');
+    setAttachedFiles([]);
   };
 
   const emailChipActive = !!selectedItem && !chipDismissed && rightPanel === 'chat' && !composeMode;

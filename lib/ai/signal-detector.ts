@@ -7,6 +7,7 @@
 
 import OpenAI from 'openai';
 import type { WorkSignals, SignalPatternKey } from '@/lib/types/recipient-detection';
+import { parseModelJSON } from '@/lib/ai/parse-json';
 
 // ==========================================
 // MAIN DETECTION FUNCTION
@@ -20,9 +21,9 @@ export async function detectWorkSignals(
   emailSubject: string,
   recipientEmail: string,
   recipientPosition: 'to' | 'cc' | 'bcc',
-  resolvedClient: { client: OpenAI; model: string }
+  resolvedClient: { client: OpenAI; model: string; endpoint?: { provider: string } }
 ): Promise<WorkSignals> {
-  const { client: openai, model: defaultModel } = resolvedClient;
+  const { client: openai, model: defaultModel, endpoint } = resolvedClient;
 
   const prompt = buildSignalDetectionPrompt(
     emailBody,
@@ -44,12 +45,12 @@ export async function detectWorkSignals(
           content: prompt,
         },
       ],
-      response_format: { type: 'json_object' },
+      ...(endpoint?.provider === 'openai' || endpoint?.provider === 'azure_openai' ? { response_format: { type: 'json_object' as const } } : {}),
       temperature: 0, // Deterministic
       max_tokens: 500,
     });
 
-    const result = JSON.parse(response.choices[0].message.content || '{}');
+    const result = parseModelJSON(response.choices[0].message.content || '{}', {});
 
     // Validate and return signals
     return validateWorkSignals(result);

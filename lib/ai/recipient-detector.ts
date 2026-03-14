@@ -6,6 +6,7 @@
  */
 
 import { getAIClient } from '@/lib/ai/factory';
+import { parseModelJSON } from '@/lib/ai/parse-json';
 import { SupabaseClient } from '@supabase/supabase-js';
 import type {
   RecipientRole,
@@ -208,10 +209,12 @@ async function detectRolesWithAI(
   email: Email,
   recipients: Array<{ email: string; position: EmailPosition; userName: string | null }>,
   senderContext?: { importance: number; relationshipType?: string },
-  resolvedClient?: { client: any; model: string }
+  resolvedClient?: { client: any; model: string; endpoint?: { provider: string } }
 ): Promise<AIRoleDetection[]> {
   const { getSystemClient } = await import('@/lib/ai/factory');
-  const { client: openai, model: defaultModel } = resolvedClient ?? getSystemClient('classification');
+  const resolved = resolvedClient ?? getSystemClient('classification');
+  const { client: openai, model: defaultModel } = resolved;
+  const endpoint = (resolved as any).endpoint;
 
   const prompt = buildRoleDetectionPrompt(email, recipients, senderContext);
 
@@ -228,12 +231,12 @@ async function detectRolesWithAI(
           content: prompt,
         },
       ],
-      response_format: { type: 'json_object' },
+      ...(endpoint?.provider === 'openai' || endpoint?.provider === 'azure_openai' ? { response_format: { type: 'json_object' as const } } : {}),
       temperature: 0,
       max_tokens: 1500,
     });
 
-    const result = JSON.parse(response.choices[0].message.content || '{}');
+    const result = parseModelJSON(response.choices[0].message.content || '{}', { recipients: [] });
     return result.recipients || [];
   } catch (error) {
     console.error('Error detecting roles with AI:', error);

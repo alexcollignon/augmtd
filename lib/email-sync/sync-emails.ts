@@ -652,11 +652,8 @@ export async function syncEmailsForConnection(
                   from_address: emailForProcessing.from_address,
                   from_name: emailForProcessing.from_name,
                   subject: emailForProcessing.subject,
-                  // Use the absolute latest thread email body so the "Latest" card expands correctly
-                  body: threadEmails && threadEmails.length > 0
-                    ? threadEmails[threadEmails.length - 1].body
-                    : storedEmail.body,
-                  html_body: ((parsed as any).html_body as string | null)?.slice(0, 15000) || null,
+                  body: emailForProcessing.body,
+                  html_body: ((emailForProcessing as any).html_body as string | null)?.slice(0, 15000) || null,
                   received_at: emailForProcessing.received_at,
                   provider: connection.provider,
                   calendar_event_id: calendarEventId || undefined,
