@@ -795,34 +795,41 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
 
       {/* Actions footer */}
       <div className="flex-shrink-0 border-t border-neutral-200 bg-neutral-50 px-6 py-4">
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-3 flex-1">
+        <div className={`flex ${linkedCalEvent ? 'flex-col gap-2' : 'items-center gap-3'}`}>
 
-              {/* Calendar invite */}
-              {linkedCalEvent && (
-                <div className="flex-1 flex items-center gap-2">
-                  {(['accepted', 'tentative', 'declined'] as const).map((val) => {
-                    const labels = { accepted: 'Accept', tentative: 'Maybe', declined: 'Decline' };
-                    const icons = { accepted: CheckIcon, tentative: QuestionMarkCircleIcon, declined: XMarkIcon };
-                    const Icon = icons[val];
-                    const isThisLoading = rsvpLoading === val;
-                    return (
-                      <button
-                        key={val}
-                        onClick={() => handleRsvpWithReply(val, false)}
-                        disabled={!!rsvpLoading}
-                        className="flex-1 inline-flex items-center justify-center gap-1.5 px-4 py-2.5 text-[13px] font-semibold border border-neutral-300 bg-white text-neutral-700 hover:border-neutral-400 hover:bg-neutral-50 disabled:opacity-60 disabled:cursor-not-allowed transition-all shadow-sm"
-                      >
-                        {isThisLoading
-                          ? <div className="w-4 h-4 border-2 border-neutral-400 border-t-transparent rounded-full animate-spin" />
-                          : <Icon className="w-4 h-4" />
-                        }
-                        {isThisLoading ? 'Sending…' : labels[val]}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
+          {/* RSVP row — meeting invites only */}
+          {linkedCalEvent && (
+            <div className="flex items-center gap-2">
+              {(['accepted', 'tentative', 'declined'] as const).map((val) => {
+                const labels = { accepted: 'Accept', tentative: 'Maybe', declined: 'Decline' };
+                const icons = { accepted: CheckIcon, tentative: QuestionMarkCircleIcon, declined: XMarkIcon };
+                const Icon = icons[val];
+                const isThisLoading = rsvpLoading === val;
+                const colorClass = val === 'accepted'
+                  ? 'border-green-200 text-green-700 hover:bg-green-50 hover:border-green-300'
+                  : val === 'declined'
+                  ? 'border-red-200 text-red-600 hover:bg-red-50 hover:border-red-300'
+                  : 'border-neutral-300 text-neutral-700 hover:bg-neutral-50 hover:border-neutral-400';
+                return (
+                  <button
+                    key={val}
+                    onClick={() => handleRsvpWithReply(val, false)}
+                    disabled={!!rsvpLoading}
+                    className={`flex-1 inline-flex items-center justify-center gap-1.5 px-4 py-2.5 text-[13px] font-semibold border bg-white disabled:opacity-60 disabled:cursor-not-allowed transition-all shadow-sm ${colorClass}`}
+                  >
+                    {isThisLoading
+                      ? <div className="w-4 h-4 border-2 border-neutral-400 border-t-transparent rounded-full animate-spin" />
+                      : <Icon className="w-4 h-4" />
+                    }
+                    {isThisLoading ? 'Sending…' : labels[val]}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Secondary actions row (for invites) / primary row (for regular emails) */}
+          <div className="flex items-center gap-3 flex-1">
 
               {/* Preparing state */}
               {!linkedCalEvent && executable && item.execution_status === 'preparing' && (
@@ -854,14 +861,18 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
               )}
 
               {/* Reply */}
-              {!linkedCalEvent && item.source === 'email' && (
+              {item.source === 'email' && (
                 <button
                   onClick={() => {
                     setReplyOpen(true);
                     onReplyOpenChange?.(true);
                     setTimeout(() => replyBoxRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 50);
                   }}
-                  className="flex items-center gap-1.5 px-4 py-2.5 text-[13px] font-semibold text-indigo-600 border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 transition-colors"
+                  className={`flex items-center justify-center gap-1.5 px-4 py-2.5 text-[13px] font-semibold transition-colors border ${
+                    linkedCalEvent
+                      ? 'flex-1 text-neutral-700 border-neutral-300 hover:bg-neutral-100'
+                      : 'text-indigo-600 border-indigo-200 bg-indigo-50 hover:bg-indigo-100'
+                  }`}
                 >
                   <ArrowUturnLeftIcon className="w-3.5 h-3.5" />
                   Reply
@@ -869,12 +880,12 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
               )}
 
               {/* Move to folder */}
-              {!linkedCalEvent && item.source === 'email' && sourceData?.provider ? (
+              {item.source === 'email' && sourceData?.provider ? (
                 <div className="relative" ref={moveMenuRef}>
                   <button
                     onClick={handleOpenMoveMenu}
                     disabled={isMoving}
-                    className="px-4 py-2.5 text-[13px] font-semibold text-neutral-700 hover:bg-neutral-100 disabled:opacity-50 transition-colors border border-neutral-300 flex items-center gap-1.5"
+                    className={`px-4 py-2.5 text-[13px] font-semibold text-neutral-700 hover:bg-neutral-100 disabled:opacity-50 transition-colors border border-neutral-300 flex items-center justify-center gap-1.5${linkedCalEvent ? ' flex-1' : ''}`}
                   >
                     {isMoving ? (
                       <div className="w-3.5 h-3.5 border-2 border-neutral-400 border-t-transparent rounded-full animate-spin" />
@@ -909,7 +920,7 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
                   )}
                 </div>
               ) : null}
-              {!linkedCalEvent && item.source === 'email' && sourceData?.provider && (
+              {item.source === 'email' && sourceData?.provider && (
                 isArchiving ? (
                   <div className="px-4 py-2.5 flex items-center gap-2 border border-indigo-200 bg-indigo-50 text-indigo-600">
                     <div className="w-3.5 h-3.5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
@@ -937,16 +948,15 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
                 ) : (
                   <button
                     onClick={() => setArchiveConfirmPending(true)}
-                    className="px-4 py-2.5 text-[13px] font-semibold text-neutral-600 hover:bg-neutral-100 transition-colors border border-neutral-300 flex items-center gap-2"
+                    className={`px-4 py-2.5 text-[13px] font-semibold text-neutral-600 hover:bg-neutral-100 transition-colors border border-neutral-300 flex items-center justify-center gap-2${linkedCalEvent ? ' flex-1' : ''}`}
                   >
                     <ArchiveBoxArrowDownIcon className="w-4 h-4" />
                     Archive
                   </button>
                 )
               )}
-          </div>
 
-              {/* Workflows — always on the right */}
+              {/* Workflows — always on the right of the secondary row */}
               <button
                 onClick={() => {
                   if (!isOpeningWorkflow) {
@@ -955,7 +965,7 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
                   }
                 }}
                 disabled={isOpeningWorkflow}
-                className="flex-shrink-0 px-3 py-2.5 text-[13px] font-semibold text-indigo-600 hover:bg-indigo-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors border border-indigo-200 flex items-center gap-1.5"
+                className={`px-3 py-2.5 text-[13px] font-semibold text-indigo-600 hover:bg-indigo-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors border border-indigo-200 flex items-center justify-center gap-1.5${linkedCalEvent ? ' flex-1' : ' flex-shrink-0'}`}
               >
                 {isOpeningWorkflow ? (
                   <div className="w-3.5 h-3.5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
@@ -964,6 +974,7 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
                 )}
                 Workflows
               </button>
+          </div>
         </div>
       </div>
 

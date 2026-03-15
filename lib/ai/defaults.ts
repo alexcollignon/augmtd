@@ -22,7 +22,8 @@ export const TIER_DEFAULTS: Record<TierType, Record<TaskType, ModelEndpoint>> = 
     embeddings:    { provider: 'openai',     model: 'text-embedding-3-small', dimensions: 1024 },
     ocr:           { provider: 'openai',     model: 'gpt-4o' },
     assignment:    { provider: 'openai',     model: 'gpt-4o-mini' },
-    conversation:  { provider: 'openai',     model: 'gpt-4o-mini' },
+    conversation:  { provider: 'anthropic',  model: 'claude-haiku-4-5-20251001',
+                     baseURL: 'https://api.anthropic.com/v1' },
   },
 
   // ── Professional — Azure OpenAI / AWS Bedrock ────────────────────────────────

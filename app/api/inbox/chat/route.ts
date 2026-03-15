@@ -47,8 +47,9 @@ MEETING_SUGGESTION:{"title":"...","duration_minutes":30,"attendees":["email@exam
   If the email address is unknown, omit the attendee rather than using a name.
 
 OPEN_COMPOSE:{"to":"...","subject":"...","body":"..."}
-→ User wants to write or send a NEW email to someone not in their inbox.
-  Only emit when you have at least a recipient. Do not combine with ACTION or MEETING_SUGGESTION.
+→ User wants to write or send a NEW email to someone.
+  ALWAYS emit this token when the user wants to compose a new email — even if the recipient email address is unknown (use their name or leave to:"" and the user will fill it in the compose panel).
+  Do not combine with ACTION or MEETING_SUGGESTION.
 
 REPLY_DRAFT:{"body":"..."}
 → REQUIRED when user asks to draft, write, or suggest a reply to an email.
