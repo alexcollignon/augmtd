@@ -14,6 +14,8 @@ import {
   ChevronUpIcon,
   LockClosedIcon,
   GlobeAltIcon,
+  BuildingOfficeIcon,
+  ShieldCheckIcon,
 } from '@heroicons/react/24/outline';
 
 interface SidebarNavProps {
@@ -28,11 +30,13 @@ export default function SidebarNav({ userEmail }: SidebarNavProps) {
   // Tier toggle state
   const [tier, setTier] = useState<'standard' | 'private_shared' | null>(null);
   const [tierLoading, setTierLoading] = useState(false);
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false);
 
   const navigation = [
     { name: 'Work Inbox', href: '/inbox', icon: InboxIcon },
     { name: 'Workflows', href: '/work', icon: QueueListIcon },
     { name: 'Knowledge', href: '/knowledge', icon: BookOpenIcon },
+    ...(isSuperAdmin ? [{ name: 'Platform Admin', href: '/platform-admin', icon: ShieldCheckIcon }] : []),
   ];
 
   // Load current tier on mount
@@ -41,6 +45,10 @@ export default function SidebarNav({ userEmail }: SidebarNavProps) {
       .then((r) => r.json())
       .then((d) => setTier(d.tier ?? 'standard'))
       .catch(() => setTier('standard'));
+    fetch('/api/platform-admin/me')
+      .then((r) => r.json())
+      .then((d) => setIsSuperAdmin(d.isSuperAdmin === true))
+      .catch(() => {});
   }, []);
 
   const toggleTier = useCallback(async () => {

@@ -436,25 +436,31 @@ export async function syncEmailsForConnection(
         // ==== RECIPIENT DETECTION ====
         // Analyze all recipients to determine who needs inbox items
 
-        // Always fetch the connection owner's profile directly (works for solo users and orgs)
+        // Always fetch the connection owner's profile directly
         const { data: ownerProfile } = await adminSupabase
           .from('profiles')
-          .select('id, email, full_name, organization_id')
+          .select('id, email, full_name, company_id')
           .eq('id', connection.user_id)
           .single();
 
         const usersInSystem: Array<{ id: string; email: string; full_name: string | null }> =
           ownerProfile ? [{ id: ownerProfile.id, email: ownerProfile.email, full_name: ownerProfile.full_name }] : [];
 
-        // Also fetch other org members if the user belongs to an org
-        if (ownerProfile?.organization_id) {
-          const { data: orgMembers } = await adminSupabase
-            .from('profiles')
-            .select('id, email, full_name')
-            .eq('organization_id', ownerProfile.organization_id)
-            .neq('id', connection.user_id)
+        // Also fetch other company members if the user belongs to a company
+        if (ownerProfile?.company_id) {
+          const { data: companyMembers } = await adminSupabase
+            .from('company_members')
+            .select('user_id, profiles(id, email, full_name)')
+            .eq('company_id', ownerProfile.company_id)
+            .eq('status', 'active')
+            .neq('user_id', connection.user_id)
             .limit(100);
-          if (orgMembers) usersInSystem.push(...orgMembers);
+          if (companyMembers) {
+            for (const m of companyMembers) {
+              const p = Array.isArray(m.profiles) ? m.profiles[0] : m.profiles;
+              if (p) usersInSystem.push({ id: p.id, email: p.email, full_name: p.full_name });
+            }
+          }
         }
 
         // Add the connection email as an alias if it differs from the profile email
