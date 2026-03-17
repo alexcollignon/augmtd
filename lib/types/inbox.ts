@@ -163,6 +163,22 @@ export interface EmailContent {
 
 export type ArtifactContent = DocContent | PptxContent | XlsxContent | EmailContent;
 
+export type QAIssueType = 'missing_section' | 'fabricated_data' | 'structural' | 'requirement_gap' | 'other';
+export type QASeverity = 'error' | 'warning';
+
+export interface QAIssue {
+  section?: string;
+  type: QAIssueType;
+  description: string;
+  severity: QASeverity;
+}
+
+export interface QAReport {
+  issues: QAIssue[];
+  score: number;    // 0–100; deduct 20 per error, 5 per warning
+  summary: string;  // 1–2 sentence plain-language verdict
+}
+
 export interface DocumentArtifact {
   id?: string; // UUID generated at creation time; optional for backward compat with legacy artifacts
   title: string;
@@ -173,6 +189,7 @@ export interface DocumentArtifact {
   source_data?: unknown; // Raw source material from automated skills (e.g. InvoiceData[]) — used as context in Ask/Edit
   sent_at?: string; // ISO timestamp set when this email artifact was sent
   sent_to?: string; // Recipient address(es) at send time
+  qa_report?: QAReport; // Post-generation QA review — present when skill has skillReview brief
 }
 
 export interface InboxItem {

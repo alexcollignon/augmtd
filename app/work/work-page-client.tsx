@@ -21,9 +21,11 @@ import {
   BookmarkIcon,
   BookOpenIcon,
   ChevronDownIcon,
+  ShieldCheckIcon,
+  ChevronUpIcon,
 } from '@heroicons/react/24/outline';
 import { WorkBlueprint, SavedWorkflow } from '@/lib/types/work-blueprints';
-import { ExecutionPlan, DocumentArtifact, DocContent, PptxContent, XlsxContent, EmailContent } from '@/lib/types/inbox';
+import { ExecutionPlan, DocumentArtifact, DocContent, PptxContent, XlsxContent, EmailContent, QAReport } from '@/lib/types/inbox';
 import OnboardingModal from '@/components/onboarding-modal';
 import SaveWorkflowModal from '@/components/work/save-workflow-modal';
 
@@ -1260,6 +1262,77 @@ function EmailPreviewPanel({
   );
 }
 
+function QAReportPanel({ qaReport }: { qaReport: QAReport }) {
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  const scoreColor =
+    qaReport.score >= 80 ? 'text-green-700 bg-green-50 border-green-200'
+    : qaReport.score >= 60 ? 'text-amber-700 bg-amber-50 border-amber-200'
+    : 'text-red-700 bg-red-50 border-red-200';
+
+  const issueTypeLabel: Record<string, string> = {
+    missing_section: 'Missing Section',
+    fabricated_data: 'Fabricated Data',
+    structural: 'Structure',
+    requirement_gap: 'Requirement Gap',
+    other: 'Other',
+  };
+
+  return (
+    <div className="border-b border-neutral-200 text-[12px] flex-shrink-0">
+      <button
+        onClick={() => setIsExpanded((v) => !v)}
+        className="w-full flex items-center justify-between px-4 py-2.5 bg-neutral-50 hover:bg-neutral-100 transition-colors"
+      >
+        <div className="flex items-center gap-2">
+          <ShieldCheckIcon className="w-4 h-4 text-neutral-500" />
+          <span className="font-medium text-neutral-700">QA Review</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className={`px-2 py-0.5 rounded-full text-[11px] font-semibold border ${scoreColor}`}>
+            {qaReport.score}/100
+          </span>
+          {isExpanded ? (
+            <ChevronUpIcon className="w-3.5 h-3.5 text-neutral-400" />
+          ) : (
+            <ChevronDownIcon className="w-3.5 h-3.5 text-neutral-400" />
+          )}
+        </div>
+      </button>
+
+      {isExpanded && (
+        <div className="px-4 py-3 bg-white border-t border-neutral-200 space-y-3 max-h-64 overflow-y-auto">
+          <p className="text-neutral-600 leading-relaxed">{qaReport.summary}</p>
+
+          {qaReport.issues.length === 0 ? (
+            <p className="text-green-600 flex items-center gap-1.5">
+              <CheckCircleIcon className="w-4 h-4" /> No issues found
+            </p>
+          ) : (
+            <ul className="space-y-2">
+              {qaReport.issues.map((issue, i) => (
+                <li key={i} className="flex gap-2.5">
+                  <span className={`mt-0.5 shrink-0 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide ${
+                    issue.severity === 'error'
+                      ? 'bg-red-100 text-red-700'
+                      : 'bg-amber-100 text-amber-700'
+                  }`}>
+                    {issueTypeLabel[issue.type] ?? issue.type}
+                  </span>
+                  <span className="text-neutral-600 leading-relaxed">
+                    {issue.section && <span className="font-medium text-neutral-800">{issue.section} — </span>}
+                    {issue.description}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DocumentPanel({
   artifact,
   artifacts,
@@ -1336,6 +1409,11 @@ function DocumentPanel({
         </div>
       </div>
 
+      {/* QA Review panel — shown below toolbar, always visible without scrolling */}
+      {artifact.qa_report && !isEmail && (
+        <QAReportPanel qaReport={artifact.qa_report} />
+      )}
+
       {/* Document preview / Email preview */}
       {isEmail ? (
         <EmailPreviewPanel
@@ -1345,23 +1423,25 @@ function DocumentPanel({
           onSent={onArtifactSent}
         />
       ) : (
-        <div className="flex-1 overflow-y-auto p-6">
-          {artifact.content ? (
-            artifact.type === 'presentation'
-              ? <PptxPreview content={artifact.content as PptxContent} />
-              : artifact.type === 'spreadsheet'
-              ? <XlsxPreview content={artifact.content as XlsxContent} />
-              : <DocPreview content={artifact.content as DocContent} />
-          ) : (
-            /* Fallback for artifacts without content */
-            <div className="max-w-2xl mx-auto bg-white shadow-sm border border-neutral-200 px-12 py-10 flex items-center justify-center min-h-64">
-              <div className="text-center">
-                <CheckCircleIcon className="w-8 h-8 text-green-500 mx-auto mb-2" />
-                <p className="text-[13px] text-neutral-600">Document ready</p>
-                <p className="text-[11px] text-neutral-400 mt-1">Regenerate to see a preview</p>
+        <div className="flex-1 overflow-y-auto">
+          <div className="p-6">
+            {artifact.content ? (
+              artifact.type === 'presentation'
+                ? <PptxPreview content={artifact.content as PptxContent} />
+                : artifact.type === 'spreadsheet'
+                ? <XlsxPreview content={artifact.content as XlsxContent} />
+                : <DocPreview content={artifact.content as DocContent} />
+            ) : (
+              /* Fallback for artifacts without content */
+              <div className="max-w-2xl mx-auto bg-white shadow-sm border border-neutral-200 px-12 py-10 flex items-center justify-center min-h-64">
+                <div className="text-center">
+                  <CheckCircleIcon className="w-8 h-8 text-green-500 mx-auto mb-2" />
+                  <p className="text-[13px] text-neutral-600">Document ready</p>
+                  <p className="text-[11px] text-neutral-400 mt-1">Regenerate to see a preview</p>
+                </div>
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       )}
     </div>

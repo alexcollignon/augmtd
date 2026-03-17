@@ -2,6 +2,29 @@ import { MCPServer, MCPTool, MCPToolResult, MCPCredentials } from '../types'
 
 const TOOLS: MCPTool[] = [
   {
+    id: 'generators__grant_proposal',
+    name: 'Grant Proposal Generator',
+    description: `Grant proposals and funding applications. Use for: Horizon Europe, ERC, MSCA, FCT, EIT, DFG, ANR, private foundations, or any call for proposals.
+Use whenever a user uploads or pastes a call for proposals and asks to write, draft, structure, or develop a grant proposal, funding application, research bid, or project submission.
+Triggers: "help me apply for this grant", "turn this call into a proposal", "draft a proposal based on this CFP", "write a funding application", "help me respond to this call".
+Works with PDF, Word, or pasted text of the call. Always use this over generators__word when grant/funding context is present.
+Action text: describe the funder and call reference if identifiable, and any specific focus areas the user has mentioned.
+Examples:
+  User uploads a Horizon Europe call: "Write a grant proposal for ERC-2025-StG call on urban climate resilience"
+  User pastes FCT call text: "Draft a funding application for FCT research grant on machine learning for diagnostics"
+Recommended plan structure — always use 4-5 intermediate steps before this generator step:
+  Step 1 — Extract all call requirements: funder identity, call ID, deadline, page limits, eligible entities, mandatory sections, evaluation criteria and weightings, KPI targets, budget ceiling
+  Step 2 — Identify the funder template and map requirements to the correct structural pattern (Horizon Part B, ERC synopsis, EIT Knowledge Triangle, FCT, private foundation)
+  Step 3 — Build a section-by-section outline with key arguments, content bullets, and evaluation criterion mapping for each mandatory section
+  Step 4 — Draft substantive content for each section using the outline and source material, with specific data, methodology justification, and impact narrative
+  Step 5 — this generator tool (final assembly into formatted proposal)
+Do NOT collapse steps 1-4 into a single analysis step. Each step builds context the next step depends on. A 2-step plan (1 analysis + generator) produces a generic template, not a real proposal.`,
+    params: [
+      { name: 'action', type: 'string', description: 'Funder, call reference, and proposal focus', required: true },
+    ],
+    requires_approval: false,
+  },
+  {
     id: 'generators__word',
     name: 'Word Document Generator',
     description: `Writing and drafting. Use for: reports, memos, summaries, analysis narratives, proposals, contracts, briefs, meeting recaps.
@@ -89,6 +112,13 @@ export const generatorsServer: MCPServer = {
         userContext: params.userContext as string,
         adminClient: params.adminClient as import('@supabase/supabase-js').SupabaseClient,
         stepAction: params.stepAction as string | undefined,
+        skillGeneration: params.skillGeneration as string | undefined,
+        pageSize: params.pageSize as 'letter' | 'a4' | undefined,
+        maxGenerationTokens: params.maxGenerationTokens as number | undefined,
+        maxStepOutputsChars: params.maxStepOutputsChars as number | undefined,
+        maxJsonChars: params.maxJsonChars as number | undefined,
+        requirementsContext: params.requirementsContext as string | undefined,
+        skillReview: params.skillReview as string | undefined,
       })
       return { success: true, data: artifact }
     } catch (err: any) {

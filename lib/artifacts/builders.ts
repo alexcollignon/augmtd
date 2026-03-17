@@ -13,7 +13,8 @@ function stripBulletPrefix(line: string): string {
   return line.trim().replace(/^[-•*]\s+/, '');
 }
 
-export function buildDocx(content: DocContent): Promise<Buffer> {
+export function buildDocx(content: DocContent, options?: { pageSize?: 'letter' | 'a4' }): Promise<Buffer> {
+  const isA4 = options?.pageSize === 'a4';
   const NUMBERING_REF = 'bullet-list';
 
   const numberingConfig = {
@@ -106,8 +107,12 @@ export function buildDocx(content: DocContent): Promise<Buffer> {
     sections: [{
       properties: {
         page: {
-          size: { width: 12240, height: 15840 },  // US Letter
-          margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 },
+          size: isA4
+            ? { width: 11906, height: 16838 }   // A4
+            : { width: 12240, height: 15840 },  // US Letter
+          margin: isA4
+            ? { top: 1418, right: 1418, bottom: 1418, left: 1418 }  // ~2.5cm
+            : { top: 1440, right: 1440, bottom: 1440, left: 1440 }, // ~1 inch
         },
       },
       children,
@@ -273,8 +278,8 @@ export function getMimeType(type: DeliverableType): string {
   return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 }
 
-export async function buildArtifactFile(type: DeliverableType, content: ArtifactContent): Promise<Buffer> {
+export async function buildArtifactFile(type: DeliverableType, content: ArtifactContent, options?: { pageSize?: 'letter' | 'a4' }): Promise<Buffer> {
   if (type === 'presentation') return buildPptx(content as PptxContent);
   if (type === 'spreadsheet') return buildXlsx(content as XlsxContent);
-  return buildDocx(content as DocContent);
+  return buildDocx(content as DocContent, options);
 }

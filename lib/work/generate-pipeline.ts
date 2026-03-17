@@ -8,6 +8,11 @@ import { invokeTool } from '@/lib/mcp/client';
 import { DOCX_SKILL } from '@/lib/skills/docx';
 import { PPTX_SKILL } from '@/lib/skills/pptx';
 import { XLSX_SKILL } from '@/lib/skills/xlsx';
+import { GRANT_PROPOSAL_REASONING, GRANT_PROPOSAL_GENERATION, GRANT_PROPOSAL_REQUIREMENTS_SCHEMA, GRANT_PROPOSAL_SKILL_REVIEW } from '@/lib/skills/grant-proposal';
+import { extractTextFromAttachment } from '@/lib/attachments/text-extractor';
+import { chunkText, topNChunks, type DocumentChunk, type AttachmentContextBundle } from '@/lib/work/bm25';
+import { parseModelJSON } from '@/lib/ai/parse-json';
+import type { QAReport } from '@/lib/types/inbox';
 
 // ─── Smart attachment context ──────────────────────────────────────────────────
 // Runs before any plan steps. Detects what files actually arrived and routes
@@ -30,11 +35,19 @@ function isExcelOrCsv(filename: string, mimeType: string): boolean {
   );
 }
 
+const FULL_EXTRACTION_MAX_CHARS = 80000;
+const FULL_EXTRACTION_MIME_TYPES = new Set([
+  'application/pdf',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/msword',
+]);
+
 async function buildSmartAttachmentContext(
   emailAttachments: Array<{ filename: string; mimeType?: string; storagePath?: string; extractedText: string | null }>,
   userAttachments: Array<{ filename: string; mimeType: string; storagePath: string; extractedText: string | null }>,
   adminClient: SupabaseClient,
   userId: string,
+  fullDocumentExtraction?: boolean,
 ): Promise<string> {
   const parts: string[] = [];
 
@@ -101,6 +114,31 @@ async function buildSmartAttachmentContext(
   }
 
   for (const att of userAttachments) {
+    // Full extraction: re-download and extract without the upload-time 3000 char cap
+    if (fullDocumentExtraction && att.storagePath && FULL_EXTRACTION_MIME_TYPES.has(att.mimeType)) {
+      try {
+        const { data: blob, error } = await adminClient.storage
+          .from('email-attachments')
+          .download(att.storagePath);
+        if (error || !blob) {
+          console.error(`[SmartContext] Full extraction download failed for ${att.filename}:`, error);
+          // Fall through to extractedText below
+        } else {
+          const buffer = Buffer.from(await blob.arrayBuffer());
+          const extracted = await extractTextFromAttachment(buffer, att.mimeType, att.filename);
+          if (extracted) {
+            const capped = extracted.length > FULL_EXTRACTION_MAX_CHARS
+              ? extracted.slice(0, FULL_EXTRACTION_MAX_CHARS) + '\n[... document truncated at 80k chars ...]'
+              : extracted;
+            parts.push(`--- ${att.filename} ---\n${capped}`);
+            continue;
+          }
+        }
+      } catch (err) {
+        console.error(`[SmartContext] Full extraction failed for ${att.filename}:`, err);
+      }
+    }
+
     if (att.extractedText) {
       // Already extracted upstream (PDF, DOCX, TXT)
       parts.push(`--- ${att.filename} ---\n${att.extractedText}`);
@@ -164,6 +202,84 @@ async function buildSmartAttachmentContext(
   return parts.join('\n\n');
 }
 
+/**
+ * Wraps buildSmartAttachmentContext to produce an AttachmentContextBundle.
+ * When chunkedRetrieval is true, also splits the flat text into overlapping chunks
+ * for BM25 per-step retrieval. Otherwise chunks is null and every step gets flat text.
+ */
+async function buildAttachmentBundle(
+  emailAttachments: Array<{ filename: string; mimeType?: string; storagePath?: string; extractedText: string | null }>,
+  userAttachments: Array<{ filename: string; mimeType: string; storagePath: string; extractedText: string | null }>,
+  adminClient: SupabaseClient,
+  userId: string,
+  fullDocumentExtraction?: boolean,
+  chunkedRetrieval?: boolean,
+): Promise<AttachmentContextBundle> {
+  const flat = await buildSmartAttachmentContext(emailAttachments, userAttachments, adminClient, userId, fullDocumentExtraction);
+  if (!chunkedRetrieval || flat.length === 0) {
+    return { flat, chunks: null };
+  }
+  const chunks = chunkText(flat);
+  // If only one chunk produced, chunking adds no value — fall back to flat mode
+  if (chunks.length <= 1) {
+    return { flat, chunks: null };
+  }
+  return { flat, chunks };
+}
+
+// ─── Requirements extraction ──────────────────────────────────────────────────
+
+/**
+ * Runs a focused extraction call against the source document to produce a
+ * structured CALL REQUIREMENTS block. This block is injected into every
+ * subsequent step and the final assembly so the model always writes against
+ * authoritative requirements rather than whatever it happened to see in its chunks.
+ *
+ * Returns a formatted string like:
+ *   "funder_identity: Horizon Europe – ERC Starting Grant\ncall_id: ERC-2025-StG\n..."
+ * Returns undefined on failure (non-fatal — pipeline continues without it).
+ */
+async function extractRequirements(
+  flat: string,
+  schema: Record<string, string>,
+  client: OpenAI,
+  model: string,
+): Promise<string | undefined> {
+  try {
+    const schemaLines = Object.entries(schema)
+      .map(([key, desc]) => `  "${key}": null  // ${desc}`)
+      .join(',\n');
+
+    const completion = await aiCreate(client, {
+      model,
+      max_tokens: 1200,
+      messages: [
+        {
+          role: 'system',
+          content: 'You are a requirements extraction specialist. Read the source document and extract exact values for each JSON field. Output ONLY valid JSON. Use null for fields not found in the document. Do not invent values. Do not add extra fields.',
+        },
+        {
+          role: 'user',
+          content: `DOCUMENT (first 40000 characters):\n${flat.slice(0, 40000)}\n\nEXTRACT these fields as JSON:\n{\n${schemaLines}\n}`,
+        },
+      ],
+    });
+
+    const raw = completion.choices[0]?.message?.content ?? '';
+    const parsed = parseModelJSON<Record<string, unknown>>(raw, {});
+    if (Object.keys(parsed).length === 0) return undefined;
+
+    // Format as a flat labeled block for injection into step prompts
+    const lines = Object.entries(parsed)
+      .filter(([, v]) => v !== null && v !== undefined && v !== '')
+      .map(([k, v]) => `${k}: ${v}`);
+    return lines.length > 0 ? lines.join('\n') : undefined;
+  } catch (err) {
+    console.error('[RequirementsExtraction] Failed:', err);
+    return undefined;
+  }
+}
+
 // ─── Step execution ────────────────────────────────────────────────────────────
 
 export interface StepOutput {
@@ -176,10 +292,14 @@ async function executeStep(
   step: { number: number; action: string; skill?: string; options?: Record<string, unknown> },
   plan: any,
   previousOutputs: StepOutput[],
-  attachmentContext: string,
+  contextBundle: AttachmentContextBundle,
   userContext: string,
   client: OpenAI,
   model: string,
+  skillReasoning?: string,
+  maxTokens = 1200,
+  stepIndex = 0,
+  requirementsContext?: string,
 ): Promise<string> {
   const previousContext = previousOutputs.length > 0
     ? `\n\nPREVIOUS STEPS COMPLETED:\n${previousOutputs.map((s) => `Step ${s.stepNumber} — ${s.action}:\n${s.output}`).join('\n\n')}`
@@ -189,21 +309,32 @@ async function executeStep(
     ? `\nCONSTRAINTS: ${JSON.stringify(step.options)} — follow these exactly`
     : '';
 
+  // BM25 retrieval: step 0 always gets full flat context (needs broad survey);
+  // subsequent steps get the top-3 most relevant chunks when chunking is active.
+  let attachmentForPrompt: string;
+  if (contextBundle.chunks && stepIndex > 0) {
+    const query = `${step.action} ${plan.deliverable_description ?? ''}`;
+    const relevant = topNChunks(query, contextBundle.chunks, 3);
+    attachmentForPrompt = relevant.map((c) => `[${c.source}]\n${c.text}`).join('\n\n---\n\n');
+  } else {
+    attachmentForPrompt = contextBundle.flat;
+  }
+
   const userPrompt = `OVERALL GOAL: ${plan.deliverable_description}
 DELIVERABLE TYPE: ${plan.deliverable_type}
 AUTHOR: ${userContext}
 ${step.skill ? `SKILL: ${step.skill}` : ''}${optionsContext}
-
+${requirementsContext ? `\nCALL REQUIREMENTS (authoritative — use these exact values):\n${requirementsContext}\n` : ''}
 YOUR TASK (Step ${step.number} of ${plan.steps?.length ?? '?'}): ${step.action}
-${attachmentContext ? `\nSOURCE MATERIAL:\n${attachmentContext}` : ''}${previousContext}
+${attachmentForPrompt ? `\nSOURCE MATERIAL:\n${attachmentForPrompt}` : ''}${previousContext}
 
 Execute this step thoroughly. Output the specific results, data, analysis, or content this step produces. Be concrete — actual numbers, actual text, actual structure. Do not explain what you are going to do, just do it.`;
 
   const completion = await aiCreate(client, {
     model,
-    max_tokens: 1200,
+    max_tokens: maxTokens,
     messages: [
-      { role: 'system', content: `You are executing a single step in a professional workflow for a ${userContext}. Perform the task described and output the results directly. No preamble, no meta-commentary — only the output of the work itself. When drawing on source material sections, cite inline as [Source: filename § section].` },
+      { role: 'system', content: `You are executing a single step in a professional workflow for a ${userContext}. Perform the task described and output the results directly. No preamble, no meta-commentary — only the output of the work itself. When drawing on source material sections, cite inline as [Source: filename § section].${skillReasoning ? `\n\n${skillReasoning}` : ''}` },
       { role: 'user', content: userPrompt },
     ],
   });
@@ -213,17 +344,19 @@ Execute this step thoroughly. Output the specific results, data, analysis, or co
 
 export async function executeSteps(
   plan: any,
-  attachmentContext: string,
+  contextBundle: AttachmentContextBundle,
   userContext: string,
   client: OpenAI,
   model: string,
+  requirementsContext?: string,
 ): Promise<StepOutput[]> {
   const steps = (plan.steps || []).slice(0, 4);
   const outputs: StepOutput[] = [];
 
-  for (const step of steps) {
+  for (let i = 0; i < steps.length; i++) {
+    const step = steps[i];
     try {
-      const output = await executeStep(step, plan, outputs, attachmentContext, userContext, client, model);
+      const output = await executeStep(step, plan, outputs, contextBundle, userContext, client, model, undefined, 1200, i, requirementsContext);
       outputs.push({ stepNumber: step.number, action: step.action, output });
     } catch (err) {
       console.error(`[GeneratePipeline] Step ${step.number} failed:`, err);
@@ -237,11 +370,11 @@ export async function executeSteps(
 
 const STEP_OUTPUTS_MAX_CHARS = 3000;
 
-function buildStepOutputsBlock(stepOutputs: StepOutput[]): string {
+function buildStepOutputsBlock(stepOutputs: StepOutput[], maxChars = STEP_OUTPUTS_MAX_CHARS): string {
   if (stepOutputs.length === 0) return '';
   const full = stepOutputs.map((s) => `--- Step ${s.stepNumber}: ${s.action} ---\n${s.output}`).join('\n\n');
-  const truncated = full.length > STEP_OUTPUTS_MAX_CHARS
-    ? full.slice(0, STEP_OUTPUTS_MAX_CHARS) + '\n[... truncated for assembly ...]'
+  const truncated = full.length > maxChars
+    ? full.slice(0, maxChars) + '\n[... truncated for assembly ...]'
     : full;
   return `\nWORK COMPLETED — use this as the primary source material:\n${truncated}`;
 }
@@ -256,10 +389,15 @@ export function buildGeneratePrompt(
     attachmentContext: string;
     stepOutputs: StepOutput[];
     stepAction?: string;
+    skillGeneration?: string;
+    maxStepOutputsChars?: number;
+    maxGenerationTokens?: number;
+    maxJsonChars?: number;
+    requirementsContext?: string;
   }
 ): { systemPrompt: string; userPrompt: string; maxTokens: number } {
-  const { deadlineLine, userContext, conversationContext, attachmentContext, stepOutputs, stepAction } = context;
-  const stepOutputsBlock = buildStepOutputsBlock(stepOutputs);
+  const { deadlineLine, userContext, conversationContext, attachmentContext, stepOutputs, stepAction, skillGeneration, maxStepOutputsChars, maxGenerationTokens, maxJsonChars, requirementsContext } = context;
+  const stepOutputsBlock = buildStepOutputsBlock(stepOutputs, maxStepOutputsChars);
 
   if (type === 'email') {
     return {
@@ -356,8 +494,13 @@ Return the JSON spreadsheet structure.`,
     };
   }
 
+  // Extract mandatory_sections from requirementsContext and inject into system prompt
+  // for strong enforcement — user-prompt position alone is too weak to override model priors
+  const mandatorySectionsMatch = requirementsContext?.match(/^mandatory_sections:\s*(.+)$/m);
+  const mandatorySections = mandatorySectionsMatch ? mandatorySectionsMatch[1].trim() : undefined;
+
   return {
-    systemPrompt: `You generate structured document content in JSON. Return ONLY valid JSON — no markdown, no explanation. Keep total JSON under 4000 characters.
+    systemPrompt: `You generate structured document content in JSON. Return ONLY valid JSON — no markdown, no explanation. Keep total JSON under ${maxJsonChars ?? 4000} characters.
 
 JSON format:
 {
@@ -369,8 +512,8 @@ JSON format:
   ]
 }
 
-${DOCX_SKILL}
-
+${skillGeneration ?? DOCX_SKILL}
+${mandatorySections ? `\nCRITICAL — USE THESE EXACT SECTION HEADINGS IN THIS EXACT ORDER. Do not add, remove, rename, or reorder any section:\n${mandatorySections}\n` : ''}
 - level 1 = major section heading, level 2 = sub-section (use sparingly)
 - paragraphs array: each string is one paragraph OR one "- item" bullet line — mix freely within a section
 - Be specific — use actual data and findings from the work completed, not generic statements
@@ -380,12 +523,12 @@ ${DOCX_SKILL}
 
 DELIVERABLE: ${plan.deliverable_description}${deadlineLine}
 ${stepAction ? `SPECIFIC INSTRUCTION: ${stepAction}\n` : ''}AUTHOR: ${userContext}
-${stepOutputsBlock}
+${requirementsContext ? `\nCALL REQUIREMENTS (locked — reproduce these exactly in section titles and structure):\n${requirementsContext}\n` : ''}${stepOutputsBlock}
 ${attachmentContext ? `\nSOURCE MATERIAL:\n${attachmentContext}` : ''}
 CONVERSATION CONTEXT: ${conversationContext || '(none)'}
 
 Return the JSON document structure.`,
-    maxTokens: 2000,
+    maxTokens: maxGenerationTokens ?? 2000,
   };
 }
 
@@ -470,9 +613,9 @@ export async function runPipelineSteps(params: {
   const { plan, emailAttachments, userAttachments = [], userContext, adminClient, userId } = params;
   const { client, model } = await getAIClient(userId, 'generation', adminClient);
 
-  const attachmentContext = await buildSmartAttachmentContext(emailAttachments, userAttachments, adminClient, userId);
-  const stepOutputs = await executeSteps(plan, attachmentContext, userContext, client, model);
-  return { stepOutputs, attachmentContext };
+  const bundle = await buildAttachmentBundle(emailAttachments, userAttachments, adminClient, userId);
+  const stepOutputs = await executeSteps(plan, bundle, userContext, client, model);
+  return { stepOutputs, attachmentContext: bundle.flat };
 }
 
 /**
@@ -490,8 +633,15 @@ export async function assembleArtifactFromSteps(params: {
   userContext: string;
   adminClient: SupabaseClient;
   stepAction?: string;
+  skillGeneration?: string;
+  pageSize?: 'letter' | 'a4';
+  maxGenerationTokens?: number;
+  maxStepOutputsChars?: number;
+  maxJsonChars?: number;
+  requirementsContext?: string;
+  skillReview?: string;
 }): Promise<DocumentArtifact> {
-  const { userId, threadId, type, plan, stepOutputs, attachmentContext, conversationContext, userContext, adminClient, stepAction } = params;
+  const { userId, threadId, type, plan, stepOutputs, attachmentContext, conversationContext, userContext, adminClient, stepAction, skillGeneration, pageSize, maxGenerationTokens, maxStepOutputsChars, maxJsonChars, requirementsContext, skillReview } = params;
   const { client, model } = await getAIClient(userId, 'generation', adminClient);
 
   const deadlineLine = plan.deadline ? `\nDeadline: ${new Date(plan.deadline).toLocaleDateString()}` : '';
@@ -502,6 +652,11 @@ export async function assembleArtifactFromSteps(params: {
     attachmentContext,
     stepOutputs,
     stepAction,
+    skillGeneration,
+    maxStepOutputsChars,
+    maxGenerationTokens,
+    maxJsonChars,
+    requirementsContext,
   });
 
   const completion = await aiCreate(client, {
@@ -516,6 +671,39 @@ export async function assembleArtifactFromSteps(params: {
   const rawText = completion.choices[0]?.message?.content ?? '{}';
   const content = parseAndValidateContent(type, rawText);
 
+  // QA pass — runs when skill has a skillReview brief (non-fatal)
+  // Uses the conversation task model (lighter, more reliable for structured JSON output)
+  let qaReport: QAReport | undefined;
+  if (skillReview && type !== 'email') {
+    try {
+      const docText = 'sections' in content
+        ? (content as any).sections
+            .map((s: any) => `## ${s.heading}\n${(s.paragraphs ?? []).join('\n\n')}`)
+            .join('\n\n')
+        : rawText.slice(0, 12000);
+
+      console.log('[QAPass] Starting review — docText chars:', docText.length, 'requirementsContext:', !!requirementsContext);
+      const { client: qaClient, model: qaModel } = await getAIClient(userId, 'conversation', adminClient);
+      const qaCompletion = await aiCreate(qaClient, {
+        model: qaModel,
+        max_tokens: 1000,
+        messages: [
+          { role: 'system', content: skillReview },
+          {
+            role: 'user',
+            content: `GENERATED DOCUMENT:\n${docText.slice(0, 10000)}${requirementsContext ? `\n\nCALL REQUIREMENTS:\n${requirementsContext}` : ''}`,
+          },
+        ],
+      });
+      const qaRaw = qaCompletion.choices[0]?.message?.content ?? '';
+      console.log('[QAPass] Raw response length:', qaRaw.length, '— preview:', qaRaw.slice(0, 150));
+      qaReport = parseModelJSON<QAReport>(qaRaw, { issues: [], score: 100, summary: 'QA pass produced no output.' });
+    } catch (err) {
+      console.error('[QAPass] Failed:', err);
+      qaReport = { issues: [], score: 0, summary: 'QA review encountered an error — see server logs.' };
+    }
+  }
+
   const artifactId = randomUUID();
 
   // Email artifacts store content in JSONB — no file to upload
@@ -529,7 +717,7 @@ export async function assembleArtifactFromSteps(params: {
     };
   }
 
-  const buffer = await buildArtifactFile(type, content);
+  const buffer = await buildArtifactFile(type, content, { pageSize });
   const ext = getFileExt(type);
   const storagePath = `${userId}/${threadId}/${artifactId}.${ext}`;
 
@@ -546,6 +734,7 @@ export async function assembleArtifactFromSteps(params: {
     generated_at: new Date().toISOString(),
     storage_path: storagePath,
     content,
+    ...(qaReport ? { qa_report: qaReport } : {}),
   };
 }
 
@@ -555,7 +744,7 @@ export async function assembleArtifactFromSteps(params: {
 const GENERATOR_SKILLS = new Set(['excel-generator', 'word-generator', 'powerpoint-generator', 'email-drafter']);
 
 // Generator tool IDs in the new MCP format
-const GENERATOR_TOOL_IDS = new Set(['generators__word', 'generators__xlsx', 'generators__pptx', 'generators__email_draft']);
+const GENERATOR_TOOL_IDS = new Set(['generators__word', 'generators__xlsx', 'generators__pptx', 'generators__email_draft', 'generators__grant_proposal']);
 
 // Backward-compat mapping: legacy skill → MCP tool ID
 export const SKILL_TO_TOOL: Record<string, string> = {
@@ -571,6 +760,41 @@ const TOOL_TO_TYPE: Record<string, string> = {
   'generators__xlsx': 'spreadsheet',
   'generators__pptx': 'presentation',
   'generators__email_draft': 'email',
+  'generators__grant_proposal': 'document',  // still a .docx, A4 format
+};
+
+// MCP tool ID → skill name (for skill-aware pipeline routing)
+const TOOL_TO_SKILL: Record<string, string> = {
+  'generators__grant_proposal': 'grant_proposal',
+};
+
+// Skill name → reasoning + generation briefs + build options
+const SKILL_BRIEFS: Record<string, {
+  reasoning: string;
+  generation: string;
+  pageSize?: 'letter' | 'a4';
+  maxIntermediateTokens?: number;
+  maxGenerationTokens?: number;
+  maxStepOutputsChars?: number;
+  maxJsonChars?: number;
+  fullDocumentExtraction?: boolean;
+  chunkedRetrieval?: boolean;
+  requirementsSchema?: Record<string, string>;
+  skillReview?: string;
+}> = {
+  'grant_proposal': {
+    reasoning: GRANT_PROPOSAL_REASONING,
+    generation: GRANT_PROPOSAL_GENERATION,
+    pageSize: 'a4',
+    maxIntermediateTokens: 2500,
+    maxGenerationTokens: 6000,
+    maxStepOutputsChars: 10000,
+    maxJsonChars: 16000,
+    fullDocumentExtraction: true,
+    chunkedRetrieval: true,
+    requirementsSchema: GRANT_PROPOSAL_REQUIREMENTS_SCHEMA,
+    skillReview: GRANT_PROPOSAL_SKILL_REVIEW,
+  },
 };
 
 /**
@@ -631,10 +855,58 @@ export async function runFullPipeline(params: GeneratePipelineParams): Promise<P
   const { userId, threadId, plan, emailAttachments, userAttachments = [], conversationContext, userContext, adminClient } = params;
   const { client, model } = await getAIClient(userId, 'generation', adminClient);
 
-  // Smart pre-execution: detect file types and extract content before any step runs
-  const attachmentContext = await buildSmartAttachmentContext(emailAttachments, userAttachments, adminClient, userId);
-
   const allSteps = (plan.steps || []).slice(0, 6);
+
+  // Detect if any generator step activates a domain skill — load briefs upfront
+  // (must run before buildSmartAttachmentContext so fullDocumentExtraction is known)
+  let skillReasoning: string | undefined;
+  let skillGeneration: string | undefined;
+  let skillPageSize: 'letter' | 'a4' | undefined;
+  let skillMaxIntermediateTokens: number | undefined;
+  let skillMaxGenerationTokens: number | undefined;
+  let skillMaxStepOutputsChars: number | undefined;
+  let skillMaxJsonChars: number | undefined;
+  let skillFullDocumentExtraction: boolean | undefined;
+  let skillChunkedRetrieval: boolean | undefined;
+  let skillRequirementsSchema: Record<string, string> | undefined;
+  let skillReview: string | undefined;
+  for (const step of allSteps) {
+    const toolId = resolveToolId(step);
+    if (toolId && TOOL_TO_SKILL[toolId]) {
+      const briefs = SKILL_BRIEFS[TOOL_TO_SKILL[toolId]];
+      if (briefs) {
+        skillReasoning = briefs.reasoning;
+        skillGeneration = briefs.generation;
+        skillPageSize = briefs.pageSize;
+        skillMaxIntermediateTokens = briefs.maxIntermediateTokens;
+        skillMaxGenerationTokens = briefs.maxGenerationTokens;
+        skillMaxStepOutputsChars = briefs.maxStepOutputsChars;
+        skillMaxJsonChars = briefs.maxJsonChars;
+        skillFullDocumentExtraction = briefs.fullDocumentExtraction;
+        skillChunkedRetrieval = briefs.chunkedRetrieval;
+        skillRequirementsSchema = briefs.requirementsSchema;
+        skillReview = briefs.skillReview;
+      }
+      break;
+    }
+  }
+
+  // Build attachment context bundle — full re-extraction + optional BM25 chunking
+  const contextBundle = await buildAttachmentBundle(
+    emailAttachments, userAttachments, adminClient, userId,
+    skillFullDocumentExtraction, skillChunkedRetrieval,
+  );
+
+  // Structured requirements extraction — runs before the step loop when skill has a schema.
+  // Produces a locked CALL REQUIREMENTS block injected into every step and final assembly.
+  let requirementsContext: string | undefined;
+  if (skillRequirementsSchema && contextBundle.flat.length > 0) {
+    requirementsContext = await extractRequirements(contextBundle.flat, skillRequirementsSchema, client, model);
+    if (requirementsContext) {
+      console.log('[RequirementsExtraction] Extracted requirements block:', requirementsContext.slice(0, 200));
+    }
+  }
+
   const intermediateOutputs: StepOutput[] = [];
   const artifacts: DocumentArtifact[] = [];
   let generatorIndex = 0;
@@ -658,8 +930,14 @@ export async function runFullPipeline(params: GeneratePipelineParams): Promise<P
         const result = await invokeTool(toolId, {
           userId, threadId, type, plan,
           stepOutputs: [...intermediateOutputs],
-          attachmentContext, conversationContext, userContext,
+          attachmentContext: contextBundle.flat, conversationContext, userContext,
           adminClient, stepAction: step.action,
+          skillGeneration, pageSize: skillPageSize,
+          maxGenerationTokens: skillMaxGenerationTokens,
+          maxStepOutputsChars: skillMaxStepOutputsChars,
+          maxJsonChars: skillMaxJsonChars,
+          requirementsContext,
+          skillReview,
         }, {});
         if (!result.success) {
           console.error(`[FullPipeline] Tool ${toolId} failed:`, result.error);
@@ -671,7 +949,8 @@ export async function runFullPipeline(params: GeneratePipelineParams): Promise<P
         }
       } else {
         // No tool — intermediate step executed by Claude
-        const output = await executeStep(step, plan, intermediateOutputs, attachmentContext, userContext, client, model);
+        const stepIndex = allSteps.indexOf(step);
+        const output = await executeStep(step, plan, intermediateOutputs, contextBundle, userContext, client, model, skillReasoning, skillMaxIntermediateTokens, stepIndex, requirementsContext);
         intermediateOutputs.push({ stepNumber: step.number, action: step.action, output });
       }
     } catch (err) {
@@ -693,8 +972,14 @@ export async function runFullPipeline(params: GeneratePipelineParams): Promise<P
       try {
         const artifact = await assembleArtifactFromSteps({
           userId, threadId, type: declaredType, plan,
-          stepOutputs: intermediateOutputs, attachmentContext,
+          stepOutputs: intermediateOutputs, attachmentContext: contextBundle.flat,
           conversationContext, userContext, adminClient,
+          skillGeneration, pageSize: skillPageSize,
+          maxGenerationTokens: skillMaxGenerationTokens,
+          maxStepOutputsChars: skillMaxStepOutputsChars,
+          maxJsonChars: skillMaxJsonChars,
+          requirementsContext,
+          skillReview,
         });
         artifacts.push(artifact);
         producedTypes.add(declaredType);
