@@ -16,6 +16,7 @@ import {
   GlobeAltIcon,
   BuildingOfficeIcon,
   ShieldCheckIcon,
+  ArrowPathIcon,
 } from '@heroicons/react/24/outline';
 
 interface SidebarNavProps {
@@ -35,6 +36,7 @@ export default function SidebarNav({ userEmail }: SidebarNavProps) {
   const navigation = [
     { name: 'Work Inbox', href: '/inbox', icon: InboxIcon },
     { name: 'Workflows', href: '/work', icon: QueueListIcon },
+    { name: 'Processes', href: '/processes', icon: ArrowPathIcon },
     { name: 'Knowledge', href: '/knowledge', icon: BookOpenIcon },
     ...(isSuperAdmin ? [{ name: 'Platform Admin', href: '/platform-admin', icon: ShieldCheckIcon }] : []),
   ];
