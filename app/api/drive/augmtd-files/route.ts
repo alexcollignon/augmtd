@@ -116,6 +116,18 @@ export async function GET() {
     // Sort by generated_at DESC
     files.sort((a, b) => new Date(b.generated_at).getTime() - new Date(a.generated_at).getTime());
 
+    // Mark which artifacts are indexed in the KB
+    const artifactIds = files.map((f) => f.id).filter(Boolean);
+    if (artifactIds.length > 0) {
+      const { data: indexedRows } = await adminClient
+        .from('knowledge_files')
+        .select('provider_file_id')
+        .in('provider_file_id', artifactIds)
+        .eq('user_id', user.id);
+      const indexedSet = new Set(indexedRows?.map((r) => r.provider_file_id) ?? []);
+      files.forEach((f) => { f.is_indexed = indexedSet.has(f.id); });
+    }
+
     return NextResponse.json(files);
   } catch (error) {
     console.error('[Drive/AugmtdFiles] Error:', error);

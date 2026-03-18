@@ -45,6 +45,19 @@ export async function DELETE(
       await adminClient.storage.from('work-artifacts').remove([target.storage_path]);
     }
 
+    // Clean up KB entry for this artifact
+    const { data: kbFile } = await adminClient
+      .from('knowledge_files')
+      .select('id')
+      .eq('provider_file_id', artifactId)
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    if (kbFile) {
+      await adminClient.from('knowledge_chunks').delete().eq('file_id', kbFile.id);
+      await adminClient.from('knowledge_files').delete().eq('id', kbFile.id);
+    }
+
     // Remove from array
     const remaining = artifactsArray.filter((a) => a.id !== artifactId);
     const newLatest = remaining.length > 0 ? remaining[remaining.length - 1] : null;

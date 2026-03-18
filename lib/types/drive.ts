@@ -12,6 +12,7 @@ export interface DriveAugmtdFile {
   process_id?: string;
   process_step_index?: number;
   storage_path?: string;
+  is_indexed?: boolean;
 }
 
 export interface DriveFolder {

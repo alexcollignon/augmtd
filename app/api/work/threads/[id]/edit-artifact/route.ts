@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { getAIClient, aiCreate } from '@/lib/ai/factory';
-import { DocumentArtifact, DeliverableType, ArtifactContent } from '@/lib/types/inbox';
-import { buildArtifactFile, getMimeType } from '@/lib/artifacts/builders';
+import { DocumentArtifact, DeliverableType, ArtifactContent, EmailContent } from '@/lib/types/inbox';
+import { buildArtifactFile, getMimeType, getFileExt } from '@/lib/artifacts/builders';
 import { buildKBContext } from '@/lib/knowledge/build-kb-context';
+import { indexArtifact } from '@/lib/knowledge/indexer';
 
 const ARTIFACT_SEPARATOR = '---ARTIFACT_UPDATE---';
 
@@ -255,6 +256,20 @@ export async function POST(
                 updated_at: updatedArtifact.generated_at,
               })
               .eq('id', threadId);
+
+            // Fire-and-forget: re-index the updated artifact into KB
+            if (updatedArtifact.id) {
+              indexArtifact({
+                artifactId: updatedArtifact.id,
+                storagePath: updatedArtifact.storage_path ?? null,
+                filename: `${updatedArtifact.title}.${getFileExt(updatedArtifact.type)}`,
+                mimeType: getMimeType(updatedArtifact.type),
+                userId: user.id,
+                emailBody: updatedArtifact.type === 'email'
+                  ? (updatedArtifact.content as EmailContent)?.body
+                  : undefined,
+              }, adminClient).catch(() => {});
+            }
 
             controller.enqueue(
               encoder.encode(`\n${ARTIFACT_SEPARATOR}\n${JSON.stringify(updatedArtifact)}`)

@@ -11,18 +11,38 @@ export async function GET() {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { data, error } = await supabase
+    // Exclude augmtd-sourced files — those are already shown via the AUGMTD Files tab
+    const { data: augmtdSource } = await supabase
+      .from('knowledge_sources')
+      .select('id')
+      .eq('user_id', user.id)
+      .eq('provider', 'augmtd')
+      .maybeSingle();
+
+    let query = supabase
       .from('knowledge_files')
-      .select('id, filename, mime_type, size_bytes, indexed_at, folder_id, storage_path, source_id')
+      .select('id, filename, mime_type, size_bytes, indexed_at, folder_id, storage_path, source_id, knowledge_chunks(count)')
       .eq('user_id', user.id)
       .order('indexed_at', { ascending: false })
       .limit(200);
+
+    if (augmtdSource) {
+      query = query.neq('source_id', augmtdSource.id);
+    }
+
+    const { data, error } = await query;
 
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    return NextResponse.json(data ?? []);
+    const files = (data ?? []).map((f) => ({
+      ...f,
+      chunk_count: (f.knowledge_chunks as unknown as { count: number }[])?.[0]?.count ?? 0,
+      knowledge_chunks: undefined,
+    }));
+
+    return NextResponse.json(files);
   } catch (error) {
     console.error('[Drive/KbFiles] Error:', error);
     return NextResponse.json({ error: 'Failed to fetch files' }, { status: 500 });

@@ -61,10 +61,10 @@ async function fetchKBContext(
     );
 
     const { data: chunks } = await db.rpc('hybrid_search_knowledge', {
-      p_company_id: companyId,
+      p_user_id: userId,
       p_query: query,
       p_embedding: embedding,
-      p_match_count: 5,
+      p_limit: 5,
     });
 
     if (!chunks?.length) return '';

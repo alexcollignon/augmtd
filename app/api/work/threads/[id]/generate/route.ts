@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { DocumentArtifact } from '@/lib/types/inbox';
+import { DocumentArtifact, EmailContent } from '@/lib/types/inbox';
 import { runFullPipeline } from '@/lib/work/generate-pipeline';
 import { buildToolRegistry } from '@/lib/mcp/registry';
 import { buildUserContextBlock } from '@/lib/context/build-user-context';
+import { indexArtifact } from '@/lib/knowledge/indexer';
+import { getMimeType, getFileExt } from '@/lib/artifacts/builders';
 
 // POST /api/work/threads/[id]/generate
 export async function POST(
@@ -76,6 +78,9 @@ export async function POST(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
+
+    // Mark thread as generating — persists across refreshes so the UI can show the state
+    await adminClient.from('work_threads').update({ is_generating: true }).eq('id', threadId);
 
     // Inject accepted KB inputs as attachment context (fromKB covers named + global; fromContext covers manual adds)
     // Uses chunk-based injection (top 3 chunks per file, with citation headers) instead of full extracted_text.
@@ -187,13 +192,35 @@ export async function POST(
       .update({
         artifact: latestArtifact,
         artifacts: updatedArtifacts,
+        is_generating: false,
         updated_at: new Date().toISOString(),
       })
       .eq('id', threadId);
 
+    // Fire-and-forget: index each new artifact into the KB
+    newArtifacts.forEach((artifact) => {
+      if (!artifact.id) return;
+      indexArtifact({
+        artifactId: artifact.id,
+        storagePath: artifact.storage_path ?? null,
+        filename: `${artifact.title}.${getFileExt(artifact.type)}`,
+        mimeType: getMimeType(artifact.type),
+        userId: user.id,
+        emailBody: artifact.type === 'email'
+          ? (artifact.content as EmailContent)?.body
+          : undefined,
+      }, adminClient).catch(() => {});
+    });
+
     return NextResponse.json({ artifacts: newArtifacts, artifact: newArtifacts[newArtifacts.length - 1] });
   } catch (error) {
     console.error('[Generate] Error:', error);
+    // Best-effort: clear generating state so the user isn't stuck
+    try {
+      const { createClient: createAdmin } = await import('@supabase/supabase-js');
+      const adminClient = createAdmin(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+      await adminClient.from('work_threads').update({ is_generating: false }).eq('id', threadId);
+    } catch { /* ignore */ }
     return NextResponse.json({ error: 'Failed to generate document' }, { status: 500 });
   }
 }

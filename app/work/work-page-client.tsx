@@ -130,6 +130,7 @@ interface WorkThread {
   updated_at: string;
   auto_generated?: boolean;
   saved_workflow_id?: string;
+  is_generating?: boolean;
 }
 
 interface WorkMessage {
@@ -1498,7 +1499,9 @@ export function WorkPageClient({
     return [];
   })();
   const [workMode, setWorkMode] = useState<WorkMode>(
-    initialView === 'document' && initialArtifacts.length > 0 ? 'document' : 'planning'
+    initialThread?.is_generating
+      ? 'generating'
+      : (initialView === 'document' && initialArtifacts.length > 0 ? 'document' : 'planning')
   );
   const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(
     initialView === 'document' && initialArtifacts.length > 0
@@ -1518,6 +1521,7 @@ export function WorkPageClient({
 
   const planUpdatedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const skipLoadRef = useRef<string | null>(null);
+  const generatingPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatInputRef = useRef<HTMLTextAreaElement>(null);
@@ -1560,6 +1564,55 @@ export function WorkPageClient({
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, streamingText, editStreamText]);
 
+  // Poll for generation completion when the thread is generating (survives page refresh)
+  useEffect(() => {
+    if (workMode !== 'generating' || !activeThreadId) {
+      if (generatingPollRef.current) {
+        clearInterval(generatingPollRef.current);
+        generatingPollRef.current = null;
+      }
+      return;
+    }
+
+    generatingPollRef.current = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/work/threads/${activeThreadId}`);
+        if (!res.ok) return;
+        const { thread } = await res.json();
+        if (!thread?.is_generating) {
+          clearInterval(generatingPollRef.current!);
+          generatingPollRef.current = null;
+          const newArtifacts: DocumentArtifact[] = (() => {
+            const arr = (thread.artifacts ?? []) as DocumentArtifact[];
+            if (arr.length > 0) return arr;
+            if (thread.artifact) return [thread.artifact as DocumentArtifact];
+            return [];
+          })();
+          setThreads((prev) => prev.map((t) => t.id === activeThreadId ? {
+            ...t,
+            artifact: thread.artifact ?? null,
+            artifacts: (thread.artifacts ?? []) as DocumentArtifact[],
+            is_generating: false,
+            updated_at: thread.updated_at,
+          } : t));
+          if (newArtifacts.length > 0) {
+            setSelectedArtifactId(newArtifacts[newArtifacts.length - 1].id ?? null);
+            setWorkMode('document');
+          } else {
+            setWorkMode('planning');
+          }
+        }
+      } catch { /* ignore transient poll errors */ }
+    }, 4000);
+
+    return () => {
+      if (generatingPollRef.current) {
+        clearInterval(generatingPollRef.current);
+        generatingPollRef.current = null;
+      }
+    };
+  }, [workMode, activeThreadId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const loadThread = useCallback(async (threadId: string) => {
     setIsLoadingThread(true);
     setMessages([]);
@@ -1586,6 +1639,7 @@ export function WorkPageClient({
               plan: data.thread.plan ?? t.plan,
               artifact: data.thread.artifact ?? null,
               artifacts: (data.thread.artifacts ?? []) as DocumentArtifact[],
+              is_generating: data.thread.is_generating ?? false,
             } : t);
           }
           // Thread not in list (e.g. auto-generated, navigated to directly)
@@ -1599,9 +1653,12 @@ export function WorkPageClient({
             created_at: data.thread.created_at,
             updated_at: data.thread.updated_at,
             auto_generated: data.thread.auto_generated ?? false,
+            is_generating: data.thread.is_generating ?? false,
           }];
         });
-        if (loadedArtifacts.length > 0) {
+        if (data.thread.is_generating) {
+          setWorkMode('generating');
+        } else if (loadedArtifacts.length > 0) {
           const latest = loadedArtifacts[loadedArtifacts.length - 1];
           setSelectedArtifactId(latest.id ?? null);
           if (initialView === 'document') {

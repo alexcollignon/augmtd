@@ -1,4 +1,5 @@
 import { getAIClient, aiCreate } from '@/lib/ai/factory';
+import { parseModelJSON } from '@/lib/ai/parse-json';
 import Anthropic from '@anthropic-ai/sdk';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { extractTextFromAttachment } from '@/lib/attachments/text-extractor';
@@ -21,6 +22,8 @@ const OCR_IMAGE_TYPES = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/
 // ~800 tokens ≈ 3200 chars. Overlap prevents cutting context at boundaries.
 const CHUNK_SIZE = 3200;
 const CHUNK_OVERLAP = 300;
+// Hard cap on chunks per file — prevents DB bloat for very large documents.
+const MAX_CHUNKS_PER_FILE = 200;
 
 export interface KnowledgeFile {
   id: string;
@@ -40,10 +43,10 @@ export interface KnowledgeFile {
 
 // ─── Embedding ──────────────────────────────────────────────────────────────
 
-// multilingual-e5-large-instruct (Together AI) has a 514 token (~2000 char) context limit.
-// text-embedding-3-small (OpenAI) supports 8191 tokens (~32000 chars).
-// Cap conservatively at 2000 chars for the short-context model.
-const EMBED_MAX_CHARS = 2000
+// multilingual-e5-large-instruct (Together AI) has a 512-token context limit.
+// Summaries embedded via summarizeChunks() are ~50-100 words, well under 512 tokens.
+// This constant is a safety-net guard only — applied after summarization.
+const EMBED_MAX_CHARS = 1300
 
 export async function embedText(text: string, userId: string, supabase: SupabaseClient): Promise<number[]> {
   const { client, model, endpoint } = await getAIClient(userId, 'embeddings', supabase);
@@ -169,6 +172,70 @@ async function generateSummary(extractedText: string, filename: string, userId: 
   } catch {
     return null;
   }
+}
+
+// ─── Chunk summarization ─────────────────────────────────────────────────────
+
+const SUMMARIZE_BATCH_SIZE = 8;
+const SUMMARIZE_CHUNK_PREVIEW = 800; // chars sent to AI per chunk — enough for a good summary
+
+/**
+ * Summarize each chunk in 1 sentence for embedding.
+ * Processed in batches of SUMMARIZE_BATCH_SIZE via a single AI call per batch.
+ * Falls back to raw truncation per chunk on any failure.
+ *
+ * Why: multilingual-e5-large-instruct has a 512-token limit. Embedding summaries
+ * instead of raw chunk text ensures we never exceed it regardless of content density,
+ * and produces cleaner semantic vectors.
+ */
+async function summarizeChunks(
+  chunks: Chunk[],
+  filename: string,
+  userId: string,
+  supabase: SupabaseClient
+): Promise<string[]> {
+  const FALLBACK_CHARS = 1200;
+  const results: string[] = new Array(chunks.length);
+
+  for (let batchStart = 0; batchStart < chunks.length; batchStart += SUMMARIZE_BATCH_SIZE) {
+    const batch = chunks.slice(batchStart, batchStart + SUMMARIZE_BATCH_SIZE);
+    const batchIndices = batch.map((_, i) => batchStart + i);
+
+    try {
+      const { client, model } = await getAIClient(userId, 'summarization', supabase);
+      const chunkList = batch
+        .map((c, i) => `[${i + 1}]: ${c.content.slice(0, SUMMARIZE_CHUNK_PREVIEW)}`)
+        .join('\n\n');
+
+      const res = await aiCreate(client, {
+        model,
+        messages: [{
+          role: 'user',
+          content: `Summarize each chunk in 1 sentence (max 25 words). Focus on key facts, entities, dates, and topics. Return a JSON array of strings — one per chunk, in order.\n\nFile: ${filename}\n\nCHUNKS:\n${chunkList}`,
+        }],
+        max_tokens: 400,
+      });
+
+      const raw = res.choices[0]?.message?.content ?? '';
+      const parsed = parseModelJSON<string[]>(raw, []);
+
+      if (Array.isArray(parsed) && parsed.length === batch.length) {
+        batchIndices.forEach((globalIdx, i) => {
+          results[globalIdx] = String(parsed[i] ?? batch[i].content.slice(0, FALLBACK_CHARS));
+        });
+        continue;
+      }
+    } catch {
+      // Fall through to per-chunk fallback
+    }
+
+    // Fallback: truncate each chunk in this batch
+    batchIndices.forEach((globalIdx, i) => {
+      results[globalIdx] = batch[i].content.slice(0, FALLBACK_CHARS);
+    });
+  }
+
+  return results;
 }
 
 // ─── OCR + PDF extraction ────────────────────────────────────────────────────
@@ -454,10 +521,14 @@ export async function indexUploadedFile(params: IndexUploadParams, adminClient: 
   const fileId = fileRows[0].id;
 
   if (cleanText && cleanText.length > 10) {
-    const chunks = chunkText(cleanText, filename);
+    const allChunks = chunkText(cleanText, filename);
+    const chunks = allChunks.slice(0, MAX_CHUNKS_PER_FILE);
+    if (allChunks.length > MAX_CHUNKS_PER_FILE) {
+      console.warn(`[Indexer] ${filename}: ${allChunks.length} chunks — capped at ${MAX_CHUNKS_PER_FILE}`);
+    }
     const headers = chunks.map((c, i) => buildContextHeader(filename, c.heading, i));
-    const textsToEmbed = chunks.map((c, i) => headers[i] + '\n' + c.content);
-    const embeddings = await embedTexts(textsToEmbed, userId, adminClient);
+    const chunkSummaries = await summarizeChunks(chunks, filename, userId, adminClient);
+    const embeddings = await embedTexts(chunkSummaries, userId, adminClient);
 
     await adminClient.from('knowledge_chunks').delete().eq('file_id', fileId);
 
@@ -475,6 +546,136 @@ export async function indexUploadedFile(params: IndexUploadParams, adminClient: 
   }
 
   return fileId;
+}
+
+// ─── AUGMTD artifact indexing ─────────────────────────────────────────────────
+
+/**
+ * Lazily provisions a knowledge_sources row for AUGMTD-generated artifacts.
+ * Uses select-then-insert so only one row exists per user.
+ */
+export async function getOrCreateAugmtdSource(userId: string, adminClient: SupabaseClient): Promise<string> {
+  const { data: existing } = await adminClient
+    .from('knowledge_sources')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('provider', 'augmtd')
+    .maybeSingle();
+
+  if (existing) return existing.id;
+
+  const { data, error } = await adminClient
+    .from('knowledge_sources')
+    .insert({
+      user_id: userId,
+      provider: 'augmtd',
+      folder_name: 'AUGMTD Files',
+      folder_id: 'augmtd',
+      status: 'ready',
+      connection_id: null,
+    })
+    .select('id')
+    .single();
+
+  if (error || !data) throw new Error(`Failed to provision augmtd source: ${error?.message}`);
+  return data.id;
+}
+
+export interface IndexArtifactParams {
+  artifactId: string;         // provider_file_id — drives upsert semantics
+  storagePath: string | null; // path in work-artifacts bucket; null for email artifacts
+  filename: string;           // title + ext (e.g. "Q1 Report.docx")
+  mimeType: string;
+  userId: string;
+  emailBody?: string;         // body text for email artifacts (skips buffer download)
+}
+
+/**
+ * Index a generated artifact into knowledge_files + knowledge_chunks.
+ * Re-generation replaces the existing KB entry (upsert on user_id,provider_file_id).
+ * All errors are silently caught — this is fire-and-forget.
+ */
+export async function indexArtifact(params: IndexArtifactParams, adminClient: SupabaseClient): Promise<void> {
+  const { artifactId, storagePath, filename, userId, emailBody } = params;
+  let { mimeType } = params;
+
+  try {
+    let buffer: Buffer;
+
+    if (emailBody !== undefined) {
+      buffer = Buffer.from(emailBody);
+      mimeType = 'text/plain';
+    } else if (storagePath) {
+      const { data: dl, error: dlErr } = await adminClient.storage
+        .from('work-artifacts')
+        .download(storagePath);
+      if (dlErr || !dl) return;
+      buffer = Buffer.from(await dl.arrayBuffer());
+    } else {
+      return; // nothing to index
+    }
+
+    const sourceId = await getOrCreateAugmtdSource(userId, adminClient);
+
+    const extractedText = await extractTextFromFile(buffer, mimeType, filename, userId, adminClient);
+    const cleanText = extractedText ? extractedText.replace(/\u0000/g, '') : null;
+
+    const summary = cleanText ? await generateSummary(cleanText, filename, userId, adminClient) : null;
+
+    let fileEmbedding: number[] | null = null;
+    if (cleanText && cleanText.length > 10) {
+      fileEmbedding = await embedText(cleanText, userId, adminClient);
+    }
+
+    const { data: fileRows, error: upsertError } = await adminClient
+      .from('knowledge_files')
+      .upsert(
+        {
+          user_id: userId,
+          source_id: sourceId,
+          provider_file_id: artifactId,
+          filename,
+          mime_type: mimeType,
+          extracted_text: cleanText,
+          embedding: fileEmbedding ? JSON.stringify(fileEmbedding) : null,
+          summary,
+          size_bytes: buffer.length,
+          last_modified_at: new Date().toISOString(),
+          indexed_at: new Date().toISOString(),
+          storage_path: storagePath,
+        },
+        { onConflict: 'user_id,provider_file_id' }
+      )
+      .select('id');
+
+    if (upsertError || !fileRows?.[0]) return;
+
+    const fileId = fileRows[0].id;
+
+    if (cleanText && cleanText.length > 10) {
+      const allChunks = chunkText(cleanText, filename);
+      const chunks = allChunks.slice(0, MAX_CHUNKS_PER_FILE);
+      const headers = chunks.map((c, i) => buildContextHeader(filename, c.heading, i));
+      const chunkSummaries = await summarizeChunks(chunks, filename, userId, adminClient);
+      const embeddings = await embedTexts(chunkSummaries, userId, adminClient);
+
+      await adminClient.from('knowledge_chunks').delete().eq('file_id', fileId);
+
+      const chunkRows = chunks.map((c, i) => ({
+        file_id: fileId,
+        user_id: userId,
+        chunk_index: i,
+        heading: c.heading,
+        content: c.content,
+        context_header: headers[i],
+        embedding: JSON.stringify(embeddings[i]),
+      }));
+
+      await adminClient.from('knowledge_chunks').insert(chunkRows);
+    }
+  } catch {
+    // Fire-and-forget — silently swallow all errors
+  }
 }
 
 // ─── Index source ────────────────────────────────────────────────────────────
@@ -610,11 +811,15 @@ export async function indexSource(
 
         // Build chunks and embed them in one batch API call
         if (cleanText && cleanText.length > 10) {
-          const chunks = chunkText(cleanText, file.name);
+          const allChunks = chunkText(cleanText, file.name);
+          const chunks = allChunks.slice(0, MAX_CHUNKS_PER_FILE);
+          if (allChunks.length > MAX_CHUNKS_PER_FILE) {
+            console.warn(`[Indexer] ${file.name}: ${allChunks.length} chunks — capped at ${MAX_CHUNKS_PER_FILE}`);
+          }
           const headers = chunks.map((c, i) => buildContextHeader(file.name, c.heading, i));
-          const textsToEmbed = chunks.map((c, i) => headers[i] + '\n' + c.content);
+          const chunkSummaries = await summarizeChunks(chunks, file.name, source.user_id, adminClient);
 
-          const embeddings = await embedTexts(textsToEmbed, source.user_id, adminClient);
+          const embeddings = await embedTexts(chunkSummaries, source.user_id, adminClient);
 
           // Delete stale chunks for this file before re-inserting
           await adminClient.from('knowledge_chunks').delete().eq('file_id', fileId);

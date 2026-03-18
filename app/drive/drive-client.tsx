@@ -15,6 +15,7 @@ import {
   ArrowPathIcon,
   FolderOpenIcon,
   MagnifyingGlassIcon,
+  TrashIcon,
 } from '@heroicons/react/24/outline';
 import type { DriveAugmtdFile, DriveFolder } from '@/lib/types/drive';
 
@@ -42,6 +43,7 @@ interface KnowledgeFile {
   folder_id?: string | null;
   storage_path?: string | null;
   source_id: string;
+  chunk_count?: number;
 }
 
 interface Connection {
@@ -768,6 +770,9 @@ function FileTable({ files, folders, onMove, onNewFolderAndMove, moveDropdownFor
               <div className="flex items-center gap-2">
                 <DocumentIcon className="w-3.5 h-3.5 text-neutral-300 flex-shrink-0" />
                 <span className="text-neutral-800 truncate max-w-[260px]">{file.title}</span>
+                {file.is_indexed && (
+                  <span className="text-[10px] text-neutral-400 bg-neutral-100 px-1.5 py-0.5 rounded flex-shrink-0">Indexed</span>
+                )}
               </div>
             </td>
             <td className="py-2.5 px-3 hidden sm:table-cell">
@@ -1230,9 +1235,10 @@ interface AllFilesTabProps {
   sources: KnowledgeSource[];
   augmtdFiles: DriveAugmtdFile[];
   kbFiles: KnowledgeFile[];
+  onDeleteKbFile: (id: string) => void;
 }
 
-function AllFilesTab({ sources, augmtdFiles, kbFiles }: AllFilesTabProps) {
+function AllFilesTab({ sources, augmtdFiles, kbFiles, onDeleteKbFile }: AllFilesTabProps) {
   // Merge into a single sorted list
   type AllRow =
     | { kind: 'augmtd'; file: DriveAugmtdFile; date: string }
@@ -1258,6 +1264,7 @@ function AllFilesTab({ sources, augmtdFiles, kbFiles }: AllFilesTabProps) {
             <th className="text-left py-2.5 px-3 text-[11px] font-medium text-neutral-400 uppercase tracking-wide hidden sm:table-cell">Type</th>
             <th className="text-left py-2.5 px-3 text-[11px] font-medium text-neutral-400 uppercase tracking-wide hidden md:table-cell">Source</th>
             <th className="text-left py-2.5 px-3 text-[11px] font-medium text-neutral-400 uppercase tracking-wide hidden lg:table-cell">Date</th>
+            <th className="w-8" />
           </tr>
         </thead>
         <tbody>
@@ -1279,19 +1286,24 @@ function AllFilesTab({ sources, augmtdFiles, kbFiles }: AllFilesTabProps) {
                     <SourceBadge source={f.source} />
                   </td>
                   <td className="py-2.5 px-3 text-neutral-400 hidden lg:table-cell">{formatDate(f.generated_at)}</td>
+                  <td />
                 </tr>
               );
             }
 
             const f = row.file;
+            const failed = f.chunk_count === 0;
             const srcRecord = connectedSources.find((s) => s.id === f.source_id);
             const sourceKey = f.storage_path ? 'upload' : (srcRecord?.provider ?? 'upload');
             return (
-              <tr key={`k-${f.id}`} className="border-b border-neutral-50 hover:bg-neutral-50">
+              <tr key={`k-${f.id}`} className={`border-b border-neutral-50 hover:bg-neutral-50 group ${failed ? 'bg-red-50/40' : ''}`}>
                 <td className="py-2.5 px-4">
                   <div className="flex items-center gap-2">
-                    <DocumentIcon className="w-3.5 h-3.5 text-neutral-300 flex-shrink-0" />
-                    <span className="text-neutral-700 truncate max-w-[280px]">{f.filename}</span>
+                    <DocumentIcon className={`w-3.5 h-3.5 flex-shrink-0 ${failed ? 'text-red-300' : 'text-neutral-300'}`} />
+                    <span className={`truncate max-w-[240px] ${failed ? 'text-red-700' : 'text-neutral-700'}`}>{f.filename}</span>
+                    {failed && (
+                      <span className="text-[10px] font-medium text-red-500 bg-red-100 px-1.5 py-0.5 rounded flex-shrink-0">Index failed</span>
+                    )}
                   </div>
                 </td>
                 <td className="py-2.5 px-3 hidden sm:table-cell">
@@ -1301,6 +1313,17 @@ function AllFilesTab({ sources, augmtdFiles, kbFiles }: AllFilesTabProps) {
                   <SourceBadge source={sourceKey} />
                 </td>
                 <td className="py-2.5 px-3 text-neutral-400 hidden lg:table-cell">{formatDate(f.indexed_at)}</td>
+                <td className="py-2.5 px-2">
+                  {failed && (
+                    <button
+                      onClick={() => onDeleteKbFile(f.id)}
+                      title="Remove failed file"
+                      className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 rounded transition-opacity"
+                    >
+                      <TrashIcon className="w-3.5 h-3.5 text-red-400" />
+                    </button>
+                  )}
+                </td>
               </tr>
             );
           })}
@@ -1552,7 +1575,20 @@ export default function DriveClient({ initialSources, connections }: DriveClient
             />
           )}
           {tab === 'all' && (
-            <AllFilesTab sources={sources} augmtdFiles={augmtdFiles} kbFiles={kbFiles} />
+            <AllFilesTab
+              sources={sources}
+              augmtdFiles={augmtdFiles}
+              kbFiles={kbFiles}
+              onDeleteKbFile={async (id) => {
+                const res = await fetch(`/api/drive/uploads/${id}`, { method: 'DELETE' });
+                if (res.ok) {
+                  setKbFiles((prev) => prev.filter((f) => f.id !== id));
+                  toast.success('File removed');
+                } else {
+                  toast.error('Failed to remove file');
+                }
+              }}
+            />
           )}
         </>
       )}
