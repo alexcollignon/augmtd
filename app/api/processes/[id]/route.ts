@@ -83,7 +83,7 @@ export async function PATCH(
   if (error || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const body = await request.json();
-  const allowed = ['title', 'description', 'due_date', 'plan', 'status'];
+  const allowed = ['title', 'description', 'due_date', 'plan', 'status', 'files'];
   const updates: Record<string, unknown> = {};
   for (const key of allowed) {
     if (key in body) updates[key] = body[key];
@@ -105,7 +105,8 @@ export async function PATCH(
   return NextResponse.json({ process: updated });
 }
 
-// DELETE /api/processes/[id] — archive
+// DELETE /api/processes/[id] — hard delete (owner or company admin only)
+// process_steps + process_comments are removed via ON DELETE CASCADE
 export async function DELETE(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -115,12 +116,38 @@ export async function DELETE(
   const { data: { user }, error } = await supabase.auth.getUser();
   if (error || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const { error: upErr } = await supabase
+  // Verify ownership or admin role before deleting
+  const { data: proc } = await supabase
     .from('processes')
-    .update({ status: 'archived' })
+    .select('owner_id, company_id')
+    .eq('id', id)
+    .single();
+
+  if (!proc) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+
+  const isOwner = proc.owner_id === user.id;
+
+  if (!isOwner) {
+    // Check if user is a company admin/owner
+    const { data: membership } = await supabase
+      .from('company_members')
+      .select('role')
+      .eq('company_id', proc.company_id)
+      .eq('user_id', user.id)
+      .eq('status', 'active')
+      .single();
+
+    if (!membership || !['owner', 'admin'].includes(membership.role)) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+  }
+
+  const { error: delErr } = await supabase
+    .from('processes')
+    .delete()
     .eq('id', id);
 
-  if (upErr) return NextResponse.json({ error: 'Failed to archive' }, { status: 500 });
+  if (delErr) return NextResponse.json({ error: 'Failed to delete' }, { status: 500 });
 
   return NextResponse.json({ ok: true });
 }

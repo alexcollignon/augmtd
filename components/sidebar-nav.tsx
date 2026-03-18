@@ -32,6 +32,7 @@ export default function SidebarNav({ userEmail }: SidebarNavProps) {
   const [tier, setTier] = useState<'standard' | 'private_shared' | null>(null);
   const [tierLoading, setTierLoading] = useState(false);
   const [isSuperAdmin, setIsSuperAdmin] = useState(false);
+  const [processNotifCount, setProcessNotifCount] = useState(0);
 
   const navigation = [
     { name: 'Work Inbox', href: '/inbox', icon: InboxIcon },
@@ -41,7 +42,7 @@ export default function SidebarNav({ userEmail }: SidebarNavProps) {
     ...(isSuperAdmin ? [{ name: 'Platform Admin', href: '/platform-admin', icon: ShieldCheckIcon }] : []),
   ];
 
-  // Load current tier on mount
+  // Load current tier + super admin status on mount
   useEffect(() => {
     fetch('/api/settings/tier')
       .then((r) => r.json())
@@ -51,6 +52,19 @@ export default function SidebarNav({ userEmail }: SidebarNavProps) {
       .then((r) => r.json())
       .then((d) => setIsSuperAdmin(d.isSuperAdmin === true))
       .catch(() => {});
+  }, []);
+
+  // Poll process notifications every 30s
+  useEffect(() => {
+    const fetchCount = () => {
+      fetch('/api/notifications/processes')
+        .then((r) => r.json())
+        .then((d) => setProcessNotifCount(d.count ?? 0))
+        .catch(() => {});
+    };
+    fetchCount();
+    const interval = setInterval(fetchCount, 30000);
+    return () => clearInterval(interval);
   }, []);
 
   const toggleTier = useCallback(async () => {
@@ -138,6 +152,7 @@ export default function SidebarNav({ userEmail }: SidebarNavProps) {
       <nav className="flex-1 py-2 px-2">
         {navigation.map((item) => {
           const isActive = pathname.startsWith(item.href);
+          const badge = item.href === '/processes' && processNotifCount > 0 ? processNotifCount : 0;
           return (
             <Link
               key={item.name}
@@ -153,7 +168,12 @@ export default function SidebarNav({ userEmail }: SidebarNavProps) {
               <item.icon
                 className={`w-4 h-4 flex-shrink-0 ${isActive ? 'text-indigo-500' : 'text-neutral-400'}`}
               />
-              {item.name}
+              <span className="flex-1">{item.name}</span>
+              {badge > 0 && (
+                <span className="flex-shrink-0 min-w-[18px] h-[18px] px-1 bg-red-500 text-white text-[10px] font-semibold rounded-full flex items-center justify-center leading-none">
+                  {badge > 9 ? '9+' : badge}
+                </span>
+              )}
             </Link>
           );
         })}

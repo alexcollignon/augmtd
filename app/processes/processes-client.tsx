@@ -11,6 +11,7 @@ import {
   LockClosedIcon,
   CheckCircleIcon,
   ClockIcon,
+  TrashIcon,
 } from '@heroicons/react/24/outline';
 
 interface Props {
@@ -82,6 +83,18 @@ export function ProcessesClient({ userId, userEmail, companyName }: Props) {
 
   useEffect(() => { load(); }, [load]);
 
+  const deleteProcess = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!confirm('Delete this process? All steps and comments will be permanently removed.')) return;
+    const res = await fetch(`/api/processes/${id}`, { method: 'DELETE' });
+    if (res.ok) {
+      setProcesses(prev => prev.filter(p => p.id !== id));
+    } else {
+      const err = await res.json().catch(() => ({}));
+      alert(err.error ?? 'Failed to delete process');
+    }
+  };
+
   const onDesk = processes.filter((p) => p.on_desk_of_me);
   const watching = processes.filter((p) => !p.on_desk_of_me && p.owner_id !== userId);
   const owned = processes.filter((p) => p.owner_id === userId && !p.on_desk_of_me);
@@ -112,7 +125,7 @@ export function ProcessesClient({ userId, userEmail, companyName }: Props) {
             </div>
             <button
               onClick={() => router.push('/processes/new')}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 text-white text-[12px] font-medium rounded hover:bg-indigo-700 transition-colors"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 text-white text-[12px] font-medium hover:bg-indigo-700 transition-colors"
             >
               <PlusIcon className="w-3.5 h-3.5" />
               New Process
@@ -203,6 +216,7 @@ export function ProcessesClient({ userId, userEmail, companyName }: Props) {
                   items={onDesk}
                   userId={userId}
                   onRowClick={(id) => router.push(`/processes/${id}`)}
+                  onDelete={deleteProcess}
                 />
               )}
 
@@ -213,6 +227,7 @@ export function ProcessesClient({ userId, userEmail, companyName }: Props) {
                   items={displayed}
                   userId={userId}
                   onRowClick={(id) => router.push(`/processes/${id}`)}
+                  onDelete={deleteProcess}
                 />
               ) : watching.length > 0 || owned.length > 0 ? (
                 <ProcessSection
@@ -220,6 +235,7 @@ export function ProcessesClient({ userId, userEmail, companyName }: Props) {
                   items={[...owned, ...watching]}
                   userId={userId}
                   onRowClick={(id) => router.push(`/processes/${id}`)}
+                  onDelete={deleteProcess}
                 />
               ) : null}
             </div>
@@ -235,11 +251,13 @@ function ProcessSection({
   items,
   userId,
   onRowClick,
+  onDelete,
 }: {
   title?: string;
   items: ProcessListItem[];
   userId: string;
   onRowClick: (id: string) => void;
+  onDelete: (id: string, e: React.MouseEvent) => void;
 }) {
   return (
     <div>
@@ -250,7 +268,7 @@ function ProcessSection({
         <table className="w-full text-[12px]">
           <thead>
             <tr className="border-b border-neutral-100">
-              {['Process', 'Current Step', 'On desk of', 'Owner', 'Due', 'Progress', 'Status'].map((h) => (
+              {['Process', 'Current Step', 'On desk of', 'Owner', 'Due', 'Progress', 'Status', ''].map((h) => (
                 <th key={h} className="text-left px-4 py-2.5 text-[11px] font-medium text-neutral-400">{h}</th>
               ))}
             </tr>
@@ -260,7 +278,7 @@ function ProcessSection({
               <tr
                 key={p.id}
                 onClick={() => onRowClick(p.id)}
-                className="border-b border-neutral-50 hover:bg-neutral-50 cursor-pointer transition-colors"
+                className="border-b border-neutral-50 hover:bg-neutral-50 cursor-pointer transition-colors group"
               >
                 <td className="px-4 py-3 font-medium text-neutral-900 max-w-[200px] truncate">{p.title}</td>
                 <td className="px-4 py-3 text-neutral-600 max-w-[160px] truncate">
@@ -278,6 +296,17 @@ function ProcessSection({
                 </td>
                 <td className="px-4 py-3">
                   <StatusBadge status={p.status} />
+                </td>
+                <td className="px-4 py-3 w-8 text-right">
+                  {p.owner_id === userId && (
+                    <button
+                      onClick={(e) => onDelete(p.id, e)}
+                      title="Delete process"
+                      className="opacity-0 group-hover:opacity-100 p-1 text-neutral-300 hover:text-red-500 transition-all rounded"
+                    >
+                      <TrashIcon className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                 </td>
               </tr>
             ))}

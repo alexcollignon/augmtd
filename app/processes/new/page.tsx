@@ -19,6 +19,7 @@ export default async function NewProcessPage() {
 
   return (
     <NewProcessClient
+      userId={user.id}
       userEmail={profile?.email ?? user.email ?? ''}
     />
   );

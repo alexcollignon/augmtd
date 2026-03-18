@@ -51,8 +51,10 @@ export async function POST(
     status: i === 0 ? 'in_progress' : 'pending',
     input_type: step.input_type || null,
     input_label: step.input_label || null,
+    cta_label: step.cta_label || null,
     tool: step.tool || null,
     tool_parameters: step.tool_parameters || null,
+    estimated_days: step.estimated_days ? Math.round(step.estimated_days) : null,
     started_at: i === 0 ? now : null,
   }));
 
@@ -61,7 +63,8 @@ export async function POST(
     .insert(stepRows);
 
   if (stepsErr) {
-    return NextResponse.json({ error: 'Failed to create steps' }, { status: 500 });
+    console.error('[launch] process_steps insert error:', stepsErr);
+    return NextResponse.json({ error: 'Failed to create steps', detail: stepsErr.message }, { status: 500 });
   }
 
   // Update process to active

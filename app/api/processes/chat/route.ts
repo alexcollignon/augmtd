@@ -49,7 +49,59 @@ export async function POST(request: NextRequest) {
       getTeamMembers(company.id, supabase),
     ]);
 
-    const systemPrompt = buildProcessSystemPrompt(userContext, company.name, teamMembers);
+    let systemPrompt: string;
+
+    // If chatting from a live process — inject full process state, use assistant mode
+    if (processId) {
+      const { createClient: createAdminClient } = await import('@supabase/supabase-js');
+      const adminClient = createAdminClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.SUPABASE_SERVICE_ROLE_KEY!
+      );
+
+      const [{ data: proc }, { data: steps }] = await Promise.all([
+        adminClient.from('processes').select('*').eq('id', processId).single(),
+        adminClient.from('process_steps').select('*').eq('process_id', processId).order('step_index'),
+      ]);
+
+      const stepLines = (steps ?? []).map((s: any) => {
+        const assignee = teamMembers.find(m => m.id === s.assignee_id);
+        const name = assignee?.full_name ?? s.department ?? 'Unassigned';
+        const inputSummary = s.input_data
+          ? ` | Submitted: ${JSON.stringify(s.input_data).slice(0, 120)}`
+          : '';
+        return `  Step ${s.step_index + 1}: [${s.status.toUpperCase()}] ${s.title} — ${name}${s.estimated_days ? ` (~${s.estimated_days}d)` : ''}${inputSummary}`;
+      }).join('\n');
+
+      const processContext = proc ? [
+        `PROCESS: ${proc.title}`,
+        `STATUS: ${proc.status}`,
+        `PROGRESS: step ${proc.current_step + 1}/${(steps ?? []).length}`,
+        proc.due_date ? `DUE: ${new Date(proc.due_date).toLocaleDateString()}` : '',
+        `\nSTEPS:\n${stepLines}`,
+      ].filter(Boolean).join('\n') : '';
+
+      const teamBlock = teamMembers.length > 0
+        ? 'TEAM MEMBERS:\n' + teamMembers.map(m => {
+            const lines = [`  ${m.full_name}`];
+            lines.push(`    Company role: ${m.role}${m.department ? ` | Department: ${m.department}` : ''}`);
+            if (m.job_role) lines.push(`    Job title: ${m.job_role}`);
+            if (m.authority && m.authority !== 'unknown') lines.push(`    Authority: ${m.authority}`);
+            if (m.responsibilities?.length) lines.push(`    Responsibilities: ${m.responsibilities.slice(0, 4).join(', ')}`);
+            return lines.join('\n');
+          }).join('\n\n')
+        : '';
+
+      systemPrompt = `You are an AI process assistant embedded in AUGMTD. You help team members understand and manage a specific running process.
+
+${processContext}
+
+${userContext ? `${userContext}\n` : ''}${teamBlock}
+
+Answer questions about this process specifically — reference actual step names, assignees, and statuses. Identify blockers and suggest concrete next actions. Be concise (2-4 sentences) unless more detail is requested. Do NOT output a plan or ---PLAN_UPDATE---.`;
+    } else {
+      systemPrompt = buildProcessSystemPrompt(userContext, company.name, teamMembers);
+    }
 
     const messages = [
       ...history.map((h) => ({ role: h.role as 'user' | 'assistant', content: h.content })),

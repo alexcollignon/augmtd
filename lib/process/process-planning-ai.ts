@@ -43,10 +43,15 @@ PLAN JSON STRUCTURE:
       "step_type": "human",
       "input_type": "text",
       "input_label": "Specific actionable prompt for the form — e.g. 'List the top 3 compliance requirements and any red flags found. Attach relevant sections of the call document.'",
+      "cta_label": "Short action verb phrase for the submit button (2-4 words) — e.g. '+ Submit findings', '+ Upload report', '+ Approve budget'. Must start with '+ '.",
       "assignee_id": "uuid-of-team-member",
       "department": "Finance",
       "estimated_days": 2
     }
+  ],
+  "expected_outcomes": [
+    { "type": "risk", "text": "Potential risk or blocker the team should watch for" },
+    { "type": "suggestion", "text": "Optimization or best practice suggestion for this process type" }
   ]
 }
 

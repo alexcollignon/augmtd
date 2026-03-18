@@ -23,6 +23,7 @@ import {
   ChevronDownIcon,
   ShieldCheckIcon,
   ChevronUpIcon,
+  PaperAirplaneIcon,
 } from '@heroicons/react/24/outline';
 import { WorkBlueprint, SavedWorkflow } from '@/lib/types/work-blueprints';
 import { ExecutionPlan, DocumentArtifact, DocContent, PptxContent, XlsxContent, EmailContent, QAReport } from '@/lib/types/inbox';
@@ -2932,11 +2933,9 @@ export function WorkPageClient({
                     <button
                       type="submit"
                       disabled={!chatInput.trim() || isStreaming}
-                      className="flex-shrink-0 w-8 h-8 flex items-center justify-center bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors self-end mb-px"
+                      className="flex-shrink-0 p-1 text-indigo-600 hover:text-indigo-800 disabled:text-neutral-300 transition-colors self-end mb-px"
                     >
-                      <svg className="w-3.5 h-3.5 rotate-90" fill="currentColor" viewBox="0 0 20 20">
-                        <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" />
-                      </svg>
+                      <PaperAirplaneIcon className="w-4 h-4" />
                     </button>
                   </div>
                   <p className="text-[10px] text-neutral-400 mt-2">

@@ -12,6 +12,7 @@ export interface ProcessPlanStep {
   // Human steps
   input_type?: HumanInputType;
   input_label?: string;
+  cta_label?: string;
   // Generator steps
   tool?: string;
   tool_parameters?: Record<string, unknown>;
@@ -25,6 +26,7 @@ export interface ProcessPlan {
   description: string;
   steps: ProcessPlanStep[];
   estimated_total_days?: number;
+  expected_outcomes?: { type: 'risk' | 'suggestion'; text: string }[];
 }
 
 // DB rows
@@ -42,6 +44,13 @@ export interface Process {
   completed_at?: string;
   created_at: string;
   updated_at: string;
+  files?: Array<{
+    filename: string;
+    content_base64: string;
+    mime_type: string;
+    size_bytes: number;
+    uploaded_at: string;
+  }>;
 }
 
 export interface ProcessStepRecord {
@@ -56,9 +65,11 @@ export interface ProcessStepRecord {
   status: ProcessStepStatus;
   input_type?: HumanInputType;
   input_label?: string;
+  cta_label?: string;
   input_data?: unknown;
   artifact?: unknown;
   tool?: string;
+  estimated_days?: number;
   due_date?: string;
   started_at?: string;
   completed_at?: string;

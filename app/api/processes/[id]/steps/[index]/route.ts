@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { createClient as createAdminClient } from '@supabase/supabase-js';
 import { getMyCompany } from '@/lib/company/get-my-company';
 
 // PATCH /api/processes/[id]/steps/[index] — complete a step
@@ -18,12 +19,12 @@ export async function PATCH(
   if (!company) return NextResponse.json({ error: 'No company' }, { status: 404 });
 
   // Load process + step
-  const [{ data: process }, { data: step }] = await Promise.all([
+  const [{ data: proc }, { data: step }] = await Promise.all([
     supabase.from('processes').select('*').eq('id', id).single(),
     supabase.from('process_steps').select('*').eq('process_id', id).eq('step_index', stepIndex).single(),
   ]);
 
-  if (!process || !step) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  if (!proc || !step) return NextResponse.json({ error: 'Not found' }, { status: 404 });
   if (step.status !== 'in_progress') {
     return NextResponse.json({ error: 'Step is not in progress' }, { status: 400 });
   }
@@ -39,30 +40,29 @@ export async function PATCH(
 
   let artifact: unknown = null;
 
-  // For generator steps, invoke the MCP tool
+  // For generator steps, run the AI generator
   if (step.step_type === 'generator' && step.tool) {
     try {
-      const { invokeTool } = await import('@/lib/mcp/client');
-      // Gather credentials from connections
-      const { data: connections } = await supabase
-        .from('connections')
-        .select('provider, access_token, refresh_token')
-        .eq('user_id', user.id);
+      const { runGeneratorStep } = await import('@/lib/process/run-generator-step');
 
-      const credentials = {
-        userId: user.id,
-        connections: connections ?? [],
-      };
+      // Fetch completed steps for context
+      const { data: completedSteps } = await supabase
+        .from('process_steps')
+        .select('title, input_label, input_data')
+        .eq('process_id', id)
+        .eq('status', 'completed')
+        .order('step_index', { ascending: true });
 
-      const toolParams = {
-        ...(step.tool_parameters ?? {}),
-        ...(body.tool_parameters ?? {}),
-      };
-
-      const result = await invokeTool(step.tool, toolParams as Record<string, unknown>, credentials as any);
-      artifact = result;
+      artifact = await runGeneratorStep(
+        step.tool,
+        { title: step.title, description: step.description },
+        completedSteps ?? [],
+        user.id,
+        company.id,
+      );
     } catch (err) {
-      console.error('[process step] generator tool error:', err);
+      console.error('[process step] generator error:', err);
+      // Continue — step still completes, artifact just empty
     }
   }
 
@@ -99,6 +99,24 @@ export async function PATCH(
       .from('processes')
       .update({ current_step: stepIndex + 1 })
       .eq('id', id);
+
+    // Notify the next step's assignee
+    if (nextStep.assignee_id && nextStep.assignee_id !== user.id) {
+      try {
+        const adminClient = createAdminClient(
+          process.env.NEXT_PUBLIC_SUPABASE_URL!,
+          process.env.SUPABASE_SERVICE_ROLE_KEY!
+        );
+        await adminClient.from('process_notifications').insert({
+          user_id: nextStep.assignee_id,
+          process_id: id,
+          step_index: nextStep.step_index,
+          message: `Your step "${nextStep.title}" is ready in "${proc.title}"`,
+        });
+      } catch (err) {
+        console.error('[process step] notification insert error:', err);
+      }
+    }
   } else {
     // All steps done — complete process
     await supabase

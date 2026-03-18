@@ -1000,3 +1000,16 @@ export async function runGeneratePipeline(params: GeneratePipelineParams): Promi
   const { artifacts } = await runFullPipeline(params);
   return artifacts[0];
 }
+
+// ── Process generator step helpers ───────────────────────────────────────────
+export function getSkillSystemPrompt(toolId: string): string | null {
+  const skill = TOOL_TO_SKILL[toolId];
+  if (!skill) return null;
+  return SKILL_BRIEFS[skill]?.generation ?? null;
+}
+
+export function getSkillMaxTokens(toolId: string): number {
+  const skill = TOOL_TO_SKILL[toolId];
+  if (!skill) return 2500;
+  return SKILL_BRIEFS[skill]?.maxGenerationTokens ?? 2500;
+}
