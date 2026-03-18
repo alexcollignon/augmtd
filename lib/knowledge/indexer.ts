@@ -33,6 +33,8 @@ export interface KnowledgeFile {
   size_bytes: number | null;
   last_modified_at: string | null;
   indexed_at: string;
+  storage_path?: string;
+  folder_id?: string;
   similarity?: number;
 }
 
@@ -357,6 +359,122 @@ async function collectAllFiles(
 
   const nested = await Promise.all(subFolderPromises);
   return files.concat(...nested);
+}
+
+// ─── Upload indexing ─────────────────────────────────────────────────────────
+
+/**
+ * Lazily provisions a knowledge_sources row for direct uploads.
+ * Uses upsert on (user_id, provider) so only one row exists per user.
+ * Returns the source_id.
+ */
+export async function getOrCreateUploadSource(userId: string, adminClient: SupabaseClient): Promise<string> {
+  // Check for existing upload source first
+  const { data: existing } = await adminClient
+    .from('knowledge_sources')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('provider', 'upload')
+    .maybeSingle();
+
+  if (existing) return existing.id;
+
+  // None exists — insert
+  const { data, error } = await adminClient
+    .from('knowledge_sources')
+    .insert({
+      user_id: userId,
+      provider: 'upload',
+      folder_name: 'Uploads',
+      folder_id: 'uploads',
+      status: 'ready',
+      connection_id: null,
+    })
+    .select('id')
+    .single();
+
+  if (error || !data) throw new Error(`Failed to provision upload source: ${error?.message}`);
+  return data.id;
+}
+
+export interface IndexUploadParams {
+  buffer: Buffer;
+  filename: string;
+  mimeType: string;
+  userId: string;
+  storagePathInBucket: string;
+  folderId?: string;
+}
+
+/**
+ * Index a directly-uploaded file into knowledge_files + knowledge_chunks.
+ * Returns the knowledge_files.id (UUID).
+ */
+export async function indexUploadedFile(params: IndexUploadParams, adminClient: SupabaseClient): Promise<string> {
+  const { buffer, filename, mimeType, userId, storagePathInBucket, folderId } = params;
+
+  const sourceId = await getOrCreateUploadSource(userId, adminClient);
+
+  const extractedText = await extractTextFromFile(buffer, mimeType, filename, userId, adminClient);
+  const cleanText = extractedText ? extractedText.replace(/\u0000/g, '') : null;
+
+  const summary = cleanText ? await generateSummary(cleanText, filename, userId, adminClient) : null;
+
+  let fileEmbedding: number[] | null = null;
+  if (cleanText && cleanText.length > 10) {
+    fileEmbedding = await embedText(cleanText, userId, adminClient);
+  }
+
+  const { data: fileRows, error: upsertError } = await adminClient
+    .from('knowledge_files')
+    .upsert(
+      {
+        user_id: userId,
+        source_id: sourceId,
+        provider_file_id: storagePathInBucket,
+        filename,
+        mime_type: mimeType,
+        extracted_text: cleanText,
+        embedding: fileEmbedding ? JSON.stringify(fileEmbedding) : null,
+        summary,
+        size_bytes: buffer.length,
+        last_modified_at: new Date().toISOString(),
+        indexed_at: new Date().toISOString(),
+        storage_path: storagePathInBucket,
+        ...(folderId ? { folder_id: folderId } : {}),
+      },
+      { onConflict: 'user_id,provider_file_id' }
+    )
+    .select('id');
+
+  if (upsertError || !fileRows?.[0]) {
+    throw new Error(`Failed to upsert knowledge_files: ${upsertError?.message}`);
+  }
+
+  const fileId = fileRows[0].id;
+
+  if (cleanText && cleanText.length > 10) {
+    const chunks = chunkText(cleanText, filename);
+    const headers = chunks.map((c, i) => buildContextHeader(filename, c.heading, i));
+    const textsToEmbed = chunks.map((c, i) => headers[i] + '\n' + c.content);
+    const embeddings = await embedTexts(textsToEmbed, userId, adminClient);
+
+    await adminClient.from('knowledge_chunks').delete().eq('file_id', fileId);
+
+    const chunkRows = chunks.map((c, i) => ({
+      file_id: fileId,
+      user_id: userId,
+      chunk_index: i,
+      heading: c.heading,
+      content: c.content,
+      context_header: headers[i],
+      embedding: JSON.stringify(embeddings[i]),
+    }));
+
+    await adminClient.from('knowledge_chunks').insert(chunkRows);
+  }
+
+  return fileId;
 }
 
 // ─── Index source ────────────────────────────────────────────────────────────

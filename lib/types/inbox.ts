@@ -190,6 +190,7 @@ export interface DocumentArtifact {
   sent_at?: string; // ISO timestamp set when this email artifact was sent
   sent_to?: string; // Recipient address(es) at send time
   qa_report?: QAReport; // Post-generation QA review — present when skill has skillReview brief
+  folder_id?: string; // drive_folders.id; NULL = show in origin group (Workflows/Processes)
 }
 
 export interface InboxItem {
