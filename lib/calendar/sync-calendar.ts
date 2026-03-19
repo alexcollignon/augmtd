@@ -128,6 +128,7 @@ async function syncGmailCalendar(
 
     const errors: string[] = [];
     let synced = 0;
+    const cancelledEventIds: string[] = [];
 
     for (const event of events) {
       try {
@@ -135,6 +136,9 @@ async function syncGmailCalendar(
         if (!event.start || !event.end) {
           continue;
         }
+
+        const eventStatus: 'confirmed' | 'cancelled' | 'tentative' = event.status as any || 'confirmed';
+        if (eventStatus === 'cancelled') cancelledEventIds.push(event.id!);
 
         const calendarEvent: CalendarEvent = {
           user_id: connection.user_id,
@@ -148,14 +152,14 @@ async function syncGmailCalendar(
           start_time: event.start.dateTime || event.start.date!,
           end_time: event.end.dateTime || event.end.date!,
           timezone: event.start.timeZone,
-          is_all_day: !event.start.dateTime, // All-day if no dateTime
+          is_all_day: !event.start.dateTime,
           organizer: event.organizer?.email,
           attendees: (event.attendees || []).map(a => ({
             email: a.email!,
             name: a.displayName,
             status: a.responseStatus as any,
           })),
-          status: event.status as any || 'confirmed',
+          status: eventStatus,
           provider: 'gmail',
           metadata: event,
         };
@@ -175,6 +179,8 @@ async function syncGmailCalendar(
         errors.push(`Error processing event ${event.id}: ${error.message}`);
       }
     }
+
+    await cleanupCancelledEvents(connection.user_id, cancelledEventIds, 'gmail', supabase);
 
     return { synced, errors };
   } catch (error: any) {
@@ -246,9 +252,12 @@ async function syncOutlookCalendar(
 
     const errors: string[] = [];
     let synced = 0;
+    const cancelledEventIds: string[] = [];
 
     for (const event of events) {
       try {
+        if (event.isCancelled) cancelledEventIds.push(event.id);
+
         const calendarEvent: CalendarEvent = {
           user_id: connection.user_id,
           connection_id: connection.id,
@@ -289,11 +298,69 @@ async function syncOutlookCalendar(
       }
     }
 
+    await cleanupCancelledEvents(connection.user_id, cancelledEventIds, 'outlook', supabase);
+
     return { synced, errors };
   } catch (error: any) {
     console.error('[CalendarSync] Outlook API error:', error);
     return { synced: 0, errors: [error.message] };
   }
+}
+
+/**
+ * Clean up inbox_items linked to cancelled calendar events.
+ * Called after each sync to remove stale meeting prep and action items.
+ *
+ * Covers two link paths:
+ *  1. bot/recording action items: inbox_items.source_meeting_transcript_id → meeting_transcripts.calendar_event_id
+ *  2. email-prep items:           inbox_items.source_data->>'calendar_event_id'
+ */
+async function cleanupCancelledEvents(
+  userId: string,
+  cancelledEventIds: string[], // external event_id strings (e.g. Google/Outlook IDs)
+  provider: 'gmail' | 'outlook',
+  supabase: SupabaseClient
+): Promise<void> {
+  if (cancelledEventIds.length === 0) return;
+
+  // Resolve external event_ids → internal calendar_events.id UUIDs
+  const { data: cancelledRows } = await supabase
+    .from('calendar_events')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('provider', provider)
+    .in('event_id', cancelledEventIds)
+    .eq('status', 'cancelled');
+
+  const calendarEventUuids = (cancelledRows ?? []).map((r) => r.id);
+  if (calendarEventUuids.length === 0) return;
+
+  // 1. Delete action items via meeting_transcripts
+  const { data: transcripts } = await supabase
+    .from('meeting_transcripts')
+    .select('id')
+    .eq('user_id', userId)
+    .in('calendar_event_id', calendarEventUuids);
+
+  const transcriptIds = (transcripts ?? []).map((t) => t.id);
+  if (transcriptIds.length > 0) {
+    await supabase
+      .from('inbox_items')
+      .delete()
+      .eq('user_id', userId)
+      .in('source_meeting_transcript_id', transcriptIds);
+  }
+
+  // 2. Delete email-prep items linked via source_data->>'calendar_event_id'
+  for (const uuid of calendarEventUuids) {
+    await supabase
+      .from('inbox_items')
+      .delete()
+      .eq('user_id', userId)
+      .eq('source_data->>calendar_event_id', uuid);
+  }
+
+  console.log(`[CalendarSync] Cleaned up inbox items for ${calendarEventUuids.length} cancelled event(s)`);
 }
 
 /**

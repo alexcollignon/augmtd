@@ -177,7 +177,15 @@ export function InboxPageClient({
   useEffect(() => {
     fetchMeetings();
     const interval = setInterval(fetchMeetings, 60000);
-    return () => clearInterval(interval);
+
+    // Refresh immediately when a meeting/recording is added or deleted from another page
+    const channel = new BroadcastChannel('meetings-updated');
+    channel.onmessage = () => fetchMeetings();
+
+    return () => {
+      clearInterval(interval);
+      channel.close();
+    };
   }, [fetchMeetings]);
 
   // Trigger initial sync after connecting
@@ -206,6 +214,7 @@ export function InboxPageClient({
         .select('*')
         .eq('user_id', user.id)
         .eq('status', 'pending')
+        .neq('source', 'meeting')
         .order('priority', { ascending: false })
         .order('created_at', { ascending: false });
 
@@ -419,6 +428,7 @@ export function InboxPageClient({
   const handleReplyOpenChange = useCallback((open: boolean) => {
     setReplyIsOpen(open);
     if (open) setRightPanel('chat');
+    else setPendingReplyDraft(null); // clear so "Use as reply" can re-trigger after discard
   }, []);
 
   const handleUpdateReplyDraft = useCallback((body: string) => {

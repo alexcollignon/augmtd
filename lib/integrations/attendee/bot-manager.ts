@@ -5,8 +5,10 @@
  */
 
 import { SupabaseClient } from '@supabase/supabase-js';
+import { randomUUID } from 'crypto';
 import { createAttendeeBot, getAttendeeBot, getAttendeeBotTranscript, isSupportedMeetingUrl } from './client';
 import { getAIClient } from '@/lib/ai/factory';
+import { buildUserContextBlock } from '@/lib/context/build-user-context';
 
 interface ExtractedActionItem {
   action: string;
@@ -15,11 +17,39 @@ interface ExtractedActionItem {
   context?: string;
   dueDate?: string;
   category: 'todo' | 'waiting_for' | 'project';
+  isUserTask?: boolean;
+}
+
+interface MeetingDecision {
+  text: string;
+  owner?: string;
+  date?: string;
+}
+
+interface KeyMoment {
+  segmentIndex: number;
+  type: 'decision' | 'risk' | 'commitment';
+  text: string;
+}
+
+interface MeetingRisk {
+  text: string;
+  severity: 'high' | 'medium' | 'low';
+}
+
+interface MeetingInsights {
+  summary: string;
+  decisions: MeetingDecision[];
+  actionItems: ExtractedActionItem[];
+  keyMoments: KeyMoment[];
+  risks: MeetingRisk[];
+  suggested_next_step: string | null;
 }
 
 /**
- * Create Attendee bots for calendar events with meeting links
- * Called after calendar sync completes
+ * Create bots for calendar events with meeting links.
+ * Uses self-hosted bot service if MEETING_BOT_SERVICE_URL is set, else falls back to Attendee.dev.
+ * Called after calendar sync completes.
  */
 export async function createBotsForCalendarEvents(
   userId: string,
@@ -78,11 +108,19 @@ export async function createBotsForCalendarEvents(
       // Use the later of meeting start or minimum join time
       const joinAt = meetingStart > minJoinTime ? meetingStart : minJoinTime;
 
-      const bot = await createAttendeeBot(
-        event.meeting_link,
-        'AUGMTD Assistant',
-        joinAt.toISOString()  // Schedule bot to join at meeting start
-      );
+      // Use self-hosted bot if configured, else fall back to Attendee.dev
+      let bot: { id: string; state: string };
+      if (process.env.MEETING_BOT_SERVICE_URL) {
+        const { createMeetingBot } = await import('@/lib/integrations/meeting-bot/client');
+        const result = await createMeetingBot(event.meeting_link, joinAt);
+        bot = { id: result.botId, state: 'scheduled' };
+      } else {
+        bot = await createAttendeeBot(
+          event.meeting_link,
+          'AUGMTD Assistant',
+          joinAt.toISOString()
+        );
+      }
 
       // Update event with bot info
       const { error } = await supabase
@@ -138,7 +176,12 @@ export async function pollAndFetchTranscripts(
 
   for (const event of events) {
     try {
-      // Fetch bot status
+      // Self-hosted bots deliver audio via webhook — no polling needed
+      if (process.env.MEETING_BOT_SERVICE_URL) {
+        continue;
+      }
+
+      // Fetch bot status from Attendee.dev
       const bot = await getAttendeeBot(event.attendee_bot_id);
 
       // Update bot state
@@ -198,17 +241,21 @@ export async function pollAndFetchTranscripts(
 }
 
 /**
- * Store transcript and generate work items
+ * Store transcript and generate work items.
+ * Accepts both raw Attendee.dev segments ({ speaker_name, transcription.transcript, timestamp_ms })
+ * and pre-normalized segments ({ speaker, text, timestamp }) from the Whisper pipeline.
+ * Exported for use by the transcription pipeline.
  */
-async function storeTranscriptAndGenerateWork(
+export async function storeTranscriptAndGenerateWork(
   userId: string,
-  calendarEventId: string,
-  botId: string,
+  calendarEventId: string | null,
+  botId: string | null,
   title: string,
   startTime: string,
   endTime: string,
   transcript: any,
-  supabase: SupabaseClient
+  supabase: SupabaseClient,
+  options?: { source?: 'bot' | 'recording'; recordingStoragePath?: string; existingTranscriptId?: string }
 ): Promise<void> {
   // Calculate duration
   const durationMinutes = Math.round(
@@ -223,49 +270,80 @@ async function storeTranscriptAndGenerateWork(
     .map((s: any) => `[${s.speaker_name || 'Unknown'}]: ${s.transcription?.transcript || ''}`)
     .join('\n');
 
-  // Normalize segments to our expected format {speaker, text, timestamp}
+  // Normalize segments — accept both Attendee format (speaker_name / transcription.transcript / timestamp_ms)
+  // and pre-normalized format (speaker / text / timestamp) from the Whisper pipeline.
   const normalizedSegments = rawSegments.map((s: any) => ({
-    speaker: s.speaker_name || 'Unknown',
-    text: s.transcription?.transcript || '',
-    timestamp: Math.floor((s.timestamp_ms || 0) / 1000), // Convert ms to seconds
+    speaker: s.speaker || s.speaker_name || 'Unknown',
+    text: s.text || s.transcription?.transcript || '',
+    timestamp: s.timestamp ?? Math.floor((s.timestamp_ms || 0) / 1000),
   }));
 
-  // Store transcript
-  const { data: transcriptRecord, error: insertError} = await supabase
-    .from('meeting_transcripts')
-    .insert({
-      user_id: userId,
-      meeting_id: calendarEventId, // meeting_id is required (same as calendar_event_id)
-      calendar_event_id: calendarEventId,
-      attendee_bot_id: botId,
-      bot_state: 'ended',
-      title,
-      start_time: startTime,
-      end_time: endTime,
-      duration_minutes: durationMinutes,
-      transcript: transcriptText, // Plain text transcript (required)
-      transcript_segments: normalizedSegments, // Normalized format
-      attendees: [],
-      processed: false,
-    })
-    .select()
-    .single();
-
-  if (insertError) {
-    console.error('[AttendeeBot] Failed to store transcript:', insertError);
-    return;
+  // Store transcript — update existing pending row if provided, otherwise insert
+  let transcriptRecord: any;
+  if (options?.existingTranscriptId) {
+    const { data, error: updateError } = await supabase
+      .from('meeting_transcripts')
+      .update({
+        attendee_bot_id: botId,
+        bot_state: 'ended',
+        duration_minutes: durationMinutes,
+        transcript: transcriptText,
+        transcript_segments: normalizedSegments,
+      })
+      .eq('id', options.existingTranscriptId)
+      .eq('user_id', userId)
+      .select()
+      .single();
+    if (updateError) {
+      console.error('[AttendeeBot] Failed to update transcript:', updateError);
+      return;
+    }
+    transcriptRecord = data;
+  } else {
+    const { data, error: insertError } = await supabase
+      .from('meeting_transcripts')
+      .insert({
+        user_id: userId,
+        meeting_id: calendarEventId ?? randomUUID(), // NOT NULL — use generated UUID for ad-hoc recordings
+        calendar_event_id: calendarEventId,
+        attendee_bot_id: botId,
+        bot_state: 'ended',
+        source: options?.source ?? 'bot',
+        recording_storage_path: options?.recordingStoragePath ?? null,
+        title,
+        start_time: startTime,
+        end_time: endTime,
+        duration_minutes: durationMinutes,
+        transcript: transcriptText,
+        transcript_segments: normalizedSegments,
+        attendees: [],
+        processed: false,
+      })
+      .select()
+      .single();
+    if (insertError) {
+      console.error('[AttendeeBot] Failed to store transcript:', insertError);
+      return;
+    }
+    transcriptRecord = data;
   }
 
   console.log(`[AttendeeBot] Stored transcript ${transcriptRecord.id}`);
 
-  // Extract action items and key topics from transcript with AI
-  const actionItems = await extractActionItemsWithAI(userId, title, normalizedSegments, supabase);
+  // Extract full meeting insights (summary, decisions, action items, key moments)
+  const insights = await extractMeetingInsights(userId, title, normalizedSegments, supabase);
   const keyTopics = extractKeyTopics(normalizedSegments);
 
   let workItemsCreated = 0;
 
-  // Create work items from action items
-  for (const item of actionItems) {
+  // Create inbox items — only for tasks owned by (or unassigned to) the current user
+  for (const item of insights.actionItems) {
+    const isUserTask = item.isUserTask === true || item.isUserTask == null || !item.assignee;
+    if (!isUserTask) {
+      console.log(`[AttendeeBot] Skipping non-user task: ${item.action} (assignee: ${item.assignee})`);
+      continue;
+    }
+
     const workTitle = item.action;
     const whyMatters = item.context
       ? `${item.context} (from meeting: ${title})`
@@ -303,12 +381,17 @@ async function storeTranscriptAndGenerateWork(
     }
   }
 
-  // Mark transcript as processed
+  // Mark transcript as processed and store insights
   await supabase
     .from('meeting_transcripts')
     .update({
       processed: true,
       work_items_generated: workItemsCreated,
+      summary: insights.summary || null,
+      decisions: insights.decisions,
+      key_moments: insights.keyMoments,
+      risks: insights.risks ?? [],
+      suggested_next_step: insights.suggested_next_step ?? null,
     })
     .eq('id', transcriptRecord.id);
 
@@ -401,6 +484,105 @@ export async function reprocessTranscripts(
   }
 
   return { reprocessed, created, errors };
+}
+
+/**
+ * Extract full meeting insights (summary, decisions, action items, risks, key moments, suggested next step)
+ * in a single AI call using the planning model and full user context.
+ */
+async function extractMeetingInsights(
+  userId: string,
+  meetingTitle: string,
+  segments: any[],
+  supabase: SupabaseClient
+): Promise<MeetingInsights> {
+  try {
+    const { client: openai, model: defaultModel } = await getAIClient(userId, 'planning', supabase);
+
+    const userContext = await buildUserContextBlock(userId, supabase);
+
+    const transcriptText = segments
+      .map((s, i) => `[${i}] [${s.speaker}]: ${s.text}`)
+      .join('\n');
+
+    const prompt = `${userContext ? userContext + '\n\n' : ''}You are analysing a meeting transcript. Reason step by step (internally) before producing output:
+1. What was the purpose of this meeting?
+2. What was actually decided (not just discussed)?
+3. What risks or blockers were raised, explicitly or implicitly?
+4. What actions follow, and who owns each one?
+5. Given the user's role and responsibilities, what is the single most important next step for them?
+
+Meeting: "${meetingTitle}"
+
+Transcript (each line prefixed with segment index [N]):
+${transcriptText}
+
+Return a JSON object with exactly these fields:
+{
+  "summary": "2-3 sentence plain text summary of what was discussed and decided",
+  "decisions": [
+    { "text": "What was decided", "owner": "Name or null", "date": "YYYY-MM-DD or null" }
+  ],
+  "actionItems": [
+    {
+      "action": "What needs to be done",
+      "assignee": "Name or null",
+      "priority": 75,
+      "context": "Why this matters",
+      "dueDate": "YYYY-MM-DD or null",
+      "category": "todo",
+      "isUserTask": true
+    }
+  ],
+  "risks": [
+    { "text": "Risk or blocker description", "severity": "high" }
+  ],
+  "keyMoments": [
+    { "segmentIndex": 5, "type": "decision", "text": "Brief label for this moment" }
+  ],
+  "suggested_next_step": "Single sentence — the most important thing for the user to do next"
+}
+
+Rules:
+- decisions: concrete things that were agreed/decided (not tasks). Max 8.
+- actionItems: specific tasks requiring action. Max 10. category: "todo" | "waiting_for" | "project". Set isUserTask=true if assignee matches the user above or is unassigned.
+- risks: blockers or risks raised explicitly or implicitly. Max 6. severity: "high" | "medium" | "low".
+- keyMoments: up to 6 notable segments. type: "decision" | "risk" | "commitment". segmentIndex must match a real [N] from the transcript.
+- suggested_next_step: single sentence, most important action for the user given their role. Null if unclear.
+- Return ONLY the JSON object, no other text.`;
+
+    const completion = await openai.chat.completions.create({
+      model: defaultModel,
+      messages: [
+        { role: 'system', content: 'You are an expert meeting analyst. Always return valid JSON only.' },
+        { role: 'user', content: prompt },
+      ],
+      temperature: 0.3,
+      max_tokens: 3000,
+    });
+
+    const response = completion.choices[0]?.message?.content?.trim();
+    if (!response) throw new Error('No response');
+
+    // Strip markdown code fences if present
+    const cleaned = response.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
+    const parsed = JSON.parse(cleaned) as MeetingInsights;
+
+    console.log(`[AttendeeBot] Extracted insights: ${parsed.decisions?.length ?? 0} decisions, ${parsed.actionItems?.length ?? 0} actions, ${parsed.risks?.length ?? 0} risks, ${parsed.keyMoments?.length ?? 0} key moments`);
+    return {
+      summary: parsed.summary ?? '',
+      decisions: parsed.decisions ?? [],
+      actionItems: parsed.actionItems ?? [],
+      risks: parsed.risks ?? [],
+      keyMoments: parsed.keyMoments ?? [],
+      suggested_next_step: parsed.suggested_next_step ?? null,
+    };
+  } catch (error) {
+    console.error('[AttendeeBot] Error extracting meeting insights:', error);
+    // Fallback: try to get action items only
+    const actionItems = await extractActionItemsWithAI(userId, meetingTitle, segments, supabase);
+    return { summary: '', decisions: [], actionItems, risks: [], keyMoments: [], suggested_next_step: null };
+  }
 }
 
 /**

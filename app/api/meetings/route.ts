@@ -63,9 +63,25 @@ export async function GET() {
         return {
           ...meeting,
           attendees: enrichedAttendees,
+          has_transcript: false, // filled below
         };
       })
     );
+
+    // Batch-check which events have transcripts
+    const eventIds = enrichedMeetings.map((m) => m.id);
+    if (eventIds.length > 0) {
+      const { data: transcripts } = await supabase
+        .from('meeting_transcripts')
+        .select('calendar_event_id')
+        .eq('user_id', user.id)
+        .in('calendar_event_id', eventIds);
+
+      const transcriptSet = new Set((transcripts ?? []).map((t) => t.calendar_event_id));
+      enrichedMeetings.forEach((m) => {
+        m.has_transcript = transcriptSet.has(m.id);
+      });
+    }
 
     return NextResponse.json({
       meetings: enrichedMeetings,

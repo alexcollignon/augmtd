@@ -66,6 +66,7 @@ export interface CalendarEvent {
   // Meeting-specific fields
   meeting_status: MeetingStatus;
   meeting_metadata: MeetingMetadata;
+  has_transcript?: boolean;
 
   created_at: string;
   updated_at: string;

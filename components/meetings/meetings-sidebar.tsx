@@ -1,9 +1,10 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { ChevronDownIcon, ChevronUpIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import { ChevronDownIcon, ChevronUpIcon, XMarkIcon, MicrophoneIcon } from '@heroicons/react/24/outline';
 import type { CalendarEvent } from '@/lib/types/meetings';
 import MeetingCard from './meeting-card';
+import CaptureModal from './capture-modal';
 
 interface MeetingsSidebarProps {
   userId: string;
@@ -16,6 +17,7 @@ export default function MeetingsSidebar({ userId, userEmail, isOpen, onClose }: 
   const [meetings, setMeetings] = useState<CalendarEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set(['tomorrow', 'this_week']));
+  const [showCapture, setShowCapture] = useState(false);
 
   // Fetch meetings from calendar_events
   useEffect(() => {
@@ -107,14 +109,25 @@ export default function MeetingsSidebar({ userId, userEmail, isOpen, onClose }: 
             {loading ? 'Loading...' : `${totalMeetings} ${totalMeetings === 1 ? 'meeting' : 'meetings'}`}
           </p>
         </div>
-        <button
-          onClick={onClose}
-          className="p-1.5 hover:bg-neutral-100 rounded transition-colors"
-          aria-label="Close meetings panel"
-        >
-          <XMarkIcon className="w-5 h-5 text-neutral-500" />
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowCapture(true)}
+            className="flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-indigo-600 hover:bg-indigo-50 transition-colors"
+          >
+            <MicrophoneIcon className="w-3 h-3" />
+            Record
+          </button>
+          <button
+            onClick={onClose}
+            className="p-1.5 hover:bg-neutral-100 rounded transition-colors"
+            aria-label="Close meetings panel"
+          >
+            <XMarkIcon className="w-5 h-5 text-neutral-500" />
+          </button>
+        </div>
       </div>
+
+      <CaptureModal isOpen={showCapture} onClose={() => setShowCapture(false)} />
 
       {/* Scrollable content */}
       <div className="flex-1 overflow-y-auto px-5 py-4 bg-neutral-50/30">

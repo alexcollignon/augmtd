@@ -372,6 +372,7 @@ export async function syncEmailsForConnection(
 
         let processedAttachments: ProcessedAttachment[] = [];
         let calendarEventId: string | null = null;
+        let hasCalendarInvite = false;
 
         if (hasAttachments) {
           const attResult = await processAttachmentsForEmail({
@@ -384,6 +385,7 @@ export async function syncEmailsForConnection(
             adminSupabase,
           });
           processedAttachments = attResult.attachments;
+          hasCalendarInvite = attResult.hasCalendarInvite ?? false;
 
           // If this is a calendar invite email, find the matching calendar event
           // by organizer (= email sender) + future start time — language-independent
@@ -547,15 +549,65 @@ export async function syncEmailsForConnection(
 
           console.log(`   ✓ Creating item for ${recipient.email} (${recipient.detectedRole}, ${suggestionLabel})`);
 
-          // Check if inbox item already exists for this thread + user
+          // Check if inbox item already exists for this thread + user (any status)
           const { data: existingInboxItem } = await adminSupabase
             .from('inbox_items')
             .select('id, status')
             .eq('user_id', recipient.userId)
             .eq('source', 'email')
             .eq('source_data->>thread_id', storedEmail.thread_id || storedEmail.message_id)
-            .eq('status', 'pending')
             .single();
+
+          // If already completed (e.g. user RSVPed or dismissed), don't re-surface it
+          if (existingInboxItem && existingInboxItem.status !== 'pending') {
+            console.log(`       ⏭️  Skipping thread — item already ${existingInboxItem.status}`);
+            continue;
+          }
+
+          // For calendar invite emails (including updates and past events), if the user
+          // already responded to an invite with the same meeting title, skip re-creating.
+          // Covers: same-thread updates, cross-thread updates, and past events where
+          // calendarEventId is null (past events fall outside the sync window).
+          if (!existingInboxItem && hasCalendarInvite && storedEmail.subject) {
+            // Normalize subject: strip invite prefixes to extract the meeting title
+            const inviteTitleMatch = storedEmail.subject.match(
+              /^(?:Convite|Invitation|Updated invitation|Convite atualizado|Invite|Convidado|Actualizado)[:\s]+(.+?)(?:\s*@\s*|\s*-\s*(?:dom|seg|ter|qua|qui|sex|sáb|sun|mon|tue|wed|thu|fri|sat|\d).*)?$/i
+            );
+            const meetingTitle = inviteTitleMatch ? inviteTitleMatch[1].trim() : null;
+
+            // Check by calendar_event_id if available (future events)
+            const calIdCheck = calendarEventId
+              ? adminSupabase
+                  .from('inbox_items')
+                  .select('id, status')
+                  .eq('user_id', recipient.userId)
+                  .eq('source_data->>calendar_event_id', calendarEventId)
+                  .neq('status', 'pending')
+                  .limit(1)
+                  .maybeSingle()
+              : Promise.resolve({ data: null });
+
+            // Check by meeting title extracted from subject (past events / cross-thread)
+            const titleCheck = meetingTitle
+              ? adminSupabase
+                  .from('inbox_items')
+                  .select('id, status')
+                  .eq('user_id', recipient.userId)
+                  .eq('item_type', 'meeting')
+                  .neq('status', 'pending')
+                  .ilike('source_data->>subject', `%${meetingTitle}%`)
+                  .limit(1)
+                  .maybeSingle()
+              : Promise.resolve({ data: null });
+
+            const [{ data: completedByCalId }, { data: completedByTitle }] = await Promise.all([calIdCheck, titleCheck]);
+            const completedCalItem = completedByCalId ?? completedByTitle;
+
+            if (completedCalItem) {
+              console.log(`       ⏭️  Skipping calendar invite — event already ${completedCalItem.status}`);
+              continue;
+            }
+          }
 
           if (existingInboxItem) {
             console.log(`       ♻️  Updating existing inbox item for thread`);

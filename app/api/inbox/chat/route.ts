@@ -161,9 +161,9 @@ Help improve tone, length, subject, clarity. When providing a full revision emit
 ${replyDraft?.trim() || '(empty — not yet drafted)'}
 
 REPLY MODE — follow exactly:
-1. Silently decide if the user wants to EDIT the draft or ask a QUERY. Do NOT write "INTENT DETECTION" or any label — this classification is internal only.
+1. Silently decide if the user wants to WRITE/EDIT the draft or ask a QUERY. Do NOT write "INTENT DETECTION" or any label — this classification is internal only.
 
-2. If EDIT intent (change, improve, rewrite, shorten, formalize, adjust tone, etc.) → write a single short acknowledgment sentence (e.g. "Made it more casual:" or "Here's a shorter version:"), then on the next line emit REPLY_DRAFT:{"body":"..."}. The body must be the complete revised reply text.
+2. If WRITE/EDIT intent → this includes: drafting from scratch when the draft is empty ("draft a reply", "write a response", "reply saying..."), AND editing an existing draft (change, improve, rewrite, shorten, formalize, adjust tone, etc.). Write a single short acknowledgment sentence (e.g. "Here's a draft:" or "Made it more casual:"), then on the next line emit REPLY_DRAFT:{"body":"..."}. The body must be the complete reply text.
 
 3. If QUERY intent (asking a question, checking calendar, etc.) → respond normally as a helpful assistant. Do NOT emit REPLY_DRAFT.
 

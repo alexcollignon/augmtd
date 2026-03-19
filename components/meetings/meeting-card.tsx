@@ -1,7 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import { VideoCameraIcon, MapPinIcon } from '@heroicons/react/24/outline';
+import Link from 'next/link';
+import { VideoCameraIcon, MapPinIcon, MicrophoneIcon } from '@heroicons/react/24/outline';
 import type { CalendarEvent } from '@/lib/types/meetings';
 import { formatMeetingTime, calculateDuration, isUserOrganizer } from '@/lib/types/meetings';
 import MeetingDetailPanel from './meeting-detail-panel';
@@ -118,6 +119,16 @@ export default function MeetingCard({ event, userEmail, onRefresh }: MeetingCard
                   )}
                   {event.meeting_link && <VideoCameraIcon className="w-3 h-3" />}
                   {event.location && !event.meeting_link && <MapPinIcon className="w-3 h-3" />}
+                  {/* Link to meetings detail page — only when transcript exists */}
+                  {event.has_transcript && (
+                    <Link
+                      href={`/meetings/${event.id}`}
+                      onClick={(e) => e.stopPropagation()}
+                      className="text-[10px] text-indigo-500 hover:underline font-medium"
+                    >
+                      View
+                    </Link>
+                  )}
                 </>
               )}
             </div>

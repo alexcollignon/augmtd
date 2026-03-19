@@ -12,6 +12,7 @@ import {
   UserGroupIcon,
   SparklesIcon,
   DocumentTextIcon,
+  MicrophoneIcon,
 } from '@heroicons/react/24/outline';
 import type { CalendarEvent } from '@/lib/types/meetings';
 import {
@@ -22,6 +23,7 @@ import {
 } from '@/lib/types/meetings';
 import { createClient } from '@/lib/supabase/client';
 import RsvpButtons from '@/components/inbox/rsvp-buttons';
+import MeetingRecorder from '@/components/meetings/meeting-recorder';
 
 /** Renders the subset of markdown the AI uses in meeting prep: ## headings, **bold**, - lists */
 function PrepMarkdown({ text }: { text: string }) {
@@ -113,14 +115,15 @@ export default function MeetingDetailPanel({
   // Transcript state
   const [transcript, setTranscript] = useState<MeetingTranscript | null>(null);
   const [transcriptLoading, setTranscriptLoading] = useState(false);
+  const [transcriptKey, setTranscriptKey] = useState(0); // bump to refetch
 
   // Get AI-generated prep from meeting metadata if available
   // This would come from the meeting processor's source_data
   const prep = (event.metadata as any)?.prep as { agenda?: string; context?: string } | undefined;
 
-  // Fetch transcript for completed meetings
+  // Fetch transcript for completed meetings (or after recording submitted)
   useEffect(() => {
-    if (!isOpen || event.meeting_status !== 'completed') {
+    if (!isOpen || (event.meeting_status !== 'completed' && transcriptKey === 0)) {
       setTranscript(null);
       return;
     }
@@ -150,7 +153,7 @@ export default function MeetingDetailPanel({
     };
 
     fetchTranscript();
-  }, [isOpen, event.id, event.meeting_status]);
+  }, [isOpen, event.id, event.meeting_status, transcriptKey]);
 
   const handleJoinMeeting = () => {
     if (event.meeting_link) {
@@ -337,6 +340,24 @@ export default function MeetingDetailPanel({
                               <PrepMarkdown text={prep.context} />
                             </div>
                           )}
+                        </div>
+                      )}
+
+                      {/* In-Person Recorder (for upcoming / in-progress meetings) */}
+                      {(event.meeting_status === 'upcoming' || event.meeting_status === 'in_progress' || event.meeting_status === 'starting_soon') && (
+                        <div className="border-t border-neutral-200 pt-6">
+                          <div className="flex items-center gap-2 text-xs font-medium text-neutral-500 uppercase tracking-wide mb-3">
+                            <MicrophoneIcon className="w-4 h-4 text-red-600" />
+                            Record In-Person
+                          </div>
+                          <p className="text-xs text-neutral-500 mb-3">
+                            Meeting in the room? Record directly from your mic — transcript and action items generated automatically.
+                          </p>
+                          <MeetingRecorder
+                            calendarEventId={event.id}
+                            meetingTitle={event.title}
+                            onTranscriptReady={() => setTranscriptKey((k) => k + 1)}
+                          />
                         </div>
                       )}
 

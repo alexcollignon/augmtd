@@ -1,0 +1,22 @@
+services:
+  whisper:
+    image: fedirz/faster-whisper-server:latest-cpu
+    environment:
+      WHISPER__MODEL: Systran/faster-whisper-large-v3
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  meeting-bot:
+    image: screenappai/meeting-bot:latest
+    environment:
+      WEBHOOK_URL: https://app.augmtd.com/api/meetings/${CALENDAR_EVENT_ID}/bot-webhook
+      WEBHOOK_SECRET: ${MEETING_BOT_SECRET}
+      STORAGE_TYPE: supabase
+      SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
+      SUPABASE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
+      BUCKET: meeting-recordings
+    ports:
+      - "3001:3001"
+    shm_size: "2gb" # required for headless Chromium
+    restart: unless-stopped

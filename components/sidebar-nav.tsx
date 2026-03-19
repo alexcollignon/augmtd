@@ -17,6 +17,7 @@ import {
   BuildingOfficeIcon,
   ShieldCheckIcon,
   ArrowPathIcon,
+  CalendarDaysIcon,
 } from '@heroicons/react/24/outline';
 
 interface SidebarNavProps {
@@ -38,6 +39,7 @@ export default function SidebarNav({ userEmail }: SidebarNavProps) {
     { name: 'Work Inbox', href: '/inbox', icon: InboxIcon },
     { name: 'Workflows', href: '/work', icon: QueueListIcon },
     { name: 'Processes', href: '/processes', icon: ArrowPathIcon },
+    { name: 'Meetings', href: '/meetings', icon: CalendarDaysIcon },
     { name: 'Drive', href: '/drive', icon: CircleStackIcon },
     ...(isSuperAdmin ? [{ name: 'Platform Admin', href: '/platform-admin', icon: ShieldCheckIcon }] : []),
   ];
