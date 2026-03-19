@@ -65,11 +65,11 @@ export async function processAudioFile(params: ProcessAudioFileParams): Promise<
     console.error(`[TranscriptionPipeline] Failed for: ${title}`, err);
     // Mark the pending transcript row as failed so the UI surfaces it
     if (existingTranscriptId) {
-      await adminClient
+      const { error: updateErr } = await adminClient
         .from('meeting_transcripts')
         .update({ bot_state: 'failed', processed: true })
-        .eq('id', existingTranscriptId)
-        .catch((updateErr) => console.error('[TranscriptionPipeline] Failed to mark row as failed:', updateErr));
+        .eq('id', existingTranscriptId);
+      if (updateErr) console.error('[TranscriptionPipeline] Failed to mark row as failed:', updateErr);
     }
     throw err;
   }
