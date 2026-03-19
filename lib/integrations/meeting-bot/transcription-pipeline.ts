@@ -15,7 +15,7 @@ export interface ProcessAudioFileParams {
   startTime: string;
   endTime: string;
   storagePath: string; // path in meeting-recordings bucket
-  source: 'bot' | 'recording';
+  source: 'bot' | 'recording' | 'upload';
   adminClient: SupabaseClient;
   existingTranscriptId?: string; // update pending row instead of inserting
 }

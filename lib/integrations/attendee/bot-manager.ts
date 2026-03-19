@@ -255,7 +255,7 @@ export async function storeTranscriptAndGenerateWork(
   endTime: string,
   transcript: any,
   supabase: SupabaseClient,
-  options?: { source?: 'bot' | 'recording'; recordingStoragePath?: string; existingTranscriptId?: string }
+  options?: { source?: 'bot' | 'recording' | 'upload'; recordingStoragePath?: string; existingTranscriptId?: string }
 ): Promise<void> {
   // Calculate duration
   const durationMinutes = Math.round(
