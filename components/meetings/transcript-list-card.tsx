@@ -11,6 +11,7 @@ interface TranscriptListCardProps {
   durationMinutes: number;
   workItemsGenerated: number;
   processed: boolean;
+  botState: string | null;
   source: 'bot' | 'recording' | 'upload';
   summary?: string | null;
 }
@@ -23,6 +24,7 @@ export default function TranscriptListCard({
   durationMinutes,
   workItemsGenerated,
   processed,
+  botState,
   source,
   summary,
 }: TranscriptListCardProps) {
@@ -33,7 +35,9 @@ export default function TranscriptListCard({
   const timeLabel = date.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
 
   const statusBadge = !processed
-    ? { label: 'Processing', className: 'text-amber-700 bg-amber-50' }
+    ? { label: 'Transcribing…', className: 'text-amber-700 bg-amber-50' }
+    : botState === 'failed'
+    ? { label: 'Failed', className: 'text-red-700 bg-red-50' }
     : workItemsGenerated > 0
     ? { label: 'Reviewed', className: 'text-green-700 bg-green-50' }
     : { label: 'Needs review', className: 'text-red-700 bg-red-50' };

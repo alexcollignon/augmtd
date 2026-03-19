@@ -16,8 +16,24 @@ interface Transcript {
   durationMinutes: number;
   workItemsGenerated: number;
   processed: boolean;
+  botState: string | null;
   source: 'bot' | 'recording' | 'upload';
   summary?: string | null;
+}
+
+function mapTranscripts(raw: any[]): Transcript[] {
+  return raw.map((t) => ({
+    id: t.id,
+    calendarEventId: t.calendar_event_id,
+    title: t.title,
+    startTime: t.start_time,
+    durationMinutes: t.duration_minutes,
+    workItemsGenerated: t.work_items_generated,
+    processed: t.processed,
+    botState: t.bot_state ?? null,
+    source: t.source,
+    summary: t.summary,
+  }));
 }
 
 export default function MeetingsPageClient({ userEmail }: { userEmail: string }) {
@@ -37,56 +53,28 @@ export default function MeetingsPageClient({ userEmail }: { userEmail: string })
           (m: CalendarEvent) => m.meeting_status !== 'completed'
         );
         setUpcoming(upcomingEvents);
-        setTranscripts(
-          (transcriptsData.transcripts ?? []).map((t: any) => ({
-            id: t.id,
-            calendarEventId: t.calendar_event_id,
-            title: t.title,
-            startTime: t.start_time,
-            durationMinutes: t.duration_minutes,
-            workItemsGenerated: t.work_items_generated,
-            processed: t.processed,
-            source: t.source,
-            summary: t.summary,
-          }))
-        );
+        setTranscripts(mapTranscripts(transcriptsData.transcripts ?? []));
       })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
 
   const processingList = transcripts.filter((t) => !t.processed);
-  const needsReviewList = transcripts.filter((t) => t.processed && t.workItemsGenerated === 0);
-  const recentList = transcripts.filter((t) => t.processed && t.workItemsGenerated > 0).slice(0, 10);
+  const failedList = transcripts.filter((t) => t.processed && t.botState === 'failed');
+  const needsReviewList = transcripts.filter((t) => t.processed && t.botState !== 'failed' && t.workItemsGenerated === 0);
+  const recentList = transcripts.filter((t) => t.processed && t.botState !== 'failed' && t.workItemsGenerated > 0).slice(0, 10);
 
-  const hasProcessing = processingList.length > 0;
-
-  // Poll every 5s while any transcripts are still processing
+  // Always poll every 10s so new recordings appear without a manual reload
   useEffect(() => {
-    if (!hasProcessing) return;
     const fetchTranscripts = () => {
       fetch('/api/meetings/transcripts')
         .then((r) => r.json())
-        .then((data) => {
-          setTranscripts(
-            (data.transcripts ?? []).map((t: any) => ({
-              id: t.id,
-              calendarEventId: t.calendar_event_id,
-              title: t.title,
-              startTime: t.start_time,
-              durationMinutes: t.duration_minutes,
-              workItemsGenerated: t.work_items_generated,
-              processed: t.processed,
-              source: t.source,
-              summary: t.summary,
-            }))
-          );
-        })
+        .then((data) => setTranscripts(mapTranscripts(data.transcripts ?? [])))
         .catch(() => {});
     };
-    const interval = setInterval(fetchTranscripts, 5000);
+    const interval = setInterval(fetchTranscripts, 10000);
     return () => clearInterval(interval);
-  }, [hasProcessing]);
+  }, []);
 
   return (
     <div className="max-w-4xl mx-auto px-6 py-8">
@@ -162,6 +150,20 @@ export default function MeetingsPageClient({ userEmail }: { userEmail: string })
           </h2>
           <div className="space-y-1.5">
             {processingList.map((t) => (
+              <TranscriptListCard key={t.id} {...t} />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Failed */}
+      {failedList.length > 0 && (
+        <section className="mb-8">
+          <h2 className="text-[11px] font-semibold text-red-500 uppercase tracking-wide mb-3">
+            Transcription failed ({failedList.length})
+          </h2>
+          <div className="space-y-1.5">
+            {failedList.map((t) => (
               <TranscriptListCard key={t.id} {...t} />
             ))}
           </div>

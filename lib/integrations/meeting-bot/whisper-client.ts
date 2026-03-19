@@ -39,7 +39,7 @@ export async function transcribeAudio(
   const formData = new FormData();
   const blob = new Blob([audioBuffer.buffer as ArrayBuffer], { type: 'audio/webm' });
   formData.append('file', blob, filename);
-  formData.append('model', 'Systran/faster-whisper-large-v3');
+  formData.append('model', 'Systran/faster-whisper-medium');
   formData.append('response_format', 'verbose_json');
   formData.append('language', 'en');
 

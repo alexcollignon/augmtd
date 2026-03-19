@@ -29,35 +29,48 @@ export async function processAudioFile(params: ProcessAudioFileParams): Promise<
 
   console.log(`[TranscriptionPipeline] Starting transcription for: ${title} (${storagePath})`);
 
-  // 1. Download audio from Supabase Storage
-  const { data: audioData, error: downloadError } = await adminClient.storage
-    .from('meeting-recordings')
-    .download(storagePath);
+  try {
+    // 1. Download audio from Supabase Storage
+    const { data: audioData, error: downloadError } = await adminClient.storage
+      .from('meeting-recordings')
+      .download(storagePath);
 
-  if (downloadError || !audioData) {
-    throw new Error(`Failed to download audio from ${storagePath}: ${downloadError?.message}`);
+    if (downloadError || !audioData) {
+      throw new Error(`Failed to download audio from ${storagePath}: ${downloadError?.message}`);
+    }
+
+    const audioBuffer = Buffer.from(await audioData.arrayBuffer());
+    const filename = storagePath.split('/').pop() ?? 'recording.webm';
+
+    // 2. Transcribe via faster-whisper-server
+    const { segments } = await transcribeAudio(audioBuffer, filename);
+
+    console.log(`[TranscriptionPipeline] Transcribed ${segments.length} segments for: ${title}`);
+
+    // 3. Store transcript + generate work items
+    await storeTranscriptAndGenerateWork(
+      userId,
+      calendarEventId,
+      null, // no bot ID for direct recordings
+      title,
+      startTime,
+      endTime,
+      segments, // already normalized { speaker, text, timestamp }
+      adminClient,
+      { source, recordingStoragePath: storagePath, existingTranscriptId }
+    );
+
+    console.log(`[TranscriptionPipeline] Done: ${title}`);
+  } catch (err) {
+    console.error(`[TranscriptionPipeline] Failed for: ${title}`, err);
+    // Mark the pending transcript row as failed so the UI surfaces it
+    if (existingTranscriptId) {
+      await adminClient
+        .from('meeting_transcripts')
+        .update({ bot_state: 'failed', processed: true })
+        .eq('id', existingTranscriptId)
+        .catch((updateErr) => console.error('[TranscriptionPipeline] Failed to mark row as failed:', updateErr));
+    }
+    throw err;
   }
-
-  const audioBuffer = Buffer.from(await audioData.arrayBuffer());
-  const filename = storagePath.split('/').pop() ?? 'recording.webm';
-
-  // 2. Transcribe via faster-whisper-server
-  const { segments } = await transcribeAudio(audioBuffer, filename);
-
-  console.log(`[TranscriptionPipeline] Transcribed ${segments.length} segments for: ${title}`);
-
-  // 3. Store transcript + generate work items
-  await storeTranscriptAndGenerateWork(
-    userId,
-    calendarEventId,
-    null, // no bot ID for direct recordings
-    title,
-    startTime,
-    endTime,
-    segments, // already normalized { speaker, text, timestamp }
-    adminClient,
-    { source, recordingStoragePath: storagePath, existingTranscriptId }
-  );
-
-  console.log(`[TranscriptionPipeline] Done: ${title}`);
 }
