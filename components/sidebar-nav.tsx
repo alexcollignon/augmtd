@@ -18,6 +18,7 @@ import {
   ShieldCheckIcon,
   ArrowPathIcon,
   CalendarDaysIcon,
+  RectangleGroupIcon,
 } from '@heroicons/react/24/outline';
 
 interface SidebarNavProps {
@@ -36,6 +37,7 @@ export default function SidebarNav({ userEmail }: SidebarNavProps) {
   const [processNotifCount, setProcessNotifCount] = useState(0);
 
   const navigation = [
+    { name: 'On Your Desk', href: '/desk', icon: RectangleGroupIcon },
     { name: 'Work Inbox', href: '/inbox', icon: InboxIcon },
     { name: 'Workflows', href: '/work', icon: QueueListIcon },
     { name: 'Processes', href: '/processes', icon: ArrowPathIcon },
