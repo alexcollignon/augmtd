@@ -684,6 +684,8 @@ ssh hetzner "docker compose -f /root/augmtd-infra/docker-compose.yml logs -f mee
 - Full end-to-end: calendar event → bot → transcript → inbox items
 - Storage path uses `calendarEventId` (not `botId`) — files inherently linked to meeting
 - Audio player on meeting detail page (signed URL, HTML5 native)
+- Source chip on list cards + detail header: "Online" / "In-person" / "Upload"
+- Removed automatic "Needs review" / "Reviewed" status badges — misleading for meetings with no action items; all processed transcripts go into "Recent meetings"
 - Google Meet only (Zoom/Teams: future phases)
 
 **Next Steps:**

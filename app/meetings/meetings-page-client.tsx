@@ -61,8 +61,7 @@ export default function MeetingsPageClient({ userEmail }: { userEmail: string })
 
   const processingList = transcripts.filter((t) => !t.processed);
   const failedList = transcripts.filter((t) => t.processed && t.botState === 'failed');
-  const needsReviewList = transcripts.filter((t) => t.processed && t.botState !== 'failed' && t.workItemsGenerated === 0);
-  const recentList = transcripts.filter((t) => t.processed && t.botState !== 'failed' && t.workItemsGenerated > 0).slice(0, 10);
+  const recentList = transcripts.filter((t) => t.processed && t.botState !== 'failed').slice(0, 20);
 
   // Always poll every 10s so new recordings appear without a manual reload
   useEffect(() => {
@@ -164,20 +163,6 @@ export default function MeetingsPageClient({ userEmail }: { userEmail: string })
           </h2>
           <div className="space-y-1.5">
             {failedList.map((t) => (
-              <TranscriptListCard key={t.id} {...t} />
-            ))}
-          </div>
-        </section>
-      )}
-
-      {/* Needs review */}
-      {needsReviewList.length > 0 && (
-        <section className="mb-8">
-          <h2 className="text-[11px] font-semibold text-red-500 uppercase tracking-wide mb-3">
-            Needs review ({needsReviewList.length})
-          </h2>
-          <div className="space-y-1.5">
-            {needsReviewList.map((t) => (
               <TranscriptListCard key={t.id} {...t} />
             ))}
           </div>

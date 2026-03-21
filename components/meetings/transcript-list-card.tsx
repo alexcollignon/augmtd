@@ -38,9 +38,9 @@ export default function TranscriptListCard({
     ? { label: 'Transcribing…', className: 'text-amber-700 bg-amber-50' }
     : botState === 'failed'
     ? { label: 'Failed', className: 'text-red-700 bg-red-50' }
-    : workItemsGenerated > 0
-    ? { label: 'Reviewed', className: 'text-green-700 bg-green-50' }
-    : { label: 'Needs review', className: 'text-red-700 bg-red-50' };
+    : null;
+
+  const sourceLabel = source === 'bot' ? 'Online' : source === 'recording' ? 'In-person' : 'Upload';
 
   const SourceIcon = source === 'upload' ? CloudArrowUpIcon : MicrophoneIcon;
 
@@ -57,9 +57,14 @@ export default function TranscriptListCard({
           <h3 className="text-[13px] font-semibold text-neutral-900 leading-tight truncate">
             {title}
           </h3>
-          <span className={`flex-shrink-0 text-[11px] font-medium px-2 py-0.5 ${statusBadge.className}`}>
-            {statusBadge.label}
-          </span>
+          <div className="flex-shrink-0 flex items-center gap-1.5">
+            <span className="text-[11px] text-neutral-400 bg-neutral-100 px-2 py-0.5">{sourceLabel}</span>
+            {statusBadge && (
+              <span className={`text-[11px] font-medium px-2 py-0.5 ${statusBadge.className}`}>
+                {statusBadge.label}
+              </span>
+            )}
+          </div>
         </div>
 
         <p className="text-[11px] text-neutral-500 mt-0.5">

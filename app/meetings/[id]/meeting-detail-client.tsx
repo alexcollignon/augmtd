@@ -214,6 +214,11 @@ export default function MeetingDetailClient({
                   <span className="text-emerald-700 font-medium">Recorded</span>
                 </span>
               )}
+              {transcript && (
+                <span className="text-[11px] text-neutral-400 bg-neutral-100 px-2 py-0.5">
+                  {transcript.source === 'bot' ? 'Online' : transcript.source === 'recording' ? 'In-person' : 'Upload'}
+                </span>
+              )}
             </div>
 
             {/* Attendee avatar chips */}
