@@ -1,7 +1,7 @@
-# Meeting Assistant - Phase 1, 2 & 3
+# Meeting Assistant - Phase 1, 2 & 3 (+ Phase 66)
 
 **Status:** ✅ Implemented
-**Features:** Meeting prep + meeting_behavior profile + Attendee.dev bot integration
+**Features:** Meeting prep + meeting_behavior profile + self-hosted Google Meet bot
 
 ---
 
@@ -515,460 +515,130 @@ await updateProfile(userId, 'meeting_behavior', {
 
 ---
 
-## Phase 3: Attendee.dev Bot Integration
+## Phase 66: Self-Hosted Google Meet Bot
 
 **Status:** ✅ COMPLETE
-**Features:** Scheduled bots, transcription, AI action items
+**Features:** Python/FastAPI bot on Hetzner, Playwright + PulseAudio audio capture, webhook-push pipeline
 
-### How It Works
+### Architecture
 
-#### 1. Scheduled Bot Creation
 ```
-Calendar sync completes
+Calendar sync → createBotsForCalendarEvents()
   ↓
-createBotsForCalendarEvents()
+POST http://hetzner:3001/join  (self-hosted bot service)
+  ↓  (APScheduler fires at joinAt)
+Bot joins Google Meet via Playwright (Chromium + Xvfb)
   ↓
-For each meeting with link:
-  ├─ Verify meeting link is supported (Zoom/Meet/Teams)
-  ├─ Calculate join time (meeting start or min 2 min from now)
-  ├─ Create scheduled bot via Attendee API:
-  │  POST /api/v1/bots
-  │  {
-  │    meeting_url: "https://meet.google.com/abc-def",
-  │    bot_name: "AUGMTD Assistant",
-  │    join_at: "2026-02-16T10:00:00Z"  ← Scheduled join time
-  │  }
+PulseAudio null sink → ffmpeg → .webm recording
+  ↓  (meeting ends or bot alone 30s)
+Upload to Supabase Storage: meeting-recordings/{userId}/{botId}.webm
   ↓
-  └─ Store bot ID + state in calendar_events table
-     - attendee_bot_id: "bot_xyz123"
-     - attendee_bot_state: "scheduled"
-     - attendee_bot_created_at: timestamp
-```
-
-**Key Feature:** Bots don't join immediately - they wait until meeting start time!
-
-#### 2. Bot Lifecycle
-```
-scheduled → joining → joined_recording/active → ended → transcript fetched
-
-scheduled:        Bot created, waiting for join_at time
-joining:          Bot is requesting to join meeting
-joined_recording: Bot successfully joined and is recording (Attendee API state)
-active:           Bot in meeting, recording transcript (alternative state)
-ended:            Meeting finished, transcription processing
-fatal_error:      Bot failed (denied access, invalid link, etc.)
-```
-
-#### 3. Transcript Polling
-```
-Cron job runs every 5 minutes:
+POST https://app.augmtd.ai/api/meetings/{calendarEventId}/bot-webhook
   ↓
-pollAndFetchTranscripts()
+processAudioFile() → Whisper → storeTranscriptAndGenerateWork()
   ↓
-For each bot in [scheduled, joining, active, ended]:
-  ├─ Fetch bot status from Attendee API
-  ├─ Update attendee_bot_state in database
-  ↓
-  └─ If state = 'ended' AND transcription_state = 'completed':
-     ├─ Fetch transcript (segments with speaker + text + timestamp)
-     ├─ Store in meeting_transcripts table
-     ├─ Extract action items with AI
-     └─ Create work items in inbox
+Transcript + inbox items in app
 ```
 
-#### 4. AI Action Item Extraction
+**Platform support:** Google Meet only (self-hosted path).
 
-Uses GPT-4o-mini with user context to extract meaningful action items:
+### Bot Service (infra/meeting-bot/)
 
-**Input to AI:**
-```
-User context:
-- Role: Senior Consultant
-- Title: Product Manager
-- Authority: Senior
-- Responsibilities: client management, reporting
+Python FastAPI service deployed on Hetzner CX32 alongside Whisper.
 
-Meeting: "Sprint Planning"
+**API endpoints:**
+- `POST /join` — schedule a bot (`{ meetingUrl, joinAt, botName, calendarEventId, userId, googleAccessToken? }`)
+- `GET /bots/{botId}` — bot status
+- `GET /health` — active bot count
 
-Transcript:
-[Sarah]: We need to finalize the Q1 roadmap by Friday
-[Alex]: I'll send the draft to stakeholders
-[Mike]: Can you also prepare the metrics dashboard?
+**Key implementation files:**
+- `infra/meeting-bot/bot_runner.py` — Playwright state machine (join → record → upload → webhook)
+- `infra/meeting-bot/audio_capture.py` — PulseAudio null sink + ffmpeg; split into `create_sink()` (before browser launch) + `start_recording()` (after admitted)
+- `infra/meeting-bot/storage_uploader.py` — HTTP PUT to Supabase Storage REST API
+- `infra/meeting-bot/scheduler.py` — APScheduler with SQLite job store at `/data/scheduler.db`
+- `infra/meeting-bot/main.py` — FastAPI app
+- `infra/hetzner/docker-compose.yml` — `meeting-bot` + `whisper` services
 
-Extract action items relevant to the user based on their role.
-```
+### Audio Capture Details
 
-**Output from AI:**
-```json
-[
-  {
-    "action": "Send Q1 roadmap draft to stakeholders",
-    "assignee": "Alex",
-    "priority": 85,
-    "context": "Deadline Friday, critical for Q1 planning",
-    "dueDate": "2026-02-21"
-  },
-  {
-    "action": "Prepare metrics dashboard for sprint review",
-    "assignee": "Alex",
-    "priority": 70,
-    "context": "Requested by Mike, supports data-driven decisions",
-    "dueDate": null
-  }
+Critical lessons learned:
+- **No `--mute-audio`** — this flag silences Chrome's audio output entirely, nothing reaches PulseAudio. Removed.
+- **Full `os.environ` spread** — Playwright browser `env=` dict replaces the full environment. Must spread `os.environ` and add `PULSE_SINK`, `DISPLAY`, `HOME`, `XDG_RUNTIME_DIR` or PulseAudio client can't connect.
+- **`create_sink()` before browser launch** — creates the PulseAudio sink first so Chromium routes audio to it from startup
+- **`start_recording()` after admitted** — starts ffmpeg only after bot is in the call; eliminates silence at recording start
+- **30s alone-detection** — polls `[data-participant-id]` count; leaves after 30s alone to avoid recording dead air at the end
+
+### Meeting-Ended Detection
+
+MEETING_ENDED_SELECTORS restricted to `h1` elements only (multilingual):
+```python
+MEETING_ENDED_SELECTORS = [
+    '[data-call-ended]',
+    'h1:has-text("You\'ve left the call")',
+    'h1:has-text("Saiu da reunião")',
+    'h1:has-text("Has salido de la videollamada")',
+    'h1:has-text("Vous avez quitté")',
+    'h1:has-text("Sie haben das Meeting verlassen")',
 ]
 ```
 
-**Work Items Created:**
-```sql
-INSERT INTO inbox_items (
-  user_id,
-  source: 'meeting',
-  source_id: bot_id,
-  source_meeting_transcript_id: transcript_id,
-  work_state: 'action_required',
-  work_title: "Send Q1 roadmap draft to stakeholders",
-  why_matters: "Deadline Friday, critical for Q1 planning (from meeting: Sprint Planning)",
-  priority: 85,
-  auto_generated: true,
-  status: 'pending'
-)
+Earlier selectors (`.crqnQb`, `div:has-text(...)`) false-positived on active meeting UI elements in Portuguese, causing the bot to leave immediately after joining.
+
+### App-Side Changes (Phase 66)
+
+**Files moved/renamed (Attendee.dev removed):**
+- `lib/integrations/attendee/` directory deleted
+- `lib/integrations/meeting-bot/bot-manager.ts` — canonical bot manager (was `attendee/bot-manager.ts`)
+- `components/settings/meeting-assistant-card.tsx` — replaces `attendee-connection-card.tsx`; prop `selfHostedConfigured` (no `apiKeyConfigured`)
+- `app/api/integrations/meeting-bot/toggle/route.ts` — replaces `attendee/toggle/route.ts`
+- `app/api/cron/attendee-poll/route.ts` — deleted (webhook-push replaces polling)
+
+**`createBotsForCalendarEvents()` simplified:**
+- Only runs when `MEETING_BOT_SERVICE_URL` is set
+- Filters to `meet.google.com` URLs only
+- No Attendee.dev fallback
+
+### Environment Variables (Hetzner container)
+
+```bash
+BOT_SECRET=...                         # shared with MEETING_BOT_SECRET on Vercel
+SUPABASE_URL=...
+SUPABASE_SERVICE_ROLE_KEY=...
+AUGMTD_WEBHOOK_BASE_URL=https://app.augmtd.ai   # NOT .com
+MAX_CONCURRENT_BOTS=4
+GOOGLE_CLIENT_ID=...
+PROXY_URL=...                          # optional residential proxy
 ```
 
-#### 5. Transcript Display in UI
+### Vercel Environment Variables
 
-**In Meeting Detail Panel:**
-```
-Meeting: Sprint Planning
-Status: Completed
-Duration: 45 minutes
-
-📝 Transcript (15 segments)
-─────────────────────────────────
-[0:00] Sarah Johnson
-We need to finalize the Q1 roadmap by Friday
-
-[0:15] Alex (You)
-I'll send the draft to stakeholders
-
-[0:30] Mike Chen
-Can you also prepare the metrics dashboard?
-...
-
-✅ Work Items Generated: 2
+```bash
+MEETING_BOT_SERVICE_URL=http://<hetzner-ip>:3001
+MEETING_BOT_SECRET=...                 # same as BOT_SECRET above
 ```
 
-### Technical Implementation
+### Scaling
 
-#### Bot Creation with Scheduling
+| Server | Cost/mo | Concurrent bots |
+|---|---|---|
+| CX32 (current) | $0 extra | 4 |
+| CX52 | $50 | 20 |
 
-**lib/integrations/attendee/client.ts:**
-```typescript
-export async function createAttendeeBot(
-  meetingUrl: string,
-  botName: string = 'AUGMTD Assistant',
-  joinAt?: string  // ISO 8601 timestamp
-): Promise<AttendeeBot> {
-  const body: any = {
-    meeting_url: meetingUrl,
-    bot_name: botName,
-  };
-
-  // Schedule bot to join at specific time
-  if (joinAt) {
-    body.join_at = joinAt;
-  }
-
-  const response = await fetch(`${ATTENDEE_API_URL}/bots`, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Token ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(body),
-  });
-
-  return response.json();
-}
-```
-
-**lib/integrations/attendee/bot-manager.ts:**
-```typescript
-// Calculate join time (at least 2 minutes from now)
-const meetingStart = new Date(event.start_time);
-const now = new Date();
-const minJoinTime = new Date(now.getTime() + 2 * 60 * 1000);
-const joinAt = meetingStart > minJoinTime ? meetingStart : minJoinTime;
-
-// Create scheduled bot
-const bot = await createAttendeeBot(
-  event.meeting_link,
-  'AUGMTD Assistant',
-  joinAt.toISOString()
-);
-```
-
-#### Action Item Extraction with User Context
-
-**lib/integrations/attendee/bot-manager.ts:**
-```typescript
-async function extractActionItemsWithAI(
-  userId: string,
-  meetingTitle: string,
-  segments: any[],
-  supabase: SupabaseClient
-): Promise<ExtractedActionItem[]> {
-  // Load user profiles for context
-  const { data: profiles } = await supabase
-    .from('profiles')
-    .select('profile_type, data, confidence_score')
-    .eq('user_id', userId)
-    .in('profile_type', ['identity', 'meeting_behavior', 'communication_patterns']);
-
-  const identity = profiles?.find(p => p.profile_type === 'identity')?.data;
-
-  // Build context-aware prompt
-  const prompt = `
-User context:
-- Role: ${identity.role || 'Unknown'}
-- Title: ${identity.title || 'Unknown'}
-- Responsibilities: ${identity.responsibilities?.join(', ') || 'Unknown'}
-
-Meeting: "${meetingTitle}"
-
-Transcript:
-${segments.map(s => `[${s.speaker}]: ${s.text}`).join('\n')}
-
-Extract action items relevant to the user based on their role.
-Return JSON array with: action, assignee, priority (1-100), context, dueDate
-`;
-
-  const completion = await openai.chat.completions.create({
-    model: 'gpt-4o-mini',
-    messages: [
-      { role: 'system', content: 'Extract actionable items from meeting transcripts.' },
-      { role: 'user', content: prompt }
-    ],
-    temperature: 0.3,
-  });
-
-  return JSON.parse(completion.choices[0]?.message?.content?.trim());
-}
-```
-
-### Database Schema Updates
-
-**calendar_events table:**
-```sql
-attendee_bot_id          TEXT        -- Bot ID from Attendee API
-attendee_bot_state       TEXT        -- scheduled | joining | active | ended | fatal_error
-attendee_bot_created_at  TIMESTAMPTZ -- When bot was created
-```
-
-**meeting_transcripts table (new):**
-```sql
-CREATE TABLE meeting_transcripts (
-  id UUID PRIMARY KEY,
-  user_id UUID REFERENCES auth.users(id),
-  calendar_event_id UUID REFERENCES calendar_events(id),
-  attendee_bot_id TEXT NOT NULL,
-  bot_state TEXT NOT NULL,
-  title TEXT NOT NULL,
-  start_time TIMESTAMPTZ NOT NULL,
-  end_time TIMESTAMPTZ NOT NULL,
-  duration_minutes INTEGER NOT NULL,
-  transcript_segments JSONB NOT NULL,  -- Array of {speaker, text, timestamp}
-  attendees JSONB,
-  processed BOOLEAN DEFAULT false,
-  work_items_generated INTEGER DEFAULT 0,
-  created_at TIMESTAMPTZ DEFAULT NOW()
-);
-```
-
-### Files Created
-
-**Integration:**
-- `lib/integrations/attendee/client.ts` - Attendee API wrapper
-- `lib/integrations/attendee/bot-manager.ts` - Bot lifecycle + transcript processing
-
-**UI:**
-- `components/meetings/meeting-detail-panel.tsx` - Transcript display
-- `components/settings/attendee-connection-card.tsx` - Settings UI
-
-**Scripts:**
-- `scripts/debug-attendee.ts` - Debug bot creation
-- `scripts/check-bot-errors.ts` - Investigate bot failures
-- `scripts/check-call.ts` - Test specific meeting bot
-
-### Sync Flow Integration
-
-**app/api/connections/sync/route.ts:**
-```typescript
-// After calendar sync:
-console.log(`[Sync Order] 2/3: Creating meeting bots...`);
-const botResult = await createBotsForCalendarEvents(user.id, adminSupabase);
-totalBotsCreated += botResult.created;
-
-// Response includes bot count:
-return NextResponse.json({
-  success: true,
-  emailsFetched: totalEmailsFetched,
-  eventsSynced: totalEventsSynced,
-  botsCreated: totalBotsCreated,  // NEW!
-  inboxItemsCreated: totalInboxItemsCreated
-});
-```
-
-### Common Issues & Solutions
-
-#### Issue: Bots fail with "request_to_join_denied"
-**Cause:** Meeting hasn't started yet, no one to approve bot
-**Solution:** ✅ Fixed - Use scheduled bots with `join_at` parameter
-
-#### Issue: OpenAI client initialization error
-**Cause:** Client instantiated at module load time (before env vars loaded)
-**Solution:** ✅ Fixed - Lazy-load OpenAI client only when needed
-
-```typescript
-// Before (broken):
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
-// After (fixed):
-let openaiClient: OpenAI | null = null;
-function getOpenAIClient(): OpenAI {
-  if (!openaiClient) {
-    openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-  }
-  return openaiClient;
-}
-```
-
-#### Issue: Transcripts not fetching (transcription_state mismatch)
-**Cause:** Code checked for `'completed'` but API returns `'complete'`
-**Solution:** ✅ Fixed - Updated to check for `'complete'`
-
-```typescript
-// Before (broken):
-if (bot.state === 'ended' && bot.transcription_state === 'completed') {
-
-// After (fixed):
-if (bot.state === 'ended' && bot.transcription_state === 'complete') {
-```
-
-#### Issue: Transcript structure errors (Cannot read properties of undefined)
-**Cause:** Expected `transcript.segments` but API returns array directly
-**Solution:** ✅ Fixed - Normalize Attendee API format to internal format
-
-```typescript
-// Attendee API format:
-[
-  {
-    "speaker_name": "Alexandre Collignon",
-    "transcription": { "transcript": "Hey everyone..." },
-    "timestamp_ms": 1771279240444
-  }
-]
-
-// Normalized to internal format:
-const normalizedSegments = rawSegments.map(s => ({
-  speaker: s.speaker_name || 'Unknown',
-  text: s.transcription?.transcript || '',
-  timestamp: Math.floor((s.timestamp_ms || 0) / 1000)
-}));
-```
-
-#### Issue: Database insert fails (meeting_id/transcript null constraint)
-**Cause:** Table requires `meeting_id` and `transcript` fields
-**Solution:** ✅ Fixed - Added required fields to insert
-
-```typescript
-.insert({
-  meeting_id: calendarEventId,        // Required (same as calendar_event_id)
-  transcript: transcriptText,          // Required (plain text version)
-  transcript_segments: normalizedSegments,  // JSONB array
-  // ... other fields
-})
-```
-
-#### Issue: UI console error "Failed to fetch transcript: {}"
-**Cause:** Using `.single()` which throws error when no rows found
-**Solution:** ✅ Fixed - Use `.maybeSingle()` for graceful handling
-
-```typescript
-// Before (broken):
-.eq('calendar_event_id', event.id)
-.single();  // Throws error if no rows
-
-// After (fixed):
-.eq('calendar_event_id', event.id)
-.maybeSingle();  // Returns null if no rows
-```
-
-#### Issue: Past meetings still showing "Happening now" badge
-**Cause:** Meeting statuses only update when events are modified, not automatically over time
-**Solution:** ✅ Fixed - Attendee poll cron now updates meeting statuses every 5 minutes
-
-```typescript
-// app/api/cron/attendee-poll/route.ts
-// 1. Update meeting statuses (upcoming → in_progress → completed)
-const { data: statusUpdates } = await supabaseAdmin.rpc('update_meeting_statuses');
-
-// 2. Poll bots and fetch transcripts
-const result = await pollAndFetchTranscripts(supabaseAdmin);
-```
-
-**How it works:**
-- Database trigger auto-calculates status on insert/update
-- Cron job runs every 5 minutes to update all meeting statuses
-- Status transitions: `upcoming` → `starting_soon` (60 min before) → `in_progress` → `completed`
-
-#### Issue: Transcripts not fetching (bot in 'joined_recording' state)
-**Cause:** Attendee API returns `'joined_recording'` state but polling query didn't include it
-**Solution:** ✅ Fixed - Added `'joined_recording'` to polling query and TypeScript interface
-
-```typescript
-// Before (broken):
-.in('attendee_bot_state', ['scheduled', 'joining', 'active', 'ended'])
-
-// After (fixed):
-.in('attendee_bot_state', ['scheduled', 'joining', 'joined_recording', 'active', 'ended'])
-```
-
-**Actual bot lifecycle from Attendee API:**
-- `scheduled` → `joining` → `joined_recording` → `ended` → transcript ready
+Change only `MAX_CONCURRENT_BOTS` env var + resize Hetzner server.
 
 ### Testing
 
-**1. Enable Attendee in Settings:**
-```
-Settings → AUGMTD Meeting Assistant → Enable
-```
-
-**2. Connect Calendar and Sync:**
-```
-Settings → Connect Gmail/Outlook → Sync Now
-```
-
-**3. Check Bot Creation:**
-```sql
-SELECT
-  title,
-  start_time,
-  meeting_link,
-  attendee_bot_id,
-  attendee_bot_state
-FROM calendar_events
-WHERE user_id = 'YOUR_USER_ID'
-  AND attendee_bot_id IS NOT NULL;
-```
-
-**4. Monitor Bot Status:**
 ```bash
-npx tsx scripts/debug-attendee.ts
-```
+# 1. Trigger bot manually
+curl -X POST http://hetzner:3001/join \
+  -H "Authorization: Bearer {secret}" \
+  -d '{"meetingUrl":"https://meet.google.com/xxx","joinAt":"<now+2min>","botName":"AUGMTD Assistant","calendarEventId":"test","userId":"test"}'
 
-**5. View Transcript (after meeting):**
-```
-Meetings → [Completed Meeting] → View Details → Transcript section
+# 2. Watch logs
+ssh hetzner "docker compose -f /root/augmtd-infra/docker-compose.yml logs -f meeting-bot"
+
+# 3. Check Supabase Storage → meeting-recordings/{userId}/{botId}.webm
+# 4. Check Meetings page for transcript + action items
 ```
 
 ---
@@ -976,32 +646,20 @@ Meetings → [Completed Meeting] → View Details → Transcript section
 ## Summary
 
 ✅ **Phase 1: Meeting Prep** - COMPLETE
-- Analyzes upcoming meetings (next 48 hours)
-- Generates AI-powered agendas
-- Creates inbox items in "For Your Awareness"
-- Uses attendee relationships + email context
-
 ✅ **Phase 2: meeting_behavior Profile** - COMPLETE
-- New profile type added
-- Initialized on user signup with defaults
-- Ready for learning (future implementation)
-
-✅ **Phase 3: Attendee.dev Integration** - COMPLETE
-- Scheduled bot creation (joins at meeting start)
-- Automatic meeting transcription
-- AI-powered action item extraction with user context
-- Work items generated from meeting outcomes
-- Transcript display in UI
-- Bot lifecycle management
+✅ **Phase 66: Self-Hosted Google Meet Bot** - COMPLETE
+- Playwright + PulseAudio + ffmpeg audio capture
+- Webhook-push pipeline (no polling cron needed)
+- Whisper transcription on same Hetzner server
+- Full end-to-end: calendar event → bot → transcript → inbox items
+- Google Meet only (Zoom/Teams: future phases)
 
 **Next Steps:**
-- Implement learning from calendar patterns
-- Add meeting follow-up features (email drafts based on decisions)
-- Smart scheduling suggestions
-- Meeting pattern detection (recurring topics, decision tracking)
+- Ad hoc meeting URL support ("Send bot to this link" UI)
+- Zoom support (requires Zoom Marketplace approval)
+- Teams support (Phase 67)
 
 ---
 
 **Status:** Production ready
-**Risk:** Low (isolated from email processing)
-**Impact:** High (autonomous meeting participation + outcomes!)
+**Infrastructure:** Hetzner CX32 (shared with Whisper)

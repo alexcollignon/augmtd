@@ -45,13 +45,17 @@ function getBotAuthHeaders(): HeadersInit {
  */
 export async function createMeetingBot(
   meetingUrl: string,
-  joinAt: Date
+  joinAt: Date,
+  calendarEventId: string,
+  userId: string,
+  botName: string = 'AUGMTD Assistant',
+  googleAccessToken?: string
 ): Promise<{ botId: string }> {
   const base = getBotServiceBase();
   const response = await fetch(`${base}/join`, {
     method: 'POST',
     headers: getBotAuthHeaders(),
-    body: JSON.stringify({ meetingUrl, joinAt: joinAt.toISOString(), botName: 'AUGMTD Assistant' }),
+    body: JSON.stringify({ meetingUrl, joinAt: joinAt.toISOString(), botName, calendarEventId, userId, googleAccessToken }),
   });
 
   if (!response.ok) {

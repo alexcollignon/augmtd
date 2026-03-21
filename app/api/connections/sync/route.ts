@@ -5,7 +5,7 @@ import { syncEmailsForConnection } from '@/lib/email-sync/sync-emails';
 import { syncCalendarForConnection } from '@/lib/calendar/sync-calendar';
 import { processMeetingsForUser } from '@/lib/calendar/meeting-processor';
 import { analyzeCalendarPatterns } from '@/lib/calendar/pattern-analyzer';
-import { createBotsForCalendarEvents } from '@/lib/integrations/attendee/bot-manager';
+import { createBotsForCalendarEvents } from '@/lib/integrations/meeting-bot/bot-manager';
 
 export const maxDuration = 300; // 5 minutes
 

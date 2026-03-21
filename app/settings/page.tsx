@@ -2,7 +2,7 @@ import { createClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
 import SidebarNav from '@/components/sidebar-nav';
 import ConnectionCard from '@/components/settings/connection-card';
-import AttendeeConnectionCard from '@/components/settings/attendee-connection-card';
+import MeetingAssistantCard from '@/components/settings/meeting-assistant-card';
 import DataManagementSection from '@/components/settings/data-management-section';
 import IdentitySection from '@/components/settings/identity-section';
 import SettingsPageClient from './settings-page-client';
@@ -104,7 +104,7 @@ export default async function SettingsPage({ searchParams }: Props) {
 
   const gmailConnections = connections.filter(c => c.provider === 'gmail');
   const outlookConnections = connections.filter(c => c.provider === 'outlook');
-  const apiKeyConfigured = !!process.env.ATTENDEE_API_KEY;
+  const selfHostedConfigured = !!process.env.MEETING_BOT_SERVICE_URL;
 
   return (
     <SettingsPageClient>
@@ -176,9 +176,9 @@ export default async function SettingsPage({ searchParams }: Props) {
                   <p className="text-[13px] text-neutral-600 mb-4">
                     Automatically join your meetings, capture transcripts, and generate action items using AI.
                   </p>
-                  <AttendeeConnectionCard
+                  <MeetingAssistantCard
                     isEnabled={profile?.attendee_enabled || false}
-                    apiKeyConfigured={apiKeyConfigured}
+                    selfHostedConfigured={selfHostedConfigured}
                   />
                 </div>
 

@@ -6,7 +6,7 @@
 
 import { SupabaseClient } from '@supabase/supabase-js';
 import { transcribeAudio } from './whisper-client';
-import { storeTranscriptAndGenerateWork } from '@/lib/integrations/attendee/bot-manager';
+import { storeTranscriptAndGenerateWork } from '@/lib/integrations/meeting-bot/bot-manager';
 
 export interface ProcessAudioFileParams {
   userId: string;

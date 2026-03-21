@@ -1,14 +1,14 @@
 /**
- * Attendee Bot Manager
+ * Meeting Bot Manager
  *
- * Handles bot creation for calendar events and transcript retrieval.
+ * Handles bot creation for calendar events and transcript storage.
  */
 
 import { SupabaseClient } from '@supabase/supabase-js';
 import { randomUUID } from 'crypto';
-import { createAttendeeBot, getAttendeeBot, getAttendeeBotTranscript, isSupportedMeetingUrl } from './client';
 import { getAIClient } from '@/lib/ai/factory';
 import { buildUserContextBlock } from '@/lib/context/build-user-context';
+import { getOAuth2Client } from '@/lib/google/oauth';
 
 interface ExtractedActionItem {
   action: string;
@@ -47,18 +47,22 @@ interface MeetingInsights {
 }
 
 /**
- * Create bots for calendar events with meeting links.
- * Uses self-hosted bot service if MEETING_BOT_SERVICE_URL is set, else falls back to Attendee.dev.
+ * Create bots for calendar events with Google Meet links.
+ * Uses self-hosted bot service (MEETING_BOT_SERVICE_URL).
  * Called after calendar sync completes.
  */
 export async function createBotsForCalendarEvents(
   userId: string,
   supabase: SupabaseClient
 ): Promise<{ created: number; errors: string[] }> {
-  // Check if user has Attendee enabled
+  if (!process.env.MEETING_BOT_SERVICE_URL) {
+    return { created: 0, errors: [] };
+  }
+
+  // Check if user has meeting assistant enabled + get name for bot display
   const { data: profile } = await supabase
     .from('profiles')
-    .select('attendee_enabled')
+    .select('attendee_enabled, full_name')
     .eq('id', userId)
     .single();
 
@@ -66,7 +70,32 @@ export async function createBotsForCalendarEvents(
     return { created: 0, errors: [] };
   }
 
-  // Find upcoming events (next 2 weeks) with meeting links but no bot created yet
+  // Derive bot name: "Alex's Assistant"
+  const firstName = profile.full_name?.split(' ')[0] ?? 'Your';
+  const botName = `${firstName}'s Assistant`;
+
+  // Get a fresh Google OAuth access token for the user (used to authenticate the bot browser session)
+  let googleAccessToken: string | undefined;
+  try {
+    const { data: conn } = await supabase
+      .from('connections')
+      .select('metadata')
+      .eq('user_id', userId)
+      .eq('provider', 'gmail')
+      .eq('status', 'active')
+      .single();
+    if (conn?.metadata?.tokens) {
+      const tokens = JSON.parse(Buffer.from(conn.metadata.tokens, 'base64').toString());
+      const oauth2 = getOAuth2Client();
+      oauth2.setCredentials(tokens);
+      const { credentials } = await oauth2.refreshAccessToken();
+      googleAccessToken = credentials.access_token ?? undefined;
+    }
+  } catch (err) {
+    console.warn('[MeetingBot] Could not get Google access token — bot will join as guest:', err);
+  }
+
+  // Find upcoming events (next 2 weeks) with Google Meet links but no bot created yet
   const now = new Date();
   const twoWeeksFromNow = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
 
@@ -85,44 +114,26 @@ export async function createBotsForCalendarEvents(
     return { created: 0, errors: [] };
   }
 
-  console.log(`[AttendeeBot] Found ${events.length} events to create bots for (user: ${userId})`);
+  console.log(`[MeetingBot] Found ${events.length} events to create bots for (user: ${userId})`);
 
   let created = 0;
   const errors: string[] = [];
 
   for (const event of events) {
     try {
-      // Verify meeting link is supported
-      if (!isSupportedMeetingUrl(event.meeting_link)) {
-        continue;
-      }
+      // Only Google Meet is supported
+      if (!event.meeting_link?.includes('meet.google.com')) continue;
 
-      console.log(`[AttendeeBot] Creating bot for: ${event.title}`);
+      console.log(`[MeetingBot] Creating bot for: ${event.title}`);
 
-      // Create scheduled bot (joins at meeting start time)
-      // Attendee requires join_at to be at least 2 minutes in the future
       const meetingStart = new Date(event.start_time);
-      const now = new Date();
-      const minJoinTime = new Date(now.getTime() + 2 * 60 * 1000); // 2 minutes from now
-
-      // Use the later of meeting start or minimum join time
+      const minJoinTime = new Date(now.getTime() + 2 * 60 * 1000);
       const joinAt = meetingStart > minJoinTime ? meetingStart : minJoinTime;
 
-      // Use self-hosted bot if configured, else fall back to Attendee.dev
-      let bot: { id: string; state: string };
-      if (process.env.MEETING_BOT_SERVICE_URL) {
-        const { createMeetingBot } = await import('@/lib/integrations/meeting-bot/client');
-        const result = await createMeetingBot(event.meeting_link, joinAt);
-        bot = { id: result.botId, state: 'scheduled' };
-      } else {
-        bot = await createAttendeeBot(
-          event.meeting_link,
-          'AUGMTD Assistant',
-          joinAt.toISOString()
-        );
-      }
+      const { createMeetingBot } = await import('@/lib/integrations/meeting-bot/client');
+      const result = await createMeetingBot(event.meeting_link, joinAt, event.id, userId, botName, googleAccessToken);
+      const bot = { id: result.botId, state: 'scheduled' };
 
-      // Update event with bot info
       const { error } = await supabase
         .from('calendar_events')
         .update({
@@ -136,10 +147,10 @@ export async function createBotsForCalendarEvents(
         errors.push(`Failed to save bot for event ${event.id}: ${error.message}`);
       } else {
         created++;
-        console.log(`[AttendeeBot] Created scheduled bot ${bot.id} for event: ${event.title} (joins at ${joinAt.toISOString()})`);
+        console.log(`[MeetingBot] Scheduled bot ${bot.id} for: ${event.title} (joins at ${joinAt.toISOString()})`);
       }
     } catch (error: any) {
-      console.error(`[AttendeeBot] Error creating bot for event ${event.id}:`, error);
+      console.error(`[MeetingBot] Error creating bot for event ${event.id}:`, error);
       errors.push(`Event ${event.title}: ${error.message}`);
     }
   }
@@ -148,102 +159,9 @@ export async function createBotsForCalendarEvents(
 }
 
 /**
- * Poll bot status and fetch completed transcripts
- * Should be run periodically (e.g., every 5 minutes)
- *
- * Bot lifecycle: scheduled → joining → joined_recording/active → ended → transcript fetched
- */
-export async function pollAndFetchTranscripts(
-  supabase: SupabaseClient
-): Promise<{ processed: number; errors: string[] }> {
-  // Find events with active bots that haven't been processed yet
-  const { data: events } = await supabase
-    .from('calendar_events')
-    .select('id, user_id, title, attendee_bot_id, attendee_bot_state, start_time, end_time')
-    .not('attendee_bot_id', 'is', null)
-    .in('attendee_bot_state', ['scheduled', 'joining', 'joined_recording', 'active', 'ended'])
-    .order('start_time', { ascending: false })
-    .limit(100);
-
-  if (!events || events.length === 0) {
-    return { processed: 0, errors: [] };
-  }
-
-  console.log(`[AttendeeBot] Polling ${events.length} active bots`);
-
-  let processed = 0;
-  const errors: string[] = [];
-
-  for (const event of events) {
-    try {
-      // Self-hosted bots deliver audio via webhook — no polling needed
-      if (process.env.MEETING_BOT_SERVICE_URL) {
-        continue;
-      }
-
-      // Fetch bot status from Attendee.dev
-      const bot = await getAttendeeBot(event.attendee_bot_id);
-
-      // Update bot state
-      await supabase
-        .from('calendar_events')
-        .update({ attendee_bot_state: bot.state })
-        .eq('id', event.id);
-
-      // If bot ended and transcription completed, fetch transcript
-      // Note: API returns 'complete' not 'completed'
-      if (bot.state === 'ended' && bot.transcription_state === 'complete') {
-        // Check if transcript already exists (prevent duplicates)
-        const { data: existingTranscript } = await supabase
-          .from('meeting_transcripts')
-          .select('id')
-          .eq('attendee_bot_id', event.attendee_bot_id)
-          .single();
-
-        if (existingTranscript) {
-          console.log(`[AttendeeBot] Transcript already exists for: ${event.title}`);
-          continue; // Skip - already processed
-        }
-
-        console.log(`[AttendeeBot] Fetching transcript for: ${event.title}`);
-
-        const transcript = await getAttendeeBotTranscript(event.attendee_bot_id);
-
-        // Store transcript
-        await storeTranscriptAndGenerateWork(
-          event.user_id,
-          event.id,
-          event.attendee_bot_id,
-          event.title,
-          event.start_time,
-          event.end_time,
-          transcript,
-          supabase
-        );
-
-        processed++;
-      }
-    } catch (error: any) {
-      console.error(`[AttendeeBot] Error polling bot ${event.attendee_bot_id}:`, error);
-      errors.push(`Event ${event.title}: ${error.message}`);
-
-      // Mark bot as failed if error persists
-      if (error.message.includes('404') || error.message.includes('not found')) {
-        await supabase
-          .from('calendar_events')
-          .update({ attendee_bot_state: 'failed' })
-          .eq('id', event.id);
-      }
-    }
-  }
-
-  return { processed, errors };
-}
-
-/**
  * Store transcript and generate work items.
- * Accepts both raw Attendee.dev segments ({ speaker_name, transcription.transcript, timestamp_ms })
- * and pre-normalized segments ({ speaker, text, timestamp }) from the Whisper pipeline.
+ * Accepts pre-normalized segments ({ speaker, text, timestamp }) from the Whisper pipeline
+ * or raw Attendee.dev segments ({ speaker_name, transcription.transcript, timestamp_ms }).
  * Exported for use by the transcription pipeline.
  */
 export async function storeTranscriptAndGenerateWork(
@@ -257,28 +175,22 @@ export async function storeTranscriptAndGenerateWork(
   supabase: SupabaseClient,
   options?: { source?: 'bot' | 'recording' | 'upload'; recordingStoragePath?: string; existingTranscriptId?: string }
 ): Promise<void> {
-  // Calculate duration
   const durationMinutes = Math.round(
     (new Date(endTime).getTime() - new Date(startTime).getTime()) / (1000 * 60)
   );
 
-  // Normalize transcript structure (Attendee API returns array directly)
   const rawSegments = Array.isArray(transcript) ? transcript : [];
 
-  // Format transcript as plain text for storage
   const transcriptText = rawSegments
-    .map((s: any) => `[${s.speaker_name || 'Unknown'}]: ${s.transcription?.transcript || ''}`)
+    .map((s: any) => `[${s.speaker_name || s.speaker || 'Unknown'}]: ${s.transcription?.transcript || s.text || ''}`)
     .join('\n');
 
-  // Normalize segments — accept both Attendee format (speaker_name / transcription.transcript / timestamp_ms)
-  // and pre-normalized format (speaker / text / timestamp) from the Whisper pipeline.
   const normalizedSegments = rawSegments.map((s: any) => ({
     speaker: s.speaker || s.speaker_name || 'Unknown',
     text: s.text || s.transcription?.transcript || '',
     timestamp: s.timestamp ?? Math.floor((s.timestamp_ms || 0) / 1000),
   }));
 
-  // Store transcript — update existing pending row if provided, otherwise insert
   let transcriptRecord: any;
   if (options?.existingTranscriptId) {
     const { data, error: updateError } = await supabase
@@ -295,7 +207,7 @@ export async function storeTranscriptAndGenerateWork(
       .select()
       .single();
     if (updateError) {
-      console.error('[AttendeeBot] Failed to update transcript:', updateError);
+      console.error('[MeetingBot] Failed to update transcript:', updateError);
       return;
     }
     transcriptRecord = data;
@@ -304,7 +216,7 @@ export async function storeTranscriptAndGenerateWork(
       .from('meeting_transcripts')
       .insert({
         user_id: userId,
-        meeting_id: calendarEventId ?? randomUUID(), // NOT NULL — use generated UUID for ad-hoc recordings
+        meeting_id: calendarEventId ?? randomUUID(),
         calendar_event_id: calendarEventId,
         attendee_bot_id: botId,
         bot_state: 'ended',
@@ -322,29 +234,26 @@ export async function storeTranscriptAndGenerateWork(
       .select()
       .single();
     if (insertError) {
-      console.error('[AttendeeBot] Failed to store transcript:', insertError);
+      console.error('[MeetingBot] Failed to store transcript:', insertError);
       return;
     }
     transcriptRecord = data;
   }
 
-  console.log(`[AttendeeBot] Stored transcript ${transcriptRecord.id}`);
+  console.log(`[MeetingBot] Stored transcript ${transcriptRecord.id}`);
 
-  // Extract full meeting insights (summary, decisions, action items, key moments)
   const insights = await extractMeetingInsights(userId, title, normalizedSegments, supabase);
   const keyTopics = extractKeyTopics(normalizedSegments);
 
   let workItemsCreated = 0;
 
-  // Create inbox items — only for tasks owned by (or unassigned to) the current user
   for (const item of insights.actionItems) {
     const isUserTask = item.isUserTask === true || item.isUserTask == null || !item.assignee;
     if (!isUserTask) {
-      console.log(`[AttendeeBot] Skipping non-user task: ${item.action} (assignee: ${item.assignee})`);
+      console.log(`[MeetingBot] Skipping non-user task: ${item.action} (assignee: ${item.assignee})`);
       continue;
     }
 
-    const workTitle = item.action;
     const whyMatters = item.context
       ? `${item.context} (from meeting: ${title})`
       : `Action item from meeting: ${title}`;
@@ -357,7 +266,7 @@ export async function storeTranscriptAndGenerateWork(
         source_id: botId,
         source_meeting_transcript_id: transcriptRecord.id,
         work_state: 'action_required',
-        work_title: workTitle,
+        work_title: item.action,
         why_matters: whyMatters,
         source_data: {
           meeting_title: title,
@@ -377,11 +286,10 @@ export async function storeTranscriptAndGenerateWork(
 
     if (!error) {
       workItemsCreated++;
-      console.log(`[AttendeeBot] Created work item: ${workTitle} (priority: ${item.priority})`);
+      console.log(`[MeetingBot] Created work item: ${item.action} (priority: ${item.priority})`);
     }
   }
 
-  // Mark transcript as processed and store insights
   await supabase
     .from('meeting_transcripts')
     .update({
@@ -395,11 +303,11 @@ export async function storeTranscriptAndGenerateWork(
     })
     .eq('id', transcriptRecord.id);
 
-  console.log(`[AttendeeBot] Generated ${workItemsCreated} work items from: ${title}`);
+  console.log(`[MeetingBot] Generated ${workItemsCreated} work items from: ${title}`);
 }
 
 /**
- * Reprocess existing transcripts that never generated work items (e.g. due to missing columns).
+ * Reprocess existing transcripts that never generated work items.
  * Safe to call multiple times — only processes transcripts with work_items_generated = 0.
  */
 export async function reprocessTranscripts(
@@ -418,7 +326,7 @@ export async function reprocessTranscripts(
     return { reprocessed: 0, created: 0, errors: [] };
   }
 
-  console.log(`[AttendeeBot] Reprocessing ${transcripts.length} transcripts for user ${userId}`);
+  console.log(`[MeetingBot] Reprocessing ${transcripts.length} transcripts for user ${userId}`);
 
   let reprocessed = 0;
   let created = 0;
@@ -467,7 +375,7 @@ export async function reprocessTranscripts(
           workItemsCreated++;
           created++;
         } else {
-          console.error('[AttendeeBot] Reprocess insert error:', error);
+          console.error('[MeetingBot] Reprocess insert error:', error);
         }
       }
 
@@ -478,7 +386,7 @@ export async function reprocessTranscripts(
 
       reprocessed++;
     } catch (error: any) {
-      console.error(`[AttendeeBot] Reprocess error for transcript ${transcript.id}:`, error);
+      console.error(`[MeetingBot] Reprocess error for transcript ${transcript.id}:`, error);
       errors.push(`${transcript.title}: ${error.message}`);
     }
   }
@@ -487,8 +395,7 @@ export async function reprocessTranscripts(
 }
 
 /**
- * Extract full meeting insights (summary, decisions, action items, risks, key moments, suggested next step)
- * in a single AI call using the planning model and full user context.
+ * Extract full meeting insights in a single AI call.
  */
 async function extractMeetingInsights(
   userId: string,
@@ -564,11 +471,10 @@ Rules:
     const response = completion.choices[0]?.message?.content?.trim();
     if (!response) throw new Error('No response');
 
-    // Strip markdown code fences if present
     const cleaned = response.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
     const parsed = JSON.parse(cleaned) as MeetingInsights;
 
-    console.log(`[AttendeeBot] Extracted insights: ${parsed.decisions?.length ?? 0} decisions, ${parsed.actionItems?.length ?? 0} actions, ${parsed.risks?.length ?? 0} risks, ${parsed.keyMoments?.length ?? 0} key moments`);
+    console.log(`[MeetingBot] Extracted insights: ${parsed.decisions?.length ?? 0} decisions, ${parsed.actionItems?.length ?? 0} actions, ${parsed.risks?.length ?? 0} risks, ${parsed.keyMoments?.length ?? 0} key moments`);
     return {
       summary: parsed.summary ?? '',
       decisions: parsed.decisions ?? [],
@@ -578,15 +484,14 @@ Rules:
       suggested_next_step: parsed.suggested_next_step ?? null,
     };
   } catch (error) {
-    console.error('[AttendeeBot] Error extracting meeting insights:', error);
-    // Fallback: try to get action items only
+    console.error('[MeetingBot] Error extracting meeting insights:', error);
     const actionItems = await extractActionItemsWithAI(userId, meetingTitle, segments, supabase);
     return { summary: '', decisions: [], actionItems, risks: [], keyMoments: [], suggested_next_step: null };
   }
 }
 
 /**
- * Extract action items from transcript using GPT-4o mini with user context
+ * Extract action items from transcript using AI with user context.
  */
 async function extractActionItemsWithAI(
   userId: string,
@@ -597,23 +502,19 @@ async function extractActionItemsWithAI(
   try {
     const { client: openai, model: defaultModel } = await getAIClient(userId, 'summarization', supabase);
 
-    // Load user profiles for context
     const { data: profiles } = await supabase
       .from('profiles')
       .select('profile_type, data, confidence_score')
       .eq('user_id', userId)
       .in('profile_type', ['identity', 'meeting_behavior', 'communication_patterns']);
 
-    // Build context from profiles
     const identity = profiles?.find(p => p.profile_type === 'identity')?.data;
     const meetingBehavior = profiles?.find(p => p.profile_type === 'meeting_behavior')?.data;
 
-    // Format transcript for AI
     const transcriptText = segments
       .map(s => `[${s.speaker}]: ${s.text}`)
       .join('\n');
 
-    // Build context prompt
     let contextPrompt = '';
     if (identity) {
       contextPrompt += `User context:
@@ -638,14 +539,7 @@ async function extractActionItemsWithAI(
 Transcript:
 ${transcriptText}
 
-Extract concrete action items from this meeting transcript. For each action item:
-1. Identify what needs to be done (clear, actionable)
-2. Determine who should do it (if mentioned or implied from context)
-3. Estimate priority (1-100) based on urgency and user's role
-4. Note any due dates mentioned
-5. Provide brief context explaining why this matters
-
-Return ONLY a JSON array of action items in this exact format:
+Extract concrete action items from this meeting transcript. Return ONLY a JSON array:
 [
   {
     "action": "Brief description of what needs to be done",
@@ -657,67 +551,36 @@ Return ONLY a JSON array of action items in this exact format:
   }
 ]
 
-Category must be one of:
-- "todo" — a specific task the user needs to do
-- "waiting_for" — something the user is waiting on from someone else
-- "project" — a larger initiative or ongoing effort to track
-
-Rules:
-- Only extract items that require action (not discussions or updates)
-- Focus on items relevant to the user based on their role
-- Maximum 10 action items
-- Higher priority (70-100) for urgent or role-critical items
-- Medium priority (40-69) for important but not urgent
-- Lower priority (1-39) for nice-to-have or delegatable items
-- If no clear action items, return empty array []
-
-Return ONLY the JSON array, no other text.`;
+Category: "todo" | "waiting_for" | "project". Maximum 10 items. Return ONLY the JSON array.`;
 
     const completion = await openai.chat.completions.create({
       model: defaultModel,
       messages: [
-        {
-          role: 'system',
-          content: 'You are an expert at analyzing meeting transcripts and extracting actionable items. Always return valid JSON only.',
-        },
-        {
-          role: 'user',
-          content: prompt,
-        },
+        { role: 'system', content: 'You are an expert at analyzing meeting transcripts. Always return valid JSON only.' },
+        { role: 'user', content: prompt },
       ],
-      temperature: 0.3, // Lower temperature for more consistent extraction
+      temperature: 0.3,
       max_tokens: 2000,
     });
 
     const response = completion.choices[0]?.message?.content?.trim();
+    if (!response) return [];
 
-    if (!response) {
-      console.error('[AttendeeBot] No response from GPT-4o mini');
-      return [];
-    }
-
-    // Parse JSON response
     const actionItems = JSON.parse(response) as ExtractedActionItem[];
-
-    console.log(`[AttendeeBot] Extracted ${actionItems.length} action items with AI`);
+    console.log(`[MeetingBot] Extracted ${actionItems.length} action items`);
     return actionItems;
   } catch (error) {
-    console.error('[AttendeeBot] Error extracting action items with AI:', error);
-    // Fallback: return empty array rather than crashing
+    console.error('[MeetingBot] Error extracting action items:', error);
     return [];
   }
 }
 
 /**
- * Extract key topics from transcript
- * Groups segments by speaker and finds frequently mentioned terms
+ * Extract key topics from transcript segments.
  */
 function extractKeyTopics(segments: any[]): string[] {
-  // Simple implementation - can be enhanced with NLP
   const text = segments.map(s => s.text).join(' ');
   const words = text.toLowerCase().split(/\s+/);
-
-  // Count word frequency (filter common words)
   const stopWords = new Set(['the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'is', 'was', 'are', 'were', 'we', 'i', 'you', 'it', 'this', 'that', 'so', 'just', 'like']);
   const wordCount = new Map<string, number>();
 
@@ -727,7 +590,6 @@ function extractKeyTopics(segments: any[]): string[] {
     }
   }
 
-  // Get top 5 words
   return Array.from(wordCount.entries())
     .sort((a, b) => b[1] - a[1])
     .slice(0, 5)

@@ -4,7 +4,7 @@ This app uses external cron jobs via [cron-job.org](https://cron-job.org) to avo
 
 ## Required Cron Jobs
 
-### 1. Email & Calendar Sync (with Attendee Bot Creation)
+### 1. Email & Calendar Sync (with Meeting Bot Creation)
 - **URL**: `https://your-domain.vercel.app/api/cron/fetch-emails`
 - **Method**: GET
 - **Schedule**: Every 15 minutes (`*/15 * * * *`)
@@ -13,41 +13,21 @@ This app uses external cron jobs via [cron-job.org](https://cron-job.org) to avo
 - **What it does**:
   - Syncs calendar events from Gmail/Outlook
   - Syncs emails and creates inbox items
-  - Creates Attendee bots for meetings with links
+  - Creates meeting bots for Google Meet events (when `MEETING_BOT_SERVICE_URL` is set)
   - Analyzes calendar patterns
   - Generates meeting prep items
 
-### 2. Attendee Bot Polling (Transcript Fetching)
-- **URL**: `https://your-domain.vercel.app/api/cron/attendee-poll`
-- **Method**: GET
-- **Schedule**: Every 5 minutes (`*/5 * * * *`)
-- **Headers**:
-  - `Authorization: Bearer YOUR_CRON_SECRET`
-- **What it does**:
-  - Polls active Attendee bots for status updates
-  - Fetches completed transcripts
-  - Extracts action items
-  - Creates work items from meetings
+> **Note:** There is no separate polling cron. The self-hosted bot delivers transcripts via webhook push (`POST /api/meetings/[id]/bot-webhook`) — no polling needed.
 
 ## Setup Steps on cron-job.org
 
 1. **Create Account** at [cron-job.org](https://cron-job.org)
 
-2. **Create First Job** (Email Sync)
+2. **Create Job** (Email & Calendar Sync)
    - Click "Create cronjob"
    - Title: `AUGMTD - Email & Calendar Sync`
    - URL: `https://your-domain.vercel.app/api/cron/fetch-emails`
    - Schedule: Every 15 minutes
-   - Enable "Advanced" → Add Header:
-     - Header: `Authorization`
-     - Value: `Bearer YOUR_CRON_SECRET`
-   - Save
-
-3. **Create Second Job** (Attendee Polling)
-   - Click "Create cronjob"
-   - Title: `AUGMTD - Attendee Bot Polling`
-   - URL: `https://your-domain.vercel.app/api/cron/attendee-poll`
-   - Schedule: Every 5 minutes
    - Enable "Advanced" → Add Header:
      - Header: `Authorization`
      - Value: `Bearer YOUR_CRON_SECRET`
@@ -59,7 +39,10 @@ Make sure these are set in your `.env.local` and Vercel:
 
 ```bash
 CRON_SECRET=your_random_secret_string
-ATTENDEE_API_KEY=your_attendee_api_key
+
+# Self-hosted meeting bot (Hetzner)
+MEETING_BOT_SERVICE_URL=http://<hetzner-ip>:3001
+MEETING_BOT_SECRET=your_bot_secret_string   # same as BOT_SECRET on the Hetzner container
 ```
 
 ## Testing
@@ -68,9 +51,9 @@ You can manually trigger cron jobs by clicking "Run" on cron-job.org dashboard.
 
 Check logs in Vercel deployment logs to verify:
 - Calendar sync working
-- Bots being created
-- Transcripts being fetched
-- Work items being generated
+- Bots being created for Google Meet events
+- Webhooks received from bot service
+- Transcripts stored and work items generated
 
 ## Security Note
 

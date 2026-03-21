@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { reprocessTranscripts } from '@/lib/integrations/attendee/bot-manager';
+import { reprocessTranscripts } from '@/lib/integrations/meeting-bot/bot-manager';
 
 export async function POST() {
   try {
