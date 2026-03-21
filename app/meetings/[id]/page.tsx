@@ -27,12 +27,26 @@ export default async function MeetingDetailPage({
   // Load transcript if exists
   const { data: transcriptRaw } = await supabase
     .from('meeting_transcripts')
-    .select('id, summary, decisions, risks, suggested_next_step, key_moments, transcript_segments, duration_minutes, work_items_generated, source')
+    .select('id, summary, decisions, risks, suggested_next_step, key_moments, transcript_segments, duration_minutes, work_items_generated, source, recording_storage_path')
     .eq('calendar_event_id', id)
     .eq('user_id', user.id)
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle();
+
+  // Generate signed URL for audio playback if recording exists
+  let audioUrl: string | null = null;
+  if (transcriptRaw?.recording_storage_path) {
+    const { createClient: createAdmin } = await import('@supabase/supabase-js');
+    const adminClient = createAdmin(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    );
+    const { data: signed } = await adminClient.storage
+      .from('meeting-recordings')
+      .createSignedUrl(transcriptRaw.recording_storage_path, 3600);
+    audioUrl = signed?.signedUrl ?? null;
+  }
 
   const transcript = transcriptRaw
     ? {
@@ -79,6 +93,7 @@ export default async function MeetingDetailPage({
           actionItems={actionItems}
           risks={transcript?.risks ?? []}
           suggestedNextStep={transcript?.suggestedNextStep ?? null}
+          audioUrl={audioUrl}
         />
       </main>
     </div>

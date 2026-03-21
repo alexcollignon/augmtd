@@ -531,13 +531,15 @@ Bot joins Google Meet via Playwright (Chromium + Xvfb)
   ↓
 PulseAudio null sink → ffmpeg → .webm recording
   ↓  (meeting ends or bot alone 30s)
-Upload to Supabase Storage: meeting-recordings/{userId}/{botId}.webm
+Upload to Supabase Storage: meeting-recordings/{userId}/{calendarEventId}.webm
   ↓
 POST https://app.augmtd.ai/api/meetings/{calendarEventId}/bot-webhook
   ↓
 processAudioFile() → Whisper → storeTranscriptAndGenerateWork()
   ↓
 Transcript + inbox items in app
+  ↓
+Meeting detail page: signed URL → HTML5 audio player
 ```
 
 **Platform support:** Google Meet only (self-hosted path).
@@ -644,6 +646,16 @@ MEETING_BOT_SECRET=...                 # same as BOT_SECRET above
 
 Change only `MAX_CONCURRENT_BOTS` env var + resize Hetzner server.
 
+### Storage Path
+
+Recording files are stored as `meeting-recordings/{userId}/{calendarEventId}.webm`.
+
+Using `calendarEventId` (not `botId`) means every file is inherently linkable to its calendar event — even if the webhook fails, the file can be manually re-associated.
+
+### Audio Playback
+
+Meeting detail page (`app/meetings/[id]/page.tsx`) generates a 1-hour Supabase signed URL for `recording_storage_path` (via admin client) and passes it to `MeetingDetailClient`. The client renders a native HTML5 `<audio controls>` player above the transcript when `audioUrl` is present. Works for both bot recordings and in-person recordings.
+
 ### Testing
 
 ```bash
@@ -655,8 +667,8 @@ curl -X POST http://hetzner:3001/join \
 # 2. Watch logs
 ssh hetzner "docker compose -f /root/augmtd-infra/docker-compose.yml logs -f meeting-bot"
 
-# 3. Check Supabase Storage → meeting-recordings/{userId}/{botId}.webm
-# 4. Check Meetings page for transcript + action items
+# 3. Check Supabase Storage → meeting-recordings/{userId}/{calendarEventId}.webm
+# 4. Check Meetings page: meeting detail should show audio player + transcript + action items
 ```
 
 ---
@@ -670,6 +682,8 @@ ssh hetzner "docker compose -f /root/augmtd-infra/docker-compose.yml logs -f mee
 - Webhook-push pipeline (no polling cron needed)
 - Whisper transcription on same Hetzner server
 - Full end-to-end: calendar event → bot → transcript → inbox items
+- Storage path uses `calendarEventId` (not `botId`) — files inherently linked to meeting
+- Audio player on meeting detail page (signed URL, HTML5 native)
 - Google Meet only (Zoom/Teams: future phases)
 
 **Next Steps:**

@@ -373,7 +373,7 @@ async def run_bot(bot_id: str) -> None:
 
         await capture.stop()
 
-        storage_path = f'{bot.user_id}/{bot.bot_id}.webm'
+        storage_path = f'{bot.user_id}/{bot.calendar_event_id}.webm'
         logger.info(f'[BotRunner] Uploading {local_path} → {storage_path}')
         await upload_to_supabase(local_path, storage_path)
 

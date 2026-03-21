@@ -69,6 +69,7 @@ interface MeetingDetailClientProps {
   actionItems: ActionItem[];
   risks: Risk[];
   suggestedNextStep: string | null;
+  audioUrl?: string | null;
 }
 
 const KEY_MOMENT_COLORS: Record<KeyMoment['type'], string> = {
@@ -105,6 +106,7 @@ export default function MeetingDetailClient({
   actionItems,
   risks,
   suggestedNextStep,
+  audioUrl,
 }: MeetingDetailClientProps) {
   const router = useRouter();
   const [transcriptKey, setTranscriptKey] = useState(0);
@@ -356,6 +358,19 @@ export default function MeetingDetailClient({
               <span className="text-indigo-400 text-[13px] flex-shrink-0 mt-0.5">✦</span>
               <p className="text-[12px] text-neutral-600 leading-relaxed">{suggestedNextStep}</p>
             </div>
+          )}
+
+          {/* Audio player */}
+          {audioUrl && (
+            <section className="mb-6">
+              <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2">Recording</h2>
+              <audio
+                controls
+                src={audioUrl}
+                className="w-full h-9"
+                style={{ accentColor: '#6366f1' }}
+              />
+            </section>
           )}
 
           {/* Transcript */}
