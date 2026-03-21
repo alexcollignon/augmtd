@@ -114,6 +114,7 @@ export async function POST(request: NextRequest) {
       status: 'confirmed',
       provider: connection.provider,
       attendees: validAttendees.map((email: string) => ({ email, responseStatus: 'needsAction' })),
+      meeting_link: meetLink ?? null,
       metadata: meetLink ? { meetLink } : {},
     }, { onConflict: 'user_id,event_id,provider' });
 
