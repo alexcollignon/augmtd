@@ -584,6 +584,24 @@ MEETING_ENDED_SELECTORS = [
 
 Earlier selectors (`.crqnQb`, `div:has-text(...)`) false-positived on active meeting UI elements in Portuguese, causing the bot to leave immediately after joining.
 
+### Join Button Reliability (Phase 66 debug)
+
+- `force=True` added to all Playwright join button clicks — bypasses microphone warning modal that intercepts clicks
+- Modal dismissal: after `Escape` key, explicitly query and click `button[aria-label="Fechar"]` / `button[aria-label="Close"]`
+- JS fallback click as last resort: `document.querySelector button` with regex on innerText
+- Previous failure mode: "Could not find join/ask-to-join button" despite button being visible in screenshot — caused by modal overlay blocking Playwright's click interception check
+
+### Webhook Timeout Fix (Phase 66 debug)
+
+Critical issue: `processAudioFile()` was called fire-and-forget (`.catch()`) in the webhook handler. Vercel kills the serverless function after returning 200 — the transcription pipeline was being abandoned mid-execution (Whisper never completed).
+
+Fix applied to `app/api/meetings/[id]/bot-webhook/route.ts`:
+```typescript
+export const maxDuration = 300; // 5 min — allows Whisper to complete
+// Changed from: processAudioFile({...}).catch(err => ...)
+// Changed to:   await processAudioFile({...})
+```
+
 ### App-Side Changes (Phase 66)
 
 **Files moved/renamed (Attendee.dev removed):**

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { processAudioFile } from '@/lib/integrations/meeting-bot/transcription-pipeline';
 
+export const maxDuration = 300; // 5 min — allows Whisper to complete
+
 // POST /api/meetings/[id]/bot-webhook
 // Body: { botId, state, audioStoragePath }
 // Auth: Authorization: Bearer {MEETING_BOT_SECRET}
@@ -50,7 +52,7 @@ export async function POST(
         .single();
 
       if (event) {
-        processAudioFile({
+        await processAudioFile({
           userId: event.user_id,
           calendarEventId,
           title: event.title,
@@ -59,8 +61,6 @@ export async function POST(
           storagePath: audioStoragePath,
           source: 'bot',
           adminClient,
-        }).catch((err) => {
-          console.error('[BotWebhook] Transcription pipeline error:', err);
         });
       }
     }

@@ -219,6 +219,11 @@ async def run_bot(bot_id: str) -> None:
             try:
                 await page.keyboard.press('Escape')
                 await asyncio.sleep(0.5)
+                # Also try clicking the close (×) button on any open dialog
+                close_btn = await page.query_selector('button[aria-label="Close"], button[aria-label="Fechar"], button[jsname="LgbsSe"]')
+                if close_btn:
+                    await close_btn.click()
+                    await asyncio.sleep(0.5)
             except Exception:
                 pass
 
@@ -254,7 +259,7 @@ async def run_bot(bot_id: str) -> None:
             )
             try:
                 btn = page.get_by_role('button', name=join_pattern)
-                await btn.first.click(timeout=10_000)
+                await btn.first.click(timeout=10_000, force=True)
                 joined = True
                 logger.info('[BotRunner] Clicked join button via get_by_role')
             except Exception as e:
@@ -266,12 +271,28 @@ async def run_bot(bot_id: str) -> None:
                     try:
                         btn = await page.wait_for_selector(selector, timeout=3_000)
                         if btn:
-                            await btn.click()
+                            await btn.click(force=True)
                             joined = True
                             logger.info(f'[BotRunner] Clicked join button via selector: {selector}')
                             break
                     except Exception:
                         continue
+
+            # Final fallback: JS click on any visible join/ask button
+            if not joined:
+                try:
+                    clicked = await page.evaluate("""() => {
+                        const buttons = Array.from(document.querySelectorAll('button'));
+                        const patterns = /pedir|participar|join|ask|request|unirse|teilnehmen/i;
+                        const btn = buttons.find(b => patterns.test(b.innerText));
+                        if (btn) { btn.click(); return true; }
+                        return false;
+                    }""")
+                    if clicked:
+                        joined = True
+                        logger.info('[BotRunner] Clicked join button via JS fallback')
+                except Exception as e:
+                    logger.warning(f'[BotRunner] JS click fallback failed: {e}')
 
             # Debug screenshot — after join attempt
             screenshot_path3 = f'{DEBUG_SCREENSHOT_DIR}/{bot_id}_03_after_join.png'
