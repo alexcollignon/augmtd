@@ -433,14 +433,20 @@ export function NewProcessClient({ userEmail, userId }: Props) {
           </div>
 
           <div className="flex-shrink-0 border-t border-neutral-200 bg-white">
-            <div className="flex items-center gap-2 px-3 py-3">
-              <input
+            <div className="flex items-end gap-2 px-3 py-3">
+              <textarea
                 value={input}
-                onChange={e => setInput(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && !e.shiftKey && sendMessage()}
+                onChange={e => {
+                  setInput(e.target.value);
+                  e.target.style.height = 'auto';
+                  e.target.style.height = `${e.target.scrollHeight}px`;
+                }}
+                onKeyDown={e => e.key === 'Enter' && !e.shiftKey && (sendMessage(), (e.target as HTMLTextAreaElement).style.height = 'auto')}
                 placeholder="Describe your process..."
                 disabled={streaming}
-                className="flex-1 text-[12px] text-neutral-700 placeholder-neutral-400 bg-transparent outline-none min-w-0 disabled:opacity-50"
+                rows={1}
+                className="flex-1 text-[12px] text-neutral-700 placeholder-neutral-400 bg-transparent outline-none min-w-0 disabled:opacity-50 resize-none overflow-hidden leading-relaxed"
+                style={{ maxHeight: '160px', overflowY: 'auto' }}
               />
               <button
                 onClick={sendMessage}

@@ -95,7 +95,7 @@ export function InboxPageClient({
   const [chatSources, setChatSources] = useState<string[]>(['inbox', 'kb', 'calendar']);
   const [attachedFiles, setAttachedFiles] = useState<Array<{ filename: string; extractedText: string }>>([]);
   const [isAttaching, setIsAttaching] = useState(false);
-  const chatInputRef = useRef<HTMLInputElement>(null);
+  const chatInputRef = useRef<HTMLTextAreaElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   const optimisticSyncTriggered = useRef(false);

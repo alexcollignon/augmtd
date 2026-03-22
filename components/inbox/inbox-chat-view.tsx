@@ -42,7 +42,7 @@ interface InboxChatViewProps {
   onAction: (type: string, itemId: string) => Promise<void>;
   chatInput: string;
   onChatInputChange: (val: string) => void;
-  chatInputRef: RefObject<HTMLInputElement | null>;
+  chatInputRef: RefObject<HTMLTextAreaElement | null>;
   chatSources: string[];
   onSourcesChange: (sources: string[]) => void;
   attachedFiles: Array<{ filename: string; extractedText: string }>;
@@ -639,12 +639,12 @@ export default function InboxChatView({
         )}
 
         {/* Input row */}
-        <div className="flex items-center gap-2 px-3 py-3">
+        <div className="flex items-end gap-2 px-3 py-3">
           <button
             onClick={() => fileInputRef.current?.click()}
             disabled={isStreaming || isAttaching}
             title="Attach file"
-            className="flex-shrink-0 p-1 text-neutral-400 hover:text-neutral-700 disabled:opacity-30 transition-colors"
+            className="flex-shrink-0 p-1 text-neutral-400 hover:text-neutral-700 disabled:opacity-30 transition-colors mb-px"
           >
             <PaperClipIcon className="w-4 h-4" />
           </button>
@@ -659,20 +659,25 @@ export default function InboxChatView({
               e.target.value = '';
             }}
           />
-          <input
+          <textarea
             ref={chatInputRef}
-            type="text"
             value={chatInput}
-            onChange={e => onChatInputChange(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') handleSubmit(); }}
+            onChange={e => {
+              onChatInputChange(e.target.value);
+              e.target.style.height = 'auto';
+              e.target.style.height = `${e.target.scrollHeight}px`;
+            }}
+            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmit(); (e.target as HTMLTextAreaElement).style.height = 'auto'; } }}
             placeholder={mode === 'reply' ? "Edit draft or ask a question..." : composeDraft !== undefined ? (composeDraft.body?.trim() ? "Refine your draft..." : "What would you like to write?") : emailChipActive ? "Ask about this email..." : "Ask about your inbox..."}
             disabled={isStreaming}
-            className="flex-1 text-[12px] text-neutral-700 placeholder-neutral-400 bg-transparent outline-none min-w-0 disabled:opacity-50"
+            rows={1}
+            className="flex-1 text-[12px] text-neutral-700 placeholder-neutral-400 bg-transparent outline-none min-w-0 disabled:opacity-50 resize-none overflow-hidden leading-relaxed"
+            style={{ maxHeight: '160px', overflowY: 'auto' }}
           />
           <button
             onClick={handleSubmit}
             disabled={!chatInput.trim() || isStreaming}
-            className="flex-shrink-0 p-1 text-indigo-600 hover:text-indigo-800 disabled:text-neutral-300 transition-colors"
+            className="flex-shrink-0 p-1 text-indigo-600 hover:text-indigo-800 disabled:text-neutral-300 transition-colors mb-px"
           >
             <PaperAirplaneIcon className="w-4 h-4" />
           </button>

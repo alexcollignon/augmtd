@@ -970,16 +970,22 @@ export function ProcessDetailClient({ processId, userId, userEmail, companyRole 
               <div ref={draftChatEndRef} />
             </div>
             <div className="flex-shrink-0 border-t border-neutral-200 bg-white">
-              <div className="flex items-center gap-2 px-3 py-3">
-                <input
+              <div className="flex items-end gap-2 px-3 py-3">
+                <textarea
                   value={draftInput}
-                  onChange={e => setDraftInput(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && draftSendMessage()}
+                  onChange={e => {
+                    setDraftInput(e.target.value);
+                    e.target.style.height = 'auto';
+                    e.target.style.height = `${e.target.scrollHeight}px`;
+                  }}
+                  onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); draftSendMessage(); (e.target as HTMLTextAreaElement).style.height = 'auto'; } }}
                   placeholder="Refine your process plan..."
                   disabled={draftStreaming}
-                  className="flex-1 text-[12px] text-neutral-700 placeholder-neutral-400 bg-transparent outline-none min-w-0 disabled:opacity-50"
+                  rows={1}
+                  className="flex-1 text-[12px] text-neutral-700 placeholder-neutral-400 bg-transparent outline-none min-w-0 disabled:opacity-50 resize-none overflow-hidden leading-relaxed"
+                  style={{ maxHeight: '160px', overflowY: 'auto' }}
                 />
-                <button onClick={draftSendMessage} disabled={!draftInput.trim() || draftStreaming} className="flex-shrink-0 p-1 text-indigo-600 hover:text-indigo-800 disabled:text-neutral-300 transition-colors">
+                <button onClick={draftSendMessage} disabled={!draftInput.trim() || draftStreaming} className="flex-shrink-0 p-1 text-indigo-600 hover:text-indigo-800 disabled:text-neutral-300 transition-colors mb-px">
                   <PaperAirplaneIcon className="w-4 h-4" />
                 </button>
               </div>
@@ -1459,19 +1465,25 @@ export function ProcessDetailClient({ processId, userId, userEmail, companyRole 
           </div>
 
           <div className="flex-shrink-0 border-t border-neutral-200 bg-white">
-            <div className="flex items-center gap-2 px-3 py-3">
-              <input
+            <div className="flex items-end gap-2 px-3 py-3">
+              <textarea
                 value={chatInput}
-                onChange={e => setChatInput(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && sendChatMessage()}
+                onChange={e => {
+                  setChatInput(e.target.value);
+                  e.target.style.height = 'auto';
+                  e.target.style.height = `${e.target.scrollHeight}px`;
+                }}
+                onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChatMessage(); (e.target as HTMLTextAreaElement).style.height = 'auto'; } }}
                 placeholder="Ask about this process..."
                 disabled={chatStreaming}
-                className="flex-1 text-[12px] text-neutral-700 placeholder-neutral-400 bg-transparent outline-none min-w-0 disabled:opacity-50"
+                rows={1}
+                className="flex-1 text-[12px] text-neutral-700 placeholder-neutral-400 bg-transparent outline-none min-w-0 disabled:opacity-50 resize-none overflow-hidden leading-relaxed"
+                style={{ maxHeight: '160px', overflowY: 'auto' }}
               />
               <button
                 onClick={sendChatMessage}
                 disabled={!chatInput.trim() || chatStreaming}
-                className="flex-shrink-0 p-1 text-indigo-600 hover:text-indigo-800 disabled:text-neutral-300 transition-colors"
+                className="flex-shrink-0 p-1 text-indigo-600 hover:text-indigo-800 disabled:text-neutral-300 transition-colors mb-px"
               >
                 <PaperAirplaneIcon className="w-4 h-4" />
               </button>
