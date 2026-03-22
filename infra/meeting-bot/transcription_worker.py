@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 SUPABASE_URL = os.getenv('SUPABASE_URL', '')
 SUPABASE_SERVICE_ROLE_KEY = os.getenv('SUPABASE_SERVICE_ROLE_KEY', '')
-WHISPER_URL = 'http://localhost:8000'  # always local
+WHISPER_URL = os.getenv('WHISPER_SERVICE_URL', 'http://whisper:8000')
 AUGMTD_BASE_URL = os.getenv('AUGMTD_WEBHOOK_BASE_URL', '')
 BOT_SECRET = os.getenv('BOT_SECRET', '')
 

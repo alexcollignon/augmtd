@@ -49,7 +49,7 @@ export async function POST(
   const botServiceUrl = process.env.MEETING_BOT_SERVICE_URL;
   if (botServiceUrl) {
     // Delegate to Hetzner transcription worker — returns 202 immediately.
-    fetch(`${botServiceUrl}/transcribe`, {
+    await fetch(`${botServiceUrl}/transcribe`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

@@ -1,0 +1,33 @@
+services:
+  whisper:
+    image: fedirz/faster-whisper-server:latest-cpu
+    environment:
+      WHISPER__MODEL: Systran/faster-whisper-medium   # large-v3 OOMs on CX32
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  meeting-bot:
+    build:
+      context: ../meeting-bot
+      dockerfile: Dockerfile
+    environment:
+      BOT_SECRET: ${MEETING_BOT_SECRET}
+      SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
+      AUGMTD_WEBHOOK_BASE_URL: https://app.augmtd.com
+      MAX_CONCURRENT_BOTS: "4"
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      PROXY_URL: ${PROXY_URL}
+    ports:
+      - "3001:3001"
+    shm_size: "2gb"
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+    volumes:
+      - bot-scheduler:/data
+    restart: unless-stopped
+
+volumes:
+  bot-scheduler:

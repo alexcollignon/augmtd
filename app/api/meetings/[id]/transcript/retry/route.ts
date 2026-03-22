@@ -55,7 +55,7 @@ export async function POST(
     // Delegate to Hetzner transcription worker — returns 202 immediately.
     // Worker downloads audio, calls local Whisper (no timeout risk), writes segments,
     // then calls /api/meetings/recording/[id]/generate-insights on Vercel.
-    fetch(`${botServiceUrl}/transcribe`, {
+    await fetch(`${botServiceUrl}/transcribe`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
