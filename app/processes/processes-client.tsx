@@ -66,7 +66,7 @@ export function ProcessesClient({ userId, userEmail, companyName }: Props) {
   const router = useRouter();
   const [processes, setProcesses] = useState<ProcessListItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<Tab>('needs_action');
+  const [activeTab, setActiveTab] = useState<Tab>('all');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -162,10 +162,10 @@ export function ProcessesClient({ userId, userEmail, companyName }: Props) {
         <div className="flex-shrink-0 px-6 mt-3 border-b border-neutral-200 bg-white">
           <div className="flex gap-0">
             {([
+              ['all', 'All'],
               ['needs_action', 'Needs my action'],
               ['watching', 'Watching'],
               ['owned', 'Owned by me'],
-              ['all', 'All'],
             ] as [Tab, string][]).map(([tab, label]) => (
               <button
                 key={tab}

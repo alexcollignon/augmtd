@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import {
-  CalendarIcon, CalendarDaysIcon, Bars3Icon,
+  CalendarIcon,
   ChevronRightIcon, ChevronDownIcon, ChevronUpIcon,
   PlusIcon, XMarkIcon, VideoCameraIcon,
 } from '@heroicons/react/24/outline';
@@ -72,46 +72,93 @@ function MonthView({
   onNewMeeting?: (date: Date) => void;
 }) {
   const todayStr = new Date().toDateString();
-  const [selectedDateStr, setSelectedDateStr] = useState<string>(todayStr);
-
-  const meetingsByDate = new Map<string, CalendarEvent[]>();
-  for (const m of meetings) {
-    const key = new Date(m.start_time).toDateString();
-    if (!meetingsByDate.has(key)) meetingsByDate.set(key, []);
-    meetingsByDate.get(key)!.push(m);
-  }
-  const selectedMeetings = meetingsByDate.get(selectedDateStr) ?? [];
 
   return (
     <div>
       <MonthCalendar
         meetings={meetings}
         userEmail={userEmail}
-        selectedDateStr={selectedDateStr}
-        onSelectDate={setSelectedDateStr}
+        selectedDateStr={todayStr}
+        onSelectDate={() => {}}
         onNewMeeting={onNewMeeting}
         compact
       />
-
-      {/* Selected day meetings */}
-      <div className="border-t border-neutral-100 pt-2 mt-3">
-        <p className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wider mb-1.5 px-1">
-          {new Date(selectedDateStr).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
-        </p>
-        {selectedMeetings.length === 0 ? (
-          <p className="text-[11px] text-neutral-400 px-1 py-1">No meetings</p>
-        ) : (
-          selectedMeetings.map(m => (
-            <MeetingCard key={m.id} event={m} userEmail={userEmail} onRefresh={onRefresh} />
-          ))
-        )}
+      <div className="border-t border-neutral-100 pt-3 mt-3">
+        <RollingWeekView meetings={meetings} userEmail={userEmail} onRefresh={onRefresh} />
       </div>
     </div>
   );
 }
 
+function RollingWeekView({
+  meetings,
+  userEmail,
+  onRefresh,
+}: {
+  meetings: CalendarEvent[];
+  userEmail: string;
+  onRefresh?: () => void;
+}) {
+  const now = new Date();
+
+  // Build 7 days starting from today
+  const days = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(now);
+    d.setDate(now.getDate() + i);
+    d.setHours(0, 0, 0, 0);
+    return d;
+  });
+
+  // Only surface genuinely active meetings (end_time must be in the future)
+  const inProgress = meetings.filter(m =>
+    (m.meeting_status === 'in_progress' || m.meeting_status === 'starting_soon') &&
+    new Date(m.end_time) > now
+  );
+
+  // Group upcoming meetings by day string
+  const byDay = new Map<string, CalendarEvent[]>();
+  for (const m of meetings) {
+    if (inProgress.includes(m)) continue;
+    if (new Date(m.end_time) <= now) continue; // skip already-ended meetings
+    const key = new Date(m.start_time).toDateString();
+    if (!byDay.has(key)) byDay.set(key, []);
+    byDay.get(key)!.push(m);
+  }
+
+  const hasAny = inProgress.length > 0 || days.some(d => (byDay.get(d.toDateString()) ?? []).length > 0);
+
+  if (!hasAny) {
+    return <p className="text-[12px] text-neutral-400 text-center py-8">No meetings in the next 7 days</p>;
+  }
+
+  return (
+    <div className="space-y-3">
+      {inProgress.length > 0 && (
+        <div>
+          <p className="text-[10px] font-semibold text-indigo-500 uppercase tracking-wider mb-1 px-1">Now</p>
+          {inProgress.map(m => <MeetingCard key={m.id} event={m} userEmail={userEmail} onRefresh={onRefresh} />)}
+        </div>
+      )}
+      {days.map((day, i) => {
+        const dayMeetings = byDay.get(day.toDateString()) ?? [];
+        if (dayMeetings.length === 0) return null;
+        const isToday = day.toDateString() === now.toDateString();
+        const isTomorrow = i === 1;
+        const label = isToday ? 'Today' : isTomorrow ? 'Tomorrow' : day.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+        return (
+          <div key={day.toDateString()}>
+            <p className={`text-[10px] font-semibold uppercase tracking-wider mb-1 px-1 ${isToday ? 'text-indigo-500' : 'text-neutral-400'}`}>
+              {label}
+            </p>
+            {dayMeetings.map(m => <MeetingCard key={m.id} event={m} userEmail={userEmail} onRefresh={onRefresh} />)}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function MeetingsColumn({ isOpen, onToggle, meetings, loading, userEmail, onRefresh }: MeetingsColumnProps) {
-  const [viewMode, setViewMode] = useState<'list' | 'month'>('month');
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(
     new Set(['completed', 'next_week'])
   );
@@ -285,27 +332,9 @@ export default function MeetingsColumn({ isOpen, onToggle, meetings, loading, us
               <button
                 onClick={() => openNewForm()}
                 title="New meeting"
-                className={`p-1 rounded transition-colors ${showNewForm ? 'text-indigo-600' : 'text-neutral-300 hover:text-neutral-500'}`}
+                className={`p-1 rounded transition-colors ${showNewForm ? 'text-indigo-600' : 'text-indigo-400 hover:text-indigo-600'}`}
               >
                 <PlusIcon className="w-3.5 h-3.5" />
-              </button>
-              <button
-                onClick={() => setViewMode('list')}
-                title="List view"
-                className={`p-1 rounded transition-colors ${
-                  viewMode === 'list' ? 'text-indigo-600' : 'text-neutral-300 hover:text-neutral-500'
-                }`}
-              >
-                <Bars3Icon className="w-3.5 h-3.5" />
-              </button>
-              <button
-                onClick={() => setViewMode('month')}
-                title="Month view"
-                className={`p-1 rounded transition-colors ${
-                  viewMode === 'month' ? 'text-indigo-600' : 'text-neutral-300 hover:text-neutral-500'
-                }`}
-              >
-                <CalendarDaysIcon className="w-3.5 h-3.5" />
               </button>
               <button onClick={onToggle} title="Hide calendar" className="p-0.5 hover:opacity-70 transition-opacity ml-1">
                 <ChevronRightIcon className="w-3.5 h-3.5 text-neutral-400" />
@@ -464,7 +493,7 @@ export default function MeetingsColumn({ isOpen, onToggle, meetings, loading, us
               <div className="h-16 bg-neutral-100 rounded" />
               <div className="h-16 bg-neutral-100 rounded" />
             </div>
-          ) : viewMode === 'month' ? (
+          ) : (
             <MonthView
               meetings={meetings}
               userEmail={userEmail}
@@ -473,46 +502,6 @@ export default function MeetingsColumn({ isOpen, onToggle, meetings, loading, us
                 ? (date) => setNewForm(f => ({ ...f, date: date.toISOString().slice(0, 10) }))
                 : undefined}
             />
-          ) : meetings.length === 0 ? (
-            <p className="text-[12px] text-neutral-400 text-center py-8">No meetings scheduled</p>
-          ) : (
-            <div>
-              {grouped.in_progress.length > 0 && (
-                <MeetingSection title="HAPPENING NOW" count={grouped.in_progress.length} isCollapsed={false} onToggle={() => {}} canCollapse={false}>
-                  {grouped.in_progress.map(m => <MeetingCard key={m.id} event={m} userEmail={userEmail} onRefresh={onRefresh} />)}
-                </MeetingSection>
-              )}
-              {grouped.starting_soon.length > 0 && (
-                <MeetingSection title="STARTING SOON" count={grouped.starting_soon.length} isCollapsed={false} onToggle={() => {}} canCollapse={false}>
-                  {grouped.starting_soon.map(m => <MeetingCard key={m.id} event={m} userEmail={userEmail} onRefresh={onRefresh} />)}
-                </MeetingSection>
-              )}
-              {grouped.today.length > 0 && (
-                <MeetingSection title="TODAY" count={grouped.today.length} isCollapsed={collapsedSections.has('today')} onToggle={() => toggleSection('today')}>
-                  {grouped.today.map(m => <MeetingCard key={m.id} event={m} userEmail={userEmail} onRefresh={onRefresh} />)}
-                </MeetingSection>
-              )}
-              {grouped.completed_recent.length > 0 && (
-                <MeetingSection title="COMPLETED TODAY" count={grouped.completed_recent.length} isCollapsed={collapsedSections.has('completed')} onToggle={() => toggleSection('completed')}>
-                  {grouped.completed_recent.map(m => <MeetingCard key={m.id} event={m} userEmail={userEmail} onRefresh={onRefresh} />)}
-                </MeetingSection>
-              )}
-              {grouped.tomorrow.length > 0 && (
-                <MeetingSection title="TOMORROW" count={grouped.tomorrow.length} isCollapsed={collapsedSections.has('tomorrow')} onToggle={() => toggleSection('tomorrow')}>
-                  {grouped.tomorrow.map(m => <MeetingCard key={m.id} event={m} userEmail={userEmail} onRefresh={onRefresh} />)}
-                </MeetingSection>
-              )}
-              {grouped.this_week.length > 0 && (
-                <MeetingSection title="THIS WEEK" count={grouped.this_week.length} isCollapsed={collapsedSections.has('this_week')} onToggle={() => toggleSection('this_week')}>
-                  {grouped.this_week.map(m => <MeetingCard key={m.id} event={m} userEmail={userEmail} onRefresh={onRefresh} />)}
-                </MeetingSection>
-              )}
-              {grouped.next_week.length > 0 && (
-                <MeetingSection title="NEXT WEEK" count={grouped.next_week.length} isCollapsed={collapsedSections.has('next_week')} onToggle={() => toggleSection('next_week')}>
-                  {grouped.next_week.map(m => <MeetingCard key={m.id} event={m} userEmail={userEmail} onRefresh={onRefresh} />)}
-                </MeetingSection>
-              )}
-            </div>
           )}
         </div>
       )}
