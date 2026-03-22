@@ -29,6 +29,7 @@ interface RecordingDetailClientProps {
     durationMinutes: number;
     source: string;
     processed: boolean;
+    botState: string | null;
     summary: string | null;
     decisions: Decision[];
     keyMoments: KeyMoment[];
@@ -39,6 +40,7 @@ interface RecordingDetailClientProps {
   userId: string;
   risks: Risk[];
   suggestedNextStep: string | null;
+  audioUrl?: string | null;
 }
 
 const RISK_DOT: Record<Risk['severity'], string> = {
@@ -58,10 +60,30 @@ const KEY_MOMENT_BADGES = {
   commitment: 'text-amber-700 bg-amber-100',
 };
 
-export default function RecordingDetailClient({ transcript, actionItems, risks, suggestedNextStep }: RecordingDetailClientProps) {
+export default function RecordingDetailClient({ transcript, actionItems, risks, suggestedNextStep, audioUrl }: RecordingDetailClientProps) {
   const router = useRouter();
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [retrying, setRetrying] = useState(false);
+  const [retryError, setRetryError] = useState<string | null>(null);
+
+  const handleRetry = async () => {
+    setRetrying(true);
+    setRetryError(null);
+    try {
+      const res = await fetch(`/api/meetings/recording/${transcript.id}/retry`, { method: 'POST' });
+      if (!res.ok) {
+        const data = await res.json();
+        setRetryError(data?.error ?? 'Retry failed');
+      } else {
+        router.refresh();
+      }
+    } catch {
+      setRetryError('Network error');
+    } finally {
+      setRetrying(false);
+    }
+  };
   const [itemSources, setItemSources] = useState<Record<string, string>>(() =>
     Object.fromEntries(actionItems.map((item) => [item.id, item.source]))
   );
@@ -140,14 +162,49 @@ export default function RecordingDetailClient({ transcript, actionItems, risks, 
               <SourceIcon className="w-3.5 h-3.5" />
               {transcript.source === 'upload' ? 'Uploaded' : 'Recorded'}
             </span>
-            {!transcript.processed && (
+            {!transcript.processed && transcript.botState === 'processing' && (
               <span className="flex items-center gap-1 text-amber-600">
                 <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse inline-block" />
                 Transcribing…
               </span>
             )}
+            {transcript.botState === 'failed' && (
+              <span className="text-[11px] font-medium text-red-600 bg-red-50 px-2 py-0.5">
+                Failed
+              </span>
+            )}
           </div>
         </div>
+
+        {/* Failed state */}
+        {transcript.botState === 'failed' && (
+          <div className="flex items-center justify-between gap-4 px-4 py-3 mb-6 bg-red-50 border border-red-100">
+            <div>
+              <p className="text-[13px] font-medium text-red-700">Transcription failed</p>
+              <p className="text-[12px] text-red-500 mt-0.5">
+                {audioUrl ? 'The audio was saved — you can retry.' : 'No audio available to retry.'}
+              </p>
+              {retryError && <p className="text-[11px] text-red-600 mt-1">{retryError}</p>}
+            </div>
+            {audioUrl && (
+              <button
+                onClick={handleRetry}
+                disabled={retrying}
+                className="flex-shrink-0 px-3 py-1.5 text-[12px] font-medium text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 transition-colors"
+              >
+                {retrying ? 'Retrying…' : 'Retry'}
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Audio player */}
+        {audioUrl && (
+          <section className="mb-6">
+            <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2">Recording</h2>
+            <audio controls src={audioUrl} className="w-full h-9" style={{ accentColor: '#6366f1' }} />
+          </section>
+        )}
 
         {/* Summary */}
         {transcript.summary && (
@@ -284,7 +341,7 @@ export default function RecordingDetailClient({ transcript, actionItems, risks, 
           </section>
         )}
 
-        {!transcript.processed && transcript.transcriptSegments?.length === 0 && (
+        {!transcript.processed && transcript.botState === 'processing' && transcript.transcriptSegments?.length === 0 && (
           <div className="py-8 text-center border border-dashed border-neutral-200">
             <div className="w-2 h-2 rounded-full bg-amber-500 animate-pulse mx-auto mb-3" />
             <p className="text-[13px] text-neutral-500">Transcription in progress…</p>

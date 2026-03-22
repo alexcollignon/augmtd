@@ -646,6 +646,21 @@ MEETING_BOT_SECRET=...                 # same as BOT_SECRET above
 
 Change only `MAX_CONCURRENT_BOTS` env var + resize Hetzner server.
 
+### Transcript Visibility & Retry
+
+Both bot and in-person paths now guarantee a `meeting_transcripts` row exists as soon as audio is available:
+
+- **Bot path** (`bot-webhook`): pre-inserts a pending row (`bot_state: 'processing'`) before calling Whisper; on failure the row is marked `bot_state: 'failed'` with `recording_storage_path` set
+- **In-person path** (`recordings/confirm`): already pre-inserted a pending row (unchanged)
+
+Retry endpoints:
+- `POST /api/meetings/[calendarEventId]/transcript/retry` — for bot/calendar-linked recordings
+- `POST /api/meetings/recording/[transcriptId]/retry` — for in-person/upload recordings without a calendar event
+
+Both retry routes: reset row to `bot_state: 'processing'`, re-run `processAudioFile()` with `existingTranscriptId`.
+
+UI: failed banner + Retry button shown on both `/meetings/[id]` (calendar detail) and `/meetings/recording/[id]` (recording detail). Audio player also shown on recording detail page when `recording_storage_path` is set.
+
 ### Storage Path
 
 Recording files are stored as `meeting-recordings/{userId}/{calendarEventId}.webm`.
@@ -683,12 +698,18 @@ ssh hetzner "docker compose -f /root/augmtd-infra/docker-compose.yml logs -f mee
 - Whisper transcription on same Hetzner server
 - Full end-to-end: calendar event → bot → transcript → inbox items
 - Storage path uses `calendarEventId` (not `botId`) — files inherently linked to meeting
-- Audio player on meeting detail page (signed URL, HTML5 native)
+- Audio player on both bot meeting detail + in-person recording detail (1h signed URL, HTML5 native)
 - Source chip on list cards + detail header: "Online" / "In-person" / "Upload"
-- Removed automatic "Needs review" / "Reviewed" status badges — misleading for meetings with no action items; all processed transcripts go into "Recent meetings"
+- Removed automatic "Needs review" / "Reviewed" status badges — all processed transcripts go into "Recent meetings"
+- Transcript visibility guarantee + retry: both bot and in-person paths pre-insert pending row before Whisper runs; failures surface immediately with Retry button
+- `meeting_link` fix: calendar invites created from sidebar now correctly populate `meeting_link` column
 - Google Meet only (Zoom/Teams: future phases)
 
+**Known issue:**
+- Duplicate bot scheduling: two close calendar syncs can both pass the `attendee_bot_id IS NULL` guard → two bots join same meeting. Fix: write placeholder `attendee_bot_id` before calling bot service.
+
 **Next Steps:**
+- Fix duplicate bot scheduling race condition
 - Ad hoc meeting URL support ("Send bot to this link" UI)
 - Zoom support (requires Zoom Marketplace approval)
 - Teams support (Phase 67)

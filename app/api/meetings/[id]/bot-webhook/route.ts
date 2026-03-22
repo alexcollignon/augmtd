@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { randomUUID } from 'crypto';
 import { processAudioFile } from '@/lib/integrations/meeting-bot/transcription-pipeline';
 
 export const maxDuration = 300; // 5 min — allows Whisper to complete
@@ -52,6 +53,33 @@ export async function POST(
         .single();
 
       if (event) {
+        // Pre-insert a pending transcript row so the meeting shows immediately
+        // even if Whisper fails — same pattern as in-person recordings/confirm route
+        const pendingId = randomUUID();
+        const { error: pendingError } = await adminClient
+          .from('meeting_transcripts')
+          .insert({
+            id: pendingId,
+            user_id: event.user_id,
+            meeting_id: calendarEventId,
+            calendar_event_id: calendarEventId,
+            title: event.title,
+            start_time: event.start_time,
+            end_time: event.end_time,
+            duration_minutes: 0,
+            source: 'bot',
+            recording_storage_path: audioStoragePath,
+            transcript: '',
+            transcript_segments: [],
+            attendees: [],
+            processed: false,
+            bot_state: 'processing',
+          });
+
+        if (pendingError) {
+          console.error('[BotWebhook] Failed to insert pending transcript row:', pendingError);
+        }
+
         await processAudioFile({
           userId: event.user_id,
           calendarEventId,
@@ -61,6 +89,7 @@ export async function POST(
           storagePath: audioStoragePath,
           source: 'bot',
           adminClient,
+          existingTranscriptId: pendingError ? undefined : pendingId,
         });
       }
     }

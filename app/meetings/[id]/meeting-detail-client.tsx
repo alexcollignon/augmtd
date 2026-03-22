@@ -70,6 +70,8 @@ interface MeetingDetailClientProps {
   risks: Risk[];
   suggestedNextStep: string | null;
   audioUrl?: string | null;
+  transcriptBotState?: string | null;
+  transcriptProcessed?: boolean;
 }
 
 const KEY_MOMENT_COLORS: Record<KeyMoment['type'], string> = {
@@ -107,9 +109,31 @@ export default function MeetingDetailClient({
   risks,
   suggestedNextStep,
   audioUrl,
+  transcriptBotState,
+  transcriptProcessed,
 }: MeetingDetailClientProps) {
   const router = useRouter();
   const [transcriptKey, setTranscriptKey] = useState(0);
+  const [retrying, setRetrying] = useState(false);
+  const [retryError, setRetryError] = useState<string | null>(null);
+
+  const handleRetry = async () => {
+    setRetrying(true);
+    setRetryError(null);
+    try {
+      const res = await fetch(`/api/meetings/${event.id}/transcript/retry`, { method: 'POST' });
+      if (!res.ok) {
+        const data = await res.json();
+        setRetryError(data?.error ?? 'Retry failed');
+      } else {
+        router.refresh();
+      }
+    } catch {
+      setRetryError('Network error');
+    } finally {
+      setRetrying(false);
+    }
+  };
   const [deleting, setDeleting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [itemSources, setItemSources] = useState<Record<string, string>>(() =>
@@ -241,6 +265,34 @@ export default function MeetingDetailClient({
               </div>
             )}
           </div>
+
+          {/* Transcription processing / failed state */}
+          {transcript && !transcriptProcessed && transcriptBotState === 'processing' && (
+            <div className="flex items-center gap-2 px-4 py-3 mb-6 bg-amber-50 border border-amber-100 text-[13px] text-amber-700">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse flex-shrink-0" />
+              Transcribing recording — check back in a minute.
+            </div>
+          )}
+          {transcript && transcriptBotState === 'failed' && (
+            <div className="flex items-center justify-between gap-4 px-4 py-3 mb-6 bg-red-50 border border-red-100">
+              <div>
+                <p className="text-[13px] font-medium text-red-700">Transcription failed</p>
+                <p className="text-[12px] text-red-500 mt-0.5">
+                  {audioUrl ? 'The audio was saved — you can retry.' : 'No audio available to retry.'}
+                </p>
+                {retryError && <p className="text-[11px] text-red-600 mt-1">{retryError}</p>}
+              </div>
+              {audioUrl && (
+                <button
+                  onClick={handleRetry}
+                  disabled={retrying}
+                  className="flex-shrink-0 px-3 py-1.5 text-[12px] font-medium text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 transition-colors"
+                >
+                  {retrying ? 'Retrying…' : 'Retry'}
+                </button>
+              )}
+            </div>
+          )}
 
           {/* No transcript yet — show recorder */}
           {!transcript && (

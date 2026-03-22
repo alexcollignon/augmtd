@@ -16,12 +16,26 @@ export default async function RecordingDetailPage({
 
   const { data: transcriptRaw } = await supabase
     .from('meeting_transcripts')
-    .select('id, title, start_time, end_time, duration_minutes, work_items_generated, processed, source, summary, decisions, risks, suggested_next_step, key_moments, transcript_segments, recording_storage_path')
+    .select('id, title, start_time, end_time, duration_minutes, work_items_generated, processed, bot_state, source, summary, decisions, risks, suggested_next_step, key_moments, transcript_segments, recording_storage_path')
     .eq('id', id)
     .eq('user_id', user.id)
     .maybeSingle();
 
   if (!transcriptRaw) notFound();
+
+  // Generate signed URL for audio playback
+  let audioUrl: string | null = null;
+  if (transcriptRaw.recording_storage_path) {
+    const { createClient: createAdminClient } = await import('@supabase/supabase-js');
+    const adminClient = createAdminClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    );
+    const { data: signed } = await adminClient.storage
+      .from('meeting-recordings')
+      .createSignedUrl(transcriptRaw.recording_storage_path, 3600);
+    audioUrl = signed?.signedUrl ?? null;
+  }
 
   const transcript = {
     id: transcriptRaw.id,
@@ -31,6 +45,7 @@ export default async function RecordingDetailPage({
     durationMinutes: transcriptRaw.duration_minutes ?? 0,
     source: transcriptRaw.source ?? 'recording',
     processed: transcriptRaw.processed,
+    botState: transcriptRaw.bot_state ?? null,
     summary: transcriptRaw.summary ?? null,
     decisions: (transcriptRaw.decisions as any[]) ?? [],
     risks: (transcriptRaw.risks as any[]) ?? [],
@@ -66,6 +81,7 @@ export default async function RecordingDetailPage({
           userId={user.id}
           risks={transcript.risks}
           suggestedNextStep={transcript.suggestedNextStep}
+          audioUrl={audioUrl}
         />
       </main>
     </div>

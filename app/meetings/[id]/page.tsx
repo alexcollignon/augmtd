@@ -27,7 +27,7 @@ export default async function MeetingDetailPage({
   // Load transcript if exists
   const { data: transcriptRaw } = await supabase
     .from('meeting_transcripts')
-    .select('id, summary, decisions, risks, suggested_next_step, key_moments, transcript_segments, duration_minutes, work_items_generated, source, recording_storage_path')
+    .select('id, summary, decisions, risks, suggested_next_step, key_moments, transcript_segments, duration_minutes, work_items_generated, source, recording_storage_path, bot_state, processed')
     .eq('calendar_event_id', id)
     .eq('user_id', user.id)
     .order('created_at', { ascending: false })
@@ -60,6 +60,8 @@ export default async function MeetingDetailPage({
         durationMinutes: transcriptRaw.duration_minutes ?? 0,
         workItemsGenerated: transcriptRaw.work_items_generated ?? 0,
         source: transcriptRaw.source ?? 'bot',
+        botState: transcriptRaw.bot_state ?? null,
+        processed: transcriptRaw.processed ?? false,
       }
     : null;
 
@@ -94,6 +96,8 @@ export default async function MeetingDetailPage({
           risks={transcript?.risks ?? []}
           suggestedNextStep={transcript?.suggestedNextStep ?? null}
           audioUrl={audioUrl}
+          transcriptBotState={transcript?.botState ?? null}
+          transcriptProcessed={transcript?.processed ?? false}
         />
       </main>
     </div>
