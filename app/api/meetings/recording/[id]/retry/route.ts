@@ -7,6 +7,9 @@ export const maxDuration = 300;
 
 // POST /api/meetings/recording/[id]/retry
 // Retries transcription for a failed in-person/upload recording by transcript ID.
+//
+// If MEETING_BOT_SERVICE_URL is configured, delegates to the Hetzner transcription worker
+// (POST /transcribe) — avoids Vercel 300s limit for large audio files.
 export async function POST(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -43,6 +46,28 @@ export async function POST(
     .update({ bot_state: 'processing', processed: false })
     .eq('id', transcriptId);
 
+  const botServiceUrl = process.env.MEETING_BOT_SERVICE_URL;
+  if (botServiceUrl) {
+    // Delegate to Hetzner transcription worker — returns 202 immediately.
+    fetch(`${botServiceUrl}/transcribe`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${process.env.MEETING_BOT_SECRET}`,
+      },
+      body: JSON.stringify({
+        storagePath: transcript.recording_storage_path,
+        transcriptId,
+        calendarEventId: transcript.calendar_event_id ?? undefined,
+        userId: user.id,
+        source: transcript.source ?? 'recording',
+      }),
+    }).catch((err) => console.error('[RetryRoute] Failed to call Hetzner /transcribe:', err));
+
+    return NextResponse.json({ success: true, async: true });
+  }
+
+  // Fallback: synchronous (local dev without bot service)
   await processAudioFile({
     userId: user.id,
     calendarEventId: transcript.calendar_event_id ?? null,

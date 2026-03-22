@@ -5,6 +5,16 @@
  * POST {WHISPER_SERVICE_URL}/v1/audio/transcriptions (multipart/form-data)
  */
 
+import { Agent } from 'undici';
+
+// 30-minute timeout for headers + body — large audio files on the medium model
+// can take several minutes to process on a CX32.
+const whisperAgent = new Agent({
+  headersTimeout: 30 * 60 * 1000,
+  bodyTimeout: 30 * 60 * 1000,
+  connectTimeout: 30 * 1000,
+});
+
 export interface TranscriptSegment {
   speaker: string;
   text: string;
@@ -46,6 +56,8 @@ export async function transcribeAudio(
   const response = await fetch(`${whisperUrl}/v1/audio/transcriptions`, {
     method: 'POST',
     body: formData,
+    // @ts-expect-error — undici dispatcher not in standard fetch types
+    dispatcher: whisperAgent,
   });
 
   if (!response.ok) {

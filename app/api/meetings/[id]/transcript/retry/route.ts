@@ -7,6 +7,10 @@ export const maxDuration = 300;
 
 // POST /api/meetings/[id]/transcript/retry
 // Re-runs the transcription pipeline for a failed transcript that has audio in storage.
+//
+// If MEETING_BOT_SERVICE_URL is configured, delegates to the Hetzner transcription worker
+// (POST /transcribe) which calls local Whisper and returns immediately — avoiding the
+// Vercel 300s function limit for large audio files.
 export async function POST(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -46,7 +50,30 @@ export async function POST(
     .update({ bot_state: 'processing', processed: false })
     .eq('id', transcript.id);
 
-  // Re-run pipeline
+  const botServiceUrl = process.env.MEETING_BOT_SERVICE_URL;
+  if (botServiceUrl) {
+    // Delegate to Hetzner transcription worker — returns 202 immediately.
+    // Worker downloads audio, calls local Whisper (no timeout risk), writes segments,
+    // then calls /api/meetings/recording/[id]/generate-insights on Vercel.
+    fetch(`${botServiceUrl}/transcribe`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${process.env.MEETING_BOT_SECRET}`,
+      },
+      body: JSON.stringify({
+        storagePath: transcript.recording_storage_path,
+        transcriptId: transcript.id,
+        calendarEventId,
+        userId: user.id,
+        source: transcript.source ?? 'bot',
+      }),
+    }).catch((err) => console.error('[RetryRoute] Failed to call Hetzner /transcribe:', err));
+
+    return NextResponse.json({ success: true, async: true });
+  }
+
+  // Fallback: synchronous (local dev without bot service)
   await processAudioFile({
     userId: user.id,
     calendarEventId,

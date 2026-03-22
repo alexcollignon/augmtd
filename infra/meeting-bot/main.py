@@ -13,6 +13,7 @@ load_dotenv()
 
 from models import BotRecord, BotState, bots
 from scheduler import schedule_bot, scheduler
+from transcription_worker import run_transcription
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -112,6 +113,27 @@ async def get_bot(bot_id: str, _: HTTPAuthorizationCredentials = Depends(verify_
         state=bot.state.value,
         audioStoragePath=bot.audio_storage_path,
     )
+
+
+class TranscribeRequest(BaseModel):
+    storagePath: str
+    transcriptId: str | None = None   # omit for new bot recordings; provide for retries
+    calendarEventId: str | None = None
+    userId: str
+    source: str = 'bot'
+
+
+@app.post('/transcribe', status_code=202)
+async def transcribe(body: TranscribeRequest, _: HTTPAuthorizationCredentials = Depends(verify_auth)):
+    asyncio.create_task(run_transcription(
+        storage_path=body.storagePath,
+        calendar_event_id=body.calendarEventId,
+        user_id=body.userId,
+        source=body.source,
+        transcript_id=body.transcriptId,
+    ))
+    logger.info(f'[Main] Queued transcription for storage_path={body.storagePath} transcript_id={body.transcriptId}')
+    return {'status': 'queued', 'transcriptId': body.transcriptId}
 
 
 @app.get('/health')

@@ -10,6 +10,7 @@ from playwright.async_api import async_playwright
 from audio_capture import AudioCapture
 from models import BotState, bots
 from storage_uploader import upload_to_supabase
+from transcription_worker import run_transcription
 
 logger = logging.getLogger(__name__)
 
@@ -380,7 +381,18 @@ async def run_bot(bot_id: str) -> None:
         bot.audio_storage_path = storage_path
         bot.state = BotState.ENDED
 
-        await _send_webhook(bot.calendar_event_id, bot_id, 'ended', storage_path)
+        # Notify Vercel of state change (lightweight — no transcription triggered)
+        await _send_webhook(bot.calendar_event_id, bot_id, 'ended')
+
+        # Transcribe locally — avoids Vercel 300s function timeout for large audio files.
+        # run_transcription pre-inserts the pending row, calls local Whisper, writes
+        # segments to Supabase, then calls Vercel /generate-insights (fast AI-only route).
+        asyncio.create_task(run_transcription(
+            storage_path=storage_path,
+            calendar_event_id=bot.calendar_event_id,
+            user_id=bot.user_id,
+            source='bot',
+        ))
 
         # Clean up local file
         try:
