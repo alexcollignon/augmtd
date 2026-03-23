@@ -13,6 +13,8 @@
  */
 
 import { SupabaseClient } from '@supabase/supabase-js';
+import { batchClassifyEmails, type EmailEnvelope } from '@/lib/ai/email-classifier-batch';
+import { batchAnalyzeRecipients, type EmailRoutingInput, type UserInSystem } from '@/lib/ai/recipient-classifier-batch';
 
 // Postgres rejects \u0000 (null bytes) in text columns — strip recursively from any value
 function stripNulls(v: unknown): unknown {
@@ -166,6 +168,8 @@ export interface SyncResult {
 export interface SyncOptions {
   maxEmails?: number;
   syncWindowDays?: number;
+  /** Skip fetch step — use these pre-fetched raw messages directly (push webhook path) */
+  preloadedMessages?: any[];
 }
 
 /**
@@ -236,13 +240,16 @@ export async function syncEmailsForConnection(
       .update({ sync_status: 'syncing' })
       .eq('id', connection.id);
 
-    // Fetch emails based on provider
+    // Fetch emails based on provider (or use preloaded messages from push webhook)
     const encryptedTokens = connection.metadata.tokens;
     const maxEmails = options.maxEmails || connection.metadata.max_emails_per_sync || 10;
     const syncWindowDays = options.syncWindowDays || connection.metadata.sync_window_days || 7;
 
     let messages: any[];
-    if (connection.provider === 'gmail') {
+    if (options.preloadedMessages) {
+      messages = options.preloadedMessages;
+      console.log(`Using ${messages.length} preloaded ${connection.provider} messages for user ${connection.user_id}`);
+    } else if (connection.provider === 'gmail') {
       const onGmailTokenRefresh = async (newEncryptedTokens: string) => {
         await adminSupabase
           .from('connections')
@@ -312,13 +319,80 @@ export async function syncEmailsForConnection(
       console.log(`○ No calendar context available - AI will not use scheduling insights`);
     }
 
+    // === BATCH PRE-FILTER ===
+    // Parse all messages upfront so we can build envelopes for the batch classifier.
+    // If messages are already parsed (from fetch-batch / process-single), skip re-parsing.
+    const parsedMessages = messages.map(m =>
+      // A parsed message has message_id; a raw Gmail/Outlook message does not
+      ('message_id' in m)
+        ? m
+        : connection.provider === 'gmail' ? parseGmailMessage(m) : parseOutlookMessage(m)
+    );
+
+    // Build envelopes (subject + from + snippet only — no body)
+    const envelopes: EmailEnvelope[] = parsedMessages.map((p, i) => ({
+      id: String(i), // use index as temporary id
+      from: p.from_address,
+      subject: p.subject || '',
+      snippet: (p as any).snippet || p.body?.slice(0, 200) || '',
+    }));
+
+    const classMap = await batchClassifyEmails(envelopes, connection.user_id, adminSupabase);
+
+    // Build routing inputs for process-class emails
+    const processEnvelopes = parsedMessages
+      .map((p, i) => ({ p, i }))
+      .filter(({ i }) => classMap.get(String(i)) === 'process');
+
+    const routingInputs: EmailRoutingInput[] = processEnvelopes.map(({ p, i }) => ({
+      id: String(i),
+      from: p.from_address,
+      to: (p as any).to_addresses || [],
+      cc: (p as any).cc_addresses || [],
+      subject: p.subject || '',
+    }));
+
+    // Fetch users in system once for batch routing
+    let usersInSystemForBatch: UserInSystem[] = [];
+    try {
+      const { data: ownerProfileForBatch } = await adminSupabase
+        .from('profiles')
+        .select('id, email, full_name, company_id')
+        .eq('id', connection.user_id)
+        .single();
+      if (ownerProfileForBatch) {
+        usersInSystemForBatch = [{ userId: ownerProfileForBatch.id, email: ownerProfileForBatch.email, fullName: ownerProfileForBatch.full_name ?? undefined }];
+        if (ownerProfileForBatch.company_id) {
+          const { data: members } = await adminSupabase
+            .from('company_members')
+            .select('user_id, profiles(id, email, full_name)')
+            .eq('company_id', ownerProfileForBatch.company_id)
+            .eq('status', 'active')
+            .limit(100);
+          if (members) {
+            for (const m of members) {
+              const pr = Array.isArray(m.profiles) ? m.profiles[0] : m.profiles;
+              if (pr) usersInSystemForBatch.push({ userId: pr.id, email: pr.email, fullName: pr.full_name ?? undefined });
+            }
+          }
+        }
+      }
+    } catch { /* non-fatal — batch routing falls back to connection owner */ }
+
+    // routingMap provides pre-computed routing hints for each email; used to log and
+    // in future to short-circuit per-email analyzeRecipients() for clear cases.
+    const routingMap = await batchAnalyzeRecipients(routingInputs, usersInSystemForBatch, connection.user_id, adminSupabase);
+    if (routingMap.size > 0) {
+      console.log(`[BatchRouting] Pre-computed routing for ${routingMap.size} process-class email(s)`);
+    }
+    // === END BATCH PRE-FILTER ===
+
     // Process each email
-    for (const message of messages) {
+    for (let _msgIdx = 0; _msgIdx < parsedMessages.length; _msgIdx++) {
+      const emailClass = classMap.get(String(_msgIdx)) ?? 'process';
       try {
-        // Parse based on provider
-        const parsed = connection.provider === 'gmail'
-          ? parseGmailMessage(message)
-          : parseOutlookMessage(message);
+        // Already parsed above
+        const parsed = parsedMessages[_msgIdx];
 
         const isForwarded = detectForwarded(parsed.subject || '', parsed.body || '');
 
@@ -434,6 +508,46 @@ export async function syncEmailsForConnection(
           console.log(`    ✓ Learning signals queued, skipping inbox item (sent email)\n`);
           continue; // Skip to next email (already stored for context)
         }
+
+        // ==== BATCH AI FAST-PATH ====
+        // noise → store email only, no inbox item
+        // fyi_only → minimal inbox item, skip expensive AI processing
+        if (emailClass === 'noise') {
+          console.log(`    ⊘ Classified as noise — stored, skipping inbox item`);
+          continue;
+        }
+
+        if (emailClass === 'fyi_only') {
+          console.log(`    ℹ Classified as FYI — creating minimal inbox item`);
+          await adminSupabase.from('inbox_items').insert(stripNulls({
+            user_id: connection.user_id,
+            connection_id: connection.id,
+            source: 'email',
+            source_id: storedEmail.id,
+            work_state: 'fyi',
+            work_title: parsed.subject || 'Email',
+            why_matters: null,
+            what_i_prepared: null,
+            item_type: 'email',
+            source_data: {
+              email_id: storedEmail.id,
+              message_id: storedEmail.message_id,
+              thread_id: storedEmail.thread_id || storedEmail.message_id,
+              from: storedEmail.from_address,
+              from_address: storedEmail.from_address,
+              from_name: storedEmail.from_name,
+              subject: storedEmail.subject,
+              body: storedEmail.body,
+              received_at: storedEmail.received_at,
+              provider: connection.provider,
+            },
+            status: 'pending',
+            needs_review: false,
+          }) as Record<string, unknown>);
+          result.inboxItemsCreated++;
+          continue;
+        }
+        // ==== END BATCH AI FAST-PATH ====
 
         // ==== RECIPIENT DETECTION ====
         // Analyze all recipients to determine who needs inbox items

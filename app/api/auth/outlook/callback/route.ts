@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient as createServerClient } from '@supabase/supabase-js';
 import { getTokenFromCode } from '@/lib/microsoft/oauth';
 import { Client } from '@microsoft/microsoft-graph-client';
+import { registerOutlookSubscription } from '@/lib/microsoft/outlook-subscriptions';
 
 export async function GET(request: NextRequest) {
   try {
@@ -81,6 +82,22 @@ export async function GET(request: NextRequest) {
     }
 
     console.log(`✓ Outlook connected for user ${userId}, sync will be triggered by client`);
+
+    // Register Outlook push subscription (non-blocking — failure must not break OAuth flow)
+    try {
+      const { data: newConnection } = await supabase
+        .from('connections')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('provider', 'outlook')
+        .eq('provider_account_id', profile.userPrincipalName || profile.mail)
+        .single();
+      if (newConnection) {
+        await registerOutlookSubscription(newConnection, supabase);
+      }
+    } catch (subErr) {
+      console.error('[OutlookCallback] Failed to register subscription (non-fatal):', subErr);
+    }
 
     // Success - redirect to inbox (client will trigger sync)
     return NextResponse.redirect(`${origin}/inbox?success=outlook_connected`);

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient as createServerClient } from '@supabase/supabase-js';
 import { getOAuth2Client } from '@/lib/google/oauth';
 import { google } from 'googleapis';
+import { registerGmailWatch } from '@/lib/google/gmail-watch';
 
 export async function GET(request: NextRequest) {
   try {
@@ -73,6 +74,22 @@ export async function GET(request: NextRequest) {
     }
 
     console.log(`✓ Gmail connected for user ${userId}, sync will be triggered by client`);
+
+    // Register Gmail push watch (non-blocking — failure must not break OAuth flow)
+    try {
+      const { data: newConnection } = await supabase
+        .from('connections')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('provider', 'gmail')
+        .eq('provider_account_id', profile.email!)
+        .single();
+      if (newConnection) {
+        await registerGmailWatch(newConnection, supabase);
+      }
+    } catch (watchErr) {
+      console.error('[GmailCallback] Failed to register watch (non-fatal):', watchErr);
+    }
 
     // Success - redirect to inbox (client will trigger sync)
     return NextResponse.redirect(`${origin}/inbox?success=gmail_connected`);

@@ -14,6 +14,7 @@ load_dotenv()
 from models import BotRecord, BotState, bots
 from scheduler import schedule_bot, scheduler
 from transcription_worker import run_transcription
+from email_backfill_worker import run_email_backfill
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -134,6 +135,25 @@ async def transcribe(body: TranscribeRequest, _: HTTPAuthorizationCredentials = 
     ))
     logger.info(f'[Main] Queued transcription for storage_path={body.storagePath} transcript_id={body.transcriptId}')
     return {'status': 'queued', 'transcriptId': body.transcriptId}
+
+
+class BackfillRequest(BaseModel):
+    connectionId: str
+    userId: str
+    maxEmails: int = 100
+    appUrl: str
+
+
+@app.post('/email-backfill', status_code=202)
+async def email_backfill(body: BackfillRequest, _: HTTPAuthorizationCredentials = Depends(verify_auth)):
+    asyncio.create_task(run_email_backfill(
+        connection_id=body.connectionId,
+        user_id=body.userId,
+        max_emails=body.maxEmails,
+        app_url=body.appUrl,
+    ))
+    logger.info(f'[Main] Queued email backfill for connection={body.connectionId} max={body.maxEmails}')
+    return {'status': 'queued'}
 
 
 @app.get('/health')
