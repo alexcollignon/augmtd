@@ -43,6 +43,7 @@ export const TIER_DEFAULTS: Record<TierType, Record<TaskType, ModelEndpoint>> = 
   // ── Private shared — Together AI (fully private, no data leaves to OpenAI/Anthropic)
   // DeepSeek-V3.1 for planning/generation. Llama-3.3-70B for classification/summarization/assignment.
   // Qwen3-VL-8B for OCR (32B not serverless on Together AI). multilingual-e5 for embeddings (514 token limit).
+  // conversation: Qwen/Qwen3.5-9B — replaced mistralai/Mistral-Small-24B-Instruct-2501 (deprecated Mar 2026 by Together AI).
   // Upgrade paths: OCR → Qwen3-VL-32B (needs dedicated endpoint). Embeddings → bge-large (flaky serverless).
   private_shared: {
     planning:      { provider: 'openai_compatible', model: 'deepseek-ai/DeepSeek-V3.1',

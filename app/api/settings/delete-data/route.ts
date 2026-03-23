@@ -144,7 +144,21 @@ export async function POST(request: NextRequest) {
         .eq('connection_id', connectionId);
     }
 
-    // 9. Delete knowledge base data (user-scoped, not connection-scoped — only on full wipe)
+    // 9. Reset last_sync so next sync re-fetches the full window instead of fetching nothing
+    if (isAll) {
+      await adminSupabase
+        .from('connections')
+        .update({ last_sync: null })
+        .eq('user_id', userId);
+    } else {
+      await adminSupabase
+        .from('connections')
+        .update({ last_sync: null })
+        .eq('user_id', userId)
+        .eq('id', connectionId);
+    }
+
+    // 10. Delete knowledge base data (user-scoped, not connection-scoped — only on full wipe)
     if (isAll) {
       await adminSupabase.from('knowledge_chunks').delete().eq('user_id', userId);
       await adminSupabase.from('knowledge_files').delete().eq('user_id', userId);

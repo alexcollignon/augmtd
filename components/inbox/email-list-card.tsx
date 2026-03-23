@@ -30,8 +30,8 @@ export default function EmailListCard({ item, isSelected, onSelect, compact = fa
     ? 'bg-indigo-500'
     : 'bg-neutral-300';
 
-  const fromDisplay = sourceData?.from_name || sourceData?.from || 'Unknown';
-  const subjectDisplay = sourceData?.subject || '(no subject)';
+  const fromDisplay = sourceData?.from_name || sourceData?.from || '';
+  const subjectDisplay = sourceData?.subject || '';
 
   const snippetDisplay = (typeof sourceData?.snippet === 'string' ? sourceData.snippet : null)
     || (typeof sourceData?.body === 'string' ? sourceData.body.slice(0, 120) : null)

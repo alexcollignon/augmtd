@@ -206,12 +206,24 @@ export async function syncDeskForUser(userId: string, adminClient: SupabaseClien
   console.log(`[SyncDesk] inserting ${toInsert.length}, updating ${toUpdate.length}`);
 
   // ── 5. Write to DB ─────────────────────────────────────────────────────────
-  if (toInsert.length > 0) {
+  // Split by thread_key presence: threaded rows need onConflict:'user_id,thread_key',
+  // non-threaded rows need onConflict:'user_id,source_type,source_id'.
+  // Using separate upserts avoids the partial-index ON CONFLICT mismatch in PostgREST.
+  const toInsertThreaded = toInsert.filter(r => r.thread_key != null);
+  const toInsertSingle = toInsert.filter(r => r.thread_key == null);
+
+  if (toInsertThreaded.length > 0) {
     const { error: insertErr } = await adminClient
       .from('desk_items')
-      .upsert(toInsert, { onConflict: 'user_id,thread_key', ignoreDuplicates: true });
+      .upsert(toInsertThreaded, { onConflict: 'user_id,thread_key', ignoreDuplicates: true });
+    if (insertErr) console.error('[SyncDesk] Insert (threaded) error:', insertErr.message);
+  }
 
-    if (insertErr) console.error('[SyncDesk] Insert error:', insertErr.message);
+  if (toInsertSingle.length > 0) {
+    const { error: insertErr } = await adminClient
+      .from('desk_items')
+      .upsert(toInsertSingle, { onConflict: 'user_id,source_type,source_id', ignoreDuplicates: true });
+    if (insertErr) console.error('[SyncDesk] Insert (single) error:', insertErr.message);
   }
 
   for (const { id, fields } of toUpdate) {

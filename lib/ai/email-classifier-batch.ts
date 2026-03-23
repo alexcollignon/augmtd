@@ -2,7 +2,7 @@
  * Batch email classifier — single AI call to pre-filter a batch of emails.
  *
  * Returns a map of emailId → 'process' | 'fyi_only' | 'noise' for each envelope.
- * Falls back to classifying all as 'process' if the AI call fails.
+ * Falls back to classifying all as 'fyi_only' if the AI call fails.
  */
 
 import { getAIClient } from '@/lib/ai/factory';
@@ -18,64 +18,134 @@ export interface EmailEnvelope {
   snippet: string;
 }
 
-const SYSTEM_PROMPT = `You are an email classifier. Given a batch of email envelopes (from, subject, snippet), classify each one:
-- "process": requires the user's attention, action, decision, or a prepared reply
-- "fyi_only": informational only — updates, newsletters, confirmations the user may want to see but need not act on
-- "noise": automated notifications, marketing, spam, system alerts the user doesn't need to see
+const SYSTEM_PROMPT = `You are an email triage classifier. Given a batch of email envelopes, classify each into exactly one category.
 
-Respond with a JSON object: { "results": [ { "id": "...", "class": "process"|"fyi_only"|"noise" } ] }`;
+CATEGORIES:
+
+"noise" — The user does not need to see this. Use for:
+- Marketing, promotions, discounts ("10% off", "sale", "deal", "offer")
+- Newsletters, digests, editorial content (Substack, mailing lists)
+- Automated system notifications (login alerts, sign-in detected, new device)
+- Shipping/delivery confirmations, order receipts, booking confirmations
+- Social media notifications (likes, follows, comments)
+- Service status updates, uptime reports
+- Automated daily/weekly digest emails ("Your Daily Digest", "Weekly Report")
+- No-reply senders with purely informational content
+- Sports club event announcements, golf tournaments, gym offers
+- Ride receipts (Uber, Lyft, Bolt)
+- Bank transaction alerts (automated, no action needed)
+- App welcome emails, verify-email transactional flows
+- Cron job / system monitoring alerts
+
+"fyi_only" — The user may want to see this but does not need to act. Use for:
+- Calendar invites accepted/declined/updated from known contacts
+- Payment received confirmations (Wise, Stripe, PayPal — money coming IN)
+- Invoice receipts for purchases already made
+- Non-urgent status updates from colleagues or clients
+- FYI-style forwards ("just so you know")
+- Soft deadlines or reminders that don't require immediate action
+
+"process" — The user must read and likely respond or decide. Use for:
+- A human (not automated) is expecting a reply
+- A client, partner, or colleague is asking a question or requesting action
+- A contract, proposal, or document needs review or signature
+- A meeting request or scheduling negotiation
+- An urgent payment failure or billing issue that needs fixing
+- A legal, compliance, or regulatory notice
+- A job application, interview, or hiring decision
+- Any email where ignoring it has a cost
+
+EXAMPLES:
+- From: noreply@uber.com, Subject: "Your Thursday trip receipt" → noise
+- From: info@zaask.pt, Subject: "✅ Os seus orçamentos estão a caminho!" → noise
+- From: no-reply@accounts.google.com, Subject: "Alerta de segurança" → noise
+- From: newsletter@substack.com, Subject: "The Guide to AI Research" → noise
+- From: noreply@wise.com, Subject: "You got paid by ACME Ltd" → fyi_only
+- From: calendar@google.com, Subject: "Updated invitation: Team Sync" → fyi_only
+- From: client@company.com, Subject: "RE: Proposal feedback" → process
+- From: partner@firm.com, Subject: "Contract revision needed" → process
+- From: failed-payments@stripe.com, Subject: "Payment to Synthesia unsuccessful" → process
+
+Respond ONLY with valid JSON: { "results": [ { "id": "...", "class": "process"|"fyi_only"|"noise" } ] }
+Include every id from the input. No explanations.`;
+
+async function classifyBatch(
+  envelopes: EmailEnvelope[],
+  userId: string,
+  adminSupabase: SupabaseClient,
+): Promise<Map<string, EmailClass>> {
+  const { client: ai, model } = await getAIClient(userId, 'classification', adminSupabase);
+
+  const userContent = JSON.stringify(
+    envelopes.map(e => ({
+      id: e.id,
+      from: e.from,
+      subject: e.subject,
+      snippet: e.snippet?.slice(0, 150),
+    })),
+  );
+
+  // Dynamic token budget: ~60 tokens per result, minimum 1024
+  const maxTokens = Math.min(4096, Math.max(1024, envelopes.length * 60));
+
+  const response = await ai.chat.completions.create({
+    model,
+    messages: [
+      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'user', content: userContent },
+    ],
+    max_tokens: maxTokens,
+    temperature: 0,
+  });
+
+  const text = response.choices[0]?.message?.content || '';
+  const parsed = parseModelJSON<{ results: Array<{ id: string; class: string }> }>(text, { results: [] });
+
+  const result = new Map<string, EmailClass>();
+  for (const item of parsed.results) {
+    const cls = item.class as EmailClass;
+    if (['process', 'fyi_only', 'noise'].includes(cls)) {
+      result.set(item.id, cls);
+    }
+  }
+
+  // Fill missing ids with fyi_only (safer than process — avoids flooding inbox)
+  for (const e of envelopes) {
+    if (!result.has(e.id)) result.set(e.id, 'fyi_only');
+  }
+
+  return result;
+}
 
 export async function batchClassifyEmails(
   envelopes: EmailEnvelope[],
   userId: string,
   adminSupabase: SupabaseClient,
 ): Promise<Map<string, EmailClass>> {
-  // Default: treat all as process
-  const fallback = new Map<string, EmailClass>(envelopes.map(e => [e.id, 'process']));
+  // Default: fyi_only (safer failure mode than process-all)
+  const fallback = new Map<string, EmailClass>(envelopes.map(e => [e.id, 'fyi_only']));
 
   if (envelopes.length === 0) return fallback;
 
   try {
-    const { client: ai, model } = await getAIClient(userId, 'classification', adminSupabase);
+    let result: Map<string, EmailClass>;
 
-    const userContent = JSON.stringify(
-      envelopes.map(e => ({
-        id: e.id,
-        from: e.from,
-        subject: e.subject,
-        snippet: e.snippet?.slice(0, 200),
-      })),
-    );
-
-    const response = await ai.chat.completions.create({
-      model,
-      messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'user', content: userContent },
-      ],
-      max_tokens: 512,
-    });
-
-    const text = response.choices[0]?.message?.content || '';
-    const parsed = parseModelJSON<{ results: Array<{ id: string; class: string }> }>(text, { results: [] });
-
-    const result = new Map<string, EmailClass>();
-    for (const item of parsed.results) {
-      const cls = item.class as EmailClass;
-      if (['process', 'fyi_only', 'noise'].includes(cls)) {
-        result.set(item.id, cls);
-      }
-    }
-
-    // Fill in any missing ids with fallback
-    for (const e of envelopes) {
-      if (!result.has(e.id)) result.set(e.id, 'process');
+    if (envelopes.length <= 50) {
+      result = await classifyBatch(envelopes, userId, adminSupabase);
+    } else {
+      // Split large batches to avoid token truncation
+      const half = Math.ceil(envelopes.length / 2);
+      const [a, b] = await Promise.all([
+        classifyBatch(envelopes.slice(0, half), userId, adminSupabase),
+        classifyBatch(envelopes.slice(half), userId, adminSupabase),
+      ]);
+      result = new Map([...a, ...b]);
     }
 
     console.log(`[BatchClassify] ${envelopes.length} emails → process:${[...result.values()].filter(v => v === 'process').length} fyi:${[...result.values()].filter(v => v === 'fyi_only').length} noise:${[...result.values()].filter(v => v === 'noise').length}`);
     return result;
   } catch (err) {
-    console.error('[BatchClassify] Failed, falling back to process-all:', err);
+    console.error('[BatchClassify] Failed, falling back to fyi-all:', err);
     return fallback;
   }
 }

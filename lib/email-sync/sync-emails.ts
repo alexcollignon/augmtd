@@ -16,6 +16,24 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import { batchClassifyEmails, type EmailEnvelope } from '@/lib/ai/email-classifier-batch';
 import { batchAnalyzeRecipients, type EmailRoutingInput, type UserInSystem } from '@/lib/ai/recipient-classifier-batch';
 
+// Sanitize filenames for Supabase Storage keys — spaces and special chars cause 400 errors
+function sanitizeStorageKey(filename: string): string {
+  return filename
+    .replace(/\s+/g, '_')
+    .replace(/[^A-Za-z0-9._\-]/g, '_')
+    .replace(/_+/g, '_');
+}
+
+// MIME types that Supabase Storage rejects outright — skip upload for these
+const UNSUPPORTED_STORAGE_MIME_TYPES = new Set([
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation', // pptx
+  'application/vnd.ms-powerpoint', // ppt
+  'application/octet-stream', // generic binary — also rejected
+]);
+function isStorageMimeTypeSupported(mimeType: string): boolean {
+  return !UNSUPPORTED_STORAGE_MIME_TYPES.has(mimeType);
+}
+
 // Postgres rejects \u0000 (null bytes) in text columns — strip recursively from any value
 function stripNulls(v: unknown): unknown {
   if (typeof v === 'string') return v.replace(/\u0000/g, '');
@@ -127,8 +145,23 @@ async function processAttachmentsForEmail(params: {
       // Extract text
       const extractedText = await extractTextFromAttachment(buffer, att.mimeType, att.filename);
 
+      // Skip upload for MIME types that Supabase Storage rejects (pptx, octet-stream, etc.)
+      if (!isStorageMimeTypeSupported(att.mimeType)) {
+        console.log(`[Attachments] Skipping upload for unsupported MIME type: ${att.mimeType} (${att.filename})`);
+        // Still push metadata so the attachment appears in the email card, just without a storagePath
+        results.push({
+          filename: att.filename,
+          mimeType: att.mimeType,
+          size: att.size,
+          storagePath: '',
+          extractedText: extractedText ? extractedText.slice(0, 3000) : null,
+        });
+        continue;
+      }
+
       // Upload to Supabase Storage
-      const storagePath = `${userId}/${emailId}/${att.filename}`;
+      const safeFilename = sanitizeStorageKey(att.filename);
+      const storagePath = `${userId}/${emailId}/${safeFilename}`;
       const { error: uploadError } = await adminSupabase.storage
         .from('email-attachments')
         .upload(storagePath, buffer, {
@@ -510,10 +543,36 @@ export async function syncEmailsForConnection(
         }
 
         // ==== BATCH AI FAST-PATH ====
-        // noise → store email only, no inbox item
+        // noise → minimal inbox item (visible in Latest, filtered out in Smart)
         // fyi_only → minimal inbox item, skip expensive AI processing
         if (emailClass === 'noise') {
-          console.log(`    ⊘ Classified as noise — stored, skipping inbox item`);
+          console.log(`    ⊘ Classified as noise — creating minimal inbox item`);
+          await adminSupabase.from('inbox_items').insert(stripNulls({
+            user_id: connection.user_id,
+            connection_id: connection.id,
+            source: 'email',
+            source_id: storedEmail.id,
+            work_state: 'noise',
+            work_title: parsed.subject || 'Email',
+            why_matters: null,
+            what_i_prepared: null,
+            item_type: 'notification',
+            source_data: {
+              email_id: storedEmail.id,
+              message_id: storedEmail.message_id,
+              thread_id: storedEmail.thread_id || storedEmail.message_id,
+              from: storedEmail.from_address,
+              from_address: storedEmail.from_address,
+              from_name: storedEmail.from_name,
+              subject: storedEmail.subject,
+              body: storedEmail.body,
+              received_at: storedEmail.received_at,
+              provider: connection.provider,
+            },
+            status: 'pending',
+            needs_review: false,
+          }) as Record<string, unknown>);
+          result.inboxItemsCreated++;
           continue;
         }
 
@@ -528,7 +587,7 @@ export async function syncEmailsForConnection(
             work_title: parsed.subject || 'Email',
             why_matters: null,
             what_i_prepared: null,
-            item_type: 'email',
+            item_type: 'fyi',
             source_data: {
               email_id: storedEmail.id,
               message_id: storedEmail.message_id,
@@ -790,7 +849,7 @@ export async function syncEmailsForConnection(
             // Update existing inbox item with recipient context
             const { error: updateError } = await adminSupabase
               .from('inbox_items')
-              .update({
+              .update(stripNulls({
                 connection_id: connection.id,
                 work_state: recipient.inferredWorkState,
                 work_title: processed.workTitle,
@@ -857,7 +916,7 @@ export async function syncEmailsForConnection(
                 execution_status: executionPlan ? 'queued' : null,
                 current_step: 0,
                 artifacts: [],
-              })
+              }) as Record<string, unknown>)
               .eq('id', existingInboxItem.id);
 
             if (updateError) {

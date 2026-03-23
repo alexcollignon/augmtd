@@ -286,9 +286,14 @@ export function InboxPageClient({
   const meetingAssistantItems = inboxItems.filter((item: any) => item.source === 'meeting');
 
   const filteredItems = useMemo(() => {
+    let items = inboxItems;
+    // Smart tab hides noise-classified emails
+    if (viewMode === 'smart') {
+      items = items.filter(item => (item as any).work_state !== 'noise');
+    }
     const q = searchQuery.trim().toLowerCase();
-    if (!q) return inboxItems;
-    return inboxItems.filter(item => {
+    if (!q) return items;
+    return items.filter(item => {
       const sd = (item as any).source_data;
       return (
         (sd?.from_name || '').toLowerCase().includes(q) ||
@@ -297,7 +302,7 @@ export function InboxPageClient({
         (sd?.snippet || '').toLowerCase().includes(q)
       );
     });
-  }, [inboxItems, searchQuery]);
+  }, [inboxItems, searchQuery, viewMode]);
 
   const handleItemConfirmed = (ids: string[], _action: 'confirm_as_mine' | 'not_my_task') => {
     setInboxItems(prev => prev.filter(i => !ids.includes(i.id)));
@@ -573,16 +578,16 @@ export function InboxPageClient({
             <div className="w-[272px] flex-shrink-0 border-r border-neutral-200 flex flex-col bg-white">
 
               {/* View + density toggles */}
-              <div className="flex-shrink-0 flex items-center justify-between pl-3 pr-1.5 border-b border-neutral-100 h-10">
+              <div className="flex-shrink-0 flex items-center justify-between pl-2.5 pr-1 border-b border-neutral-100 h-10">
                 {/* Segmented view tabs */}
                 <div className="flex items-center h-full gap-0.5">
                   {(['chronological', 'smart', 'browse'] as const).map((key) => {
-                    const labels = { chronological: 'Latest', smart: 'Smart', browse: 'Browse' };
+                    const labels = { chronological: 'Standard', smart: 'Smart', browse: 'Browse' };
                     return (
                       <button
                         key={key}
                         onClick={() => handleViewMode(key)}
-                        className={`relative px-2.5 h-full text-[12px] font-medium transition-colors ${
+                        className={`relative px-1.5 h-full text-[12px] font-medium transition-colors ${
                           viewMode === key
                             ? 'text-indigo-600'
                             : 'text-neutral-400 hover:text-neutral-600'
@@ -598,11 +603,11 @@ export function InboxPageClient({
                 </div>
 
                 {/* Density + sync */}
-                <div className="flex items-center gap-0.5">
+                <div className="flex items-center gap-0">
                   <button
                     onClick={() => handleDensity('normal')}
                     title="Normal"
-                    className={`p-1.5 transition-colors ${
+                    className={`p-1 transition-colors ${
                       density === 'normal' ? 'text-neutral-500' : 'text-neutral-300 hover:text-neutral-500'
                     }`}
                   >
@@ -611,7 +616,7 @@ export function InboxPageClient({
                   <button
                     onClick={() => handleDensity('compact')}
                     title="Compact"
-                    className={`p-1.5 transition-colors ${
+                    className={`p-1 transition-colors ${
                       density === 'compact' ? 'text-neutral-500' : 'text-neutral-300 hover:text-neutral-500'
                     }`}
                   >
@@ -625,7 +630,7 @@ export function InboxPageClient({
                     }}
                     disabled={isSyncing}
                     title={isSyncing ? 'Syncing…' : 'Sync inbox'}
-                    className="p-1.5 transition-colors text-neutral-300 hover:text-neutral-500 disabled:opacity-50"
+                    className="p-1 transition-colors text-neutral-300 hover:text-neutral-500 disabled:opacity-50"
                   >
                     <ArrowPathIcon className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
                   </button>
