@@ -242,7 +242,7 @@ export async function syncEmailsForConnection(
 
     // Fetch emails based on provider (or use preloaded messages from push webhook)
     const encryptedTokens = connection.metadata.tokens;
-    const maxEmails = options.maxEmails || connection.metadata.max_emails_per_sync || 10;
+    const maxEmails = options.maxEmails || connection.metadata.max_emails_per_sync || 50;
     const syncWindowDays = options.syncWindowDays || connection.metadata.sync_window_days || 7;
 
     let messages: any[];
@@ -257,7 +257,7 @@ export async function syncEmailsForConnection(
           .eq('id', connection.id);
         console.log(`✓ Updated refreshed Gmail tokens for connection ${connection.id}`);
       };
-      messages = await fetchGmailEmails(encryptedTokens, maxEmails, syncWindowDays, connection.metadata?.email, onGmailTokenRefresh);
+      messages = await fetchGmailEmails(encryptedTokens, maxEmails, syncWindowDays, connection.metadata?.email, onGmailTokenRefresh, connection.last_sync ?? undefined);
     } else if (connection.provider === 'outlook') {
       // Token refresh callback - updates database when tokens are refreshed
       const onTokenRefresh = async (newTokens: { accessToken: string; refreshToken: string; expiresOn: string }) => {
@@ -280,7 +280,7 @@ export async function syncEmailsForConnection(
         console.log(`✓ Updated refreshed tokens for connection ${connection.id}`);
       };
 
-      messages = await fetchOutlookEmails(encryptedTokens, maxEmails, syncWindowDays, onTokenRefresh);
+      messages = await fetchOutlookEmails(encryptedTokens, maxEmails, syncWindowDays, onTokenRefresh, connection.last_sync ?? undefined);
     } else {
       console.warn(`Unknown provider: ${connection.provider}`);
       result.errors.push(`Unknown provider: ${connection.provider}`);

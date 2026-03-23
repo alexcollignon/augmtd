@@ -95,14 +95,15 @@ export async function fetchUnreadEmails(
   encryptedTokens: string,
   maxResults: number = 10,
   syncWindowDays: number = 7,
-  onTokenRefresh?: TokenRefreshCallback
+  onTokenRefresh?: TokenRefreshCallback,
+  lastSync?: string,
 ) {
   const client = await getGraphClient(encryptedTokens, onTokenRefresh);
 
-  // Calculate date filter (7 days ago)
-  const dateFilter = new Date();
-  dateFilter.setDate(dateFilter.getDate() - syncWindowDays);
-  const dateString = dateFilter.toISOString();
+  // Use last sync timestamp when available; fall back to syncWindowDays on first sync.
+  const dateString = lastSync
+    ? new Date(lastSync).toISOString()
+    : (() => { const d = new Date(); d.setDate(d.getDate() - syncWindowDays); return d.toISOString(); })();
 
   const messages = await client
     .api('/me/mailFolders/inbox/messages')

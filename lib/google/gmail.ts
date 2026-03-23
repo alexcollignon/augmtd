@@ -52,20 +52,24 @@ export async function fetchUnreadEmails(
   syncWindowDays: number = 7,
   accountEmail?: string,
   onTokenRefresh?: GmailTokenRefreshCallback,
+  lastSync?: string,
 ): Promise<GmailMessage[]> {
   try {
     const gmail = await getGmailClient(encryptedTokens, onTokenRefresh);
 
-    // Personal Gmail accounts (@gmail.com / @googlemail.com) use the tabbed inbox,
-    // so category:primary targets the Primary tab precisely.
-    // Google Workspace accounts don't have category tabs, so category:primary returns
-    // nothing — use in:inbox instead.
     const isPersonalGmail = !accountEmail ||
       accountEmail.endsWith('@gmail.com') ||
       accountEmail.endsWith('@googlemail.com');
-    const query = isPersonalGmail
-      ? `newer_than:${syncWindowDays}d category:primary -is:spam`
-      : `newer_than:${syncWindowDays}d in:inbox -is:spam`;
+    const inboxFilter = isPersonalGmail ? 'category:primary' : 'in:inbox';
+
+    // Use last sync timestamp when available so we only fetch emails received
+    // since the previous sync, not a fixed window from now.
+    // Fall back to newer_than:Xd on first sync (no last_sync recorded yet).
+    const timeFilter = lastSync
+      ? `after:${Math.floor(new Date(lastSync).getTime() / 1000)}`
+      : `newer_than:${syncWindowDays}d`;
+
+    const query = `${timeFilter} ${inboxFilter} -is:spam`;
 
     const response = await gmail.users.messages.list({
       userId: 'me',
