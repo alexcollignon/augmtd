@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import type { DeskItem, DeskColumn } from '@/lib/types/desk';
 import DeskCard from './desk-card';
+import PoolCard from './pool-card';
 
 interface KanbanColumnProps {
   id: DeskColumn;
@@ -10,12 +11,19 @@ interface KanbanColumnProps {
   items: DeskItem[];
   onMove: (id: string, column: DeskColumn) => void;
   onDismiss: (id: string) => void;
+  onConfirm?: (id: string) => void;
 }
 
-export default function KanbanColumn({ id, label, items, onMove, onDismiss }: KanbanColumnProps) {
+const POOL_VISIBLE_DEFAULT = 15;
+
+export default function KanbanColumn({ id, label, items, onMove, onDismiss, onConfirm }: KanbanColumnProps) {
   const [isDragOver, setIsDragOver] = useState(false);
+  const [showAll, setShowAll] = useState(false);
+
+  const isPool = id === 'pool';
 
   const handleDragOver = (e: React.DragEvent) => {
+    if (isPool) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
     setIsDragOver(true);
@@ -24,6 +32,7 @@ export default function KanbanColumn({ id, label, items, onMove, onDismiss }: Ka
   const handleDragLeave = () => setIsDragOver(false);
 
   const handleDrop = (e: React.DragEvent) => {
+    if (isPool) return;
     e.preventDefault();
     setIsDragOver(false);
     const itemId = e.dataTransfer.getData('desk-item-id');
@@ -31,6 +40,7 @@ export default function KanbanColumn({ id, label, items, onMove, onDismiss }: Ka
   };
 
   const COLUMN_HEADER_COLOR: Record<DeskColumn, string> = {
+    pool: 'text-violet-600',
     todo: 'text-neutral-600',
     in_progress: 'text-indigo-600',
     waiting: 'text-amber-600',
@@ -38,11 +48,15 @@ export default function KanbanColumn({ id, label, items, onMove, onDismiss }: Ka
   };
 
   const COLUMN_DOT: Record<DeskColumn, string> = {
+    pool: 'bg-violet-400',
     todo: 'bg-neutral-300',
     in_progress: 'bg-indigo-400',
     waiting: 'bg-amber-400',
     done: 'bg-green-400',
   };
+
+  const visibleItems = isPool && !showAll ? items.slice(0, POOL_VISIBLE_DEFAULT) : items;
+  const hiddenCount = isPool ? Math.max(0, items.length - POOL_VISIBLE_DEFAULT) : 0;
 
   return (
     <div
@@ -69,14 +83,31 @@ export default function KanbanColumn({ id, label, items, onMove, onDismiss }: Ka
         {items.length === 0 && (
           <div className="h-8" />
         )}
-        {items.map((item) => (
-          <DeskCard
-            key={item.id}
-            item={item}
-            onMove={onMove}
-            onDismiss={onDismiss}
-          />
-        ))}
+        {visibleItems.map((item) =>
+          isPool ? (
+            <PoolCard
+              key={item.id}
+              item={item}
+              onConfirm={onConfirm ?? (() => {})}
+              onDismiss={onDismiss}
+            />
+          ) : (
+            <DeskCard
+              key={item.id}
+              item={item}
+              onMove={onMove}
+              onDismiss={onDismiss}
+            />
+          )
+        )}
+        {isPool && !showAll && hiddenCount > 0 && (
+          <button
+            onClick={() => setShowAll(true)}
+            className="w-full text-[11px] text-neutral-500 hover:text-neutral-700 py-1.5 text-center"
+          >
+            + {hiddenCount} more
+          </button>
+        )}
       </div>
     </div>
   );

@@ -2,13 +2,13 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { createClient } from '@/lib/supabase/client';
-import { useSearchParams } from 'next/navigation';
+import { useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import SidebarNav from '@/components/sidebar-nav';
 import EmailListSections from '@/components/inbox/email-list-sections';
 import EmailListChronological from '@/components/inbox/email-list-chronological';
 import WorkDetailInline from '@/components/inbox/work-detail-inline';
-import InboxChatView from '@/components/inbox/inbox-chat-view';
+import AiChatPanel from '@/components/shared/ai-chat-panel';
 import MeetingsColumn from '@/components/inbox/meetings-column';
 import OnboardingModal from '@/components/onboarding-modal';
 import { ArrowPathIcon, SparklesIcon, ClockIcon, Bars3Icon, QueueListIcon, ArchiveBoxArrowDownIcon, XMarkIcon, MagnifyingGlassIcon, PencilSquareIcon, CalendarIcon, FolderIcon, FolderOpenIcon, EnvelopeIcon } from '@heroicons/react/24/outline';
@@ -49,6 +49,7 @@ export function InboxPageClient({
   initialInboxItems,
 }: InboxPageClientProps) {
   const searchParams = useSearchParams();
+  const router = useRouter();
   const [user] = useState(initialUser);
   const [hasConnection, setHasConnection] = useState(initialHasConnection);
   const [inboxItems, setInboxItems] = useState<InboxItem[]>(initialInboxItems);
@@ -400,11 +401,20 @@ export function InboxPageClient({
     } else if (type === 'open') {
       const item = inboxItems.find(i => i.id === itemId);
       if (item) handleSelectItem(item);
-    } else if (type === 'workflow') {
-      const item = inboxItems.find(i => i.id === itemId);
-      if (item) handleSelectItem(item);
     }
   }, [inboxItems]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleOpenWorkflow = useCallback((itemId: string, skill?: string, prefillTitle?: string) => {
+    const params = new URLSearchParams();
+    if (skill) params.set('skill', skill);
+    if (prefillTitle) params.set('title', prefillTitle);
+    if (itemId) params.set('fromItem', itemId);
+    router.push(`/work/new?${params.toString()}`);
+  }, [router]);
+
+  const handleOpenProcess = useCallback((processId: string) => {
+    router.push(`/processes/${processId}`);
+  }, [router]);
 
   const openChat = () => {
     setRightPanel('chat');
@@ -478,10 +488,11 @@ export function InboxPageClient({
     setStreamingContent('');
 
     try {
-      const res = await fetch('/api/inbox/chat', {
+      const res = await fetch('/api/assistant/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          context: 'inbox',
           message: userMessage,
           history: chatHistory,
           sources: chatSources,
@@ -947,7 +958,8 @@ export function InboxPageClient({
             )}
             {rightPanel === 'chat' && (
               <div className="w-[340px] flex-shrink-0 border-l border-neutral-200 flex flex-col">
-                <InboxChatView
+                <AiChatPanel
+                  context="inbox"
                   composeDraft={composeMode ? composeDraft : undefined}
                   onUpdateComposeDraft={composeMode
                     ? (fields) => setComposeDraft(prev => ({ ...prev, ...fields }))
@@ -977,6 +989,8 @@ export function InboxPageClient({
                   mode={composeMode ? 'compose' : replyIsOpen ? 'reply' : 'inbox'}
                   replyDraft={replyIsOpen ? replyBody : undefined}
                   onUpdateReplyDraft={handleUpdateReplyDraft}
+                  onOpenWorkflow={handleOpenWorkflow}
+                  onOpenProcess={handleOpenProcess}
                 />
               </div>
             )}

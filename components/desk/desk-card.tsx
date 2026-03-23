@@ -35,6 +35,7 @@ export default function DeskCard({ item, onMove, onDismiss }: DeskCardProps) {
   const SourceIcon = SOURCE_ICONS[item.sourceType] ?? RectangleStackIcon;
   const isDone = item.column === 'done';
   const synthesizing = !item.synthesis && !item.synthesisAt && item.sourceType === 'email';
+  const bodyText = item.synthesis || (!synthesizing ? item.description : null);
 
   return (
     <div
@@ -43,83 +44,64 @@ export default function DeskCard({ item, onMove, onDismiss }: DeskCardProps) {
         e.dataTransfer.setData('desk-item-id', item.id);
         e.dataTransfer.effectAllowed = 'move';
       }}
-      className={`group bg-white border border-neutral-100 p-3 cursor-grab active:cursor-grabbing transition-all hover:shadow-sm hover:border-neutral-200 ${
+      className={`group bg-white border border-neutral-100 px-3 py-2 cursor-grab active:cursor-grabbing transition-all hover:shadow-sm hover:border-neutral-200 ${
         isDone ? 'opacity-55' : ''
       }`}
     >
-      {/* Header row */}
-      <div className="flex items-start gap-2">
-        <div className="flex-shrink-0 w-6 h-6 bg-neutral-100 flex items-center justify-center mt-0.5">
-          <SourceIcon className="w-3.5 h-3.5 text-neutral-500" />
+      {/* Title row */}
+      <div className="flex items-start gap-1.5">
+        <SourceIcon className="w-3 h-3 text-neutral-400 flex-shrink-0 mt-px" />
+        <p className={`text-[12px] font-medium leading-snug line-clamp-1 flex-1 min-w-0 ${isDone ? 'line-through text-neutral-400' : 'text-neutral-900'}`}>
+          {item.title}
+        </p>
+        <div className="flex items-center gap-1 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+          {item.sourceUrl && (
+            <Link href={item.sourceUrl} title="Open">
+              <ArrowTopRightOnSquareIcon className="w-3 h-3 text-neutral-400 hover:text-indigo-500" />
+            </Link>
+          )}
+          <button
+            onClick={() => onDismiss(item.id)}
+            className="p-0.5 text-neutral-300 hover:text-red-500 transition-colors"
+            title="Remove"
+          >
+            <XMarkIcon className="w-3 h-3" />
+          </button>
         </div>
-
-        <div className="flex-1 min-w-0">
-          {/* Title */}
-          <div className="flex items-start gap-1">
-            <p className={`text-[13px] font-medium leading-tight flex-1 ${isDone ? 'line-through text-neutral-400' : 'text-neutral-900'}`}>
-              {item.title}
-            </p>
-            {item.sourceUrl && (
-              <Link
-                href={item.sourceUrl}
-                className="flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
-                title="Open"
-              >
-                <ArrowTopRightOnSquareIcon className="w-3.5 h-3.5 text-neutral-400 hover:text-indigo-500 mt-0.5" />
-              </Link>
-            )}
-          </div>
-
-          {/* Source badge row */}
-          <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-            <span className="text-[10px] font-medium text-neutral-400 uppercase tracking-wide">
-              {SOURCE_LABELS[item.sourceType]}
-            </span>
-            {item.sourceType === 'email' && item.emailCount > 1 && (
-              <span className="text-[10px] text-neutral-400">· {item.emailCount} emails</span>
-            )}
-            {item.urgency && (
-              <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${URGENCY_DOT[item.urgency] ?? 'bg-neutral-300'}`} />
-            )}
-            {item.hasPrepared && (
-              <span className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-indigo-400" title="AUGMTD has prepared a draft" />
-            )}
-          </div>
-        </div>
-
-        {/* Dismiss */}
-        <button
-          onClick={() => onDismiss(item.id)}
-          className="flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:text-red-500 text-neutral-300"
-          title="Remove from desk"
-        >
-          <XMarkIcon className="w-3.5 h-3.5" />
-        </button>
       </div>
 
-      {/* Body — synthesis > ai_context > description */}
-      <div className="pl-8 mt-1.5">
-        {synthesizing && !item.synthesis && (
-          <div className="space-y-1">
-            <div className="h-2.5 bg-neutral-100 animate-pulse rounded w-full" />
-            <div className="h-2.5 bg-neutral-100 animate-pulse rounded w-4/5" />
-          </div>
+      {/* Meta row */}
+      <div className="flex items-center gap-1.5 mt-0.5 pl-4">
+        <span className="text-[10px] font-medium text-neutral-400 uppercase tracking-wide">
+          {SOURCE_LABELS[item.sourceType]}
+        </span>
+        {item.sourceType === 'email' && item.emailCount > 1 && (
+          <span className="text-[10px] text-neutral-400">· {item.emailCount}</span>
         )}
-        {item.synthesis && (
-          <p className="text-[11px] text-neutral-600 leading-snug">
-            {item.synthesis}
-          </p>
+        {item.urgency && (
+          <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${URGENCY_DOT[item.urgency] ?? 'bg-neutral-300'}`} />
         )}
-        {!item.synthesis && !synthesizing && item.description && (
-          <p className="text-[11px] text-neutral-500 leading-snug line-clamp-2">
-            {item.description}
-          </p>
+        {item.hasPrepared && (
+          <span className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-indigo-400" title="Draft prepared" />
         )}
       </div>
 
-      {/* Quick actions */}
+      {/* Body */}
+      {synthesizing && (
+        <div className="pl-4 mt-1 space-y-1">
+          <div className="h-2 bg-neutral-100 animate-pulse rounded w-full" />
+          <div className="h-2 bg-neutral-100 animate-pulse rounded w-3/4" />
+        </div>
+      )}
+      {bodyText && (
+        <p className="pl-4 mt-0.5 text-[11px] text-neutral-500 leading-snug line-clamp-1">
+          {bodyText}
+        </p>
+      )}
+
+      {/* Quick actions on hover */}
       {!isDone && (
-        <div className="flex items-center gap-2 mt-2.5 pl-8 opacity-0 group-hover:opacity-100 transition-opacity">
+        <div className="flex items-center gap-2 mt-1.5 pl-4 opacity-0 group-hover:opacity-100 transition-opacity">
           {item.column !== 'in_progress' && (
             <button
               onClick={() => onMove(item.id, 'in_progress')}

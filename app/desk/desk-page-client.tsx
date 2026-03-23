@@ -1,16 +1,20 @@
 'use client';
 
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { ArrowPathIcon } from '@heroicons/react/24/outline';
+import { useRouter } from 'next/navigation';
+import { ArrowPathIcon, SparklesIcon } from '@heroicons/react/24/outline';
 import type { DeskItem, DeskColumn } from '@/lib/types/desk';
 import { DESK_COLUMNS } from '@/lib/types/desk';
 import KanbanColumn from '@/components/desk/kanban-column';
+import DeskChatSidebar from '@/components/desk/desk-chat-sidebar';
 
 export default function DeskPageClient() {
+  const router = useRouter();
   const [items, setItems] = useState<DeskItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [lastSynced, setLastSynced] = useState<Date | null>(null);
+  const [chatOpen, setChatOpen] = useState(false);
   const synthesisTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const synthesisStartRef = useRef<Date | null>(null);
   const syncInProgressRef = useRef(false);
@@ -22,10 +26,7 @@ export default function DeskPageClient() {
     setItems(data.items ?? []);
   }, []);
 
-  // Synthesis polling — only while items have synthesis_at=null (actively being synthesized)
-  // synthesis_at gets set even on failure, so polling stops regardless of outcome
   useEffect(() => {
-    // Only poll for items where synthesis hasn't been attempted yet (synthesis_at is null)
     const hasPending = items.some(
       (i) => i.sourceType === 'email' && !i.synthesis && !i.synthesisAt
     );
@@ -91,6 +92,22 @@ export default function DeskPageClient() {
     await fetch(`/api/desk/${itemId}`, { method: 'DELETE' });
   }, []);
 
+  const handleConfirm = useCallback((itemId: string) => {
+    handleMove(itemId, 'todo');
+  }, [handleMove]);
+
+  const handleOpenWorkflow = useCallback((itemId: string, skill?: string, prefillTitle?: string) => {
+    const params = new URLSearchParams();
+    if (skill) params.set('skill', skill);
+    if (prefillTitle) params.set('title', prefillTitle);
+    if (itemId) params.set('fromItem', itemId);
+    router.push(`/work/new?${params.toString()}`);
+  }, [router]);
+
+  const handleOpenProcess = useCallback((processId: string) => {
+    router.push(`/processes/${processId}`);
+  }, [router]);
+
   const grouped = DESK_COLUMNS.reduce<Record<DeskColumn, DeskItem[]>>(
     (acc, col) => {
       acc[col.id] = items
@@ -98,7 +115,7 @@ export default function DeskPageClient() {
         .sort((a, b) => a.position - b.position);
       return acc;
     },
-    { todo: [], in_progress: [], waiting: [], done: [] }
+    { pool: [], todo: [], in_progress: [], waiting: [], done: [] }
   );
 
   const activeCount = items.filter((i) => i.column !== 'done').length;
@@ -126,6 +143,18 @@ export default function DeskPageClient() {
             </span>
           )}
           <button
+            onClick={() => setChatOpen((v) => !v)}
+            className={`flex-shrink-0 flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold border transition-colors ${
+              chatOpen
+                ? 'bg-indigo-600 border-indigo-600 text-white'
+                : 'border-indigo-400 text-indigo-500 hover:bg-indigo-50'
+            }`}
+            title="Ask AI"
+          >
+            <SparklesIcon className="w-3 h-3" />
+            Ask AI
+          </button>
+          <button
             onClick={triggerSync}
             disabled={syncing}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium text-neutral-600 border border-neutral-200 hover:bg-neutral-50 transition-colors disabled:opacity-50"
@@ -136,28 +165,42 @@ export default function DeskPageClient() {
         </div>
       </div>
 
-      {/* Kanban board */}
-      <div className="flex-1 overflow-x-auto px-6 py-6">
-        {loading ? (
-          <div className="grid grid-cols-4 gap-4">
-            {DESK_COLUMNS.map((col) => (
-              <div key={col.id} className="bg-neutral-50 rounded h-48 animate-pulse" />
-            ))}
-          </div>
-        ) : (
-          <div className="grid grid-cols-4 gap-4 min-w-[760px]">
-            {DESK_COLUMNS.map((col) => (
-              <KanbanColumn
-                key={col.id}
-                id={col.id}
-                label={col.label}
-                items={grouped[col.id]}
-                onMove={handleMove}
-                onDismiss={handleDismiss}
-              />
-            ))}
-          </div>
-        )}
+      {/* Board + sidebar */}
+      <div className="flex flex-row flex-1 overflow-hidden">
+        <div className="flex-1 overflow-x-auto px-6 py-6">
+          {loading ? (
+            <div className="grid grid-cols-5 gap-4">
+              {DESK_COLUMNS.map((col) => (
+                <div key={col.id} className="bg-neutral-50 rounded h-48 animate-pulse" />
+              ))}
+            </div>
+          ) : (
+            <div className="grid grid-cols-5 gap-4 min-w-[950px]">
+              {DESK_COLUMNS.map((col) => (
+                <KanbanColumn
+                  key={col.id}
+                  id={col.id}
+                  label={col.label}
+                  items={grouped[col.id]}
+                  onMove={handleMove}
+                  onDismiss={handleDismiss}
+                  onConfirm={col.id === 'pool' ? handleConfirm : undefined}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+
+        <DeskChatSidebar
+          isOpen={chatOpen}
+          onClose={() => setChatOpen(false)}
+          boardItems={items}
+          onDeskMove={handleMove}
+          onDeskDismiss={handleDismiss}
+          onDeskConfirm={handleConfirm}
+          onOpenWorkflow={handleOpenWorkflow}
+          onOpenProcess={handleOpenProcess}
+        />
       </div>
     </div>
   );

@@ -1,4 +1,4 @@
-export type DeskColumn = 'todo' | 'in_progress' | 'waiting' | 'done';
+export type DeskColumn = 'pool' | 'todo' | 'in_progress' | 'waiting' | 'done';
 export type DeskSourceType = 'email' | 'meeting_action' | 'process_step' | 'manual';
 export type DeskUrgency = 'high' | 'medium' | 'low';
 
@@ -54,6 +54,7 @@ export function mapDeskItem(raw: Record<string, unknown>): DeskItem {
 }
 
 export const DESK_COLUMNS: { id: DeskColumn; label: string }[] = [
+  { id: 'pool', label: 'Pool' },
   { id: 'todo', label: 'To Do' },
   { id: 'in_progress', label: 'In Progress' },
   { id: 'waiting', label: 'Waiting' },

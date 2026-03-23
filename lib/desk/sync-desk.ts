@@ -52,6 +52,7 @@ export async function syncDeskForUser(userId: string, adminClient: SupabaseClien
     .eq('user_id', userId)
     .eq('source', 'email')
     .not('status', 'in', '("completed","dismissed")')
+    .in('work_state', ['decision_required', 'work_prepared', 'reply_needed', 'noted'])
     .order('created_at', { ascending: false })
     .limit(60);
 
@@ -114,7 +115,7 @@ export async function syncDeskForUser(userId: string, adminClient: SupabaseClien
         source_id: lead.id,
         thread_key: threadKey,
         source_refs: sourceRefs,
-        kanban_column: 'todo',
+        kanban_column: 'pool',
         position: 0,
         title,
         description,
@@ -152,7 +153,7 @@ export async function syncDeskForUser(userId: string, adminClient: SupabaseClien
       source_id: item.id,
       thread_key: null,
       source_refs: [{ type: 'meeting_action', id: item.id }],
-      kanban_column: 'todo',
+      kanban_column: 'pool',
       position: 0,
       title: item.work_title || item.source_data?.action_item || '(Action item)',
       description: `From: ${meetingTitle}`,
