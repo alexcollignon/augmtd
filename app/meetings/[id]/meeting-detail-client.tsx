@@ -133,9 +133,9 @@ export default function MeetingDetailClient({
   const [schedulingBot, setSchedulingBot] = useState(false);
   const [cancellingBot, setCancellingBot] = useState(false);
 
-  const segmentDuration = transcript?.transcriptSegments?.length > 0
-    ? transcript.transcriptSegments[transcript.transcriptSegments.length - 1].timestamp
-    : transcript?.durationMinutes > 0 ? transcript.durationMinutes * 60 : null;
+  const segmentDuration = (transcript?.transcriptSegments?.length ?? 0) > 0
+    ? transcript!.transcriptSegments[transcript!.transcriptSegments.length - 1].timestamp
+    : (transcript?.durationMinutes ?? 0) > 0 ? transcript!.durationMinutes * 60 : null;
   const [audioDuration, setAudioDuration] = useState<number | null>(null);
   const durationSeconds = audioDuration ?? segmentDuration;
 
