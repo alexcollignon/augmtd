@@ -11,13 +11,14 @@ import {
   VideoCameraIcon,
   MicrophoneIcon,
   TrashIcon,
-  ExclamationTriangleIcon,
+  SparklesIcon,
 } from '@heroicons/react/24/outline';
 import type { CalendarEvent } from '@/lib/types/meetings';
 import { formatMeetingTime, calculateDuration } from '@/lib/types/meetings';
 import LinkedWorkPanel from '@/components/meetings/linked-work-panel';
 import MeetingRecorder from '@/components/meetings/meeting-recorder';
 import ProcessingPipeline from '@/components/meetings/processing-pipeline';
+import MeetingChatSidebar, { type MeetingChatContext } from '@/components/meetings/meeting-chat-sidebar';
 
 interface TranscriptSegment {
   speaker: string;
@@ -122,9 +123,6 @@ export default function MeetingDetailClient({
   const [localProcessed, setLocalProcessed] = useState(transcriptProcessed ?? false);
   const [localAttendeeState, setLocalAttendeeState] = useState(event.attendee_bot_state ?? null);
 
-  // Add to desk
-  const [addingToDesk, setAddingToDesk] = useState(false);
-  const [addedToDesk, setAddedToDesk] = useState(false);
 
   // Per-meeting assistant toggle
   const [localAssistantState, setLocalAssistantState] = useState<string | null>(
@@ -162,16 +160,6 @@ export default function MeetingDetailClient({
     return () => clearInterval(intervalId);
   }, [localProcessed, localBotState, localAssistantState, transcript, event.id, router]);
 
-  const handleAddToDesk = async () => {
-    setAddingToDesk(true);
-    try {
-      const res = await fetch(`/api/meetings/${event.id}/add-to-desk`, { method: 'POST' });
-      if (res.ok) setAddedToDesk(true);
-    } finally {
-      setAddingToDesk(false);
-    }
-  };
-
   const handleRetry = async () => {
     setRetrying(true);
     setRetryError(null);
@@ -194,8 +182,36 @@ export default function MeetingDetailClient({
   };
   const [deleting, setDeleting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
   const { primary } = formatMeetingTime(event.start_time, event.end_time);
   const duration = calculateDuration(event.start_time, event.end_time);
+
+  const handleOpenWorkflow = (title: string, skill?: string) => {
+    const params = new URLSearchParams();
+    if (title) params.set('title', title);
+    if (skill) params.set('skill', skill);
+    router.push(`/work/new${params.toString() ? `?${params.toString()}` : ''}`);
+  };
+
+  const handleOpenProcess = (processId: string) => {
+    router.push(`/processes/${processId}`);
+  };
+
+  const buildMeetingContext = (): MeetingChatContext => ({
+    title: event.title,
+    date: event.start_time,
+    durationMinutes: duration ?? undefined,
+    attendees: event.attendees.map((a) => a.name || a.email || '').filter(Boolean),
+    summary: transcript?.summary ?? undefined,
+    decisions: transcript?.decisions?.map((d) => d.text) ?? [],
+    actionItems: actionItems.map((a) => ({
+      text: a.workTitle,
+      assignee: a.assignee ?? undefined,
+      status: a.category,
+    })),
+    risks: risks.map((r) => ({ description: r.text, severity: r.severity })),
+    suggestedNextStep: suggestedNextStep ?? undefined,
+  });
 
   const handleDelete = async () => {
     setDeleting(true);
@@ -226,33 +242,49 @@ export default function MeetingDetailClient({
           <div className="mb-6">
             <div className="flex items-start justify-between gap-4 mb-2">
               <h1 className="text-xl font-semibold text-neutral-900">{event.title}</h1>
-              {transcript && !confirmDelete && (
-                <button
-                  onClick={() => setConfirmDelete(true)}
-                  className="flex-shrink-0 p-1.5 text-neutral-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
-                  title="Delete recording & transcript"
-                >
-                  <TrashIcon className="w-4 h-4" />
-                </button>
-              )}
-              {transcript && confirmDelete && (
-                <div className="flex-shrink-0 flex items-center gap-2">
-                  <span className="text-[11px] text-neutral-500">Delete recording?</span>
+              <div className="flex items-center gap-1.5 flex-shrink-0">
+                {localProcessed && transcript && (
                   <button
-                    onClick={handleDelete}
-                    disabled={deleting}
-                    className="text-[11px] font-medium text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 px-2.5 py-1 rounded transition-colors"
+                    onClick={() => setChatOpen((v) => !v)}
+                    className={`flex items-center gap-1.5 px-2.5 py-1.5 text-[12px] font-medium transition-colors ${
+                      chatOpen
+                        ? 'bg-indigo-100 text-indigo-700 hover:bg-indigo-200'
+                        : 'text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50'
+                    }`}
+                    title="Ask AI about this meeting"
                   >
-                    {deleting ? 'Deleting…' : 'Delete'}
+                    <SparklesIcon className="w-3.5 h-3.5" />
+                    Ask AI
                   </button>
+                )}
+                {transcript && !confirmDelete && (
                   <button
-                    onClick={() => setConfirmDelete(false)}
-                    className="text-[11px] text-neutral-500 hover:text-neutral-700"
+                    onClick={() => setConfirmDelete(true)}
+                    className="p-1.5 text-neutral-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
+                    title="Delete recording & transcript"
                   >
-                    Cancel
+                    <TrashIcon className="w-4 h-4" />
                   </button>
-                </div>
-              )}
+                )}
+                {transcript && confirmDelete && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] text-neutral-500">Delete recording?</span>
+                    <button
+                      onClick={handleDelete}
+                      disabled={deleting}
+                      className="text-[11px] font-medium text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 px-2.5 py-1 rounded transition-colors"
+                    >
+                      {deleting ? 'Deleting…' : 'Delete'}
+                    </button>
+                    <button
+                      onClick={() => setConfirmDelete(false)}
+                      className="text-[11px] text-neutral-500 hover:text-neutral-700"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
             <div className="flex flex-wrap items-center gap-3 text-[12px] text-neutral-500">
               <span className="flex items-center gap-1">
@@ -366,24 +398,6 @@ export default function MeetingDetailClient({
             )}
           </div>
 
-          {/* Quick actions — shown when analysis is ready */}
-          {localProcessed && transcript && (
-            <div className="flex items-center gap-2 mb-6 pb-4 border-b border-neutral-100">
-              <button
-                onClick={handleAddToDesk}
-                disabled={addingToDesk || addedToDesk}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium bg-neutral-900 text-white hover:bg-neutral-700 disabled:opacity-50 transition-colors"
-              >
-                {addedToDesk ? 'On your desk ✓' : addingToDesk ? 'Adding…' : '+ Add to desk'}
-              </button>
-              <button
-                onClick={() => router.push(`/work/new?fromMeeting=${event.id}`)}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium text-indigo-600 border border-indigo-200 hover:bg-indigo-50 transition-colors"
-              >
-                Start workflow →
-              </button>
-            </div>
-          )}
 
           {/* Processing pipeline — show when transcript is processing or bot is active */}
           {!localProcessed && localBotState !== 'failed' &&
@@ -522,6 +536,13 @@ export default function MeetingDetailClient({
             </div>
           )}
 
+          {/* Related work — inline section */}
+          {localProcessed && (
+            <section className="mb-6">
+              <LinkedWorkPanel calendarEventId={event.id} />
+            </section>
+          )}
+
           {/* Audio player */}
           {audioUrl && (
             <section className="mb-6">
@@ -584,10 +605,13 @@ export default function MeetingDetailClient({
         </div>
       </div>
 
-      {/* Linked work sidebar */}
-      <div className="w-72 flex-shrink-0 border-l border-neutral-100 bg-white overflow-y-auto px-5 py-6">
-        <LinkedWorkPanel calendarEventId={event.id} />
-      </div>
+      <MeetingChatSidebar
+        isOpen={chatOpen}
+        onClose={() => setChatOpen(false)}
+        meetingContext={buildMeetingContext()}
+        onOpenWorkflow={handleOpenWorkflow}
+        onOpenProcess={handleOpenProcess}
+      />
     </div>
   );
 }

@@ -160,8 +160,9 @@ export async function POST(request: NextRequest) {
       fileContext,
       boardItems = [],
       focusedCard,
+      meetingContext,
     } = body as {
-      context?: 'inbox' | 'desk';
+      context?: 'inbox' | 'desk' | 'meeting';
       message: string;
       history: Array<{ role: 'user' | 'assistant'; content: string }>;
       sources?: string[];
@@ -178,6 +179,17 @@ export async function POST(request: NextRequest) {
         id: string; title: string; description: string | null;
         sourceType: string; column: string; urgency: string | null; synthesis: string | null;
       };
+      meetingContext?: {
+        title: string;
+        date: string;
+        durationMinutes?: number;
+        attendees: string[];
+        summary?: string;
+        decisions?: string[];
+        actionItems?: Array<{ text: string; assignee?: string; status?: string }>;
+        risks?: Array<{ description: string; severity: string }>;
+        suggestedNextStep?: string;
+      };
     };
 
     if (!message?.trim()) {
@@ -187,7 +199,7 @@ export async function POST(request: NextRequest) {
     const { client: aiClient, model: chatModel } = await getAIClient(user.id, 'conversation', supabase);
 
     const activeSources = sources?.length ? sources : ['inbox', 'kb', 'calendar'];
-    const fetchInbox = activeSources.includes('inbox') && mode !== 'reply';
+    const fetchInbox = activeSources.includes('inbox') && mode !== 'reply' && context !== 'meeting';
     const fetchKB = activeSources.includes('kb');
     const fetchCal = activeSources.includes('calendar');
 
@@ -264,6 +276,33 @@ export async function POST(request: NextRequest) {
         processes.map(p => `- "${p.title}" [id: ${p.id}] — ${p.status}${p.current_step_index != null ? `, step ${p.current_step_index + 1}` : ''}`).join('\n')
       : '';
 
+    // Meeting context block
+    let focusedMeetingBlock = '';
+    if (context === 'meeting' && meetingContext) {
+      const lines: string[] = [
+        `FOCUSED MEETING — you have full context of this meeting. When the user says "this meeting", "the meeting", "decisions", etc., refer to this:`,
+        `Title: ${meetingContext.title}`,
+        `Date: ${meetingContext.date}${meetingContext.durationMinutes ? ` · ${meetingContext.durationMinutes} min` : ''}`,
+      ];
+      if (meetingContext.attendees.length > 0) {
+        lines.push(`Attendees: ${meetingContext.attendees.join(', ')}`);
+      }
+      if (meetingContext.summary) lines.push(`Summary: ${meetingContext.summary}`);
+      if (meetingContext.decisions?.length) {
+        lines.push(`Decisions:\n${meetingContext.decisions.map(d => `- ${d}`).join('\n')}`);
+      }
+      if (meetingContext.actionItems?.length) {
+        lines.push(`Action items:\n${meetingContext.actionItems.map(a => `- ${a.text}${a.assignee ? ` (${a.assignee})` : ''}`).join('\n')}`);
+      }
+      if (meetingContext.risks?.length) {
+        lines.push(`Risks:\n${meetingContext.risks.map(r => `- [${r.severity}] ${r.description}`).join('\n')}`);
+      }
+      if (meetingContext.suggestedNextStep) {
+        lines.push(`Suggested next step: ${meetingContext.suggestedNextStep}`);
+      }
+      focusedMeetingBlock = lines.join('\n');
+    }
+
     // Focused item block
     let focusedItemBlock = '';
     if (emailContext) {
@@ -295,7 +334,7 @@ Column: ${focusedCard.column}${focusedCard.urgency ? `\nUrgency: ${focusedCard.u
       .replace('{{CALENDAR_CONTEXT}}', calendarText || '')
       .replace('{{WORKFLOW_HISTORY}}', workflowHistory || '')
       .replace('{{PROCESS_LIST}}', processList || '')
-      .replace('{{FOCUSED_ITEM}}', focusedItemBlock || '')
+      .replace('{{FOCUSED_ITEM}}', focusedMeetingBlock || focusedItemBlock || '')
       .replace('{{INBOX_SNAPSHOT_SECTION}}', inboxSnapshotSection || '')
       .replace('{{BOARD_CONTEXT_SECTION}}', boardContextSection || '')
       .replace(/{{TODAY}}/g, today);
@@ -333,6 +372,10 @@ REPLY MODE — follow exactly:
       systemPrompt += `\n\nYou are on the DESK surface — the user's home screen. Help them prioritize, move tasks, start workflows, and take action on their work. When suggesting task movement use DESK_ACTION tokens. When the user wants to start work on something use OPEN_WORKFLOW.`;
     }
 
+    if (context === 'meeting') {
+      systemPrompt += `\n\nYou are a meeting assistant. You have the full context of this meeting above. Help the user understand outcomes, draft follow-up emails, create workflows, or identify next steps.\nRelevant action tokens:\n- REPLY_DRAFT when the user asks to draft a follow-up email or any email related to the meeting.\n- OPEN_WORKFLOW when the user wants to start a workflow or generate a document based on meeting outcomes.\n- OPEN_PROCESS when the user wants to navigate to a specific active process referenced in the meeting.`;
+    }
+
     const userContent = fileContext
       ? `[Attached document content:\n${fileContext}\n]\n\n${message}`
       : message;
@@ -345,7 +388,7 @@ REPLY MODE — follow exactly:
         { role: 'user' as const, content: userContent },
       ],
       temperature: 0.3,
-      max_tokens: mode === 'reply' ? 1200 : 700,
+      max_tokens: context === 'meeting' ? 900 : mode === 'reply' ? 1200 : 700,
       stream: true as const,
     };
 

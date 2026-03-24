@@ -11,6 +11,8 @@
 
 import { SupabaseClient } from '@supabase/supabase-js';
 import type { DeskUrgency, DeskSourceRef } from '@/lib/types/desk';
+import { batchClassifyDeskItems, type DeskClassifyRichInput } from '@/lib/desk/classify-desk-batch';
+import { assignColumnByRules } from '@/lib/desk/desk-column-rules';
 
 export interface SyncDeskResult {
   surfaced: number;
@@ -41,14 +43,32 @@ export async function syncDeskForUser(userId: string, adminClient: SupabaseClien
     }
   }
 
+  // Fetch user's email addresses for isUserLastSender detection
+  const { data: userConns } = await adminClient
+    .from('connections')
+    .select('metadata, provider_account_id')
+    .eq('user_id', userId)
+    .in('provider', ['gmail', 'outlook']);
+
+  const userEmails = new Set<string>(
+    (userConns ?? [])
+      .flatMap((c: { metadata: unknown; provider_account_id: string | null }) => [
+        ((c.metadata as Record<string, unknown>)?.email as string | undefined),
+        c.provider_account_id ?? undefined,
+      ])
+      .filter((e): e is string => !!e)
+      .map((e) => e.toLowerCase()),
+  );
+
   const toInsert: Record<string, unknown>[] = [];
   const toUpdate: Array<{ id: string; fields: Record<string, unknown> }> = [];
   const needsSynthesis: string[] = [];
+  const aiInputs: DeskClassifyRichInput[] = [];
 
   // ── 2. Emails — group by thread_id ────────────────────────────────────────
   const { data: emailItems, error: emailErr } = await adminClient
     .from('inbox_items')
-    .select('id, work_title, what_i_prepared, why_matters, source_data, item_type, status')
+    .select('id, work_title, what_i_prepared, why_matters, source_data, item_type, status, work_state')
     .eq('user_id', userId)
     .eq('source', 'email')
     .not('status', 'in', '("completed","dismissed")')
@@ -87,35 +107,101 @@ export async function syncDeskForUser(userId: string, adminClient: SupabaseClien
 
     const existingThread = existingByThread.get(threadKey);
 
+    const fromAddr = ((lead.source_data as Record<string, unknown>)?.from_address as string | undefined)?.toLowerCase() ?? '';
+    const isUserLastSender = userEmails.size > 0 && !!fromAddr && userEmails.has(fromAddr);
+    const leadWorkState = (lead as unknown as { work_state?: string }).work_state;
+    const snippet  = (lead.source_data as Record<string, unknown>)?.snippet   as string | undefined;
+    const subject  = (lead.source_data as Record<string, unknown>)?.subject   as string | undefined;
+    const fromName = (lead.source_data as Record<string, unknown>)?.from_name as string | undefined;
+
     if (existingThread) {
       // Card already exists — update if thread grew
       const threadGrew = emailCount > existingThread.emailCount;
       if (threadGrew) {
-        toUpdate.push({
-          id: existingThread.id,
-          fields: {
-            title,
-            description,
-            source_id: lead.id,
-            source_refs: sourceRefs,
-            email_count: emailCount,
-            has_prepared: hasPrepared,
-            urgency,
-            synthesis: null, // re-queue synthesis
-            synthesis_at: null,
-            updated_at: new Date().toISOString(),
-          },
-        });
+        const updateFields = {
+          title,
+          description,
+          source_id: lead.id,
+          source_refs: sourceRefs,
+          email_count: emailCount,
+          has_prepared: hasPrepared,
+          urgency,
+          synthesis: null,
+          synthesis_at: null,
+          updated_at: new Date().toISOString(),
+        };
+
+        // Re-classify grown threads that are still in pool
+        if (existingThread.column === 'pool') {
+          const ruleResult = assignColumnByRules({
+            sourceType: 'email',
+            workState: leadWorkState,
+            itemType: lead.item_type as string | undefined,
+            isUserLastSender,
+            hasPrepared,
+          });
+
+          if (ruleResult.confidence === 'high') {
+            // Rules resolved it — promote directly out of pool
+            toUpdate.push({ id: existingThread.id, fields: { ...updateFields, kanban_column: ruleResult.column } });
+          } else {
+            // Still uncertain — update content, queue for AI
+            toUpdate.push({ id: existingThread.id, fields: updateFields });
+            aiInputs.push({
+              tempId: `update:${existingThread.id}`,
+              sourceType: 'email',
+              subject,
+              fromName,
+              snippet: snippet?.slice(0, 150),
+              whyMatters: (lead.why_matters as string | undefined)?.slice(0, 300),
+              workState: leadWorkState,
+              itemType: lead.item_type as string | undefined,
+              isUserLastSender,
+              threadSize: emailCount,
+            });
+          }
+        } else {
+          // Column is not pool — user moved it manually, just update content
+          toUpdate.push({ id: existingThread.id, fields: updateFields });
+        }
+
         needsSynthesis.push(existingThread.id);
       }
     } else {
+      // New thread — run rule engine first
+      const ruleResult = assignColumnByRules({
+        sourceType: 'email',
+        workState: leadWorkState,
+        itemType: lead.item_type as string | undefined,
+        isUserLastSender,
+        hasPrepared,
+      });
+
+      const initialColumn = ruleResult.column; // 'pool' for low confidence, rule column otherwise
+
+      if (ruleResult.confidence === 'low') {
+        // Queue for AI with rich context
+        aiInputs.push({
+          tempId: threadKey,
+          sourceType: 'email',
+          subject,
+          fromName,
+          snippet: snippet?.slice(0, 150),
+          whyMatters: (lead.why_matters as string | undefined)?.slice(0, 300),
+          workState: leadWorkState,
+          itemType: lead.item_type as string | undefined,
+          isUserLastSender,
+          threadSize: emailCount,
+        });
+      }
+
       toInsert.push({
         user_id: userId,
         source_type: 'email',
         source_id: lead.id,
         thread_key: threadKey,
         source_refs: sourceRefs,
-        kanban_column: 'pool',
+        kanban_column: initialColumn,
         position: 0,
         title,
         description,
@@ -146,16 +232,18 @@ export async function syncDeskForUser(userId: string, adminClient: SupabaseClien
     const key = `meeting_action:${item.id}`;
     if (doneSourceKeys.has(key) || existingBySource.has(key)) continue;
 
-    const meetingTitle = item.source_data?.meeting_title ?? 'Meeting';
+    const meetingTitle = (item.source_data as Record<string, unknown>)?.meeting_title as string ?? 'Meeting';
+    const meetingActionTitle = item.work_title || (item.source_data as Record<string, unknown>)?.action_item as string || '(Action item)';
+    const ruleResult = assignColumnByRules({ sourceType: 'meeting_action', title: meetingActionTitle });
     toInsert.push({
       user_id: userId,
       source_type: 'meeting_action',
       source_id: item.id,
       thread_key: null,
       source_refs: [{ type: 'meeting_action', id: item.id }],
-      kanban_column: 'pool',
+      kanban_column: ruleResult.column,
       position: 0,
-      title: item.work_title || item.source_data?.action_item || '(Action item)',
+      title: meetingActionTitle,
       description: `From: ${meetingTitle}`,
       source_url: '/meetings',
       urgency: 'high' as DeskUrgency,
@@ -204,9 +292,34 @@ export async function syncDeskForUser(userId: string, adminClient: SupabaseClien
     });
   }
 
+  // ── 5. AI pass — only for genuinely uncertain items ───────────────────────
+  console.log(`[SyncDesk] rule engine: ${toInsert.length + toUpdate.length - aiInputs.length} high-confidence, ${aiInputs.length} uncertain → AI`);
+
+  const aiColumns = aiInputs.length > 0
+    ? await batchClassifyDeskItems(aiInputs, userId, adminClient)
+    : new Map<string, import('@/lib/types/desk').DeskColumn>();
+
+  // Apply AI results to insert rows that were queued as low-confidence
+  for (const row of toInsert) {
+    const tempId = row.thread_key as string | null ?? `${row.source_type}:${row.source_id}`;
+    const aiCol = aiColumns.get(tempId as string);
+    if (aiCol) {
+      (row as Record<string, unknown>).kanban_column = aiCol;
+    }
+    // else: stays at rule-assigned column (pool for low-confidence, or rule column for high-confidence)
+  }
+
+  // Apply AI results to update rows queued for re-classification
+  for (const upd of toUpdate) {
+    const aiCol = aiColumns.get(`update:${upd.id}`);
+    if (aiCol) {
+      upd.fields.kanban_column = aiCol;
+    }
+  }
+
   console.log(`[SyncDesk] inserting ${toInsert.length}, updating ${toUpdate.length}`);
 
-  // ── 5. Write to DB ─────────────────────────────────────────────────────────
+  // ── 6. Write to DB ─────────────────────────────────────────────────────────
   // Split by thread_key presence: threaded rows need onConflict:'user_id,thread_key',
   // non-threaded rows need onConflict:'user_id,source_type,source_id'.
   // Using separate upserts avoids the partial-index ON CONFLICT mismatch in PostgREST.
@@ -235,7 +348,7 @@ export async function syncDeskForUser(userId: string, adminClient: SupabaseClien
     if (error) console.error('[SyncDesk] Update error:', error.message);
   }
 
-  // ── 6. Collect all items that still need synthesis (new + existing unsynthesized) ──
+  // ── 7. Collect all items that still need synthesis (new + existing unsynthesized) ──
   const { data: pendingSynthesis } = await adminClient
     .from('desk_items')
     .select('id')
