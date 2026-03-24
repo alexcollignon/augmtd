@@ -106,16 +106,16 @@ export async function POST(request: NextRequest) {
         if (patternResult.success) {
           console.log(`[Sync Order] ✓ Patterns analyzed: ${patternResult.patternsDetected} meeting types, ${Math.round(patternResult.confidence * 100)}% confidence`);
         }
+      }
 
-        // Step 2: Create Attendee bots for meetings with links
-        console.log(`[Sync Order] 2/3: Creating meeting bots...`);
-        const botResult = await createBotsForCalendarEvents(user.id, adminSupabase);
-        totalBotsCreated += botResult.created;
-        errors.push(...botResult.errors);
+      // Step 2: Create bots for any upcoming events not yet scheduled (runs every sync, not just on new events)
+      console.log(`[Sync Order] 2/3: Creating meeting bots...`);
+      const botResult = await createBotsForCalendarEvents(user.id, adminSupabase);
+      totalBotsCreated += botResult.created;
+      errors.push(...botResult.errors);
 
-        if (botResult.created > 0) {
-          console.log(`[Sync Order] ✓ Bots created: ${botResult.created} meeting bots`);
-        }
+      if (botResult.created > 0) {
+        console.log(`[Sync Order] ✓ Bots created: ${botResult.created} meeting bots`);
       }
 
       // Step 3: Sync emails AFTER calendar + pattern analysis (can now use calendar context)

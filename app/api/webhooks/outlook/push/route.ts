@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { getGraphClient, parseOutlookMessage } from '@/lib/microsoft/outlook';
 import { syncEmailsForConnection } from '@/lib/email-sync/sync-emails';
+import { syncCalendarForConnection } from '@/lib/calendar/sync-calendar';
+import { createBotsForCalendarEvents } from '@/lib/integrations/meeting-bot/bot-manager';
 
 export const maxDuration = 60;
 
@@ -97,6 +99,11 @@ export async function POST(request: NextRequest) {
       await syncEmailsForConnection(connection, adminSupabase, {
         preloadedMessages: [message],
       });
+
+      // Sync calendar + schedule bots — catches new meeting invitations
+      await syncCalendarForConnection(connection, adminSupabase, { daysAhead: 14, daysBehind: 0 })
+        .then(() => createBotsForCalendarEvents(connection.user_id, adminSupabase))
+        .catch((err) => console.warn('[OutlookPush] Calendar/bot sync failed (non-fatal):', err));
 
       console.log(`[OutlookPush] ✓ Processed notification for message ${messageId}`);
     } catch (err) {

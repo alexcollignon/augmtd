@@ -21,10 +21,22 @@ interface LinkedWork {
 
 interface UpcomingMeetingCardProps {
   event: CalendarEvent;
+  botState: string | null;
+  onScheduled?: (eventId: string) => void;
+  onCancelled?: (eventId: string) => void;
 }
 
-export default function UpcomingMeetingCard({ event }: UpcomingMeetingCardProps) {
+export default function UpcomingMeetingCard({ event, botState, onScheduled, onCancelled }: UpcomingMeetingCardProps) {
   const [linkedWork, setLinkedWork] = useState<LinkedWork | null>(null);
+  const [schedulingBot, setSchedulingBot] = useState(false);
+  const [cancellingBot, setCancellingBot] = useState(false);
+
+  // Reset scheduling state if parent cancels from elsewhere (e.g. sidebar)
+  useEffect(() => {
+    if (!botState || botState === 'cancelled') {
+      setSchedulingBot(false);
+    }
+  }, [botState]);
   const { primary } = formatMeetingTime(event.start_time, event.end_time);
   const duration = calculateDuration(event.start_time, event.end_time);
 
@@ -75,12 +87,73 @@ export default function UpcomingMeetingCard({ event }: UpcomingMeetingCardProps)
             )}
           </div>
 
-          <p className="text-[11px] text-neutral-500 mt-0.5">
-            {primary} · {duration}min
-            {event.attendees.length > 0 && (
-              <> · {event.attendees.slice(0, 3).map((a) => a.name?.split(' ')[0] || a.email?.split('@')[0]).join(', ')}{event.attendees.length > 3 && ` +${event.attendees.length - 3}`}</>
+          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+            <p className="text-[11px] text-neutral-500">
+              {primary} · {duration}min
+              {event.attendees.length > 0 && (
+                <> · {event.attendees.slice(0, 3).map((a) => a.name?.split(' ')[0] || a.email?.split('@')[0]).join(', ')}{event.attendees.length > 3 && ` +${event.attendees.length - 3}`}</>
+              )}
+            </p>
+            {event.meeting_link?.includes('meet.google.com') && (
+              botState === 'joining' ? (
+                <span className="text-[10px] font-medium text-amber-600">Joining…</span>
+              ) : botState === 'recording' ? (
+                <span className="text-[10px] font-medium text-red-600">● Recording</span>
+              ) : botState === 'done' ? (
+                <span className="text-[10px] font-medium text-neutral-400">Done</span>
+              ) : botState === 'scheduled' ? (
+                cancellingBot ? (
+                  <span className="text-[10px] font-medium text-neutral-400 animate-pulse">Removing assistant…</span>
+                ) : (
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="text-[10px] font-medium text-emerald-600">Assistant scheduled ✓</span>
+                  <button
+                    onClick={async (e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setCancellingBot(true);
+                      let success = false;
+                      try {
+                        const res = await fetch(`/api/meetings/${event.id}/cancel-bot`, { method: 'DELETE' });
+                        success = res.ok;
+                      } finally {
+                        setCancellingBot(false);
+                      }
+                      if (success) { setSchedulingBot(false); onCancelled?.(event.id); }
+                    }}
+                    className="text-[10px] text-neutral-400 hover:text-red-500 transition-colors"
+                  >
+                    × Remove
+                  </button>
+                </span>
+                )
+              ) : schedulingBot ? (
+                <span className="text-[10px] font-medium text-neutral-400 animate-pulse">Scheduling assistant…</span>
+              ) : (
+                <button
+                  onClick={async (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setSchedulingBot(true);
+                    try {
+                      const res = await fetch(`/api/meetings/${event.id}/schedule-bot`, { method: 'POST' });
+                      if (res.ok) {
+                        onScheduled?.(event.id);
+                        // Don't reset schedulingBot — botState prop change handles the transition
+                      } else {
+                        setSchedulingBot(false);
+                      }
+                    } catch {
+                      setSchedulingBot(false);
+                    }
+                  }}
+                  className="text-[10px] font-medium text-indigo-500 hover:text-indigo-700"
+                >
+                  + Send assistant
+                </button>
+              )
             )}
-          </p>
+          </div>
 
           {/* Context chips */}
           {linkedWork && totalChips > 0 && (

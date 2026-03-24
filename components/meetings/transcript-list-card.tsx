@@ -14,6 +14,7 @@ interface TranscriptListCardProps {
   botState: string | null;
   source: 'bot' | 'recording' | 'upload';
   summary?: string | null;
+  isNew?: boolean;
 }
 
 export default function TranscriptListCard({
@@ -27,6 +28,7 @@ export default function TranscriptListCard({
   botState,
   source,
   summary,
+  isNew,
 }: TranscriptListCardProps) {
   const href = calendarEventId ? `/meetings/${calendarEventId}` : `/meetings/recording/${id}`;
 
@@ -54,8 +56,9 @@ export default function TranscriptListCard({
       {/* Content */}
       <div className="flex-1 min-w-0">
         <div className="flex items-start justify-between gap-3">
-          <h3 className="text-[13px] font-semibold text-neutral-900 leading-tight truncate">
+          <h3 className="text-[13px] font-semibold text-neutral-900 leading-tight truncate flex items-center gap-1.5">
             {title}
+            {isNew && <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 flex-shrink-0 inline-block" />}
           </h3>
           <div className="flex-shrink-0 flex items-center gap-1.5">
             <span className="text-[11px] text-neutral-400 bg-neutral-100 px-2 py-0.5">{sourceLabel}</span>
@@ -68,7 +71,7 @@ export default function TranscriptListCard({
         </div>
 
         <p className="text-[11px] text-neutral-500 mt-0.5">
-          {dateLabel} · {timeLabel} · {durationMinutes}min
+          {dateLabel} · {timeLabel}{durationMinutes > 0 && ` · ${durationMinutes}min`}
         </p>
 
         {summary && (

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
@@ -12,12 +12,12 @@ import {
   MicrophoneIcon,
   TrashIcon,
   ExclamationTriangleIcon,
-  InboxArrowDownIcon,
 } from '@heroicons/react/24/outline';
 import type { CalendarEvent } from '@/lib/types/meetings';
 import { formatMeetingTime, calculateDuration } from '@/lib/types/meetings';
 import LinkedWorkPanel from '@/components/meetings/linked-work-panel';
 import MeetingRecorder from '@/components/meetings/meeting-recorder';
+import ProcessingPipeline from '@/components/meetings/processing-pipeline';
 
 interface TranscriptSegment {
   speaker: string;
@@ -117,6 +117,61 @@ export default function MeetingDetailClient({
   const [retrying, setRetrying] = useState(false);
   const [retryError, setRetryError] = useState<string | null>(null);
 
+  // Local state for polling
+  const [localBotState, setLocalBotState] = useState(transcriptBotState ?? null);
+  const [localProcessed, setLocalProcessed] = useState(transcriptProcessed ?? false);
+  const [localAttendeeState, setLocalAttendeeState] = useState(event.attendee_bot_state ?? null);
+
+  // Add to desk
+  const [addingToDesk, setAddingToDesk] = useState(false);
+  const [addedToDesk, setAddedToDesk] = useState(false);
+
+  // Per-meeting assistant toggle
+  const [localAssistantState, setLocalAssistantState] = useState<string | null>(
+    event.attendee_bot_state ?? (event.attendee_bot_id ? 'scheduled' : null)
+  );
+  const [schedulingBot, setSchedulingBot] = useState(false);
+  const [cancellingBot, setCancellingBot] = useState(false);
+
+  const segmentDuration = transcript?.transcriptSegments?.length > 0
+    ? transcript.transcriptSegments[transcript.transcriptSegments.length - 1].timestamp
+    : transcript?.durationMinutes > 0 ? transcript.durationMinutes * 60 : null;
+  const [audioDuration, setAudioDuration] = useState<number | null>(null);
+  const durationSeconds = audioDuration ?? segmentDuration;
+
+  // Poll while transcript is being processed or bot is still active
+  useEffect(() => {
+    if (localProcessed || localBotState === 'failed') return;
+    // Keep polling if bot is active even if transcript hasn't been loaded yet
+    if (!transcript && !localAssistantState) return;
+    const intervalId = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/meetings/${event.id}/status`);
+        if (!res.ok) return;
+        const data = await res.json();
+        setLocalAttendeeState(data.attendeeBotState);
+        setLocalBotState(data.botState);
+        if (data.attendeeBotState) setLocalAssistantState(data.attendeeBotState);
+        if (data.processed) {
+          setLocalProcessed(true);
+          clearInterval(intervalId);
+          router.refresh();
+        }
+      } catch {}
+    }, 5000);
+    return () => clearInterval(intervalId);
+  }, [localProcessed, localBotState, localAssistantState, transcript, event.id, router]);
+
+  const handleAddToDesk = async () => {
+    setAddingToDesk(true);
+    try {
+      const res = await fetch(`/api/meetings/${event.id}/add-to-desk`, { method: 'POST' });
+      if (res.ok) setAddedToDesk(true);
+    } finally {
+      setAddingToDesk(false);
+    }
+  };
+
   const handleRetry = async () => {
     setRetrying(true);
     setRetryError(null);
@@ -126,6 +181,9 @@ export default function MeetingDetailClient({
         const data = await res.json();
         setRetryError(data?.error ?? 'Retry failed');
       } else {
+        setLocalBotState('processing');
+        setLocalAttendeeState(null);
+        setLocalProcessed(false);
         router.refresh();
       }
     } catch {
@@ -136,20 +194,6 @@ export default function MeetingDetailClient({
   };
   const [deleting, setDeleting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [itemSources, setItemSources] = useState<Record<string, string>>(() =>
-    Object.fromEntries(actionItems.map((item) => [item.id, item.source]))
-  );
-  const [promoting, setPromoting] = useState<string | null>(null);
-
-  const promoteToInbox = async (itemId: string) => {
-    setPromoting(itemId);
-    try {
-      const res = await fetch(`/api/meetings/action-items/${itemId}/promote`, { method: 'PATCH' });
-      if (res.ok) setItemSources((prev) => ({ ...prev, [itemId]: 'meeting_action' }));
-    } finally {
-      setPromoting(null);
-    }
-  };
   const { primary } = formatMeetingTime(event.start_time, event.end_time);
   const duration = calculateDuration(event.start_time, event.end_time);
 
@@ -232,6 +276,62 @@ export default function MeetingDetailClient({
                   Join
                 </a>
               )}
+              {event.meeting_link?.includes('meet.google.com') && !transcript && (
+                localAssistantState === 'joining' ? (
+                  <span className="text-[11px] font-medium text-amber-600">Joining…</span>
+                ) : localAssistantState === 'recording' ? (
+                  <span className="text-[11px] font-medium text-red-600">● Recording</span>
+                ) : localAssistantState === 'done' ? (
+                  <span className="text-[11px] font-medium text-neutral-400">Done</span>
+                ) : localAssistantState === 'scheduled' ? (
+                  cancellingBot ? (
+                    <span className="text-[11px] font-medium text-neutral-400 animate-pulse">Removing assistant…</span>
+                  ) : (
+                  <span className="inline-flex items-center gap-2">
+                    <span className="text-[11px] font-medium text-emerald-600">Assistant scheduled ✓</span>
+                    <button
+                      onClick={async () => {
+                        setCancellingBot(true);
+                        let success = false;
+                        try {
+                          const res = await fetch(`/api/meetings/${event.id}/cancel-bot`, { method: 'DELETE' });
+                          success = res.ok;
+                        } finally {
+                          setCancellingBot(false);
+                        }
+                        if (success) { setLocalAssistantState(null); setLocalAttendeeState(null); }
+                      }}
+                      className="text-[11px] text-neutral-400 hover:text-red-500 transition-colors"
+                    >
+                      × Remove
+                    </button>
+                  </span>
+                  )
+                ) : schedulingBot ? (
+                  <span className="text-[11px] font-medium text-neutral-400 animate-pulse">Scheduling assistant…</span>
+                ) : (
+                  <button
+                    onClick={async () => {
+                      setSchedulingBot(true);
+                      try {
+                        const res = await fetch(`/api/meetings/${event.id}/schedule-bot`, { method: 'POST' });
+                        if (res.ok) {
+                          setLocalAssistantState('scheduled');
+                          setLocalAttendeeState('scheduled');
+                          // Don't reset schedulingBot — localAssistantState change handles the transition
+                        } else {
+                          setSchedulingBot(false);
+                        }
+                      } catch {
+                        setSchedulingBot(false);
+                      }
+                    }}
+                    className="text-[11px] font-medium text-indigo-600 hover:text-indigo-800"
+                  >
+                    Send assistant →
+                  </button>
+                )
+              )}
               {transcript && (
                 <span className="flex items-center gap-1">
                   <MicrophoneIcon className="w-3.5 h-3.5 text-emerald-500" />
@@ -266,14 +366,40 @@ export default function MeetingDetailClient({
             )}
           </div>
 
-          {/* Transcription processing / failed state */}
-          {transcript && !transcriptProcessed && transcriptBotState === 'processing' && (
-            <div className="flex items-center gap-2 px-4 py-3 mb-6 bg-amber-50 border border-amber-100 text-[13px] text-amber-700">
-              <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse flex-shrink-0" />
-              Transcribing recording — check back in a minute.
+          {/* Quick actions — shown when analysis is ready */}
+          {localProcessed && transcript && (
+            <div className="flex items-center gap-2 mb-6 pb-4 border-b border-neutral-100">
+              <button
+                onClick={handleAddToDesk}
+                disabled={addingToDesk || addedToDesk}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium bg-neutral-900 text-white hover:bg-neutral-700 disabled:opacity-50 transition-colors"
+              >
+                {addedToDesk ? 'On your desk ✓' : addingToDesk ? 'Adding…' : '+ Add to desk'}
+              </button>
+              <button
+                onClick={() => router.push(`/work/new?fromMeeting=${event.id}`)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium text-indigo-600 border border-indigo-200 hover:bg-indigo-50 transition-colors"
+              >
+                Start workflow →
+              </button>
             </div>
           )}
-          {transcript && transcriptBotState === 'failed' && (
+
+          {/* Processing pipeline — show when transcript is processing or bot is active */}
+          {!localProcessed && localBotState !== 'failed' &&
+            (transcript || localAssistantState === 'joining' || localAssistantState === 'recording') && (
+            <div className="mb-6">
+              <ProcessingPipeline
+                source={(transcript?.source ?? 'bot') as 'bot' | 'recording' | 'upload'}
+                attendeeBotState={localAttendeeState}
+                botState={localBotState}
+                processed={localProcessed}
+              />
+            </div>
+          )}
+
+          {/* Failed state */}
+          {transcript && localBotState === 'failed' && (
             <div className="flex items-center justify-between gap-4 px-4 py-3 mb-6 bg-red-50 border border-red-100">
               <div>
                 <p className="text-[13px] font-medium text-red-700">Transcription failed</p>
@@ -350,44 +476,23 @@ export default function MeetingDetailClient({
                 Action items ({actionItems.length})
               </h2>
               <div className="space-y-1.5">
-                {actionItems.map((item) => {
-                  const currentSource = itemSources[item.id] ?? item.source;
-                  const inInbox = currentSource === 'meeting_action';
-                  return (
-                    <div key={item.id} className="flex items-start gap-3 px-4 py-2.5 bg-white border border-neutral-100">
-                      <BoltIcon className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-[13px] font-medium text-neutral-800">{item.workTitle}</p>
-                        {item.whyMatters && (
-                          <p className="text-[11px] text-neutral-500 mt-0.5">{item.whyMatters}</p>
-                        )}
-                        {item.assignee && (
-                          <span className="inline-block mt-1 text-[10px] text-neutral-500 bg-neutral-100 px-1.5 py-0.5">
-                            {item.assignee}
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex-shrink-0 flex flex-col items-end gap-1.5">
-                        <span className="text-[10px] font-medium text-neutral-400 capitalize">{item.category}</span>
-                        {inInbox ? (
-                          <span className="text-[10px] text-emerald-600 font-medium flex items-center gap-1">
-                            <InboxArrowDownIcon className="w-3 h-3" />
-                            In inbox ✓
-                          </span>
-                        ) : (
-                          <button
-                            onClick={() => promoteToInbox(item.id)}
-                            disabled={promoting === item.id}
-                            className="text-[10px] text-indigo-600 hover:text-indigo-800 font-medium flex items-center gap-1 disabled:opacity-50"
-                          >
-                            <InboxArrowDownIcon className="w-3 h-3" />
-                            {promoting === item.id ? '…' : 'Send to inbox'}
-                          </button>
-                        )}
-                      </div>
+                {actionItems.map((item) => (
+                  <div key={item.id} className="flex items-start gap-3 px-4 py-2.5 bg-white border border-neutral-100">
+                    <BoltIcon className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[13px] font-medium text-neutral-800">{item.workTitle}</p>
+                      {item.whyMatters && (
+                        <p className="text-[11px] text-neutral-500 mt-0.5">{item.whyMatters}</p>
+                      )}
+                      {item.assignee && (
+                        <span className="inline-block mt-1 text-[10px] text-neutral-500 bg-neutral-100 px-1.5 py-0.5">
+                          {item.assignee}
+                        </span>
+                      )}
                     </div>
-                  );
-                })}
+                    <span className="flex-shrink-0 text-[10px] font-medium text-neutral-400 capitalize mt-0.5">{item.category}</span>
+                  </div>
+                ))}
               </div>
             </section>
           )}
@@ -420,12 +525,18 @@ export default function MeetingDetailClient({
           {/* Audio player */}
           {audioUrl && (
             <section className="mb-6">
-              <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2">Recording</h2>
+              <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2">
+                Recording{durationSeconds != null && <span className="ml-1.5 font-normal normal-case text-neutral-400">{fmtDuration(durationSeconds)}</span>}
+              </h2>
               <audio
                 controls
                 src={audioUrl}
                 className="w-full h-9"
                 style={{ accentColor: '#6366f1' }}
+                onDurationChange={(e) => {
+                  const d = e.currentTarget.duration;
+                  if (isFinite(d) && d > 0) setAudioDuration(d);
+                }}
               />
             </section>
           )}
@@ -436,7 +547,7 @@ export default function MeetingDetailClient({
               <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2">
                 Transcript
                 <span className="ml-2 text-neutral-400 normal-case font-normal">
-                  {transcript.transcriptSegments.length} segments · {transcript.durationMinutes}min
+                  {transcript.transcriptSegments.length} segments{durationSeconds != null && ` · ${fmtDuration(durationSeconds)}`}
                 </span>
               </h2>
               <div className="space-y-0.5 border border-neutral-100 bg-white max-h-[500px] overflow-y-auto">
@@ -479,6 +590,12 @@ export default function MeetingDetailClient({
       </div>
     </div>
   );
+}
+
+function fmtDuration(totalSeconds: number): string {
+  const m = Math.floor(totalSeconds / 60);
+  const s = Math.floor(totalSeconds % 60);
+  return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
 function formatTs(seconds: number): string {

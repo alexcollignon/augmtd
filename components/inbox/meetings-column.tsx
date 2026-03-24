@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import Link from 'next/link';
 import {
   CalendarIcon,
   ChevronRightIcon, ChevronDownIcon, ChevronUpIcon,
@@ -60,6 +61,73 @@ function MeetingSection({
   );
 }
 
+function getBotStateChip(state?: string | null) {
+  if (!state || state === 'scheduled' || state === 'done') return null;
+  if (state === 'joining') return { label: 'Joining', className: 'text-blue-600 bg-blue-50' };
+  if (state === 'recording') return { label: 'Recording', className: 'text-red-600 bg-red-50' };
+  if (state === 'processing') return { label: 'Transcribing', className: 'text-amber-600 bg-amber-50' };
+  if (state === 'failed') return { label: 'Failed', className: 'text-red-600 bg-red-50' };
+  return null;
+}
+
+function CompletedMeetingRow({ event }: { event: CalendarEvent }) {
+  const chip = getBotStateChip(event.attendee_bot_state);
+  return (
+    <div className="px-1 py-1.5 flex items-center justify-between gap-2">
+      <p className="text-[12px] text-neutral-700 truncate flex-1 leading-tight">{event.title}</p>
+      <div className="flex items-center gap-1.5 flex-shrink-0">
+        {chip && (
+          <span className={`text-[10px] font-medium px-1.5 py-0.5 ${chip.className}`}>
+            {chip.label}
+          </span>
+        )}
+        <Link
+          href={`/meetings/${event.id}`}
+          className="text-[10px] text-indigo-500 hover:underline font-medium"
+        >
+          View
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+function CompletedTodaySection({ meetings }: { meetings: CalendarEvent[] }) {
+  const hasProcessing = meetings.some(m =>
+    m.attendee_bot_state === 'joining' ||
+    m.attendee_bot_state === 'recording' ||
+    m.attendee_bot_state === 'processing'
+  );
+  const [collapsed, setCollapsed] = useState(!hasProcessing);
+
+  useEffect(() => {
+    if (hasProcessing) setCollapsed(false);
+  }, [hasProcessing]);
+
+  if (meetings.length === 0) return null;
+
+  return (
+    <div className="mt-3 pt-3 border-t border-neutral-100">
+      <button
+        onClick={() => setCollapsed(c => !c)}
+        className="w-full h-6 flex items-center justify-between px-1 mb-0.5"
+      >
+        <h3 className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wider">
+          Completed today <span className="font-normal text-neutral-300">({meetings.length})</span>
+        </h3>
+        {collapsed
+          ? <ChevronDownIcon className="w-3 h-3 text-neutral-300" />
+          : <ChevronUpIcon className="w-3 h-3 text-neutral-300" />}
+      </button>
+      {!collapsed && (
+        <div className="space-y-0.5">
+          {meetings.map(m => <CompletedMeetingRow key={m.id} event={m} />)}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function MonthView({
   meetings,
   userEmail,
@@ -71,7 +139,13 @@ function MonthView({
   onRefresh?: () => void;
   onNewMeeting?: (date: Date) => void;
 }) {
-  const todayStr = new Date().toDateString();
+  const now = new Date();
+  const todayStr = now.toDateString();
+
+  const completedToday = meetings.filter(m =>
+    m.meeting_status === 'completed' &&
+    new Date(m.end_time).toDateString() === todayStr
+  );
 
   return (
     <div>
@@ -85,6 +159,7 @@ function MonthView({
       />
       <div className="border-t border-neutral-100 pt-3 mt-3">
         <RollingWeekView meetings={meetings} userEmail={userEmail} onRefresh={onRefresh} />
+        <CompletedTodaySection meetings={completedToday} />
       </div>
     </div>
   );

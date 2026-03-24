@@ -67,6 +67,21 @@ export async function createMeetingBot(
 }
 
 /**
+ * Cancel a scheduled bot (fire-and-forget — ignores non-2xx).
+ */
+export async function cancelMeetingBot(botId: string): Promise<void> {
+  try {
+    const base = getBotServiceBase();
+    await fetch(`${base}/bots/${botId}`, {
+      method: 'DELETE',
+      headers: getBotAuthHeaders(),
+    });
+  } catch {
+    // Non-fatal — DB state is cleared by the caller regardless
+  }
+}
+
+/**
  * Get the current state (and optional audio path) of a self-hosted bot.
  */
 export async function getMeetingBot(botId: string): Promise<SelfHostedBot> {

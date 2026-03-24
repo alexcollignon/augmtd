@@ -91,7 +91,7 @@ export default function MeetingAssistantCard({
               )}
             </div>
             <p className="text-[12px] text-neutral-600 mt-0.5">
-              {isEnabled ? 'Meeting bot auto-join enabled' : 'Meeting transcription disabled'}
+              {isEnabled ? 'Automatically joins your Google Meet calls' : 'Meeting transcription disabled'}
             </p>
             <span className="inline-flex items-center px-1.5 py-0.5 bg-blue-50 text-blue-600 text-[10px] font-medium border border-blue-100 mt-1">
               Google Meet only

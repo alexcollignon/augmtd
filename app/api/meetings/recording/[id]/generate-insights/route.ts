@@ -62,5 +62,50 @@ export async function POST(
     }
   );
 
+  // Fire-and-forget: surface to desk pool
+  void (async () => {
+    try {
+      const { data: done } = await adminClient
+        .from('meeting_transcripts')
+        .select('summary, work_items_generated, suggested_next_step, title, source, calendar_event_id')
+        .eq('id', transcriptId)
+        .maybeSingle();
+      if (!done) return;
+
+      const count = (done.work_items_generated as number) ?? 0;
+      const urgency = count >= 3 ? 'high' : count >= 1 ? 'medium' : 'low';
+      const isBot = done.source === 'bot';
+      const sourceId = isBot && done.calendar_event_id ? done.calendar_event_id : transcriptId;
+      const sourceUrl = isBot && done.calendar_event_id
+        ? `/meetings/${done.calendar_event_id}`
+        : `/meetings/recording/${transcriptId}`;
+      const title = done.suggested_next_step
+        ? (done.suggested_next_step as string).slice(0, 120)
+        : `Review: ${(done.title as string) ?? 'Meeting'}`;
+
+      await adminClient
+        .from('desk_items')
+        .upsert({
+          user_id: transcript.user_id,
+          source_type: 'meeting_action',
+          source_id: sourceId,
+          thread_key: null,
+          source_refs: [{ type: 'meeting_action', id: transcriptId }],
+          kanban_column: 'pool',
+          position: 0,
+          title,
+          description: done.summary ? (done.summary as string).slice(0, 200) : null,
+          source_url: sourceUrl,
+          urgency,
+          email_count: 1,
+          has_prepared: false,
+          synthesis: null,
+          synthesis_at: null,
+        }, { onConflict: 'user_id,source_type,source_id', ignoreDuplicates: true });
+    } catch (e) {
+      console.error('[generate-insights] auto-desk error:', e);
+    }
+  })();
+
   return NextResponse.json({ success: true });
 }

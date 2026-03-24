@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { getGmailClient } from '@/lib/google/gmail';
 import { syncEmailsForConnection } from '@/lib/email-sync/sync-emails';
+import { syncCalendarForConnection } from '@/lib/calendar/sync-calendar';
+import { createBotsForCalendarEvents } from '@/lib/integrations/meeting-bot/bot-manager';
 
 export const maxDuration = 60;
 
@@ -128,6 +130,11 @@ export async function POST(request: NextRequest) {
       .from('connections')
       .update({ push_history_id: String(historyId) })
       .eq('id', connection.id);
+
+    // Sync calendar + schedule bots — catches new meeting invitations arriving via email
+    await syncCalendarForConnection(connection, adminSupabase, { daysAhead: 14, daysBehind: 0 })
+      .then(() => createBotsForCalendarEvents(connection.user_id, adminSupabase))
+      .catch((err) => console.warn('[GmailPush] Calendar/bot sync failed (non-fatal):', err));
 
     console.log(`[GmailPush] ✓ Processed push for ${emailAddress}, updated historyId to ${historyId}`);
   } catch (err) {

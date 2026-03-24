@@ -3,6 +3,7 @@ import logging
 import os
 import re
 import tempfile
+from uuid import uuid4
 
 import httpx
 from playwright.async_api import async_playwright
@@ -18,6 +19,8 @@ AUGMTD_WEBHOOK_BASE_URL = os.getenv('AUGMTD_WEBHOOK_BASE_URL', 'https://app.augm
 BOT_SECRET = os.getenv('BOT_SECRET', '')
 GOOGLE_CLIENT_ID = os.getenv('GOOGLE_CLIENT_ID', '')
 PROXY_URL = os.getenv('PROXY_URL', '')
+SUPABASE_URL = os.getenv('SUPABASE_URL', '')
+SUPABASE_SERVICE_ROLE_KEY = os.getenv('SUPABASE_SERVICE_ROLE_KEY', '')
 
 DEBUG_SCREENSHOT_DIR = '/tmp/recordings'
 
@@ -91,6 +94,27 @@ async def _authenticate_with_oauth(page, access_token: str) -> bool:
         return False
 
 
+async def _patch_transcript(transcript_id: str, fields: dict) -> None:
+    """Fire-and-forget PATCH on meeting_transcripts — non-fatal on failure."""
+    if not transcript_id or not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        return
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            await client.patch(
+                f'{SUPABASE_URL}/rest/v1/meeting_transcripts',
+                params={'id': f'eq.{transcript_id}'},
+                headers={
+                    'Authorization': f'Bearer {SUPABASE_SERVICE_ROLE_KEY}',
+                    'apikey': SUPABASE_SERVICE_ROLE_KEY,
+                    'Content-Type': 'application/json',
+                    'Prefer': 'return=minimal',
+                },
+                json=fields,
+            )
+    except Exception as exc:
+        logger.warning(f'[BotRunner] _patch_transcript failed: {exc}')
+
+
 async def _send_webhook(calendar_event_id: str, bot_id: str, state: str, audio_storage_path: str | None = None) -> None:
     url = f'{AUGMTD_WEBHOOK_BASE_URL}/api/meetings/{calendar_event_id}/bot-webhook'
     payload = {'botId': bot_id, 'state': state}
@@ -118,10 +142,54 @@ async def run_bot(bot_id: str) -> None:
     local_path = os.path.join('/tmp/recordings', f'{bot_id}.webm')
     capture = AudioCapture(bot_id, local_path)
 
+    # For ad-hoc bots: pre-insert transcript row so the UI can track live state.
+    # Scheduled bots use calendar_events.attendee_bot_state for live tracking instead.
+    adhoc_transcript_id: str | None = None
+
     try:
         # --- JOINING ---
         bot.state = BotState.JOINING
         logger.info(f'[BotRunner] Bot {bot_id} joining: {bot.meeting_url}')
+
+        if bot.calendar_event_id:
+            await _send_webhook(bot.calendar_event_id, bot_id, 'joining')
+
+        if not bot.calendar_event_id and SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY:
+            from datetime import datetime, timezone
+            adhoc_transcript_id = str(uuid4())
+            now_iso = datetime.now(timezone.utc).isoformat()
+            try:
+                async with httpx.AsyncClient(timeout=15.0) as client:
+                    ins_resp = await client.post(
+                        f'{SUPABASE_URL}/rest/v1/meeting_transcripts',
+                        headers={
+                            'Authorization': f'Bearer {SUPABASE_SERVICE_ROLE_KEY}',
+                            'apikey': SUPABASE_SERVICE_ROLE_KEY,
+                            'Content-Type': 'application/json',
+                            'Prefer': 'return=minimal',
+                        },
+                        json={
+                            'id': adhoc_transcript_id,
+                            'user_id': bot.user_id,
+                            'meeting_id': adhoc_transcript_id,
+                            'calendar_event_id': None,
+                            'title': 'Ad-hoc meeting',
+                            'start_time': now_iso,
+                            'end_time': now_iso,
+                            'duration_minutes': 0,
+                            'source': 'bot',
+                            'transcript': '',
+                            'transcript_segments': [],
+                            'attendees': [],
+                            'processed': False,
+                            'bot_state': 'joining',
+                        },
+                    )
+                    ins_resp.raise_for_status()
+                logger.info(f'[BotRunner] Pre-inserted ad-hoc transcript row {adhoc_transcript_id}')
+            except Exception as ins_err:
+                logger.warning(f'[BotRunner] Ad-hoc pre-insert failed: {ins_err}')
+                adhoc_transcript_id = None
 
         await capture.create_sink()
 
@@ -320,6 +388,10 @@ async def run_bot(bot_id: str) -> None:
             bot.state = BotState.RECORDING
             await capture.start_recording()
             logger.info(f'[BotRunner] Bot {bot_id} is now recording')
+            if bot.calendar_event_id:
+                await _send_webhook(bot.calendar_event_id, bot_id, 'recording')
+            if adhoc_transcript_id:
+                await _patch_transcript(adhoc_transcript_id, {'bot_state': 'recording'})
 
             # Poll every 5s for meeting-ended selectors (hard cap 4 hours)
             hard_timeout = 4 * 60 * 60  # seconds
@@ -374,24 +446,32 @@ async def run_bot(bot_id: str) -> None:
 
         await capture.stop()
 
-        storage_path = f'{bot.user_id}/{bot.calendar_event_id}.webm'
+        # Use calendarEventId as filename; fall back to a UUID for ad-hoc bots
+        file_id = bot.calendar_event_id or str(uuid4())
+        storage_path = f'{bot.user_id}/{file_id}.webm'
         logger.info(f'[BotRunner] Uploading {local_path} → {storage_path}')
         await upload_to_supabase(local_path, storage_path)
 
         bot.audio_storage_path = storage_path
         bot.state = BotState.ENDED
 
-        # Notify Vercel of state change (lightweight — no transcription triggered)
-        await _send_webhook(bot.calendar_event_id, bot_id, 'ended')
+        # Notify Vercel of state change — only for calendar-linked bots
+        if bot.calendar_event_id:
+            await _send_webhook(bot.calendar_event_id, bot_id, 'ended')
+
+        # For ad-hoc bots: update the pre-inserted row with the final storage path.
+        if adhoc_transcript_id:
+            await _patch_transcript(adhoc_transcript_id, {'recording_storage_path': storage_path})
 
         # Transcribe locally — avoids Vercel 300s function timeout for large audio files.
-        # run_transcription pre-inserts the pending row, calls local Whisper, writes
-        # segments to Supabase, then calls Vercel /generate-insights (fast AI-only route).
+        # run_transcription pre-inserts the pending row (or updates existing for ad-hoc),
+        # calls local Whisper, writes segments to Supabase, then calls Vercel /generate-insights.
         asyncio.create_task(run_transcription(
             storage_path=storage_path,
-            calendar_event_id=bot.calendar_event_id,
+            calendar_event_id=bot.calendar_event_id or None,
             user_id=bot.user_id,
             source='bot',
+            transcript_id=adhoc_transcript_id,
         ))
 
         # Clean up local file

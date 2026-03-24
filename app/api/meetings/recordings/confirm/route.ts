@@ -68,20 +68,39 @@ export async function POST(request: NextRequest) {
       console.error('[Recordings/Confirm] Failed to insert pending row:', pendingError);
     }
 
-    // Fire-and-forget — returns immediately, transcription runs async
-    processAudioFile({
-      userId: user.id,
-      calendarEventId: calendarEventId ?? null,
-      title,
-      startTime,
-      endTime,
-      storagePath,
-      source,
-      adminClient,
-      existingTranscriptId: pendingError ? undefined : pendingId,
-    }).catch((err) => {
-      console.error('[Recordings/Confirm] Transcription pipeline error:', err);
-    });
+    const botServiceUrl = process.env.MEETING_BOT_SERVICE_URL;
+    if (botServiceUrl && !pendingError) {
+      // Delegate to Hetzner transcription worker — returns 202 immediately
+      fetch(`${botServiceUrl}/transcribe`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${process.env.MEETING_BOT_SECRET}`,
+        },
+        body: JSON.stringify({
+          storagePath,
+          transcriptId: pendingId,
+          calendarEventId: calendarEventId ?? undefined,
+          userId: user.id,
+          source,
+        }),
+      }).catch((err) => console.error('[Recordings/Confirm] Failed to call Hetzner /transcribe:', err));
+    } else {
+      // Fallback: synchronous (local dev without bot service, or if pending insert failed)
+      processAudioFile({
+        userId: user.id,
+        calendarEventId: calendarEventId ?? null,
+        title,
+        startTime,
+        endTime,
+        storagePath,
+        source,
+        adminClient,
+        existingTranscriptId: pendingError ? undefined : pendingId,
+      }).catch((err) => {
+        console.error('[Recordings/Confirm] Transcription pipeline error:', err);
+      });
+    }
 
     return NextResponse.json({ success: true, transcriptId: pendingId });
   } catch (error) {

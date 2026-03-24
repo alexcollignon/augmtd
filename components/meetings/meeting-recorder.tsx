@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { MicrophoneIcon, StopIcon } from '@heroicons/react/24/solid';
+import fixWebmDuration from 'fix-webm-duration';
 
 type RecorderState = 'idle' | 'recording' | 'uploading' | 'processing' | 'done' | 'error';
 
@@ -113,7 +114,9 @@ export default function MeetingRecorder({
     setState('uploading');
     setUploadProgress(0);
 
-    const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
+    const rawBlob = new Blob(chunksRef.current, { type: 'audio/webm' });
+    const durationMs = Date.now() - startTimeRef.current;
+    const blob = await fixWebmDuration(rawBlob, durationMs);
     const now = new Date();
     const startTime = new Date(startTimeRef.current).toISOString();
     const endTime = now.toISOString();

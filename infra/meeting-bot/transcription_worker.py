@@ -11,6 +11,8 @@ Flow:
 
 import logging
 import os
+import subprocess
+import tempfile
 from uuid import uuid4
 
 import httpx
@@ -40,9 +42,11 @@ async def run_transcription(
 
     try:
         # 1. Resolve title / times (needed for insert; skip for update)
-        title = 'Meeting'
-        start_time = ''
-        end_time = ''
+        from datetime import datetime, timezone
+        now_iso = datetime.now(timezone.utc).isoformat()
+        title = 'Ad-hoc meeting'
+        start_time = now_iso
+        end_time = now_iso
         if not transcript_id and calendar_event_id:
             async with httpx.AsyncClient(timeout=15.0) as client:
                 resp = await client.get(
@@ -76,7 +80,7 @@ async def run_transcription(
                         'id': transcript_id,
                         'user_id': user_id,
                         'meeting_id': calendar_event_id or transcript_id,
-                        'calendar_event_id': calendar_event_id,
+                        'calendar_event_id': calendar_event_id or None,
                         'title': title,
                         'start_time': start_time,
                         'end_time': end_time,
@@ -107,6 +111,47 @@ async def run_transcription(
             audio_bytes = dl_resp.content
 
         logger.info(f'[Transcription] Downloaded {len(audio_bytes):,} bytes for {transcript_id}')
+
+        # 3b. Remux webm to add duration header (browser/ffmpeg recordings omit it)
+        try:
+            with tempfile.NamedTemporaryFile(suffix='.webm', delete=False) as tmp_in:
+                tmp_in.write(audio_bytes)
+                tmp_in_path = tmp_in.name
+            tmp_out_path = tmp_in_path + '_fixed.webm'
+            result = subprocess.run(
+                ['ffmpeg', '-y', '-i', tmp_in_path, '-c', 'copy', tmp_out_path],
+                capture_output=True, timeout=60,
+            )
+            if result.returncode == 0:
+                with open(tmp_out_path, 'rb') as f:
+                    fixed_bytes = f.read()
+                # Re-upload fixed file to Supabase Storage
+                upload_url = f'{SUPABASE_URL}/storage/v1/object/meeting-recordings/{storage_path}'
+                async with httpx.AsyncClient(timeout=60.0) as client:
+                    up_resp = await client.put(
+                        upload_url,
+                        content=fixed_bytes,
+                        headers={
+                            'Authorization': f'Bearer {SUPABASE_SERVICE_ROLE_KEY}',
+                            'apikey': SUPABASE_SERVICE_ROLE_KEY,
+                            'Content-Type': 'audio/webm',
+                        },
+                    )
+                if up_resp.status_code < 300:
+                    audio_bytes = fixed_bytes
+                    logger.info(f'[Transcription] Remuxed + re-uploaded for {transcript_id}')
+                else:
+                    logger.warning(f'[Transcription] Re-upload failed ({up_resp.status_code}), using original')
+            else:
+                logger.warning(f'[Transcription] ffmpeg remux failed (rc={result.returncode}), using original')
+        except Exception as remux_err:
+            logger.warning(f'[Transcription] Remux skipped: {remux_err}')
+        finally:
+            for p in [tmp_in_path, tmp_out_path]:
+                try:
+                    os.unlink(p)
+                except Exception:
+                    pass
 
         # 4. Call local Whisper — no timeout risk (localhost)
         filename = storage_path.split('/')[-1]

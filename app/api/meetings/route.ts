@@ -22,15 +22,15 @@ export async function GET() {
     // Fetch calendar events for the next 7 days and past 24 hours
     const now = new Date();
     const past24Hours = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-    const next7Days = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+    const next14Days = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
 
     const { data: meetings, error } = await supabase
       .from('calendar_events')
       .select('*')
       .eq('user_id', user.id)
-      .eq('status', 'confirmed') // Only show confirmed meetings
-      .gte('end_time', past24Hours.toISOString()) // Include meetings that ended in last 24h
-      .lte('start_time', next7Days.toISOString()) // Only show meetings in next 7 days
+      .eq('status', 'confirmed')
+      .gte('end_time', past24Hours.toISOString())
+      .lte('start_time', next14Days.toISOString())
       .order('start_time', { ascending: true });
 
     if (error) {

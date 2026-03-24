@@ -11,7 +11,7 @@ export default async function MeetingsPage() {
   return (
     <div className="flex h-screen bg-gradient-to-br from-neutral-50 to-white">
       <SidebarNav userEmail={user.email} />
-      <main className="flex-1 overflow-y-auto">
+      <main className="flex-1 min-h-0 flex flex-col">
         <MeetingsPageClient userEmail={user.email ?? ''} />
       </main>
     </div>
