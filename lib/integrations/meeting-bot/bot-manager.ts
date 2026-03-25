@@ -307,6 +307,12 @@ export async function storeTranscriptAndGenerateWork(
 
   // Fire-and-forget: index transcript text into KB so it's searchable in Drive
   if (transcriptText.trim()) {
+    const { createClient: createAdminClient } = await import('@supabase/supabase-js');
+    const adminClient = createAdminClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!,
+      { auth: { autoRefreshToken: false, persistSession: false } }
+    );
     void indexArtifact({
       artifactId: `transcript::${transcriptRecord.id}`,
       storagePath: null,
@@ -314,7 +320,7 @@ export async function storeTranscriptAndGenerateWork(
       mimeType: 'text/plain',
       userId,
       emailBody: transcriptText,
-    }, supabase).catch(() => {});
+    }, adminClient).catch(() => {});
   }
 
   console.log(`[MeetingBot] Generated ${workItemsCreated} work items from: ${title}`);

@@ -1,13 +1,15 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { MicrophoneIcon, CalendarDaysIcon, UserCircleIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
+import { MicrophoneIcon, CalendarDaysIcon, UserCircleIcon, ChevronRightIcon, FolderIcon } from '@heroicons/react/24/outline';
 import type { CalendarEvent } from '@/lib/types/meetings';
 import UpcomingMeetingCard from '@/components/meetings/upcoming-meeting-card';
 import TranscriptListCard from '@/components/meetings/transcript-list-card';
 import ActiveBotCard from '@/components/meetings/active-bot-card';
 import CaptureModal from '@/components/meetings/capture-modal';
 import MonthCalendar from '@/components/meetings/month-calendar';
+import MeetingFoldersSidebar from '@/components/meetings/meeting-folders-sidebar';
+import type { DriveFolder } from '@/lib/types/drive';
 
 interface Transcript {
   id: string;
@@ -21,6 +23,7 @@ interface Transcript {
   source: 'bot' | 'recording' | 'upload';
   summary?: string | null;
   processedAt?: string | null;
+  folderId?: string | null;
 }
 
 function mapTranscripts(raw: any[]): Transcript[] {
@@ -36,6 +39,7 @@ function mapTranscripts(raw: any[]): Transcript[] {
     source: t.source,
     summary: t.summary,
     processedAt: t.updated_at ?? null,
+    folderId: t.folder_id ?? null,
   }));
 }
 
@@ -69,6 +73,11 @@ export default function MeetingsPageClient({ userEmail }: { userEmail: string })
   const [seenIds, setSeenIds] = useState<Set<string>>(loadSeenIds);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
+  // Folder popover state for recent meeting cards
+  const [folderPopoverTranscriptId, setFolderPopoverTranscriptId] = useState<string | null>(null);
+  const [folders, setFolders] = useState<DriveFolder[]>([]);
+  const [movingFolderId, setMovingFolderId] = useState<string | null>(null);
 
   // Track isActive in a ref so the polling interval always reads the latest value
   const isActiveRef = useRef(false);
@@ -76,8 +85,11 @@ export default function MeetingsPageClient({ userEmail }: { userEmail: string })
 
   const fetchAll = useCallback(async () => {
     try {
+      const meetingsUrl = selectedFolderId
+        ? `/api/meetings?folderId=${encodeURIComponent(selectedFolderId)}`
+        : '/api/meetings';
       const [meetingsData, transcriptsData] = await Promise.all([
-        fetch('/api/meetings').then((r) => r.json()),
+        fetch(meetingsUrl).then((r) => r.json()),
         fetch('/api/meetings/transcripts').then((r) => r.json()),
       ]);
 
@@ -109,12 +121,20 @@ export default function MeetingsPageClient({ userEmail }: { userEmail: string })
     } catch {
       // Swallow — polling will retry
     }
+  }, [selectedFolderId]);
+
+  // Fetch folders list for move-to-folder popover
+  useEffect(() => {
+    fetch('/api/drive/folders')
+      .then((r) => r.json())
+      .then((data) => setFolders(Array.isArray(data) ? data : (data.folders ?? [])));
   }, []);
 
-  // Initial load
+  // Initial load + refetch when folder filter changes (fetchAll depends on selectedFolderId)
   useEffect(() => {
+    setLoading(true);
     fetchAll().finally(() => setLoading(false));
-  }, [fetchAll]);
+  }, [fetchAll]); // fetchAll changes when selectedFolderId changes
 
   // Adaptive polling: 5s when active, 30s otherwise
   useEffect(() => {
@@ -152,6 +172,23 @@ export default function MeetingsPageClient({ userEmail }: { userEmail: string })
 
   const handleCancelled = (eventId: string) => {
     setBotStateMap((prev) => new Map(prev).set(eventId, 'cancelled'));
+  };
+
+  const handleMoveTranscriptToFolder = async (transcriptId: string, folderId: string | null) => {
+    setMovingFolderId(transcriptId);
+    try {
+      await fetch(`/api/meetings/recording/${transcriptId}/folder`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folderId }),
+      });
+      setTranscripts((prev) =>
+        prev.map((t) => (t.id === transcriptId ? { ...t, folderId } : t))
+      );
+    } finally {
+      setMovingFolderId(null);
+      setFolderPopoverTranscriptId(null);
+    }
   };
 
   const handleCancel = async (eventId: string) => {
@@ -245,6 +282,12 @@ export default function MeetingsPageClient({ userEmail }: { userEmail: string })
 
   return (
     <div className="flex h-full">
+      {/* Folder sidebar */}
+      <MeetingFoldersSidebar
+        selectedFolderId={selectedFolderId}
+        onSelect={setSelectedFolderId}
+      />
+
       {/* Main content */}
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-3xl mx-auto px-6 py-8">
@@ -383,7 +426,49 @@ export default function MeetingsPageClient({ userEmail }: { userEmail: string })
             {!loading && recentList.length > 0 && (
               <div className="space-y-1.5">
                 {recentList.map((t) => (
-                  <TranscriptListCard key={t.id} {...t} isNew={isNew(t)} />
+                  <div key={t.id} className="group relative">
+                    <TranscriptListCard {...t} isNew={isNew(t)} />
+                    {/* Move to folder button */}
+                    <div className="absolute right-2 top-1/2 -translate-y-1/2 hidden group-hover:flex items-center">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setFolderPopoverTranscriptId((prev) => (prev === t.id ? null : t.id));
+                        }}
+                        className="flex items-center gap-1 px-2 py-1 text-[11px] text-neutral-400 hover:text-neutral-700 bg-white border border-neutral-100 hover:border-neutral-200 shadow-sm transition-colors"
+                        title="Move to folder"
+                      >
+                        <FolderIcon className="w-3 h-3" />
+                      </button>
+                      {/* Folder popover */}
+                      {folderPopoverTranscriptId === t.id && (
+                        <div className="absolute right-0 top-full mt-1 z-20 bg-white border border-neutral-200 shadow-md min-w-[140px] py-1">
+                          <button
+                            onClick={() => handleMoveTranscriptToFolder(t.id, null)}
+                            disabled={movingFolderId === t.id}
+                            className={`w-full text-left px-3 py-1.5 text-[12px] hover:bg-neutral-50 transition-colors ${
+                              t.folderId === null ? 'text-neutral-900 font-medium' : 'text-neutral-600'
+                            }`}
+                          >
+                            No folder
+                          </button>
+                          {folders.map((folder) => (
+                            <button
+                              key={folder.id}
+                              onClick={() => handleMoveTranscriptToFolder(t.id, folder.id)}
+                              disabled={movingFolderId === t.id}
+                              className={`w-full text-left px-3 py-1.5 text-[12px] flex items-center gap-1.5 hover:bg-neutral-50 transition-colors ${
+                                t.folderId === folder.id ? 'text-neutral-900 font-medium' : 'text-neutral-600'
+                              }`}
+                            >
+                              <FolderIcon className="w-3 h-3 flex-shrink-0" />
+                              <span className="truncate">{folder.name}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 ))}
               </div>
             )}

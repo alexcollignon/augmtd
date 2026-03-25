@@ -70,6 +70,8 @@ export interface CalendarEvent {
   attendee_bot_id?: string | null;
   attendee_bot_state?: string | null;
 
+  folder_id?: string | null;
+
   created_at: string;
   updated_at: string;
 }
