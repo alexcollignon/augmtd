@@ -108,6 +108,7 @@ export async function createBotsForCalendarEvents(
     .lte('start_time', twoWeeksFromNow.toISOString())
     .is('attendee_bot_id', null)
     .not('meeting_link', 'is', null)
+    .neq('attendee_bot_state', 'cancelled')
     .order('start_time', { ascending: true })
     .limit(50);
 

@@ -35,7 +35,7 @@ export async function DELETE(
   // Clear DB state first
   await adminClient
     .from('calendar_events')
-    .update({ attendee_bot_id: null, attendee_bot_state: null, attendee_bot_created_at: null })
+    .update({ attendee_bot_id: null, attendee_bot_state: 'cancelled', attendee_bot_created_at: null })
     .eq('id', eventId);
 
   // Tell the bot service (fire-and-forget)

@@ -101,6 +101,31 @@ export default function UpcomingMeetingCard({ event, botState, onScheduled, onCa
                 <span className="text-[10px] font-medium text-red-600">● Recording</span>
               ) : botState === 'done' ? (
                 <span className="text-[10px] font-medium text-neutral-400">Done</span>
+              ) : botState === 'cancelled' ? (
+                schedulingBot ? (
+                  <span className="text-[10px] font-medium text-neutral-400 animate-pulse">Scheduling assistant…</span>
+                ) : (
+                  <button
+                    onClick={async (e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setSchedulingBot(true);
+                      try {
+                        const res = await fetch(`/api/meetings/${event.id}/enable-bot`, { method: 'POST' });
+                        if (res.ok) {
+                          onScheduled?.(event.id);
+                        } else {
+                          setSchedulingBot(false);
+                        }
+                      } catch {
+                        setSchedulingBot(false);
+                      }
+                    }}
+                    className="text-[10px] font-medium text-neutral-500 hover:text-indigo-600"
+                  >
+                    ↺ Re-enable assistant
+                  </button>
+                )
               ) : botState === 'scheduled' ? (
                 cancellingBot ? (
                   <span className="text-[10px] font-medium text-neutral-400 animate-pulse">Removing assistant…</span>
