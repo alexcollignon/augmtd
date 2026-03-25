@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { XMarkIcon, PaperAirplaneIcon, SparklesIcon, ArrowTopRightOnSquareIcon } from '@heroicons/react/24/outline';
+import { XMarkIcon, PaperAirplaneIcon, SparklesIcon, ArrowTopRightOnSquareIcon, PlusIcon } from '@heroicons/react/24/outline';
 import type { DeskItem, DeskColumn } from '@/lib/types/desk';
 
 interface ChatMessage {
@@ -27,6 +27,11 @@ interface ParsedOpenProcess {
   label: string;
 }
 
+interface ParsedCreateTask {
+  title: string;
+  column: DeskColumn;
+}
+
 interface DeskChatSidebarProps {
   isOpen: boolean;
   onClose: () => void;
@@ -36,6 +41,7 @@ interface DeskChatSidebarProps {
   onDeskConfirm?: (itemId: string) => void;
   onOpenWorkflow?: (itemId: string, skill?: string, prefillTitle?: string) => void;
   onOpenProcess?: (processId: string) => void;
+  onTaskCreated?: (item: DeskItem) => void;
 }
 
 const QUICK_PROMPTS = [
@@ -47,6 +53,7 @@ const QUICK_PROMPTS = [
 
 // ── Token regexes ─────────────────────────────────────────────────────────────
 
+const DESK_CREATE_RE = /DESK_ACTION:create::([^:\n]+)(?:::(todo|in_progress|waiting|done))?/;
 const DESK_ACTION_RE = /DESK_ACTION:(\{[\s\S]+?\})/;
 const OPEN_WORKFLOW_RE = /OPEN_WORKFLOW:(\{[\s\S]+?\})/;
 const OPEN_PROCESS_RE = /OPEN_PROCESS:(\{[\s\S]+?\})/;
@@ -59,11 +66,20 @@ function tryParse<T>(s: string): T | null {
 }
 
 function parseMessage(raw: string) {
+  let createTask: ParsedCreateTask | null = null;
   let deskAction: ParsedDeskAction | null = null;
   let openWorkflow: ParsedOpenWorkflow | null = null;
   let openProcess: ParsedOpenProcess | null = null;
   let replyDraft: { body: string } | null = null;
   let openCompose: { to?: string; subject?: string; body?: string } | null = null;
+
+  const createMatch = raw.match(DESK_CREATE_RE);
+  if (createMatch) {
+    createTask = {
+      title: createMatch[1].trim(),
+      column: (createMatch[2] as DeskColumn) ?? 'todo',
+    };
+  }
 
   const deskMatch = raw.match(DESK_ACTION_RE);
   if (deskMatch) deskAction = tryParse(deskMatch[1]);
@@ -81,6 +97,7 @@ function parseMessage(raw: string) {
   if (composeMatch) openCompose = tryParse(composeMatch[1]);
 
   const text = raw
+    .replace(DESK_CREATE_RE, '')
     .replace(DESK_ACTION_RE, '')
     .replace(OPEN_WORKFLOW_RE, '')
     .replace(OPEN_PROCESS_RE, '')
@@ -93,7 +110,7 @@ function parseMessage(raw: string) {
     .replace(/^---+\s*$/gm, '')
     .trim();
 
-  return { text, deskAction, openWorkflow, openProcess, replyDraft, openCompose };
+  return { text, createTask, deskAction, openWorkflow, openProcess, replyDraft, openCompose };
 }
 
 // ── Markdown renderer ─────────────────────────────────────────────────────────
@@ -215,6 +232,48 @@ function ProcessChip({ process, onOpenProcess }: {
   );
 }
 
+function CreateTaskChip({ task, onTaskCreated }: {
+  task: ParsedCreateTask;
+  onTaskCreated?: (item: DeskItem) => void;
+}) {
+  const [state, setState] = useState<'idle' | 'loading' | 'done' | 'error'>('idle');
+  const COLUMN_LABELS: Record<DeskColumn, string> = {
+    pool: 'Pool', todo: 'To Do', in_progress: 'In Progress', waiting: 'Waiting', done: 'Done',
+  };
+
+  const execute = async () => {
+    setState('loading');
+    try {
+      const res = await fetch('/api/desk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: task.title, kanban_column: task.column }),
+      });
+      if (!res.ok) throw new Error();
+      const { item } = await res.json();
+      onTaskCreated?.(item);
+      setState('done');
+    } catch {
+      setState('error');
+    }
+  };
+
+  if (state === 'done') return <span className="text-[11px] text-green-600 font-medium">Task added ✓</span>;
+  if (state === 'error') return <span className="text-[11px] text-red-500">Something went wrong</span>;
+
+  return (
+    <div className="inline-flex items-center gap-2 mt-2 px-3 py-1.5 bg-neutral-50 border border-neutral-200 text-[12px]">
+      <PlusIcon className="w-3 h-3 text-neutral-400 flex-shrink-0" />
+      <span className="text-neutral-600">"{task.title}" → {COLUMN_LABELS[task.column]}</span>
+      {state === 'loading' ? (
+        <div className="w-3 h-3 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+      ) : (
+        <button onClick={execute} className="text-indigo-600 font-semibold hover:text-indigo-800">Add it</button>
+      )}
+    </div>
+  );
+}
+
 function ReplyDraftButton({ body }: { body: string }) {
   const [state, setState] = useState<'idle' | 'copied'>('idle');
   return (
@@ -230,19 +289,23 @@ function ReplyDraftButton({ body }: { body: string }) {
 
 // ── Message renderer ──────────────────────────────────────────────────────────
 
-function MessageContent({ content, onDeskMove, onDeskDismiss, onDeskConfirm, onOpenWorkflow, onOpenProcess }: {
+function MessageContent({ content, onDeskMove, onDeskDismiss, onDeskConfirm, onOpenWorkflow, onOpenProcess, onTaskCreated }: {
   content: string;
   onDeskMove?: (itemId: string, column: DeskColumn) => void;
   onDeskDismiss?: (itemId: string) => void;
   onDeskConfirm?: (itemId: string) => void;
   onOpenWorkflow?: (itemId: string, skill?: string, prefillTitle?: string) => void;
   onOpenProcess?: (processId: string) => void;
+  onTaskCreated?: (item: DeskItem) => void;
 }) {
-  const { text, deskAction, openWorkflow, openProcess, replyDraft } = parseMessage(content);
+  const { text, createTask, deskAction, openWorkflow, openProcess, replyDraft } = parseMessage(content);
 
   return (
     <div>
       {renderMarkdown(text)}
+      {createTask && (
+        <CreateTaskChip task={createTask} onTaskCreated={onTaskCreated} />
+      )}
       {deskAction && (
         <DeskActionChip action={deskAction} onMove={onDeskMove} onDismiss={onDeskDismiss} onConfirm={onDeskConfirm} />
       )}
@@ -270,6 +333,7 @@ export default function DeskChatSidebar({
   onDeskConfirm,
   onOpenWorkflow,
   onOpenProcess,
+  onTaskCreated,
 }: DeskChatSidebarProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputValue, setInputValue] = useState('');
@@ -380,6 +444,7 @@ export default function DeskChatSidebar({
                         onDeskConfirm={onDeskConfirm}
                         onOpenWorkflow={onOpenWorkflow}
                         onOpenProcess={onOpenProcess}
+                        onTaskCreated={onTaskCreated}
                       />
                     ) : (
                       streaming && i === messages.length - 1 ? (

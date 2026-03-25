@@ -16,6 +16,7 @@ interface DeskCardProps {
   item: DeskItem;
   onMove: (id: string, column: DeskColumn) => void;
   onDismiss: (id: string) => void;
+  onSelect?: (id: string) => void;
 }
 
 const SOURCE_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -31,7 +32,7 @@ const URGENCY_DOT: Record<string, string> = {
   low: 'bg-neutral-300',
 };
 
-export default function DeskCard({ item, onMove, onDismiss }: DeskCardProps) {
+export default function DeskCard({ item, onMove, onDismiss, onSelect }: DeskCardProps) {
   const SourceIcon = SOURCE_ICONS[item.sourceType] ?? RectangleStackIcon;
   const isDone = item.column === 'done';
   const synthesizing = !item.synthesis && !item.synthesisAt && item.sourceType === 'email';
@@ -44,7 +45,8 @@ export default function DeskCard({ item, onMove, onDismiss }: DeskCardProps) {
         e.dataTransfer.setData('desk-item-id', item.id);
         e.dataTransfer.effectAllowed = 'move';
       }}
-      className={`group bg-white border border-neutral-100 px-3 py-2 cursor-grab active:cursor-grabbing transition-all hover:shadow-sm hover:border-neutral-200 ${
+      onClick={() => onSelect?.(item.id)}
+      className={`group bg-white border border-neutral-100 px-3 py-2 cursor-pointer transition-all hover:shadow-sm hover:border-neutral-200 ${
         isDone ? 'opacity-55' : ''
       }`}
     >
@@ -56,12 +58,12 @@ export default function DeskCard({ item, onMove, onDismiss }: DeskCardProps) {
         </p>
         <div className="flex items-center gap-1 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
           {item.sourceUrl && (
-            <Link href={item.sourceUrl} title="Open">
+            <Link href={item.sourceUrl} title="Open" onClick={(e) => e.stopPropagation()}>
               <ArrowTopRightOnSquareIcon className="w-3 h-3 text-neutral-400 hover:text-indigo-500" />
             </Link>
           )}
           <button
-            onClick={() => onDismiss(item.id)}
+            onClick={(e) => { e.stopPropagation(); onDismiss(item.id); }}
             className="p-0.5 text-neutral-300 hover:text-red-500 transition-colors"
             title="Remove"
           >
@@ -80,9 +82,6 @@ export default function DeskCard({ item, onMove, onDismiss }: DeskCardProps) {
         )}
         {item.urgency && (
           <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${URGENCY_DOT[item.urgency] ?? 'bg-neutral-300'}`} />
-        )}
-        {item.hasPrepared && (
-          <span className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-indigo-400" title="Draft prepared" />
         )}
       </div>
 
@@ -104,7 +103,7 @@ export default function DeskCard({ item, onMove, onDismiss }: DeskCardProps) {
         <div className="flex items-center gap-2 mt-1.5 pl-4 opacity-0 group-hover:opacity-100 transition-opacity">
           {item.column !== 'in_progress' && (
             <button
-              onClick={() => onMove(item.id, 'in_progress')}
+              onClick={(e) => { e.stopPropagation(); onMove(item.id, 'in_progress'); }}
               className="text-[10px] font-medium text-indigo-600 hover:text-indigo-700"
             >
               Start
@@ -112,14 +111,14 @@ export default function DeskCard({ item, onMove, onDismiss }: DeskCardProps) {
           )}
           {item.column !== 'waiting' && (
             <button
-              onClick={() => onMove(item.id, 'waiting')}
+              onClick={(e) => { e.stopPropagation(); onMove(item.id, 'waiting'); }}
               className="text-[10px] font-medium text-neutral-500 hover:text-neutral-700"
             >
               Waiting
             </button>
           )}
           <button
-            onClick={() => onMove(item.id, 'done')}
+            onClick={(e) => { e.stopPropagation(); onMove(item.id, 'done'); }}
             className="text-[10px] font-medium text-green-600 hover:text-green-700 flex items-center gap-0.5"
           >
             <CheckIcon className="w-3 h-3" />

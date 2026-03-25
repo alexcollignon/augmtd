@@ -12,6 +12,7 @@ interface PoolCardProps {
   item: DeskItem;
   onConfirm: (id: string) => void;
   onDismiss: (id: string) => void;
+  onSelect?: (id: string) => void;
 }
 
 const SOURCE_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -27,11 +28,14 @@ const URGENCY_DOT: Record<string, string> = {
   low: 'bg-neutral-300',
 };
 
-export default function PoolCard({ item, onConfirm, onDismiss }: PoolCardProps) {
+export default function PoolCard({ item, onConfirm, onDismiss, onSelect }: PoolCardProps) {
   const SourceIcon = SOURCE_ICONS[item.sourceType] ?? RectangleStackIcon;
 
   return (
-    <div className="group bg-white border border-neutral-100 px-3 py-2 hover:border-neutral-200 hover:shadow-sm transition-all">
+    <div
+      className="group bg-white border border-neutral-100 px-3 py-2 hover:border-neutral-200 hover:shadow-sm transition-all cursor-pointer"
+      onClick={() => onSelect?.(item.id)}
+    >
       {/* Title row */}
       <div className="flex items-start gap-1.5">
         <SourceIcon className="w-3 h-3 text-neutral-400 flex-shrink-0 mt-px" />
@@ -53,21 +57,18 @@ export default function PoolCard({ item, onConfirm, onDismiss }: PoolCardProps) 
         {item.urgency && (
           <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ml-auto ${URGENCY_DOT[item.urgency] ?? 'bg-neutral-300'}`} />
         )}
-        {item.hasPrepared && (
-          <span className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-indigo-400" title="Draft prepared" />
-        )}
       </div>
 
       {/* CTAs — always visible, inline */}
       <div className="flex items-center gap-3 mt-1.5 pl-4">
         <button
-          onClick={() => onConfirm(item.id)}
+          onClick={(e) => { e.stopPropagation(); onConfirm(item.id); }}
           className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 transition-colors"
         >
           Add to board →
         </button>
         <button
-          onClick={() => onDismiss(item.id)}
+          onClick={(e) => { e.stopPropagation(); onDismiss(item.id); }}
           className="text-[11px] text-neutral-400 hover:text-neutral-600 transition-colors"
         >
           Dismiss

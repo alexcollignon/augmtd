@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { DeskItem, DeskColumn } from '@/lib/types/desk';
 import DeskCard from './desk-card';
 import PoolCard from './pool-card';
@@ -12,15 +12,33 @@ interface KanbanColumnProps {
   onMove: (id: string, column: DeskColumn) => void;
   onDismiss: (id: string) => void;
   onConfirm?: (id: string) => void;
+  onSelect?: (id: string) => void;
+  addingTask?: boolean;
+  onAddTask?: (title: string) => void;
+  onCancelAddTask?: () => void;
 }
 
 const POOL_VISIBLE_DEFAULT = 15;
 
-export default function KanbanColumn({ id, label, items, onMove, onDismiss, onConfirm }: KanbanColumnProps) {
+export default function KanbanColumn({
+  id, label, items, onMove, onDismiss, onConfirm,
+  onSelect, addingTask, onAddTask, onCancelAddTask,
+}: KanbanColumnProps) {
   const [isDragOver, setIsDragOver] = useState(false);
   const [showAll, setShowAll] = useState(false);
+  const [newTaskTitle, setNewTaskTitle] = useState('');
+  const inputRef = useRef<HTMLInputElement>(null);
+  const submittedRef = useRef(false);
 
   const isPool = id === 'pool';
+
+  useEffect(() => {
+    if (addingTask) {
+      setNewTaskTitle('');
+      submittedRef.current = false;
+      setTimeout(() => inputRef.current?.focus(), 0);
+    }
+  }, [addingTask]);
 
   const handleDragOver = (e: React.DragEvent) => {
     if (isPool) return;
@@ -80,7 +98,35 @@ export default function KanbanColumn({ id, label, items, onMove, onDismiss, onCo
 
       {/* Cards */}
       <div className="flex-1 p-2 space-y-2">
-        {items.length === 0 && (
+        {/* Inline task input (top of Todo) */}
+        {addingTask && id === 'todo' && (
+          <div className="bg-white border border-indigo-200 px-3 py-2">
+            <input
+              ref={inputRef}
+              type="text"
+              value={newTaskTitle}
+              onChange={(e) => setNewTaskTitle(e.target.value)}
+              placeholder="Task title…"
+              className="w-full text-[12px] text-neutral-800 placeholder-neutral-400 outline-none bg-transparent"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && newTaskTitle.trim()) {
+                  submittedRef.current = true;
+                  onAddTask?.(newTaskTitle.trim());
+                  setNewTaskTitle('');
+                } else if (e.key === 'Escape') {
+                  submittedRef.current = true;
+                  onCancelAddTask?.();
+                }
+              }}
+              onBlur={() => {
+                if (!submittedRef.current) onCancelAddTask?.();
+              }}
+            />
+            <p className="text-[10px] text-neutral-400 mt-1">Enter to add · Esc to cancel</p>
+          </div>
+        )}
+
+        {items.length === 0 && !addingTask && (
           <div className="h-8" />
         )}
         {visibleItems.map((item) =>
@@ -90,6 +136,7 @@ export default function KanbanColumn({ id, label, items, onMove, onDismiss, onCo
               item={item}
               onConfirm={onConfirm ?? (() => {})}
               onDismiss={onDismiss}
+              onSelect={onSelect}
             />
           ) : (
             <DeskCard
@@ -97,6 +144,7 @@ export default function KanbanColumn({ id, label, items, onMove, onDismiss, onCo
               item={item}
               onMove={onMove}
               onDismiss={onDismiss}
+              onSelect={onSelect}
             />
           )
         )}

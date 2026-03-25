@@ -85,6 +85,7 @@ export function InboxPageClient({
   const [replyIsOpen, setReplyIsOpen] = useState(false);
   const [replyBody, setReplyBody] = useState('');
   const autoFiredReplyRef = useRef(false);
+  const deepLinkFiredRef = useRef(false);
   // Email context chip
   const [chipDismissed, setChipDismissed] = useState(false);
 
@@ -188,6 +189,20 @@ export function InboxPageClient({
       channel.close();
     };
   }, [fetchMeetings]);
+
+  // Deep-link: ?item=<uuid> auto-selects a specific inbox item (e.g. from desk card)
+  useEffect(() => {
+    if (deepLinkFiredRef.current) return;
+    const itemId = searchParams?.get('item');
+    if (!itemId || inboxItems.length === 0) return;
+    const target = inboxItems.find((i) => i.id === itemId);
+    if (target) {
+      deepLinkFiredRef.current = true;
+      handleSelectItem(target);
+      window.history.replaceState({}, '', '/inbox');
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inboxItems, searchParams]);
 
   // Trigger initial sync after connecting
   useEffect(() => {

@@ -2,11 +2,12 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowPathIcon, SparklesIcon } from '@heroicons/react/24/outline';
+import { ArrowPathIcon, SparklesIcon, PlusIcon } from '@heroicons/react/24/outline';
 import type { DeskItem, DeskColumn } from '@/lib/types/desk';
 import { DESK_COLUMNS } from '@/lib/types/desk';
 import KanbanColumn from '@/components/desk/kanban-column';
 import DeskChatSidebar from '@/components/desk/desk-chat-sidebar';
+import CardDetailPanel from '@/components/desk/card-detail-panel';
 
 export default function DeskPageClient() {
   const router = useRouter();
@@ -15,6 +16,8 @@ export default function DeskPageClient() {
   const [syncing, setSyncing] = useState(false);
   const [lastSynced, setLastSynced] = useState<Date | null>(null);
   const [chatOpen, setChatOpen] = useState(false);
+  const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
+  const [addingTask, setAddingTask] = useState(false);
   const synthesisTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const synthesisStartRef = useRef<Date | null>(null);
   const syncInProgressRef = useRef(false);
@@ -96,6 +99,58 @@ export default function DeskPageClient() {
     handleMove(itemId, 'todo');
   }, [handleMove]);
 
+  const handleSelectCard = useCallback((id: string) => {
+    setSelectedCardId((prev) => (prev === id ? null : id));
+    setChatOpen(false);
+  }, []);
+
+  const handleAddTask = useCallback(async (title: string) => {
+    setAddingTask(false);
+    const tempId = crypto.randomUUID();
+    const now = new Date().toISOString();
+    const optimistic: DeskItem = {
+      id: tempId,
+      userId: '',
+      sourceType: 'manual',
+      sourceId: tempId,
+      threadKey: null,
+      sourceRefs: [],
+      column: 'todo',
+      position: 0,
+      title,
+      description: null,
+      sourceUrl: null,
+      urgency: null,
+      aiContext: null,
+      synthesis: null,
+      synthesisAt: null,
+      emailCount: 1,
+      hasPrepared: false,
+      createdAt: now,
+      updatedAt: now,
+    };
+    setItems((prev) => [optimistic, ...prev]);
+    try {
+      const res = await fetch('/api/desk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title, kanban_column: 'todo' }),
+      });
+      if (res.ok) {
+        const { item } = await res.json();
+        setItems((prev) => prev.map((i) => (i.id === tempId ? item : i)));
+      } else {
+        setItems((prev) => prev.filter((i) => i.id !== tempId));
+      }
+    } catch {
+      setItems((prev) => prev.filter((i) => i.id !== tempId));
+    }
+  }, []);
+
+  const handleTaskCreated = useCallback((item: DeskItem) => {
+    setItems((prev) => [item, ...prev]);
+  }, []);
+
   const handleOpenWorkflow = useCallback((itemId: string, skill?: string, prefillTitle?: string) => {
     const params = new URLSearchParams();
     if (skill) params.set('skill', skill);
@@ -120,6 +175,7 @@ export default function DeskPageClient() {
 
   const activeCount = items.filter((i) => i.column !== 'done').length;
   const synthesisPending = items.some((i) => i.sourceType === 'email' && !i.synthesis && !i.synthesisAt);
+  const selectedItem = items.find((i) => i.id === selectedCardId) ?? null;
 
   return (
     <div className="flex flex-col h-full">
@@ -143,7 +199,19 @@ export default function DeskPageClient() {
             </span>
           )}
           <button
-            onClick={() => setChatOpen((v) => !v)}
+            onClick={() => {
+              setAddingTask(true);
+              setSelectedCardId(null);
+              setChatOpen(false);
+            }}
+            className="flex-shrink-0 flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold border border-neutral-300 text-neutral-600 hover:bg-neutral-50 transition-colors"
+            title="Add task"
+          >
+            <PlusIcon className="w-3 h-3" />
+            Add task
+          </button>
+          <button
+            onClick={() => { setChatOpen((v) => !v); setSelectedCardId(null); }}
             className={`flex-shrink-0 flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold border transition-colors ${
               chatOpen
                 ? 'bg-indigo-600 border-indigo-600 text-white'
@@ -165,7 +233,7 @@ export default function DeskPageClient() {
         </div>
       </div>
 
-      {/* Board + sidebar */}
+      {/* Board + sidebars */}
       <div className="flex flex-row flex-1 overflow-hidden">
         <div className="flex-1 overflow-x-auto px-6 py-6">
           {loading ? (
@@ -185,11 +253,24 @@ export default function DeskPageClient() {
                   onMove={handleMove}
                   onDismiss={handleDismiss}
                   onConfirm={col.id === 'pool' ? handleConfirm : undefined}
+                  onSelect={handleSelectCard}
+                  addingTask={addingTask && col.id === 'todo'}
+                  onAddTask={handleAddTask}
+                  onCancelAddTask={() => setAddingTask(false)}
                 />
               ))}
             </div>
           )}
         </div>
+
+        {selectedItem && (
+          <CardDetailPanel
+            item={selectedItem}
+            onClose={() => setSelectedCardId(null)}
+            onMove={handleMove}
+            onDismiss={handleDismiss}
+          />
+        )}
 
         <DeskChatSidebar
           isOpen={chatOpen}
@@ -200,6 +281,7 @@ export default function DeskPageClient() {
           onDeskConfirm={handleConfirm}
           onOpenWorkflow={handleOpenWorkflow}
           onOpenProcess={handleOpenProcess}
+          onTaskCreated={handleTaskCreated}
         />
       </div>
     </div>

@@ -27,12 +27,24 @@ export async function DELETE(
   if (transcripts && transcripts.length > 0) {
     const transcriptIds = transcripts.map((t) => t.id);
 
-    // Delete linked inbox items
-    await adminClient
+    // Delete linked inbox items (fetch IDs first to clean desk_items)
+    const { data: deletedInboxItems } = await adminClient
       .from('inbox_items')
       .delete()
       .eq('user_id', user.id)
-      .in('source_meeting_transcript_id', transcriptIds);
+      .in('source_meeting_transcript_id', transcriptIds)
+      .select('id');
+
+    // Delete linked desk items (meeting_action cards)
+    const deletedInboxIds = (deletedInboxItems ?? []).map((r: { id: string }) => r.id);
+    if (deletedInboxIds.length > 0) {
+      await adminClient
+        .from('desk_items')
+        .delete()
+        .eq('user_id', user.id)
+        .eq('source_type', 'meeting_action')
+        .in('source_id', deletedInboxIds);
+    }
 
     // Delete storage files for any recordings
     const storagePaths = transcripts

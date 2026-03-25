@@ -35,6 +35,7 @@ function buildBoardContext(boardItems: DeskItem[]): string {
     for (const item of items) {
       const src = item.sourceType === 'email' ? 'EMAIL'
         : item.sourceType === 'meeting_action' ? 'MEETING'
+        : item.sourceType === 'manual' ? 'TASK'
         : 'PROCESS';
       lines.push(`  - ${item.title} (${src}) [id:${item.id}]`);
     }
@@ -135,7 +136,12 @@ DESK_ACTION:{"type":"dismiss","itemId":"uuid","label":"..."}
 → User wants to remove an item from the board entirely.
 
 DESK_ACTION:{"type":"confirm","itemId":"uuid","label":"..."}
-→ User wants to move a Pool item to To Do. Only valid for items in the Pool column.`;
+→ User wants to move a Pool item to To Do. Only valid for items in the Pool column.
+
+DESK_ACTION:create::<title>::<column>
+→ User explicitly asks to create a new task. <title> is the task name. <column> is optional (todo|in_progress|waiting) — defaults to todo.
+  Use ONLY when user explicitly asks to add/create a task. Never invent tasks unprompted.
+  Example: DESK_ACTION:create::Prepare Q2 board report::todo`;
 
 // ── Route handler ────────────────────────────────────────────────────────────
 

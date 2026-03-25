@@ -103,7 +103,7 @@ export async function syncDeskForUser(userId: string, adminClient: SupabaseClien
     const sourceRefs: DeskSourceRef[] = items.map((i) => ({ type: 'email', id: i.id }));
     const title = lead.work_title || lead.source_data?.subject || '(No subject)';
     const description = lead.why_matters || `From ${lead.source_data?.from_name || lead.source_data?.from_address || 'Unknown'}`;
-    const sourceUrl = `/inbox`;
+    const sourceUrl = `/inbox?item=${lead.id}`;
 
     const existingThread = existingByThread.get(threadKey);
 
@@ -123,6 +123,7 @@ export async function syncDeskForUser(userId: string, adminClient: SupabaseClien
           description,
           source_id: lead.id,
           source_refs: sourceRefs,
+          source_url: `/inbox?item=${lead.id}`,
           email_count: emailCount,
           has_prepared: hasPrepared,
           urgency,
@@ -219,7 +220,7 @@ export async function syncDeskForUser(userId: string, adminClient: SupabaseClien
   // ── 3. Meeting action items (source='meeting') ─────────────────────────────
   const { data: meetingItems, error: meetingErr } = await adminClient
     .from('inbox_items')
-    .select('id, work_title, source_data, status')
+    .select('id, work_title, source_data, status, source_meeting_transcript_id')
     .eq('user_id', userId)
     .eq('source', 'meeting')
     .not('status', 'in', '("completed","dismissed")')
@@ -228,6 +229,22 @@ export async function syncDeskForUser(userId: string, adminClient: SupabaseClien
 
   if (meetingErr) console.error('[SyncDesk] meeting query error:', meetingErr.message);
 
+  // Resolve transcript → calendar_event_id in one batch query
+  const transcriptIds = (meetingItems ?? [])
+    .map((i: any) => i.source_meeting_transcript_id)
+    .filter((id: unknown): id is string => !!id);
+
+  const transcriptToEvent = new Map<string, string | null>();
+  if (transcriptIds.length > 0) {
+    const { data: transcriptRows } = await adminClient
+      .from('meeting_transcripts')
+      .select('id, calendar_event_id')
+      .in('id', transcriptIds);
+    for (const row of transcriptRows ?? []) {
+      transcriptToEvent.set(row.id, row.calendar_event_id ?? null);
+    }
+  }
+
   for (const item of meetingItems ?? []) {
     const key = `meeting_action:${item.id}`;
     if (doneSourceKeys.has(key) || existingBySource.has(key)) continue;
@@ -235,6 +252,12 @@ export async function syncDeskForUser(userId: string, adminClient: SupabaseClien
     const meetingTitle = (item.source_data as Record<string, unknown>)?.meeting_title as string ?? 'Meeting';
     const meetingActionTitle = item.work_title || (item.source_data as Record<string, unknown>)?.action_item as string || '(Action item)';
     const ruleResult = assignColumnByRules({ sourceType: 'meeting_action', title: meetingActionTitle });
+
+    const calendarEventId = item.source_meeting_transcript_id
+      ? transcriptToEvent.get(item.source_meeting_transcript_id) ?? null
+      : null;
+    const sourceUrl = calendarEventId ? `/meetings/${calendarEventId}` : '/meetings';
+
     toInsert.push({
       user_id: userId,
       source_type: 'meeting_action',
@@ -245,7 +268,7 @@ export async function syncDeskForUser(userId: string, adminClient: SupabaseClien
       position: 0,
       title: meetingActionTitle,
       description: `From: ${meetingTitle}`,
-      source_url: '/meetings',
+      source_url: sourceUrl,
       urgency: 'high' as DeskUrgency,
       email_count: 1,
       has_prepared: false,
@@ -348,7 +371,28 @@ export async function syncDeskForUser(userId: string, adminClient: SupabaseClien
     if (error) console.error('[SyncDesk] Update error:', error.message);
   }
 
-  // ── 7. Collect all items that still need synthesis (new + existing unsynthesized) ──
+  // ── 7. Prune stale meeting_action desk items whose inbox_item no longer exists ──
+  const existingMeetingDeskItems = (existing ?? []).filter((r) => r.source_type === 'meeting_action');
+  if (existingMeetingDeskItems.length > 0) {
+    const existingSourceIds = existingMeetingDeskItems.map((r) => r.source_id).filter(Boolean) as string[];
+    if (existingSourceIds.length > 0) {
+      const { data: stillValid } = await adminClient
+        .from('inbox_items')
+        .select('id')
+        .eq('user_id', userId)
+        .in('id', existingSourceIds);
+      const validSet = new Set((stillValid ?? []).map((r: { id: string }) => r.id));
+      const staleIds = existingMeetingDeskItems
+        .filter((r) => r.source_id && !validSet.has(r.source_id))
+        .map((r) => r.id);
+      if (staleIds.length > 0) {
+        await adminClient.from('desk_items').delete().eq('user_id', userId).in('id', staleIds);
+        console.log(`[SyncDesk] pruned ${staleIds.length} stale meeting_action desk items`);
+      }
+    }
+  }
+
+  // ── 8. Collect all items that still need synthesis (new + existing unsynthesized) ──
   const { data: pendingSynthesis } = await adminClient
     .from('desk_items')
     .select('id')
