@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { extractTextFromAttachment } from '@/lib/attachments/text-extractor';
+import { indexUploadedFile } from '@/lib/knowledge/indexer';
 
 const CONTENT_TYPES = [
   'application/pdf',
@@ -89,6 +90,8 @@ export async function POST(
       extractedText: string | null;
     }> = [];
 
+    const buffersToIndex: Array<{ buffer: Buffer; filename: string; mimeType: string; storagePath: string }> = [];
+
     for (const upload of uploads) {
       const isZip = ZIP_MIME_TYPES.includes(upload.mimeType) || upload.filename.toLowerCase().endsWith('.zip');
 
@@ -131,6 +134,7 @@ export async function POST(
             storagePath: entryStoragePath,
             extractedText: extracted ? extracted.slice(0, 3000) : null,
           });
+          buffersToIndex.push({ buffer: entryBuffer, filename: baseName, mimeType: entryMime, storagePath: entryStoragePath });
         }
 
         // Remove the raw ZIP — individual files have been stored
@@ -145,6 +149,7 @@ export async function POST(
           storagePath: upload.storagePath,
           extractedText: extracted ? extracted.slice(0, 3000) : null,
         });
+        buffersToIndex.push({ buffer, filename: upload.filename, mimeType: upload.mimeType, storagePath: upload.storagePath });
       }
     }
 
@@ -200,6 +205,13 @@ export async function POST(
         updated_at: new Date().toISOString(),
       })
       .eq('id', threadId);
+
+    // Fire-and-forget KB indexing for all new attachments
+    void Promise.all(
+      buffersToIndex.map(({ buffer, filename, mimeType, storagePath }) =>
+        indexUploadedFile({ buffer, filename, mimeType, userId: user.id, storagePathInBucket: storagePath }, adminClient).catch(() => {})
+      )
+    );
 
     return NextResponse.json({ attachments: newAttachments, plan });
   } catch (error) {

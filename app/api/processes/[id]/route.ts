@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createAdminClient } from '@supabase/supabase-js';
 import type { ProcessDetail } from '@/lib/types/process';
+import { indexUploadedFile } from '@/lib/knowledge/indexer';
 
 // GET /api/processes/[id] — full detail
 export async function GET(
@@ -101,6 +102,27 @@ export async function PATCH(
     .single();
 
   if (upErr) return NextResponse.json({ error: 'Failed to update' }, { status: 500 });
+
+  // Fire-and-forget KB indexing for newly attached process files
+  if (updates.files && Array.isArray(updates.files)) {
+    const adminClient = createAdminClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    );
+    void Promise.all(
+      (updates.files as Array<{ filename?: string; content_base64?: string; mime_type?: string }>)
+        .filter((entry) => entry.content_base64 && entry.filename)
+        .map((entry) =>
+          indexUploadedFile({
+            buffer: Buffer.from(entry.content_base64!, 'base64'),
+            filename: entry.filename!,
+            mimeType: entry.mime_type || 'application/octet-stream',
+            userId: user.id,
+            storagePathInBucket: `process::${id}::${entry.filename}`,
+          }, adminClient).catch(() => {})
+        )
+    );
+  }
 
   return NextResponse.json({ process: updated });
 }

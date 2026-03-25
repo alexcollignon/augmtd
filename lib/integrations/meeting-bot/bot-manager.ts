@@ -9,6 +9,7 @@ import { randomUUID } from 'crypto';
 import { getAIClient } from '@/lib/ai/factory';
 import { buildUserContextBlock } from '@/lib/context/build-user-context';
 import { getOAuth2Client } from '@/lib/google/oauth';
+import { indexArtifact } from '@/lib/knowledge/indexer';
 
 interface ExtractedActionItem {
   action: string;
@@ -302,6 +303,18 @@ export async function storeTranscriptAndGenerateWork(
       suggested_next_step: insights.suggested_next_step ?? null,
     })
     .eq('id', transcriptRecord.id);
+
+  // Fire-and-forget: index transcript text into KB so it's searchable in Drive
+  if (transcriptText.trim()) {
+    void indexArtifact({
+      artifactId: `transcript::${transcriptRecord.id}`,
+      storagePath: null,
+      filename: `Meeting: ${title}.txt`,
+      mimeType: 'text/plain',
+      userId,
+      emailBody: transcriptText,
+    }, supabase).catch(() => {});
+  }
 
   console.log(`[MeetingBot] Generated ${workItemsCreated} work items from: ${title}`);
 }

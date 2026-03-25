@@ -393,6 +393,7 @@ function TypeBadge({ type }: { type: string }) {
     email: 'bg-amber-50 text-amber-700',
     analysis: 'bg-teal-50 text-teal-700',
     spreadsheet: 'bg-green-50 text-green-700',
+    transcript: 'bg-teal-50 text-teal-700',
   };
   // Mime-derived labels
   const mimeLabels: Record<string, string> = {
@@ -441,6 +442,7 @@ function SourceBadge({ source }: { source: string }) {
   const config: Record<string, { label: string; className: string }> = {
     workflow: { label: 'Workflow', className: 'bg-indigo-50 text-indigo-700' },
     process:  { label: 'Process',  className: 'bg-purple-50 text-purple-700' },
+    meeting:  { label: 'Meeting',  className: 'bg-teal-50 text-teal-700' },
     google_drive: { label: 'Google Drive', className: 'bg-blue-50 text-blue-700' },
     onedrive:     { label: 'OneDrive',     className: 'bg-sky-50 text-sky-700' },
     upload:       { label: 'Upload',       className: 'bg-neutral-100 text-neutral-600' },
@@ -718,6 +720,18 @@ function AugmtdFilesTab({ folders, onFoldersChange }: AugmtdTabProps) {
             );
           })()}
 
+          {/* Meetings group */}
+          {(() => {
+            const mFiles = visibleFiles.filter((f) => f.source === 'meeting');
+            if (mFiles.length === 0) return null;
+            return (
+              <div className="mb-4">
+                <h4 className="text-[11px] font-semibold text-neutral-400 uppercase tracking-wider mb-2 px-1">Meetings</h4>
+                <FileTable files={mFiles} folders={userFolders} onMove={handleMove} onNewFolderAndMove={handleNewFolderAndMove} moveDropdownFor={moveDropdownFor} setMoveDropdownFor={setMoveDropdownFor} />
+              </div>
+            );
+          })()}
+
           {visibleFiles.length === 0 && userFolders.length === 0 && (
             <EmptyState message="No AUGMTD-generated files yet." sub="Generate documents in Workflows or Processes to see them here." />
           )}
@@ -841,6 +855,15 @@ function FileTable({ files, folders, onMove, onNewFolderAndMove, moveDropdownFor
                       onClick={() => setMenuOpenId(null)}
                     >
                       Open in Processes
+                    </a>
+                  )}
+                  {file.source === 'meeting' && file.transcript_id && (
+                    <a
+                      href={`/meetings/${file.transcript_id}`}
+                      className="block px-3 py-1.5 text-[12.5px] text-neutral-700 hover:bg-neutral-50"
+                      onClick={() => setMenuOpenId(null)}
+                    >
+                      Open in Meetings
                     </a>
                   )}
                 </div>

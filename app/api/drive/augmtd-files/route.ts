@@ -15,6 +15,20 @@ export async function GET() {
 
     const files: DriveAugmtdFile[] = [];
 
+    const adminClient = (await import('@supabase/supabase-js')).createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    );
+
+    // Resolve augmtd source ID upfront (used for transcripts section + is_indexed check)
+    const { data: augmtdSource } = await adminClient
+      .from('knowledge_sources')
+      .select('id')
+      .eq('user_id', user.id)
+      .eq('provider', 'augmtd')
+      .maybeSingle();
+    const augmtdSourceId = augmtdSource?.id ?? null;
+
     // 1. Work threads — flatten artifacts array
     const { data: threads } = await supabase
       .from('work_threads')
@@ -65,10 +79,6 @@ export async function GET() {
     }
 
     // 2. Process steps — generator type with artifact
-    const adminClient = (await import('@supabase/supabase-js')).createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
 
     // Get user's company memberships
     const { data: memberships } = await adminClient
@@ -113,11 +123,36 @@ export async function GET() {
       }
     }
 
+    // 3. Meeting transcripts — indexed to KB via augmtd source
+    if (augmtdSourceId) {
+      const { data: transcriptFiles } = await adminClient
+        .from('knowledge_files')
+        .select('id, provider_file_id, filename, indexed_at, folder_id')
+        .eq('source_id', augmtdSourceId)
+        .eq('user_id', user.id)
+        .like('provider_file_id', 'transcript::%')
+        .order('indexed_at', { ascending: false });
+
+      for (const tf of transcriptFiles ?? []) {
+        const transcriptId = (tf.provider_file_id as string).replace('transcript::', '');
+        files.push({
+          id: tf.provider_file_id,
+          title: tf.filename,
+          type: 'transcript',
+          source: 'meeting',
+          folder_id: tf.folder_id ?? undefined,
+          generated_at: tf.indexed_at,
+          transcript_id: transcriptId,
+          is_indexed: true,
+        });
+      }
+    }
+
     // Sort by generated_at DESC
     files.sort((a, b) => new Date(b.generated_at).getTime() - new Date(a.generated_at).getTime());
 
-    // Mark which artifacts are indexed in the KB
-    const artifactIds = files.map((f) => f.id).filter(Boolean);
+    // Mark which artifacts are indexed in the KB (skip meeting transcripts — already marked)
+    const artifactIds = files.filter((f) => f.source !== 'meeting').map((f) => f.id).filter(Boolean);
     if (artifactIds.length > 0) {
       const { data: indexedRows } = await adminClient
         .from('knowledge_files')
@@ -125,7 +160,7 @@ export async function GET() {
         .in('provider_file_id', artifactIds)
         .eq('user_id', user.id);
       const indexedSet = new Set(indexedRows?.map((r) => r.provider_file_id) ?? []);
-      files.forEach((f) => { f.is_indexed = indexedSet.has(f.id); });
+      files.forEach((f) => { if (f.source !== 'meeting') f.is_indexed = indexedSet.has(f.id); });
     }
 
     return NextResponse.json(files);

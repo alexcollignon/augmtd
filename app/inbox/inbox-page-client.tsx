@@ -306,14 +306,25 @@ export function InboxPageClient({
   }, [inboxItems, searchQuery, viewMode]);
 
   const handleItemConfirmed = (ids: string[], _action: 'confirm_as_mine' | 'not_my_task') => {
-    setInboxItems(prev => prev.filter(i => !ids.includes(i.id)));
-    setSelectedItem(prev => {
-      if (!prev) return null;
-      if (ids.includes(prev.id)) return null;
-      const batchItems: InboxItem[] = (prev as any).__batchItems;
-      if (batchItems && batchItems.every(b => ids.includes(b.id))) return null;
-      return prev;
-    });
+    const idsSet = new Set(ids);
+
+    // Determine if the currently selected item is being removed
+    const batchItems: InboxItem[] | undefined = (selectedItem as any)?.__batchItems;
+    const currentIsRemoved = selectedItem && (
+      idsSet.has(selectedItem.id) ||
+      (batchItems && batchItems.every(b => idsSet.has(b.id)))
+    );
+
+    // Auto-select the next item in the visible list
+    let nextSelected: InboxItem | null = null;
+    if (currentIsRemoved && selectedItem) {
+      const currentIndex = filteredItems.findIndex(i => i.id === selectedItem.id);
+      const remaining = filteredItems.filter(i => !idsSet.has(i.id));
+      nextSelected = remaining[currentIndex] ?? remaining[currentIndex - 1] ?? null;
+    }
+
+    setInboxItems(prev => prev.filter(i => !idsSet.has(i.id)));
+    if (currentIsRemoved) setSelectedItem(nextSelected);
   };
 
   const handleToggleSelect = (id: string) => {
@@ -957,7 +968,7 @@ export function InboxPageClient({
               />
             )}
             {rightPanel === 'chat' && (
-              <div className="w-[340px] flex-shrink-0 border-l border-neutral-200 flex flex-col">
+              <div className="w-[300px] flex-shrink-0 border-l border-neutral-200 flex flex-col">
                 <AiChatPanel
                   context="inbox"
                   composeDraft={composeMode ? composeDraft : undefined}

@@ -384,7 +384,7 @@ export default function MeetingsColumn({ isOpen, onToggle, meetings, loading, us
   return (
     <div
       className={`flex-shrink-0 border-l border-neutral-200 flex flex-col bg-white transition-all duration-200 overflow-hidden ${
-        isOpen ? 'w-[272px]' : 'w-9'
+        isOpen ? 'w-[300px]' : 'w-9'
       }`}
     >
       {/* Header */}
