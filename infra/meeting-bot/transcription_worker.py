@@ -9,6 +9,7 @@ Flow:
      (fast AI call, < 30s — no Whisper involved)
 """
 
+import json
 import logging
 import os
 import subprocess
@@ -32,6 +33,7 @@ async def run_transcription(
     user_id: str,
     source: str = 'bot',
     transcript_id: str | None = None,  # None → pre-insert new row
+    caption_file: str | None = None,   # path to /tmp/captions_{bot_id}.json, or None
 ) -> None:
     """
     Background task: transcribe audio and store results.
@@ -176,6 +178,33 @@ async def run_transcription(
         full_text = whisper_data.get('text', '')
         if not normalized and full_text.strip():
             normalized = [{'speaker': 'Speaker', 'text': full_text.strip(), 'timestamp': 0}]
+
+        # Load caption log for speaker identification (written by bot_runner during recording)
+        caption_log = []
+        if caption_file:
+            try:
+                with open(caption_file, 'r') as f:
+                    caption_log = json.load(f)
+                logger.info(f'[Transcription] Loaded {len(caption_log)} caption entries from {caption_file}')
+            except Exception as cap_load_err:
+                logger.warning(f'[Transcription] Could not load caption file: {cap_load_err}')
+
+        # Merge caption speaker names into Whisper segments (nearest match within ±30s)
+        if len(caption_log) > 3 and normalized:
+            logger.info('[Transcription] Merging caption speakers into Whisper segments')
+            for seg in normalized:
+                seg_ts = seg['timestamp']
+                best: dict | None = None
+                best_dist = 999999
+                for cap in caption_log:
+                    dist = abs(cap['timestamp'] - seg_ts)
+                    if dist < best_dist and dist <= 30:
+                        best_dist = dist
+                        best = cap
+                if best:
+                    seg['speaker'] = best['speaker']
+            distinct = {s['speaker'] for s in normalized}
+            logger.info(f'[Transcription] Speaker merge complete — distinct speakers: {distinct}')
 
         logger.info(f'[Transcription] {len(normalized)} segments for {transcript_id}')
 

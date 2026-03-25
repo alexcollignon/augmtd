@@ -1,8 +1,10 @@
 import asyncio
+import json
 import logging
 import os
 import re
 import tempfile
+import time
 from uuid import uuid4
 
 import httpx
@@ -31,6 +33,8 @@ GUEST_NAME_SELECTORS = [
     'input[data-initial-value]',
     'input[jsname="YPqjbf"]',
 ]
+# Combined multi-selector — resolves as soon as ANY variant appears (no sequential waiting)
+GUEST_NAME_MULTI_SELECTOR = ', '.join(GUEST_NAME_SELECTORS)
 # "Continue without signing in" — shown before the name/join screen
 CONTINUE_WITHOUT_SIGNIN_SELECTORS = [
     'button:has-text("Continue without signing in")',
@@ -38,16 +42,9 @@ CONTINUE_WITHOUT_SIGNIN_SELECTORS = [
     'button:has-text("Use without an account")',
 ]
 JOIN_BUTTON_SELECTORS = [
-    'button[jsname="Qx7uuf"]',
-    'button[jsname="V67aGc"]',
-    'button:has-text("Ask to join")',
-    'button:has-text("Join now")',
-    'button:has-text("Request to join")',
-    'button:has-text("Pedir para participar")',  # Portuguese
-    'button:has-text("Demander à participer")',  # French
-    'button:has-text("Unirse")',                 # Spanish
-    'button:has-text("Teilnehmen")',             # German
-    '[data-ved] button',
+    'button[jsname="Qx7uuf"]',   # "Ask to join" jsname (stable across locales)
+    'button[jsname="V67aGc"]',   # "Join now" jsname
+    'button:has-text("Join now")',  # English text fallback (get_by_role regex covers the rest)
 ]
 IN_CALL_SELECTORS = [
     'div[data-participant-id]',
@@ -133,6 +130,50 @@ async def _send_webhook(calendar_event_id: str, bot_id: str, state: str, audio_s
         logger.error(f'[BotRunner] Webhook failed for bot {bot_id}: {exc}')
 
 
+async def _poll_captions(page, caption_log: list, stop_event: asyncio.Event) -> None:
+    """
+    Poll Google Meet's live captions DOM every 2s and append speaker-attributed
+    entries to caption_log in-place. Always non-fatal — any exception is silently swallowed.
+
+    Google Meet caption structure (stable jsname="tgaKEf"):
+      Each caption block is a <div> child with:
+        spans[0] = speaker display name
+        spans[1] = caption text
+    Also tries .a4cQT (obfuscated but common class) as a fallback container.
+    """
+    while not stop_event.is_set():
+        try:
+            entries = await page.evaluate("""
+                (() => {
+                    const results = [];
+                    const candidates = document.querySelectorAll(
+                        '[jsname="tgaKEf"] > div, .a4cQT > div'
+                    );
+                    candidates.forEach(el => {
+                        const spans = el.querySelectorAll('span');
+                        if (spans.length >= 2) {
+                            const speaker = spans[0].textContent.trim();
+                            const text = spans[1].textContent.trim();
+                            if (text) results.push({ speaker: speaker || 'Speaker', text });
+                        }
+                    });
+                    return results;
+                })()
+            """)
+            now = int(time.time())
+            for entry in entries:
+                # Deduplicate: skip if identical to any of the last 3 captured entries
+                dup = any(
+                    c['speaker'] == entry['speaker'] and c['text'] == entry['text']
+                    for c in caption_log[-3:]
+                )
+                if not dup:
+                    caption_log.append({'speaker': entry['speaker'], 'text': entry['text'], 'timestamp': now})
+        except Exception:
+            pass  # page may be mid-navigation or already closed — always non-fatal
+        await asyncio.sleep(2)
+
+
 async def run_bot(bot_id: str) -> None:
     bot = bots.get(bot_id)
     if not bot:
@@ -141,6 +182,7 @@ async def run_bot(bot_id: str) -> None:
 
     local_path = os.path.join('/tmp/recordings', f'{bot_id}.webm')
     capture = AudioCapture(bot_id, local_path)
+    caption_file: str | None = None  # set inside browser block if captions are captured
 
     # For ad-hoc bots: pre-insert transcript row so the UI can track live state.
     # Scheduled bots use calendar_events.attendee_bot_state for live tracking instead.
@@ -244,7 +286,7 @@ async def run_bot(bot_id: str) -> None:
             else:
                 logger.warning('[BotRunner] No googleAccessToken — joining as anonymous guest')
 
-            await page.goto(bot.meeting_url, wait_until='networkidle', timeout=60_000)
+            await page.goto(bot.meeting_url, wait_until='domcontentloaded', timeout=60_000)
             await asyncio.sleep(2)
 
             # Debug screenshot — see what the page looks like
@@ -255,7 +297,7 @@ async def run_bot(bot_id: str) -> None:
             # Handle "Continue without signing in" if present
             for selector in CONTINUE_WITHOUT_SIGNIN_SELECTORS:
                 try:
-                    btn = await page.wait_for_selector(selector, timeout=5_000)
+                    btn = await page.wait_for_selector(selector, timeout=2_000)
                     if btn:
                         await btn.click()
                         logger.info(f'[BotRunner] Clicked continue without signing in')
@@ -264,15 +306,12 @@ async def run_bot(bot_id: str) -> None:
                 except Exception:
                     continue
 
-            # Fill guest name
+            # Fill guest name — try all selector variants in parallel (resolves on first match)
             name_input = None
-            for selector in GUEST_NAME_SELECTORS:
-                try:
-                    name_input = await page.wait_for_selector(selector, timeout=10_000)
-                    if name_input:
-                        break
-                except Exception:
-                    continue
+            try:
+                name_input = await page.wait_for_selector(GUEST_NAME_MULTI_SELECTOR, timeout=10_000)
+            except Exception:
+                pass
 
             if name_input:
                 await name_input.fill(bot.bot_name)
@@ -393,6 +432,33 @@ async def run_bot(bot_id: str) -> None:
             if adhoc_transcript_id:
                 await _patch_transcript(adhoc_transcript_id, {'bot_state': 'recording'})
 
+            # Enable Google Meet live captions for speaker identification
+            try:
+                await page.keyboard.press('c')  # Meet caption toggle shortcut
+                await asyncio.sleep(1)
+                logger.info('[BotRunner] Sent caption toggle keystroke')
+            except Exception as cap_key_exc:
+                logger.warning(f'[BotRunner] Caption keystroke failed: {cap_key_exc}')
+            try:
+                cc_btn = await page.query_selector(
+                    'button[aria-label="Turn on captions"], '
+                    'button[aria-label="Enable captions"], '
+                    'button[aria-label="Ativar legendas"], '
+                    'button[aria-label="Activer les sous-titres"]'
+                )
+                if cc_btn:
+                    await cc_btn.click(force=True)
+                    await asyncio.sleep(1)
+                    logger.info('[BotRunner] Clicked CC button to enable captions')
+            except Exception as cc_exc:
+                logger.warning(f'[BotRunner] CC button click failed: {cc_exc}')
+
+            # Start caption polling task (runs alongside recording loop)
+            caption_log: list = []
+            caption_stop = asyncio.Event()
+            caption_task = asyncio.create_task(_poll_captions(page, caption_log, caption_stop))
+            logger.info('[BotRunner] Caption polling task started')
+
             # Poll every 5s for meeting-ended selectors (hard cap 4 hours)
             hard_timeout = 4 * 60 * 60  # seconds
             elapsed = 0
@@ -438,6 +504,24 @@ async def run_bot(bot_id: str) -> None:
             if not meeting_ended:
                 logger.warning(f'[BotRunner] Bot {bot_id} hit 4-hour hard cap — leaving meeting')
 
+            # Stop caption polling and persist results
+            caption_stop.set()
+            try:
+                await asyncio.wait_for(caption_task, timeout=3.0)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                pass
+            logger.info(f'[BotRunner] Captured {len(caption_log)} caption entries')
+
+            if caption_log:
+                _caption_file = f'/tmp/captions_{bot_id}.json'
+                try:
+                    with open(_caption_file, 'w') as f:
+                        json.dump(caption_log, f)
+                    caption_file = _caption_file
+                    logger.info(f'[BotRunner] Caption log written → {caption_file}')
+                except Exception as cf_exc:
+                    logger.warning(f'[BotRunner] Caption file write failed: {cf_exc}')
+
             await browser.close()
 
         # --- UPLOADING ---
@@ -472,13 +556,19 @@ async def run_bot(bot_id: str) -> None:
             user_id=bot.user_id,
             source='bot',
             transcript_id=adhoc_transcript_id,
+            caption_file=caption_file,
         ))
 
-        # Clean up local file
+        # Clean up local files
         try:
             os.unlink(local_path)
         except OSError:
             pass
+        if caption_file:
+            try:
+                os.unlink(caption_file)
+            except OSError:
+                pass
 
         logger.info(f'[BotRunner] Bot {bot_id} completed successfully')
 
