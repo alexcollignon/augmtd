@@ -54,11 +54,19 @@ IN_CALL_SELECTORS = [
 ]
 MEETING_ENDED_SELECTORS = [
     '[data-call-ended]',
+    # "You left" strings
     'h1:has-text("You\'ve left the call")',
     'h1:has-text("Saiu da reunião")',
     'h1:has-text("Has salido de la videollamada")',
     'h1:has-text("Vous avez quitté")',
     'h1:has-text("Sie haben das Meeting verlassen")',
+    # "Host ended the meeting" strings
+    'h1:has-text("A reunião terminou")',
+    'h1:has-text("Chamada terminada")',
+    'h1:has-text("The meeting has ended")',
+    'h1:has-text("La llamada ha finalizado")',
+    'h1:has-text("L\'appel a pris fin")',
+    'h1:has-text("Das Meeting wurde beendet")',
 ]
 
 
@@ -132,34 +140,80 @@ async def _send_webhook(calendar_event_id: str, bot_id: str, state: str, audio_s
 
 async def _poll_captions(page, caption_log: list, stop_event: asyncio.Event) -> None:
     """
-    Poll Google Meet's live captions DOM every 2s and append speaker-attributed
-    entries to caption_log in-place. Always non-fatal — any exception is silently swallowed.
-
-    Google Meet caption structure (stable jsname="tgaKEf"):
-      Each caption block is a <div> child with:
-        spans[0] = speaker display name
-        spans[1] = caption text
-    Also tries .a4cQT (obfuscated but common class) as a fallback container.
+    Poll Google Meet's live captions DOM every 2s.
+    Uses confirmed CueMeet selectors: [role="region"][aria-label~="caption/legenda"]
+    → .nMcdL blocks → .NWpY1d (speaker name) + .bh44bd/.VbkSUe (text).
+    Falls back to jsname="tgaKEf" and a global .nMcdL scan.
     """
+    dumped_html = False
     while not stop_event.is_set():
         try:
-            entries = await page.evaluate("""
+            result = await page.evaluate("""
                 (() => {
                     const results = [];
-                    const candidates = document.querySelectorAll(
-                        '[jsname="tgaKEf"] > div, .a4cQT > div'
-                    );
-                    candidates.forEach(el => {
-                        const spans = el.querySelectorAll('span');
-                        if (spans.length >= 2) {
-                            const speaker = spans[0].textContent.trim();
-                            const text = spans[1].textContent.trim();
-                            if (text) results.push({ speaker: speaker || 'Speaker', text });
+                    const seen = new Set();
+                    let debugHtml = null;
+
+                    function isSpeechText(t) {
+                        if (!t || t.length > 300) return false;
+                        if (/\bBETA\b/.test(t)) return false;
+                        return t.trim().length > 2;
+                    }
+
+                    function addEntry(speaker, text, source) {
+                        if (!speaker || !text) return;
+                        speaker = speaker.trim();
+                        text = text.trim();
+                        if (!speaker || !isSpeechText(text)) return;
+                        const key = speaker + '|' + text;
+                        if (!seen.has(key)) {
+                            seen.add(key);
+                            results.push({ speaker, text });
+                            if (!debugHtml) {
+                                debugHtml = '[' + source + '] speaker=' + speaker + ' | text=' + text.slice(0, 80);
+                            }
                         }
-                    });
-                    return results;
+                    }
+
+                    function extractFromRegion(container, source) {
+                        // Use confirmed CueMeet selectors: .nMcdL block → .NWpY1d + .bh44bd
+                        container.querySelectorAll('.nMcdL, [jsname="nMcdL"]').forEach(block => {
+                            const nameEl = block.querySelector('.NWpY1d, [jsname="NWpY1d"]');
+                            const textEl = block.querySelector('.bh44bd, [jsname="bh44bd"]') ||
+                                           block.querySelector('.VbkSUe');
+                            addEntry(nameEl && nameEl.textContent, textEl && textEl.textContent, source);
+                        });
+                    }
+
+                    // Strategy 1: [role="region"] with aria-label matching captions (most stable)
+                    Array.from(document.querySelectorAll('[role="region"]'))
+                        .filter(r => /caption|legenda|subtitl/i.test(r.getAttribute('aria-label') || ''))
+                        .forEach(r => extractFromRegion(r, 'region'));
+
+                    // Strategy 2: jsname="tgaKEf" — older/parallel Meet renderer
+                    document.querySelectorAll('[jsname="tgaKEf"]')
+                        .forEach(el => extractFromRegion(el, 'tgaKEf'));
+
+                    // Strategy 3: global .nMcdL scan (if nothing found above)
+                    if (results.length === 0) {
+                        const blocks = document.querySelectorAll('.nMcdL');
+                        blocks.forEach(block => {
+                            const nameEl = block.querySelector('.NWpY1d');
+                            const textEl = block.querySelector('.bh44bd') || block.querySelector('.VbkSUe');
+                            addEntry(nameEl && nameEl.textContent, textEl && textEl.textContent, 'nMcdL-global');
+                        });
+                    }
+
+                    return { results, debugHtml };
                 })()
             """)
+            entries = result.get('results', [])
+            debug_html = result.get('debugHtml')
+            if debug_html and not dumped_html:
+                logger.info(f'[BotRunner] Caption DOM: {debug_html}')
+                dumped_html = True
+            if entries and len(caption_log) < 3:
+                logger.info(f'[BotRunner] Caption sample: {entries[:2]}')
             now = int(time.time())
             for entry in entries:
                 # Deduplicate: skip if identical to any of the last 3 captured entries
@@ -432,26 +486,155 @@ async def run_bot(bot_id: str) -> None:
             if adhoc_transcript_id:
                 await _patch_transcript(adhoc_transcript_id, {'bot_state': 'recording'})
 
-            # Enable Google Meet live captions for speaker identification
+            CC_PATTERN = r'caption|subtitle|legenda|l\u00e9gende|untertitel|ondertitel|didascal|altyaz|subt\u00edt|\u043f\u043e\u0434\u043f\u0438\u0441|\u5b57\u5e55'
+            DISABLE_CC_PATTERN = r'desativar legendas|turn off captions|disable captions|d\u00e9sactiver|untertitel deaktivieren'
+
+            async def _confirm_cc_on() -> bool:
+                """Check if captions are confirmed ON (disable button visible)."""
+                try:
+                    return await page.evaluate(f"""
+                        (() => {{
+                            const p = /{DISABLE_CC_PATTERN}/i;
+                            return Array.from(document.querySelectorAll('button[aria-label]'))
+                                .some(b => p.test(b.getAttribute('aria-label')));
+                        }})()
+                    """)
+                except Exception:
+                    return False
+
+            async def _handle_language_panel():
+                """If language selection panel appeared, click English/selected option then Escape."""
+                try:
+                    lang = await page.evaluate("""
+                        (() => {
+                            const prefer = /^(ingl\u00eas|english)$/i;
+                            const opts = Array.from(document.querySelectorAll('[role="option"], [role="radio"], li[data-value]'));
+                            const eng = opts.find(o => prefer.test(o.textContent.trim()));
+                            if (eng) { eng.click(); return eng.textContent.trim(); }
+                            const sel = opts.find(o => o.getAttribute('aria-selected') === 'true' || o.getAttribute('aria-checked') === 'true');
+                            if (sel) { sel.click(); return sel.textContent.trim(); }
+                            return null;
+                        })()
+                    """)
+                    if lang:
+                        logger.info(f'[BotRunner] Selected caption language: "{lang}"')
+                        await asyncio.sleep(0.5)
+                except Exception:
+                    pass
+                try:
+                    await page.keyboard.press('Escape')
+                    await asyncio.sleep(0.3)
+                except Exception:
+                    pass
+
+            # Sleep 3s for toolbar to render, then try CC enable up to 3 times
+            await asyncio.sleep(3)
+            cc_enabled = False
+
+            for attempt in range(3):
+                # Wake toolbar with mouse move
+                try:
+                    await page.mouse.move(640, 360)
+                    await page.mouse.move(640, 650)
+                    await asyncio.sleep(0.5)
+                except Exception:
+                    pass
+
+                # Try direct toolbar button
+                try:
+                    clicked_label = await page.evaluate(f"""
+                        (() => {{
+                            const pattern = /{CC_PATTERN}/i;
+                            const btn = Array.from(document.querySelectorAll('button[aria-label]'))
+                                .find(b => pattern.test(b.getAttribute('aria-label')));
+                            if (btn) {{ btn.click(); return btn.getAttribute('aria-label'); }}
+                            return null;
+                        }})()
+                    """)
+                except Exception:
+                    clicked_label = None
+
+                if clicked_label:
+                    logger.info(f'[BotRunner] Clicked CC button: "{clicked_label}" (attempt {attempt+1})')
+                    await asyncio.sleep(1.0)
+                    await _handle_language_panel()
+                    await asyncio.sleep(0.5)
+                    if await _confirm_cc_on():
+                        logger.info('[BotRunner] Captions confirmed ON')
+                        cc_enabled = True
+                        break
+                    # Button might have been "Desativar" (was already on) — re-enable
+                    logger.warning('[BotRunner] CC not confirmed after click — retrying')
+                    continue
+
+                # Toolbar button not found — try overflow menu once
+                if attempt == 1:
+                    try:
+                        opened = await page.evaluate("""
+                            (() => {
+                                const exact = [
+                                    'Mais op\u00e7\u00f5es', 'More options', 'M\u00e1s opciones',
+                                    "Plus d'options", 'Weitere Optionen', 'Meer opties',
+                                    'Altre opzioni', 'Daha fazla se\u00e7enek', '\u66f4\u591a\u9009\u9879'
+                                ];
+                                const btn = Array.from(document.querySelectorAll('button[aria-label]'))
+                                    .find(b => exact.includes(b.getAttribute('aria-label')));
+                                if (btn) { btn.click(); return btn.getAttribute('aria-label'); }
+                                return null;
+                            })()
+                        """)
+                        if opened:
+                            logger.info(f'[BotRunner] Opened overflow menu: "{opened}"')
+                            await asyncio.sleep(0.5)
+                            clicked_label = await page.evaluate(f"""
+                                (() => {{
+                                    const pattern = /{CC_PATTERN}/i;
+                                    const btn = Array.from(document.querySelectorAll(
+                                        'button[aria-label], [role="menuitem"], [role="option"]'
+                                    )).find(b => pattern.test(b.getAttribute('aria-label') || b.textContent));
+                                    if (btn) {{ btn.click(); return btn.getAttribute('aria-label') || btn.textContent.trim(); }}
+                                    return null;
+                                }})()
+                            """)
+                            if clicked_label:
+                                logger.info(f'[BotRunner] Clicked CC in overflow: "{clicked_label}"')
+                                await asyncio.sleep(1.0)
+                                await _handle_language_panel()
+                                if await _confirm_cc_on():
+                                    logger.info('[BotRunner] Captions confirmed ON via overflow')
+                                    cc_enabled = True
+                                    break
+                            else:
+                                logger.warning('[BotRunner] CC not found in overflow menu')
+                                await page.keyboard.press('Escape')
+                    except Exception as overflow_exc:
+                        logger.warning(f'[BotRunner] Overflow failed: {overflow_exc}')
+
+            if not cc_enabled:
+                # Final fallback: 'c' keyboard shortcut
+                await page.keyboard.press('c')
+                await asyncio.sleep(1.0)
+                if await _confirm_cc_on():
+                    logger.info('[BotRunner] Captions confirmed ON via "c" keystroke')
+                    cc_enabled = True
+                else:
+                    logger.warning('[BotRunner] Could not enable captions — speaker ID will be unavailable')
+
+            # Log all buttons + aria-live regions for debugging
+            await asyncio.sleep(1)
             try:
-                await page.keyboard.press('c')  # Meet caption toggle shortcut
-                await asyncio.sleep(1)
-                logger.info('[BotRunner] Sent caption toggle keystroke')
-            except Exception as cap_key_exc:
-                logger.warning(f'[BotRunner] Caption keystroke failed: {cap_key_exc}')
-            try:
-                cc_btn = await page.query_selector(
-                    'button[aria-label="Turn on captions"], '
-                    'button[aria-label="Enable captions"], '
-                    'button[aria-label="Ativar legendas"], '
-                    'button[aria-label="Activer les sous-titres"]'
-                )
-                if cc_btn:
-                    await cc_btn.click(force=True)
-                    await asyncio.sleep(1)
-                    logger.info('[BotRunner] Clicked CC button to enable captions')
-            except Exception as cc_exc:
-                logger.warning(f'[BotRunner] CC button click failed: {cc_exc}')
+                cc_snap = await page.evaluate("""
+                    (() => {
+                        const live = Array.from(document.querySelectorAll('[aria-live]'))
+                            .map(el => ({ aria: el.getAttribute('aria-live'), jsname: el.getAttribute('jsname'), childCount: el.children.length }));
+                        const all_btns = Array.from(document.querySelectorAll('button[aria-label]'))
+                            .map(b => b.getAttribute('aria-label')).filter(Boolean).slice(0, 20);
+                        return { live_regions: live, all_btns };
+                    })()
+                """)
+                logger.info(f'[BotRunner] CC snap: {cc_snap}')
+            except Exception as cc_snap_exc:
+                logger.warning(f'[BotRunner] CC snap failed: {cc_snap_exc}')
 
             # Start caption polling task (runs alongside recording loop)
             caption_log: list = []
@@ -479,21 +662,33 @@ async def run_bot(bot_id: str) -> None:
                     except Exception:
                         pass
 
+                # Also detect if page navigated away from meet.google.com
+                if not meeting_ended:
+                    try:
+                        if 'meet.google.com' not in page.url:
+                            meeting_ended = True
+                    except Exception:
+                        pass
+
                 if meeting_ended:
                     logger.info(f'[BotRunner] Bot {bot_id} detected meeting ended after {elapsed}s')
                     break
 
-                # Detect "bot is alone" — if participant count stays at 1 for 2 min, leave
+                # Detect "bot is alone" — exit after 2min with ≤1 participant tile
+                # data-participant-id counts OTHER participants' video tiles (bot has no tile
+                # in headless mode, so count=0 means nobody else, count≥1 means others present)
                 try:
                     participant_count = await page.evaluate("""() => {
-                        return document.querySelectorAll('[data-participant-id]').length;
+                        const byTile = document.querySelectorAll('[data-participant-id]').length;
+                        const byRow  = document.querySelectorAll('[jsname="bnCOle"], [jsname="rn3Vkc"]').length;
+                        return Math.max(byTile, byRow);
                     }""")
                     if participant_count <= 1:
                         if alone_since is None:
                             alone_since = elapsed
-                            logger.info(f'[BotRunner] Bot {bot_id} appears to be alone in meeting')
-                        elif elapsed - alone_since >= 30:
-                            logger.info(f'[BotRunner] Bot {bot_id} alone for 2min — ending recording')
+                            logger.info(f'[BotRunner] Bot {bot_id} appears to be alone (count={participant_count})')
+                        elif elapsed - alone_since >= 30:  # 30 seconds
+                            logger.info(f'[BotRunner] Bot {bot_id} alone for 30s — ending recording')
                             meeting_ended = True
                             break
                     else:
@@ -559,16 +754,11 @@ async def run_bot(bot_id: str) -> None:
             caption_file=caption_file,
         ))
 
-        # Clean up local files
+        # Clean up local audio file (caption file is cleaned up by transcription_worker after reading)
         try:
             os.unlink(local_path)
         except OSError:
             pass
-        if caption_file:
-            try:
-                os.unlink(caption_file)
-            except OSError:
-                pass
 
         logger.info(f'[BotRunner] Bot {bot_id} completed successfully')
 

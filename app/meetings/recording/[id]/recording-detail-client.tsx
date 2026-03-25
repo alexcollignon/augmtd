@@ -10,9 +10,11 @@ import {
   MicrophoneIcon,
   CloudArrowUpIcon,
   TrashIcon,
+  SparklesIcon,
 } from '@heroicons/react/24/outline';
 import { formatMeetingTime } from '@/lib/types/meetings';
 import ProcessingPipeline from '@/components/meetings/processing-pipeline';
+import MeetingChatSidebar, { type MeetingChatContext } from '@/components/meetings/meeting-chat-sidebar';
 
 interface TranscriptSegment { speaker: string; text: string; timestamp: number }
 interface Decision { text: string; owner?: string; date?: string }
@@ -66,14 +68,11 @@ export default function RecordingDetailClient({ transcript, actionItems, risks, 
   const [deleting, setDeleting] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const [retryError, setRetryError] = useState<string | null>(null);
+  const [chatOpen, setChatOpen] = useState(false);
 
   // Local state for polling
   const [localBotState, setLocalBotState] = useState(transcript.botState);
   const [localProcessed, setLocalProcessed] = useState(transcript.processed);
-
-  // Add to desk
-  const [addingToDesk, setAddingToDesk] = useState(false);
-  const [addedToDesk, setAddedToDesk] = useState(false);
 
   // Duration: browser fires ondurationchange; webm starts as Infinity then resolves.
   // Seed from last segment timestamp so we show *something* before audio loads.
@@ -102,15 +101,32 @@ export default function RecordingDetailClient({ transcript, actionItems, risks, 
     return () => clearInterval(intervalId);
   }, [localProcessed, localBotState, transcript.id, router]);
 
-  const handleAddToDesk = async () => {
-    setAddingToDesk(true);
-    try {
-      const res = await fetch(`/api/meetings/recording/${transcript.id}/add-to-desk`, { method: 'POST' });
-      if (res.ok) setAddedToDesk(true);
-    } finally {
-      setAddingToDesk(false);
-    }
+  const handleOpenWorkflow = (title: string, skill?: string) => {
+    const params = new URLSearchParams();
+    if (title) params.set('title', title);
+    if (skill) params.set('skill', skill);
+    router.push(`/work/new${params.toString() ? `?${params.toString()}` : ''}`);
   };
+
+  const handleOpenProcess = (processId: string) => {
+    router.push(`/processes/${processId}`);
+  };
+
+  const buildMeetingContext = (): MeetingChatContext => ({
+    title: transcript.title,
+    date: transcript.startTime,
+    durationMinutes: transcript.durationMinutes || undefined,
+    attendees: [],
+    summary: transcript.summary ?? undefined,
+    decisions: transcript.decisions?.map((d) => d.text) ?? [],
+    actionItems: actionItems.map((a) => ({
+      text: a.workTitle,
+      assignee: a.assignee ?? undefined,
+      status: a.category,
+    })),
+    risks: risks.map((r) => ({ description: r.text, severity: r.severity })),
+    suggestedNextStep: suggestedNextStep ?? undefined,
+  });
 
   const handleRetry = async () => {
     setRetrying(true);
@@ -150,7 +166,8 @@ export default function RecordingDetailClient({ transcript, actionItems, risks, 
   const SourceIcon = transcript.source === 'upload' ? CloudArrowUpIcon : MicrophoneIcon;
 
   return (
-    <div className="flex-1 overflow-y-auto h-full">
+    <div className="flex h-full min-h-0">
+      <div className="flex-1 overflow-y-auto">
       <div className="max-w-2xl mx-auto px-6 py-8">
         {/* Breadcrumb */}
         <div className="flex items-center gap-1.5 text-[12px] text-neutral-400 mb-4">
@@ -163,28 +180,44 @@ export default function RecordingDetailClient({ transcript, actionItems, risks, 
         <div className="mb-6">
           <div className="flex items-start justify-between gap-4 mb-2">
             <h1 className="text-xl font-semibold text-neutral-900">{transcript.title}</h1>
-            {!confirmDelete ? (
-              <button
-                onClick={() => setConfirmDelete(true)}
-                className="flex-shrink-0 p-1.5 text-neutral-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
-              >
-                <TrashIcon className="w-4 h-4" />
-              </button>
-            ) : (
-              <div className="flex-shrink-0 flex items-center gap-2">
-                <span className="text-[11px] text-neutral-500">Delete recording?</span>
+            <div className="flex items-center gap-1.5 flex-shrink-0">
+              {localProcessed && (
                 <button
-                  onClick={handleDelete}
-                  disabled={deleting}
-                  className="text-[11px] font-medium text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 px-2.5 py-1 rounded transition-colors"
+                  onClick={() => setChatOpen((v) => !v)}
+                  className={`flex items-center gap-1.5 px-2.5 py-1.5 text-[12px] font-medium transition-colors ${
+                    chatOpen
+                      ? 'bg-indigo-100 text-indigo-700 hover:bg-indigo-200'
+                      : 'text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50'
+                  }`}
+                  title="Ask AI about this meeting"
                 >
-                  {deleting ? 'Deleting…' : 'Delete'}
+                  <SparklesIcon className="w-3.5 h-3.5" />
+                  Ask AI
                 </button>
-                <button onClick={() => setConfirmDelete(false)} className="text-[11px] text-neutral-500 hover:text-neutral-700">
-                  Cancel
+              )}
+              {!confirmDelete ? (
+                <button
+                  onClick={() => setConfirmDelete(true)}
+                  className="p-1.5 text-neutral-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
+                >
+                  <TrashIcon className="w-4 h-4" />
                 </button>
-              </div>
-            )}
+              ) : (
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] text-neutral-500">Delete recording?</span>
+                  <button
+                    onClick={handleDelete}
+                    disabled={deleting}
+                    className="text-[11px] font-medium text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 px-2.5 py-1 rounded transition-colors"
+                  >
+                    {deleting ? 'Deleting…' : 'Delete'}
+                  </button>
+                  <button onClick={() => setConfirmDelete(false)} className="text-[11px] text-neutral-500 hover:text-neutral-700">
+                    Cancel
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
           <div className="flex items-center gap-3 text-[12px] text-neutral-500">
             <span className="flex items-center gap-1">
@@ -197,25 +230,6 @@ export default function RecordingDetailClient({ transcript, actionItems, risks, 
             </span>
           </div>
         </div>
-
-        {/* Quick actions — shown when analysis is ready */}
-        {localProcessed && (
-          <div className="flex items-center gap-2 mb-6 pb-4 border-b border-neutral-100">
-            <button
-              onClick={handleAddToDesk}
-              disabled={addingToDesk || addedToDesk}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium bg-neutral-900 text-white hover:bg-neutral-700 disabled:opacity-50 transition-colors"
-            >
-              {addedToDesk ? 'On your desk ✓' : addingToDesk ? 'Adding…' : '+ Add to desk'}
-            </button>
-            <button
-              onClick={() => router.push(`/work/new?fromRecording=${transcript.id}`)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium text-indigo-600 border border-indigo-200 hover:bg-indigo-50 transition-colors"
-            >
-              Start workflow →
-            </button>
-          </div>
-        )}
 
         {/* Processing pipeline */}
         {!localProcessed && localBotState !== 'failed' && (
@@ -383,6 +397,15 @@ export default function RecordingDetailClient({ transcript, actionItems, risks, 
           </section>
         )}
       </div>
+      </div>
+
+      <MeetingChatSidebar
+        isOpen={chatOpen}
+        onClose={() => setChatOpen(false)}
+        meetingContext={buildMeetingContext()}
+        onOpenWorkflow={handleOpenWorkflow}
+        onOpenProcess={handleOpenProcess}
+      />
     </div>
   );
 }

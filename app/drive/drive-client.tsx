@@ -1478,14 +1478,25 @@ export default function DriveClient({ initialSources, connections }: DriveClient
       .then((data) => setFolders(Array.isArray(data) ? data : []));
   }, []);
 
-  // Load augmtd files + kb files
-  useEffect(() => {
+  const refreshAugmtdFiles = () => {
     fetch('/api/drive/augmtd-files')
       .then((r) => r.ok ? r.json() : [])
       .then((data) => setAugmtdFiles(Array.isArray(data) ? data : []));
+  };
+
+  // Load augmtd files + kb files on mount
+  useEffect(() => {
+    refreshAugmtdFiles();
     fetch('/api/drive/kb-files')
       .then((r) => r.ok ? r.json() : [])
       .then((data) => setKbFiles(Array.isArray(data) ? data : []));
+  }, []);
+
+  // Refetch augmtd files when page becomes visible (user returns from another tab/page)
+  useEffect(() => {
+    const onVisible = () => { if (document.visibilityState === 'visible') refreshAugmtdFiles(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
   }, []);
 
   const tabs: { key: Tab; label: string }[] = [
@@ -1561,7 +1572,7 @@ export default function DriveClient({ initialSources, connections }: DriveClient
           {tabs.map(({ key, label }) => (
             <button
               key={key}
-              onClick={() => setTab(key)}
+              onClick={() => { setTab(key); if (key === 'augmtd') refreshAugmtdFiles(); }}
               className={`px-4 py-2.5 text-[13px] font-medium border-b-2 transition-colors -mb-px ${
                 tab === key
                   ? 'border-indigo-500 text-indigo-700'

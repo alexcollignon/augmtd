@@ -165,6 +165,8 @@ async def run_transcription(
                     'model': 'Systran/faster-whisper-medium',
                     'response_format': 'verbose_json',
                     'language': 'en',
+                    'vad_filter': 'true',           # skip silent segments → prevents hallucination loops
+                    'condition_on_previous_text': 'false',  # don't feed prior output back → stops repetition
                 },
             )
             whisper_resp.raise_for_status()
@@ -174,7 +176,17 @@ async def run_transcription(
         normalized = [
             {'speaker': 'Speaker', 'text': s['text'].strip(), 'timestamp': round(s['start'])}
             for s in raw_segments
+            if s.get('text', '').strip()
         ]
+
+        # Deduplicate: remove consecutive segments with identical text (Whisper looping artifact)
+        deduped = []
+        for seg in normalized:
+            if deduped and deduped[-1]['text'].lower() == seg['text'].lower():
+                continue
+            deduped.append(seg)
+        normalized = deduped
+
         full_text = whisper_data.get('text', '')
         if not normalized and full_text.strip():
             normalized = [{'speaker': 'Speaker', 'text': full_text.strip(), 'timestamp': 0}]
@@ -188,16 +200,26 @@ async def run_transcription(
                 logger.info(f'[Transcription] Loaded {len(caption_log)} caption entries from {caption_file}')
             except Exception as cap_load_err:
                 logger.warning(f'[Transcription] Could not load caption file: {cap_load_err}')
+            finally:
+                try:
+                    os.unlink(caption_file)
+                except Exception:
+                    pass
 
         # Merge caption speaker names into Whisper segments (nearest match within ±30s)
+        # Caption timestamps are Unix epoch seconds; Whisper timestamps are seconds from
+        # start of audio. Normalise by subtracting the earliest caption timestamp so both
+        # use the same relative-seconds scale.
         if len(caption_log) > 3 and normalized:
             logger.info('[Transcription] Merging caption speakers into Whisper segments')
+            caption_start = min(c['timestamp'] for c in caption_log)
             for seg in normalized:
-                seg_ts = seg['timestamp']
+                seg_ts = seg['timestamp']  # seconds from audio start
                 best: dict | None = None
                 best_dist = 999999
                 for cap in caption_log:
-                    dist = abs(cap['timestamp'] - seg_ts)
+                    cap_relative = cap['timestamp'] - caption_start  # also seconds from start
+                    dist = abs(cap_relative - seg_ts)
                     if dist < best_dist and dist <= 30:
                         best_dist = dist
                         best = cap
