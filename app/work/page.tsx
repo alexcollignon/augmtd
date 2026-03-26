@@ -5,12 +5,14 @@ import { getUserIdentity } from '@/lib/context/work-patterns-service';
 import { getBlueprintsForDepartment } from '@/lib/blueprints/blueprint-library';
 import { WorkBlueprint, SavedWorkflow } from '@/lib/types/work-blueprints';
 
+export const metadata = { title: 'Studio — AUGMTD' };
+
 export default async function WorkPage({
   searchParams,
 }: {
-  searchParams: Promise<{ thread?: string; view?: string; prompt?: string }>;
+  searchParams: Promise<{ thread?: string; view?: string; prompt?: string; processStep?: string; processId?: string; stepTitle?: string; stepDesc?: string }>;
 }) {
-  const { thread: initialThreadId, view: initialView, prompt: initialChatInput } = await searchParams;
+  const { thread: initialThreadId, view: initialView, prompt: initialChatInput, processStep, processId, stepTitle, stepDesc } = await searchParams;
   const supabase = await createClient();
 
   const { data: { user } } = await supabase.auth.getUser();
@@ -64,6 +66,7 @@ export default async function WorkPage({
       initialView={initialView || null}
       initialChatInput={initialChatInput || null}
       initialSavedWorkflows={(savedWorkflowsData as SavedWorkflow[]) || []}
+      processStepContext={processStep ? { processStep, processId, stepTitle, stepDesc } : undefined}
     />
   );
 }

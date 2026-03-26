@@ -64,6 +64,14 @@ export default function ConnectionCard({ provider, connection, connectUrl, disco
 
   const config = providerConfig[provider];
 
+  const isPushActive = (() => {
+    if (!connection?.push_expires_at) return false;
+    if (new Date(connection.push_expires_at) <= new Date()) return false;
+    if (provider === 'gmail') return !!connection.push_history_id;
+    if (provider === 'outlook') return !!connection.push_subscription_id;
+    return false;
+  })();
+
   const handleSync = async () => {
     setSyncing(true);
     setSyncMessage(null);
@@ -223,6 +231,21 @@ export default function ConnectionCard({ provider, connection, connectUrl, disco
               </div>
             </>
           )}
+          <>
+            <span className="text-neutral-300">•</span>
+            <div className="flex items-center gap-1.5">
+              <span className="font-semibold text-neutral-700">Delivery:</span>
+              <span
+                className={`inline-flex items-center gap-1 ${isPushActive ? 'text-green-700' : 'text-amber-700'}`}
+                title={isPushActive
+                  ? `Live push — expires ${new Date(connection.push_expires_at).toLocaleDateString()}`
+                  : 'Push subscription expired or not registered — emails arrive on manual sync only'}
+              >
+                <span className={`w-1.5 h-1.5 rounded-full ${isPushActive ? 'bg-green-500' : 'bg-amber-400'}`} />
+                {isPushActive ? 'Live' : 'Polling only'}
+              </span>
+            </div>
+          </>
           {syncMessage && (
             <>
               <span className="text-neutral-300">•</span>

@@ -6,7 +6,7 @@ import Image from 'next/image';
 import { usePathname } from 'next/navigation';
 import {
   InboxIcon,
-  QueueListIcon,
+  BriefcaseIcon,
   CircleStackIcon,
   ClockIcon,
   Cog6ToothIcon,
@@ -16,9 +16,7 @@ import {
   GlobeAltIcon,
   BuildingOfficeIcon,
   ShieldCheckIcon,
-  ArrowPathIcon,
   CalendarDaysIcon,
-  RectangleGroupIcon,
 } from '@heroicons/react/24/outline';
 
 interface SidebarNavProps {
@@ -37,10 +35,8 @@ export default function SidebarNav({ userEmail }: SidebarNavProps) {
   const [processNotifCount, setProcessNotifCount] = useState(0);
 
   const navigation = [
-    { name: 'On Your Desk', href: '/desk', icon: RectangleGroupIcon },
-    { name: 'Work Inbox', href: '/inbox', icon: InboxIcon },
-    { name: 'Workflows', href: '/work', icon: QueueListIcon },
-    { name: 'Processes', href: '/processes', icon: ArrowPathIcon },
+    { name: 'Inbox', href: '/inbox', icon: InboxIcon },
+    { name: 'Work', href: '/work', icon: BriefcaseIcon },
     { name: 'Meetings', href: '/meetings', icon: CalendarDaysIcon },
     { name: 'Drive', href: '/drive', icon: CircleStackIcon },
     ...(isSuperAdmin ? [{ name: 'Platform Admin', href: '/platform-admin', icon: ShieldCheckIcon }] : []),
@@ -155,30 +151,33 @@ export default function SidebarNav({ userEmail }: SidebarNavProps) {
       {/* Navigation */}
       <nav className="flex-1 py-2 px-2">
         {navigation.map((item) => {
-          const isActive = pathname.startsWith(item.href);
-          const badge = item.href === '/processes' && processNotifCount > 0 ? processNotifCount : 0;
+          const isActive = item.href === '/work'
+            ? pathname.startsWith('/work') || pathname.startsWith('/processes')
+            : pathname.startsWith(item.href);
+          const badge = 0;
           return (
-            <Link
-              key={item.name}
-              href={item.href}
-              className={`
-                flex items-center gap-2.5 px-3 py-2 mb-px text-[12.5px] font-medium transition-colors
-                ${isActive
-                  ? 'bg-indigo-50 text-indigo-700 border-l-2 border-indigo-500'
-                  : 'text-neutral-500 hover:text-neutral-800 hover:bg-neutral-50 border-l-2 border-transparent'
-                }
-              `}
-            >
-              <item.icon
-                className={`w-4 h-4 flex-shrink-0 ${isActive ? 'text-indigo-500' : 'text-neutral-400'}`}
-              />
-              <span className="flex-1">{item.name}</span>
-              {badge > 0 && (
-                <span className="flex-shrink-0 min-w-[18px] h-[18px] px-1 bg-red-500 text-white text-[10px] font-semibold rounded-full flex items-center justify-center leading-none">
-                  {badge > 9 ? '9+' : badge}
-                </span>
-              )}
-            </Link>
+            <div key={item.name}>
+              <Link
+                href={item.href}
+                className={`
+                  flex items-center gap-2.5 px-3 py-2 mb-px text-[12.5px] font-medium transition-colors
+                  ${isActive
+                    ? 'bg-indigo-50 text-indigo-700 border-l-2 border-indigo-500'
+                    : 'text-neutral-500 hover:text-neutral-800 hover:bg-neutral-50 border-l-2 border-transparent'
+                  }
+                `}
+              >
+                <item.icon
+                  className={`w-4 h-4 flex-shrink-0 ${isActive ? 'text-indigo-500' : 'text-neutral-400'}`}
+                />
+                <span className="flex-1">{item.name}</span>
+                {badge > 0 && (
+                  <span className="flex-shrink-0 min-w-[18px] h-[18px] px-1 bg-red-500 text-white text-[10px] font-semibold rounded-full flex items-center justify-center leading-none">
+                    {badge > 9 ? '9+' : badge}
+                  </span>
+                )}
+              </Link>
+            </div>
           );
         })}
       </nav>

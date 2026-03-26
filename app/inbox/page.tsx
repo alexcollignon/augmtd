@@ -2,6 +2,8 @@ import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { InboxPageClient } from './inbox-page-client';
 
+export const dynamic = 'force-dynamic';
+
 export default async function PreparedWorkPage() {
   const supabase = await createClient();
 

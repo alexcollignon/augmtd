@@ -3,6 +3,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import SidebarNav from '@/components/sidebar-nav';
+import { WorkspaceTabBar } from '@/components/work/workspace-tab-bar';
 import type { ProcessPlan } from '@/lib/types/process';
 import {
   PaperAirplaneIcon,
@@ -180,6 +181,8 @@ export function NewProcessClient({ userEmail, userId }: Props) {
       <SidebarNav userEmail={userEmail} />
       <ProcessSidebar userId={userId} />
 
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+      <WorkspaceTabBar />
       <div className="flex-1 flex min-w-0 overflow-hidden">
         {/* Center: Plan Preview */}
         <div className="flex-1 flex flex-col min-w-0 overflow-hidden border-r border-neutral-200 bg-white">
@@ -459,6 +462,7 @@ export function NewProcessClient({ userEmail, userId }: Props) {
           </div>
         </div>
       </div>
+      </div>{/* end flex-1 flex-col */}
     </div>
   );
 }

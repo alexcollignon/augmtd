@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import SidebarNav from '@/components/sidebar-nav';
+import { WorkspaceTabBar } from '@/components/work/workspace-tab-bar';
 import {
   PlusIcon,
   DocumentTextIcon,
@@ -150,6 +151,7 @@ interface WorkPageClientProps {
   initialView?: string | null;
   initialChatInput?: string | null;
   initialSavedWorkflows: SavedWorkflow[];
+  processStepContext?: { processStep?: string; processId?: string; stepTitle?: string; stepDesc?: string };
 }
 
 const PLAN_SEPARATOR = '---PLAN_UPDATE---';
@@ -276,10 +278,12 @@ function PlanPanel({
   onUpdateWorkflow?: () => void;
 }) {
   const isGenerating = workMode === 'generating';
+  const [planTab, setPlanTab] = useState<'inputs' | 'plan'>('inputs');
   const [kbQuery, setKbQuery] = useState('');
   const [kbSearchResults, setKbSearchResults] = useState<{ id: string; filename: string }[]>([]);
   const [kbSearching, setKbSearching] = useState(false);
   const kbSearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
 
   const [kbInputQueries, setKbInputQueries] = useState<Record<string, string>>({});
   const [kbInputResults, setKbInputResults] = useState<Record<string, { id: string; filename: string }[]>>({});
@@ -364,7 +368,7 @@ function PlanPanel({
     });
 
   return (
-    <div className="flex-1 overflow-y-auto border-r border-neutral-200 bg-white flex flex-col">
+    <div className="flex-1 border-r border-neutral-200 bg-white flex flex-col overflow-hidden">
       {/* Generating overlay banner */}
       {isGenerating && (
         <div className="flex items-center gap-2 px-4 py-3 bg-indigo-50 border-b border-indigo-100">
@@ -436,8 +440,61 @@ function PlanPanel({
         </div>
       )}
 
-      <div className="flex-1 p-6 space-y-6">
-        {/* Deliverable header */}
+      {/* Tab bar + Generate button */}
+      <div className="flex items-center justify-between px-4 py-2 border-b border-neutral-100 flex-shrink-0 bg-white">
+        <div className="flex gap-1">
+          {(['inputs', 'plan'] as const).map((tab) => (
+            <button
+              key={tab}
+              onClick={() => setPlanTab(tab)}
+              className={`px-3 py-1 text-[11px] font-medium transition-colors capitalize ${
+                planTab === tab
+                  ? 'bg-indigo-50 text-indigo-700'
+                  : 'text-neutral-400 hover:text-neutral-700'
+              }`}
+            >
+              {tab}
+            </button>
+          ))}
+        </div>
+        {workMode === 'planning' && threadId && planTab === 'plan' && (() => {
+          const allOutputTypes: string[] = generatorStepTypes.length > 0
+            ? generatorStepTypes
+            : Array.isArray(plan.deliverable_types) && plan.deliverable_types.length > 0
+              ? plan.deliverable_types as string[]
+              : [plan.deliverable_type];
+          const isMulti = allOutputTypes.length > 1;
+          const generateLabel = isMulti ? `Generate ${allOutputTypes.join(' + ')}` : `Generate ${allOutputTypes[0] ?? plan.deliverable_type}`;
+          return !artifact ? (
+            <button
+              onClick={() => onGenerate(threadId)}
+              className="inline-flex items-center gap-1.5 px-3 py-1 bg-indigo-600 text-white text-[11px] font-semibold hover:bg-indigo-700 transition-colors"
+            >
+              <SparklesIcon className="w-3.5 h-3.5" />
+              {generateLabel}
+            </button>
+          ) : !isDocumentStale ? (
+            <button
+              onClick={onViewDocument}
+              className="inline-flex items-center gap-1.5 px-3 py-1 bg-indigo-600 text-white text-[11px] font-semibold hover:bg-indigo-700 transition-colors"
+            >
+              <DocumentTextIcon className="w-3.5 h-3.5" />
+              View document
+            </button>
+          ) : (
+            <button
+              onClick={() => onGenerate(threadId)}
+              className="inline-flex items-center gap-1.5 px-3 py-1 bg-indigo-600 text-white text-[11px] font-semibold hover:bg-indigo-700 transition-colors"
+            >
+              <SparklesIcon className="w-3.5 h-3.5" />
+              {isMulti ? 'New versions' : 'New version'}
+            </button>
+          );
+        })()}
+      </div>
+
+      <div className="flex-1 p-6 space-y-6 overflow-y-auto">
+        {/* Deliverable header — always visible */}
         <div className="flex items-start gap-3">
           <div className="flex-shrink-0 w-9 h-9 bg-indigo-50 flex items-center justify-center">
             <Icon className="w-4.5 h-4.5 text-indigo-600" />
@@ -461,14 +518,14 @@ function PlanPanel({
           </div>
         </div>
 
-        {/* Inputs */}
-        {plan && (() => {
+        {/* Inputs — Inputs tab only */}
+        {planTab === 'inputs' && plan && (() => {
           const namedInputs = (plan.inputs ?? []).filter((i: any) => !i.id?.startsWith('kb_') && !i.fromContext);
           const contextInputs = (plan.inputs ?? []).filter((i: any) => i.id?.startsWith('kb_') || i.fromContext);
           return (
             <div>
               <p className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wide mb-2">
-                Inputs needed
+                Inputs
               </p>
 
               {/* ── Section 1: Named inputs ── */}
@@ -738,14 +795,14 @@ function PlanPanel({
           );
         })()}
 
-        {/* Steps */}
-        {plan.steps && plan.steps.length > 0 && (
+        {/* Steps — Plan tab only */}
+        {planTab === 'plan' && plan.steps && plan.steps.length > 0 && (
           <div>
             <p className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wide mb-2">
               Steps ({plan.steps.length})
             </p>
             <div className="space-y-1.5">
-              {plan.steps.map((step) => (
+              {plan.steps.filter((step) => !!step.action).map((step) => (
                 <div
                   key={step.number}
                   className={`flex items-start gap-2.5 p-3 border ${
@@ -784,8 +841,8 @@ function PlanPanel({
           </div>
         )}
 
-        {/* Outputs */}
-        {plan.outputs && plan.outputs.length > 0 && (
+        {/* Outputs — Plan tab only */}
+        {planTab === 'plan' && plan.outputs && plan.outputs.length > 0 && (
           <div>
             <p className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wide mb-2">
               Expected outputs
@@ -821,59 +878,16 @@ function PlanPanel({
         )}
       </div>
 
-      {/* Bottom CTA */}
+      {/* Save / Update blueprint — bottom secondary action */}
       {workMode === 'planning' && threadId && (
-        <div className="p-4 border-t border-neutral-100 space-y-2">
-          {(() => {
-            // Use all declared output types (from steps or deliverable_types) for button label
-            const allOutputTypes: string[] = generatorStepTypes.length > 0
-              ? generatorStepTypes
-              : Array.isArray(plan.deliverable_types) && plan.deliverable_types.length > 0
-                ? plan.deliverable_types as string[]
-                : [plan.deliverable_type];
-            const isMulti = allOutputTypes.length > 1;
-            const generateLabel = isMulti
-              ? `Generate ${allOutputTypes.join(' + ')}`
-              : `Generate ${allOutputTypes[0] ?? plan.deliverable_type}`;
-            const newVersionLabel = isMulti ? 'Generate new versions' : 'Generate new version';
-            return !artifact ? (
-              /* First generation */
-              <button
-                onClick={() => onGenerate(threadId)}
-                className="w-full px-4 py-2.5 bg-indigo-600 text-white text-[13px] font-semibold hover:bg-indigo-700 transition-colors flex items-center justify-center gap-2"
-              >
-                <SparklesIcon className="w-4 h-4" />
-                {generateLabel}
-              </button>
-            ) : !isDocumentStale ? (
-              /* Document is current — just view it */
-              <button
-                onClick={onViewDocument}
-                className="w-full px-4 py-2.5 bg-indigo-600 text-white text-[13px] font-semibold hover:bg-indigo-700 transition-colors flex items-center justify-center gap-2"
-              >
-                <DocumentTextIcon className="w-4 h-4" />
-                View document
-              </button>
-            ) : (
-              /* Plan is stale — generate new version (appends, not destructive) */
-              <button
-                onClick={() => onGenerate(threadId)}
-                className="w-full px-4 py-2.5 bg-indigo-600 text-white text-[13px] font-semibold hover:bg-indigo-700 transition-colors flex items-center justify-center gap-2"
-              >
-                <SparklesIcon className="w-4 h-4" />
-                {newVersionLabel}
-              </button>
-            );
-          })()}
-
-          {/* Save / Update workflow — secondary action */}
+        <div className="px-4 py-2 border-t border-neutral-100 flex-shrink-0">
           {savedWorkflowId ? (
             <button
               onClick={onUpdateWorkflow}
               className="w-full flex items-center justify-center gap-1.5 text-[11px] text-neutral-400 hover:text-neutral-700 py-1 transition-colors"
             >
               <BookmarkIcon className="w-3 h-3" />
-              Update saved workflow
+              Update blueprint
             </button>
           ) : (
             <button
@@ -881,7 +895,7 @@ function PlanPanel({
               className="w-full flex items-center justify-center gap-1.5 text-[11px] text-neutral-400 hover:text-neutral-700 py-1 transition-colors"
             >
               <BookmarkIcon className="w-3 h-3" />
-              Save workflow
+              Save as blueprint
             </button>
           )}
         </div>
@@ -1462,6 +1476,7 @@ export function WorkPageClient({
   initialView,
   initialChatInput,
   initialSavedWorkflows,
+  processStepContext,
 }: WorkPageClientProps) {
   const [threads, setThreads] = useState<WorkThread[]>(initialThreads);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
@@ -1481,11 +1496,10 @@ export function WorkPageClient({
 
   // Saved workflows state
   const [savedWorkflows, setSavedWorkflows] = useState<SavedWorkflow[]>(initialSavedWorkflows);
-  const [workflowsExpanded, setWorkflowsExpanded] = useState(true);
   const [showSaveModal, setShowSaveModal] = useState(false);
-  const [confirmDeleteWorkflowId, setConfirmDeleteWorkflowId] = useState<string | null>(null);
-  const [editingWorkflowId, setEditingWorkflowId] = useState<string | null>(null);
-  const [editingWorkflowName, setEditingWorkflowName] = useState('');
+
+  // Entry textarea ref — for pre-filling from process step context
+  const entryTextareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Document states — initialize directly from server data when ?view=document to avoid flash
   const initialThread = initialActiveThreadId
@@ -1522,11 +1536,26 @@ export function WorkPageClient({
   const planUpdatedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const skipLoadRef = useRef<string | null>(null);
   const generatingPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // True while generateDocument is awaiting its fetch — prevents the polling handler from
+  // calling setWorkMode('planning') before the server has set is_generating=true in the DB.
+  const isGeneratingRef = useRef(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatInputRef = useRef<HTMLTextAreaElement>(null);
   const editTitleInputRef = useRef<HTMLInputElement>(null);
   const artifactInputRef = useRef<HTMLTextAreaElement>(null);
+
+  // Pre-fill entry input from process step context (e.g. "Create in Studio →" from Processes)
+  useEffect(() => {
+    if (processStepContext?.stepTitle) {
+      const prefill = processStepContext.stepDesc
+        ? `${processStepContext.stepTitle}\n\n${processStepContext.stepDesc}`
+        : processStepContext.stepTitle;
+      setEntryInput(prefill);
+      entryTextareaRef.current?.focus();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const activeThread = threads.find((t) => t.id === activeThreadId) ?? null;
 
@@ -1598,7 +1627,9 @@ export function WorkPageClient({
           if (newArtifacts.length > 0) {
             setSelectedArtifactId(newArtifacts[newArtifacts.length - 1].id ?? null);
             setWorkMode('document');
-          } else {
+          } else if (!isGeneratingRef.current) {
+            // Only reset to planning if generateDocument is not actively in flight.
+            // Guards against the race where the poll fires before the server sets is_generating=true.
             setWorkMode('planning');
           }
         }
@@ -1785,6 +1816,7 @@ export function WorkPageClient({
   }, [isStreaming]);
 
   const generateDocument = useCallback(async (threadId: string) => {
+    isGeneratingRef.current = true;
     setWorkMode('generating');
     try {
       const res = await fetch(`/api/work/threads/${threadId}/generate`, { method: 'POST' });
@@ -1816,6 +1848,8 @@ export function WorkPageClient({
     } catch (err) {
       console.error('Generate error:', err);
       setWorkMode('planning');
+    } finally {
+      isGeneratingRef.current = false;
     }
   }, []);
 
@@ -2246,7 +2280,6 @@ export function WorkPageClient({
 
   const renameWorkflow = useCallback(async (workflowId: string, name: string) => {
     const trimmed = name.trim();
-    setEditingWorkflowId(null);
     if (!trimmed) return;
     setSavedWorkflows((prev) =>
       prev.map((wf) => wf.id === workflowId ? { ...wf, name: trimmed } : wf)
@@ -2263,7 +2296,6 @@ export function WorkPageClient({
   }, []);
 
   const deleteWorkflow = useCallback(async (workflowId: string) => {
-    setConfirmDeleteWorkflowId(null);
     setSavedWorkflows((prev) => prev.filter((wf) => wf.id !== workflowId));
     try {
       await fetch(`/api/work/saved-workflows/${workflowId}`, { method: 'DELETE' });
@@ -2367,6 +2399,10 @@ export function WorkPageClient({
     <div className="flex h-screen overflow-hidden bg-white">
       <SidebarNav userEmail={userEmail} />
 
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+      <WorkspaceTabBar />
+
+      <div className="flex-1 flex min-w-0 overflow-hidden">
       {/* Thread list sidebar */}
       <div className="w-52 border-r border-neutral-200 flex flex-col flex-shrink-0 bg-white">
         <div className="p-3 border-b border-neutral-100">
@@ -2375,87 +2411,11 @@ export function WorkPageClient({
             className="w-full flex items-center gap-2 px-3 py-2 text-[12px] font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 transition-colors"
           >
             <PlusIcon className="w-3.5 h-3.5" />
-            New work
+            New
           </button>
         </div>
 
         <div className="flex-1 overflow-y-auto py-1">
-          {/* My Workflows section */}
-          {savedWorkflows.length > 0 && (
-            <div className="border-b border-neutral-100 pb-1">
-              <button
-                onClick={() => setWorkflowsExpanded((v) => !v)}
-                className="w-full flex items-center justify-between px-3 py-2 text-[10px] font-semibold tracking-wide text-neutral-400 hover:text-neutral-600 uppercase"
-              >
-                <span>My Workflows</span>
-                <ChevronDownIcon className={`w-3 h-3 transition-transform ${workflowsExpanded ? '' : '-rotate-90'}`} />
-              </button>
-              {workflowsExpanded && savedWorkflows.map((wf) => (
-                <div key={wf.id} className="group relative flex items-center">
-                  {editingWorkflowId === wf.id ? (
-                    <div className="flex-1 flex items-center gap-1 px-2 py-1.5">
-                      <input
-                        autoFocus
-                        value={editingWorkflowName}
-                        onChange={(e) => setEditingWorkflowName(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') renameWorkflow(wf.id, editingWorkflowName);
-                          if (e.key === 'Escape') setEditingWorkflowId(null);
-                        }}
-                        onBlur={() => renameWorkflow(wf.id, editingWorkflowName)}
-                        className="flex-1 min-w-0 text-[12px] text-neutral-900 border border-indigo-300 focus:outline-none focus:border-indigo-500 px-2 py-0.5 bg-white"
-                      />
-                    </div>
-                  ) : confirmDeleteWorkflowId === wf.id ? (
-                    <div className="flex-1 px-3 py-2">
-                      <p className="text-[10px] text-red-600 mb-1">Delete this workflow?</p>
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => deleteWorkflow(wf.id)}
-                          className="text-[10px] font-medium text-white bg-red-500 hover:bg-red-600 px-2 py-0.5 transition-colors"
-                        >
-                          Delete
-                        </button>
-                        <button
-                          onClick={() => setConfirmDeleteWorkflowId(null)}
-                          className="text-[10px] text-neutral-500 hover:text-neutral-700"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <>
-                      <button
-                        onClick={() => runSavedWorkflow(wf.id)}
-                        disabled={isCreatingThread}
-                        className="flex-1 min-w-0 flex items-center gap-2 px-3 py-1.5 hover:bg-neutral-50 text-left disabled:opacity-50"
-                      >
-                        <BookmarkIcon className="w-3 h-3 text-neutral-300 flex-shrink-0" />
-                        <span className="text-[12px] text-neutral-600 truncate">{wf.name}</span>
-                      </button>
-                      <div className="flex-shrink-0 flex items-center pr-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button
-                          onClick={(e) => { e.stopPropagation(); setEditingWorkflowId(wf.id); setEditingWorkflowName(wf.name); setConfirmDeleteWorkflowId(null); }}
-                          className="p-1 text-neutral-300 hover:text-neutral-600 transition-colors"
-                          title="Rename"
-                        >
-                          <PencilIcon className="w-3 h-3" />
-                        </button>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); setConfirmDeleteWorkflowId(wf.id); setEditingWorkflowId(null); }}
-                          className="p-1 text-neutral-300 hover:text-red-500 transition-colors"
-                          title="Delete"
-                        >
-                          <TrashIcon className="w-3 h-3" />
-                        </button>
-                      </div>
-                    </>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
 
           {threads.length === 0 ? (
             <p className="text-[11px] text-neutral-400 px-4 py-6 text-center leading-relaxed">
@@ -2591,15 +2551,16 @@ export function WorkPageClient({
         <div className="flex-1 overflow-y-auto bg-gray-50">
           <div className="max-w-2xl mx-auto px-6 py-12">
             <div className="mb-10">
-              <h1 className="text-2xl font-bold text-neutral-900 mb-1">Create Work</h1>
+              <h1 className="text-2xl font-bold text-neutral-900 mb-1">Studio</h1>
               <p className="text-[14px] text-neutral-500">
-                Describe what you need done — the AI will propose a plan and guide you through it.
+                Describe what you need — AI builds a plan, then generates the deliverable.
               </p>
             </div>
 
             <form onSubmit={handleEntrySubmit} className="mb-10">
               <div className="bg-white border border-neutral-200 shadow-sm">
                 <textarea
+                  ref={entryTextareaRef}
                   value={entryInput}
                   onChange={(e) => setEntryInput(e.target.value)}
                   onKeyDown={(e) => {
@@ -2678,6 +2639,28 @@ export function WorkPageClient({
               </div>
             </form>
 
+            {/* Saved blueprints horizontal strip */}
+            {savedWorkflows.length > 0 && (
+              <div className="mb-8">
+                <p className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wide mb-3">
+                  My blueprints
+                </p>
+                <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1">
+                  {savedWorkflows.map((wf) => (
+                    <button
+                      key={wf.id}
+                      onClick={() => runSavedWorkflow(wf.id)}
+                      disabled={isCreatingThread}
+                      className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 bg-white border border-neutral-200 hover:border-indigo-300 hover:bg-indigo-50/30 text-[11.5px] text-neutral-700 transition-all disabled:opacity-40 max-w-[160px]"
+                    >
+                      <BookmarkIcon className="w-3 h-3 text-neutral-300 flex-shrink-0" />
+                      <span className="truncate">{wf.name}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {blueprints.length > 0 && (
               <div>
                 <div className="flex items-center gap-2 mb-4">
@@ -2686,8 +2669,8 @@ export function WorkPageClient({
                     Quick start
                   </p>
                 </div>
-                <div className="grid grid-cols-2 gap-2">
-                  {blueprints.slice(0, 8).map((blueprint) => {
+                <div className="grid grid-cols-3 gap-2">
+                  {blueprints.slice(0, 9).map((blueprint) => {
                     const Icon = getCategoryIcon(blueprint.category);
                     return (
                       <button
@@ -3023,6 +3006,8 @@ export function WorkPageClient({
         onSave={saveWorkflow}
         onClose={() => setShowSaveModal(false)}
       />
+      </div>{/* end flex-1 flex min-w-0 (content area) */}
+      </div>{/* end flex-1 flex-col (tab bar + content) */}
     </div>
   );
 }

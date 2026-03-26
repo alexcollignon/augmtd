@@ -133,7 +133,7 @@ const DESK_ACTION_RE = /DESK_ACTION:(\{[\s\S]+?\})/;
 
 const SOURCE_OPTIONS = [
   { id: 'inbox', label: 'Inbox' },
-  { id: 'kb', label: 'KB' },
+  { id: 'kb', label: 'Drive' },
   { id: 'calendar', label: 'Calendar' },
 ];
 

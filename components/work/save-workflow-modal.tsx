@@ -94,7 +94,7 @@ export default function SaveWorkflowModal({ isOpen, prompt, defaultName, onSave,
                 <div className="flex items-center gap-2">
                   <BookmarkIcon className="w-4 h-4 text-neutral-500" />
                   <Dialog.Title className="text-[14px] font-semibold text-neutral-900">
-                    Save workflow
+                    Save as blueprint
                   </Dialog.Title>
                 </div>
 
@@ -112,7 +112,7 @@ export default function SaveWorkflowModal({ isOpen, prompt, defaultName, onSave,
                       if (e.key === 'Enter') handleSave();
                       if (e.key === 'Escape') onClose();
                     }}
-                    placeholder="Name this workflow…"
+                    placeholder="Name this blueprint…"
                     className="w-full text-[13px] border border-neutral-300 focus:border-indigo-400 focus:outline-none px-3 py-2 bg-white"
                   />
                 </div>
@@ -201,7 +201,7 @@ export default function SaveWorkflowModal({ isOpen, prompt, defaultName, onSave,
                     disabled={!canSave}
                     className="text-[13px] font-semibold text-white bg-indigo-600 hover:bg-indigo-700 px-4 py-1.5 disabled:opacity-40 transition-colors flex items-center gap-1.5"
                   >
-                    {isSaving ? '…' : 'Save workflow →'}
+                    {isSaving ? '…' : 'Save blueprint →'}
                   </button>
                 </div>
               </Dialog.Panel>

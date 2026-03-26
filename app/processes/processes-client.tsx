@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import SidebarNav from '@/components/sidebar-nav';
+import { WorkspaceTabBar } from '@/components/work/workspace-tab-bar';
 import type { ProcessListItem, ProcessStatus } from '@/lib/types/process';
 import {
   PlusIcon,
@@ -116,6 +117,7 @@ export function ProcessesClient({ userId, userEmail, companyName }: Props) {
       <SidebarNav userEmail={userEmail} />
 
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+        <WorkspaceTabBar />
         {/* Header */}
         <div className="flex-shrink-0 bg-white border-b border-neutral-200 px-6 py-4">
           <div className="flex items-center justify-between">

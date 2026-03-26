@@ -36,6 +36,14 @@ export async function POST(
       return NextResponse.json({ error: 'Thread has no plan yet' }, { status: 400 });
     }
 
+    // Mark thread as generating immediately after ownership check — minimises the window
+    // where a client poll fires before this flag is set and incorrectly resets workMode to 'planning'.
+    const adminClient = (await import('@supabase/supabase-js')).createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    );
+    await adminClient.from('work_threads').update({ is_generating: true }).eq('id', threadId);
+
     const [{ data: recentMessages }, { data: linkedItem }, userContextBlock] = await Promise.all([
       supabase
         .from('work_messages')
@@ -73,14 +81,6 @@ export async function POST(
     }>;
 
     const userContext = userContextBlock || 'Professional';
-
-    const adminClient = (await import('@supabase/supabase-js')).createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
-
-    // Mark thread as generating — persists across refreshes so the UI can show the state
-    await adminClient.from('work_threads').update({ is_generating: true }).eq('id', threadId);
 
     // Inject accepted KB inputs as attachment context (fromKB covers named + global; fromContext covers manual adds)
     // Uses chunk-based injection (top 3 chunks per file, with citation headers) instead of full extracted_text.

@@ -6,6 +6,9 @@ import { buildSystemPrompt, parsePlanResponse } from '@/lib/work/planning-ai';
 import { buildToolRegistry } from '@/lib/mcp/registry';
 import { buildKBContext } from '@/lib/knowledge/build-kb-context';
 import { buildUserContextBlock } from '@/lib/context/build-user-context';
+import { buildInboxSnapshot, formatSnapshotForPrompt } from '@/lib/inbox/chat-context';
+import { getCalendarContext } from '@/lib/calendar/calendar-context';
+import { formatCalendarContextForChat } from '@/lib/calendar/format-calendar-context';
 
 // POST /api/work/threads/[id]/messages — send a message and stream the AI response
 export async function POST(
@@ -83,16 +86,40 @@ export async function POST(
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
 
-    const [toolRegistry, kbContext, userContextBlock] = await Promise.all([
+    const [toolRegistry, kbContext, userContextBlock, calendarCtx, inboxSnapshot, processListResult] = await Promise.all([
       buildToolRegistry(user.id, supabase),
       buildKBContext(user.id, content, adminClient, { fileLimit: 6, maxChunksPerFile: 3, threshold: 0.2, maxTotalChars: 12000 }),
       buildUserContextBlock(user.id, supabase),
+      getCalendarContext(user.id, supabase),
+      buildInboxSnapshot(user.id, content, supabase),
+      supabase
+        .from('processes')
+        .select('id, title, status, current_step_index')
+        .in('status', ['active', 'in_progress'])
+        .order('updated_at', { ascending: false })
+        .limit(8),
     ]);
     const systemPrompt = buildSystemPrompt(toolRegistry);
 
     const userContextNote = userContextBlock ? `\n\n${userContextBlock}` : '';
     const kbContextNote = kbContext.context
       ? `\n\nKNOWLEDGE BASE CONTEXT (from user's indexed files — reference when planning):\n${kbContext.context}`
+      : '';
+
+    const calendarText = formatCalendarContextForChat(calendarCtx);
+    const calendarNote = calendarText
+      ? `\n\nCALENDAR (upcoming meetings — use when the user asks about scheduling or meeting context):\n${calendarText}`
+      : '';
+
+    const snapshotText = formatSnapshotForPrompt(inboxSnapshot);
+    const inboxNote = snapshotText
+      ? `\n\nINBOX SNAPSHOT (recent relevant emails — use when the user asks about emails, people, or ongoing conversations):\n${snapshotText}`
+      : '';
+
+    const processes = (processListResult.data ?? []) as Array<{ id: string; title: string; status: string; current_step_index?: number }>;
+    const processNote = processes.length
+      ? `\n\nACTIVE PROCESSES (team workflows currently running — reference when the user asks about ongoing work):\n` +
+        processes.map(p => `- "${p.title}" [id: ${p.id}] — ${p.status}${p.current_step_index != null ? `, step ${p.current_step_index + 1}` : ''}`).join('\n')
       : '';
 
     // On the very first message (no existing plan), inject a strong reminder that a plan is required now.
@@ -104,7 +131,7 @@ export async function POST(
     const openaiMessages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
       {
         role: 'system',
-        content: currentModeNote + systemPrompt + userContextNote + kbContextNote + currentPlanNote + attachmentNote + firstMessageNote,
+        content: currentModeNote + systemPrompt + userContextNote + kbContextNote + calendarNote + inboxNote + processNote + currentPlanNote + attachmentNote + firstMessageNote,
       },
       ...(messages || []).map((m) => ({
         role: m.role as 'user' | 'assistant',

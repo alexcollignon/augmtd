@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo, lazy, Suspense } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -11,29 +11,16 @@ import WorkDetailInline from '@/components/inbox/work-detail-inline';
 import AiChatPanel from '@/components/shared/ai-chat-panel';
 import MeetingsColumn from '@/components/inbox/meetings-column';
 import OnboardingModal from '@/components/onboarding-modal';
-import { ArrowPathIcon, SparklesIcon, ClockIcon, Bars3Icon, QueueListIcon, ArchiveBoxArrowDownIcon, XMarkIcon, MagnifyingGlassIcon, PencilSquareIcon, CalendarIcon, FolderIcon, FolderOpenIcon, EnvelopeIcon } from '@heroicons/react/24/outline';
+import { ArrowPathIcon, SparklesIcon, Bars3Icon, QueueListIcon, ArchiveBoxArrowDownIcon, XMarkIcon, MagnifyingGlassIcon, PencilSquareIcon, CalendarIcon, RectangleGroupIcon } from '@heroicons/react/24/outline';
 import ComposePanel from '@/components/inbox/compose-panel';
 import { toast } from 'sonner';
 import type { CalendarEvent } from '@/lib/types/meetings';
 import type { InboxItem } from '@/lib/types/inbox';
 
-type ViewMode = 'chronological' | 'smart' | 'browse';
+const DeskPageClient = lazy(() => import('@/app/desk/desk-page-client'));
+
+type ViewMode = 'chronological' | 'smart';
 type Density = 'normal' | 'compact';
-
-interface FolderConnection {
-  connectionId: string;
-  provider: string;
-  folders: { id: string; name: string; isSystem: boolean }[];
-}
-
-interface FolderEmail {
-  id: string;
-  subject: string;
-  from: string;
-  fromName: string;
-  date: string;
-  snippet: string;
-}
 
 interface InboxPageClientProps {
   initialUser: any;
@@ -65,16 +52,10 @@ export function InboxPageClient({
   const [isBulkDismissing, setIsBulkDismissing] = useState(false);
   const [bulkArchiveConfirmPending, setBulkArchiveConfirmPending] = useState(false);
 
+  const [showDesk, setShowDesk] = useState(false);
+
   // Search state (client-side filter on left list)
   const [searchQuery, setSearchQuery] = useState('');
-
-  // Folder browser state
-  const [folderConnections, setFolderConnections] = useState<FolderConnection[]>([]);
-  const [folderConnectionsLoading, setFolderConnectionsLoading] = useState(false);
-  const [selectedFolderConn, setSelectedFolderConn] = useState<string | null>(null);
-  const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
-  const [folderEmails, setFolderEmails] = useState<FolderEmail[]>([]);
-  const [folderEmailsLoading, setFolderEmailsLoading] = useState(false);
 
   // Right panel + compose state
   const [rightPanel, setRightPanel] = useState<'calendar' | 'chat' | null>('calendar');
@@ -85,7 +66,7 @@ export function InboxPageClient({
   const [replyIsOpen, setReplyIsOpen] = useState(false);
   const [replyBody, setReplyBody] = useState('');
   const autoFiredReplyRef = useRef(false);
-  const deepLinkFiredRef = useRef(false);
+  const deepLinkFiredRef = useRef<string | null>(null);
   // Email context chip
   const [chipDismissed, setChipDismissed] = useState(false);
 
@@ -110,36 +91,16 @@ export function InboxPageClient({
     if (savedView === 'smart' || savedView === 'chronological') setViewMode(savedView);
     const savedDensity = localStorage.getItem('inboxDensity') as Density | null;
     if (savedDensity === 'normal' || savedDensity === 'compact') setDensity(savedDensity);
-  }, []);
+    // Auto-select most recently received item after hydration (can't do during SSR — causes dangerouslySetInnerHTML mismatch)
+    const latest = inboxItems.length
+      ? inboxItems.reduce((a, b) => new Date((b as any).created_at) > new Date((a as any).created_at) ? b : a)
+      : null;
+    setSelectedItem(prev => prev ?? latest);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleViewMode = (mode: ViewMode) => {
     setViewMode(mode);
-    if (mode !== 'browse') localStorage.setItem('inboxViewMode', mode);
-    if (mode === 'browse' && folderConnections.length === 0 && !folderConnectionsLoading) {
-      setFolderConnectionsLoading(true);
-      fetch('/api/inbox/folders')
-        .then(r => r.json())
-        .then(data => {
-          setFolderConnections(data.connections ?? []);
-          setFolderConnectionsLoading(false);
-        })
-        .catch(() => setFolderConnectionsLoading(false));
-    }
-  };
-
-  const handleSelectFolder = (connectionId: string, folderId: string) => {
-    if (selectedFolderConn === connectionId && selectedFolderId === folderId) return;
-    setSelectedFolderConn(connectionId);
-    setSelectedFolderId(folderId);
-    setFolderEmails([]);
-    setFolderEmailsLoading(true);
-    fetch(`/api/inbox/folder-emails?connectionId=${encodeURIComponent(connectionId)}&folderId=${encodeURIComponent(folderId)}`)
-      .then(r => r.json())
-      .then(data => {
-        setFolderEmails(data.emails ?? []);
-        setFolderEmailsLoading(false);
-      })
-      .catch(() => setFolderEmailsLoading(false));
+    localStorage.setItem('inboxViewMode', mode);
   };
 
   const handleDensity = (d: Density) => {
@@ -193,12 +154,13 @@ export function InboxPageClient({
 
   // Deep-link: ?item=<uuid> auto-selects a specific inbox item (e.g. from desk card)
   useEffect(() => {
-    if (deepLinkFiredRef.current) return;
     const itemId = searchParams?.get('item');
     if (!itemId || inboxItems.length === 0) return;
+    if (deepLinkFiredRef.current === itemId) return; // already handled this specific item
     const target = inboxItems.find((i) => i.id === itemId);
     if (target) {
-      deepLinkFiredRef.current = true;
+      deepLinkFiredRef.current = itemId;
+      setShowDesk(false);
       handleSelectItem(target);
       window.history.replaceState({}, '', '/inbox');
     }
@@ -221,32 +183,38 @@ export function InboxPageClient({
     }
   }, [searchParams, hasConnection]);
 
-  // Poll for inbox items and sync status
+  // Realtime subscription — new items appear instantly without polling
+  useEffect(() => {
+    const supabase = createClient();
+    const channel = supabase
+      .channel(`inbox_items:${user.id}`)
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'inbox_items',
+        filter: `user_id=eq.${user.id}`,
+      }, (payload) => {
+        if (payload.eventType === 'INSERT') {
+          const item = payload.new as InboxItem;
+          if (item.status === 'pending' && (item as any).source !== 'meeting') {
+            setInboxItems(prev => prev.some(i => i.id === item.id) ? prev : [item, ...prev]);
+            setSelectedItem(prev => prev ?? item);
+          }
+        } else if (payload.eventType === 'UPDATE') {
+          setInboxItems(prev => prev.map(i => i.id === (payload.new as any).id ? payload.new as InboxItem : i));
+        } else if (payload.eventType === 'DELETE') {
+          setInboxItems(prev => prev.filter(i => i.id !== (payload.old as any).id));
+        }
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [user.id]);
+
+  // Poll for sync status only (inbox items arrive via Realtime above)
   useEffect(() => {
     const supabase = createClient();
 
     async function fetchData() {
-      const { data: items, error: itemsError } = await supabase
-        .from('inbox_items')
-        .select('*')
-        .eq('user_id', user.id)
-        .eq('status', 'pending')
-        .neq('source', 'meeting')
-        .order('priority', { ascending: false })
-        .order('created_at', { ascending: false });
-
-      if (itemsError) {
-        if (itemsError.message?.includes('JWT') || itemsError.code === 'PGRST301') {
-          window.location.href = '/login?session=expired';
-          return;
-        }
-      }
-
-      if (items) {
-        setInboxItems(items);
-        setSelectedItem(prev => prev ? (items.find(i => i.id === prev.id) ?? prev) : null);
-      }
-
       const { data: connections, error: connectionsError } = await supabase
         .from('connections')
         .select('sync_status, sync_started_at, provider')
@@ -290,9 +258,19 @@ export function InboxPageClient({
         }
 
         if (isSyncingRef.current && !isCurrentlySyncing) {
-          setInboxItems(items || []);
-          // Show a brief toast with the new-item delta
-          const newCount = (items || []).length;
+          // Full refetch as catch-all for items that arrived before Realtime was subscribed
+          const { data: freshItems } = await supabase
+            .from('inbox_items')
+            .select('*')
+            .eq('user_id', user.id)
+            .eq('status', 'pending')
+            .neq('source', 'meeting')
+            .order('created_at', { ascending: false });
+          if (freshItems) {
+            setInboxItems(freshItems);
+            setSelectedItem(prev => prev ? (freshItems.find(i => i.id === prev.id) ?? prev) : (freshItems[0] ?? null));
+          }
+          const newCount = (freshItems || []).length;
           const prevCount = preSyncCountRef.current ?? newCount;
           const delta = newCount - prevCount;
           preSyncCountRef.current = null;
@@ -328,6 +306,10 @@ export function InboxPageClient({
       items = items.filter(item => (item as any).work_state !== 'noise');
     }
     const q = searchQuery.trim().toLowerCase();
+    // Always show at least the most recent item when no search is active
+    if (!q && items.length === 0 && inboxItems.length > 0) {
+      items = [inboxItems[0]];
+    }
     if (!q) return items;
     return items.filter(item => {
       const sd = (item as any).source_data;
@@ -635,8 +617,29 @@ export function InboxPageClient({
           </div>
         )}
 
+        {/* Desk view */}
+        {hasConnection && showDesk && (
+          <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+            <div className="flex-shrink-0 h-10 flex items-center gap-2 px-3 border-b border-neutral-200 bg-white">
+              <button
+                onClick={() => setShowDesk(false)}
+                className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold border bg-indigo-600 border-indigo-600 text-white"
+              >
+                <RectangleGroupIcon className="w-3 h-3" />
+                On Your Desk
+              </button>
+              <span className="text-[11px] text-neutral-400">— click to return to inbox</span>
+            </div>
+            <div className="flex-1 min-h-0 overflow-hidden">
+              <Suspense fallback={<div className="flex items-center justify-center h-full"><div className="w-5 h-5 border-2 border-neutral-300 border-t-transparent rounded-full animate-spin" /></div>}>
+                <DeskPageClient />
+              </Suspense>
+            </div>
+          </div>
+        )}
+
         {/* 3-column layout */}
-        {hasConnection && (
+        {hasConnection && !showDesk && (
           <div className="flex-1 flex min-h-0 overflow-hidden">
             {/* Left: email list */}
             <div className="w-[272px] flex-shrink-0 border-r border-neutral-200 flex flex-col bg-white">
@@ -645,8 +648,8 @@ export function InboxPageClient({
               <div className="flex-shrink-0 flex items-center justify-between pl-2.5 pr-1 border-b border-neutral-100 h-10">
                 {/* Segmented view tabs */}
                 <div className="flex items-center h-full gap-0.5">
-                  {(['chronological', 'smart', 'browse'] as const).map((key) => {
-                    const labels = { chronological: 'Standard', smart: 'Smart', browse: 'Browse' };
+                  {(['chronological', 'smart'] as const).map((key) => {
+                    const labels = { chronological: 'Standard', smart: 'Smart' };
                     return (
                       <button
                         key={key}
@@ -666,26 +669,44 @@ export function InboxPageClient({
                   })}
                 </div>
 
-                {/* Density + sync */}
-                <div className="flex items-center gap-0">
+                {/* Density toggles + action icons */}
+                <div className="flex items-center">
+                  {/* Density — subtle toggles */}
                   <button
                     onClick={() => handleDensity('normal')}
-                    title="Normal"
+                    title="Normal density"
                     className={`p-1 transition-colors ${
-                      density === 'normal' ? 'text-neutral-500' : 'text-neutral-300 hover:text-neutral-500'
+                      density === 'normal' ? 'text-neutral-400' : 'text-neutral-300 hover:text-neutral-400'
                     }`}
                   >
                     <QueueListIcon className="w-3.5 h-3.5" />
                   </button>
                   <button
                     onClick={() => handleDensity('compact')}
-                    title="Compact"
+                    title="Compact density"
                     className={`p-1 transition-colors ${
-                      density === 'compact' ? 'text-neutral-500' : 'text-neutral-300 hover:text-neutral-500'
+                      density === 'compact' ? 'text-neutral-400' : 'text-neutral-300 hover:text-neutral-400'
                     }`}
                   >
                     <Bars3Icon className="w-3.5 h-3.5" />
                   </button>
+                  {/* Divider */}
+                  <div className="w-px h-3.5 bg-neutral-200 mx-1" />
+                  {/* Compose — action icon, indigo tint */}
+                  <button
+                    onClick={() => {
+                      setComposeMode(true);
+                      setRightPanel('chat');
+                      setTimeout(() => chatInputRef.current?.focus(), 50);
+                    }}
+                    title="Compose new email"
+                    className={`p-1 transition-colors ${
+                      composeMode ? 'text-indigo-500' : 'text-neutral-400 hover:text-indigo-500'
+                    }`}
+                  >
+                    <PencilSquareIcon className="w-3.5 h-3.5" />
+                  </button>
+                  {/* Sync — action icon */}
                   <button
                     onClick={() => {
                       if (isSyncing) return;
@@ -695,7 +716,7 @@ export function InboxPageClient({
                     }}
                     disabled={isSyncing}
                     title={isSyncing ? 'Syncing…' : 'Sync inbox'}
-                    className="p-1 transition-colors text-neutral-300 hover:text-neutral-500 disabled:opacity-50"
+                    className="p-1 transition-colors text-neutral-400 hover:text-neutral-600 disabled:opacity-50"
                   >
                     <ArrowPathIcon className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
                   </button>
@@ -769,85 +790,7 @@ export function InboxPageClient({
                 </div>
               )}
 
-              {/* Email list / folder browser */}
-              {viewMode === 'browse' ? (
-                <div className="flex-1 flex min-h-0 overflow-hidden">
-                  {/* Folder sidebar */}
-                  <div className="w-[110px] flex-shrink-0 border-r border-neutral-100 overflow-y-auto bg-neutral-50">
-                    {folderConnectionsLoading ? (
-                      <div className="flex items-center justify-center py-8">
-                        <div className="w-4 h-4 border-2 border-neutral-300 border-t-transparent rounded-full animate-spin" />
-                      </div>
-                    ) : folderConnections.length === 0 ? (
-                      <p className="text-[11px] text-neutral-400 px-3 py-4">No folders found</p>
-                    ) : (
-                      folderConnections.map(conn => (
-                        <div key={conn.connectionId}>
-                          {folderConnections.length > 1 && (
-                            <div className="px-2 pt-3 pb-1">
-                              <span className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wide">
-                                {conn.provider}
-                              </span>
-                            </div>
-                          )}
-                          {conn.folders.map(folder => (
-                            <button
-                              key={folder.id}
-                              onClick={() => handleSelectFolder(conn.connectionId, folder.id)}
-                              className={`w-full flex items-center gap-1.5 px-2 py-1.5 text-left text-[11px] transition-colors ${
-                                selectedFolderConn === conn.connectionId && selectedFolderId === folder.id
-                                  ? 'bg-indigo-50 text-indigo-700 font-semibold'
-                                  : 'text-neutral-600 hover:bg-neutral-100'
-                              }`}
-                            >
-                              {selectedFolderConn === conn.connectionId && selectedFolderId === folder.id
-                                ? <FolderOpenIcon className="w-3 h-3 flex-shrink-0" />
-                                : <FolderIcon className="w-3 h-3 flex-shrink-0" />
-                              }
-                              <span className="truncate">{folder.name}</span>
-                            </button>
-                          ))}
-                        </div>
-                      ))
-                    )}
-                  </div>
-
-                  {/* Folder email list */}
-                  <div className="flex-1 overflow-y-auto">
-                    {!selectedFolderId ? (
-                      <div className="flex flex-col items-center justify-center h-full py-12 px-3 text-center">
-                        <FolderIcon className="w-6 h-6 text-neutral-300 mb-2" />
-                        <p className="text-[11px] text-neutral-400">Select a folder</p>
-                      </div>
-                    ) : folderEmailsLoading ? (
-                      <div className="flex items-center justify-center py-12">
-                        <div className="w-4 h-4 border-2 border-neutral-300 border-t-transparent rounded-full animate-spin" />
-                      </div>
-                    ) : folderEmails.length === 0 ? (
-                      <div className="flex flex-col items-center justify-center h-full py-12 px-3 text-center">
-                        <EnvelopeIcon className="w-6 h-6 text-neutral-300 mb-2" />
-                        <p className="text-[11px] text-neutral-400">No emails</p>
-                      </div>
-                    ) : (
-                      folderEmails.map(email => (
-                        <div
-                          key={email.id}
-                          className="px-2 py-2 border-b border-neutral-100 hover:bg-neutral-50 cursor-default"
-                        >
-                          <p className="text-[11px] font-semibold text-neutral-800 truncate">
-                            {email.fromName || email.from}
-                          </p>
-                          <p className="text-[11px] text-neutral-600 truncate">{email.subject}</p>
-                          <p className="text-[10px] text-neutral-400 truncate mt-0.5">{email.snippet}</p>
-                          <p className="text-[10px] text-neutral-300 mt-0.5">
-                            {email.date ? new Date(email.date).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true }) : ''}
-                          </p>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-              ) : (
+              {/* Email list */}
               <div className="flex-1 overflow-y-auto">
                 {inboxItems.length === 0 && !isSyncing ? (
                   <div className="flex flex-col items-center justify-center h-full py-16 px-4 text-center">
@@ -881,7 +824,6 @@ export function InboxPageClient({
                   />
                 )}
               </div>
-              )}
             </div>
 
             {/* Middle: search header + detail/compose */}
@@ -916,6 +858,20 @@ export function InboxPageClient({
                 {/* Divider */}
                 <div className="w-px h-4 bg-neutral-200 mx-1 flex-shrink-0" />
 
+                {/* On Your Desk toggle */}
+                <button
+                  onClick={() => setShowDesk(v => !v)}
+                  title="On Your Desk"
+                  className={`flex-shrink-0 flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold border transition-colors ${
+                    showDesk
+                      ? 'bg-indigo-600 border-indigo-600 text-white'
+                      : 'border-neutral-300 text-neutral-600 hover:bg-neutral-50'
+                  }`}
+                >
+                  <RectangleGroupIcon className="w-3 h-3" />
+                  On Your Desk
+                </button>
+
                 {/* Ask AI toggle */}
                 <button
                   onClick={() => {
@@ -937,24 +893,6 @@ export function InboxPageClient({
                   Ask AI
                 </button>
 
-                {/* Compose button */}
-                <button
-                  onClick={() => {
-                    setComposeMode(true);
-                    setRightPanel('chat');
-                    setTimeout(() => chatInputRef.current?.focus(), 50);
-                  }}
-                  title="Compose new email"
-                  className={`flex-shrink-0 flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold border transition-colors ${
-                    composeMode
-                      ? 'bg-indigo-600 border-indigo-600 text-white'
-                      : 'border-neutral-300 text-neutral-500 hover:bg-neutral-50'
-                  }`}
-                >
-                  <PencilSquareIcon className="w-3 h-3" />
-                  Compose
-                </button>
-
                 {/* Calendar toggle */}
                 <button
                   onClick={() => setRightPanel(rightPanel === 'calendar' ? null : 'calendar')}
@@ -968,6 +906,7 @@ export function InboxPageClient({
                   <CalendarIcon className="w-3 h-3" />
                   Calendar
                 </button>
+
               </div>
 
               {composeMode ? (

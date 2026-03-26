@@ -2,7 +2,9 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import SidebarNav from '@/components/sidebar-nav';
+import { WorkspaceTabBar } from '@/components/work/workspace-tab-bar';
 import type { ProcessDetail, ProcessStepRecord, ProcessComment, ProcessStepStatus, ProcessPlan } from '@/lib/types/process';
 import { StepTypeIcon, AssigneePicker, TeamMember, ChatMessage as PlanChatMessage, getDisplayText, hasReachedJson, extractPlanJson, PLAN_SEPARATOR as PLAN_SEP } from '@/app/processes/_components/plan-components';
 import { ProcessSidebar } from '@/app/processes/_components/process-sidebar';
@@ -22,6 +24,7 @@ import {
   PencilIcon,
   PaperClipIcon,
   XMarkIcon,
+  SparklesIcon,
 } from '@heroicons/react/24/outline';
 import { CheckCircleIcon as CheckCircleSolid } from '@heroicons/react/24/solid';
 
@@ -231,16 +234,31 @@ function StepInputForm({
   const label = ctaLabel(step);
 
   if (step.step_type === 'generator') {
+    const studioUrl = `/work?processStep=${step.step_index}&processId=${step.id}&stepTitle=${encodeURIComponent(step.title ?? '')}&stepDesc=${encodeURIComponent(step.description ?? '')}`;
     return (
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 flex-wrap">
         <button
           onClick={() => submit({ generated: true })}
           disabled={submitting}
-          className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-[12px] rounded hover:bg-indigo-700 disabled:opacity-50"
+          className="inline-flex items-center gap-2 px-3 py-1.5 bg-indigo-600 text-white text-[12px] hover:bg-indigo-700 disabled:opacity-50 transition-colors"
         >
-          {submitting && <ArrowPathIcon className="w-3.5 h-3.5 animate-spin" />}
-          {submitting ? 'Generating...' : 'Run AI Step'}
+          {submitting ? (
+            <>
+              <span className="w-1.5 h-1.5 bg-white/50 rounded-full animate-bounce [animation-delay:0ms]" />
+              <span className="w-1.5 h-1.5 bg-white/50 rounded-full animate-bounce [animation-delay:150ms]" />
+              <span className="w-1.5 h-1.5 bg-white/50 rounded-full animate-bounce [animation-delay:300ms]" />
+            </>
+          ) : (
+            <SparklesIcon className="w-3.5 h-3.5" />
+          )}
+          {submitting ? 'Running…' : 'Run in Studio'}
         </button>
+        <Link
+          href={studioUrl}
+          className="text-[11px] text-indigo-500 hover:text-indigo-700 transition-colors"
+        >
+          Open in Studio →
+        </Link>
         {submitting && (
           <span className="text-[11px] text-neutral-400">This may take 10–20 seconds</span>
         )}
@@ -356,13 +374,22 @@ function StepInputForm({
             rows={3}
             className="border border-neutral-200 rounded px-3 py-2 text-[12px] resize-none focus:outline-none focus:ring-1 focus:ring-indigo-400"
           />
-          <button
-            onClick={() => submit({ text: value })}
-            disabled={submitting || !value.trim()}
-            className="self-end px-4 py-1.5 bg-indigo-600 text-white text-[12px] rounded hover:bg-indigo-700 disabled:opacity-50"
-          >
-            {submitting ? 'Submitting...' : label}
-          </button>
+          <div className="flex items-center justify-between">
+            <Link
+              href={`/work?processStep=${step.step_index}&processId=${step.id}&stepTitle=${encodeURIComponent(step.title ?? '')}&stepDesc=${encodeURIComponent(step.description ?? '')}`}
+              className="inline-flex items-center gap-1 text-[11px] text-indigo-500 hover:text-indigo-700 transition-colors"
+            >
+              <SparklesIcon className="w-3 h-3" />
+              Create in Studio →
+            </Link>
+            <button
+              onClick={() => submit({ text: value })}
+              disabled={submitting || !value.trim()}
+              className="px-4 py-1.5 bg-indigo-600 text-white text-[12px] rounded hover:bg-indigo-700 disabled:opacity-50"
+            >
+              {submitting ? 'Submitting...' : label}
+            </button>
+          </div>
         </div>
       );
   }
@@ -765,6 +792,8 @@ export function ProcessDetailClient({ processId, userId, userEmail, companyRole 
       <div className="flex h-screen overflow-hidden bg-neutral-50">
         <SidebarNav userEmail={userEmail} />
         <ProcessSidebar currentId={processId} userId={userId} />
+        <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+        <WorkspaceTabBar />
         <div className="flex-1 flex min-w-0 overflow-hidden">
           {/* Center: Plan preview */}
           <div className="flex-1 flex flex-col min-w-0 overflow-hidden border-r border-neutral-200 bg-white">
@@ -992,6 +1021,7 @@ export function ProcessDetailClient({ processId, userId, userEmail, companyRole 
             </div>
           </div>
         </div>
+        </div>{/* end flex-1 flex-col */}
       </div>
     );
   }
@@ -1005,6 +1035,8 @@ export function ProcessDetailClient({ processId, userId, userEmail, companyRole 
       <SidebarNav userEmail={userEmail} />
       <ProcessSidebar currentId={processId} userId={userId} />
 
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+      <WorkspaceTabBar />
       <div className="flex-1 flex min-w-0 overflow-hidden">
         {/* Center: Process detail */}
         <div className="flex-1 flex flex-col min-w-0 overflow-hidden border-r border-neutral-200 bg-white">
@@ -1208,7 +1240,10 @@ export function ProcessDetailClient({ processId, userId, userEmail, companyRole 
                               {step.step_index + 1}. {step.title}
                             </span>
                             {step.step_type === 'generator' && (
-                              <CpuChipIcon className="w-3.5 h-3.5 text-indigo-400" />
+                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-indigo-50 text-indigo-600 text-[9px] font-semibold uppercase tracking-wide border border-indigo-100">
+                                <SparklesIcon className="w-2.5 h-2.5" />
+                                Studio
+                              </span>
                             )}
                             {step.assignee_id ? (
                               <span className="px-1.5 py-0.5 bg-indigo-50 text-indigo-700 text-[10px] rounded-full border border-indigo-100">
@@ -1491,6 +1526,7 @@ export function ProcessDetailClient({ processId, userId, userEmail, companyRole 
           </div>
         </div>
       </div>
+      </div>{/* end flex-1 flex-col */}
     </div>
   );
 }

@@ -75,67 +75,62 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    let totalEmailsFetched = 0;
-    let totalInboxItemsCreated = 0;
-    let totalEventsSynced = 0;
-    let totalBotsCreated = 0;
-    const errors: string[] = [];
+    // Process all connections in parallel — within each, calendar → bots → emails order is preserved
+    const results = await Promise.all(connections.map(async (connection) => {
+      try {
+        console.log(`Syncing ${connection.provider} calendar + emails for user ${user.id}...`);
 
-    // Process each connection (sync calendar FIRST, then emails)
-    // Calendar provides context for email analysis (availability, patterns, etc.)
-    for (const connection of connections) {
-      console.log(`Syncing ${connection.provider} calendar + emails for user ${user.id}...`);
-
-      // Step 1: Sync calendar FIRST (provides context for email processing)
-      console.log(`[Sync Order] 1/3: Syncing calendar for ${connection.provider}...`);
-      const calendarResult = await syncCalendarForConnection(connection, adminSupabase, {
-        daysAhead: 14,  // Next 2 weeks
-        daysBehind: 7,  // Past week (for updates)
-      });
-
-      totalEventsSynced += calendarResult.synced;
-      errors.push(...calendarResult.errors);
-
-      if (calendarResult.synced > 0) {
-        console.log(`[Sync Order] ✓ Calendar synced: ${calendarResult.synced} events`);
-
-        // Step 1.5: Analyze calendar patterns to build meeting_behavior profile
-        console.log(`[Sync Order] 1.5/3: Analyzing calendar patterns...`);
-        const patternResult = await analyzeCalendarPatterns(user.id, adminSupabase);
-
-        if (patternResult.success) {
-          console.log(`[Sync Order] ✓ Patterns analyzed: ${patternResult.patternsDetected} meeting types, ${Math.round(patternResult.confidence * 100)}% confidence`);
+        console.log(`[Sync Order] 1/3: Syncing calendar for ${connection.provider}...`);
+        const calendarResult = await syncCalendarForConnection(connection, adminSupabase, {
+          daysAhead: 14,
+          daysBehind: 7,
+        });
+        if (calendarResult.synced > 0) {
+          console.log(`[Sync Order] ✓ Calendar synced: ${calendarResult.synced} events`);
         }
+
+        console.log(`[Sync Order] 2/3: Creating meeting bots for ${connection.provider}...`);
+        const botResult = await createBotsForCalendarEvents(user.id, adminSupabase);
+        if (botResult.created > 0) {
+          console.log(`[Sync Order] ✓ Bots created: ${botResult.created} meeting bots`);
+        }
+
+        console.log(`[Sync Order] 3/3: Syncing emails for ${connection.provider}...`);
+        const emailResult = await syncEmailsForConnection(connection, adminSupabase);
+        if (emailResult.emailsFetched > 0) {
+          console.log(`[Sync Order] ✓ Emails synced: ${emailResult.emailsFetched} emails`);
+        }
+
+        return { calendarResult, botResult, emailResult, error: null };
+      } catch (err) {
+        console.error(`Sync error for ${connection.provider}:`, err);
+        return {
+          calendarResult: { synced: 0, errors: [String(err)] },
+          botResult: { created: 0, errors: [] },
+          emailResult: { emailsFetched: 0, inboxItemsCreated: 0, errors: [] },
+          error: String(err),
+        };
       }
+    }));
 
-      // Step 2: Create bots for any upcoming events not yet scheduled (runs every sync, not just on new events)
-      console.log(`[Sync Order] 2/3: Creating meeting bots...`);
-      const botResult = await createBotsForCalendarEvents(user.id, adminSupabase);
-      totalBotsCreated += botResult.created;
-      errors.push(...botResult.errors);
-
-      if (botResult.created > 0) {
-        console.log(`[Sync Order] ✓ Bots created: ${botResult.created} meeting bots`);
-      }
-
-      // Step 3: Sync emails AFTER calendar + pattern analysis (can now use calendar context)
-      console.log(`[Sync Order] 3/3: Syncing emails for ${connection.provider}...`);
-      const emailResult = await syncEmailsForConnection(connection, adminSupabase);
-
-      totalEmailsFetched += emailResult.emailsFetched;
-      totalInboxItemsCreated += emailResult.inboxItemsCreated;
-      errors.push(...emailResult.errors);
-
-      if (emailResult.emailsFetched > 0) {
-        console.log(`[Sync Order] ✓ Emails synced: ${emailResult.emailsFetched} emails`);
-      }
-    }
+    // Aggregate results
+    const totalEventsSynced = results.reduce((sum, r) => sum + r.calendarResult.synced, 0);
+    const totalEmailsFetched = results.reduce((sum, r) => sum + r.emailResult.emailsFetched, 0);
+    let totalInboxItemsCreated = results.reduce((sum, r) => sum + r.emailResult.inboxItemsCreated, 0);
+    const totalBotsCreated = results.reduce((sum, r) => sum + r.botResult.created, 0);
+    const errors = results.flatMap(r => [...r.calendarResult.errors, ...r.botResult.errors, ...r.emailResult.errors]);
 
     console.log(`Manual sync completed. Emails: ${totalEmailsFetched}, Calendar: ${totalEventsSynced}, Inbox items: ${totalInboxItemsCreated}`);
 
-    // Process meetings to create prep items (after calendar sync)
+    // User-scoped post-sync ops — run once after all connections finish
     let meetingPrepItemsCreated = 0;
     if (totalEventsSynced > 0) {
+      console.log(`[Sync Order] 1.5: Analyzing calendar patterns...`);
+      const patternResult = await analyzeCalendarPatterns(user.id, adminSupabase);
+      if (patternResult.success) {
+        console.log(`[Sync Order] ✓ Patterns analyzed: ${patternResult.patternsDetected} meeting types, ${Math.round(patternResult.confidence * 100)}% confidence`);
+      }
+
       console.log(`Processing meetings for user ${user.id}...`);
       const meetingResult = await processMeetingsForUser(user.id, adminSupabase);
       meetingPrepItemsCreated = meetingResult.created;
