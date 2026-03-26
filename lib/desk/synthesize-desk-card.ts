@@ -48,7 +48,7 @@ export async function synthesizeDeskCard(
       if (from) contextLines.push(`From: ${from}`);
       if (item.source_data?.subject) contextLines.push(`Subject: ${item.source_data.subject}`);
       if (item.why_matters) contextLines.push(`Why it matters: ${item.why_matters}`);
-      // Note: what_i_prepared is a draft reply — skip it, it reads like a letter
+      // what_i_prepared is action guidance text — skip it to avoid it reading as instructions in the brief
       contextLines.push('---');
     }
   }

@@ -11,7 +11,7 @@
     }
   ],
   "crons": [
-    { "path": "/api/cron/fetch-emails", "schedule": "0 2 * * *" },
+    { "path": "/api/cron/sync-calendar", "schedule": "0 2 * * *" },
     { "path": "/api/cron/renew-push-subscriptions", "schedule": "0 6 * * *" }
   ]
 }

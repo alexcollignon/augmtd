@@ -3,7 +3,6 @@
 import { useState } from 'react';
 import Image from 'next/image';
 import {
-  SparklesIcon,
   PaperClipIcon,
 } from '@heroicons/react/24/outline';
 import type { InboxItem } from '@/lib/types/inbox';
@@ -127,17 +126,6 @@ export default function WorkCard({ item }: WorkCardProps) {
                 <span className="text-neutral-300">•</span>
                 <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-neutral-100 text-neutral-700 font-semibold">
                   {batchCount} reminders
-                </span>
-              </>
-            )}
-
-            {/* AI indicator - subtle */}
-            {sourceData?.draft && (
-              <>
-                <span className="text-neutral-300">•</span>
-                <span className="inline-flex items-center gap-0.5 text-violet-600">
-                  <SparklesIcon className="w-2.5 h-2.5" />
-                  <span className="text-[10px]">Draft ready</span>
                 </span>
               </>
             )}

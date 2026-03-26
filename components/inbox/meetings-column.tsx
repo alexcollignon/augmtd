@@ -141,6 +141,7 @@ function MonthView({
 }) {
   const now = new Date();
   const todayStr = now.toDateString();
+  const [selectedDateStr, setSelectedDateStr] = useState(todayStr);
 
   const completedToday = meetings.filter(m =>
     m.meeting_status === 'completed' &&
@@ -152,13 +153,13 @@ function MonthView({
       <MonthCalendar
         meetings={meetings}
         userEmail={userEmail}
-        selectedDateStr={todayStr}
-        onSelectDate={() => {}}
+        selectedDateStr={selectedDateStr}
+        onSelectDate={setSelectedDateStr}
         onNewMeeting={onNewMeeting}
         compact
       />
       <div className="border-t border-neutral-100 pt-3 mt-3">
-        <RollingWeekView meetings={meetings} userEmail={userEmail} onRefresh={onRefresh} />
+        <RollingWeekView meetings={meetings} userEmail={userEmail} onRefresh={onRefresh} focusDateStr={selectedDateStr} />
         <CompletedTodaySection meetings={completedToday} />
       </div>
     </div>
@@ -169,14 +170,38 @@ function RollingWeekView({
   meetings,
   userEmail,
   onRefresh,
+  focusDateStr,
 }: {
   meetings: CalendarEvent[];
   userEmail: string;
   onRefresh?: () => void;
+  focusDateStr?: string;
 }) {
   const now = new Date();
+  const todayStr = now.toDateString();
+  const isFocused = focusDateStr && focusDateStr !== todayStr;
 
-  // Build 7 days starting from today
+  // When a specific date is selected, show just that day
+  if (isFocused) {
+    const dayMeetings = meetings.filter(m =>
+      new Date(m.start_time).toDateString() === focusDateStr
+    );
+    const focusDate = new Date(focusDateStr!);
+    const label = focusDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+    if (dayMeetings.length === 0) {
+      return <p className="text-[12px] text-neutral-400 text-center py-4">{label} — no meetings</p>;
+    }
+    return (
+      <div className="space-y-3">
+        <div>
+          <p className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wider mb-1 px-1">{label}</p>
+          {dayMeetings.map(m => <MeetingCard key={m.id} event={m} userEmail={userEmail} onRefresh={onRefresh} />)}
+        </div>
+      </div>
+    );
+  }
+
+  // Default: rolling 7-day view from today
   const days = Array.from({ length: 7 }, (_, i) => {
     const d = new Date(now);
     d.setDate(now.getDate() + i);
@@ -217,7 +242,7 @@ function RollingWeekView({
       {days.map((day, i) => {
         const dayMeetings = byDay.get(day.toDateString()) ?? [];
         if (dayMeetings.length === 0) return null;
-        const isToday = day.toDateString() === now.toDateString();
+        const isToday = day.toDateString() === todayStr;
         const isTomorrow = i === 1;
         const label = isToday ? 'Today' : isTomorrow ? 'Tomorrow' : day.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
         return (

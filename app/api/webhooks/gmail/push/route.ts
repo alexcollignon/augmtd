@@ -5,7 +5,7 @@ import { syncEmailsForConnection } from '@/lib/email-sync/sync-emails';
 import { syncCalendarForConnection } from '@/lib/calendar/sync-calendar';
 import { createBotsForCalendarEvents } from '@/lib/integrations/meeting-bot/bot-manager';
 
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 const GMAIL_WEBHOOK_SECRET = process.env.GMAIL_WEBHOOK_SECRET!;
 

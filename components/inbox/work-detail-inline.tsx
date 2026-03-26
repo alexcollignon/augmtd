@@ -22,7 +22,6 @@ import {
   QuestionMarkCircleIcon,
 } from '@heroicons/react/24/outline';
 import type { InboxItem } from '@/lib/types/inbox';
-import { isExecutable } from '@/lib/types/inbox';
 
 import RsvpButtons from './rsvp-buttons';
 import KbFilePicker from './kb-file-picker';
@@ -151,8 +150,6 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
 
   const sourceData = item.source_data;
   const recipientContext = item.recipient_context;
-  const executable = isExecutable(item);
-
   // Reset folder + reply state when item changes
   useEffect(() => {
     setShowMoveMenu(false);
@@ -194,21 +191,30 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
   }, [showMoveMenu]);
 
   // Fetch ranked workflow suggestions + AI suggestion for this item
+  // AbortController cancels in-flight requests when item changes; ref prevents duplicate fetches
+  const _suggestFetchedForRef = useRef<string | null>(null);
+  const _suggestAbortRef = useRef<AbortController | null>(null);
   useEffect(() => {
     if (!item?.id) return;
+    if (_suggestFetchedForRef.current === item.id) return; // already have results for this item
+    _suggestAbortRef.current?.abort();
+    const ctrl = new AbortController();
+    _suggestAbortRef.current = ctrl;
     setIsSuggesting(true);
     setAiSuggestion(null);
     setSuggestedWorkflows([]);
     setFreshPrompt('');
     setShowWorkflowPanel(false);
-    fetch(`/api/inbox/${item.id}/suggest-workflows`, { method: 'POST' })
+    fetch(`/api/inbox/${item.id}/suggest-workflows`, { method: 'POST', signal: ctrl.signal })
       .then(r => r.json())
       .then(({ rankedWorkflows, aiSuggestion: suggestion }) => {
+        _suggestFetchedForRef.current = item.id;
         setSuggestedWorkflows(rankedWorkflows ?? []);
         setAiSuggestion(suggestion ?? null);
       })
-      .catch(() => {})
+      .catch(e => { if (e?.name !== 'AbortError') console.error('[suggest-workflows]', e); })
       .finally(() => setIsSuggesting(false));
+    return () => ctrl.abort();
   }, [item?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleRunWithWorkflow = async (workflowId: string) => {
@@ -470,25 +476,6 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
       {/* Scrollable content */}
       <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
 
-        {/* What will be created — compact inline for executable */}
-        {executable && item.execution_plan && (
-          <div className="space-y-1.5">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-[10px] uppercase tracking-wide text-indigo-600 font-semibold px-1.5 py-0.5 bg-indigo-50 border border-indigo-100">
-                {item.execution_plan.deliverable_type}
-              </span>
-              <span className="text-[13px] text-neutral-700">{item.execution_plan.deliverable_description}</span>
-              {item.execution_plan.deadline && (
-                <span className="text-[11px] text-orange-500 font-medium flex items-center gap-1">
-                  <CalendarIcon className="w-3.5 h-3.5" />
-                  Due {new Date(item.execution_plan.deadline).toLocaleDateString()}
-                </span>
-              )}
-            </div>
-            <p className="text-[12px] text-neutral-400">Open in Workflows to build a step-by-step plan.</p>
-          </div>
-        )}
-
         {/* Meeting details */}
         {hasMeetingData() && (
           <div>
@@ -533,9 +520,9 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
         )}
 
         {/* Summary + Key Points — 2-column layout */}
-        {(!executable && item.what_i_prepared) || (sourceData?.keyPoints?.length > 0) ? (
+        {item.what_i_prepared || (sourceData?.keyPoints?.length > 0) ? (
           <div className="grid grid-cols-2 gap-4">
-            {!executable && item.what_i_prepared && (
+            {item.what_i_prepared && (
               <div>
                 <h3 className="text-[11px] font-medium text-neutral-400 uppercase tracking-wide mb-2">
                   Summary
@@ -830,35 +817,6 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
 
           {/* Secondary actions row (for invites) / primary row (for regular emails) */}
           <div className="flex items-center gap-3 flex-1">
-
-              {/* Preparing state */}
-              {!linkedCalEvent && executable && item.execution_status === 'preparing' && (
-                <div className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 text-[13px] font-semibold bg-indigo-50 text-indigo-500 border border-indigo-200 cursor-default">
-                  <div className="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
-                  Preparing work…
-                </div>
-              )}
-
-              {/* Ready state — direct to prepared document */}
-              {!linkedCalEvent && executable && item.execution_status === 'ready' && (
-                <button
-                  onClick={() => handleOpenInWorkflows()}
-                  disabled={isOpeningWorkflow}
-                  className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 text-[13px] font-semibold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm"
-                >
-                  {isOpeningWorkflow ? (
-                    <>
-                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      Opening…
-                    </>
-                  ) : (
-                    <>
-                      <ArrowTopRightOnSquareIcon className="w-4 h-4" />
-                      See prepared work
-                    </>
-                  )}
-                </button>
-              )}
 
               {/* Reply */}
               {item.source === 'email' && (

@@ -9,12 +9,6 @@ import {
   PaperAirplaneIcon,
   UserIcon,
   CheckIcon,
-  DocumentTextIcon,
-  PresentationChartBarIcon,
-  DocumentChartBarIcon,
-  DocumentIcon,
-  MagnifyingGlassIcon,
-  EnvelopeIcon,
   CalendarIcon,
   ArrowTopRightOnSquareIcon,
   MapPinIcon,
@@ -438,79 +432,6 @@ export default function WorkDetailPanel({ item, isOpen, onClose, batchItems }: W
 
                     {/* Content - Scrollable */}
                     <div className="flex-1 overflow-y-auto px-6 py-6 space-y-6">
-                      {/* Executable work — show deliverable + open in Workflows */}
-                      {!isBatch && isExecutable(item) && item.execution_plan && (
-                        <div className="space-y-5">
-                          {/* Who requested it */}
-                          {(sourceData?.from_name || sourceData?.from || item.why_matters) && (
-                            <div>
-                              <h3 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2">
-                                Requested by
-                              </h3>
-                              <div className="flex items-start gap-3 p-3 bg-neutral-50 border border-neutral-200">
-                                <UserIcon className="w-4 h-4 text-neutral-400 flex-shrink-0 mt-0.5" />
-                                <div>
-                                  <p className="text-[13px] font-medium text-neutral-900">
-                                    {sourceData?.from_name || sourceData?.from || 'Unknown'}
-                                  </p>
-                                  {item.why_matters && (
-                                    <p className="text-[12px] text-neutral-600 mt-0.5">{item.why_matters}</p>
-                                  )}
-                                </div>
-                              </div>
-                            </div>
-                          )}
-
-                          {/* What will be created */}
-                          <div>
-                            <h3 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2">
-                              What will be created
-                            </h3>
-                            <div className="flex items-start gap-3 p-4 bg-white border border-neutral-300">
-                              <div className="flex-shrink-0 w-9 h-9 bg-indigo-50 border border-indigo-100 flex items-center justify-center">
-                                {item.execution_plan.deliverable_type === 'report' && (
-                                  <DocumentTextIcon className="w-5 h-5 text-indigo-600" />
-                                )}
-                                {item.execution_plan.deliverable_type === 'presentation' && (
-                                  <PresentationChartBarIcon className="w-5 h-5 text-indigo-600" />
-                                )}
-                                {item.execution_plan.deliverable_type === 'spreadsheet' && (
-                                  <DocumentChartBarIcon className="w-5 h-5 text-indigo-600" />
-                                )}
-                                {item.execution_plan.deliverable_type === 'document' && (
-                                  <DocumentIcon className="w-5 h-5 text-indigo-600" />
-                                )}
-                                {item.execution_plan.deliverable_type === 'analysis' && (
-                                  <MagnifyingGlassIcon className="w-5 h-5 text-indigo-600" />
-                                )}
-                                {item.execution_plan.deliverable_type === 'email' && (
-                                  <EnvelopeIcon className="w-5 h-5 text-indigo-600" />
-                                )}
-                              </div>
-                              <div className="flex-1 min-w-0">
-                                <span className="text-[10px] uppercase tracking-wide text-indigo-600 font-semibold">
-                                  {item.execution_plan.deliverable_type}
-                                </span>
-                                <p className="text-[14px] text-neutral-900 leading-relaxed mt-0.5">
-                                  {item.execution_plan.deliverable_description}
-                                </p>
-                                {item.execution_plan.deadline && (
-                                  <span className="inline-flex items-center gap-1 mt-2 text-[11px] text-orange-600 font-medium">
-                                    <CalendarIcon className="w-3.5 h-3.5" />
-                                    Due {new Date(item.execution_plan.deadline).toLocaleDateString()}
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-
-                          {/* Workflow hint */}
-                          <p className="text-[12px] text-neutral-500">
-                            Open in Workflows to build and refine a step-by-step plan.
-                          </p>
-                        </div>
-                      )}
-
                       {/* Batch Items List - Only show when not viewing individual item */}
                       {isBatch && batchItems && !selectedBatchItem && (
                         <div>
