@@ -561,7 +561,7 @@ export async function syncEmailsForConnection(
               connection_id: connection.id,
               source: 'email',
               source_id: existingEmail.id,
-              work_state: 'fyi',
+              work_state: 'noted',
               work_title: existingEmail.subject || 'Email',
               why_matters: null,
               what_i_prepared: null,
@@ -693,7 +693,7 @@ export async function syncEmailsForConnection(
             connection_id: connection.id,
             source: 'email',
             source_id: storedEmail.id,
-            work_state: 'fyi',
+            work_state: 'noted',
             work_title: parsed.subject || 'Email',
             why_matters: null,
             what_i_prepared: null,
@@ -1085,7 +1085,9 @@ export async function syncEmailsForConnection(
               source_id: storedEmail.id,
 
               // Work-state model (from recipient analysis)
-              work_state: recipient.inferredWorkState,
+              // Cap at 'noted' when role is irrelevant — user is CC'd so item should be
+              // visible but low-priority, not treated as noise
+              work_state: recipient.detectedRole === 'irrelevant' ? 'noted' : recipient.inferredWorkState,
               work_title: processed.workTitle,
               what_i_prepared: processed.whatIPrepared,
               why_matters: processed.whyMatters,

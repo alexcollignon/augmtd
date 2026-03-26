@@ -323,12 +323,9 @@ export function InboxPageClient({
 
   const filteredItems = useMemo(() => {
     let items = inboxItems;
-    // Smart tab hides noise + fast-path fyi_only items (work_state 'fyi' = no full AI pipeline ran)
+    // Smart tab hides noise items; all other work_states (including 'noted') appear
     if (viewMode === 'smart') {
-      items = items.filter(item => {
-        const ws = (item as any).work_state;
-        return ws !== 'noise' && ws !== 'fyi';
-      });
+      items = items.filter(item => (item as any).work_state !== 'noise');
     }
     const q = searchQuery.trim().toLowerCase();
     if (!q) return items;

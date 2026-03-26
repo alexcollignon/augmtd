@@ -554,18 +554,19 @@ export function shouldCreateInboxItem(
   recipientContext: RecipientContext,
   isCurrentUser: boolean = false
 ): boolean {
+  // If this is the current user and they're explicitly in To/CC, ALWAYS create an inbox item —
+  // even if role is 'irrelevant' (inferredWorkState becomes 'noise' for irrelevant role,
+  // so this guard must be first, before any noise/irrelevant filtering)
+  if (isCurrentUser && (recipientContext.position === 'to' || recipientContext.position === 'cc')) {
+    return true;
+  }
+
   // Noise is always filtered
   if (recipientContext.inferredWorkState === 'noise') {
     return false;
   }
 
-  // If this is the current user and they're in To/CC, ALWAYS create an inbox item
-  // (even if role was detected as 'irrelevant' — low confidence is surfaced via suggestion level)
-  if (isCurrentUser && (recipientContext.position === 'to' || recipientContext.position === 'cc')) {
-    return true;
-  }
-
-  // Irrelevant role is filtered (for non-current-user recipients)
+  // Irrelevant role is filtered
   if (recipientContext.detectedRole === 'irrelevant') {
     return false;
   }
