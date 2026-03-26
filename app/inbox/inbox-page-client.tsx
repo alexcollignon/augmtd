@@ -196,7 +196,7 @@ export function InboxPageClient({
       }, (payload) => {
         if (payload.eventType === 'INSERT') {
           const item = payload.new as InboxItem;
-          if (item.status === 'pending' && (item as any).source !== 'meeting') {
+          if (item.status === 'pending') {
             setInboxItems(prev => prev.some(i => i.id === item.id) ? prev : [item, ...prev]);
             setSelectedItem(prev => prev ?? item);
           }
@@ -240,6 +240,8 @@ export function InboxPageClient({
           conn.sync_status === 'completed' || conn.sync_status === 'failed'
         );
 
+        const wasSyncing = isSyncingRef.current;
+
         if (optimisticSyncTriggered.current) {
           if (isCurrentlySyncing || allCompleted) {
             optimisticSyncTriggered.current = false;
@@ -257,14 +259,29 @@ export function InboxPageClient({
           }
         }
 
-        if (isSyncingRef.current && !isCurrentlySyncing) {
+        // During sync: poll inbox_items every 2s as fallback for unreliable Realtime bulk delivery
+        if (isCurrentlySyncing) {
+          const { data: syncItems } = await supabase
+            .from('inbox_items')
+            .select('*')
+            .eq('user_id', user.id)
+            .eq('status', 'pending')
+            .order('created_at', { ascending: false });
+          if (syncItems) {
+            setInboxItems(syncItems);
+            setSelectedItem(prev =>
+              prev ? (syncItems.find(i => i.id === prev.id) ?? prev) : (syncItems[0] ?? null)
+            );
+          }
+        }
+
+        if (wasSyncing && !isCurrentlySyncing) {
           // Full refetch as catch-all for items that arrived before Realtime was subscribed
           const { data: freshItems } = await supabase
             .from('inbox_items')
             .select('*')
             .eq('user_id', user.id)
             .eq('status', 'pending')
-            .neq('source', 'meeting')
             .order('created_at', { ascending: false });
           if (freshItems) {
             setInboxItems(freshItems);
