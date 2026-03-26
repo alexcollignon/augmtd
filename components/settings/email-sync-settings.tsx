@@ -4,14 +4,17 @@ import { useState } from 'react';
 
 interface EmailSyncSettingsProps {
   connectionId: string;
-  currentMaxEmails: number;
+  currentMaxEmails?: number;
 }
 
 export default function EmailSyncSettings({
   connectionId,
   currentMaxEmails,
 }: EmailSyncSettingsProps) {
-  const [maxEmails, setMaxEmails] = useState(currentMaxEmails);
+  const [maxEmails, setMaxEmails] = useState(() => {
+    const n = Number(currentMaxEmails);
+    return Number.isFinite(n) && n > 0 ? n : 50;
+  });
   const [isSaving, setIsSaving] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
@@ -60,7 +63,7 @@ export default function EmailSyncSettings({
             min="1"
             max="100"
             value={maxEmails}
-            onChange={(e) => setMaxEmails(parseInt(e.target.value))}
+            onChange={(e) => setMaxEmails(parseInt(e.target.value) || 50)}
             className="block w-32 px-3 py-2 border border-gray-300 rounded-lg focus:ring-primary-500 focus:border-primary-500"
           />
           <button

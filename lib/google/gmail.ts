@@ -115,6 +115,18 @@ export function parseGmailMessage(message: GmailMessage) {
     } else if (part.mimeType === 'text/html' && part.body?.data) {
       htmlBody = Buffer.from(part.body.data, 'base64').toString('utf-8');
     } else if (part.body?.attachmentId && part.filename) {
+      // Skip inline embedded images (signature logos, tracked pixels, etc.)
+      // These have a Content-ID header (CID reference) or Content-Disposition: inline
+      const partHeaders: Array<{ name: string; value: string }> = part.headers || [];
+      const getPartHeader = (name: string) =>
+        partHeaders.find((h) => h.name.toLowerCase() === name.toLowerCase())?.value || '';
+      const hasContentId = !!getPartHeader('Content-ID');
+      const isInlineDisposition = getPartHeader('Content-Disposition').toLowerCase().startsWith('inline');
+      // Also catch sequential naming pattern even without headers (e.g. image001.png, image002.jpg)
+      const isSequentialImage = /^image\d{1,3}\.(png|jpg|jpeg|gif|webp)$/i.test(part.filename);
+      if (hasContentId || isInlineDisposition || isSequentialImage) {
+        return; // skip — zero content value
+      }
       attachments.push({
         attachmentId: part.body.attachmentId,
         filename: part.filename,

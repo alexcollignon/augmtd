@@ -240,7 +240,7 @@ export default function ConnectionCard({ provider, connection, connectUrl, disco
           <h4 className="text-[13px] font-semibold text-neutral-900 mb-3">Sync Settings</h4>
           <EmailSyncSettings
             connectionId={connection.id}
-            currentMaxEmails={connection.metadata?.max_emails_per_sync || 10}
+            currentMaxEmails={connection.metadata?.max_emails_per_sync || 50}
           />
         </div>
       )}

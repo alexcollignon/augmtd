@@ -102,6 +102,7 @@ export function InboxPageClient({
 
   const optimisticSyncTriggered = useRef(false);
   const isSyncingRef = useRef(false);
+  const preSyncCountRef = useRef<number | null>(null);
 
   // Restore persisted preferences after mount (avoids SSR hydration mismatch)
   useEffect(() => {
@@ -248,7 +249,7 @@ export function InboxPageClient({
 
       const { data: connections, error: connectionsError } = await supabase
         .from('connections')
-        .select('sync_status, provider')
+        .select('sync_status, sync_started_at, provider')
         .eq('user_id', user.id)
         .in('provider', ['gmail', 'outlook'])
         .eq('status', 'active');
@@ -261,7 +262,12 @@ export function InboxPageClient({
       }
 
       if (connections && connections.length > 0) {
-        const isCurrentlySyncing = connections.some(conn => conn.sync_status === 'syncing');
+        const STALE_MS = 5 * 60 * 1000; // 5 minutes
+        const isCurrentlySyncing = connections.some(conn => {
+          if (conn.sync_status !== 'syncing') return false;
+          if (!conn.sync_started_at) return true;
+          return Date.now() - new Date(conn.sync_started_at).getTime() < STALE_MS;
+        });
         const allCompleted = connections.every(conn =>
           conn.sync_status === 'completed' || conn.sync_status === 'failed'
         );
@@ -274,6 +280,10 @@ export function InboxPageClient({
           }
         } else {
           if (isSyncingRef.current !== isCurrentlySyncing) {
+            // Capture count just before sync starts
+            if (isCurrentlySyncing && preSyncCountRef.current === null) {
+              preSyncCountRef.current = inboxItems.length;
+            }
             isSyncingRef.current = isCurrentlySyncing;
             setIsSyncing(isCurrentlySyncing);
           }
@@ -281,6 +291,16 @@ export function InboxPageClient({
 
         if (isSyncingRef.current && !isCurrentlySyncing) {
           setInboxItems(items || []);
+          // Show a brief toast with the new-item delta
+          const newCount = (items || []).length;
+          const prevCount = preSyncCountRef.current ?? newCount;
+          const delta = newCount - prevCount;
+          preSyncCountRef.current = null;
+          if (delta > 0) {
+            toast.success(`Sync complete — ${delta} new item${delta !== 1 ? 's' : ''}`);
+          } else {
+            toast.success('Inbox up to date');
+          }
         }
       }
     }
@@ -303,9 +323,12 @@ export function InboxPageClient({
 
   const filteredItems = useMemo(() => {
     let items = inboxItems;
-    // Smart tab hides noise-classified emails
+    // Smart tab hides noise + fast-path fyi_only items (work_state 'fyi' = no full AI pipeline ran)
     if (viewMode === 'smart') {
-      items = items.filter(item => (item as any).work_state !== 'noise');
+      items = items.filter(item => {
+        const ws = (item as any).work_state;
+        return ws !== 'noise' && ws !== 'fyi';
+      });
     }
     const q = searchQuery.trim().toLowerCase();
     if (!q) return items;
@@ -582,7 +605,14 @@ export function InboxPageClient({
           <div className="flex-shrink-0 flex items-center gap-3 px-4 py-2.5 bg-indigo-50 border-b border-indigo-100">
             <ArrowPathIcon className="w-4 h-4 text-indigo-600 animate-spin flex-shrink-0" />
             <p className="text-[13px] text-indigo-800 font-medium">
-              Syncing your emails... This usually takes 30–60 seconds.
+              {(() => {
+                const delta = preSyncCountRef.current !== null
+                  ? inboxItems.length - preSyncCountRef.current
+                  : 0;
+                return delta > 0
+                  ? `Syncing… ${delta} new item${delta !== 1 ? 's' : ''} so far`
+                  : 'Syncing your inbox…';
+              })()}
             </p>
           </div>
         )}
@@ -662,6 +692,7 @@ export function InboxPageClient({
                   <button
                     onClick={() => {
                       if (isSyncing) return;
+                      preSyncCountRef.current = inboxItems.length;
                       setIsSyncing(true);
                       fetch('/api/connections/sync', { method: 'POST' }).catch(() => setIsSyncing(false));
                     }}

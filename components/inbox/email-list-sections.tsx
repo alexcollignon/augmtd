@@ -15,11 +15,12 @@ interface EmailListSectionsProps {
   onToggleSelect?: (id: string) => void;
 }
 
-const SECTIONS: Array<{ key: ItemType; label: string }> = [
+const SECTIONS: Array<{ key: ItemType; label: string; dim?: boolean }> = [
   { key: 'reply',    label: 'Reply Needed' },
   { key: 'decision', label: 'Decision' },
   { key: 'meeting',  label: 'Meeting' },
   { key: 'review',   label: 'Review' },
+  { key: 'fyi',      label: 'Noted', dim: true },
 ];
 
 export default function EmailListSections({ items, selectedId, onSelect, compact = false, selectedIds, onToggleSelect }: EmailListSectionsProps) {
@@ -58,7 +59,7 @@ export default function EmailListSections({ items, selectedId, onSelect, compact
               className="w-full h-8 flex items-center justify-between px-3 bg-neutral-50 border-b border-neutral-100 hover:bg-neutral-100 transition-colors sticky top-0 z-10"
             >
               <div className="flex items-center gap-2">
-                <span className="text-[11px] font-semibold text-neutral-600 uppercase tracking-wide">
+                <span className={`text-[11px] font-semibold uppercase tracking-wide ${section.dim ? 'text-neutral-400' : 'text-neutral-600'}`}>
                   {section.label}
                 </span>
                 <span className="text-[10px] text-neutral-400">({sectionItems.length})</span>

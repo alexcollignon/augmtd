@@ -16,9 +16,13 @@ export interface EmailEnvelope {
   from: string;
   subject: string;
   snippet: string;
+  /** First 500 chars of parsed email body — richer signal than snippet for borderline cases */
+  body_preview?: string;
 }
 
 const SYSTEM_PROMPT = `You are an email triage classifier. Given a batch of email envelopes, classify each into exactly one category.
+
+Each envelope includes: "from", "subject", "snippet" (email preview text), and optionally "body_preview" (first 500 characters of the email body). When "body_preview" is present, use it to resolve ambiguous cases — a snippet may look like a routine update while the body reveals an explicit question, request, or deadline.
 
 CATEGORIES:
 
@@ -65,6 +69,7 @@ EXAMPLES:
 - From: client@company.com, Subject: "RE: Proposal feedback" → process
 - From: partner@firm.com, Subject: "Contract revision needed" → process
 - From: failed-payments@stripe.com, Subject: "Payment to Synthesia unsuccessful" → process
+- From: client@company.com, Subject: "Quick update", body_preview: "...wanted to ask if you can confirm the budget before Thursday." → process (body reveals a question despite neutral subject)
 
 Respond ONLY with valid JSON: { "results": [ { "id": "...", "class": "process"|"fyi_only"|"noise" } ] }
 Include every id from the input. No explanations.`;
@@ -77,16 +82,22 @@ async function classifyBatch(
   const { client: ai, model } = await getAIClient(userId, 'classification', adminSupabase);
 
   const userContent = JSON.stringify(
-    envelopes.map(e => ({
-      id: e.id,
-      from: e.from,
-      subject: e.subject,
-      snippet: e.snippet?.slice(0, 150),
-    })),
+    envelopes.map(e => {
+      const entry: Record<string, string> = {
+        id: e.id,
+        from: e.from,
+        subject: e.subject,
+        snippet: e.snippet?.slice(0, 150) ?? '',
+      };
+      // Include body_preview only when present — omitting saves tokens for envelope-only callers
+      const preview = e.body_preview?.trim();
+      if (preview) entry.body_preview = preview.slice(0, 500);
+      return entry;
+    }),
   );
 
-  // Dynamic token budget: ~60 tokens per result, minimum 1024
-  const maxTokens = Math.min(4096, Math.max(1024, envelopes.length * 60));
+  // Dynamic token budget: ~80 tokens per result (body_preview adds ~20 tokens per email), minimum 1024
+  const maxTokens = Math.min(4096, Math.max(1024, envelopes.length * 80));
 
   const response = await ai.chat.completions.create({
     model,

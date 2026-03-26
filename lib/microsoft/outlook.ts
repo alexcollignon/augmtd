@@ -168,9 +168,11 @@ export async function fetchOutlookAttachments(
   const client = await getGraphClient(encryptedTokens);
   const response = await client
     .api(`/me/messages/${outlookMessageId}/attachments`)
-    .select('id,name,contentType,size')
+    .select('id,name,contentType,size,isInline')
     .get();
-  return (response.value || []) as OutlookAttachmentMeta[];
+  // Filter out inline embedded images (signature logos, CID embeds)
+  return ((response.value || []) as Array<OutlookAttachmentMeta & { isInline?: boolean }>)
+    .filter(a => !a.isInline);
 }
 
 export async function fetchOutlookAttachmentContent(

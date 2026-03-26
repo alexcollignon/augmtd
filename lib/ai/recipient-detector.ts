@@ -559,16 +559,15 @@ export function shouldCreateInboxItem(
     return false;
   }
 
-  // Irrelevant role is filtered
-  if (recipientContext.detectedRole === 'irrelevant') {
-    return false;
-  }
-
-  // CRITICAL CHANGE: If this is the current user and they're in To/CC,
-  // ALWAYS create an inbox item (even with low confidence)
-  // The suggestion level will indicate how confident we are
+  // If this is the current user and they're in To/CC, ALWAYS create an inbox item
+  // (even if role was detected as 'irrelevant' — low confidence is surfaced via suggestion level)
   if (isCurrentUser && (recipientContext.position === 'to' || recipientContext.position === 'cc')) {
     return true;
+  }
+
+  // Irrelevant role is filtered (for non-current-user recipients)
+  if (recipientContext.detectedRole === 'irrelevant') {
+    return false;
   }
 
   // For other users in the org, use confidence threshold

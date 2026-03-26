@@ -11,8 +11,8 @@ export type VisualSection = 'prepared' | 'suggested' | 'awareness'; // @deprecat
 
 export type ItemType = 'reply' | 'decision' | 'meeting' | 'review' | 'fyi' | 'notification';
 
-/** Item types shown in Smart view (require action from user) */
-export const SMART_VIEW_TYPES: ItemType[] = ['reply', 'decision', 'meeting', 'review'];
+/** Item types shown in Smart view (require action or awareness from user) */
+export const SMART_VIEW_TYPES: ItemType[] = ['reply', 'decision', 'meeting', 'review', 'fyi'];
 
 /** Is this item shown in Smart view? */
 export function isActionItem(item: InboxItem): boolean {

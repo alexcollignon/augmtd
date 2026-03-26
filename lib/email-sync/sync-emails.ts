@@ -62,7 +62,6 @@ import { analyzeSentEmail } from '@/lib/context/sent-email-analyzer';
 import { getCalendarContext } from '@/lib/calendar/calendar-context';
 import { buildUserContextBlock } from '@/lib/context/build-user-context';
 import type { UserContextProfile } from '@/lib/types/user-context';
-import { decomposeEmailWork } from '@/lib/execution/work-decomposition';
 
 /**
  * Detect whether an email was forwarded based on subject and body patterns
@@ -123,14 +122,28 @@ async function processAttachmentsForEmail(params: {
     (a) => a.mimeType?.includes('calendar') || a.mimeType === 'application/ics' || a.filename?.toLowerCase().endsWith('.ics')
   );
 
-  console.log(`[Attachments] Processing ${attachmentList.length} attachments for email ${emailId}${hasCalendarInvite ? ' (calendar invite)' : ''}`);
+  // Cap at 8 non-calendar attachments to avoid blocking sync on emails with many files
+  const MAX_ATTACHMENTS = 8;
+  const processableAttachments = attachmentList.filter(
+    a => !(a.mimeType?.includes('calendar') || a.mimeType === 'application/ics' || a.filename?.toLowerCase().endsWith('.ics'))
+  );
+  if (processableAttachments.length > MAX_ATTACHMENTS) {
+    console.log(`[Attachments] Capping at ${MAX_ATTACHMENTS} (was ${processableAttachments.length}) for email ${emailId}`);
+  }
 
+  console.log(`[Attachments] Processing ${Math.min(processableAttachments.length, MAX_ATTACHMENTS)} attachments for email ${emailId}${hasCalendarInvite ? ' (calendar invite)' : ''}`);
+
+  let _attachmentCount = 0;
   for (const att of attachmentList) {
     // Skip calendar/ICS files — presence already captured in hasCalendarInvite above,
     // and Supabase Storage rejects application/ics (415 Unsupported Media Type)
     if (att.mimeType?.includes('calendar') || att.mimeType === 'application/ics' || att.filename?.toLowerCase().endsWith('.ics')) {
       continue;
     }
+
+    // Enforce cap on non-calendar attachments
+    if (_attachmentCount >= MAX_ATTACHMENTS) break;
+    _attachmentCount++;
 
     try {
       // Download attachment content
@@ -142,8 +155,11 @@ async function processAttachmentsForEmail(params: {
         buffer = await fetchOutlookAttachmentContent(encryptedTokens, outlookInternalId!, att.id);
       }
 
-      // Extract text
-      const extractedText = await extractTextFromAttachment(buffer, att.mimeType, att.filename);
+      // Extract text — skip for large files (>1.5 MB) to avoid blocking sync
+      const MAX_EXTRACT_BYTES = 1.5 * 1024 * 1024;
+      const extractedText = buffer.length <= MAX_EXTRACT_BYTES
+        ? await extractTextFromAttachment(buffer, att.mimeType, att.filename)
+        : null;
 
       // Skip upload for MIME types that Supabase Storage rejects (pptx, octet-stream, etc.)
       if (!isStorageMimeTypeSupported(att.mimeType)) {
@@ -270,7 +286,7 @@ export async function syncEmailsForConnection(
     // Update sync status
     await adminSupabase
       .from('connections')
-      .update({ sync_status: 'syncing' })
+      .update({ sync_status: 'syncing', sync_started_at: new Date().toISOString() })
       .eq('id', connection.id);
 
     // Fetch emails based on provider (or use preloaded messages from push webhook)
@@ -368,6 +384,7 @@ export async function syncEmailsForConnection(
       from: p.from_address,
       subject: p.subject || '',
       snippet: (p as any).snippet || p.body?.slice(0, 200) || '',
+      body_preview: p.body?.slice(0, 500) || '',
     }));
 
     const classMap = await batchClassifyEmails(envelopes, connection.user_id, adminSupabase);
@@ -420,7 +437,52 @@ export async function syncEmailsForConnection(
     }
     // === END BATCH PRE-FILTER ===
 
-    // Process each email
+    // Hoist owner profile + company members — fetched ONCE, reused for all process-class emails
+    // (previously this was fetched inside the per-email loop = N redundant DB round-trips)
+    let _ownerProfile: { id: string; email: string; full_name: string | null; company_id: string | null } | null = null;
+    const _orgUsers: Array<{ id: string; email: string; full_name: string | null }> = [];
+    try {
+      const { data: op } = await adminSupabase
+        .from('profiles')
+        .select('id, email, full_name, company_id')
+        .eq('id', connection.user_id)
+        .single();
+      if (op) {
+        _ownerProfile = op;
+        _orgUsers.push({ id: op.id, email: op.email, full_name: op.full_name });
+        if (op.company_id) {
+          const { data: members } = await adminSupabase
+            .from('company_members')
+            .select('user_id, profiles(id, email, full_name)')
+            .eq('company_id', op.company_id)
+            .eq('status', 'active')
+            .limit(100);
+          if (members) {
+            for (const m of members) {
+              const pr = Array.isArray(m.profiles) ? m.profiles[0] : m.profiles;
+              if (pr) _orgUsers.push({ id: pr.id, email: pr.email, full_name: pr.full_name });
+            }
+          }
+        }
+      }
+    } catch { /* non-fatal — fall back to empty org context */ }
+    const _connectionEmail = connection.metadata?.email || connection.provider_account_id;
+    if (_connectionEmail && _ownerProfile && _connectionEmail.toLowerCase() !== _ownerProfile.email.toLowerCase()) {
+      _orgUsers.push({ id: connection.user_id, email: _connectionEmail, full_name: _ownerProfile.full_name });
+    }
+
+    // Phase 1: sequential — store email rows, fire learning for sent, fast-path noise/fyi
+    // Process-class emails are collected into processQueue for parallel AI in Phase 2
+    interface _ProcessQueueItem {
+      parsed: any;
+      storedEmail: any;
+      processedAttachments: ProcessedAttachment[];
+      calendarEventId: string | null;
+      hasCalendarInvite: boolean;
+      isForwarded: boolean;
+    }
+    const processQueue: _ProcessQueueItem[] = [];
+
     for (let _msgIdx = 0; _msgIdx < parsedMessages.length; _msgIdx++) {
       const emailClass = classMap.get(String(_msgIdx)) ?? 'process';
       try {
@@ -435,12 +497,103 @@ export async function syncEmailsForConnection(
         // Check if email already exists (check ALL emails, including sent ones for context)
         const { data: existingEmail } = await adminSupabase
           .from('emails')
-          .select('id')
+          .select('*')
           .eq('message_id', parsed.message_id)
           .single();
 
         if (existingEmail) {
-          console.log(`    ✓ Already exists, skipping`);
+          // Email row exists — but check if an inbox_item was ever created for this thread.
+          // This can happen when a previous sync stored the email rows but crashed or timed out
+          // before creating inbox_items (e.g. first Outlook sync attempt partially succeeded).
+          // In that case silently skipping would permanently drop the email from the inbox.
+          const threadIdForCheck = parsed.thread_id || parsed.message_id;
+          const { data: orphanCheck } = await adminSupabase
+            .from('inbox_items')
+            .select('id')
+            .eq('user_id', connection.user_id)
+            .eq('source', 'email')
+            .eq('source_data->>thread_id', threadIdForCheck)
+            .limit(1)
+            .maybeSingle();
+
+          if (orphanCheck) {
+            // Inbox item exists — genuinely already processed, skip
+            console.log(`    ✓ Already exists, skipping`);
+            continue;
+          }
+
+          // Email stored but no inbox item — recover it
+          console.log(`    ♻️  Email exists but no inbox item — recovering`);
+
+          if (emailClass === 'noise') {
+            await adminSupabase.from('inbox_items').insert(stripNulls({
+              user_id: connection.user_id,
+              connection_id: connection.id,
+              source: 'email',
+              source_id: existingEmail.id,
+              work_state: 'noise',
+              work_title: existingEmail.subject || 'Email',
+              why_matters: null,
+              what_i_prepared: null,
+              item_type: 'notification',
+              source_data: {
+                email_id: existingEmail.id,
+                message_id: existingEmail.message_id,
+                thread_id: existingEmail.thread_id || existingEmail.message_id,
+                from: existingEmail.from_address,
+                from_address: existingEmail.from_address,
+                from_name: existingEmail.from_name,
+                subject: existingEmail.subject,
+                body: existingEmail.body,
+                received_at: existingEmail.received_at,
+                provider: connection.provider,
+              },
+              status: 'pending',
+              needs_review: false,
+            }) as Record<string, unknown>);
+            result.inboxItemsCreated++;
+            continue;
+          }
+
+          if (emailClass === 'fyi_only') {
+            await adminSupabase.from('inbox_items').insert(stripNulls({
+              user_id: connection.user_id,
+              connection_id: connection.id,
+              source: 'email',
+              source_id: existingEmail.id,
+              work_state: 'fyi',
+              work_title: existingEmail.subject || 'Email',
+              why_matters: null,
+              what_i_prepared: null,
+              item_type: 'fyi',
+              source_data: {
+                email_id: existingEmail.id,
+                message_id: existingEmail.message_id,
+                thread_id: existingEmail.thread_id || existingEmail.message_id,
+                from: existingEmail.from_address,
+                from_address: existingEmail.from_address,
+                from_name: existingEmail.from_name,
+                subject: existingEmail.subject,
+                body: existingEmail.body,
+                received_at: existingEmail.received_at,
+                provider: connection.provider,
+              },
+              status: 'pending',
+              needs_review: false,
+            }) as Record<string, unknown>);
+            result.inboxItemsCreated++;
+            continue;
+          }
+
+          // Process-class: queue the stored email for full AI processing (skip attachment re-fetch)
+          processQueue.push({
+            parsed,
+            storedEmail: existingEmail,
+            processedAttachments: [],
+            calendarEventId: null,
+            hasCalendarInvite: false,
+            isForwarded,
+          });
           continue;
         }
 
@@ -472,7 +625,101 @@ export async function syncEmailsForConnection(
 
         result.emailsFetched++;
 
-        // Process attachments (Gmail: check parsed.attachments; Outlook: check parsed.hasAttachments)
+        // Check if email is from the user
+        console.log(`    User email: ${userEmail}`);
+        console.log(`    Is from user: ${storedEmail.is_from_user}`);
+
+        if (storedEmail.is_from_user) {
+          console.log(`    ✓ Stored for context, extracting learning signals...`);
+
+          // Extract learning signals from sent email (async, non-blocking)
+          analyzeSentEmail({
+            userId: connection.user_id,
+            emailId: storedEmail.id,
+            from: storedEmail.from_address,
+            to: storedEmail.to_addresses || [],
+            cc: storedEmail.cc_addresses || [],
+            subject: storedEmail.subject || '',
+            body: storedEmail.body || '',
+            sentAt: storedEmail.received_at || new Date().toISOString(),
+            threadId: storedEmail.thread_id,
+            inReplyTo: storedEmail.in_reply_to,
+          }).catch(err => {
+            console.error('    ✗ Error analyzing sent email:', err);
+            // Don't break sync if learning fails
+          });
+
+          console.log(`    ✓ Learning signals queued, skipping inbox item (sent email)\n`);
+          continue; // Skip to next email (already stored for context)
+        }
+
+        // ==== BATCH AI FAST-PATH (before attachments — noise/fyi skip attachment fetching entirely) ====
+        if (emailClass === 'noise') {
+          console.log(`    ⊘ Classified as noise — creating minimal inbox item`);
+          const { error: noiseErr } = await adminSupabase.from('inbox_items').insert(stripNulls({
+            user_id: connection.user_id,
+            connection_id: connection.id,
+            source: 'email',
+            source_id: storedEmail.id,
+            work_state: 'noise',
+            work_title: parsed.subject || 'Email',
+            why_matters: null,
+            what_i_prepared: null,
+            item_type: 'notification',
+            source_data: {
+              email_id: storedEmail.id,
+              message_id: storedEmail.message_id,
+              thread_id: storedEmail.thread_id || storedEmail.message_id,
+              from: storedEmail.from_address,
+              from_address: storedEmail.from_address,
+              from_name: storedEmail.from_name,
+              subject: storedEmail.subject,
+              body: storedEmail.body,
+              received_at: storedEmail.received_at,
+              provider: connection.provider,
+            },
+            status: 'pending',
+            needs_review: false,
+          }) as Record<string, unknown>);
+          if (noiseErr) console.error(`    ✗ Failed to insert noise inbox item:`, noiseErr.message);
+          else result.inboxItemsCreated++;
+          continue;
+        }
+
+        if (emailClass === 'fyi_only') {
+          console.log(`    ℹ Classified as FYI — creating minimal inbox item`);
+          const { error: fyiErr } = await adminSupabase.from('inbox_items').insert(stripNulls({
+            user_id: connection.user_id,
+            connection_id: connection.id,
+            source: 'email',
+            source_id: storedEmail.id,
+            work_state: 'fyi',
+            work_title: parsed.subject || 'Email',
+            why_matters: null,
+            what_i_prepared: null,
+            item_type: 'fyi',
+            source_data: {
+              email_id: storedEmail.id,
+              message_id: storedEmail.message_id,
+              thread_id: storedEmail.thread_id || storedEmail.message_id,
+              from: storedEmail.from_address,
+              from_address: storedEmail.from_address,
+              from_name: storedEmail.from_name,
+              subject: storedEmail.subject,
+              body: storedEmail.body,
+              received_at: storedEmail.received_at,
+              provider: connection.provider,
+            },
+            status: 'pending',
+            needs_review: false,
+          }) as Record<string, unknown>);
+          if (fyiErr) console.error(`    ✗ Failed to insert fyi inbox item:`, fyiErr.message);
+          else result.inboxItemsCreated++;
+          continue;
+        }
+        // ==== END BATCH AI FAST-PATH ====
+
+        // Process-class: process attachments then queue for parallel AI (Phase 2)
         const hasAttachments =
           ((parsed as any).attachments?.length > 0) ||
           ((parsed as any).hasAttachments === true);
@@ -514,143 +761,47 @@ export async function syncEmailsForConnection(
           }
         }
 
-        // Check if email is from the user (already determined and stored)
-        console.log(`    User email: ${userEmail}`);
-        console.log(`    Is from user: ${storedEmail.is_from_user}`);
+        // Queue for Phase 2 parallel AI processing
+        processQueue.push({ parsed, storedEmail, processedAttachments, calendarEventId, hasCalendarInvite, isForwarded });
 
-        if (storedEmail.is_from_user) {
-          console.log(`    ✓ Stored for context, extracting learning signals...`);
+      } catch (emailError) {
+        console.error('Error processing email:', emailError);
+        result.errors.push(`Email processing error: ${emailError instanceof Error ? emailError.message : 'Unknown'}`);
+      }
+    }
 
-          // Extract learning signals from sent email (async, non-blocking)
-          analyzeSentEmail({
-            userId: connection.user_id,
-            emailId: storedEmail.id,
-            from: storedEmail.from_address,
-            to: storedEmail.to_addresses || [],
-            cc: storedEmail.cc_addresses || [],
-            subject: storedEmail.subject || '',
-            body: storedEmail.body || '',
-            sentAt: storedEmail.received_at || new Date().toISOString(),
-            threadId: storedEmail.thread_id,
-            inReplyTo: storedEmail.in_reply_to,
-          }).catch(err => {
-            console.error('    ✗ Error analyzing sent email:', err);
-            // Don't break sync if learning fails
-          });
+    // === Phase 2 pre-step: deduplicate processQueue by thread_id ===
+    // Multiple emails from the same thread can arrive in the same sync batch (e.g. 5 replies
+    // in one thread). If we process all 5 in parallel they all query existingInboxItem at the
+    // same instant, see null, and each insert a separate inbox item → duplicates.
+    // Fix: keep only the newest email per thread — processEmail loads full thread context from
+    // DB anyway, so we never lose context.
+    const _threadSeen = new Map<string, _ProcessQueueItem>();
+    for (const item of processQueue) {
+      const threadKey = item.storedEmail.thread_id || item.storedEmail.message_id;
+      const existing = _threadSeen.get(threadKey);
+      if (!existing || new Date(item.storedEmail.received_at) > new Date(existing.storedEmail.received_at)) {
+        _threadSeen.set(threadKey, item);
+      }
+    }
+    const _dedupedQueue = Array.from(_threadSeen.values());
+    if (_dedupedQueue.length < processQueue.length) {
+      console.log(`[Sync] Deduped processQueue: ${_dedupedQueue.length} threads (was ${processQueue.length} items)`);
+    }
 
-          console.log(`    ✓ Learning signals queued, skipping inbox item (sent email)\n`);
-          continue; // Skip to next email (already stored for context)
-        }
+    // === Phase 2: Parallel AI processing — 5 process-class emails at a time ===
+    if (_dedupedQueue.length > 0) {
+      console.log(`\n[Sync] Phase 2: AI processing ${_dedupedQueue.length} process-class email(s) in parallel batches of 5`);
+    }
+    const _PARALLEL_BATCH = 5;
+    for (let _bi = 0; _bi < _dedupedQueue.length; _bi += _PARALLEL_BATCH) {
+      const _batch = _dedupedQueue.slice(_bi, _bi + _PARALLEL_BATCH);
+      const _batchResults = await Promise.allSettled(_batch.map(async (qItem) => {
+        const _batchResult = { inboxItemsCreated: 0, errors: [] as string[] };
+        const { parsed, storedEmail, processedAttachments, calendarEventId, hasCalendarInvite, isForwarded } = qItem;
 
-        // ==== BATCH AI FAST-PATH ====
-        // noise → minimal inbox item (visible in Latest, filtered out in Smart)
-        // fyi_only → minimal inbox item, skip expensive AI processing
-        if (emailClass === 'noise') {
-          console.log(`    ⊘ Classified as noise — creating minimal inbox item`);
-          await adminSupabase.from('inbox_items').insert(stripNulls({
-            user_id: connection.user_id,
-            connection_id: connection.id,
-            source: 'email',
-            source_id: storedEmail.id,
-            work_state: 'noise',
-            work_title: parsed.subject || 'Email',
-            why_matters: null,
-            what_i_prepared: null,
-            item_type: 'notification',
-            source_data: {
-              email_id: storedEmail.id,
-              message_id: storedEmail.message_id,
-              thread_id: storedEmail.thread_id || storedEmail.message_id,
-              from: storedEmail.from_address,
-              from_address: storedEmail.from_address,
-              from_name: storedEmail.from_name,
-              subject: storedEmail.subject,
-              body: storedEmail.body,
-              received_at: storedEmail.received_at,
-              provider: connection.provider,
-            },
-            status: 'pending',
-            needs_review: false,
-          }) as Record<string, unknown>);
-          result.inboxItemsCreated++;
-          continue;
-        }
-
-        if (emailClass === 'fyi_only') {
-          console.log(`    ℹ Classified as FYI — creating minimal inbox item`);
-          await adminSupabase.from('inbox_items').insert(stripNulls({
-            user_id: connection.user_id,
-            connection_id: connection.id,
-            source: 'email',
-            source_id: storedEmail.id,
-            work_state: 'fyi',
-            work_title: parsed.subject || 'Email',
-            why_matters: null,
-            what_i_prepared: null,
-            item_type: 'fyi',
-            source_data: {
-              email_id: storedEmail.id,
-              message_id: storedEmail.message_id,
-              thread_id: storedEmail.thread_id || storedEmail.message_id,
-              from: storedEmail.from_address,
-              from_address: storedEmail.from_address,
-              from_name: storedEmail.from_name,
-              subject: storedEmail.subject,
-              body: storedEmail.body,
-              received_at: storedEmail.received_at,
-              provider: connection.provider,
-            },
-            status: 'pending',
-            needs_review: false,
-          }) as Record<string, unknown>);
-          result.inboxItemsCreated++;
-          continue;
-        }
-        // ==== END BATCH AI FAST-PATH ====
-
-        // ==== RECIPIENT DETECTION ====
-        // Analyze all recipients to determine who needs inbox items
-
-        // Always fetch the connection owner's profile directly
-        const { data: ownerProfile } = await adminSupabase
-          .from('profiles')
-          .select('id, email, full_name, company_id')
-          .eq('id', connection.user_id)
-          .single();
-
-        const usersInSystem: Array<{ id: string; email: string; full_name: string | null }> =
-          ownerProfile ? [{ id: ownerProfile.id, email: ownerProfile.email, full_name: ownerProfile.full_name }] : [];
-
-        // Also fetch other company members if the user belongs to a company
-        if (ownerProfile?.company_id) {
-          const { data: companyMembers } = await adminSupabase
-            .from('company_members')
-            .select('user_id, profiles(id, email, full_name)')
-            .eq('company_id', ownerProfile.company_id)
-            .eq('status', 'active')
-            .neq('user_id', connection.user_id)
-            .limit(100);
-          if (companyMembers) {
-            for (const m of companyMembers) {
-              const p = Array.isArray(m.profiles) ? m.profiles[0] : m.profiles;
-              if (p) usersInSystem.push({ id: p.id, email: p.email, full_name: p.full_name });
-            }
-          }
-        }
-
-        // Add the connection email as an alias if it differs from the profile email
-        // This allows users to connect inboxes that don't match their AUGMTD login email
-        const connectionEmail = connection.metadata?.email || connection.provider_account_id;
-        if (connectionEmail && ownerProfile && connectionEmail.toLowerCase() !== ownerProfile.email.toLowerCase()) {
-          usersInSystem.push({
-            id: connection.user_id,
-            email: connectionEmail,
-            full_name: ownerProfile.full_name,
-          });
-        }
-
-        // orgUsers alias kept for the analyzeRecipients call below
-        const orgUsers = usersInSystem;
+        // orgUsers — use pre-hoisted values (avoids redundant DB queries per email)
+        const orgUsers = _orgUsers;
 
         console.log(`🔍 Analyzing recipients for: "${parsed.subject}"`);
         console.log(`   To: ${storedEmail.to_addresses?.join(', ') || 'none'}`);
@@ -821,31 +972,6 @@ export async function syncEmailsForConnection(
               user_context_block: userContextBlock || undefined,
             }, adminSupabase);
 
-            // Work Decomposition (Layer 2): Check if this is executable work
-            let executionPlan = null;
-            let isExecutable = false;
-
-            try {
-              executionPlan = await decomposeEmailWork(
-                {
-                  subject: emailForProcessing.subject,
-                  body: emailForProcessing.body,
-                  from: emailForProcessing.from_name || emailForProcessing.from_address,
-                  threadHistory: threadEmails || undefined,
-                },
-                recipient.userId,
-                adminSupabase
-              );
-
-              if (executionPlan) {
-                isExecutable = true;
-                console.log(`       🤖 Executable work detected: ${executionPlan.deliverable_description}`);
-              }
-            } catch (error) {
-              console.error('[Sync] Work decomposition error:', error);
-              // Continue without execution plan - don't break email sync
-            }
-
             // Update existing inbox item with recipient context
             const { error: updateError } = await adminSupabase
               .from('inbox_items')
@@ -909,19 +1035,12 @@ export async function syncEmailsForConnection(
                 confidence_score: Math.round(recipient.responsibilityConfidence * 100),
                 priority: processed.priority,
                 needs_review: true,
-
-                // Execution fields (Layer 2: Work Decomposition)
-                is_executable: isExecutable,
-                execution_plan: executionPlan,
-                execution_status: executionPlan ? 'queued' : null,
-                current_step: 0,
-                artifacts: [],
               }) as Record<string, unknown>)
               .eq('id', existingInboxItem.id);
 
             if (updateError) {
               console.error('       ✗ Error updating inbox item:', updateError);
-              result.errors.push(`Failed to update inbox item: ${updateError.message}`);
+              _batchResult.errors.push(`Failed to update inbox item: ${updateError.message}`);
             } else {
               console.log(`       ✓ Updated inbox item`);
             }
@@ -955,31 +1074,6 @@ export async function syncEmailsForConnection(
             recipient_email: recipient.email,
             user_context_block: userContextBlock || undefined,
           }, adminSupabase);
-
-          // Work Decomposition (Layer 2): Check if this is executable work
-          let executionPlan = null;
-          let isExecutable = false;
-
-          try {
-            executionPlan = await decomposeEmailWork(
-              {
-                subject: storedEmail.subject,
-                body: storedEmail.body,
-                from: storedEmail.from_name || storedEmail.from_address,
-                threadHistory: threadEmailsForNew || undefined,
-              },
-              recipient.userId,
-              adminSupabase
-            );
-
-            if (executionPlan) {
-              isExecutable = true;
-              console.log(`       🤖 Executable work detected: ${executionPlan.deliverable_description}`);
-            }
-          } catch (error) {
-            console.error('[Sync] Work decomposition error:', error);
-            // Continue without execution plan - don't break email sync
-          }
 
           // Create inbox item for this recipient
           const { data: newInboxItem, error: inboxError } = await adminSupabase
@@ -1045,13 +1139,6 @@ export async function syncEmailsForConnection(
                 ...processed.preparedOutput
               },
 
-              // Execution fields (Layer 2: Work Decomposition)
-              is_executable: isExecutable,
-              execution_plan: executionPlan,
-              execution_status: executionPlan ? 'queued' : null,
-              current_step: 0,
-              artifacts: [],
-
               // Legacy fields
               ai_suggestion_type: recipient.inferredWorkState,
               ai_suggestion_content: processed.summary,
@@ -1066,17 +1153,27 @@ export async function syncEmailsForConnection(
 
           if (inboxError) {
             console.error(`       ✗ Error creating inbox item:`, inboxError);
-            result.errors.push(`Failed to create inbox item: ${inboxError.message}`);
+            _batchResult.errors.push(`Failed to create inbox item: ${inboxError.message}`);
           } else {
-            result.inboxItemsCreated++;
+            _batchResult.inboxItemsCreated++;
             console.log(`       ✓ Created inbox item (${recipient.inferredWorkState})`);
           }
         } // End recipient loop
-      } catch (emailError) {
-        console.error('Error processing email:', emailError);
-        result.errors.push(`Email processing error: ${emailError instanceof Error ? emailError.message : 'Unknown'}`);
+
+        return _batchResult;
+      })); // End async map
+
+      // Accumulate parallel batch results
+      for (const _r of _batchResults) {
+        if (_r.status === 'fulfilled') {
+          result.inboxItemsCreated += _r.value.inboxItemsCreated;
+          result.errors.push(..._r.value.errors);
+        } else {
+          console.error('[Sync] Batch email processing error:', _r.reason);
+          result.errors.push(`Batch processing error: ${_r.reason instanceof Error ? _r.reason.message : 'Unknown'}`);
+        }
       }
-    }
+    } // End Phase 2 batch loop
 
     // Update sync status
     await adminSupabase
