@@ -37,9 +37,9 @@ export async function POST(
     return NextResponse.json({ error: 'Only Google Meet is supported' }, { status: 400 });
   }
 
-  // Block if a bot is already active (not cancelled, not absent)
-  if (event.attendee_bot_id || (event.attendee_bot_state && event.attendee_bot_state !== 'cancelled')) {
-    return NextResponse.json({ error: 'Assistant already scheduled or active' }, { status: 400 });
+  // Block only if the bot is actively recording — all other states allow recovery or retry
+  if (event.attendee_bot_state === 'recording') {
+    return NextResponse.json({ error: 'Assistant is already recording this meeting' }, { status: 400 });
   }
 
   // Get user's name for bot display

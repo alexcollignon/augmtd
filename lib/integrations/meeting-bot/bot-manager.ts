@@ -157,6 +157,66 @@ export async function createBotsForCalendarEvents(
     }
   }
 
+  // --- Orphan recovery: re-queue bots whose Hetzner job was lost (e.g. after container restart) ---
+  const { data: scheduledEvents } = await supabase
+    .from('calendar_events')
+    .select('id, title, meeting_link, start_time, attendee_bot_id')
+    .eq('user_id', userId)
+    .gte('start_time', now.toISOString())
+    .lte('start_time', twoWeeksFromNow.toISOString())
+    .eq('attendee_bot_state', 'scheduled')
+    .not('attendee_bot_id', 'is', null)
+    .not('meeting_link', 'is', null)
+    .order('start_time', { ascending: true })
+    .limit(50);
+
+  if (scheduledEvents && scheduledEvents.length > 0) {
+    console.log(`[MeetingBot] Checking ${scheduledEvents.length} scheduled bot(s) for orphans (user: ${userId})`);
+
+    const { checkMeetingBotExists } = await import('@/lib/integrations/meeting-bot/client');
+
+    for (const event of scheduledEvents) {
+      try {
+        if (!event.meeting_link?.includes('meet.google.com')) continue;
+
+        const isAlive = await checkMeetingBotExists(event.attendee_bot_id);
+        if (isAlive) {
+          console.log(`[MeetingBot] Bot ${event.attendee_bot_id} is alive for: ${event.title} — skipping`);
+          continue;
+        }
+
+        console.log(`[MeetingBot] Orphaned bot ${event.attendee_bot_id} for: ${event.title} — re-queuing`);
+
+        const meetingStart = new Date(event.start_time);
+        const minJoinTime = new Date(now.getTime() + 2 * 60 * 1000);
+        const joinAt = meetingStart > minJoinTime ? meetingStart : minJoinTime;
+
+        const { createMeetingBot: createBot } = await import('@/lib/integrations/meeting-bot/client');
+        const result = await createBot(event.meeting_link, joinAt, event.id, userId, botName, googleAccessToken);
+
+        const { error } = await supabase
+          .from('calendar_events')
+          .update({
+            attendee_bot_id: result.botId,
+            attendee_bot_state: 'scheduled',
+            attendee_bot_created_at: new Date().toISOString(),
+          })
+          .eq('id', event.id);
+
+        if (error) {
+          errors.push(`Failed to save re-queued bot for event ${event.id}: ${error.message}`);
+        } else {
+          created++;
+          console.log(`[MeetingBot] Re-queued bot ${result.botId} for: ${event.title} (joins at ${joinAt.toISOString()})`);
+        }
+      } catch (error: any) {
+        console.error(`[MeetingBot] Error checking/re-queuing orphan for event ${event.id}:`, error);
+        errors.push(`Orphan check for ${event.title}: ${error.message}`);
+      }
+    }
+  }
+  // --- End orphan recovery ---
+
   return { created, errors };
 }
 

@@ -96,3 +96,21 @@ export async function getMeetingBot(botId: string): Promise<SelfHostedBot> {
 
   return response.json();
 }
+
+/**
+ * Check whether a bot job still exists on the Hetzner service.
+ * Returns true if found (200), false if not found (404).
+ * Throws for any other non-2xx status (server error).
+ */
+export async function checkMeetingBotExists(botId: string): Promise<boolean> {
+  const base = getBotServiceBase();
+  const response = await fetch(`${base}/bots/${botId}`, {
+    headers: getBotAuthHeaders(),
+  });
+
+  if (response.ok) return true;
+  if (response.status === 404) return false;
+
+  const body = await response.text().catch(() => response.statusText);
+  throw new Error(`Bot status check failed (${response.status}): ${body}`);
+}

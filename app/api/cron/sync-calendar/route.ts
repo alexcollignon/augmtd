@@ -82,13 +82,14 @@ export async function GET(request: NextRequest) {
         const meetingResult = await processMeetingsForUser(connection.user_id, supabase);
         totalMeetingPrep += meetingResult.created;
 
-        // Create bots for meetings with links
-        const botResult = await createBotsForCalendarEvents(connection.user_id, supabase);
-        totalBotsCreated += botResult.created;
-        errors.push(...botResult.errors);
-
-        console.log(`[SyncCalendar] ✓ ${calendarResult.synced} events, ${meetingResult.created} prep items, ${botResult.created} bots`);
+        console.log(`[SyncCalendar] ✓ ${calendarResult.synced} events, ${meetingResult.created} prep items`);
       }
+
+      // Always run bot scheduling — detects new meetings and recovers orphaned jobs
+      // regardless of whether new calendar events were synced this run.
+      const botResult = await createBotsForCalendarEvents(connection.user_id, supabase);
+      totalBotsCreated += botResult.created;
+      errors.push(...botResult.errors);
     }
 
     console.log(`[SyncCalendar] Done. Events: ${totalEventsSynced}, Prep: ${totalMeetingPrep}, Bots: ${totalBotsCreated}`);
