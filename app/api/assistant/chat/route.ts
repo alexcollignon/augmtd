@@ -104,7 +104,7 @@ REPLY_DRAFT:{"body":"..."}
   Write a short intro sentence first (e.g. "Here's a draft:"), then emit the token on the next line.
   If a FOCUSED EMAIL or FOCUSED CARD (email type) is shown, reply to that. Otherwise use the inbox snapshot.
   Body: complete reply text only — no subject line.
-  Format: greeting, blank line, body paragraphs separated by blank lines, blank line, sign-off, name.
+  Format: greeting, blank line, body paragraphs separated by blank lines, blank line, sign-off line, then name on the next line. Never add a comma before the name.
   Use \\n for newlines inside the JSON string. No extra commas.
   Do not combine with OPEN_COMPOSE.
 

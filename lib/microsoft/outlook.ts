@@ -300,6 +300,15 @@ async function getSystemFolderIds(client: Client): Promise<Set<string>> {
   return ids;
 }
 
+export async function createOutlookFolder(
+  encryptedTokens: string,
+  name: string,
+): Promise<{ id: string; name: string }> {
+  const client = await getGraphClient(encryptedTokens);
+  const res = await client.api('/me/mailFolders').post({ displayName: name });
+  return { id: res.id, name: res.displayName };
+}
+
 export async function listOutlookFolders(
   encryptedTokens: string,
 ): Promise<{ id: string; name: string }[]> {

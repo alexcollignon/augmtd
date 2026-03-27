@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useRef, useState, RefObject } from 'react';
+import React, { useEffect, useRef, useState, RefObject, useCallback } from 'react';
 import type { InboxItem } from '@/lib/types/inbox';
 import type { DeskColumn } from '@/lib/types/desk';
 import EmailListCard from '@/components/inbox/email-list-card';
@@ -13,6 +13,7 @@ import {
   EnvelopeIcon,
   SparklesIcon,
   ArrowTopRightOnSquareIcon,
+  ChevronDownIcon,
 } from '@heroicons/react/24/outline';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -137,6 +138,8 @@ const SOURCE_OPTIONS = [
   { id: 'calendar', label: 'Calendar' },
 ];
 
+const CONTEXT_SOURCE_IDS = SOURCE_OPTIONS.map(s => s.id); // inbox, kb, calendar — excludes chat
+
 // ── Quick prompts ────────────────────────────────────────────────────────────
 
 const DESK_QUICK_PROMPTS = [
@@ -166,6 +169,13 @@ function getEmailPrompts(itemType?: string | null): string[] {
   if (itemType && itemType in EMAIL_PROMPTS_BY_TYPE) return EMAIL_PROMPTS_BY_TYPE[itemType];
   return EMAIL_PROMPTS_BY_TYPE.default;
 }
+
+const CHAT_QUICK_PROMPTS = [
+  "Help me think through something",
+  "Explain a concept to me",
+  "What should I focus on today?",
+  "Brainstorm ideas with me",
+];
 
 const COMPOSE_START_PROMPTS = ["Help me draft an email", "Write a follow-up email", "Draft a cold outreach", "Write a thank you note"];
 const COMPOSE_REFINE_PROMPTS = ["Make it more concise", "Make it more formal", "Suggest a subject line", "Add a professional closing"];
@@ -564,7 +574,7 @@ export default function AiChatPanel({
   chatInputRef,
   onSendMessage,
   onClose,
-  chatSources = SOURCE_OPTIONS.map(s => s.id),
+  chatSources = CONTEXT_SOURCE_IDS,
   onSourcesChange,
   attachedFiles = [],
   onFileAttach,
@@ -591,10 +601,23 @@ export default function AiChatPanel({
 }: AiChatPanelProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const sourceDropdownRef = useRef<HTMLDivElement>(null);
+  const [sourceDropdownOpen, setSourceDropdownOpen] = useState(false);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [history, streamingContent]);
+
+  // Close source dropdown on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (sourceDropdownRef.current && !sourceDropdownRef.current.contains(e.target as Node)) {
+        setSourceDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
 
   const isEmpty = history.length === 0 && !isStreaming;
 
@@ -602,42 +625,61 @@ export default function AiChatPanel({
     if (chatInput.trim() && !isStreaming) onSendMessage(chatInput);
   };
 
-  const allActive = chatSources.length === SOURCE_OPTIONS.length;
+  const isChatOnly = chatSources.length === 1 && chatSources[0] === 'chat';
+  const activeContextSources = chatSources.filter(s => s !== 'chat');
+  const allActive = !isChatOnly && activeContextSources.length === CONTEXT_SOURCE_IDS.length;
 
-  const toggleSource = (id: string) => {
+  // Source dropdown label
+  const sourceLabel = isChatOnly
+    ? 'No context'
+    : allActive
+      ? 'All sources'
+      : activeContextSources.map(id => SOURCE_OPTIONS.find(o => o.id === id)?.label ?? id).join(', ');
+
+  const toggleSource = useCallback((id: string) => {
     if (!onSourcesChange) return;
+    const current = chatSources.filter(s => s !== 'chat');
     if (allActive) {
       onSourcesChange([id]);
-    } else if (chatSources.includes(id)) {
-      const next = chatSources.filter(s => s !== id);
-      onSourcesChange(next.length === 0 ? SOURCE_OPTIONS.map(s => s.id) : next);
+    } else if (current.includes(id)) {
+      const next = current.filter(s => s !== id);
+      onSourcesChange(next.length === 0 ? CONTEXT_SOURCE_IDS : next);
     } else {
-      const next = [...chatSources, id];
-      onSourcesChange(next.length === SOURCE_OPTIONS.length ? SOURCE_OPTIONS.map(s => s.id) : next);
+      const next = [...current, id];
+      onSourcesChange(next.length === CONTEXT_SOURCE_IDS.length ? CONTEXT_SOURCE_IDS : next);
     }
-  };
+  }, [chatSources, allActive, onSourcesChange]);
+
+  const toggleChat = useCallback(() => {
+    if (!onSourcesChange) return;
+    onSourcesChange(isChatOnly ? CONTEXT_SOURCE_IDS : ['chat']);
+  }, [isChatOnly, onSourcesChange]);
 
   const showFileChips = attachedFiles.length > 0 || isAttaching;
 
   const quickPrompts = context === 'desk'
     ? DESK_QUICK_PROMPTS
-    : mode === 'reply'
-      ? REPLY_PROMPTS
-      : composeDraft !== undefined
-        ? (composeDraft.body?.trim() ? COMPOSE_REFINE_PROMPTS : COMPOSE_START_PROMPTS)
-        : emailChipActive
-          ? getEmailPrompts(emailChipData?.itemType)
-          : INBOX_QUICK_PROMPTS;
+    : isChatOnly
+      ? CHAT_QUICK_PROMPTS
+      : mode === 'reply'
+        ? REPLY_PROMPTS
+        : composeDraft !== undefined
+          ? (composeDraft.body?.trim() ? COMPOSE_REFINE_PROMPTS : COMPOSE_START_PROMPTS)
+          : emailChipActive
+            ? getEmailPrompts(emailChipData?.itemType)
+            : INBOX_QUICK_PROMPTS;
 
   const placeholder = context === 'desk'
     ? 'Ask about your work...'
-    : mode === 'reply'
-      ? 'Edit draft or ask a question...'
-      : composeDraft !== undefined
-        ? (composeDraft.body?.trim() ? 'Refine your draft...' : 'What would you like to write?')
-        : emailChipActive
-          ? 'Ask about this email...'
-          : 'Ask about your inbox...';
+    : isChatOnly
+      ? 'Ask me anything...'
+      : mode === 'reply'
+        ? 'Edit draft or ask a question...'
+        : composeDraft !== undefined
+          ? (composeDraft.body?.trim() ? 'Refine your draft...' : 'What would you like to write?')
+          : emailChipActive
+            ? 'Ask about this email...'
+            : 'Ask about your inbox...';
 
   return (
     <div className="flex-1 min-h-0 flex flex-col">
@@ -653,27 +695,74 @@ export default function AiChatPanel({
           )}
         </div>
       ) : (
-        <div className="flex-shrink-0 h-10 flex items-center gap-1.5 px-3 border-b border-neutral-100 bg-white">
-          <button
-            onClick={() => onSourcesChange?.(SOURCE_OPTIONS.map(s => s.id))}
-            className={`text-[11px] font-semibold px-2.5 py-1 transition-colors ${allActive ? 'bg-indigo-600 text-white' : 'bg-neutral-100 text-neutral-500 hover:bg-neutral-200'}`}
-          >
-            All
-          </button>
-          {SOURCE_OPTIONS.map(opt => (
+        <div className="flex-shrink-0 h-10 flex items-center gap-2.5 px-3 border-b border-neutral-100 bg-white">
+          {/* Mode pill: Assistant | Chat */}
+          <div className="flex items-center bg-neutral-100 rounded-md p-0.5 gap-0.5">
             <button
-              key={opt.id}
-              onClick={() => toggleSource(opt.id)}
-              className={`text-[11px] font-semibold px-2.5 py-1 transition-colors ${!allActive && chatSources.includes(opt.id) ? 'bg-indigo-100 text-indigo-700' : 'bg-neutral-100 text-neutral-500 hover:bg-neutral-200'}`}
+              onClick={() => { if (isChatOnly) toggleChat(); }}
+              className={`text-[11px] font-medium px-2.5 py-1 rounded transition-colors ${
+                !isChatOnly ? 'bg-white text-neutral-800 shadow-sm' : 'text-neutral-400 hover:text-neutral-600'
+              }`}
             >
-              {opt.label}
+              Assistant
             </button>
-          ))}
+            <button
+              onClick={() => { if (!isChatOnly) toggleChat(); }}
+              className={`text-[11px] font-medium px-2.5 py-1 rounded transition-colors ${
+                isChatOnly ? 'bg-white text-neutral-800 shadow-sm' : 'text-neutral-400 hover:text-neutral-600'
+              }`}
+            >
+              Chat
+            </button>
+          </div>
+
+          {/* Source dropdown — only in Assistant mode */}
+          {!isChatOnly && (
+            <div ref={sourceDropdownRef} className="relative">
+              <button
+                onClick={() => setSourceDropdownOpen(v => !v)}
+                className="flex items-center gap-1 text-[11px] text-neutral-400 hover:text-neutral-700 transition-colors"
+              >
+                <span>{sourceLabel}</span>
+                <ChevronDownIcon className="w-3 h-3 flex-shrink-0" />
+              </button>
+              {sourceDropdownOpen && (
+                <div className="absolute top-full left-0 mt-1 w-44 bg-white border border-neutral-200 shadow-md z-20 py-1">
+                  <button
+                    onClick={() => { onSourcesChange?.(CONTEXT_SOURCE_IDS); setSourceDropdownOpen(false); }}
+                    className={`w-full flex items-center gap-2 px-3 py-1.5 text-[12px] text-left hover:bg-neutral-50 transition-colors ${allActive ? 'text-indigo-700 font-semibold' : 'text-neutral-700'}`}
+                  >
+                    <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${allActive ? 'bg-indigo-500' : 'bg-transparent'}`} />
+                    All sources
+                  </button>
+                  <div className="border-t border-neutral-100 my-1" />
+                  {SOURCE_OPTIONS.map(opt => {
+                    const active = !allActive && activeContextSources.includes(opt.id);
+                    return (
+                      <button
+                        key={opt.id}
+                        onClick={() => toggleSource(opt.id)}
+                        className={`w-full flex items-center gap-2 px-3 py-1.5 text-[12px] text-left hover:bg-neutral-50 transition-colors ${active ? 'text-indigo-700 font-semibold' : 'text-neutral-700'}`}
+                      >
+                        <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${active ? 'bg-indigo-500' : 'bg-transparent'}`} />
+                        {opt.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="flex-1" />
+
           {onClose && (
-            <button onClick={onClose} className="flex-shrink-0 p-0.5 text-neutral-400 hover:text-neutral-700 transition-colors">
-              <XMarkIcon className="w-3.5 h-3.5" />
-            </button>
+            <>
+              <span className="w-px h-4 bg-neutral-200 flex-shrink-0" />
+              <button onClick={onClose} className="flex-shrink-0 p-0.5 text-neutral-400 hover:text-neutral-700 transition-colors">
+                <XMarkIcon className="w-3.5 h-3.5" />
+              </button>
+            </>
           )}
         </div>
       )}

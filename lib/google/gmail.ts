@@ -317,6 +317,18 @@ function randomId(): string {
   return Math.random().toString(36).slice(2, 12);
 }
 
+export async function createGmailLabel(
+  encryptedTokens: string,
+  name: string,
+): Promise<{ id: string; name: string }> {
+  const gmail = await getGmailClient(encryptedTokens);
+  const res = await gmail.users.labels.create({
+    userId: 'me',
+    requestBody: { name, labelListVisibility: 'labelShow', messageListVisibility: 'show' },
+  });
+  return { id: res.data.id!, name: res.data.name! };
+}
+
 export async function listGmailLabels(
   encryptedTokens: string,
 ): Promise<{ id: string; name: string }[]> {

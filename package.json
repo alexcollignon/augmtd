@@ -16,6 +16,7 @@
     "@microsoft/microsoft-graph-client": "^3.0.7",
     "@supabase/ssr": "^0.8.0",
     "@supabase/supabase-js": "^2.95.0",
+    "@vercel/functions": "^3.4.3",
     "canvas": "^3.2.1",
     "docx": "^9.5.3",
     "dotenv": "^17.3.1",

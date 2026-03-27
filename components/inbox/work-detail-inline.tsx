@@ -65,6 +65,9 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
   const [isLoadingFolders, setIsLoadingFolders] = useState(false);
   const [isMoving, setIsMoving] = useState(false);
   const moveMenuRef = useRef<HTMLDivElement>(null);
+  const [showNewFolderInput, setShowNewFolderInput] = useState(false);
+  const [newFolderName, setNewFolderName] = useState('');
+  const newFolderInputRef = useRef<HTMLInputElement>(null);
   const [suggestedWorkflows, setSuggestedWorkflows] = useState<Array<Pick<SavedWorkflow, 'id' | 'name' | 'deliverable_types'> & { score: number }>>([]);
   const [aiSuggestion, setAiSuggestion] = useState<string | null>(null);
   const [isSuggesting, setIsSuggesting] = useState(false);
@@ -184,6 +187,8 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
     const handler = (e: MouseEvent) => {
       if (moveMenuRef.current && !moveMenuRef.current.contains(e.target as Node)) {
         setShowMoveMenu(false);
+        setShowNewFolderInput(false);
+        setNewFolderName('');
       }
     };
     document.addEventListener('mousedown', handler);
@@ -353,14 +358,16 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
     }
   };
 
-  const handleMoveToFolder = async (folderId: string, folderName: string) => {
+  const handleMoveToFolder = async (folderId: string, folderName: string, createNew = false) => {
     setIsMoving(true);
     setShowMoveMenu(false);
+    setShowNewFolderInput(false);
+    setNewFolderName('');
     try {
       const res = await fetch(`/api/inbox/${item.id}/move-to-folder`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ folderId, folderName }),
+        body: JSON.stringify({ folderId, folderName, ...(createNew && { createNew: true }) }),
       });
       if (res.ok) {
         toast.success(`Moved to ${folderName}`);
@@ -859,20 +866,57 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
                           <div className="w-3 h-3 border-2 border-neutral-300 border-t-transparent rounded-full animate-spin" />
                           Loading folders…
                         </div>
-                      ) : !folders?.length ? (
-                        <p className="px-4 py-3 text-[12px] text-neutral-400">No folders found</p>
                       ) : (
-                        <div className="max-h-52 overflow-y-auto">
-                          {folders.map(f => (
-                            <button
-                              key={f.id}
-                              onClick={() => handleMoveToFolder(f.id, f.name)}
-                              className="w-full text-left px-4 py-2.5 text-[13px] text-neutral-700 hover:bg-neutral-50 transition-colors border-b border-neutral-100 last:border-b-0"
-                            >
-                              {f.name}
-                            </button>
-                          ))}
-                        </div>
+                        <>
+                          {!!folders?.length && (
+                            <div className="max-h-48 overflow-y-auto">
+                              {folders.map(f => (
+                                <button
+                                  key={f.id}
+                                  onClick={() => handleMoveToFolder(f.id, f.name)}
+                                  className="w-full text-left px-4 py-2.5 text-[13px] text-neutral-700 hover:bg-neutral-50 transition-colors border-b border-neutral-100 last:border-b-0"
+                                >
+                                  {f.name}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                          {/* New folder */}
+                          <div className="border-t border-neutral-100">
+                            {showNewFolderInput ? (
+                              <div className="flex items-center gap-1.5 px-3 py-2">
+                                <input
+                                  ref={newFolderInputRef}
+                                  type="text"
+                                  value={newFolderName}
+                                  onChange={e => setNewFolderName(e.target.value)}
+                                  onKeyDown={e => {
+                                    if (e.key === 'Enter' && newFolderName.trim()) handleMoveToFolder('', newFolderName.trim(), true);
+                                    if (e.key === 'Escape') { setShowNewFolderInput(false); setNewFolderName(''); }
+                                  }}
+                                  placeholder="Folder name"
+                                  autoFocus
+                                  className="flex-1 text-[12px] text-neutral-800 placeholder-neutral-400 outline-none bg-transparent"
+                                />
+                                <button
+                                  onClick={() => { if (newFolderName.trim()) handleMoveToFolder('', newFolderName.trim(), true); }}
+                                  disabled={!newFolderName.trim()}
+                                  className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 disabled:opacity-30 transition-colors flex-shrink-0"
+                                >
+                                  Create
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                onClick={() => { setShowNewFolderInput(true); setTimeout(() => newFolderInputRef.current?.focus(), 50); }}
+                                className="w-full text-left px-4 py-2.5 text-[13px] text-neutral-500 hover:bg-neutral-50 transition-colors flex items-center gap-1.5"
+                              >
+                                <span className="text-neutral-400 text-base leading-none">+</span>
+                                New folder
+                              </button>
+                            )}
+                          </div>
+                        </>
                       )}
                     </div>
                   )}

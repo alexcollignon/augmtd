@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { moveGmailThreadToLabel } from '@/lib/google/gmail';
-import { moveOutlookMessageToFolder } from '@/lib/microsoft/outlook';
+import { moveGmailThreadToLabel, createGmailLabel } from '@/lib/google/gmail';
+import { moveOutlookMessageToFolder, createOutlookFolder } from '@/lib/microsoft/outlook';
 
 // POST /api/inbox/[id]/move-to-folder — move email to a folder/label and dismiss inbox item
 export async function POST(
@@ -14,9 +14,10 @@ export async function POST(
     if (authError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const { id } = await params;
-    const { folderId, folderName } = await request.json() as { folderId: string; folderName: string };
+    const { folderId: rawFolderId, folderName, createNew } = await request.json() as { folderId?: string; folderName: string; createNew?: boolean };
 
-    if (!folderId) return NextResponse.json({ error: 'folderId is required' }, { status: 400 });
+    if (!createNew && !rawFolderId) return NextResponse.json({ error: 'folderId is required' }, { status: 400 });
+    if (createNew && !folderName?.trim()) return NextResponse.json({ error: 'folderName is required when createNew=true' }, { status: 400 });
 
     const { data: item, error: fetchError } = await supabase
       .from('inbox_items')
@@ -43,6 +44,18 @@ export async function POST(
     if (!connection) return NextResponse.json({ error: 'Connection not found' }, { status: 404 });
 
     const encryptedTokens = connection.metadata.tokens;
+
+    // Create folder/label first if requested
+    let folderId = rawFolderId ?? '';
+    if (createNew && folderName.trim()) {
+      if (provider === 'gmail') {
+        const created = await createGmailLabel(encryptedTokens, folderName.trim());
+        folderId = created.id;
+      } else if (provider === 'outlook') {
+        const created = await createOutlookFolder(encryptedTokens, folderName.trim());
+        folderId = created.id;
+      }
+    }
 
     if (provider === 'gmail') {
       const threadId = sourceData.thread_id;

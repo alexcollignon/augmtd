@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { waitUntil } from '@vercel/functions';
 import { createClient } from '@supabase/supabase-js';
 import { getGmailClient } from '@/lib/google/gmail';
 import { syncEmailsForConnection } from '@/lib/email-sync/sync-emails';
@@ -13,13 +14,13 @@ const GMAIL_WEBHOOK_SECRET = process.env.GMAIL_WEBHOOK_SECRET!;
  * POST /api/webhooks/gmail/push
  *
  * Receives Pub/Sub push notifications from Google when new emails arrive.
- * Always returns 200 to prevent Pub/Sub retry storms (processing is idempotent via message_id).
+ * Returns 200 immediately to prevent Pub/Sub retry storms, then processes async via waitUntil.
  */
 export async function POST(request: NextRequest) {
   // Validate secret token in query param
   const token = request.nextUrl.searchParams.get('token');
   if (!GMAIL_WEBHOOK_SECRET || token !== GMAIL_WEBHOOK_SECRET) {
-    console.warn('[GmailPush] Invalid or missing token — returning 200 to prevent retry storm');
+    console.warn('[GmailPush] Invalid or missing token');
     return NextResponse.json({ ok: true }, { status: 200 });
   }
 
@@ -32,9 +33,7 @@ export async function POST(request: NextRequest) {
 
   // Pub/Sub wraps the message inside body.message.data (base64 encoded)
   const rawData = body?.message?.data;
-  if (!rawData) {
-    return NextResponse.json({ ok: true }, { status: 200 });
-  }
+  if (!rawData) return NextResponse.json({ ok: true }, { status: 200 });
 
   let notification: { emailAddress?: string; historyId?: string | number };
   try {
@@ -44,17 +43,20 @@ export async function POST(request: NextRequest) {
   }
 
   const { emailAddress, historyId } = notification;
-  if (!emailAddress || !historyId) {
-    return NextResponse.json({ ok: true }, { status: 200 });
-  }
+  if (!emailAddress || !historyId) return NextResponse.json({ ok: true }, { status: 200 });
 
+  // Return 200 immediately — process async so Vercel timeout never blocks Google ACK
+  waitUntil(processGmailPush(emailAddress, String(historyId)));
+  return NextResponse.json({ ok: true }, { status: 200 });
+}
+
+async function processGmailPush(emailAddress: string, historyId: string) {
   const adminSupabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
     { auth: { autoRefreshToken: false, persistSession: false } },
   );
 
-  // Look up the active Gmail connection for this email address
   const { data: connection } = await adminSupabase
     .from('connections')
     .select('*')
@@ -65,13 +67,14 @@ export async function POST(request: NextRequest) {
 
   if (!connection) {
     console.warn(`[GmailPush] No active connection found for ${emailAddress}`);
-    return NextResponse.json({ ok: true }, { status: 200 });
+    return;
   }
 
   const startHistoryId = connection.push_history_id;
   if (!startHistoryId) {
-    console.warn(`[GmailPush] Connection ${connection.id} has no push_history_id — skipping delta, will be caught by cron`);
-    return NextResponse.json({ ok: true }, { status: 200 });
+    console.warn(`[GmailPush] Connection ${connection.id} has no push_history_id — updating to current and skipping`);
+    await adminSupabase.from('connections').update({ push_history_id: historyId }).eq('id', connection.id);
+    return;
   }
 
   try {
@@ -102,45 +105,39 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Always advance historyId even if no actionable messages
+    await adminSupabase
+      .from('connections')
+      .update({ push_history_id: historyId })
+      .eq('id', connection.id);
+
     if (messageIds.length === 0) {
-      // Update historyId even if no new messages
-      await adminSupabase
-        .from('connections')
-        .update({ push_history_id: String(historyId) })
-        .eq('id', connection.id);
-      return NextResponse.json({ ok: true }, { status: 200 });
+      console.log(`[GmailPush] No new messages for ${emailAddress}, historyId advanced to ${historyId}`);
+      return;
     }
 
-    console.log(`[GmailPush] Fetching ${messageIds.length} new message(s) for ${emailAddress}`);
+    console.log(`[GmailPush] Processing ${messageIds.length} message(s) for ${emailAddress} (cap 50, newest first)`);
 
-    // Fetch full messages in parallel (cap at 20 per push event)
+    // Reverse so newest messages are processed first — if cap is hit, oldest are dropped not newest
+    const prioritized = [...messageIds].reverse();
+
     const fetchedMessages = await Promise.all(
-      messageIds.slice(0, 20).map(id =>
+      prioritized.slice(0, 50).map(id =>
         gmail.users.messages.get({ userId: 'me', id, format: 'full' }).then(r => r.data),
       ),
     );
 
-    // Run sync with preloaded messages — skips the fetch step
     await syncEmailsForConnection(connection, adminSupabase, {
       preloadedMessages: fetchedMessages,
     });
 
-    // Update historyId to the latest from the push notification
-    await adminSupabase
-      .from('connections')
-      .update({ push_history_id: String(historyId) })
-      .eq('id', connection.id);
-
-    // Sync calendar + schedule bots — catches new meeting invitations arriving via email
+    // Sync calendar + schedule bots — catches meeting invitations arriving via email
     await syncCalendarForConnection(connection, adminSupabase, { daysAhead: 14, daysBehind: 0 })
       .then(() => createBotsForCalendarEvents(connection.user_id, adminSupabase))
       .catch((err) => console.warn('[GmailPush] Calendar/bot sync failed (non-fatal):', err));
 
-    console.log(`[GmailPush] ✓ Processed push for ${emailAddress}, updated historyId to ${historyId}`);
+    console.log(`[GmailPush] ✓ Processed ${fetchedMessages.length} message(s) for ${emailAddress}`);
   } catch (err) {
     console.error(`[GmailPush] Error processing push for ${emailAddress}:`, err);
-    // Still return 200 — Pub/Sub will not retry, and cron will catch any missed emails
   }
-
-  return NextResponse.json({ ok: true }, { status: 200 });
 }

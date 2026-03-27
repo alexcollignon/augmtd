@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { waitUntil } from '@vercel/functions';
 import { createClient } from '@supabase/supabase-js';
-import { getGraphClient, parseOutlookMessage } from '@/lib/microsoft/outlook';
+import { getGraphClient } from '@/lib/microsoft/outlook';
 import { syncEmailsForConnection } from '@/lib/email-sync/sync-emails';
 import { syncCalendarForConnection } from '@/lib/calendar/sync-calendar';
 import { createBotsForCalendarEvents } from '@/lib/integrations/meeting-bot/bot-manager';
@@ -13,7 +14,6 @@ const OUTLOOK_WEBHOOK_SECRET = process.env.OUTLOOK_WEBHOOK_SECRET!;
  * GET /api/webhooks/outlook/push
  *
  * Microsoft Graph validation handshake — must respond within 10s with validationToken.
- * No DB calls before this response.
  */
 export async function GET(request: NextRequest) {
   const validationToken = request.nextUrl.searchParams.get('validationToken');
@@ -30,6 +30,7 @@ export async function GET(request: NextRequest) {
  * POST /api/webhooks/outlook/push
  *
  * Receives change notifications from Microsoft Graph when new emails arrive.
+ * Returns 200 immediately, processes async via waitUntil.
  */
 export async function POST(request: NextRequest) {
   let body: any;
@@ -40,11 +41,8 @@ export async function POST(request: NextRequest) {
   }
 
   const notifications: any[] = body?.value || [];
-  if (notifications.length === 0) {
-    return NextResponse.json({ ok: true }, { status: 200 });
-  }
+  if (notifications.length === 0) return NextResponse.json({ ok: true }, { status: 200 });
 
-  // Validate clientState on all notifications
   const validNotifications = notifications.filter(
     (n) => n.clientState === OUTLOOK_WEBHOOK_SECRET,
   );
@@ -53,19 +51,24 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: true }, { status: 200 });
   }
 
+  // Return 200 immediately — process async so Microsoft never sees a timeout
+  waitUntil(processOutlookNotifications(validNotifications));
+  return NextResponse.json({ ok: true }, { status: 200 });
+}
+
+async function processOutlookNotifications(notifications: any[]) {
   const adminSupabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
     { auth: { autoRefreshToken: false, persistSession: false } },
   );
 
-  for (const notification of validNotifications) {
+  for (const notification of notifications) {
     try {
       const resourceData = notification.resourceData;
       const messageId = resourceData?.id;
       if (!messageId) continue;
 
-      // The subscription is per-user; use subscriptionId to find the connection
       const subscriptionId = notification.subscriptionId;
       const { data: connection } = await adminSupabase
         .from('connections')
@@ -90,7 +93,6 @@ export async function POST(request: NextRequest) {
 
       const client = await getGraphClient(connection.metadata.tokens, onTokenRefresh);
 
-      // Fetch full message
       const message = await client
         .api(`/me/messages/${messageId}`)
         .select('id,conversationId,subject,bodyPreview,body,from,toRecipients,ccRecipients,receivedDateTime,internetMessageId,hasAttachments')
@@ -100,7 +102,6 @@ export async function POST(request: NextRequest) {
         preloadedMessages: [message],
       });
 
-      // Sync calendar + schedule bots — catches new meeting invitations
       await syncCalendarForConnection(connection, adminSupabase, { daysAhead: 14, daysBehind: 0 })
         .then(() => createBotsForCalendarEvents(connection.user_id, adminSupabase))
         .catch((err) => console.warn('[OutlookPush] Calendar/bot sync failed (non-fatal):', err));
@@ -108,9 +109,6 @@ export async function POST(request: NextRequest) {
       console.log(`[OutlookPush] ✓ Processed notification for message ${messageId}`);
     } catch (err) {
       console.error('[OutlookPush] Error processing notification:', err);
-      // Continue to next notification
     }
   }
-
-  return NextResponse.json({ ok: true }, { status: 200 });
 }

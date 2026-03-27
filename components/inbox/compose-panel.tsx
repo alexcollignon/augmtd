@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { XMarkIcon, PaperAirplaneIcon, PaperClipIcon } from '@heroicons/react/24/outline';
 import { toast } from 'sonner';
 import KbFilePicker from './kb-file-picker';
@@ -25,6 +25,11 @@ interface ComposePanelProps {
   onSent: () => void;
 }
 
+interface ContactSuggestion {
+  email: string;
+  name?: string;
+}
+
 export default function ComposePanel({ draft, onChange, onDiscard, onSent }: ComposePanelProps) {
   const [showCc, setShowCc] = useState(false);
   const [isSending, setIsSending] = useState(false);
@@ -32,6 +37,46 @@ export default function ComposePanel({ draft, onChange, onDiscard, onSent }: Com
   const [showAttachMenu, setShowAttachMenu] = useState(false);
   const [kbPickerOpen, setKbPickerOpen] = useState(false);
   const attachFileInputRef = useRef<HTMLInputElement>(null);
+
+  // Recipient suggestions
+  const [toSuggestions, setToSuggestions] = useState<ContactSuggestion[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const toDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const toRowRef = useRef<HTMLDivElement>(null);
+
+  const fetchSuggestions = useCallback(async (q: string) => {
+    if (q.length < 2) { setToSuggestions([]); return; }
+    try {
+      const res = await fetch(`/api/contacts/suggest?q=${encodeURIComponent(q)}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      setToSuggestions(data.contacts ?? []);
+    } catch { /* ignore */ }
+  }, []);
+
+  const handleToChange = useCallback((value: string) => {
+    onChange({ to: value });
+    setShowSuggestions(true);
+    if (toDebounceRef.current) clearTimeout(toDebounceRef.current);
+    toDebounceRef.current = setTimeout(() => fetchSuggestions(value), 150);
+  }, [onChange, fetchSuggestions]);
+
+  const handleSuggestionClick = useCallback((contact: ContactSuggestion) => {
+    onChange({ to: contact.email });
+    setShowSuggestions(false);
+    setToSuggestions([]);
+  }, [onChange]);
+
+  // Close suggestions on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (toRowRef.current && !toRowRef.current.contains(e.target as Node)) {
+        setShowSuggestions(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
 
   const handleLocalFileAttach = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
@@ -106,22 +151,43 @@ export default function ComposePanel({ draft, onChange, onDiscard, onSent }: Com
       </div>
 
       {/* To */}
-      <div className="flex-shrink-0 flex items-center gap-2 px-4 py-2 border-b border-neutral-100">
-        <span className="text-[11px] font-semibold text-neutral-400 w-10 flex-shrink-0">To</span>
-        <input
-          type="text"
-          value={draft.to}
-          onChange={e => onChange({ to: e.target.value })}
-          placeholder="recipient@example.com"
-          className="flex-1 text-[13px] text-neutral-800 placeholder-neutral-400 bg-transparent outline-none"
-        />
-        {!showCc && (
-          <button
-            onClick={() => setShowCc(true)}
-            className="text-[11px] text-neutral-400 hover:text-neutral-600 transition-colors flex-shrink-0"
-          >
-            CC
-          </button>
+      <div ref={toRowRef} className="flex-shrink-0 relative">
+        <div className="flex items-center gap-2 px-4 py-2 border-b border-neutral-100">
+          <span className="text-[11px] font-semibold text-neutral-400 w-10 flex-shrink-0">To</span>
+          <input
+            type="text"
+            value={draft.to}
+            onChange={e => handleToChange(e.target.value)}
+            onFocus={() => { if (draft.to.length >= 2) setShowSuggestions(true); }}
+            onKeyDown={e => { if (e.key === 'Escape') setShowSuggestions(false); }}
+            placeholder="recipient@example.com"
+            className="flex-1 text-[13px] text-neutral-800 placeholder-neutral-400 bg-transparent outline-none"
+          />
+          {!showCc && (
+            <button
+              onClick={() => setShowCc(true)}
+              className="text-[11px] text-neutral-400 hover:text-neutral-600 transition-colors flex-shrink-0"
+            >
+              CC
+            </button>
+          )}
+        </div>
+        {showSuggestions && toSuggestions.length > 0 && (
+          <div className="absolute left-0 right-0 top-full z-20 bg-white border border-neutral-200 shadow-md max-h-48 overflow-y-auto">
+            {toSuggestions.map(contact => (
+              <button
+                key={contact.email}
+                type="button"
+                onMouseDown={e => { e.preventDefault(); handleSuggestionClick(contact); }}
+                className="w-full flex items-center gap-2 px-4 py-2 text-left hover:bg-neutral-50 transition-colors border-b border-neutral-50 last:border-0"
+              >
+                {contact.name && (
+                  <span className="text-[12px] font-medium text-neutral-800 truncate max-w-[140px]">{contact.name}</span>
+                )}
+                <span className="text-[12px] text-neutral-500 truncate">{contact.email}</span>
+              </button>
+            ))}
+          </div>
         )}
       </div>
 
