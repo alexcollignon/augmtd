@@ -23,7 +23,7 @@ export async function POST(
 
     const { data: thread, error: threadError } = await supabase
       .from('work_threads')
-      .select('id, title, plan, user_attachments')
+      .select('id, title, plan, user_attachments, process_id, process_step_index')
       .eq('id', threadId)
       .eq('user_id', user.id)
       .single();
@@ -134,6 +134,44 @@ export async function POST(
             userAttachments.push({ filename: kbFile.filename, mimeType: 'text/plain', storagePath: '', extractedText: kbFile.extracted_text.slice(0, MAX_KB_CHARS) });
           }
         }
+      }
+    }
+
+    // Inject previous completed process steps as attachments (process-linked threads only)
+    const processId = (thread as any).process_id as string | null;
+    const processStepIndex = (thread as any).process_step_index as number | null;
+    if (processId && processStepIndex !== null) {
+      const { data: completedSteps } = await adminClient
+        .from('process_steps')
+        .select('step_index, title, input_type, input_data, artifact, status')
+        .eq('process_id', processId)
+        .eq('status', 'completed')
+        .lt('step_index', processStepIndex)
+        .order('step_index', { ascending: true });
+
+      const MAX_STEP_CHARS = 4000;
+      for (const s of completedSteps ?? []) {
+        const parts: string[] = [`Step ${s.step_index + 1}: ${s.title}`];
+        if (s.input_data) {
+          const d = s.input_data as Record<string, unknown>;
+          if (d.text) parts.push(`Input: ${String(d.text).slice(0, MAX_STEP_CHARS)}`);
+          if (d.value !== undefined) parts.push(`Value: ${d.value}`);
+          if (d.filename) parts.push(`File: ${d.filename}`);
+        }
+        if (s.artifact) {
+          const a = s.artifact as Record<string, unknown>;
+          if (a.content && typeof a.content === 'string') {
+            parts.push(`Generated output:\n${a.content.slice(0, MAX_STEP_CHARS)}`);
+          } else if (a.content && typeof a.content === 'object') {
+            parts.push(`Generated output:\n${JSON.stringify(a.content).slice(0, MAX_STEP_CHARS)}`);
+          }
+        }
+        userAttachments.push({
+          filename: `process_step_${s.step_index + 1}_${(s.title as string).replace(/\s+/g, '_').toLowerCase().slice(0, 30)}.txt`,
+          mimeType: 'text/plain',
+          storagePath: '',
+          extractedText: parts.join('\n\n'),
+        });
       }
     }
 

@@ -42,7 +42,7 @@ export default async function WorkPage({
   const [{ data: threads }, { data: savedWorkflowsData }] = await Promise.all([
     supabase
       .from('work_threads')
-      .select('id, title, plan, artifact, artifacts, status, auto_generated, saved_workflow_id, created_at, updated_at')
+      .select('id, title, plan, artifact, artifacts, status, auto_generated, saved_workflow_id, is_generating, created_at, updated_at, process_id, process_step_index, processes(title)')
       .eq('user_id', user.id)
       .eq('status', 'active')
       .order('updated_at', { ascending: false })
@@ -61,7 +61,11 @@ export default async function WorkPage({
       userFullName={profile?.full_name}
       hasCompletedOnboarding={hasCompletedIdentity}
       blueprints={blueprints}
-      initialThreads={threads || []}
+      initialThreads={(threads || []).map((t: any) => ({
+          ...t,
+          process_title: t.processes?.title ?? null,
+          processes: undefined,
+        }))}
       initialActiveThreadId={initialThreadId || null}
       initialView={initialView || null}
       initialChatInput={initialChatInput || null}

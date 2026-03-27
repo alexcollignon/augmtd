@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import Link from 'next/link';
 import SidebarNav from '@/components/sidebar-nav';
 import { WorkspaceTabBar } from '@/components/work/workspace-tab-bar';
 import {
@@ -24,6 +25,7 @@ import {
   ChevronDownIcon,
   ShieldCheckIcon,
   ChevronUpIcon,
+  ChevronLeftIcon,
   PaperAirplaneIcon,
 } from '@heroicons/react/24/outline';
 import { WorkBlueprint, SavedWorkflow } from '@/lib/types/work-blueprints';
@@ -132,6 +134,9 @@ interface WorkThread {
   auto_generated?: boolean;
   saved_workflow_id?: string;
   is_generating?: boolean;
+  process_id?: string | null;
+  process_title?: string | null;
+  process_step_index?: number | null;
 }
 
 interface WorkMessage {
@@ -2517,6 +2522,11 @@ export function WorkPageClient({
                               inbox
                             </span>
                           )}
+                          {thread.process_id && thread.process_title && (
+                            <span className="text-[9px] text-violet-700 bg-violet-50 px-1 py-px truncate max-w-[80px]" title={thread.process_title}>
+                              ↑ {thread.process_title}
+                            </span>
+                          )}
                         </div>
                       </button>
 
@@ -2700,7 +2710,26 @@ export function WorkPageClient({
         </div>
       ) : (
         /* ── Split view: left panel + right chat ── */
-        <>
+        <div className="flex-1 flex flex-col min-h-0">
+          {/* Process context breadcrumb */}
+          {activeThread?.process_id && activeThread?.process_title && (
+            <div className="flex-shrink-0 flex items-center gap-1.5 px-4 py-1.5 bg-violet-50 border-b border-violet-100">
+              <Link
+                href={`/processes/${activeThread.process_id}`}
+                className="flex items-center gap-0.5 text-[10px] text-violet-600 hover:text-violet-800 font-medium transition-colors min-w-0 max-w-[240px]"
+              >
+                <ChevronLeftIcon className="w-2.5 h-2.5 flex-shrink-0" />
+                <span className="truncate">{activeThread.process_title}</span>
+              </Link>
+              {activeThread.process_step_index != null && (
+                <span className="text-[10px] text-violet-400 flex-shrink-0">· Step {activeThread.process_step_index + 1}</span>
+              )}
+            </div>
+          )}
+
+          {/* Panels row */}
+          <div className="flex-1 flex min-h-0">
+
           {/* Left panel: plan or document */}
           {workMode === 'document' && selectedArtifact ? (
             <DocumentPanel
@@ -2985,7 +3014,8 @@ export function WorkPageClient({
               </>
             )}
           </div>
-        </>
+          </div>{/* end panels row */}
+        </div>
       )}
 
       <OnboardingModal

@@ -25,8 +25,13 @@ import {
   PaperClipIcon,
   XMarkIcon,
   SparklesIcon,
+  FolderOpenIcon,
+  DocumentTextIcon,
 } from '@heroicons/react/24/outline';
 import { CheckCircleIcon as CheckCircleSolid } from '@heroicons/react/24/solid';
+import { ProcessStepStudioPanel } from '@/components/processes/process-step-studio-panel';
+import { DriveFilePicker } from '@/components/processes/drive-file-picker';
+import type { DocumentArtifact } from '@/lib/types/inbox';
 
 interface Props {
   processId: string;
@@ -102,37 +107,54 @@ function ctaLabel(step: ProcessStepRecord): string {
 }
 
 // ── Artifact display ─────────────────────────────────────────────────────────
-function ArtifactPreview({ artifact }: { artifact: Record<string, unknown> }) {
+function StepArtifactChip({ artifact, threadId }: { artifact: Record<string, unknown>; threadId?: string | null }) {
+  const [downloading, setDownloading] = useState(false);
   if (!artifact) return null;
   const a = artifact as Record<string, unknown>;
-  if (!a.content || typeof a.content !== 'string') return null;
+  const title = (a.title as string) ?? (a.filename as string) ?? 'Document';
+  const type = (a.type as string) ?? 'document';
+  const ext = type === 'presentation' ? 'pptx' : type === 'spreadsheet' ? 'xlsx' : type === 'email' ? 'email' : 'docx';
 
-  const download = () => {
-    const blob = new Blob([a.content as string], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = (a.filename as string) ?? 'output.txt';
-    link.click();
-    URL.revokeObjectURL(url);
+  const handleDownload = async () => {
+    if (!threadId || !a.id) return;
+    setDownloading(true);
+    try {
+      const res = await fetch(`/api/work/threads/${threadId}/download?artifactId=${a.id}`);
+      if (!res.ok) return;
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${title}.${ext}`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch { /* ignore */ } finally {
+      setDownloading(false);
+    }
   };
 
   return (
-    <div className="mt-3 border border-indigo-100 rounded bg-indigo-50/40">
-      <div className="flex items-center justify-between px-3 py-2 border-b border-indigo-100">
-        <span className="text-[11px] font-medium text-indigo-700">
-          {a.type === 'email_draft' ? 'Generated email' : 'Generated document'} — {a.filename as string}
-        </span>
+    <div className="mt-2 flex items-center gap-2 px-2.5 py-2 border border-indigo-100 bg-indigo-50/50">
+      <DocumentTextIcon className="w-3.5 h-3.5 text-indigo-500 flex-shrink-0" />
+      <span className="flex-1 text-[11px] font-medium text-indigo-700 truncate">{title}</span>
+      <span className="text-[9px] text-indigo-400 uppercase flex-shrink-0">{ext}</span>
+      {threadId && !!a.id && (
         <button
-          onClick={download}
-          className="text-[11px] text-indigo-600 hover:text-indigo-800 underline"
+          onClick={handleDownload}
+          disabled={downloading}
+          className="text-[11px] text-indigo-500 hover:text-indigo-700 flex-shrink-0 disabled:opacity-50"
         >
-          Download
+          {downloading ? '…' : 'Download'}
         </button>
-      </div>
-      <pre className="px-3 py-2 text-[11px] text-neutral-700 whitespace-pre-wrap font-sans max-h-48 overflow-y-auto leading-relaxed">
-        {(a.content as string).slice(0, 1200)}{(a.content as string).length > 1200 ? '\n…' : ''}
-      </pre>
+      )}
+      {threadId && (
+        <a
+          href={`/work?view=document&thread=${threadId}`}
+          className="text-[11px] text-indigo-500 hover:text-indigo-700 flex-shrink-0"
+        >
+          View
+        </a>
+      )}
     </div>
   );
 }
@@ -140,7 +162,27 @@ function ArtifactPreview({ artifact }: { artifact: Record<string, unknown> }) {
 // ── File input data display ───────────────────────────────────────────────────
 function FileChip({ inputData, onRemove }: { inputData: Record<string, unknown>; onRemove?: () => void }) {
   const d = inputData;
-  if (!d.filename || !d.content_base64) return null;
+  if (!d.filename) return null;
+
+  // Drive-sourced file — no base64, show source badge
+  if (d.source === 'drive') {
+    return (
+      <span className="inline-flex items-center gap-1.5 mt-1 px-2.5 py-1 bg-indigo-50 border border-indigo-100 rounded text-[11px] text-indigo-700">
+        <FolderOpenIcon className="w-3 h-3 flex-shrink-0" />
+        {d.filename as string}
+        {!!d.sourceName && (
+          <span className="text-[10px] text-indigo-400">· {d.sourceName as string}</span>
+        )}
+        {onRemove && (
+          <button onClick={e => { e.stopPropagation(); onRemove(); }} className="ml-1 text-indigo-300 hover:text-red-500">
+            <XMarkIcon className="w-3 h-3" />
+          </button>
+        )}
+      </span>
+    );
+  }
+
+  if (!d.content_base64) return null;
 
   const download = () => {
     try {
@@ -214,16 +256,25 @@ function StepIcon({ status }: { status: ProcessStepStatus }) {
 // ── Step input form ───────────────────────────────────────────────────────────
 function StepInputForm({
   step,
+  processId,
   onComplete,
+  onOpenPanel,
+  hasThread,
+  threadId,
 }: {
   step: ProcessStepRecord;
+  processId: string;
   onComplete: (inputData: unknown) => void;
+  onOpenPanel?: () => void;
+  hasThread?: boolean;
+  threadId?: string | null;
 }) {
   const [value, setValue] = useState('');
   const [numValue, setNumValue] = useState('');
   const [rangeMin, setRangeMin] = useState('');
   const [rangeMax, setRangeMax] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [showDrivePicker, setShowDrivePicker] = useState(false);
 
   const submit = async (data: unknown) => {
     setSubmitting(true);
@@ -234,24 +285,16 @@ function StepInputForm({
   const label = ctaLabel(step);
 
   if (step.step_type === 'generator') {
-    const studioUrl = `/work?processStep=${step.step_index}&processId=${step.id}&stepTitle=${encodeURIComponent(step.title ?? '')}&stepDesc=${encodeURIComponent(step.description ?? '')}`;
+    const studioUrl = `/work?processStep=${step.step_index}&processId=${processId}&stepTitle=${encodeURIComponent(step.title ?? '')}&stepDesc=${encodeURIComponent(step.description ?? '')}`;
     return (
       <div className="flex items-center gap-3 flex-wrap">
         <button
-          onClick={() => submit({ generated: true })}
+          onClick={() => onOpenPanel ? onOpenPanel() : submit({ generated: true })}
           disabled={submitting}
           className="inline-flex items-center gap-2 px-3 py-1.5 bg-indigo-600 text-white text-[12px] hover:bg-indigo-700 disabled:opacity-50 transition-colors"
         >
-          {submitting ? (
-            <>
-              <span className="w-1.5 h-1.5 bg-white/50 rounded-full animate-bounce [animation-delay:0ms]" />
-              <span className="w-1.5 h-1.5 bg-white/50 rounded-full animate-bounce [animation-delay:150ms]" />
-              <span className="w-1.5 h-1.5 bg-white/50 rounded-full animate-bounce [animation-delay:300ms]" />
-            </>
-          ) : (
-            <SparklesIcon className="w-3.5 h-3.5" />
-          )}
-          {submitting ? 'Running…' : 'Run in Studio'}
+          <SparklesIcon className="w-3.5 h-3.5" />
+          {hasThread ? 'Resume in Studio →' : 'Create in Studio →'}
         </button>
         <Link
           href={studioUrl}
@@ -259,9 +302,6 @@ function StepInputForm({
         >
           Open in Studio →
         </Link>
-        {submitting && (
-          <span className="text-[11px] text-neutral-400">This may take 10–20 seconds</span>
-        )}
       </div>
     );
   }
@@ -362,6 +402,40 @@ function StepInputForm({
             }}
           />
           <p className="text-[10px] text-neutral-400">Max 2 MB</p>
+          <div className="flex items-center gap-3 pt-0.5">
+            <button
+              type="button"
+              onClick={() => setShowDrivePicker(v => !v)}
+              className="inline-flex items-center gap-1 text-[11px] text-neutral-500 hover:text-indigo-600 transition-colors"
+            >
+              <FolderOpenIcon className="w-3 h-3" />
+              {showDrivePicker ? 'Close' : 'From Drive'}
+            </button>
+            <button
+              type="button"
+              onClick={() => onOpenPanel?.()}
+              className="inline-flex items-center gap-1 text-[11px] text-indigo-500 hover:text-indigo-700 transition-colors"
+            >
+              <SparklesIcon className="w-3 h-3" />
+              {hasThread ? 'Resume in Studio →' : 'Create in Studio →'}
+            </button>
+          </div>
+          {showDrivePicker && (
+            <DriveFilePicker
+              onSelect={(picked) => {
+                setShowDrivePicker(false);
+                submit({
+                  source: 'drive',
+                  fileId: picked.fileId,
+                  filename: picked.filename,
+                  mimeType: picked.mimeType,
+                  sourceProvider: picked.sourceProvider,
+                  sourceName: picked.sourceName,
+                });
+              }}
+              onCancel={() => setShowDrivePicker(false)}
+            />
+          )}
         </div>
       );
     default: // 'text'
@@ -375,13 +449,14 @@ function StepInputForm({
             className="border border-neutral-200 rounded px-3 py-2 text-[12px] resize-none focus:outline-none focus:ring-1 focus:ring-indigo-400"
           />
           <div className="flex items-center justify-between">
-            <Link
-              href={`/work?processStep=${step.step_index}&processId=${step.id}&stepTitle=${encodeURIComponent(step.title ?? '')}&stepDesc=${encodeURIComponent(step.description ?? '')}`}
+            <button
+              type="button"
+              onClick={() => onOpenPanel?.()}
               className="inline-flex items-center gap-1 text-[11px] text-indigo-500 hover:text-indigo-700 transition-colors"
             >
               <SparklesIcon className="w-3 h-3" />
-              Create in Studio →
-            </Link>
+              {hasThread ? 'Resume in Studio →' : 'Create in Studio →'}
+            </button>
             <button
               onClick={() => submit({ text: value })}
               disabled={submitting || !value.trim()}
@@ -421,6 +496,10 @@ export function ProcessDetailClient({ processId, userId, userEmail, companyRole 
   const [editDueDate, setEditDueDate] = useState('');
   const [savingMeta, setSavingMeta] = useState(false);
 
+  // Studio panel
+  const [studioPanelStep, setStudioPanelStep] = useState<ProcessStepRecord | null>(null);
+  const [stepThreadMap, setStepThreadMap] = useState<Record<number, string>>({}); // stepIndex → threadId
+
   // Meetings + files
   const [meetings, setMeetings] = useState<MeetingRow[]>([]);
   const [savingFiles, setSavingFiles] = useState(false);
@@ -447,6 +526,21 @@ export function ProcessDetailClient({ processId, userId, userEmail, companyRole 
     setDetail(data.process);
     setNameMap(data.nameMap ?? {});
     setLoading(false);
+
+    // Populate stepThreadMap — find which steps already have a linked Studio thread
+    fetch('/api/work/threads')
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (!d?.threads) return;
+        const map: Record<number, string> = {};
+        for (const t of d.threads) {
+          if (t.process_id === processId && t.process_step_index != null) {
+            map[t.process_step_index] = t.id;
+          }
+        }
+        setStepThreadMap(map);
+      })
+      .catch(() => {});
   }, [processId, router]);
 
   useEffect(() => { load(); }, [load]);
@@ -514,6 +608,16 @@ export function ProcessDetailClient({ processId, userId, userEmail, companyRole 
         .catch(() => {});
     }
   };
+
+  const completeStepFromPanel = async (_artifact: DocumentArtifact) => {
+    // Panel already called PATCH itself — just reload the process detail
+    await load();
+    setStudioPanelStep(null);
+  };
+
+  const handleThreadFound = useCallback((stepIndex: number, threadId: string) => {
+    setStepThreadMap(prev => ({ ...prev, [stepIndex]: threadId }));
+  }, []);
 
   const postCommentContent = async (content: string) => {
     if (!content.trim() || postingComment) return;
@@ -1267,8 +1371,11 @@ export function ProcessDetailClient({ processId, userId, userEmail, companyRole 
                               {step.completed_by ? ` by ${nameMap[step.completed_by] ?? 'someone'}` : ''}
                             </p>
                           )}
-                          {step.status === 'completed' && step.step_type === 'generator' && !!step.artifact && (
-                            <ArtifactPreview artifact={step.artifact as Record<string, unknown>} />
+                          {step.status === 'completed' && !!step.artifact && (
+                            <StepArtifactChip
+                              artifact={step.artifact as Record<string, unknown>}
+                              threadId={stepThreadMap[step.step_index] ?? null}
+                            />
                           )}
                           {step.status === 'completed' && step.input_type === 'file' && !!step.input_data && (
                             <FileChip inputData={step.input_data as Record<string, unknown>} />
@@ -1286,7 +1393,11 @@ export function ProcessDetailClient({ processId, userId, userEmail, companyRole 
                                   )}
                                   <StepInputForm
                                     step={step}
+                                    processId={processId}
                                     onComplete={(data) => completeStep(step.step_index, data)}
+                                    onOpenPanel={() => setStudioPanelStep(step)}
+                                    hasThread={!!stepThreadMap[step.step_index]}
+                                    threadId={stepThreadMap[step.step_index] ?? null}
                                   />
                                 </div>
                               )}
@@ -1420,8 +1531,18 @@ export function ProcessDetailClient({ processId, userId, userEmail, companyRole 
           </div>
         </div>
 
-        {/* Right: AI Assistant + Health */}
-        <div className="w-80 flex-shrink-0 flex flex-col bg-white">
+        {/* Right: Studio panel OR AI Assistant + Health */}
+        <div className="w-80 flex-shrink-0 flex flex-col bg-white border-l border-neutral-200">
+        {studioPanelStep ? (
+          <ProcessStepStudioPanel
+            processId={processId}
+            step={studioPanelStep}
+            previousSteps={detail.steps.filter(s => s.step_index < studioPanelStep.step_index)}
+            onClose={() => setStudioPanelStep(null)}
+            onStepCompleted={completeStepFromPanel}
+            onThreadFound={handleThreadFound}
+          />
+        ) : (<>
           {/* Health metrics */}
           <div className="flex-shrink-0 px-4 py-3 border-b border-neutral-100">
             <h3 className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wider mb-2">
@@ -1524,7 +1645,8 @@ export function ProcessDetailClient({ processId, userId, userEmail, companyRole 
               </button>
             </div>
           </div>
-        </div>
+        </>)}{/* end studioPanelStep ? ... : ... */}
+        </div>{/* end right sidebar */}
       </div>
       </div>{/* end flex-1 flex-col */}
     </div>

@@ -38,10 +38,11 @@ export async function PATCH(
   const body = await request.json();
   const now = new Date().toISOString();
 
-  let artifact: unknown = null;
+  // If client provides a pre-generated artifact (from the inline Studio panel), use it directly
+  let artifact: unknown = body.artifact ?? null;
 
-  // For generator steps, run the AI generator
-  if (step.step_type === 'generator' && step.tool) {
+  // For generator steps without a client artifact, run the AI generator
+  if (!artifact && step.step_type === 'generator' && step.tool) {
     try {
       const { runGeneratorStep } = await import('@/lib/process/run-generator-step');
 
