@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { renewGmailWatch } from '@/lib/google/gmail-watch';
-import { renewOutlookSubscription } from '@/lib/microsoft/outlook-subscriptions';
+import { registerGmailWatch, renewGmailWatch } from '@/lib/google/gmail-watch';
+import { registerOutlookSubscription, renewOutlookSubscription } from '@/lib/microsoft/outlook-subscriptions';
 
 export const maxDuration = 60;
 
@@ -20,33 +20,65 @@ export async function GET(request: NextRequest) {
   // Find connections whose push subscription expires within the next 24 hours
   const cutoff = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
 
-  const { data: connections, error } = await adminSupabase
-    .from('connections')
-    .select('*')
-    .lte('push_expires_at', cutoff)
-    .not('push_expires_at', 'is', null)
-    .eq('status', 'active');
+  const [{ data: expiringConnections, error }, { data: unregisteredGmail }, { data: unregisteredOutlook }] =
+    await Promise.all([
+      // Expiring soon — renew
+      adminSupabase
+        .from('connections')
+        .select('*')
+        .lte('push_expires_at', cutoff)
+        .not('push_expires_at', 'is', null)
+        .eq('status', 'active'),
+      // Gmail never registered (push_history_id IS NULL)
+      adminSupabase
+        .from('connections')
+        .select('*')
+        .eq('provider', 'gmail')
+        .eq('status', 'active')
+        .is('push_history_id', null),
+      // Outlook never registered (push_subscription_id IS NULL)
+      adminSupabase
+        .from('connections')
+        .select('*')
+        .eq('provider', 'outlook')
+        .eq('status', 'active')
+        .is('push_subscription_id', null),
+    ]);
 
   if (error) {
     console.error('[RenewPush] Error fetching connections:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  const results: { id: string; provider: string; ok: boolean; error?: string }[] = [];
+  // Deduplicate — a connection could appear in both expiring + unregistered lists
+  const seen = new Set<string>();
+  const toRenew: { connection: any; isNew: boolean }[] = [];
+  for (const c of expiringConnections ?? []) {
+    if (!seen.has(c.id)) { seen.add(c.id); toRenew.push({ connection: c, isNew: false }); }
+  }
+  for (const c of [...(unregisteredGmail ?? []), ...(unregisteredOutlook ?? [])]) {
+    if (!seen.has(c.id)) { seen.add(c.id); toRenew.push({ connection: c, isNew: true }); }
+  }
 
-  for (const connection of connections ?? []) {
+  const results: { id: string; provider: string; ok: boolean; new?: boolean; error?: string }[] = [];
+
+  for (const { connection, isNew } of toRenew) {
     try {
       if (connection.provider === 'gmail') {
-        await renewGmailWatch(connection, adminSupabase);
+        isNew
+          ? await registerGmailWatch(connection, adminSupabase)
+          : await renewGmailWatch(connection, adminSupabase);
       } else if (connection.provider === 'outlook') {
-        await renewOutlookSubscription(connection, adminSupabase);
+        isNew
+          ? await registerOutlookSubscription(connection, adminSupabase)
+          : await renewOutlookSubscription(connection, adminSupabase);
       }
-      results.push({ id: connection.id, provider: connection.provider, ok: true });
-      console.log(`[RenewPush] ✓ Renewed ${connection.provider} subscription for connection ${connection.id}`);
+      results.push({ id: connection.id, provider: connection.provider, ok: true, new: isNew });
+      console.log(`[RenewPush] ✓ ${isNew ? 'Registered' : 'Renewed'} ${connection.provider} subscription for connection ${connection.id}`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      results.push({ id: connection.id, provider: connection.provider, ok: false, error: msg });
-      console.error(`[RenewPush] ✗ Failed to renew connection ${connection.id}:`, err);
+      results.push({ id: connection.id, provider: connection.provider, ok: false, new: isNew, error: msg });
+      console.error(`[RenewPush] ✗ Failed to ${isNew ? 'register' : 'renew'} connection ${connection.id}:`, err);
     }
   }
 

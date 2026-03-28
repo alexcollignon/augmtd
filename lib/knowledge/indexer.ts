@@ -673,8 +673,8 @@ export async function indexArtifact(params: IndexArtifactParams, adminClient: Su
 
       await adminClient.from('knowledge_chunks').insert(chunkRows);
     }
-  } catch {
-    // Fire-and-forget — silently swallow all errors
+  } catch (err) {
+    console.error('[indexArtifact] Failed to index artifact', artifactId, err);
   }
 }
 

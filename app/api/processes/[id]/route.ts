@@ -164,6 +164,58 @@ export async function DELETE(
     }
   }
 
+  // Clean up work_threads linked to this process BEFORE deleting the process row.
+  // The FK is ON DELETE SET NULL — if we delete the process first, process_id becomes NULL
+  // on the threads and we can no longer find them by process_id.
+  {
+    const adminClient = createAdminClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    );
+    const { data: linkedThreads } = await adminClient
+      .from('work_threads')
+      .select('id, artifact, artifacts')
+      .eq('process_id', id);
+
+    if (linkedThreads && linkedThreads.length > 0) {
+      const allPaths = new Set<string>();
+      const allArtifactIds = new Set<string>();
+
+      for (const thread of linkedThreads) {
+        const arr = (thread.artifacts as Array<{ id?: string; storage_path?: string }>) || [];
+        for (const a of arr) {
+          if (a.storage_path) allPaths.add(a.storage_path);
+          if (a.id) allArtifactIds.add(a.id);
+        }
+        const legacy = thread.artifact as { id?: string; storage_path?: string } | null;
+        if (legacy?.storage_path) allPaths.add(legacy.storage_path);
+        if (legacy?.id) allArtifactIds.add(legacy.id);
+      }
+
+      if (allPaths.size > 0) {
+        await adminClient.storage.from('work-artifacts').remove([...allPaths]);
+      }
+
+      const kbFileIdSet = new Set<string>();
+      if (allArtifactIds.size > 0) {
+        const { data } = await adminClient.from('knowledge_files').select('id').in('provider_file_id', [...allArtifactIds]);
+        data?.forEach((f: { id: string }) => kbFileIdSet.add(f.id));
+      }
+      if (allPaths.size > 0) {
+        const { data } = await adminClient.from('knowledge_files').select('id').in('storage_path', [...allPaths]);
+        data?.forEach((f: { id: string }) => kbFileIdSet.add(f.id));
+      }
+      if (kbFileIdSet.size > 0) {
+        const kbFileIds = [...kbFileIdSet];
+        await adminClient.from('knowledge_chunks').delete().in('file_id', kbFileIds);
+        await adminClient.from('knowledge_files').delete().in('id', kbFileIds);
+      }
+
+      const threadIds = linkedThreads.map((t: { id: string }) => t.id);
+      await adminClient.from('work_threads').delete().in('id', threadIds);
+    }
+  }
+
   const { error: delErr } = await supabase
     .from('processes')
     .delete()
