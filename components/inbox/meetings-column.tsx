@@ -5,16 +5,12 @@ import Link from 'next/link';
 import {
   CalendarIcon,
   ChevronRightIcon, ChevronDownIcon, ChevronUpIcon,
-  PlusIcon, XMarkIcon, VideoCameraIcon,
+  PlusIcon,
 } from '@heroicons/react/24/outline';
-import { toast } from 'sonner';
 import type { CalendarEvent } from '@/lib/types/meetings';
 import MeetingCard from '@/components/meetings/meeting-card';
 import MonthCalendar from '@/components/meetings/month-calendar';
-
-type Connection = { id: string; provider: string; email?: string };
-
-const DURATION_OPTIONS = [15, 30, 45, 60, 90];
+import NewMeetingModal from '@/components/meetings/new-meeting-modal';
 
 interface MeetingsColumnProps {
   isOpen: boolean;
@@ -262,102 +258,8 @@ export default function MeetingsColumn({ isOpen, onToggle, meetings, loading, us
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(
     new Set(['completed', 'next_week'])
   );
-
-  // New meeting form state
   const [showNewForm, setShowNewForm] = useState(false);
-  const [connections, setConnections] = useState<Connection[]>([]);
-  const [newForm, setNewForm] = useState({
-    title: '',
-    date: '',
-    time: '',
-    duration: 30,
-    attendees: '',
-    notes: '',
-    connectionId: '',
-    includeMeetLink: true,
-  });
-  const [formState, setFormState] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
-  const [formError, setFormError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!isOpen || connections.length > 0) return;
-    fetch('/api/connections')
-      .then(r => r.json())
-      .then(d => {
-        const conns: Connection[] = d.connections ?? [];
-        setConnections(conns);
-        if (conns.length > 0) setNewForm(f => ({ ...f, connectionId: conns[0].id }));
-      })
-      .catch(() => {});
-  }, [isOpen]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const openNewForm = (date?: Date) => {
-    const today = new Date();
-    const d = date ?? today;
-    setNewForm(f => ({
-      ...f,
-      date: d.toISOString().slice(0, 10),
-      time: '',
-      title: '',
-      attendees: '',
-      notes: '',
-      includeMeetLink: true,
-    }));
-    setFormState('idle');
-    setFormError(null);
-    setShowNewForm(true);
-  };
-
-  const closeNewForm = () => {
-    setShowNewForm(false);
-    setFormState('idle');
-    setFormError(null);
-  };
-
-  const handleSendInvite = async () => {
-    const { title, date, time, duration, attendees, notes, connectionId, includeMeetLink } = newForm;
-    if (!title.trim() || !date || !time) { setFormError('Title, date, and time are required.'); return; }
-    const parsed = attendees.split(',').map(s => s.trim()).filter(Boolean);
-    if (parsed.length === 0) { setFormError('Add at least one attendee.'); return; }
-
-    setFormState('sending');
-    setFormError(null);
-    try {
-      const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-      const startTime = new Date(`${date}T${time}`).toISOString();
-      const endTime = new Date(new Date(`${date}T${time}`).getTime() + duration * 60000).toISOString();
-
-      const res = await fetch('/api/meetings/create', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: title.trim(),
-          startTime,
-          endTime,
-          timezone,
-          attendees: parsed,
-          notes: notes.trim() || undefined,
-          connectionId: connectionId || undefined,
-          includeMeetLink,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        if (data?.error === 'calendar_scope_required') {
-          setFormError(`Calendar write access needed. Reconnect ${data.provider === 'gmail' ? 'Google' : 'Outlook'} in Settings.`);
-          setFormState('error');
-          return;
-        }
-        throw new Error(data?.error ?? 'Unknown error');
-      }
-      setFormState('sent');
-      toast.success('Invitation sent');
-      setTimeout(() => { closeNewForm(); onRefresh?.(); }, 1200);
-    } catch (err: any) {
-      setFormError(err?.message ?? 'Failed to send invitation');
-      setFormState('error');
-    }
-  };
+  const [initialDate, setInitialDate] = useState<Date | undefined>(undefined);
 
   const toggleSection = (section: string) => {
     setCollapsedSections(prev => {
@@ -430,7 +332,7 @@ export default function MeetingsColumn({ isOpen, onToggle, meetings, loading, us
             </button>
             <div className="flex items-center gap-0.5">
               <button
-                onClick={() => openNewForm()}
+                onClick={() => { setInitialDate(undefined); setShowNewForm(true); }}
                 title="New meeting"
                 className={`p-1 rounded transition-colors ${showNewForm ? 'text-indigo-600' : 'text-indigo-400 hover:text-indigo-600'}`}
               >
@@ -448,141 +350,12 @@ export default function MeetingsColumn({ isOpen, onToggle, meetings, loading, us
         )}
       </div>
 
-      {/* New meeting form */}
-      {isOpen && showNewForm && (
-        <div className="border-b border-neutral-200 bg-neutral-50 px-3 py-3 flex-shrink-0 overflow-y-auto max-h-[60vh]">
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-[12px] font-semibold text-neutral-700">New meeting</span>
-            <button onClick={closeNewForm} className="p-0.5 text-neutral-400 hover:text-neutral-600 transition-colors">
-              <XMarkIcon className="w-3.5 h-3.5" />
-            </button>
-          </div>
-
-          <div className="space-y-2">
-            {/* Title */}
-            <input
-              type="text"
-              placeholder="Title"
-              value={newForm.title}
-              onChange={e => setNewForm(f => ({ ...f, title: e.target.value }))}
-              autoFocus
-              className="w-full text-[12px] border border-neutral-200 px-2 py-1.5 outline-none focus:border-indigo-400 bg-white placeholder:text-neutral-400"
-            />
-
-            {/* Date + Time */}
-            <div className="flex gap-1.5">
-              <input
-                type="date"
-                value={newForm.date}
-                onChange={e => setNewForm(f => ({ ...f, date: e.target.value }))}
-                className="flex-1 text-[12px] border border-neutral-200 px-2 py-1.5 outline-none focus:border-indigo-400 bg-white"
-              />
-              <input
-                type="time"
-                value={newForm.time}
-                onChange={e => setNewForm(f => ({ ...f, time: e.target.value }))}
-                className="w-[82px] text-[12px] border border-neutral-200 px-2 py-1.5 outline-none focus:border-indigo-400 bg-white"
-              />
-            </div>
-
-            {/* Duration */}
-            <select
-              value={newForm.duration}
-              onChange={e => setNewForm(f => ({ ...f, duration: Number(e.target.value) }))}
-              className="w-full text-[12px] border border-neutral-200 px-2 py-1.5 outline-none focus:border-indigo-400 bg-white"
-            >
-              {DURATION_OPTIONS.map(d => (
-                <option key={d} value={d}>{d} min</option>
-              ))}
-            </select>
-
-            {/* Attendees */}
-            <input
-              type="text"
-              placeholder="Attendees (comma-separated emails)"
-              value={newForm.attendees}
-              onChange={e => setNewForm(f => ({ ...f, attendees: e.target.value }))}
-              className="w-full text-[12px] border border-neutral-200 px-2 py-1.5 outline-none focus:border-indigo-400 bg-white placeholder:text-neutral-400"
-            />
-
-            {/* Notes */}
-            <textarea
-              rows={2}
-              placeholder="Notes (optional)"
-              value={newForm.notes}
-              onChange={e => setNewForm(f => ({ ...f, notes: e.target.value }))}
-              className="w-full text-[12px] border border-neutral-200 px-2 py-1.5 outline-none focus:border-indigo-400 bg-white placeholder:text-neutral-400 resize-none"
-            />
-
-            {/* Account picker — only when > 1 connection */}
-            {connections.length > 1 && (
-              <div>
-                <p className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wide mb-1">Send from</p>
-                <div className="space-y-1">
-                  {connections.map(c => (
-                    <label key={c.id} className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="radio"
-                        name="connectionId"
-                        value={c.id}
-                        checked={newForm.connectionId === c.id}
-                        onChange={() => setNewForm(f => ({ ...f, connectionId: c.id }))}
-                        className="accent-indigo-600"
-                      />
-                      <span className="text-[12px] text-neutral-700">
-                        {c.email || c.id}
-                        <span className="ml-1 text-neutral-400 text-[11px]">({c.provider === 'gmail' ? 'Google' : 'Outlook'})</span>
-                      </span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Meeting link toggle */}
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={newForm.includeMeetLink}
-                onChange={e => setNewForm(f => ({ ...f, includeMeetLink: e.target.checked }))}
-                className="accent-indigo-600"
-              />
-              <VideoCameraIcon className="w-3.5 h-3.5 text-neutral-400" />
-              <span className="text-[12px] text-neutral-600">
-                {connections.find(c => c.id === newForm.connectionId)?.provider === 'outlook'
-                  ? 'Include Teams link'
-                  : 'Include Google Meet link'}
-              </span>
-            </label>
-
-            {/* Error */}
-            {formError && (
-              <p className="text-[11px] text-red-500">{formError}</p>
-            )}
-
-            {/* Actions */}
-            {formState === 'sent' ? (
-              <p className="text-[12px] text-green-600 font-medium">Invitation sent ✓</p>
-            ) : (
-              <div className="flex gap-2 pt-1">
-                <button
-                  onClick={handleSendInvite}
-                  disabled={formState === 'sending'}
-                  className="flex-1 py-1.5 text-[12px] font-semibold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                >
-                  {formState === 'sending' ? 'Sending…' : 'Send invitation'}
-                </button>
-                <button
-                  onClick={closeNewForm}
-                  className="px-3 py-1.5 text-[12px] text-neutral-500 hover:text-neutral-700 border border-neutral-200 hover:border-neutral-300 transition-colors"
-                >
-                  Cancel
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+      <NewMeetingModal
+        isOpen={showNewForm}
+        onClose={() => setShowNewForm(false)}
+        onSuccess={() => onRefresh?.()}
+        initialDate={initialDate}
+      />
 
       {/* Content */}
       {isOpen && (
@@ -598,9 +371,7 @@ export default function MeetingsColumn({ isOpen, onToggle, meetings, loading, us
               meetings={meetings}
               userEmail={userEmail}
               onRefresh={onRefresh}
-              onNewMeeting={showNewForm
-                ? (date) => setNewForm(f => ({ ...f, date: date.toISOString().slice(0, 10) }))
-                : undefined}
+              onNewMeeting={(date) => { setInitialDate(date); setShowNewForm(true); }}
             />
           )}
         </div>

@@ -8,6 +8,7 @@ import UpcomingMeetingCard from '@/components/meetings/upcoming-meeting-card';
 import TranscriptListCard from '@/components/meetings/transcript-list-card';
 import ActiveBotCard from '@/components/meetings/active-bot-card';
 import CaptureModal from '@/components/meetings/capture-modal';
+import NewMeetingModal from '@/components/meetings/new-meeting-modal';
 import MonthCalendar from '@/components/meetings/month-calendar';
 import MeetingFolderBrowser from '@/components/meetings/meeting-folder-browser';
 
@@ -59,6 +60,7 @@ export default function MeetingsPageClient({ userEmail }: { userEmail: string })
   const [pendingAdhoc, setPendingAdhoc] = useState<{ initiatedAt: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const [showCapture, setShowCapture] = useState(false);
+  const [showNewMeeting, setShowNewMeeting] = useState(false);
   const [selectedDateStr, setSelectedDateStr] = useState(() => new Date().toDateString());
   const [seenIds, setSeenIds] = useState<Set<string>>(loadSeenIds);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
@@ -236,13 +238,22 @@ export default function MeetingsPageClient({ userEmail }: { userEmail: string })
               <h1 className="text-xl font-semibold text-neutral-900">Meetings</h1>
               <p className="text-[13px] text-neutral-500 mt-0.5">Capture, search, and turn conversations into actions</p>
             </div>
-            <button
-              onClick={() => setShowCapture(true)}
-              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 transition-colors"
-            >
-              <MicrophoneIcon className="w-4 h-4" />
-              Capture
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setShowNewMeeting(true)}
+                className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-neutral-700 border border-neutral-200 hover:bg-neutral-50 transition-colors"
+              >
+                <PlusIcon className="w-4 h-4" />
+                New meeting
+              </button>
+              <button
+                onClick={() => setShowCapture(true)}
+                className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 transition-colors"
+              >
+                <MicrophoneIcon className="w-4 h-4" />
+                Capture
+              </button>
+            </div>
           </div>
 
           {/* Live bot banner */}
@@ -473,6 +484,11 @@ export default function MeetingsPageClient({ userEmail }: { userEmail: string })
         isOpen={showCapture}
         onClose={() => setShowCapture(false)}
         onBotSent={() => setPendingAdhoc({ initiatedAt: new Date().toISOString() })}
+      />
+      <NewMeetingModal
+        isOpen={showNewMeeting}
+        onClose={() => setShowNewMeeting(false)}
+        onSuccess={fetchAll}
       />
     </div>
   );
