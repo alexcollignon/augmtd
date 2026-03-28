@@ -33,6 +33,16 @@ export async function GET(request: NextRequest) {
  * Returns 200 immediately, processes async via waitUntil.
  */
 export async function POST(request: NextRequest) {
+  // Microsoft Graph sends a POST with ?validationToken= to validate new subscriptions.
+  // Must respond with the token as plain text — same as the GET handler.
+  const validationToken = request.nextUrl.searchParams.get('validationToken');
+  if (validationToken) {
+    return new NextResponse(validationToken, {
+      status: 200,
+      headers: { 'Content-Type': 'text/plain' },
+    });
+  }
+
   let body: any;
   try {
     body = await request.json();
