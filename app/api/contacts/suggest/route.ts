@@ -11,19 +11,19 @@ export async function GET(request: NextRequest) {
 
   const like = `%${q}%`;
 
-  // Fetch senders and recipients from the user's email history
+  // Fetch senders matching by address OR name, and recipients matching by address
   const [sendersResult, recipientsResult] = await Promise.all([
     supabase
       .from('emails')
       .select('from_address, from_name')
       .eq('user_id', user.id)
-      .ilike('from_address', like)
-      .limit(50),
+      .or(`from_address.ilike.${like},from_name.ilike.${like}`)
+      .limit(100),
     supabase
       .from('emails')
       .select('to_addresses')
       .eq('user_id', user.id)
-      .limit(200),
+      .limit(500),
   ]);
 
   // Count frequency per email
