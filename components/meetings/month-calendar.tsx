@@ -42,10 +42,9 @@ export default function MonthCalendar({
 
   const selectedDateStr = controlledDateStr ?? internalDateStr;
 
-  const handleSelect = (dateStr: string, date: Date) => {
+  const handleSelect = (dateStr: string) => {
     if (!controlledDateStr) setInternalDateStr(dateStr);
     onSelectDate?.(dateStr);
-    onNewMeeting?.(date);
   };
 
   const displayMonth = new Date(today.getFullYear(), today.getMonth() + monthOffset, 1);
@@ -109,34 +108,44 @@ export default function MonthCalendar({
           const dots = dayMeetings.slice(0, 3);
 
           return (
-            <button
-              key={i}
-              onClick={() => handleSelect(dateStr, date)}
-              className={`flex flex-col items-center rounded transition-colors ${compact ? 'py-1' : 'py-1.5'} ${
-                isSelected
-                  ? 'bg-indigo-600'
-                  : isToday
-                  ? 'bg-indigo-50 hover:bg-indigo-100'
-                  : 'hover:bg-neutral-50'
-              }`}
-            >
-              <span className={`font-medium leading-none mb-0.5 ${compact ? 'text-[11px]' : 'text-[12px]'} ${
-                isSelected ? 'text-white' :
-                isToday ? 'text-indigo-600' :
-                date.getMonth() !== month ? 'text-neutral-300' :
-                'text-neutral-700'
-              }`}>
-                {date.getDate()}
-              </span>
-              <div className="flex gap-0.5 h-1.5">
-                {dots.map((m, j) => (
-                  <div
-                    key={j}
-                    className={`w-1 h-1 rounded-full ${isSelected ? 'bg-white/60' : getDotColor(m, userEmail)}`}
-                  />
-                ))}
-              </div>
-            </button>
+            <div key={i} className="relative group">
+              <button
+                onClick={() => handleSelect(dateStr)}
+                className={`w-full flex flex-col items-center rounded transition-colors ${compact ? 'py-1' : 'py-1.5'} ${
+                  isSelected
+                    ? 'bg-indigo-600'
+                    : isToday
+                    ? 'bg-indigo-50 hover:bg-indigo-100'
+                    : 'hover:bg-neutral-50'
+                }`}
+              >
+                <span className={`font-medium leading-none mb-0.5 ${compact ? 'text-[11px]' : 'text-[12px]'} ${
+                  isSelected ? 'text-white' :
+                  isToday ? 'text-indigo-600' :
+                  date.getMonth() !== month ? 'text-neutral-300' :
+                  'text-neutral-700'
+                }`}>
+                  {date.getDate()}
+                </span>
+                <div className="flex gap-0.5 h-1.5">
+                  {dots.map((m, j) => (
+                    <div
+                      key={j}
+                      className={`w-1 h-1 rounded-full ${isSelected ? 'bg-white/60' : getDotColor(m, userEmail)}`}
+                    />
+                  ))}
+                </div>
+              </button>
+              {onNewMeeting && (
+                <button
+                  onClick={() => onNewMeeting(date)}
+                  title="New meeting"
+                  className="absolute top-0 right-0 hidden group-hover:flex items-center justify-center w-3.5 h-3.5 rounded-full bg-indigo-500 text-white text-[9px] leading-none"
+                >
+                  +
+                </button>
+              )}
+            </div>
           );
         })}
       </div>
