@@ -20,6 +20,7 @@ import {
   BookmarkIcon,
   PlayIcon,
   QuestionMarkCircleIcon,
+  TrashIcon,
 } from '@heroicons/react/24/outline';
 import type { InboxItem } from '@/lib/types/inbox';
 
@@ -60,6 +61,8 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
 
   const [isArchiving, setIsArchiving] = useState(false);
   const [archiveConfirmPending, setArchiveConfirmPending] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteConfirmPending, setDeleteConfirmPending] = useState(false);
   const [showMoveMenu, setShowMoveMenu] = useState(false);
   const [folders, setFolders] = useState<{ id: string; name: string }[] | null>(null);
   const [isLoadingFolders, setIsLoadingFolders] = useState(false);
@@ -395,6 +398,20 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
       toast.error('Could not archive email');
     } finally {
       setIsArchiving(false);
+    }
+  };
+
+  const handleDeleteSource = async () => {
+    setIsDeleting(true);
+    try {
+      const res = await fetch(`/api/inbox/${item.id}/delete-source`, { method: 'POST' });
+      if (!res.ok) throw new Error('Delete failed');
+      toast.success('Email deleted');
+      onItemConfirmed?.([item.id], 'not_my_task');
+    } catch {
+      toast.error('Could not delete email');
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -788,8 +805,8 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
       </div>
 
       {/* Actions footer */}
-      <div className="flex-shrink-0 border-t border-neutral-200 bg-neutral-50 px-6 py-4">
-        <div className={`flex ${linkedCalEvent ? 'flex-col gap-2' : 'items-center gap-3'}`}>
+      <div className="flex-shrink-0 border-t border-neutral-200 bg-neutral-50 px-4 py-3">
+        <div className={`flex ${linkedCalEvent ? 'flex-col gap-2' : 'items-center gap-2'}`}>
 
           {/* RSVP row — meeting invites only */}
           {linkedCalEvent && (
@@ -822,25 +839,25 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
             </div>
           )}
 
-          {/* Secondary actions row (for invites) / primary row (for regular emails) */}
-          <div className="flex items-center gap-3 flex-1">
+          {/* Action icons row */}
+          <div className="flex items-center gap-1.5 flex-1">
 
               {/* Reply */}
               {item.source === 'email' && (
                 <button
+                  title="Reply"
                   onClick={() => {
                     setReplyOpen(true);
                     onReplyOpenChange?.(true);
                     setTimeout(() => replyBoxRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 50);
                   }}
-                  className={`flex items-center justify-center gap-1.5 px-4 py-2.5 text-[13px] font-semibold transition-colors border ${
+                  className={`p-2.5 transition-colors border ${
                     linkedCalEvent
-                      ? 'flex-1 text-neutral-700 border-neutral-300 hover:bg-neutral-100'
+                      ? 'text-neutral-600 border-neutral-300 hover:bg-neutral-100'
                       : 'text-indigo-600 border-indigo-200 bg-indigo-50 hover:bg-indigo-100'
                   }`}
                 >
-                  <ArrowUturnLeftIcon className="w-3.5 h-3.5" />
-                  Reply
+                  <ArrowUturnLeftIcon className="w-4 h-4" />
                 </button>
               )}
 
@@ -848,16 +865,16 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
               {item.source === 'email' && sourceData?.provider ? (
                 <div className="relative" ref={moveMenuRef}>
                   <button
+                    title="Move to folder"
                     onClick={handleOpenMoveMenu}
                     disabled={isMoving}
-                    className={`px-4 py-2.5 text-[13px] font-semibold text-neutral-700 hover:bg-neutral-100 disabled:opacity-50 transition-colors border border-neutral-300 flex items-center justify-center gap-1.5${linkedCalEvent ? ' flex-1' : ''}`}
+                    className="p-2.5 text-neutral-600 hover:bg-neutral-100 disabled:opacity-50 transition-colors border border-neutral-300 flex items-center justify-center"
                   >
                     {isMoving ? (
-                      <div className="w-3.5 h-3.5 border-2 border-neutral-400 border-t-transparent rounded-full animate-spin" />
+                      <div className="w-4 h-4 border-2 border-neutral-400 border-t-transparent rounded-full animate-spin" />
                     ) : (
-                      <FolderArrowDownIcon className="w-3.5 h-3.5" />
+                      <FolderArrowDownIcon className="w-4 h-4" />
                     )}
-                    Move to
                   </button>
                   {showMoveMenu && (
                     <div className="absolute bottom-full mb-1 right-0 bg-white border border-neutral-200 shadow-lg min-w-[180px] z-50">
@@ -923,43 +940,64 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
                 </div>
               ) : null}
               {item.source === 'email' && sourceData?.provider && (
-                isArchiving ? (
-                  <div className="px-4 py-2.5 flex items-center gap-2 border border-indigo-200 bg-indigo-50 text-indigo-600">
-                    <div className="w-3.5 h-3.5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
-                    <span className="text-[13px] font-semibold">Archiving…</span>
-                  </div>
-                ) : archiveConfirmPending ? (
-                  <div className="flex items-center gap-1.5 px-3 py-2 border border-indigo-300 bg-indigo-50">
-                    <ArchiveBoxArrowDownIcon className="w-3.5 h-3.5 text-indigo-500 flex-shrink-0" />
-                    <span className="text-[12px] font-semibold text-indigo-800">Archive?</span>
-                    <button
-                      onClick={() => { setArchiveConfirmPending(false); handleArchiveSource(); }}
-                      className="ml-1 w-6 h-6 flex items-center justify-center bg-indigo-600 text-white hover:bg-indigo-700 transition-colors flex-shrink-0"
-                      title="Confirm"
-                    >
-                      <CheckIcon className="w-3.5 h-3.5" strokeWidth={2.5} />
+                archiveConfirmPending ? (
+                  <div className="flex items-center gap-1 px-2 py-1.5 border border-indigo-300 bg-indigo-50">
+                    <span className="text-[11px] font-semibold text-indigo-700 mr-1">Archive?</span>
+                    <button onClick={() => { setArchiveConfirmPending(false); handleArchiveSource(); }} className="w-5 h-5 flex items-center justify-center bg-indigo-600 text-white hover:bg-indigo-700 transition-colors" title="Confirm">
+                      <CheckIcon className="w-3 h-3" strokeWidth={2.5} />
                     </button>
-                    <button
-                      onClick={() => setArchiveConfirmPending(false)}
-                      className="w-6 h-6 flex items-center justify-center border border-neutral-300 text-neutral-500 hover:bg-neutral-100 transition-colors flex-shrink-0"
-                      title="Cancel"
-                    >
-                      <XMarkIcon className="w-3.5 h-3.5" />
+                    <button onClick={() => setArchiveConfirmPending(false)} className="w-5 h-5 flex items-center justify-center border border-neutral-300 text-neutral-500 hover:bg-neutral-100 transition-colors" title="Cancel">
+                      <XMarkIcon className="w-3 h-3" />
                     </button>
                   </div>
                 ) : (
                   <button
+                    title="Archive"
                     onClick={() => setArchiveConfirmPending(true)}
-                    className={`px-4 py-2.5 text-[13px] font-semibold text-neutral-600 hover:bg-neutral-100 transition-colors border border-neutral-300 flex items-center justify-center gap-2${linkedCalEvent ? ' flex-1' : ''}`}
+                    disabled={isArchiving}
+                    className="p-2.5 text-neutral-600 hover:bg-neutral-100 disabled:opacity-50 transition-colors border border-neutral-300 flex items-center justify-center"
                   >
-                    <ArchiveBoxArrowDownIcon className="w-4 h-4" />
-                    Archive
+                    {isArchiving
+                      ? <div className="w-4 h-4 border-2 border-neutral-400 border-t-transparent rounded-full animate-spin" />
+                      : <ArchiveBoxArrowDownIcon className="w-4 h-4" />
+                    }
                   </button>
                 )
               )}
 
-              {/* Workflows — always on the right of the secondary row */}
+              {/* Delete */}
+              {item.source === 'email' && sourceData?.provider && (
+                deleteConfirmPending ? (
+                  <div className="flex items-center gap-1 px-2 py-1.5 border border-red-200 bg-red-50">
+                    <span className="text-[11px] font-semibold text-red-700 mr-1">Delete?</span>
+                    <button onClick={() => { setDeleteConfirmPending(false); handleDeleteSource(); }} className="w-5 h-5 flex items-center justify-center bg-red-600 text-white hover:bg-red-700 transition-colors" title="Confirm">
+                      <CheckIcon className="w-3 h-3" strokeWidth={2.5} />
+                    </button>
+                    <button onClick={() => setDeleteConfirmPending(false)} className="w-5 h-5 flex items-center justify-center border border-neutral-300 text-neutral-500 hover:bg-neutral-100 transition-colors" title="Cancel">
+                      <XMarkIcon className="w-3 h-3" />
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    title="Delete"
+                    onClick={() => setDeleteConfirmPending(true)}
+                    disabled={isDeleting}
+                    className="p-2.5 text-red-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-50 transition-colors border border-neutral-300 flex items-center justify-center"
+                  >
+                    {isDeleting
+                      ? <div className="w-4 h-4 border-2 border-red-300 border-t-transparent rounded-full animate-spin" />
+                      : <TrashIcon className="w-4 h-4" />
+                    }
+                  </button>
+                )
+              )}
+
+              {/* Spacer */}
+              <div className="flex-1" />
+
+              {/* Workflows */}
               <button
+                title="Workflows"
                 onClick={() => {
                   if (!isOpeningWorkflow) {
                     if (rootRef.current) setPanelTop(rootRef.current.getBoundingClientRect().top);
@@ -967,14 +1005,12 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
                   }
                 }}
                 disabled={isOpeningWorkflow}
-                className={`px-3 py-2.5 text-[13px] font-semibold text-indigo-600 hover:bg-indigo-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors border border-indigo-200 flex items-center justify-center gap-1.5${linkedCalEvent ? ' flex-1' : ' flex-shrink-0'}`}
+                className="p-2.5 text-indigo-500 hover:bg-indigo-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors border border-indigo-200 flex items-center justify-center"
               >
-                {isOpeningWorkflow ? (
-                  <div className="w-3.5 h-3.5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
-                ) : (
-                  <PlayIcon className="w-3.5 h-3.5" />
-                )}
-                Workflows
+                {isOpeningWorkflow
+                  ? <div className="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
+                  : <PlayIcon className="w-4 h-4" />
+                }
               </button>
           </div>
         </div>

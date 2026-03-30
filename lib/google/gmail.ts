@@ -436,6 +436,15 @@ export async function archiveGmailThread(
   });
 }
 
+export async function trashGmailThread(
+  encryptedTokens: string,
+  threadId: string,
+  onTokenRefresh?: GmailTokenRefreshCallback,
+): Promise<void> {
+  const gmail = await getGmailClient(encryptedTokens, onTokenRefresh);
+  await gmail.users.threads.trash({ userId: 'me', id: threadId });
+}
+
 export async function sendGmailReply(params: SendGmailReplyParams): Promise<string> {
   const { encryptedTokens, threadId, to, subject, body, inReplyTo, references, attachments = [] } = params;
 

@@ -11,7 +11,7 @@ import WorkDetailInline from '@/components/inbox/work-detail-inline';
 import AiChatPanel from '@/components/shared/ai-chat-panel';
 import MeetingsColumn from '@/components/inbox/meetings-column';
 import OnboardingModal from '@/components/onboarding-modal';
-import { ArrowPathIcon, SparklesIcon, Bars3Icon, QueueListIcon, ArchiveBoxArrowDownIcon, XMarkIcon, MagnifyingGlassIcon, PencilSquareIcon, CalendarIcon, RectangleGroupIcon } from '@heroicons/react/24/outline';
+import { ArrowPathIcon, SparklesIcon, Bars3Icon, QueueListIcon, ArchiveBoxArrowDownIcon, XMarkIcon, MagnifyingGlassIcon, PencilSquareIcon, CalendarIcon, RectangleGroupIcon, TrashIcon } from '@heroicons/react/24/outline';
 import ComposePanel from '@/components/inbox/compose-panel';
 import { toast } from 'sonner';
 import type { CalendarEvent } from '@/lib/types/meetings';
@@ -49,7 +49,8 @@ export function InboxPageClient({
   const [density, setDensity] = useState<Density>('normal');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isBulkArchiving, setIsBulkArchiving] = useState(false);
-  const [isBulkDismissing, setIsBulkDismissing] = useState(false);
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
+  const [bulkDeleteConfirmPending, setBulkDeleteConfirmPending] = useState(false);
   const [bulkArchiveConfirmPending, setBulkArchiveConfirmPending] = useState(false);
 
   const [showDesk, setShowDesk] = useState(false);
@@ -369,7 +370,7 @@ export function InboxPageClient({
     });
   };
 
-  const clearSelection = () => { setSelectedIds(new Set()); setBulkArchiveConfirmPending(false); };
+  const clearSelection = () => { setSelectedIds(new Set()); setBulkArchiveConfirmPending(false); setBulkDeleteConfirmPending(false); };
 
   const handleBulkArchive = async () => {
     const ids = Array.from(selectedIds);
@@ -389,25 +390,22 @@ export function InboxPageClient({
     }
   };
 
-  const handleBulkDismiss = async () => {
+  const handleBulkDelete = async () => {
     const ids = Array.from(selectedIds);
-    setIsBulkDismissing(true);
+    setIsBulkDeleting(true);
     try {
       await Promise.all(ids.map(id =>
-        fetch(`/api/inbox/${id}/dismiss`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ reason: 'not_relevant' }),
-        })
+        fetch(`/api/inbox/${id}/delete-source`, { method: 'POST' })
       ));
       setInboxItems(prev => prev.filter(i => !ids.includes(i.id)));
       setSelectedItem(prev => (prev && ids.includes(prev.id) ? null : prev));
       clearSelection();
-      toast.success(`${ids.length} item${ids.length > 1 ? 's' : ''} dismissed`);
+      toast.success(`${ids.length} email${ids.length > 1 ? 's' : ''} deleted`);
     } catch {
-      toast.error('Could not dismiss items');
+      toast.error('Could not delete emails');
     } finally {
-      setIsBulkDismissing(false);
+      setIsBulkDeleting(false);
+      setBulkDeleteConfirmPending(false);
     }
   };
 
@@ -744,62 +742,61 @@ export function InboxPageClient({
               {selectedIds.size > 0 && (
                 <div className="flex-shrink-0 flex items-center gap-2 px-3 py-2 border-b border-indigo-100 bg-indigo-50 min-h-[36px]">
                   {isBulkArchiving ? (
-                    /* Loading state — full row */
                     <div className="flex items-center gap-2 flex-1">
                       <div className="w-3 h-3 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
-                      <span className="text-[11px] font-semibold text-indigo-700">
-                        Archiving {selectedIds.size} email{selectedIds.size > 1 ? 's' : ''}…
-                      </span>
+                      <span className="text-[11px] font-semibold text-indigo-700">Archiving…</span>
+                    </div>
+                  ) : isBulkDeleting ? (
+                    <div className="flex items-center gap-2 flex-1">
+                      <div className="w-3 h-3 border-2 border-red-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+                      <span className="text-[11px] font-semibold text-red-700">Deleting…</span>
                     </div>
                   ) : bulkArchiveConfirmPending ? (
-                    /* Confirm state — full row */
                     <>
                       <ArchiveBoxArrowDownIcon className="w-3.5 h-3.5 text-indigo-500 flex-shrink-0" />
                       <span className="text-[11px] font-semibold text-indigo-800 flex-1">
                         Archive {selectedIds.size} email{selectedIds.size > 1 ? 's' : ''}?
                       </span>
-                      <button
-                        onClick={() => { setBulkArchiveConfirmPending(false); handleBulkArchive(); }}
-                        className="px-2.5 py-1 text-[11px] font-semibold bg-indigo-600 text-white hover:bg-indigo-700 transition-colors flex-shrink-0"
-                      >
+                      <button onClick={() => { setBulkArchiveConfirmPending(false); handleBulkArchive(); }} className="px-2.5 py-1 text-[11px] font-semibold bg-indigo-600 text-white hover:bg-indigo-700 transition-colors">
                         Confirm
                       </button>
-                      <button
-                        onClick={() => setBulkArchiveConfirmPending(false)}
-                        className="p-1 text-indigo-400 hover:text-indigo-700 transition-colors flex-shrink-0"
-                        title="Cancel"
-                      >
+                      <button onClick={() => setBulkArchiveConfirmPending(false)} className="p-1 text-indigo-400 hover:text-indigo-700 transition-colors" title="Cancel">
+                        <XMarkIcon className="w-3.5 h-3.5" />
+                      </button>
+                    </>
+                  ) : bulkDeleteConfirmPending ? (
+                    <>
+                      <TrashIcon className="w-3.5 h-3.5 text-red-500 flex-shrink-0" />
+                      <span className="text-[11px] font-semibold text-red-800 flex-1">
+                        Delete {selectedIds.size} email{selectedIds.size > 1 ? 's' : ''}?
+                      </span>
+                      <button onClick={() => { setBulkDeleteConfirmPending(false); handleBulkDelete(); }} className="px-2.5 py-1 text-[11px] font-semibold bg-red-600 text-white hover:bg-red-700 transition-colors">
+                        Confirm
+                      </button>
+                      <button onClick={() => setBulkDeleteConfirmPending(false)} className="p-1 text-red-400 hover:text-red-700 transition-colors" title="Cancel">
                         <XMarkIcon className="w-3.5 h-3.5" />
                       </button>
                     </>
                   ) : (
-                    /* Normal state */
                     <>
                       <span className="text-[11px] font-semibold text-indigo-700 flex-1">
                         {selectedIds.size} selected
                       </span>
                       <button
                         onClick={() => setBulkArchiveConfirmPending(true)}
-                        disabled={isBulkDismissing}
-                        className="flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-indigo-700 border border-indigo-200 bg-white hover:bg-indigo-50 disabled:opacity-50 transition-colors"
+                        className="flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-indigo-700 border border-indigo-200 bg-white hover:bg-indigo-50 transition-colors"
                       >
                         <ArchiveBoxArrowDownIcon className="w-3 h-3" />
                         Archive
                       </button>
                       <button
-                        onClick={handleBulkDismiss}
-                        disabled={isBulkDismissing}
-                        className="px-2 py-1 text-[11px] font-semibold text-indigo-700 border border-indigo-200 bg-white hover:bg-indigo-50 disabled:opacity-50 transition-colors"
+                        onClick={() => setBulkDeleteConfirmPending(true)}
+                        className="flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-red-600 border border-red-200 bg-white hover:bg-red-50 transition-colors"
                       >
-                        {isBulkDismissing ? (
-                          <div className="w-3 h-3 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
-                        ) : 'Dismiss'}
+                        <TrashIcon className="w-3 h-3" />
+                        Delete
                       </button>
-                      <button
-                        onClick={clearSelection}
-                        className="p-1 text-indigo-300 hover:text-indigo-600 transition-colors"
-                        title="Clear selection"
-                      >
+                      <button onClick={clearSelection} className="p-1 text-indigo-300 hover:text-indigo-600 transition-colors" title="Clear selection">
                         <XMarkIcon className="w-3.5 h-3.5" />
                       </button>
                     </>

@@ -391,6 +391,16 @@ export async function archiveOutlookMessage(
     .post({ destinationId: 'archive' });
 }
 
+export async function trashOutlookMessage(
+  encryptedTokens: string,
+  outlookMessageId: string,
+): Promise<void> {
+  const client = await getGraphClient(encryptedTokens);
+  await client
+    .api(`/me/messages/${outlookMessageId}/move`)
+    .post({ destinationId: 'deleteditems' });
+}
+
 export async function sendOutlookReply(params: SendOutlookReplyParams): Promise<string> {
   const { encryptedTokens, messageId, body, attachments = [] } = params;
 
