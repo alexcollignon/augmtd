@@ -13,6 +13,7 @@ import {
   SparklesIcon,
   DocumentTextIcon,
   MicrophoneIcon,
+  PencilSquareIcon,
 } from '@heroicons/react/24/outline';
 import type { CalendarEvent } from '@/lib/types/meetings';
 import {
@@ -98,6 +99,10 @@ interface MeetingDetailPanelProps {
   isOpen: boolean;
   onClose: () => void;
   onRefresh?: () => void;
+  botState?: string | null;
+  onScheduled?: (eventId: string) => void;
+  onCancelled?: (eventId: string) => void;
+  onEdit?: () => void;
 }
 
 export default function MeetingDetailPanel({
@@ -106,11 +111,20 @@ export default function MeetingDetailPanel({
   isOpen,
   onClose,
   onRefresh,
+  botState: botStateProp,
+  onScheduled,
+  onCancelled,
+  onEdit,
 }: MeetingDetailPanelProps) {
   const { primary } = formatMeetingTime(event.start_time, event.end_time);
   const duration = calculateDuration(event.start_time, event.end_time);
   const vipAttendees = getVIPAttendees(event.attendees);
   const isOrganizer = isUserOrganizer(event, userEmail);
+  const botState = botStateProp ?? event.attendee_bot_state ?? null;
+  const isMeet = !!event.meeting_link?.includes('meet.google.com');
+  const isUpcoming = event.meeting_status !== 'completed';
+  const [schedulingBot, setSchedulingBot] = useState(false);
+  const [cancellingBot, setCancellingBot] = useState(false);
 
   // Transcript state
   const [transcript, setTranscript] = useState<MeetingTranscript | null>(null);
@@ -201,13 +215,26 @@ export default function MeetingDetailPanel({
                             Meeting Details
                           </Dialog.Title>
                         </div>
-                        <button
-                          type="button"
-                          className="rounded-md text-neutral-400 hover:text-neutral-600 transition-colors"
-                          onClick={onClose}
-                        >
-                          <XMarkIcon className="h-5 w-5" />
-                        </button>
+                        <div className="flex items-center gap-2">
+                          {onEdit && (
+                            <button
+                              type="button"
+                              onClick={onEdit}
+                              title="Edit meeting"
+                              className="flex items-center gap-1.5 px-2.5 py-1 text-[12px] font-medium text-neutral-600 border border-neutral-200 hover:border-indigo-300 hover:text-indigo-600 transition-colors"
+                            >
+                              <PencilSquareIcon className="w-3.5 h-3.5" />
+                              Edit
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            className="rounded-md text-neutral-400 hover:text-neutral-600 transition-colors"
+                            onClick={onClose}
+                          >
+                            <XMarkIcon className="h-5 w-5" />
+                          </button>
+                        </div>
                       </div>
 
                       {/* Meeting title */}
@@ -340,6 +367,90 @@ export default function MeetingDetailPanel({
                               <PrepMarkdown text={prep.context} />
                             </div>
                           )}
+                        </div>
+                      )}
+
+                      {/* Meeting assistant — Google Meet + upcoming */}
+                      {isMeet && isUpcoming && (
+                        <div className="border-t border-neutral-200 pt-6">
+                          <div className="flex items-center gap-2 text-xs font-medium text-neutral-500 uppercase tracking-wide mb-3">
+                            <MicrophoneIcon className="w-4 h-4 text-indigo-500" />
+                            Meeting assistant
+                          </div>
+                          <div onClick={(e) => e.stopPropagation()}>
+                            {botState === 'joining' ? (
+                              <span className="inline-flex items-center gap-1.5 text-[12px] font-medium text-amber-600">
+                                <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                                Joining meeting…
+                              </span>
+                            ) : botState === 'recording' ? (
+                              <span className="inline-flex items-center gap-1.5 text-[12px] font-medium text-red-600">
+                                <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                                Recording
+                              </span>
+                            ) : botState === 'done' ? (
+                              <span className="text-[12px] text-neutral-400">● Transcribed</span>
+                            ) : botState === 'cancelled' ? (
+                              schedulingBot ? (
+                                <span className="text-[12px] text-neutral-400 animate-pulse">Scheduling…</span>
+                              ) : (
+                                <button
+                                  onClick={async () => {
+                                    setSchedulingBot(true);
+                                    try {
+                                      const res = await fetch(`/api/meetings/${event.id}/enable-bot`, { method: 'POST' });
+                                      if (res.ok) onScheduled?.(event.id);
+                                      else setSchedulingBot(false);
+                                    } catch { setSchedulingBot(false); }
+                                  }}
+                                  className="text-[12px] text-neutral-500 hover:text-indigo-600 transition-colors"
+                                >
+                                  ↺ Re-enable assistant
+                                </button>
+                              )
+                            ) : botState === 'scheduled' ? (
+                              cancellingBot ? (
+                                <span className="text-[12px] text-neutral-400 animate-pulse">Removing…</span>
+                              ) : (
+                                <div className="flex items-center justify-between">
+                                  <span className="inline-flex items-center gap-1.5 text-[12px] font-medium text-emerald-600">
+                                    <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                                    Assistant scheduled
+                                  </span>
+                                  <button
+                                    onClick={async () => {
+                                      setCancellingBot(true);
+                                      let ok = false;
+                                      try {
+                                        const res = await fetch(`/api/meetings/${event.id}/cancel-bot`, { method: 'DELETE' });
+                                        ok = res.ok;
+                                      } finally { setCancellingBot(false); }
+                                      if (ok) { setSchedulingBot(false); onCancelled?.(event.id); }
+                                    }}
+                                    className="text-[11px] text-neutral-400 hover:text-red-500 transition-colors"
+                                  >
+                                    Remove
+                                  </button>
+                                </div>
+                              )
+                            ) : schedulingBot ? (
+                              <span className="text-[12px] text-neutral-400 animate-pulse">Scheduling…</span>
+                            ) : (
+                              <button
+                                onClick={async () => {
+                                  setSchedulingBot(true);
+                                  try {
+                                    const res = await fetch(`/api/meetings/${event.id}/schedule-bot`, { method: 'POST' });
+                                    if (res.ok) onScheduled?.(event.id);
+                                    else setSchedulingBot(false);
+                                  } catch { setSchedulingBot(false); }
+                                }}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium text-indigo-600 border border-indigo-200 hover:bg-indigo-50 transition-colors"
+                              >
+                                + Send assistant to meeting
+                              </button>
+                            )}
+                          </div>
                         </div>
                       )}
 

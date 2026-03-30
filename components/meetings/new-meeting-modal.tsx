@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { XMarkIcon, VideoCameraIcon } from '@heroicons/react/24/outline';
 import { toast } from 'sonner';
+import type { CalendarEvent } from '@/lib/types/meetings';
 
 type Connection = { id: string; provider: string; email?: string };
 
@@ -13,9 +14,33 @@ interface NewMeetingModalProps {
   onClose: () => void;
   onSuccess: () => void;
   initialDate?: Date;
+  initialTitle?: string;
+  /** When provided — edit mode: pre-fills form, calls PATCH */
+  event?: CalendarEvent;
 }
 
-export default function NewMeetingModal({ isOpen, onClose, onSuccess, initialDate }: NewMeetingModalProps) {
+function toLocalDateStr(iso: string) {
+  return new Date(iso).toISOString().slice(0, 10);
+}
+
+function toLocalTimeStr(iso: string) {
+  const d = new Date(iso);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+function calcDurationMins(start: string, end: string) {
+  return Math.round((new Date(end).getTime() - new Date(start).getTime()) / 60000);
+}
+
+function snapDuration(mins: number) {
+  const snap = DURATION_OPTIONS.reduce((prev, cur) =>
+    Math.abs(cur - mins) < Math.abs(prev - mins) ? cur : prev
+  );
+  return snap;
+}
+
+export default function NewMeetingModal({ isOpen, onClose, onSuccess, initialDate, initialTitle, event }: NewMeetingModalProps) {
+  const isEdit = !!event;
   const [connections, setConnections] = useState<Connection[]>([]);
   const [form, setForm] = useState({
     title: '',
@@ -38,24 +63,42 @@ export default function NewMeetingModal({ isOpen, onClose, onSuccess, initialDat
       .then(d => {
         const conns: Connection[] = d.connections ?? [];
         setConnections(conns);
-        if (conns.length > 0) setForm(f => ({ ...f, connectionId: conns[0].id }));
+        if (conns.length > 0 && !isEdit) setForm(f => ({ ...f, connectionId: conns[0].id }));
       })
       .catch(() => {});
   }, [isOpen]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Reset form on open
+  // Reset / pre-fill form on open
   useEffect(() => {
     if (!isOpen) return;
-    const d = initialDate ?? new Date();
-    setForm(f => ({
-      ...f,
-      title: '',
-      date: d.toISOString().slice(0, 10),
-      time: '',
-      attendees: '',
-      notes: '',
-      includeMeetLink: true,
-    }));
+    if (isEdit && event) {
+      const durMins = calcDurationMins(event.start_time, event.end_time);
+      setForm(f => ({
+        ...f,
+        title: event.title,
+        date: toLocalDateStr(event.start_time),
+        time: toLocalTimeStr(event.start_time),
+        duration: snapDuration(durMins),
+        attendees: event.attendees.map(a => a.email).filter(Boolean).join(', '),
+        notes: event.description ?? '',
+        includeMeetLink: !!event.meeting_link,
+      }));
+    } else {
+      const d = initialDate ?? new Date();
+      const hasTime = !!(initialDate && (initialDate.getHours() !== 0 || initialDate.getMinutes() !== 0));
+      const timeStr = hasTime
+        ? `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+        : '';
+      setForm(f => ({
+        ...f,
+        title: initialTitle ?? '',
+        date: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`,
+        time: timeStr,
+        attendees: '',
+        notes: '',
+        includeMeetLink: true,
+      }));
+    }
     setFormState('idle');
     setFormError(null);
   }, [isOpen]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -68,7 +111,7 @@ export default function NewMeetingModal({ isOpen, onClose, onSuccess, initialDat
     return () => document.removeEventListener('keydown', handler);
   }, [isOpen, onClose]);
 
-  const handleSendInvite = async () => {
+  const handleSubmit = async () => {
     const { title, date, time, duration, attendees, notes, connectionId, includeMeetLink } = form;
     if (!title.trim() || !date || !time) { setFormError('Title, date, and time are required.'); return; }
     const parsed = attendees.split(',').map(s => s.trim()).filter(Boolean);
@@ -76,25 +119,27 @@ export default function NewMeetingModal({ isOpen, onClose, onSuccess, initialDat
 
     setFormState('sending');
     setFormError(null);
+
     try {
       const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
       const startTime = new Date(`${date}T${time}`).toISOString();
       const endTime = new Date(new Date(`${date}T${time}`).getTime() + duration * 60000).toISOString();
 
-      const res = await fetch('/api/meetings/create', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: title.trim(),
-          startTime,
-          endTime,
-          timezone,
-          attendees: parsed,
-          notes: notes.trim() || undefined,
-          connectionId: connectionId || undefined,
-          includeMeetLink,
-        }),
-      });
+      let res: Response;
+      if (isEdit && event) {
+        res = await fetch(`/api/meetings/${event.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title: title.trim(), startTime, endTime, timezone, attendees: parsed, notes: notes.trim() || undefined }),
+        });
+      } else {
+        res = await fetch('/api/meetings/create', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title: title.trim(), startTime, endTime, timezone, attendees: parsed, notes: notes.trim() || undefined, connectionId: connectionId || undefined, includeMeetLink }),
+        });
+      }
+
       const data = await res.json();
       if (!res.ok) {
         if (data?.error === 'calendar_scope_required') {
@@ -105,10 +150,10 @@ export default function NewMeetingModal({ isOpen, onClose, onSuccess, initialDat
         throw new Error(data?.error ?? 'Unknown error');
       }
       setFormState('sent');
-      toast.success('Invitation sent');
+      toast.success(isEdit ? 'Meeting updated' : 'Invitation sent');
       setTimeout(() => { onClose(); onSuccess(); }, 1200);
     } catch (err: any) {
-      setFormError(err?.message ?? 'Failed to send invitation');
+      setFormError(err?.message ?? 'Failed to save');
       setFormState('error');
     }
   };
@@ -117,22 +162,16 @@ export default function NewMeetingModal({ isOpen, onClose, onSuccess, initialDat
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
-      {/* Backdrop */}
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
-
-      {/* Panel */}
       <div className="relative w-full max-w-md mx-4 bg-white shadow-2xl flex flex-col max-h-[90vh] overflow-y-auto">
-        {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-neutral-100">
-          <h2 className="text-[15px] font-semibold text-neutral-900">New meeting</h2>
+          <h2 className="text-[15px] font-semibold text-neutral-900">{isEdit ? 'Edit meeting' : 'New meeting'}</h2>
           <button onClick={onClose} className="p-1.5 hover:bg-neutral-100 rounded transition-colors">
             <XMarkIcon className="w-5 h-5 text-neutral-400" />
           </button>
         </div>
 
-        {/* Form */}
         <div className="px-5 py-5 space-y-3">
-          {/* Title */}
           <input
             type="text"
             placeholder="Title"
@@ -142,7 +181,6 @@ export default function NewMeetingModal({ isOpen, onClose, onSuccess, initialDat
             className="w-full text-[13px] border border-neutral-200 px-3 py-2 outline-none focus:border-indigo-400 placeholder:text-neutral-400"
           />
 
-          {/* Date + Time */}
           <div className="flex gap-2">
             <input
               type="date"
@@ -158,7 +196,6 @@ export default function NewMeetingModal({ isOpen, onClose, onSuccess, initialDat
             />
           </div>
 
-          {/* Duration */}
           <select
             value={form.duration}
             onChange={e => setForm(f => ({ ...f, duration: Number(e.target.value) }))}
@@ -169,7 +206,6 @@ export default function NewMeetingModal({ isOpen, onClose, onSuccess, initialDat
             ))}
           </select>
 
-          {/* Attendees */}
           <input
             type="text"
             placeholder="Attendees (comma-separated emails)"
@@ -178,7 +214,6 @@ export default function NewMeetingModal({ isOpen, onClose, onSuccess, initialDat
             className="w-full text-[13px] border border-neutral-200 px-3 py-2 outline-none focus:border-indigo-400 placeholder:text-neutral-400"
           />
 
-          {/* Notes */}
           <textarea
             rows={2}
             placeholder="Notes (optional)"
@@ -187,8 +222,8 @@ export default function NewMeetingModal({ isOpen, onClose, onSuccess, initialDat
             className="w-full text-[13px] border border-neutral-200 px-3 py-2 outline-none focus:border-indigo-400 placeholder:text-neutral-400 resize-none"
           />
 
-          {/* Account picker — only when > 1 connection */}
-          {connections.length > 1 && (
+          {/* Account picker — only when > 1 connection and not editing */}
+          {!isEdit && connections.length > 1 && (
             <div>
               <p className="text-[11px] font-semibold text-neutral-400 uppercase tracking-wide mb-1.5">Send from</p>
               <div className="space-y-1.5">
@@ -212,36 +247,36 @@ export default function NewMeetingModal({ isOpen, onClose, onSuccess, initialDat
             </div>
           )}
 
-          {/* Meeting link toggle */}
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={form.includeMeetLink}
-              onChange={e => setForm(f => ({ ...f, includeMeetLink: e.target.checked }))}
-              className="accent-indigo-600"
-            />
-            <VideoCameraIcon className="w-4 h-4 text-neutral-400" />
-            <span className="text-[13px] text-neutral-600">
-              {connections.find(c => c.id === form.connectionId)?.provider === 'outlook'
-                ? 'Include Teams link'
-                : 'Include Google Meet link'}
-            </span>
-          </label>
+          {/* Meet link toggle — create only */}
+          {!isEdit && (
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={form.includeMeetLink}
+                onChange={e => setForm(f => ({ ...f, includeMeetLink: e.target.checked }))}
+                className="accent-indigo-600"
+              />
+              <VideoCameraIcon className="w-4 h-4 text-neutral-400" />
+              <span className="text-[13px] text-neutral-600">
+                {connections.find(c => c.id === form.connectionId)?.provider === 'outlook'
+                  ? 'Include Teams link'
+                  : 'Include Google Meet link'}
+              </span>
+            </label>
+          )}
 
-          {/* Error */}
           {formError && <p className="text-[12px] text-red-500">{formError}</p>}
 
-          {/* Actions */}
           {formState === 'sent' ? (
-            <p className="text-[13px] text-green-600 font-medium">Invitation sent ✓</p>
+            <p className="text-[13px] text-green-600 font-medium">{isEdit ? 'Meeting updated ✓' : 'Invitation sent ✓'}</p>
           ) : (
             <div className="flex gap-2 pt-1">
               <button
-                onClick={handleSendInvite}
+                onClick={handleSubmit}
                 disabled={formState === 'sending'}
                 className="flex-1 py-2 text-[13px] font-semibold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
-                {formState === 'sending' ? 'Sending…' : 'Send invitation'}
+                {formState === 'sending' ? 'Saving…' : isEdit ? 'Save changes' : 'Send invitation'}
               </button>
               <button
                 onClick={onClose}

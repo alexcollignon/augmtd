@@ -1,15 +1,15 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import Link from 'next/link';
+import { useState } from 'react';
 import {
   CalendarIcon,
-  ChevronRightIcon, ChevronDownIcon, ChevronUpIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
   PlusIcon,
 } from '@heroicons/react/24/outline';
 import type { CalendarEvent } from '@/lib/types/meetings';
-import MeetingCard from '@/components/meetings/meeting-card';
-import MonthCalendar from '@/components/meetings/month-calendar';
+import CalendarSidebar from '@/components/meetings/calendar-sidebar';
+import WeekCalendar from '@/components/meetings/week-calendar';
 import NewMeetingModal from '@/components/meetings/new-meeting-modal';
 
 interface MeetingsColumnProps {
@@ -21,303 +21,60 @@ interface MeetingsColumnProps {
   onRefresh?: () => void;
 }
 
-function MeetingSection({
-  title,
-  count,
-  isCollapsed,
-  onToggle,
-  canCollapse = true,
-  children,
-}: {
-  title: string;
-  count: number;
-  isCollapsed: boolean;
-  onToggle: () => void;
-  canCollapse?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="mb-2">
-      <button
-        onClick={canCollapse ? onToggle : undefined}
-        disabled={!canCollapse}
-        className={`w-full h-6 flex items-center justify-between px-1 mb-0.5 ${canCollapse ? 'cursor-pointer' : 'cursor-default'}`}
-      >
-        <h3 className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wider">
-          {title} <span className="text-neutral-300 font-normal">({count})</span>
-        </h3>
-        {canCollapse && (
-          isCollapsed
-            ? <ChevronDownIcon className="w-3 h-3 text-neutral-300" />
-            : <ChevronUpIcon className="w-3 h-3 text-neutral-300" />
-        )}
-      </button>
-      {!isCollapsed && <div>{children}</div>}
-    </div>
-  );
-}
-
-function getBotStateChip(state?: string | null) {
-  if (!state || state === 'scheduled' || state === 'done') return null;
-  if (state === 'joining') return { label: 'Joining', className: 'text-blue-600 bg-blue-50' };
-  if (state === 'recording') return { label: 'Recording', className: 'text-red-600 bg-red-50' };
-  if (state === 'processing') return { label: 'Transcribing', className: 'text-amber-600 bg-amber-50' };
-  if (state === 'failed') return { label: 'Failed', className: 'text-red-600 bg-red-50' };
-  return null;
-}
-
-function CompletedMeetingRow({ event }: { event: CalendarEvent }) {
-  const chip = getBotStateChip(event.attendee_bot_state);
-  return (
-    <div className="px-1 py-1.5 flex items-center justify-between gap-2">
-      <p className="text-[12px] text-neutral-700 truncate flex-1 leading-tight">{event.title}</p>
-      <div className="flex items-center gap-1.5 flex-shrink-0">
-        {chip && (
-          <span className={`text-[10px] font-medium px-1.5 py-0.5 ${chip.className}`}>
-            {chip.label}
-          </span>
-        )}
-        <Link
-          href={`/meetings/${event.id}`}
-          className="text-[10px] text-indigo-500 hover:underline font-medium"
-        >
-          View
-        </Link>
-      </div>
-    </div>
-  );
-}
-
-function CompletedTodaySection({ meetings }: { meetings: CalendarEvent[] }) {
-  const hasProcessing = meetings.some(m =>
-    m.attendee_bot_state === 'joining' ||
-    m.attendee_bot_state === 'recording' ||
-    m.attendee_bot_state === 'processing'
-  );
-  const [collapsed, setCollapsed] = useState(!hasProcessing);
-
-  useEffect(() => {
-    if (hasProcessing) setCollapsed(false);
-  }, [hasProcessing]);
-
-  if (meetings.length === 0) return null;
-
-  return (
-    <div className="mt-3 pt-3 border-t border-neutral-100">
-      <button
-        onClick={() => setCollapsed(c => !c)}
-        className="w-full h-6 flex items-center justify-between px-1 mb-0.5"
-      >
-        <h3 className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wider">
-          Completed today <span className="font-normal text-neutral-300">({meetings.length})</span>
-        </h3>
-        {collapsed
-          ? <ChevronDownIcon className="w-3 h-3 text-neutral-300" />
-          : <ChevronUpIcon className="w-3 h-3 text-neutral-300" />}
-      </button>
-      {!collapsed && (
-        <div className="space-y-0.5">
-          {meetings.map(m => <CompletedMeetingRow key={m.id} event={m} />)}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function MonthView({
-  meetings,
-  userEmail,
-  onRefresh,
-  onNewMeeting,
-}: {
-  meetings: CalendarEvent[];
-  userEmail: string;
-  onRefresh?: () => void;
-  onNewMeeting?: (date: Date) => void;
-}) {
-  const now = new Date();
-  const todayStr = now.toDateString();
-  const [selectedDateStr, setSelectedDateStr] = useState(todayStr);
-
-  const completedToday = meetings.filter(m =>
-    m.meeting_status === 'completed' &&
-    new Date(m.end_time).toDateString() === todayStr
-  );
-
-  return (
-    <div>
-      <MonthCalendar
-        meetings={meetings}
-        userEmail={userEmail}
-        selectedDateStr={selectedDateStr}
-        onSelectDate={setSelectedDateStr}
-        onNewMeeting={onNewMeeting}
-        compact
-      />
-      <div className="border-t border-neutral-100 pt-3 mt-3">
-        <RollingWeekView meetings={meetings} userEmail={userEmail} onRefresh={onRefresh} focusDateStr={selectedDateStr} />
-        <CompletedTodaySection meetings={completedToday} />
-      </div>
-    </div>
-  );
-}
-
-function RollingWeekView({
-  meetings,
-  userEmail,
-  onRefresh,
-  focusDateStr,
-}: {
-  meetings: CalendarEvent[];
-  userEmail: string;
-  onRefresh?: () => void;
-  focusDateStr?: string;
-}) {
-  const now = new Date();
-  const todayStr = now.toDateString();
-  const isFocused = focusDateStr && focusDateStr !== todayStr;
-
-  // When a specific date is selected, show just that day
-  if (isFocused) {
-    const dayMeetings = meetings.filter(m =>
-      new Date(m.start_time).toDateString() === focusDateStr
-    );
-    const focusDate = new Date(focusDateStr!);
-    const label = focusDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-    if (dayMeetings.length === 0) {
-      return <p className="text-[12px] text-neutral-400 text-center py-4">{label} — no meetings</p>;
-    }
-    return (
-      <div className="space-y-3">
-        <div>
-          <p className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wider mb-1 px-1">{label}</p>
-          {dayMeetings.map(m => <MeetingCard key={m.id} event={m} userEmail={userEmail} onRefresh={onRefresh} />)}
-        </div>
-      </div>
-    );
-  }
-
-  // Default: rolling 7-day view from today
-  const days = Array.from({ length: 7 }, (_, i) => {
-    const d = new Date(now);
-    d.setDate(now.getDate() + i);
-    d.setHours(0, 0, 0, 0);
-    return d;
-  });
-
-  // Only surface genuinely active meetings (end_time must be in the future)
-  const inProgress = meetings.filter(m =>
-    (m.meeting_status === 'in_progress' || m.meeting_status === 'starting_soon') &&
-    new Date(m.end_time) > now
-  );
-
-  // Group upcoming meetings by day string
-  const byDay = new Map<string, CalendarEvent[]>();
-  for (const m of meetings) {
-    if (inProgress.includes(m)) continue;
-    if (new Date(m.end_time) <= now) continue; // skip already-ended meetings
-    const key = new Date(m.start_time).toDateString();
-    if (!byDay.has(key)) byDay.set(key, []);
-    byDay.get(key)!.push(m);
-  }
-
-  const hasAny = inProgress.length > 0 || days.some(d => (byDay.get(d.toDateString()) ?? []).length > 0);
-
-  if (!hasAny) {
-    return <p className="text-[12px] text-neutral-400 text-center py-8">No meetings in the next 7 days</p>;
-  }
-
-  return (
-    <div className="space-y-3">
-      {inProgress.length > 0 && (
-        <div>
-          <p className="text-[10px] font-semibold text-indigo-500 uppercase tracking-wider mb-1 px-1">Now</p>
-          {inProgress.map(m => <MeetingCard key={m.id} event={m} userEmail={userEmail} onRefresh={onRefresh} />)}
-        </div>
-      )}
-      {days.map((day, i) => {
-        const dayMeetings = byDay.get(day.toDateString()) ?? [];
-        if (dayMeetings.length === 0) return null;
-        const isToday = day.toDateString() === todayStr;
-        const isTomorrow = i === 1;
-        const label = isToday ? 'Today' : isTomorrow ? 'Tomorrow' : day.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-        return (
-          <div key={day.toDateString()}>
-            <p className={`text-[10px] font-semibold uppercase tracking-wider mb-1 px-1 ${isToday ? 'text-indigo-500' : 'text-neutral-400'}`}>
-              {label}
-            </p>
-            {dayMeetings.map(m => <MeetingCard key={m.id} event={m} userEmail={userEmail} onRefresh={onRefresh} />)}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
 export default function MeetingsColumn({ isOpen, onToggle, meetings, loading, userEmail, onRefresh }: MeetingsColumnProps) {
-  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(
-    new Set(['completed', 'next_week'])
-  );
   const [showNewForm, setShowNewForm] = useState(false);
   const [initialDate, setInitialDate] = useState<Date | undefined>(undefined);
+  const [botStateMap, setBotStateMap] = useState<Map<string, string>>(new Map());
+  const [calendarView, setCalendarView] = useState<'month' | 'week'>('month');
 
-  const toggleSection = (section: string) => {
-    setCollapsedSections(prev => {
-      const next = new Set(prev);
-      next.has(section) ? next.delete(section) : next.add(section);
-      return next;
-    });
-  };
-
-  const now = new Date();
-  const tomorrow = new Date(now);
-  tomorrow.setDate(tomorrow.getDate() + 1);
-
-  const daysToSunday = now.getDay() === 0 ? 7 : 7 - now.getDay();
-  const endOfWeek = new Date(now);
-  endOfWeek.setDate(now.getDate() + daysToSunday);
-  endOfWeek.setHours(0, 0, 0, 0);
-
-  const endOfNextWeek = new Date(endOfWeek);
-  endOfNextWeek.setDate(endOfWeek.getDate() + 7);
-
-  const grouped = {
-    in_progress: meetings.filter(m => m.meeting_status === 'in_progress'),
-    starting_soon: meetings.filter(m => m.meeting_status === 'starting_soon'),
-    today: meetings.filter(m => {
-      if (m.meeting_status !== 'upcoming') return false;
-      return new Date(m.start_time).toDateString() === now.toDateString();
-    }),
-    completed_recent: meetings.filter(m => {
-      if (m.meeting_status !== 'completed') return false;
-      return new Date(m.end_time).toDateString() === now.toDateString();
-    }),
-    tomorrow: meetings.filter(m => {
-      if (m.meeting_status !== 'upcoming') return false;
-      return new Date(m.start_time).toDateString() === tomorrow.toDateString();
-    }),
-    this_week: meetings.filter(m => {
-      if (m.meeting_status !== 'upcoming') return false;
-      const start = new Date(m.start_time);
-      return start > tomorrow && start < endOfWeek && start.toDateString() !== tomorrow.toDateString();
-    }),
-    next_week: meetings.filter(m => {
-      if (m.meeting_status !== 'upcoming') return false;
-      const start = new Date(m.start_time);
-      return start >= endOfWeek && start < endOfNextWeek;
-    }),
-  };
+  const handleScheduled = (eventId: string) => setBotStateMap(prev => new Map(prev).set(eventId, 'scheduled'));
+  const handleCancelled = (eventId: string) => setBotStateMap(prev => new Map(prev).set(eventId, 'cancelled'));
 
   return (
+    <>
+    {/* Week view full-screen overlay */}
+    {isOpen && calendarView === 'week' && (
+      <div className="fixed right-0 top-0 bottom-0 z-40 w-[680px] bg-white border-l border-neutral-200 shadow-xl flex flex-col">
+        <div className="flex-shrink-0 h-10 flex items-center justify-between px-3 border-b border-neutral-200">
+          <button
+            onClick={() => setCalendarView('month')}
+            className="flex items-center gap-1.5 text-[13px] text-neutral-500 hover:text-neutral-800 transition-colors"
+          >
+            <ChevronLeftIcon className="w-3.5 h-3.5" />
+            <span className="font-medium">Back</span>
+          </button>
+          <span className="text-[13px] font-semibold text-neutral-700">Calendar</span>
+          <button
+            onClick={() => { setInitialDate(undefined); setShowNewForm(true); }}
+            title="New meeting"
+            className="p-1 text-indigo-400 hover:text-indigo-600 transition-colors"
+          >
+            <PlusIcon className="w-3.5 h-3.5" />
+          </button>
+        </div>
+        <div className="flex-1 min-h-0">
+          <WeekCalendar
+            meetings={meetings}
+            userEmail={userEmail}
+            botStateMap={botStateMap}
+            onScheduled={handleScheduled}
+            onCancelled={handleCancelled}
+            onRefresh={onRefresh}
+            onNewMeeting={(date) => { setInitialDate(date); setShowNewForm(true); }}
+          />
+        </div>
+      </div>
+    )}
+
     <div
-      className={`flex-shrink-0 border-l border-neutral-200 flex flex-col bg-white transition-all duration-200 overflow-hidden ${
+      className={`flex-shrink-0 border-l border-neutral-200 flex flex-col bg-white transition-all duration-300 overflow-hidden ${
         isOpen ? 'w-[300px]' : 'w-9'
       }`}
     >
       {/* Header */}
       <div
         className={`flex-shrink-0 h-10 flex items-center border-b border-neutral-200 ${
-          isOpen ? 'justify-between px-4' : 'justify-center'
+          isOpen ? 'justify-between px-3' : 'justify-center'
         }`}
       >
         {isOpen ? (
@@ -330,15 +87,30 @@ export default function MeetingsColumn({ isOpen, onToggle, meetings, loading, us
               <CalendarIcon className="w-4 h-4 text-neutral-500" />
               <span className="text-[13px] font-semibold text-neutral-700">Calendar</span>
             </button>
-            <div className="flex items-center gap-0.5">
+            <div className="flex items-center gap-1.5">
+              {/* Month / Week toggle */}
+              <div className="flex items-center border border-neutral-200 overflow-hidden">
+                <button
+                  onClick={() => setCalendarView('month')}
+                  className={`px-2 py-0.5 text-[11px] font-medium transition-colors ${calendarView === 'month' ? 'bg-neutral-100 text-neutral-700' : 'text-neutral-400 hover:text-neutral-600'}`}
+                >
+                  Month
+                </button>
+                <button
+                  onClick={() => setCalendarView('week')}
+                  className={`px-2 py-0.5 text-[11px] font-medium border-l border-neutral-200 transition-colors ${calendarView === 'week' ? 'bg-neutral-100 text-neutral-700' : 'text-neutral-400 hover:text-neutral-600'}`}
+                >
+                  Week
+                </button>
+              </div>
               <button
                 onClick={() => { setInitialDate(undefined); setShowNewForm(true); }}
                 title="New meeting"
-                className={`p-1 rounded transition-colors ${showNewForm ? 'text-indigo-600' : 'text-indigo-400 hover:text-indigo-600'}`}
+                className="p-1 text-indigo-400 hover:text-indigo-600 transition-colors"
               >
                 <PlusIcon className="w-3.5 h-3.5" />
               </button>
-              <button onClick={onToggle} title="Hide calendar" className="p-0.5 hover:opacity-70 transition-opacity ml-1">
+              <button onClick={onToggle} title="Hide calendar" className="p-0.5 hover:opacity-70 transition-opacity">
                 <ChevronRightIcon className="w-3.5 h-3.5 text-neutral-400" />
               </button>
             </div>
@@ -359,23 +131,27 @@ export default function MeetingsColumn({ isOpen, onToggle, meetings, loading, us
 
       {/* Content */}
       {isOpen && (
-        <div className="flex-1 overflow-y-auto px-3 py-2">
-          {loading ? (
-            <div className="animate-pulse space-y-3">
-              <div className="h-3 bg-neutral-100 rounded w-1/2" />
-              <div className="h-16 bg-neutral-100 rounded" />
-              <div className="h-16 bg-neutral-100 rounded" />
-            </div>
-          ) : (
-            <MonthView
+        loading ? (
+          <div className="flex-1 px-3 py-2 animate-pulse space-y-3">
+            <div className="h-3 bg-neutral-100 rounded w-1/2" />
+            <div className="h-16 bg-neutral-100 rounded" />
+            <div className="h-16 bg-neutral-100 rounded" />
+          </div>
+        ) : (
+          <div className="flex-1 overflow-y-auto px-3 py-2">
+            <CalendarSidebar
               meetings={meetings}
               userEmail={userEmail}
+              botStateMap={botStateMap}
+              onScheduled={handleScheduled}
+              onCancelled={handleCancelled}
               onRefresh={onRefresh}
               onNewMeeting={(date) => { setInitialDate(date); setShowNewForm(true); }}
             />
-          )}
-        </div>
+          </div>
+        )
       )}
     </div>
+    </>
   );
 }

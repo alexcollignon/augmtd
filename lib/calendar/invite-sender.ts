@@ -128,3 +128,75 @@ export async function sendOutlookInvite(
 
   return { eventId: event.id };
 }
+
+export async function updateGmailEvent(
+  params: GoogleInviteParams & { eventId: string }
+): Promise<void> {
+  const { encryptedTokens, onTokenRefresh, eventId, title, startTime, endTime, timezone, attendees, notes } = params;
+
+  const tokens = JSON.parse(Buffer.from(encryptedTokens, 'base64').toString());
+  const oauth2Client = getOAuth2Client();
+  oauth2Client.setCredentials(tokens);
+
+  if (tokens.expiry_date && tokens.expiry_date < Date.now() + 5 * 60 * 1000) {
+    try {
+      const { credentials } = await oauth2Client.refreshAccessToken();
+      oauth2Client.setCredentials(credentials);
+      const newEncrypted = Buffer.from(JSON.stringify(credentials)).toString('base64');
+      await onTokenRefresh(newEncrypted);
+    } catch (err) {
+      console.error('[InviteSender] Google token refresh failed:', err);
+      throw err;
+    }
+  }
+
+  const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+
+  try {
+    await calendar.events.patch({
+      calendarId: 'primary',
+      eventId,
+      sendUpdates: 'all',
+      requestBody: {
+        summary: title,
+        description: notes,
+        start: { dateTime: startTime, timeZone: timezone },
+        end: { dateTime: endTime, timeZone: timezone },
+        attendees: attendees.map((email) => ({ email })),
+      },
+    });
+  } catch (err: any) {
+    if (err?.code === 403 || err?.status === 403) throw { code: 'calendar_scope_required' };
+    throw err;
+  }
+}
+
+export async function updateOutlookEvent(
+  params: OutlookInviteParams & { eventId: string }
+): Promise<void> {
+  const { encryptedTokens, onTokenRefresh, eventId, title, startTime, endTime, timezone, attendees, notes } = params;
+
+  let graphClient: any;
+  try {
+    graphClient = await getGraphClient(encryptedTokens, onTokenRefresh);
+  } catch (err: any) {
+    if (err?.statusCode === 403 || err?.code === 403) throw { code: 'calendar_scope_required' };
+    throw err;
+  }
+
+  try {
+    await graphClient.api(`/me/calendar/events/${eventId}`).patch({
+      subject: title,
+      ...(notes !== undefined ? { body: { contentType: 'text', content: notes } } : {}),
+      start: { dateTime: startTime, timeZone: timezone },
+      end: { dateTime: endTime, timeZone: timezone },
+      attendees: attendees.map((email) => ({
+        emailAddress: { address: email, name: email },
+        type: 'required',
+      })),
+    });
+  } catch (err: any) {
+    if (err?.statusCode === 403 || err?.code === 403) throw { code: 'calendar_scope_required' };
+    throw err;
+  }
+}

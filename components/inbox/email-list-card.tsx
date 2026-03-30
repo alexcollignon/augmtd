@@ -33,9 +33,9 @@ export default function EmailListCard({ item, isSelected, onSelect, compact = fa
   const fromDisplay = sourceData?.from_name || sourceData?.from || '';
   const subjectDisplay = sourceData?.subject || '';
 
-  const snippetDisplay = (typeof sourceData?.snippet === 'string' ? sourceData.snippet : null)
-    || (typeof sourceData?.body === 'string' ? sourceData.body.slice(0, 120) : null)
-    || '';
+  const snippetDisplay = ((typeof sourceData?.snippet === 'string' ? sourceData.snippet : null)
+    || (typeof sourceData?.body === 'string' ? [...sourceData.body].slice(0, 120).join('') : null)
+    || '').normalize('NFC').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
   const timeDisplay = sourceData?.received_at ? formatTime(sourceData.received_at as string) : '';
 
   const checkboxVisible = isChecked || hasAnySelected;
@@ -116,7 +116,7 @@ export default function EmailListCard({ item, isSelected, onSelect, compact = fa
 
         {/* Row 3: Snippet */}
         {snippetDisplay && (
-          <p className="text-[11px] text-neutral-400 line-clamp-1 leading-relaxed">
+          <p className="text-[11px] text-neutral-400 line-clamp-1 leading-relaxed" suppressHydrationWarning>
             {snippetDisplay}
           </p>
         )}
