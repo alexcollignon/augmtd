@@ -84,7 +84,7 @@ function eventColor(event: CalendarEvent, userEmail: string): { bg: string; bord
   if (event.meeting_status === 'starting_soon') return { bg: 'bg-amber-50', border: 'border-amber-300', text: 'text-amber-800' };
   if (event.meeting_status === 'completed') return { bg: 'bg-neutral-50', border: 'border-neutral-200', text: 'text-neutral-500' };
   const self = event.attendees.find(a => a.self || a.email?.toLowerCase() === userEmail?.toLowerCase());
-  const raw = self?.responseStatus ?? self?.status ?? 'needsAction';
+  const raw: string = self?.responseStatus ?? self?.status ?? 'needsAction';
   const status = raw === 'none' ? 'needsAction' : raw === 'tentativelyaccepted' ? 'tentative' : raw;
   if (status === 'declined') return { bg: 'bg-neutral-50', border: 'border-neutral-200', text: 'text-neutral-400' };
   if (status === 'tentative') return { bg: 'bg-amber-50', border: 'border-amber-200', text: 'text-amber-800' };
