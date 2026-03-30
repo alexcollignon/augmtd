@@ -32,36 +32,72 @@ export default function MeetingsColumn({ isOpen, onToggle, meetings, loading, us
 
   return (
     <>
-    {/* Week view full-screen overlay */}
+    {/* Week view overlay — week grid left + month sidebar right, like the meetings page */}
     {isOpen && calendarView === 'week' && (
-      <div className="fixed right-0 top-0 bottom-0 z-40 w-[680px] bg-white border-l border-neutral-200 shadow-xl flex flex-col">
-        <div className="flex-shrink-0 h-10 flex items-center justify-between px-3 border-b border-neutral-200">
-          <button
-            onClick={() => setCalendarView('month')}
-            className="flex items-center gap-1.5 text-[13px] text-neutral-500 hover:text-neutral-800 transition-colors"
-          >
-            <ChevronLeftIcon className="w-3.5 h-3.5" />
-            <span className="font-medium">Back</span>
-          </button>
-          <span className="text-[13px] font-semibold text-neutral-700">Calendar</span>
-          <button
-            onClick={() => { setInitialDate(undefined); setShowNewForm(true); }}
-            title="New meeting"
-            className="p-1 text-indigo-400 hover:text-indigo-600 transition-colors"
-          >
-            <PlusIcon className="w-3.5 h-3.5" />
-          </button>
+      <div className="fixed right-0 top-0 bottom-0 z-40 flex" style={{ width: 980 }}>
+        {/* Week calendar panel */}
+        <div className="flex-1 bg-white border-l border-neutral-200 shadow-2xl flex flex-col">
+          <div className="flex-shrink-0 h-10 flex items-center justify-between px-3 border-b border-neutral-200">
+            <button
+              onClick={() => setCalendarView('month')}
+              className="flex items-center gap-1.5 text-[13px] text-neutral-500 hover:text-neutral-800 transition-colors"
+            >
+              <ChevronLeftIcon className="w-3.5 h-3.5" />
+              <span className="font-medium">Back</span>
+            </button>
+            <span className="text-[13px] font-semibold text-neutral-700">Calendar</span>
+            <button
+              onClick={() => { setInitialDate(undefined); setShowNewForm(true); }}
+              title="New meeting"
+              className="p-1 text-indigo-400 hover:text-indigo-600 transition-colors"
+            >
+              <PlusIcon className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          <div className="flex-1 min-h-0">
+            <WeekCalendar
+              meetings={meetings}
+              userEmail={userEmail}
+              botStateMap={botStateMap}
+              onScheduled={handleScheduled}
+              onCancelled={handleCancelled}
+              onRefresh={onRefresh}
+              onNewMeeting={(date) => { setInitialDate(date); setShowNewForm(true); }}
+            />
+          </div>
         </div>
-        <div className="flex-1 min-h-0">
-          <WeekCalendar
-            meetings={meetings}
-            userEmail={userEmail}
-            botStateMap={botStateMap}
-            onScheduled={handleScheduled}
-            onCancelled={handleCancelled}
-            onRefresh={onRefresh}
-            onNewMeeting={(date) => { setInitialDate(date); setShowNewForm(true); }}
-          />
+
+        {/* Month sidebar — stays visible alongside week grid */}
+        <div className="w-[300px] border-l border-neutral-200 bg-white flex flex-col overflow-y-auto">
+          <div className="flex-shrink-0 h-10 flex items-center justify-between px-3 border-b border-neutral-200">
+            <span className="text-[13px] font-semibold text-neutral-700">Calendar</span>
+            <div className="flex items-center gap-1.5">
+              <div className="flex items-center border border-neutral-200 overflow-hidden">
+                <button
+                  onClick={() => setCalendarView('month')}
+                  className="px-2 py-0.5 text-[11px] font-medium text-neutral-400 hover:text-neutral-600 transition-colors"
+                >
+                  Month
+                </button>
+                <button
+                  className="px-2 py-0.5 text-[11px] font-medium border-l border-neutral-200 bg-neutral-100 text-neutral-700"
+                >
+                  Week
+                </button>
+              </div>
+            </div>
+          </div>
+          <div className="flex-1 px-3 py-2">
+            <CalendarSidebar
+              meetings={meetings}
+              userEmail={userEmail}
+              botStateMap={botStateMap}
+              onScheduled={handleScheduled}
+              onCancelled={handleCancelled}
+              onRefresh={onRefresh}
+              onNewMeeting={(date) => { setInitialDate(date); setShowNewForm(true); }}
+            />
+          </div>
         </div>
       </div>
     )}
