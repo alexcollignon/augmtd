@@ -465,7 +465,7 @@ export function InboxPageClient({
   };
 
   const closeChat = () => {
-    setRightPanel('calendar');
+    setRightPanel(null);
     setChatInput('');
     setChatHistory([]);
     setAttachedFiles([]);
@@ -662,17 +662,22 @@ export function InboxPageClient({
               {/* View + density toggles */}
               <div className="flex-shrink-0 flex items-center justify-between pl-2.5 pr-1 border-b border-neutral-100 h-10">
                 {/* Segmented view tabs */}
-                <div className="flex items-center bg-neutral-100 rounded-full p-0.5">
+                <div className="relative grid grid-cols-2 bg-neutral-100 rounded-full p-0.5">
+                  <div
+                    className="absolute inset-y-0.5 w-[calc(50%-2px)] rounded-full bg-white shadow-sm pointer-events-none"
+                    style={{
+                      left: viewMode === 'smart' ? '50%' : '2px',
+                      transition: 'left 180ms ease-in-out',
+                    }}
+                  />
                   {(['chronological', 'smart'] as const).map((key) => {
                     const labels = { chronological: 'Standard', smart: 'Smart' };
                     return (
                       <button
                         key={key}
                         onClick={() => handleViewMode(key)}
-                        className={`px-2.5 py-0.5 text-[11px] font-medium rounded-full transition-colors ${
-                          viewMode === key
-                            ? 'bg-white text-neutral-800 shadow-sm'
-                            : 'text-neutral-500 hover:text-neutral-700'
+                        className={`relative z-10 px-2.5 py-0.5 text-[11px] font-medium rounded-full text-center transition-colors duration-180 ${
+                          viewMode === key ? 'text-neutral-800' : 'text-neutral-500 hover:text-neutral-700'
                         }`}
                       >
                         {labels[key]}
@@ -896,7 +901,7 @@ export function InboxPageClient({
                   className={`flex-shrink-0 p-1.5 border rounded-md transition-colors ${
                     rightPanel === 'chat' && !composeMode
                       ? 'bg-indigo-600 border-indigo-600 text-white'
-                      : 'border-indigo-400 text-indigo-500 hover:bg-indigo-50'
+                      : 'border-neutral-300 text-neutral-500 hover:bg-neutral-50'
                   }`}
                 >
                   <ChatBubbleLeftRightIcon className="w-3.5 h-3.5" />
@@ -908,7 +913,7 @@ export function InboxPageClient({
                   title="Toggle calendar"
                   className={`flex-shrink-0 p-1.5 border rounded-md transition-colors ${
                     rightPanel === 'calendar'
-                      ? 'bg-neutral-100 border-neutral-300 text-neutral-700'
+                      ? 'bg-indigo-600 border-indigo-600 text-white'
                       : 'border-neutral-300 text-neutral-500 hover:bg-neutral-50'
                   }`}
                 >
@@ -946,55 +951,57 @@ export function InboxPageClient({
               )}
             </div>
 
-            {/* Right: calendar OR chat */}
-            {rightPanel === 'calendar' && (
-              <MeetingsColumn
-                isOpen={true}
-                onToggle={() => setRightPanel(null)}
-                meetings={meetings}
-                loading={meetingsLoading}
-                userEmail={user?.email || ''}
-                onRefresh={fetchMeetings}
-              />
-            )}
-            {rightPanel === 'chat' && (
-              <div className="w-[380px] flex-shrink-0 border-l border-neutral-200 flex flex-col">
-                <AiChatPanel
-                  context="inbox"
-                  composeDraft={composeMode ? composeDraft : undefined}
-                  onUpdateComposeDraft={composeMode
-                    ? (fields) => setComposeDraft(prev => ({ ...prev, ...fields }))
-                    : undefined}
-                  onOpenCompose={handleOpenCompose}
-                  onUseAsReply={handleUseAsReply}
-                  emailChipActive={emailChipActive}
-                  emailChipData={emailChipData ?? undefined}
-                  onDismissEmailChip={() => setChipDismissed(true)}
-                  onClose={closeChat}
-                  history={chatHistory}
-                  streamingContent={streamingContent}
-                  isStreaming={chatStreaming}
-                  inboxItems={inboxItems}
-                  onSelectItem={item => { setSelectedItem(item); setComposeMode(false); }}
-                  onSendMessage={sendChatMessage}
-                  onAction={handleChatAction}
-                  chatInput={chatInput}
-                  onChatInputChange={setChatInput}
-                  chatInputRef={chatInputRef}
-                  chatSources={chatSources}
-                  onSourcesChange={setChatSources}
-                  attachedFiles={attachedFiles}
-                  onFileAttach={handleFileAttach}
-                  onRemoveFile={(filename) => setAttachedFiles(prev => prev.filter(f => f.filename !== filename))}
-                  isAttaching={isAttaching}
-                  mode={composeMode ? 'compose' : replyIsOpen ? 'reply' : 'inbox'}
-                  replyDraft={replyIsOpen ? replyBody : undefined}
-                  onUpdateReplyDraft={handleUpdateReplyDraft}
-                  onOpenWorkflow={handleOpenWorkflow}
-                  onOpenProcess={handleOpenProcess}
+            {/* Right panel — persistent wrapper, animates open/close */}
+            <div className={`flex-shrink-0 overflow-hidden transition-[width] duration-200 ${rightPanel ? 'w-[300px]' : 'w-0'}`}>
+              {rightPanel === 'calendar' && (
+                <MeetingsColumn
+                  isOpen={true}
+                  onToggle={() => setRightPanel(null)}
+                  meetings={meetings}
+                  loading={meetingsLoading}
+                  userEmail={user?.email || ''}
+                  onRefresh={fetchMeetings}
                 />
-              </div>
-            )}
+              )}
+              {rightPanel === 'chat' && (
+                <div className="w-[300px] h-full flex flex-col border-l border-neutral-200">
+                  <AiChatPanel
+                    context="inbox"
+                    composeDraft={composeMode ? composeDraft : undefined}
+                    onUpdateComposeDraft={composeMode
+                      ? (fields) => setComposeDraft(prev => ({ ...prev, ...fields }))
+                      : undefined}
+                    onOpenCompose={handleOpenCompose}
+                    onUseAsReply={handleUseAsReply}
+                    emailChipActive={emailChipActive}
+                    emailChipData={emailChipData ?? undefined}
+                    onDismissEmailChip={() => setChipDismissed(true)}
+                    onClose={closeChat}
+                    history={chatHistory}
+                    streamingContent={streamingContent}
+                    isStreaming={chatStreaming}
+                    inboxItems={inboxItems}
+                    onSelectItem={item => { setSelectedItem(item); setComposeMode(false); }}
+                    onSendMessage={sendChatMessage}
+                    onAction={handleChatAction}
+                    chatInput={chatInput}
+                    onChatInputChange={setChatInput}
+                    chatInputRef={chatInputRef}
+                    chatSources={chatSources}
+                    onSourcesChange={setChatSources}
+                    attachedFiles={attachedFiles}
+                    onFileAttach={handleFileAttach}
+                    onRemoveFile={(filename) => setAttachedFiles(prev => prev.filter(f => f.filename !== filename))}
+                    isAttaching={isAttaching}
+                    mode={composeMode ? 'compose' : replyIsOpen ? 'reply' : 'inbox'}
+                    replyDraft={replyIsOpen ? replyBody : undefined}
+                    onUpdateReplyDraft={handleUpdateReplyDraft}
+                    onOpenWorkflow={handleOpenWorkflow}
+                    onOpenProcess={handleOpenProcess}
+                  />
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>

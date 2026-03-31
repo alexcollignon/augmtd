@@ -68,6 +68,8 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
   const [isLoadingFolders, setIsLoadingFolders] = useState(false);
   const [isMoving, setIsMoving] = useState(false);
   const moveMenuRef = useRef<HTMLDivElement>(null);
+  const moveBtnRef = useRef<HTMLButtonElement>(null);
+  const [moveMenuPos, setMoveMenuPos] = useState<{ top: number; right: number } | null>(null);
   const [showNewFolderInput, setShowNewFolderInput] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
   const newFolderInputRef = useRef<HTMLInputElement>(null);
@@ -347,6 +349,10 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
   };
 
   const handleOpenMoveMenu = async () => {
+    if (moveBtnRef.current) {
+      const rect = moveBtnRef.current.getBoundingClientRect();
+      setMoveMenuPos({ top: rect.top, right: window.innerWidth - rect.right });
+    }
     setShowMoveMenu(true);
     if (folders !== null) return;
     setIsLoadingFolders(true);
@@ -475,9 +481,9 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
   };
 
   return (
-    <div ref={rootRef} className="flex flex-col h-full bg-white">
+    <div ref={rootRef} className="flex flex-col h-full bg-neutral-100">
       {/* Header */}
-      <div className="flex-shrink-0 px-6 py-4 border-b border-neutral-100">
+      <div className="flex-shrink-0 px-6 py-4 border-b border-neutral-200 bg-white">
         <h2 className="text-[17px] font-semibold text-neutral-900 leading-tight">
           {item.work_title || sourceData?.subject || 'Work Item'}
         </h2>
@@ -506,7 +512,7 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
             <h3 className="text-[11px] font-medium text-neutral-400 uppercase tracking-wide mb-2">
               Meeting Details
             </h3>
-            <div className="bg-indigo-50 border border-indigo-200 p-4 space-y-3">
+            <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4 space-y-3">
               {(sourceData?.start_time || sourceData?.calendar_event?.start_time) && (
                 <div className="flex items-start gap-3">
                   <CalendarIcon className="w-4 h-4 text-indigo-600 flex-shrink-0 mt-0.5" />
@@ -545,9 +551,9 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
 
         {/* Summary + Key Points — 2-column layout */}
         {item.what_i_prepared || (sourceData?.keyPoints?.length > 0) ? (
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-2 gap-3">
             {item.what_i_prepared && (
-              <div>
+              <div className="bg-white border border-neutral-200 rounded-lg shadow-sm p-4">
                 <h3 className="text-[11px] font-medium text-neutral-400 uppercase tracking-wide mb-2">
                   Summary
                 </h3>
@@ -555,7 +561,7 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
               </div>
             )}
             {sourceData?.keyPoints && sourceData.keyPoints.length > 0 && (
-              <div>
+              <div className="bg-white border border-neutral-200 rounded-lg shadow-sm p-4">
                 <h3 className="text-[11px] font-medium text-neutral-400 uppercase tracking-wide mb-2">
                   Key Points
                 </h3>
@@ -577,19 +583,31 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
           const raw = (sourceData.html_body || sourceData.body) as string;
           const isHtml = !!sourceData.html_body || /<[a-z][\s\S]*>/i.test(raw);
 
-          // Sanitise HTML: strip head/style/script, extract body content
+          // Sanitise HTML: strip head/style/script, normalise to consistent typography
           const sanitiseHtml = (html: string): string => {
             let h = html;
+            // Remove non-visual blocks
             h = h.replace(/<head[\s\S]*?<\/head>/gi, '');
             h = h.replace(/<style[\s\S]*?<\/style>/gi, '');
             h = h.replace(/<script[\s\S]*?<\/script>/gi, '');
+            // Extract body content
             const bodyMatch = h.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
             if (bodyMatch) h = bodyMatch[1];
+            // Strip inline styles and classes so our CSS controls typography
+            h = h.replace(/\s+style=(?:"[^"]*"|'[^']*')/gi, '');
+            h = h.replace(/\s+class=(?:"[^"]*"|'[^']*')/gi, '');
+            // Strip legacy presentational attributes (bgcolor, color, face, size, align…)
+            h = h.replace(/\s+(?:bgcolor|color|face|size|align|valign|width|height|border|cellpadding|cellspacing)=(?:"[^"]*"|'[^']*'|\S+)/gi, '');
+            // Unwrap <font> tags, keep their content
+            h = h.replace(/<\/?font[^>]*>/gi, '');
+            // Fix double-encoded HTML entities (e.g. &amp;#199; → &#199;, &amp;amp; → &amp;)
+            h = h.replace(/&amp;(#\w+;)/g, '&$1');
+            h = h.replace(/&amp;([a-zA-Z]+;)/g, '&$1');
             return h.slice(0, 8000);
           };
 
           return (
-            <div className="border border-neutral-100 bg-white overflow-hidden">
+            <div className="border border-neutral-200 bg-white rounded-lg shadow-sm overflow-hidden">
               <div className="flex items-baseline justify-between px-4 pt-3 pb-2 border-b border-neutral-100">
                 <span className="text-[13px] font-semibold text-neutral-800 truncate">
                   {sourceData.from_name || sourceData.from || 'Unknown'}
@@ -627,7 +645,7 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
               {sourceData.thread_history.slice(0, sourceData.thread_history.length - 1).slice(0, 8).map((msg: any, i: number) => {
                 const isExpanded = !!expandedEmails[i];
                 return (
-                  <div key={i} className="border border-neutral-100 bg-neutral-50/50 text-[12px]">
+                  <div key={i} className="border border-neutral-200 bg-white rounded-md text-[12px]">
                     <button
                       onClick={() => setExpandedEmails(prev => ({ ...prev, [i]: !prev[i] }))}
                       className="w-full flex items-center justify-between px-3 py-2 text-left"
@@ -805,7 +823,7 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
       </div>
 
       {/* Actions footer */}
-      <div className="flex-shrink-0 border-t border-neutral-200 bg-neutral-50 px-4 py-3">
+      <div className="flex-shrink-0 border-t border-neutral-200 bg-white px-4 py-3 relative z-10">
         <div className={`flex ${linkedCalEvent ? 'flex-col gap-2' : 'items-center gap-2'}`}>
 
           {/* RSVP row — meeting invites only */}
@@ -863,8 +881,9 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
 
               {/* Move to folder */}
               {item.source === 'email' && sourceData?.provider ? (
-                <div className="relative" ref={moveMenuRef}>
+                <div ref={moveMenuRef}>
                   <button
+                    ref={moveBtnRef}
                     title="Move to folder"
                     onClick={handleOpenMoveMenu}
                     disabled={isMoving}
@@ -876,8 +895,8 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
                       <FolderArrowDownIcon className="w-4 h-4" />
                     )}
                   </button>
-                  {showMoveMenu && (
-                    <div className="absolute bottom-full mb-1 right-0 bg-white border border-neutral-200 shadow-lg min-w-[180px] z-50">
+                  {showMoveMenu && moveMenuPos && (
+                    <div className="fixed bg-white border border-neutral-200 shadow-lg min-w-[180px] z-[9999] rounded-md" style={{ top: moveMenuPos.top - 4, right: moveMenuPos.right, transform: 'translateY(-100%)' }}>
                       {isLoadingFolders ? (
                         <div className="px-4 py-3 text-[12px] text-neutral-400 flex items-center gap-2">
                           <div className="w-3 h-3 border-2 border-neutral-300 border-t-transparent rounded-full animate-spin" />

@@ -10,6 +10,7 @@ import {
   DocumentTextIcon,
   PaperClipIcon,
   XMarkIcon,
+  ChevronRightIcon,
   EnvelopeIcon,
   SparklesIcon,
   ArrowTopRightOnSquareIcon,
@@ -737,8 +738,8 @@ export default function AiChatPanel({
           {onClose && (
             <>
               <span className="w-px h-4 bg-neutral-200 flex-shrink-0" />
-              <button onClick={onClose} className="flex-shrink-0 p-0.5 text-neutral-400 hover:text-neutral-700 transition-colors">
-                <XMarkIcon className="w-3.5 h-3.5" />
+              <button onClick={onClose} title="Close" className="flex-shrink-0 p-0.5 text-neutral-400 hover:text-neutral-700 transition-colors">
+                <ChevronRightIcon className="w-3.5 h-3.5" />
               </button>
             </>
           )}

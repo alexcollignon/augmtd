@@ -26,79 +26,45 @@ export default function MeetingsColumn({ isOpen, onToggle, meetings, loading, us
   const [initialDate, setInitialDate] = useState<Date | undefined>(undefined);
   const [botStateMap, setBotStateMap] = useState<Map<string, string>>(new Map());
   const [calendarView, setCalendarView] = useState<'month' | 'week'>('month');
+  const [weekClosing, setWeekClosing] = useState(false);
 
   const handleScheduled = (eventId: string) => setBotStateMap(prev => new Map(prev).set(eventId, 'scheduled'));
   const handleCancelled = (eventId: string) => setBotStateMap(prev => new Map(prev).set(eventId, 'cancelled'));
 
+  const closeWeekView = () => {
+    setWeekClosing(true);
+    setTimeout(() => { setCalendarView('month'); setWeekClosing(false); }, 200);
+  };
+
   return (
     <>
-    {/* Week view overlay — week grid left + month sidebar right, like the meetings page */}
-    {isOpen && calendarView === 'week' && (
-      <div className="fixed right-0 top-0 bottom-0 z-40 flex" style={{ width: 980 }}>
-        {/* Week calendar panel */}
-        <div className="flex-1 bg-white border-l border-neutral-200 shadow-2xl flex flex-col">
-          <div className="flex-shrink-0 h-10 flex items-center justify-between px-3 border-b border-neutral-200">
-            <button
-              onClick={() => setCalendarView('month')}
-              className="flex items-center gap-1.5 text-[13px] text-neutral-500 hover:text-neutral-800 transition-colors"
-            >
-              <ChevronLeftIcon className="w-3.5 h-3.5" />
-              <span className="font-medium">Back</span>
-            </button>
-            <span className="text-[13px] font-semibold text-neutral-700">Calendar</span>
-            <div className="w-6" />
-          </div>
-          <div className="flex-1 min-h-0">
-            <WeekCalendar
-              meetings={meetings}
-              userEmail={userEmail}
-              botStateMap={botStateMap}
-              onScheduled={handleScheduled}
-              onCancelled={handleCancelled}
-              onRefresh={onRefresh}
-              onNewMeeting={(date) => { setInitialDate(date); setShowNewForm(true); }}
-            />
-          </div>
+    {/* Week view overlay — only the week grid, positioned left of the existing sidebar */}
+    {isOpen && (calendarView === 'week' || weekClosing) && (
+      <div
+        className={`fixed top-0 bottom-0 z-40 overflow-hidden bg-white border-l border-neutral-200 flex flex-col ${weekClosing ? 'week-collapse-exit' : 'week-expand-enter'}`}
+        style={{ right: '300px', width: '680px', boxShadow: '-8px 0 24px rgba(0,0,0,0.10)' }}
+      >
+        <div className="flex-shrink-0 h-10 flex items-center justify-between px-3 border-b border-neutral-200">
+          <button
+            onClick={closeWeekView}
+            className="flex items-center gap-1.5 text-[13px] text-neutral-500 hover:text-neutral-800 transition-colors"
+          >
+            <ChevronLeftIcon className="w-3.5 h-3.5" />
+            <span className="font-medium">Back</span>
+          </button>
+          <span className="text-[13px] font-semibold text-neutral-700">Calendar</span>
+          <div className="w-6" />
         </div>
-
-        {/* Month sidebar — stays visible alongside week grid */}
-        <div className="w-[300px] border-l border-neutral-200 bg-white flex flex-col overflow-y-auto">
-          <div className="flex-shrink-0 h-10 flex items-center justify-between px-3 border-b border-neutral-200">
-            <span className="text-[13px] font-semibold text-neutral-700">Calendar</span>
-            <div className="flex items-center gap-1.5">
-              <button
-                onClick={() => { setInitialDate(undefined); setShowNewForm(true); }}
-                title="New meeting"
-                className="p-1 text-indigo-400 hover:text-indigo-600 transition-colors"
-              >
-                <PlusIcon className="w-3.5 h-3.5" />
-              </button>
-              <div className="flex items-center bg-neutral-100 rounded-full p-0.5">
-                <button
-                  onClick={() => setCalendarView('month')}
-                  className="px-2.5 py-0.5 text-[11px] font-medium rounded-full transition-colors text-neutral-500 hover:text-neutral-700"
-                >
-                  Month
-                </button>
-                <button
-                  className="px-2.5 py-0.5 text-[11px] font-medium rounded-full bg-white text-neutral-800 shadow-sm"
-                >
-                  Week
-                </button>
-              </div>
-            </div>
-          </div>
-          <div className="flex-1 px-3 py-2">
-            <CalendarSidebar
-              meetings={meetings}
-              userEmail={userEmail}
-              botStateMap={botStateMap}
-              onScheduled={handleScheduled}
-              onCancelled={handleCancelled}
-              onRefresh={onRefresh}
-              onNewMeeting={(date) => { setInitialDate(date); setShowNewForm(true); }}
-            />
-          </div>
+        <div className="flex-1 min-h-0">
+          <WeekCalendar
+            meetings={meetings}
+            userEmail={userEmail}
+            botStateMap={botStateMap}
+            onScheduled={handleScheduled}
+            onCancelled={handleCancelled}
+            onRefresh={onRefresh}
+            onNewMeeting={(date) => { setInitialDate(date); setShowNewForm(true); }}
+          />
         </div>
       </div>
     )}
@@ -133,16 +99,23 @@ export default function MeetingsColumn({ isOpen, onToggle, meetings, loading, us
                 <PlusIcon className="w-3.5 h-3.5" />
               </button>
               {/* Month / Week toggle */}
-              <div className="flex items-center bg-neutral-100 rounded-full p-0.5">
+              <div className="relative grid grid-cols-2 bg-neutral-100 rounded-full p-0.5">
+                <div
+                  className="absolute inset-y-0.5 w-[calc(50%-2px)] rounded-full bg-white shadow-sm pointer-events-none"
+                  style={{
+                    left: calendarView === 'week' && !weekClosing ? '50%' : '2px',
+                    transition: 'left 180ms ease-in-out',
+                  }}
+                />
                 <button
-                  onClick={() => setCalendarView('month')}
-                  className={`px-2.5 py-0.5 text-[11px] font-medium rounded-full transition-colors ${calendarView === 'month' ? 'bg-white text-neutral-800 shadow-sm' : 'text-neutral-500 hover:text-neutral-700'}`}
+                  onClick={() => calendarView === 'week' && closeWeekView()}
+                  className={`relative z-10 px-2.5 py-0.5 text-[11px] font-medium rounded-full text-center transition-colors duration-180 ${calendarView === 'month' && !weekClosing ? 'text-neutral-800' : 'text-neutral-500 hover:text-neutral-700'}`}
                 >
                   Month
                 </button>
                 <button
                   onClick={() => setCalendarView('week')}
-                  className={`px-2.5 py-0.5 text-[11px] font-medium rounded-full transition-colors ${calendarView === 'week' ? 'bg-white text-neutral-800 shadow-sm' : 'text-neutral-500 hover:text-neutral-700'}`}
+                  className={`relative z-10 px-2.5 py-0.5 text-[11px] font-medium rounded-full text-center transition-colors duration-180 ${calendarView === 'week' && !weekClosing ? 'text-neutral-800' : 'text-neutral-500 hover:text-neutral-700'}`}
                 >
                   Week
                 </button>

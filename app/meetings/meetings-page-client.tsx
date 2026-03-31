@@ -236,7 +236,7 @@ export default function MeetingsPageClient({ userEmail }: { userEmail: string })
           <div className="absolute inset-0 z-10" onClick={() => setCalendarView('month')} />
         )}
         {calendarView === 'week' && (
-          <div className="absolute right-0 top-0 bottom-0 z-20 w-[680px] bg-white border-l border-neutral-100 shadow-xl flex flex-col">
+          <div className="absolute right-0 top-0 bottom-0 z-20 w-[680px] bg-white border-l border-neutral-100 shadow-xl flex flex-col week-slide-enter">
             <div className="flex-shrink-0 h-10 flex items-center justify-between px-3 border-b border-neutral-200">
               <button
                 onClick={() => setCalendarView('month')}
@@ -482,18 +482,25 @@ export default function MeetingsPageClient({ userEmail }: { userEmail: string })
           >
             <PlusIcon className="w-3.5 h-3.5" />
           </button>
-          <div className="flex items-center bg-neutral-100 rounded-full p-0.5">
+          <div className="relative grid grid-cols-2 bg-neutral-100 rounded-full p-0.5">
+            <div
+              className="absolute inset-y-0.5 w-[calc(50%-2px)] rounded-full bg-white shadow-sm pointer-events-none"
+              style={{
+                left: calendarView === 'week' ? '50%' : '2px',
+                transition: 'left 180ms ease-in-out',
+              }}
+            />
             <button
               onClick={() => setCalendarView('month')}
               title="Month view"
-              className={`px-2.5 py-0.5 text-[11px] font-medium rounded-full transition-colors ${calendarView === 'month' ? 'bg-white text-neutral-800 shadow-sm' : 'text-neutral-500 hover:text-neutral-700'}`}
+              className={`relative z-10 px-2.5 py-0.5 text-[11px] font-medium rounded-full text-center transition-colors duration-180 ${calendarView === 'month' ? 'text-neutral-800' : 'text-neutral-500 hover:text-neutral-700'}`}
             >
               Month
             </button>
             <button
               onClick={() => setCalendarView('week')}
               title="Week view"
-              className={`px-2.5 py-0.5 text-[11px] font-medium rounded-full transition-colors ${calendarView === 'week' ? 'bg-white text-neutral-800 shadow-sm' : 'text-neutral-500 hover:text-neutral-700'}`}
+              className={`relative z-10 px-2.5 py-0.5 text-[11px] font-medium rounded-full text-center transition-colors duration-180 ${calendarView === 'week' ? 'text-neutral-800' : 'text-neutral-500 hover:text-neutral-700'}`}
             >
               Week
             </button>

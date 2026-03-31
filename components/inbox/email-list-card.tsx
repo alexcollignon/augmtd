@@ -1,6 +1,5 @@
 'use client';
 
-import Image from 'next/image';
 import { PaperClipIcon, CheckIcon } from '@heroicons/react/24/outline';
 import type { InboxItem } from '@/lib/types/inbox';
 
@@ -50,8 +49,8 @@ export default function EmailListCard({ item, isSelected, onSelect, compact = fa
           : 'opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto'
       }`}
     >
-      <div className={`w-3.5 h-3.5 border-2 flex items-center justify-center flex-shrink-0 ${
-        isChecked ? 'border-indigo-600 bg-indigo-600' : 'border-neutral-300 bg-white'
+      <div className={`w-3.5 h-3.5 border rounded-[3px] flex items-center justify-center flex-shrink-0 ${
+        isChecked ? 'border-indigo-500 bg-indigo-500' : 'border-neutral-300 bg-white'
       }`}>
         {isChecked && <CheckIcon className="w-2.5 h-2.5 text-white" strokeWidth={3} />}
       </div>
@@ -121,24 +120,15 @@ export default function EmailListCard({ item, isSelected, onSelect, compact = fa
           </p>
         )}
 
-        {/* Provider + badges */}
-        <div className="flex items-center gap-2 mt-1.5">
-          {sourceData?.provider && (
-            <Image
-              src={sourceData.provider === 'outlook' ? '/logos/outlook.png' : '/logos/gmail.png'}
-              alt={sourceData.provider as string}
-              width={10}
-              height={10}
-              className="opacity-30"
-            />
-          )}
-          {sourceData?.attachments?.length > 0 && (
+        {/* Badges */}
+        {sourceData?.attachments?.length > 0 && (
+          <div className="flex items-center gap-2 mt-1.5">
             <span className="inline-flex items-center gap-0.5 text-neutral-400">
               <PaperClipIcon className="w-2.5 h-2.5" />
               <span className="text-[10px]">{sourceData.attachments.length}</span>
             </span>
-          )}
-        </div>
+          </div>
+        )}
       </div>
     </div>
   );
