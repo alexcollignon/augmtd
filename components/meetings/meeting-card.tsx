@@ -2,7 +2,8 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { VideoCameraIcon, MapPinIcon, PencilSquareIcon } from '@heroicons/react/24/outline';
+import { toast } from 'sonner';
+import { VideoCameraIcon, MapPinIcon, PencilSquareIcon, TrashIcon } from '@heroicons/react/24/outline';
 import type { CalendarEvent } from '@/lib/types/meetings';
 import { formatMeetingTime, calculateDuration, isUserOrganizer } from '@/lib/types/meetings';
 import MeetingDetailPanel from './meeting-detail-panel';
@@ -22,6 +23,8 @@ export default function MeetingCard({ event, userEmail, botState: botStateProp, 
   const [showEdit, setShowEdit] = useState(false);
   const [schedulingBot, setSchedulingBot] = useState(false);
   const [cancellingBot, setCancellingBot] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const botState = botStateProp ?? event.attendee_bot_state ?? null;
 
@@ -87,14 +90,46 @@ export default function MeetingCard({ event, userEmail, botState: botStateProp, 
               {event.meeting_status === 'in_progress' && (
                 <span className="text-[10px] font-semibold text-red-600 bg-red-50 px-1.5 py-0.5 rounded-full">Now</span>
               )}
-              {isOrganizer && isUpcoming && (
-                <button
-                  onClick={(e) => { e.stopPropagation(); setShowEdit(true); }}
-                  title="Edit meeting"
-                  className="opacity-0 group-hover:opacity-100 p-0.5 text-neutral-300 hover:text-indigo-500 transition-all"
-                >
-                  <PencilSquareIcon className="w-3.5 h-3.5" />
-                </button>
+              {isUpcoming && (
+                deleteConfirm ? (
+                  <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
+                    <span className="text-[10px] text-neutral-400">Delete?</span>
+                    <button
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        setIsDeleting(true);
+                        try {
+                          const res = await fetch(`/api/meetings/${event.id}`, { method: 'DELETE' });
+                          if (res.ok) { onRefresh?.(); }
+                          else { toast.error('Failed to delete'); setDeleteConfirm(false); }
+                        } catch { toast.error('Failed to delete'); setDeleteConfirm(false); }
+                        finally { setIsDeleting(false); }
+                      }}
+                      disabled={isDeleting}
+                      className="text-[10px] font-semibold text-red-500 hover:text-red-700 disabled:opacity-50"
+                    >
+                      {isDeleting ? '…' : 'Yes'}
+                    </button>
+                    <button onClick={(e) => { e.stopPropagation(); setDeleteConfirm(false); }} className="text-[10px] text-neutral-400 hover:text-neutral-600">No</button>
+                  </div>
+                ) : (
+                  <>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setShowEdit(true); }}
+                      title="Edit meeting"
+                      className="opacity-0 group-hover:opacity-100 p-0.5 text-neutral-300 hover:text-indigo-500 transition-all"
+                    >
+                      <PencilSquareIcon className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setDeleteConfirm(true); }}
+                      title="Delete meeting"
+                      className="opacity-0 group-hover:opacity-100 p-0.5 text-neutral-300 hover:text-red-500 transition-all"
+                    >
+                      <TrashIcon className="w-3.5 h-3.5" />
+                    </button>
+                  </>
+                )
               )}
             </div>
           </div>
@@ -233,7 +268,8 @@ export default function MeetingCard({ event, userEmail, botState: botStateProp, 
         botState={botState}
         onScheduled={onScheduled}
         onCancelled={onCancelled}
-        onEdit={isOrganizer && isUpcoming ? () => { setShowDetail(false); setShowEdit(true); } : undefined}
+        onEdit={isUpcoming ? () => { setShowDetail(false); setShowEdit(true); } : undefined}
+        onDelete={isUpcoming ? () => { setShowDetail(false); onRefresh?.(); } : undefined}
       />
 
       {showEdit && (

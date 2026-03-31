@@ -10,10 +10,10 @@ import {
   MapPinIcon,
   VideoCameraIcon,
   UserGroupIcon,
-  SparklesIcon,
   DocumentTextIcon,
   MicrophoneIcon,
   PencilSquareIcon,
+  TrashIcon,
 } from '@heroicons/react/24/outline';
 import type { CalendarEvent } from '@/lib/types/meetings';
 import {
@@ -26,58 +26,6 @@ import { createClient } from '@/lib/supabase/client';
 import RsvpButtons from '@/components/inbox/rsvp-buttons';
 import MeetingRecorder from '@/components/meetings/meeting-recorder';
 
-/** Renders the subset of markdown the AI uses in meeting prep: ## headings, **bold**, - lists */
-function PrepMarkdown({ text }: { text: string }) {
-  const lines = text.split('\n');
-  const elements: React.ReactNode[] = [];
-  let listItems: string[] = [];
-
-  const flushList = (key: string) => {
-    if (listItems.length === 0) return;
-    elements.push(
-      <ul key={key} className="space-y-1 mb-3">
-        {listItems.map((item, i) => (
-          <li key={i} className="flex items-start gap-2 text-[13px] text-neutral-700 leading-relaxed">
-            <span className="text-indigo-400 font-bold flex-shrink-0 mt-0.5">·</span>
-            <span dangerouslySetInnerHTML={{ __html: renderInline(item) }} />
-          </li>
-        ))}
-      </ul>
-    );
-    listItems = [];
-  };
-
-  const renderInline = (s: string) =>
-    s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-
-  lines.forEach((line, i) => {
-    const h2 = line.match(/^##\s+(.+)/);
-    const h3 = line.match(/^###\s+(.+)/);
-    const bullet = line.match(/^[-*]\s+(.+)/);
-
-    if (h2 || h3) {
-      flushList(`list-${i}`);
-      elements.push(
-        <h4 key={i} className={`font-semibold text-neutral-900 mb-1.5 ${h2 ? 'text-[13px] mt-4 first:mt-0' : 'text-[12px] mt-3'}`}>
-          {h2 ? h2[1] : h3![1]}
-        </h4>
-      );
-    } else if (bullet) {
-      listItems.push(bullet[1]);
-    } else if (line.trim() === '') {
-      flushList(`list-${i}`);
-    } else {
-      flushList(`list-${i}`);
-      elements.push(
-        <p key={i} className="text-[13px] text-neutral-700 leading-relaxed mb-2"
-          dangerouslySetInnerHTML={{ __html: renderInline(line) }} />
-      );
-    }
-  });
-  flushList('list-end');
-
-  return <div>{elements}</div>;
-}
 
 interface TranscriptSegment {
   speaker: string;
@@ -103,6 +51,7 @@ interface MeetingDetailPanelProps {
   onScheduled?: (eventId: string) => void;
   onCancelled?: (eventId: string) => void;
   onEdit?: () => void;
+  onDelete?: () => void;
 }
 
 export default function MeetingDetailPanel({
@@ -115,6 +64,7 @@ export default function MeetingDetailPanel({
   onScheduled,
   onCancelled,
   onEdit,
+  onDelete,
 }: MeetingDetailPanelProps) {
   const { primary } = formatMeetingTime(event.start_time, event.end_time);
   const duration = calculateDuration(event.start_time, event.end_time);
@@ -125,15 +75,13 @@ export default function MeetingDetailPanel({
   const isUpcoming = event.meeting_status !== 'completed';
   const [schedulingBot, setSchedulingBot] = useState(false);
   const [cancellingBot, setCancellingBot] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Transcript state
   const [transcript, setTranscript] = useState<MeetingTranscript | null>(null);
   const [transcriptLoading, setTranscriptLoading] = useState(false);
   const [transcriptKey, setTranscriptKey] = useState(0); // bump to refetch
-
-  // Get AI-generated prep from meeting metadata if available
-  // This would come from the meeting processor's source_data
-  const prep = (event.metadata as any)?.prep as { agenda?: string; context?: string } | undefined;
 
   // Fetch transcript for completed meetings (or after recording submitted)
   useEffect(() => {
@@ -221,11 +169,42 @@ export default function MeetingDetailPanel({
                               type="button"
                               onClick={onEdit}
                               title="Edit meeting"
-                              className="flex items-center gap-1.5 px-2.5 py-1 text-[12px] font-medium text-neutral-600 border border-neutral-200 hover:border-indigo-300 hover:text-indigo-600 transition-colors"
+                              className="p-1.5 text-neutral-400 hover:text-indigo-600 transition-colors"
                             >
-                              <PencilSquareIcon className="w-3.5 h-3.5" />
-                              Edit
+                              <PencilSquareIcon className="w-4 h-4" />
                             </button>
+                          )}
+                          {onDelete && (
+                            deleteConfirm ? (
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-[11px] text-neutral-500">Delete?</span>
+                                <button
+                                  onClick={async () => {
+                                    setIsDeleting(true);
+                                    try {
+                                      const res = await fetch(`/api/meetings/${event.id}`, { method: 'DELETE' });
+                                      if (res.ok) { onDelete(); }
+                                      else { toast.error('Failed to delete meeting'); setDeleteConfirm(false); }
+                                    } catch { toast.error('Failed to delete meeting'); setDeleteConfirm(false); }
+                                    finally { setIsDeleting(false); }
+                                  }}
+                                  disabled={isDeleting}
+                                  className="text-[11px] font-semibold text-red-600 hover:text-red-700 disabled:opacity-50"
+                                >
+                                  {isDeleting ? 'Deleting…' : 'Yes'}
+                                </button>
+                                <button onClick={() => setDeleteConfirm(false)} className="text-[11px] text-neutral-400 hover:text-neutral-600">No</button>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => setDeleteConfirm(true)}
+                                title="Delete meeting"
+                                className="p-1.5 text-neutral-400 hover:text-red-500 transition-colors"
+                              >
+                                <TrashIcon className="w-4 h-4" />
+                              </button>
+                            )
                           )}
                           <button
                             type="button"
@@ -345,30 +324,6 @@ export default function MeetingDetailPanel({
                           </div>
                         )}
                       </div>
-
-                      {/* AI-Generated Prep (if available) */}
-                      {prep && (prep.agenda || prep.context) && (
-                        <div className="border-t border-neutral-200 pt-6">
-                          <div className="flex items-center gap-2 text-xs font-medium text-neutral-500 uppercase tracking-wide mb-3">
-                            <SparklesIcon className="w-4 h-4 text-violet-600" />
-                            Meeting Prep
-                          </div>
-
-                          {prep.agenda && (
-                            <div className="mb-4">
-                              <h4 className="text-[11px] font-medium text-neutral-500 uppercase tracking-wide mb-2">Agenda</h4>
-                              <PrepMarkdown text={prep.agenda} />
-                            </div>
-                          )}
-
-                          {prep.context && (
-                            <div>
-                              <h4 className="text-[11px] font-medium text-neutral-500 uppercase tracking-wide mb-2">Context</h4>
-                              <PrepMarkdown text={prep.context} />
-                            </div>
-                          )}
-                        </div>
-                      )}
 
                       {/* Meeting assistant — Google Meet + upcoming */}
                       {isMeet && isUpcoming && (
@@ -530,13 +485,7 @@ export default function MeetingDetailPanel({
                         </div>
                       )}
 
-                      {/* Description */}
-                      {event.description && (
-                        <div className="border-t border-neutral-200 pt-6">
-                          <h4 className="text-[11px] font-medium text-neutral-500 uppercase tracking-wide mb-2">Description</h4>
-                          <PrepMarkdown text={event.description} />
-                        </div>
-                      )}
+
                     </div>
 
                     {/* Footer - Fixed */}

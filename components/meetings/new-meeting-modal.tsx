@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { XMarkIcon, VideoCameraIcon } from '@heroicons/react/24/outline';
 import { toast } from 'sonner';
 import type { CalendarEvent } from '@/lib/types/meetings';
+import AttendeeInput, { type AttendeeChip } from './attendee-input';
 
 type Connection = { id: string; provider: string; email?: string };
 
@@ -47,7 +48,7 @@ export default function NewMeetingModal({ isOpen, onClose, onSuccess, initialDat
     date: '',
     time: '',
     duration: 30,
-    attendees: '',
+    attendees: [] as AttendeeChip[],
     notes: '',
     connectionId: '',
     includeMeetLink: true,
@@ -79,7 +80,7 @@ export default function NewMeetingModal({ isOpen, onClose, onSuccess, initialDat
         date: toLocalDateStr(event.start_time),
         time: toLocalTimeStr(event.start_time),
         duration: snapDuration(durMins),
-        attendees: event.attendees.map(a => a.email).filter(Boolean).join(', '),
+        attendees: event.attendees.map(a => ({ email: a.email, name: a.name })),
         notes: event.description ?? '',
         includeMeetLink: !!event.meeting_link,
       }));
@@ -94,7 +95,7 @@ export default function NewMeetingModal({ isOpen, onClose, onSuccess, initialDat
         title: initialTitle ?? '',
         date: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`,
         time: timeStr,
-        attendees: '',
+        attendees: [],
         notes: '',
         includeMeetLink: true,
       }));
@@ -114,7 +115,7 @@ export default function NewMeetingModal({ isOpen, onClose, onSuccess, initialDat
   const handleSubmit = async () => {
     const { title, date, time, duration, attendees, notes, connectionId, includeMeetLink } = form;
     if (!title.trim() || !date || !time) { setFormError('Title, date, and time are required.'); return; }
-    const parsed = attendees.split(',').map(s => s.trim()).filter(Boolean);
+    const parsed = attendees.map(a => a.email).filter(Boolean);
     if (parsed.length === 0) { setFormError('Add at least one attendee.'); return; }
 
     setFormState('sending');
@@ -163,22 +164,22 @@ export default function NewMeetingModal({ isOpen, onClose, onSuccess, initialDat
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative w-full max-w-md mx-4 bg-white shadow-2xl flex flex-col max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-neutral-100">
-          <h2 className="text-[15px] font-semibold text-neutral-900">{isEdit ? 'Edit meeting' : 'New meeting'}</h2>
-          <button onClick={onClose} className="p-1.5 hover:bg-neutral-100 rounded transition-colors">
-            <XMarkIcon className="w-5 h-5 text-neutral-400" />
+      <div className="relative w-full max-w-[360px] mx-4 bg-white rounded-lg shadow-xl flex flex-col max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-100">
+          <h2 className="text-[14px] font-bold text-neutral-900">{isEdit ? 'Edit meeting' : 'New meeting'}</h2>
+          <button onClick={onClose} className="p-1 hover:bg-neutral-100 rounded-md transition-colors">
+            <XMarkIcon className="w-4 h-4 text-neutral-400" />
           </button>
         </div>
 
-        <div className="px-5 py-5 space-y-3">
+        <div className="px-4 py-4 space-y-2.5">
           <input
             type="text"
             placeholder="Title"
             value={form.title}
             onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
             autoFocus
-            className="w-full text-[13px] border border-neutral-200 px-3 py-2 outline-none focus:border-indigo-400 placeholder:text-neutral-400"
+            className="w-full text-[13px] border border-neutral-200 rounded-md px-3 py-2 outline-none focus:border-indigo-400 placeholder:text-neutral-400"
           />
 
           <div className="flex gap-2">
@@ -186,32 +187,29 @@ export default function NewMeetingModal({ isOpen, onClose, onSuccess, initialDat
               type="date"
               value={form.date}
               onChange={e => setForm(f => ({ ...f, date: e.target.value }))}
-              className="flex-1 text-[13px] border border-neutral-200 px-3 py-2 outline-none focus:border-indigo-400"
+              className="flex-1 text-[13px] border border-neutral-200 rounded-md px-3 py-2 outline-none focus:border-indigo-400"
             />
             <input
               type="time"
               value={form.time}
               onChange={e => setForm(f => ({ ...f, time: e.target.value }))}
-              className="w-[100px] text-[13px] border border-neutral-200 px-3 py-2 outline-none focus:border-indigo-400"
+              className="w-[100px] text-[13px] border border-neutral-200 rounded-md px-3 py-2 outline-none focus:border-indigo-400"
             />
           </div>
 
           <select
             value={form.duration}
             onChange={e => setForm(f => ({ ...f, duration: Number(e.target.value) }))}
-            className="w-full text-[13px] border border-neutral-200 px-3 py-2 outline-none focus:border-indigo-400 bg-white"
+            className="w-full text-[13px] border border-neutral-200 rounded-md px-3 py-2 outline-none focus:border-indigo-400 bg-white"
           >
             {DURATION_OPTIONS.map(d => (
               <option key={d} value={d}>{d} min</option>
             ))}
           </select>
 
-          <input
-            type="text"
-            placeholder="Attendees (comma-separated emails)"
+          <AttendeeInput
             value={form.attendees}
-            onChange={e => setForm(f => ({ ...f, attendees: e.target.value }))}
-            className="w-full text-[13px] border border-neutral-200 px-3 py-2 outline-none focus:border-indigo-400 placeholder:text-neutral-400"
+            onChange={attendees => setForm(f => ({ ...f, attendees }))}
           />
 
           <textarea
@@ -219,7 +217,7 @@ export default function NewMeetingModal({ isOpen, onClose, onSuccess, initialDat
             placeholder="Notes (optional)"
             value={form.notes}
             onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
-            className="w-full text-[13px] border border-neutral-200 px-3 py-2 outline-none focus:border-indigo-400 placeholder:text-neutral-400 resize-none"
+            className="w-full text-[13px] border border-neutral-200 rounded-md px-3 py-2 outline-none focus:border-indigo-400 placeholder:text-neutral-400 resize-none"
           />
 
           {/* Account picker — only when > 1 connection and not editing */}
@@ -274,13 +272,13 @@ export default function NewMeetingModal({ isOpen, onClose, onSuccess, initialDat
               <button
                 onClick={handleSubmit}
                 disabled={formState === 'sending'}
-                className="flex-1 py-2 text-[13px] font-semibold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                className="flex-1 py-2 text-[13px] font-semibold rounded-md bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 {formState === 'sending' ? 'Saving…' : isEdit ? 'Save changes' : 'Send invitation'}
               </button>
               <button
                 onClick={onClose}
-                className="px-4 py-2 text-[13px] text-neutral-500 hover:text-neutral-700 border border-neutral-200 hover:border-neutral-300 transition-colors"
+                className="px-4 py-2 text-[13px] rounded-md text-neutral-500 hover:text-neutral-700 border border-neutral-200 hover:border-neutral-300 transition-colors"
               >
                 Cancel
               </button>

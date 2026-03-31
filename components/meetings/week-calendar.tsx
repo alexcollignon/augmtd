@@ -1,12 +1,13 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { ChevronLeftIcon, ChevronRightIcon, XMarkIcon, VideoCameraIcon } from '@heroicons/react/24/outline';
+import { ChevronLeftIcon, ChevronRightIcon, XMarkIcon, VideoCameraIcon, PencilSquareIcon, TrashIcon, MapPinIcon, CalendarIcon } from '@heroicons/react/24/outline';
 import { toast } from 'sonner';
 import type { CalendarEvent } from '@/lib/types/meetings';
 import { getDotColor } from './month-calendar';
-import MeetingDetailPanel from './meeting-detail-panel';
-import { isUserOrganizer } from '@/lib/types/meetings';
+import { isUserOrganizer, formatMeetingTime, calculateDuration } from '@/lib/types/meetings';
+import NewMeetingModal from './new-meeting-modal';
+import AttendeeInput, { type AttendeeChip } from './attendee-input';
 
 const HOUR_HEIGHT = 64;
 const START_HOUR = 7;
@@ -110,7 +111,7 @@ function QuickCreatePopover({ quickCreate, onClose, onSuccess, style }: QuickCre
     date: dateStr,
     time: timeStr,
     duration: 30,
-    attendees: '',
+    attendees: [] as AttendeeChip[],
     includeMeetLink: true,
     connectionId: '',
   });
@@ -145,7 +146,7 @@ function QuickCreatePopover({ quickCreate, onClose, onSuccess, style }: QuickCre
 
   const handleSubmit = async () => {
     if (!form.title.trim()) { setError('Add a title.'); titleRef.current?.focus(); return; }
-    const parsed = form.attendees.split(',').map(s => s.trim()).filter(Boolean);
+    const parsed = form.attendees.map(a => a.email).filter(Boolean);
     if (parsed.length === 0) { setError('Add at least one attendee.'); return; }
     setSending(true);
     setError(null);
@@ -187,13 +188,13 @@ function QuickCreatePopover({ quickCreate, onClose, onSuccess, style }: QuickCre
   return (
     <div
       ref={ref}
-      className="fixed z-50 bg-white border border-neutral-200 shadow-2xl flex flex-col"
+      className="fixed z-50 bg-white rounded-lg border border-neutral-200 shadow-xl flex flex-col"
       style={{ left: style.left, top: style.top, width: POPOVER_W }}
       onClick={e => e.stopPropagation()}
     >
       {/* Header */}
       <div className="flex items-center justify-between px-3 pt-3 pb-2 border-b border-neutral-100">
-        <span className="text-[12px] font-semibold text-neutral-500 uppercase tracking-wide">New meeting</span>
+        <span className="text-[13px] font-bold text-neutral-900">New meeting</span>
         <button onClick={onClose} className="p-0.5 text-neutral-300 hover:text-neutral-500 transition-colors">
           <XMarkIcon className="w-3.5 h-3.5" />
         </button>
@@ -208,7 +209,7 @@ function QuickCreatePopover({ quickCreate, onClose, onSuccess, style }: QuickCre
           value={form.title}
           onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
           onKeyDown={e => { if (e.key === 'Enter') handleSubmit(); }}
-          className="w-full text-[14px] font-semibold border-b border-neutral-200 pb-1.5 outline-none placeholder:text-neutral-300 focus:border-indigo-400 transition-colors bg-transparent"
+          className="w-full text-[13px] font-semibold border-b border-neutral-200 pb-1.5 outline-none placeholder:text-neutral-300 focus:border-indigo-400 transition-colors bg-transparent"
         />
 
         {/* Date + Time */}
@@ -217,13 +218,13 @@ function QuickCreatePopover({ quickCreate, onClose, onSuccess, style }: QuickCre
             type="date"
             value={form.date}
             onChange={e => setForm(f => ({ ...f, date: e.target.value }))}
-            className="flex-1 text-[12px] border border-neutral-200 px-2 py-1.5 outline-none focus:border-indigo-400 transition-colors"
+            className="flex-1 text-[12px] border border-neutral-200 rounded-md px-2 py-1.5 outline-none focus:border-indigo-400 transition-colors"
           />
           <input
             type="time"
             value={form.time}
             onChange={e => setForm(f => ({ ...f, time: e.target.value }))}
-            className="w-[88px] text-[12px] border border-neutral-200 px-2 py-1.5 outline-none focus:border-indigo-400 transition-colors"
+            className="w-[88px] text-[12px] border border-neutral-200 rounded-md px-2 py-1.5 outline-none focus:border-indigo-400 transition-colors"
           />
         </div>
 
@@ -231,18 +232,16 @@ function QuickCreatePopover({ quickCreate, onClose, onSuccess, style }: QuickCre
         <select
           value={form.duration}
           onChange={e => setForm(f => ({ ...f, duration: Number(e.target.value) }))}
-          className="w-full text-[12px] border border-neutral-200 px-2 py-1.5 outline-none focus:border-indigo-400 bg-white transition-colors"
+          className="w-full text-[12px] border border-neutral-200 rounded-md px-2 py-1.5 outline-none focus:border-indigo-400 bg-white transition-colors"
         >
           {DURATION_OPTIONS.map(d => <option key={d} value={d}>{d} min</option>)}
         </select>
 
         {/* Attendees */}
-        <input
-          type="text"
-          placeholder="Attendees (comma-separated emails)"
+        <AttendeeInput
           value={form.attendees}
-          onChange={e => setForm(f => ({ ...f, attendees: e.target.value }))}
-          className="w-full text-[12px] border border-neutral-200 px-2 py-1.5 outline-none focus:border-indigo-400 transition-colors placeholder:text-neutral-300"
+          onChange={attendees => setForm(f => ({ ...f, attendees }))}
+          compact
         />
 
         {/* Account picker — only if >1 connection */}
@@ -250,7 +249,7 @@ function QuickCreatePopover({ quickCreate, onClose, onSuccess, style }: QuickCre
           <select
             value={form.connectionId}
             onChange={e => setForm(f => ({ ...f, connectionId: e.target.value }))}
-            className="w-full text-[12px] border border-neutral-200 px-2 py-1.5 outline-none focus:border-indigo-400 bg-white transition-colors"
+            className="w-full text-[12px] border border-neutral-200 rounded-md px-2 py-1.5 outline-none focus:border-indigo-400 bg-white transition-colors"
           >
             {connections.map(c => (
               <option key={c.id} value={c.id}>
@@ -281,17 +280,146 @@ function QuickCreatePopover({ quickCreate, onClose, onSuccess, style }: QuickCre
           <button
             onClick={handleSubmit}
             disabled={sending}
-            className="flex-1 py-1.5 text-[12px] font-semibold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+            className="flex-1 py-1.5 text-[12px] font-semibold rounded-md bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 transition-colors"
           >
             {sending ? 'Sending…' : 'Send invitation'}
           </button>
           <button
             onClick={onClose}
-            className="px-3 py-1.5 text-[12px] text-neutral-500 border border-neutral-200 hover:border-neutral-300 hover:text-neutral-700 transition-colors"
+            className="px-3 py-1.5 text-[12px] rounded-md text-neutral-500 border border-neutral-200 hover:border-neutral-300 hover:text-neutral-700 transition-colors"
           >
             Cancel
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Event detail popover ──────────────────────────────────────────────────────
+interface EventPopoverProps {
+  event: CalendarEvent;
+  userEmail: string;
+  style: { left: number; top: number };
+  onClose: () => void;
+  onEdit: () => void;
+  onDeleted: () => void;
+}
+
+function EventPopover({ event, userEmail, style, onClose, onEdit, onDeleted }: EventPopoverProps) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const isUpcoming = event.meeting_status !== 'completed';
+  const { primary } = formatMeetingTime(event.start_time, event.end_time);
+  const duration = calculateDuration(event.start_time, event.end_time);
+
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const handleClick = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+    };
+    document.addEventListener('keydown', handleKey);
+    document.addEventListener('mousedown', handleClick);
+    return () => {
+      document.removeEventListener('keydown', handleKey);
+      document.removeEventListener('mousedown', handleClick);
+    };
+  }, [onClose]);
+
+  const handleDelete = async () => {
+    setIsDeleting(true);
+    try {
+      const res = await fetch(`/api/meetings/${event.id}`, { method: 'DELETE' });
+      if (res.ok) { toast.success('Meeting deleted'); onDeleted(); }
+      else { toast.error('Failed to delete meeting'); setDeleteConfirm(false); }
+    } catch { toast.error('Failed to delete meeting'); setDeleteConfirm(false); }
+    finally { setIsDeleting(false); }
+  };
+
+  return (
+    <div
+      ref={ref}
+      className="fixed z-50 bg-white border border-neutral-200 shadow-2xl rounded-lg flex flex-col"
+      style={{ left: style.left, top: style.top, width: 320 }}
+      onClick={e => e.stopPropagation()}
+    >
+      {/* Header */}
+      <div className="flex items-start justify-between px-4 pt-4 pb-2">
+        <h3 className="text-[15px] font-bold text-neutral-900 leading-tight flex-1 pr-2">{event.title}</h3>
+        <div className="flex items-center gap-0.5 flex-shrink-0">
+          {isUpcoming && !deleteConfirm && (
+            <>
+              <button onClick={onEdit} title="Edit" className="p-1.5 text-neutral-400 hover:text-indigo-600 transition-colors rounded-md hover:bg-neutral-50">
+                <PencilSquareIcon className="w-4 h-4" />
+              </button>
+              <button onClick={() => setDeleteConfirm(true)} title="Delete" className="p-1.5 text-neutral-400 hover:text-red-500 transition-colors rounded-md hover:bg-neutral-50">
+                <TrashIcon className="w-4 h-4" />
+              </button>
+            </>
+          )}
+          {deleteConfirm && (
+            <div className="flex items-center gap-1.5 mr-1">
+              <span className="text-[11px] text-neutral-500">Delete?</span>
+              <button onClick={handleDelete} disabled={isDeleting} className="text-[11px] font-semibold text-red-600 hover:text-red-700 disabled:opacity-50">
+                {isDeleting ? '…' : 'Yes'}
+              </button>
+              <button onClick={() => setDeleteConfirm(false)} className="text-[11px] text-neutral-400 hover:text-neutral-600">No</button>
+            </div>
+          )}
+          <button onClick={onClose} className="p-1.5 text-neutral-300 hover:text-neutral-500 transition-colors rounded-md hover:bg-neutral-50">
+            <XMarkIcon className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+
+      {/* Body */}
+      <div className="px-4 pb-4 space-y-2.5">
+        {/* Date/time */}
+        <div className="flex items-start gap-2 text-[13px] text-neutral-600">
+          <CalendarIcon className="w-4 h-4 text-neutral-400 flex-shrink-0 mt-0.5" />
+          <div>
+            <div>{new Date(event.start_time).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</div>
+            <div className="text-neutral-400 mt-0.5">{primary} · {duration}min</div>
+          </div>
+        </div>
+
+        {/* Meet link */}
+        {event.meeting_link && (
+          <a href={event.meeting_link} target="_blank" rel="noreferrer"
+            className="flex items-center gap-2 text-[13px] text-blue-600 hover:underline font-medium">
+            <VideoCameraIcon className="w-4 h-4 flex-shrink-0" />
+            Join with {event.meeting_link.includes('teams.microsoft') ? 'Teams' : 'Google Meet'}
+          </a>
+        )}
+
+        {/* Location */}
+        {event.location && (
+          <div className="flex items-center gap-2 text-[13px] text-neutral-500">
+            <MapPinIcon className="w-4 h-4 flex-shrink-0 text-neutral-400" />
+            {event.location}
+          </div>
+        )}
+
+        {/* Attendees */}
+        {event.attendees.length > 0 && (
+          <div className="pt-1">
+            <p className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wide mb-1.5">Attendees</p>
+            <div className="space-y-1.5">
+              {event.attendees.slice(0, 5).map((a, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <div className="w-6 h-6 rounded-full bg-indigo-100 flex items-center justify-center flex-shrink-0">
+                    <span className="text-[10px] font-semibold text-indigo-600">{(a.name || a.email)[0].toUpperCase()}</span>
+                  </div>
+                  <span className="text-[12px] text-neutral-700 truncate">{a.name || a.email}</span>
+                </div>
+              ))}
+              {event.attendees.length > 5 && (
+                <p className="text-[11px] text-neutral-400 pl-8">+{event.attendees.length - 5} more</p>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -308,7 +436,8 @@ export default function WeekCalendar({
   onRefresh,
 }: WeekCalendarProps) {
   const [weekOffset, setWeekOffset] = useState(0);
-  const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
+  const [selectedEvent, setSelectedEvent] = useState<{ event: CalendarEvent; clientX: number; clientY: number } | null>(null);
+  const [editEvent, setEditEvent] = useState<CalendarEvent | null>(null);
   const [quickCreate, setQuickCreate] = useState<QuickCreate | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -472,7 +601,7 @@ export default function WeekCalendar({
                     return (
                       <div
                         key={event.id}
-                        onClick={(e) => { e.stopPropagation(); setSelectedEvent(event); }}
+                        onClick={(e) => { e.stopPropagation(); setSelectedEvent({ event, clientX: e.clientX, clientY: e.clientY }); }}
                         className={`absolute overflow-hidden border cursor-pointer hover:brightness-95 transition-all ${colors.bg} ${colors.border} ${colors.text}`}
                         style={{
                           top: `${top}px`,
@@ -512,19 +641,32 @@ export default function WeekCalendar({
         />
       )}
 
-      {selectedEvent && (
-        <MeetingDetailPanel
-          event={selectedEvent}
-          userEmail={userEmail}
-          isOpen={!!selectedEvent}
-          onClose={() => setSelectedEvent(null)}
-          onRefresh={onRefresh}
-          botState={botStateMap.get(selectedEvent.id) ?? selectedEvent.attendee_bot_state ?? null}
-          onScheduled={onScheduled}
-          onCancelled={onCancelled}
-          onEdit={isUserOrganizer(selectedEvent, userEmail) && selectedEvent.meeting_status !== 'completed'
-            ? () => setSelectedEvent(null)
-            : undefined}
+      {selectedEvent && (() => {
+        const vw = typeof window !== 'undefined' ? window.innerWidth : 1200;
+        const vh = typeof window !== 'undefined' ? window.innerHeight : 800;
+        const pw = 320;
+        const left = selectedEvent.clientX + 16 + pw > vw
+          ? selectedEvent.clientX - pw - 16
+          : selectedEvent.clientX + 16;
+        const top = Math.min(Math.max(8, selectedEvent.clientY - 60), vh - 360);
+        return (
+          <EventPopover
+            event={selectedEvent.event}
+            userEmail={userEmail}
+            style={{ left, top }}
+            onClose={() => setSelectedEvent(null)}
+            onEdit={() => { setEditEvent(selectedEvent.event); setSelectedEvent(null); }}
+            onDeleted={() => { setSelectedEvent(null); onRefresh?.(); }}
+          />
+        );
+      })()}
+
+      {editEvent && (
+        <NewMeetingModal
+          isOpen={!!editEvent}
+          onClose={() => setEditEvent(null)}
+          onSuccess={() => { setEditEvent(null); onRefresh?.(); }}
+          event={editEvent}
         />
       )}
     </div>

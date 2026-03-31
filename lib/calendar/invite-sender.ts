@@ -200,3 +200,51 @@ export async function updateOutlookEvent(
     throw err;
   }
 }
+
+export async function deleteGmailEvent(params: {
+  encryptedTokens: string;
+  onTokenRefresh: (t: string) => Promise<void>;
+  eventId: string;
+}): Promise<void> {
+  const { encryptedTokens, onTokenRefresh, eventId } = params;
+  const tokens = JSON.parse(Buffer.from(encryptedTokens, 'base64').toString());
+  const oauth2Client = getOAuth2Client();
+  oauth2Client.setCredentials(tokens);
+
+  if (tokens.expiry_date && tokens.expiry_date < Date.now() + 5 * 60 * 1000) {
+    const { credentials } = await oauth2Client.refreshAccessToken();
+    oauth2Client.setCredentials(credentials);
+    await onTokenRefresh(Buffer.from(JSON.stringify(credentials)).toString('base64'));
+  }
+
+  const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+  try {
+    await calendar.events.delete({ calendarId: 'primary', eventId, sendUpdates: 'all' });
+  } catch (err: any) {
+    if (err?.code === 403 || err?.status === 403) throw { code: 'calendar_scope_required' };
+    if (err?.code === 410 || err?.status === 410) return; // already deleted — treat as success
+    throw err;
+  }
+}
+
+export async function deleteOutlookEvent(params: {
+  encryptedTokens: string;
+  onTokenRefresh: (tokens: OutlookTokens) => Promise<void>;
+  eventId: string;
+}): Promise<void> {
+  const { encryptedTokens, onTokenRefresh, eventId } = params;
+  let graphClient: any;
+  try {
+    graphClient = await getGraphClient(encryptedTokens, onTokenRefresh);
+  } catch (err: any) {
+    if (err?.statusCode === 403 || err?.code === 403) throw { code: 'calendar_scope_required' };
+    throw err;
+  }
+  try {
+    await graphClient.api(`/me/calendar/events/${eventId}`).delete();
+  } catch (err: any) {
+    if (err?.statusCode === 403 || err?.code === 403) throw { code: 'calendar_scope_required' };
+    if (err?.statusCode === 404 || err?.statusCode === 410) return; // already deleted — treat as success
+    throw err;
+  }
+}
