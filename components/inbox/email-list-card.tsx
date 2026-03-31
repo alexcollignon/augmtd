@@ -25,9 +25,6 @@ function formatTime(dateStr: string): string {
 
 export default function EmailListCard({ item, isSelected, onSelect, compact = false, isChecked = false, onToggleCheck, hasAnySelected = false }: EmailListCardProps) {
   const sourceData = item.source_data;
-  const accentColor = item.visual_section === 'prepared'
-    ? 'bg-indigo-500'
-    : 'bg-neutral-300';
 
   const fromDisplay = sourceData?.from_name || sourceData?.from || '';
   const subjectDisplay = sourceData?.subject || '';
@@ -37,6 +34,7 @@ export default function EmailListCard({ item, isSelected, onSelect, compact = fa
     || '').normalize('NFC').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
   const timeDisplay = sourceData?.received_at ? formatTime(sourceData.received_at as string) : '';
 
+  const isUnread = item.is_read === false;
   const checkboxVisible = isChecked || hasAnySelected;
 
   // pointer-events-none when hidden so the invisible zone doesn't intercept card clicks
@@ -66,12 +64,14 @@ export default function EmailListCard({ item, isSelected, onSelect, compact = fa
         }`}
       >
         {Checkbox}
-        <div className={`absolute left-0 top-0 bottom-0 w-[3px] rounded-l-md ${accentColor}`} />
         <div className="pl-8 pr-3 py-1.5">
           <div className="flex items-baseline justify-between gap-2 mb-0.5">
-            <span className={`text-[12px] font-semibold truncate ${isSelected ? 'text-indigo-900' : 'text-neutral-900'}`}>
-              {fromDisplay}
-            </span>
+            <div className="flex items-center gap-1.5 min-w-0">
+              {isUnread && <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 flex-shrink-0 mb-0.5" />}
+              <span className={`text-[12px] truncate ${isUnread ? 'font-bold' : 'font-semibold'} ${isSelected ? 'text-indigo-900' : 'text-neutral-900'}`}>
+                {fromDisplay}
+              </span>
+            </div>
             {timeDisplay && (
               <span className="text-[10px] text-neutral-400 flex-shrink-0">{timeDisplay}</span>
             )}
@@ -94,22 +94,22 @@ export default function EmailListCard({ item, isSelected, onSelect, compact = fa
       }`}
     >
       {Checkbox}
-      {/* Accent bar */}
-      <div className={`absolute left-0 top-0 bottom-0 w-[3px] rounded-l-md ${accentColor}`} />
-
       <div className="pl-8 pr-3 py-3">
         {/* Row 1: From + time */}
         <div className="flex items-baseline justify-between gap-2 mb-0.5">
-          <span className={`text-[13px] font-semibold truncate ${isSelected ? 'text-indigo-900' : 'text-neutral-900'}`}>
-            {fromDisplay}
-          </span>
+          <div className="flex items-center gap-1.5 min-w-0">
+            {isUnread && <span className="w-2 h-2 rounded-full bg-indigo-500 flex-shrink-0" />}
+            <span className={`text-[13px] truncate ${isUnread ? 'font-bold' : 'font-semibold'} ${isSelected ? 'text-indigo-900' : 'text-neutral-900'}`}>
+              {fromDisplay}
+            </span>
+          </div>
           {timeDisplay && (
-            <span className="text-[10px] text-neutral-400 flex-shrink-0">{timeDisplay}</span>
+            <span className={`text-[10px] flex-shrink-0 ${isUnread ? 'text-indigo-500 font-medium' : 'text-neutral-400'}`}>{timeDisplay}</span>
           )}
         </div>
 
         {/* Row 2: Subject */}
-        <p className={`text-[12px] truncate mb-0.5 ${isSelected ? 'text-indigo-700 font-medium' : 'text-neutral-700'}`}>
+        <p className={`text-[12px] truncate mb-0.5 ${isSelected ? 'text-indigo-700 font-medium' : isUnread ? 'text-neutral-800 font-medium' : 'text-neutral-700'}`}>
           {subjectDisplay}
         </p>
 

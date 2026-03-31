@@ -72,6 +72,7 @@ GENERAL RULES:
 - When referencing a specific email, include its ID in square brackets like [uuid] — the UI renders it as a card. ONLY use [uuid] when the user explicitly asked about a specific email. NEVER attach [uuid] to calendar events or meeting descriptions.
 - If multiple matching emails: list them one per line with [id].
 - Do not invent emails not in the inbox snapshot.
+- Unread items are tagged [unread] in the snapshot. When summarising or prioritising the inbox, treat unread items as higher priority unless instructed otherwise.
 - Use the calendar when answering scheduling questions. Propose conflict-free times.
 - If a document is attached ([Attached document content: ...]), use it as primary context.
 - If you used KB content, append exactly one line at the very end: KB_REFS:filename1.pdf|filename2.pdf (pipe-separated). Do not append if KB was not used.
@@ -178,6 +179,7 @@ export async function POST(request: NextRequest) {
       emailContext?: {
         subject?: string; from?: string; fromName?: string;
         summary?: string; keyPoints?: string[]; body?: string;
+        isRead?: boolean;
       };
       fileContext?: string;
       boardItems?: DeskItem[];
@@ -314,7 +316,8 @@ export async function POST(request: NextRequest) {
     if (emailContext) {
       focusedItemBlock = `FOCUSED EMAIL — the user is currently working on this email. When they say "this email", "it", "them", or "draft a reply", refer to this:
 From: ${emailContext.fromName ? `${emailContext.fromName} <${emailContext.from}>` : emailContext.from}
-Subject: ${emailContext.subject || '(no subject)'}${emailContext.summary ? `\nSummary: ${emailContext.summary}` : ''}${emailContext.keyPoints?.length ? `\nKey points:\n${emailContext.keyPoints.map(p => `- ${p}`).join('\n')}` : ''}${emailContext.body ? `\nBody:\n${emailContext.body.slice(0, 2000)}${emailContext.body.length > 2000 ? '\n[...truncated]' : ''}` : ''}`;
+Subject: ${emailContext.subject || '(no subject)'}
+Read status: ${emailContext.isRead === false ? 'unread (the user has not yet read this email)' : 'read'}${emailContext.summary ? `\nSummary: ${emailContext.summary}` : ''}${emailContext.keyPoints?.length ? `\nKey points:\n${emailContext.keyPoints.map(p => `- ${p}`).join('\n')}` : ''}${emailContext.body ? `\nBody:\n${emailContext.body.slice(0, 2000)}${emailContext.body.length > 2000 ? '\n[...truncated]' : ''}` : ''}`;
     } else if (focusedCard) {
       focusedItemBlock = `FOCUSED CARD — the user has this board item in focus. When they say "this", "it", or "this task", refer to this:
 Title: ${focusedCard.title}
@@ -398,7 +401,7 @@ REPLY MODE — follow exactly:
         { role: 'user' as const, content: userContent },
       ],
       temperature: 0.3,
-      max_tokens: context === 'meeting' ? 900 : mode === 'reply' ? 1200 : 700,
+      max_tokens: context === 'meeting' ? 1200 : mode === 'reply' ? 1500 : 1500,
       stream: true as const,
     };
 

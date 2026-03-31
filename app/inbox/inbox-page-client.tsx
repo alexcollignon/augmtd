@@ -411,6 +411,11 @@ export function InboxPageClient({
 
   const handleSelectItem = (item: InboxItem) => {
     setSelectedItem(item);
+    // Mark as read in our DB + on the provider (fire-and-forget)
+    if (item.is_read === false) {
+      setInboxItems(prev => prev.map(i => i.id === item.id ? { ...i, is_read: true } : i));
+      fetch(`/api/inbox/${item.id}/mark-read`, { method: 'POST' }).catch(() => {});
+    }
     setComposeMode(false);
     setChipDismissed(false);
     setRightPanel('chat');
@@ -433,6 +438,7 @@ export function InboxPageClient({
     body: (selectedItem as any).source_data?.body,
     itemType: (selectedItem as any).item_type ?? null,
     connectionId: (selectedItem as any).connection_id ?? null,
+    isRead: (selectedItem as any).is_read !== false,
   } : null;
 
   const handleChatAction = useCallback(async (type: string, itemId: string) => {
@@ -952,19 +958,24 @@ export function InboxPageClient({
             </div>
 
             {/* Right panel — persistent wrapper, animates open/close */}
-            <div className={`flex-shrink-0 overflow-hidden transition-[width] duration-200 ${rightPanel ? 'w-[300px]' : 'w-0'}`}>
+            <div className={`flex-shrink-0 overflow-hidden transition-[width] duration-200 bg-neutral-100 ${rightPanel ? 'w-[316px]' : 'w-0'}`}>
               {rightPanel === 'calendar' && (
-                <MeetingsColumn
-                  isOpen={true}
-                  onToggle={() => setRightPanel(null)}
-                  meetings={meetings}
-                  loading={meetingsLoading}
-                  userEmail={user?.email || ''}
-                  onRefresh={fetchMeetings}
-                />
+                <div className="w-full h-full p-2">
+                  <div className="h-full rounded-2xl bg-white shadow-sm overflow-hidden">
+                    <MeetingsColumn
+                      isOpen={true}
+                      onToggle={() => setRightPanel(null)}
+                      meetings={meetings}
+                      loading={meetingsLoading}
+                      userEmail={user?.email || ''}
+                      onRefresh={fetchMeetings}
+                    />
+                  </div>
+                </div>
               )}
               {rightPanel === 'chat' && (
-                <div className="w-[300px] h-full flex flex-col border-l border-neutral-200">
+                <div className="w-full h-full p-2">
+                  <div className="h-full flex flex-col rounded-2xl bg-white shadow-sm overflow-hidden">
                   <AiChatPanel
                     context="inbox"
                     composeDraft={composeMode ? composeDraft : undefined}
@@ -999,6 +1010,7 @@ export function InboxPageClient({
                     onOpenWorkflow={handleOpenWorkflow}
                     onOpenProcess={handleOpenProcess}
                   />
+                  </div>
                 </div>
               )}
             </div>

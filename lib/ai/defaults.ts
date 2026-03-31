@@ -60,7 +60,7 @@ export const TIER_DEFAULTS: Record<TierType, Record<TaskType, ModelEndpoint>> = 
                      baseURL: 'https://api.together.xyz/v1' },
     assignment:    { provider: 'openai_compatible', model: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
                      baseURL: 'https://api.together.xyz/v1' },
-    conversation:  { provider: 'openai_compatible', model: 'Qwen/Qwen3.5-9B',
+    conversation:  { provider: 'openai_compatible', model: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
                      baseURL: 'https://api.together.xyz/v1' },
   },
 

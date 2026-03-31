@@ -35,6 +35,13 @@ function isStorageMimeTypeSupported(mimeType: string): boolean {
 }
 
 // Postgres rejects \u0000 (null bytes) in text columns — strip recursively from any value
+/** Derive is_read from a stored email row: Gmail uses labels[], Outlook stores is_read directly */
+function deriveIsRead(email: any): boolean {
+  if (Array.isArray(email.labels)) return !email.labels.includes('UNREAD');
+  if (typeof email.is_read === 'boolean') return email.is_read;
+  return true;
+}
+
 function stripNulls(v: unknown): unknown {
   if (typeof v === 'string') return v.replace(/\u0000/g, '');
   if (Array.isArray(v)) return v.map(stripNulls);
@@ -548,6 +555,7 @@ export async function syncEmailsForConnection(
                 received_at: existingEmail.received_at,
                 provider: connection.provider,
               },
+              is_read: deriveIsRead(existingEmail),
               status: 'pending',
               needs_review: false,
             }) as Record<string, unknown>);
@@ -578,6 +586,7 @@ export async function syncEmailsForConnection(
                 received_at: existingEmail.received_at,
                 provider: connection.provider,
               },
+              is_read: deriveIsRead(existingEmail),
               status: 'pending',
               needs_review: false,
             }) as Record<string, unknown>);
@@ -678,6 +687,7 @@ export async function syncEmailsForConnection(
               received_at: storedEmail.received_at,
               provider: connection.provider,
             },
+            is_read: deriveIsRead(storedEmail),
             status: 'pending',
             needs_review: false,
           }) as Record<string, unknown>);
@@ -710,6 +720,7 @@ export async function syncEmailsForConnection(
               received_at: storedEmail.received_at,
               provider: connection.provider,
             },
+            is_read: deriveIsRead(storedEmail),
             status: 'pending',
             needs_review: false,
           }) as Record<string, unknown>);
@@ -1147,6 +1158,7 @@ export async function syncEmailsForConnection(
               ai_suggestion_reasoning: recipient.reasoning,
               confidence_score: Math.round(recipient.responsibilityConfidence * 100),
               priority: processed.priority,
+              is_read: deriveIsRead(storedEmail),
               status: 'pending',
               needs_review: true
             }) as Record<string, unknown>)

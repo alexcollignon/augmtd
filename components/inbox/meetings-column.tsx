@@ -42,7 +42,7 @@ export default function MeetingsColumn({ isOpen, onToggle, meetings, loading, us
     {isOpen && (calendarView === 'week' || weekClosing) && (
       <div
         className={`fixed top-0 bottom-0 z-40 overflow-hidden bg-white border-l border-neutral-200 flex flex-col ${weekClosing ? 'week-collapse-exit' : 'week-expand-enter'}`}
-        style={{ right: '300px', width: '680px', boxShadow: '-8px 0 24px rgba(0,0,0,0.10)' }}
+        style={{ right: '316px', width: '680px', boxShadow: '-8px 0 24px rgba(0,0,0,0.10)' }}
       >
         <div className="flex-shrink-0 h-10 flex items-center justify-between px-3 border-b border-neutral-200">
           <button
@@ -70,7 +70,7 @@ export default function MeetingsColumn({ isOpen, onToggle, meetings, loading, us
     )}
 
     <div
-      className={`flex-shrink-0 border-l border-neutral-200 flex flex-col bg-white transition-all duration-300 overflow-hidden ${
+      className={`flex-shrink-0 flex flex-col bg-white transition-all duration-300 overflow-hidden ${
         isOpen ? 'w-[300px]' : 'w-9'
       }`}
     >

@@ -6,10 +6,8 @@ import { Dialog, Transition } from '@headlessui/react';
 import {
   XMarkIcon,
   CalendarIcon,
-  ClockIcon,
   MapPinIcon,
   VideoCameraIcon,
-  UserGroupIcon,
   DocumentTextIcon,
   MicrophoneIcon,
   PencilSquareIcon,
@@ -20,12 +18,10 @@ import {
   formatMeetingTime,
   calculateDuration,
   getVIPAttendees,
-  isUserOrganizer,
 } from '@/lib/types/meetings';
 import { createClient } from '@/lib/supabase/client';
 import RsvpButtons from '@/components/inbox/rsvp-buttons';
 import MeetingRecorder from '@/components/meetings/meeting-recorder';
-
 
 interface TranscriptSegment {
   speaker: string;
@@ -54,6 +50,28 @@ interface MeetingDetailPanelProps {
   onDelete?: () => void;
 }
 
+function avatarColor(email: string) {
+  const colors = [
+    'bg-indigo-100 text-indigo-700',
+    'bg-violet-100 text-violet-700',
+    'bg-blue-100 text-blue-700',
+    'bg-emerald-100 text-emerald-700',
+    'bg-amber-100 text-amber-700',
+    'bg-rose-100 text-rose-700',
+  ];
+  let hash = 0;
+  for (const c of email) hash = (hash * 31 + c.charCodeAt(0)) & 0xffff;
+  return colors[hash % colors.length];
+}
+
+function rsvpBadge(status?: string): { label: string; className: string } | null {
+  if (!status || status === 'accepted') return null;
+  if (status === 'needsAction') return { label: 'Awaiting', className: 'bg-amber-50 text-amber-600' };
+  if (status === 'tentative' || status === 'tentativelyaccepted') return { label: 'Maybe', className: 'bg-amber-50 text-amber-600' };
+  if (status === 'declined') return { label: 'Declined', className: 'bg-neutral-100 text-neutral-500' };
+  return null;
+}
+
 export default function MeetingDetailPanel({
   event,
   userEmail,
@@ -69,7 +87,6 @@ export default function MeetingDetailPanel({
   const { primary } = formatMeetingTime(event.start_time, event.end_time);
   const duration = calculateDuration(event.start_time, event.end_time);
   const vipAttendees = getVIPAttendees(event.attendees);
-  const isOrganizer = isUserOrganizer(event, userEmail);
   const botState = botStateProp ?? event.attendee_bot_state ?? null;
   const isMeet = !!event.meeting_link?.includes('meet.google.com');
   const isUpcoming = event.meeting_status !== 'completed';
@@ -78,18 +95,15 @@ export default function MeetingDetailPanel({
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  // Transcript state
   const [transcript, setTranscript] = useState<MeetingTranscript | null>(null);
   const [transcriptLoading, setTranscriptLoading] = useState(false);
-  const [transcriptKey, setTranscriptKey] = useState(0); // bump to refetch
+  const [transcriptKey, setTranscriptKey] = useState(0);
 
-  // Fetch transcript for completed meetings (or after recording submitted)
   useEffect(() => {
     if (!isOpen || (event.meeting_status !== 'completed' && transcriptKey === 0)) {
       setTranscript(null);
       return;
     }
-
     const fetchTranscript = async () => {
       setTranscriptLoading(true);
       try {
@@ -98,29 +112,17 @@ export default function MeetingDetailPanel({
           .from('meeting_transcripts')
           .select('id, title, transcript_segments, duration_minutes, work_items_generated')
           .eq('calendar_event_id', event.id)
-          .maybeSingle(); // Use maybeSingle() instead of single() to handle no results gracefully
-
-        if (error) {
-          console.error('Failed to fetch transcript:', error);
-          setTranscript(null);
-        } else {
-          setTranscript(data); // Will be null if no transcript exists yet
-        }
-      } catch (err) {
-        console.error('Error fetching transcript:', err);
-        setTranscript(null);
-      } finally {
-        setTranscriptLoading(false);
-      }
+          .maybeSingle();
+        if (error) { setTranscript(null); }
+        else { setTranscript(data); }
+      } catch { setTranscript(null); }
+      finally { setTranscriptLoading(false); }
     };
-
     fetchTranscript();
   }, [isOpen, event.id, event.meeting_status, transcriptKey]);
 
   const handleJoinMeeting = () => {
-    if (event.meeting_link) {
-      window.open(event.meeting_link, '_blank');
-    }
+    if (event.meeting_link) window.open(event.meeting_link, '_blank');
   };
 
   return (
@@ -129,14 +131,10 @@ export default function MeetingDetailPanel({
         {/* Backdrop */}
         <Transition.Child
           as={Fragment}
-          enter="ease-in-out duration-300"
-          enterFrom="opacity-0"
-          enterTo="opacity-100"
-          leave="ease-in-out duration-200"
-          leaveFrom="opacity-100"
-          leaveTo="opacity-0"
+          enter="ease-in-out duration-300" enterFrom="opacity-0" enterTo="opacity-100"
+          leave="ease-in-out duration-200" leaveFrom="opacity-100" leaveTo="opacity-0"
         >
-          <div className="fixed inset-0 bg-neutral-900/25 backdrop-blur-sm transition-opacity" />
+          <div className="fixed inset-0 bg-neutral-900/20 backdrop-blur-sm transition-opacity" />
         </Transition.Child>
 
         {/* Panel */}
@@ -146,201 +144,141 @@ export default function MeetingDetailPanel({
               <Transition.Child
                 as={Fragment}
                 enter="transform transition ease-in-out duration-300"
-                enterFrom="translate-x-full"
-                enterTo="translate-x-0"
+                enterFrom="translate-x-full" enterTo="translate-x-0"
                 leave="transform transition ease-in-out duration-200"
-                leaveFrom="translate-x-0"
-                leaveTo="translate-x-full"
+                leaveFrom="translate-x-0" leaveTo="translate-x-full"
               >
-                <Dialog.Panel className="pointer-events-auto w-screen max-w-md">
-                  <div className="flex h-full flex-col overflow-y-scroll bg-white shadow-xl">
-                    {/* Header - Fixed */}
-                    <div className="border-b border-neutral-200 bg-white px-6 py-5">
-                      <div className="flex items-start justify-between">
-                        <div className="flex items-center gap-2">
-                          <CalendarIcon className="w-5 h-5 text-blue-600" />
-                          <Dialog.Title className="text-base font-semibold text-neutral-900">
-                            Meeting Details
-                          </Dialog.Title>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          {onEdit && (
-                            <button
-                              type="button"
-                              onClick={onEdit}
-                              title="Edit meeting"
-                              className="p-1.5 text-neutral-400 hover:text-indigo-600 transition-colors"
-                            >
-                              <PencilSquareIcon className="w-4 h-4" />
-                            </button>
-                          )}
-                          {onDelete && (
-                            deleteConfirm ? (
-                              <div className="flex items-center gap-1.5">
-                                <span className="text-[11px] text-neutral-500">Delete?</span>
-                                <button
-                                  onClick={async () => {
-                                    setIsDeleting(true);
-                                    try {
-                                      const res = await fetch(`/api/meetings/${event.id}`, { method: 'DELETE' });
-                                      if (res.ok) { onDelete(); }
-                                      else { toast.error('Failed to delete meeting'); setDeleteConfirm(false); }
-                                    } catch { toast.error('Failed to delete meeting'); setDeleteConfirm(false); }
-                                    finally { setIsDeleting(false); }
-                                  }}
-                                  disabled={isDeleting}
-                                  className="text-[11px] font-semibold text-red-600 hover:text-red-700 disabled:opacity-50"
-                                >
-                                  {isDeleting ? 'Deleting…' : 'Yes'}
-                                </button>
-                                <button onClick={() => setDeleteConfirm(false)} className="text-[11px] text-neutral-400 hover:text-neutral-600">No</button>
-                              </div>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={() => setDeleteConfirm(true)}
-                                title="Delete meeting"
-                                className="p-1.5 text-neutral-400 hover:text-red-500 transition-colors"
-                              >
-                                <TrashIcon className="w-4 h-4" />
-                              </button>
-                            )
-                          )}
-                          <button
-                            type="button"
-                            className="rounded-md text-neutral-400 hover:text-neutral-600 transition-colors"
-                            onClick={onClose}
-                          >
-                            <XMarkIcon className="h-5 w-5" />
+                <Dialog.Panel className="pointer-events-auto w-screen max-w-[400px]">
+                  <div className="flex h-full flex-col bg-white shadow-xl">
+
+                    {/* ── Header ── */}
+                    <div className="px-5 pt-5 pb-4 border-b border-neutral-100">
+                      {/* Actions row */}
+                      <div className="flex items-center justify-end gap-1 mb-3">
+                        {onEdit && (
+                          <button onClick={onEdit} title="Edit" className="p-1.5 text-neutral-300 hover:text-neutral-600 transition-colors rounded-md hover:bg-neutral-100">
+                            <PencilSquareIcon className="w-4 h-4" />
                           </button>
-                        </div>
+                        )}
+                        {onDelete && (
+                          deleteConfirm ? (
+                            <div className="flex items-center gap-1.5 mr-1">
+                              <span className="text-[11px] text-neutral-400">Delete?</span>
+                              <button
+                                onClick={async () => {
+                                  setIsDeleting(true);
+                                  try {
+                                    const res = await fetch(`/api/meetings/${event.id}`, { method: 'DELETE' });
+                                    if (res.ok) { onDelete(); }
+                                    else { toast.error('Failed to delete'); setDeleteConfirm(false); }
+                                  } catch { toast.error('Failed to delete'); setDeleteConfirm(false); }
+                                  finally { setIsDeleting(false); }
+                                }}
+                                disabled={isDeleting}
+                                className="text-[11px] font-semibold text-red-500 hover:text-red-700 disabled:opacity-50"
+                              >
+                                {isDeleting ? '…' : 'Yes'}
+                              </button>
+                              <button onClick={() => setDeleteConfirm(false)} className="text-[11px] text-neutral-400 hover:text-neutral-600">No</button>
+                            </div>
+                          ) : (
+                            <button onClick={() => setDeleteConfirm(true)} title="Delete" className="p-1.5 text-neutral-300 hover:text-red-500 transition-colors rounded-md hover:bg-neutral-100">
+                              <TrashIcon className="w-4 h-4" />
+                            </button>
+                          )
+                        )}
+                        <button onClick={onClose} className="p-1.5 text-neutral-300 hover:text-neutral-600 transition-colors rounded-md hover:bg-neutral-100">
+                          <XMarkIcon className="w-4 h-4" />
+                        </button>
                       </div>
 
-                      {/* Meeting title */}
-                      <h2 className="mt-4 text-lg font-semibold text-neutral-900 leading-tight">
+                      {/* Title */}
+                      <Dialog.Title className="text-[17px] font-bold text-neutral-900 leading-snug mb-2">
                         {event.title}
-                      </h2>
+                      </Dialog.Title>
 
-                      {/* Time */}
-                      <div className="mt-2 flex items-center gap-2 text-sm text-neutral-600">
-                        <ClockIcon className="w-4 h-4" />
+                      {/* Date + time */}
+                      <div className="flex items-center gap-1.5 text-[13px] text-neutral-500">
+                        <CalendarIcon className="w-3.5 h-3.5 flex-shrink-0" />
                         <span>{primary} · {duration}min</span>
                       </div>
-                    </div>
 
-                    {/* Content - Scrollable */}
-                    <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
                       {/* Location */}
                       {event.location && (
-                        <div>
-                          <div className="flex items-center gap-2 text-xs font-medium text-neutral-500 uppercase tracking-wide mb-2">
-                            <MapPinIcon className="w-4 h-4" />
-                            Location
-                          </div>
-                          <p className="text-sm text-neutral-900">{event.location}</p>
+                        <div className="flex items-center gap-1.5 mt-1 text-[13px] text-neutral-500">
+                          <MapPinIcon className="w-3.5 h-3.5 flex-shrink-0" />
+                          <span>{event.location}</span>
                         </div>
                       )}
 
-                      {/* Meeting Link */}
+                      {/* Join link */}
                       {event.meeting_link && (
-                        <div>
-                          <div className="flex items-center gap-2 text-xs font-medium text-neutral-500 uppercase tracking-wide mb-2">
-                            <VideoCameraIcon className="w-4 h-4" />
-                            Video Conference
-                          </div>
-                          <button
-                            onClick={handleJoinMeeting}
-                            className="
-                              inline-flex items-center gap-2
-                              px-4 py-2 rounded-md text-sm font-medium
-                              bg-blue-600 text-white
-                              hover:bg-blue-700
-                              transition-colors
-                            "
-                          >
-                            <VideoCameraIcon className="w-4 h-4" />
-                            Join Meeting
-                          </button>
-                        </div>
+                        <button
+                          onClick={handleJoinMeeting}
+                          className="mt-2.5 flex items-center gap-1.5 text-[13px] font-medium text-blue-600 hover:text-blue-700 transition-colors"
+                        >
+                          <VideoCameraIcon className="w-3.5 h-3.5" />
+                          {isMeet ? 'Join with Google Meet' : 'Join meeting'}
+                        </button>
                       )}
+                    </div>
+
+                    {/* ── Scrollable body ── */}
+                    <div className="flex-1 overflow-y-auto">
 
                       {/* Attendees */}
-                      <div>
-                        <div className="flex items-center gap-2 text-xs font-medium text-neutral-500 uppercase tracking-wide mb-3">
-                          <UserGroupIcon className="w-4 h-4" />
-                          Attendees ({event.attendees.length})
-                        </div>
-                        <div className="space-y-2">
-                          {event.organizer && (
-                            <div className="flex items-center justify-between text-sm">
-                              <div>
-                                <div className="font-medium text-neutral-900">
-                                  {event.organizer}
+                      {event.attendees.length > 0 && (
+                        <div className="px-5 py-4 border-b border-neutral-100">
+                          <p className="text-[11px] font-medium text-neutral-400 mb-3 uppercase tracking-wide">
+                            Attendees ({event.attendees.length})
+                          </p>
+                          <div className="space-y-2.5">
+                            {event.attendees.map((a, idx) => {
+                              const label = a.name || a.email;
+                              const initial = label[0].toUpperCase();
+                              const badge = rsvpBadge(a.status ?? a.responseStatus);
+                              return (
+                                <div key={idx} className="flex items-center gap-2.5">
+                                  <span className={`inline-flex items-center justify-center w-7 h-7 rounded-full text-[12px] font-semibold flex-shrink-0 ${avatarColor(a.email)}`}>
+                                    {initial}
+                                  </span>
+                                  <div className="min-w-0 flex-1">
+                                    <div className="text-[13px] font-medium text-neutral-800 truncate">{label}</div>
+                                    {a.name && <div className="text-[11px] text-neutral-400 truncate">{a.email}</div>}
+                                  </div>
+                                  {a.isVIP && (
+                                    <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-violet-100 text-violet-600 flex-shrink-0">VIP</span>
+                                  )}
+                                  {badge && (
+                                    <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full flex-shrink-0 ${badge.className}`}>
+                                      {badge.label}
+                                    </span>
+                                  )}
                                 </div>
-                                <div className="text-xs text-neutral-500">Organizer</div>
-                              </div>
-                              {isOrganizer && (
-                                <span className="text-xs px-2 py-0.5 rounded bg-indigo-100 text-indigo-700 font-medium">
-                                  You
-                                </span>
-                              )}
+                              );
+                            })}
+                          </div>
+                          {vipAttendees.length > 0 && (
+                            <div className="mt-3 text-[11px] text-violet-600 font-medium">
+                              ✦ {vipAttendees.length} VIP {vipAttendees.length === 1 ? 'attendee' : 'attendees'}
                             </div>
                           )}
-
-                          {event.attendees.map((attendee, idx) => (
-                            <div
-                              key={idx}
-                              className="flex items-center justify-between text-sm border-t border-neutral-100 pt-2"
-                            >
-                              <div>
-                                <div className="font-medium text-neutral-900">
-                                  {attendee.name || attendee.email}
-                                </div>
-                                {attendee.name && (
-                                  <div className="text-xs text-neutral-500">{attendee.email}</div>
-                                )}
-                              </div>
-                              <div className="flex items-center gap-2">
-                                {attendee.isVIP && (
-                                  <span className="text-xs px-2 py-0.5 rounded bg-violet-100 text-violet-700 font-medium">
-                                    VIP
-                                  </span>
-                                )}
-                                {attendee.status && (
-                                  <span className="text-xs text-neutral-500 capitalize">
-                                    {attendee.status}
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                          ))}
                         </div>
-
-                        {vipAttendees.length > 0 && (
-                          <div className="mt-3 p-3 bg-violet-50 border border-violet-200 rounded-md">
-                            <p className="text-xs text-violet-900 font-medium">
-                              🌟 {vipAttendees.length} VIP {vipAttendees.length === 1 ? 'attendee' : 'attendees'} in this meeting
-                            </p>
-                          </div>
-                        )}
-                      </div>
+                      )}
 
                       {/* Meeting assistant — Google Meet + upcoming */}
                       {isMeet && isUpcoming && (
-                        <div className="border-t border-neutral-200 pt-6">
-                          <div className="flex items-center gap-2 text-xs font-medium text-neutral-500 uppercase tracking-wide mb-3">
-                            <MicrophoneIcon className="w-4 h-4 text-indigo-500" />
-                            Meeting assistant
-                          </div>
-                          <div onClick={(e) => e.stopPropagation()}>
+                        <div className="px-5 py-4 border-b border-neutral-100">
+                          <p className="text-[11px] font-medium text-neutral-400 mb-2.5 uppercase tracking-wide">Assistant</p>
+                          <div onClick={e => e.stopPropagation()}>
                             {botState === 'joining' ? (
                               <span className="inline-flex items-center gap-1.5 text-[12px] font-medium text-amber-600">
-                                <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
                                 Joining meeting…
                               </span>
                             ) : botState === 'recording' ? (
                               <span className="inline-flex items-center gap-1.5 text-[12px] font-medium text-red-600">
-                                <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                                <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
                                 Recording
                               </span>
                             ) : botState === 'done' ? (
@@ -369,7 +307,7 @@ export default function MeetingDetailPanel({
                               ) : (
                                 <div className="flex items-center justify-between">
                                   <span className="inline-flex items-center gap-1.5 text-[12px] font-medium text-emerald-600">
-                                    <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
                                     Assistant scheduled
                                   </span>
                                   <button
@@ -400,7 +338,7 @@ export default function MeetingDetailPanel({
                                     else setSchedulingBot(false);
                                   } catch { setSchedulingBot(false); }
                                 }}
-                                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium text-indigo-600 border border-indigo-200 hover:bg-indigo-50 transition-colors"
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[12px] font-medium text-indigo-600 bg-indigo-50 hover:bg-indigo-100 transition-colors"
                               >
                                 + Send assistant to meeting
                               </button>
@@ -409,74 +347,42 @@ export default function MeetingDetailPanel({
                         </div>
                       )}
 
-                      {/* In-Person Recorder (for upcoming / in-progress meetings) */}
+                      {/* Record in-person */}
                       {(event.meeting_status === 'upcoming' || event.meeting_status === 'in_progress' || event.meeting_status === 'starting_soon') && (
-                        <div className="border-t border-neutral-200 pt-6">
-                          <div className="flex items-center gap-2 text-xs font-medium text-neutral-500 uppercase tracking-wide mb-3">
-                            <MicrophoneIcon className="w-4 h-4 text-red-600" />
-                            Record In-Person
-                          </div>
-                          <p className="text-xs text-neutral-500 mb-3">
-                            Meeting in the room? Record directly from your mic — transcript and action items generated automatically.
-                          </p>
+                        <div className="px-5 py-4 border-b border-neutral-100">
+                          <p className="text-[11px] font-medium text-neutral-400 mb-2.5 uppercase tracking-wide">Record in-person</p>
                           <MeetingRecorder
                             calendarEventId={event.id}
                             meetingTitle={event.title}
-                            onTranscriptReady={() => setTranscriptKey((k) => k + 1)}
+                            onTranscriptReady={() => setTranscriptKey(k => k + 1)}
                           />
                         </div>
                       )}
 
-                      {/* Meeting Transcript (for completed meetings) */}
+                      {/* Transcript */}
                       {event.meeting_status === 'completed' && (
-                        <div className="border-t border-neutral-200 pt-6">
-                          <div className="flex items-center gap-2 text-xs font-medium text-neutral-500 uppercase tracking-wide mb-3">
-                            <DocumentTextIcon className="w-4 h-4 text-blue-600" />
-                            Transcript
-                          </div>
-
-                          {transcriptLoading && (
-                            <div className="text-sm text-neutral-500 italic">
-                              Loading transcript...
-                            </div>
-                          )}
-
+                        <div className="px-5 py-4">
+                          <p className="text-[11px] font-medium text-neutral-400 mb-2.5 uppercase tracking-wide flex items-center gap-1.5">
+                            <DocumentTextIcon className="w-3.5 h-3.5" /> Transcript
+                          </p>
+                          {transcriptLoading && <p className="text-[12px] text-neutral-400 italic">Loading…</p>}
                           {!transcriptLoading && !transcript && (
-                            <div className="text-sm text-neutral-500 italic">
-                              Transcript not available yet. It will appear here once the meeting bot has processed the recording.
-                            </div>
+                            <p className="text-[12px] text-neutral-400">No transcript yet — will appear after the bot processes the recording.</p>
                           )}
-
                           {!transcriptLoading && transcript && (
                             <>
-                              {/* Transcript metadata */}
-                              <div className="mb-4 flex items-center gap-4 text-xs text-neutral-600">
-                                <span>{transcript.transcript_segments.length} segments</span>
-                                <span>•</span>
-                                <span>{transcript.duration_minutes} min duration</span>
+                              <div className="flex items-center gap-2 text-[11px] text-neutral-400 mb-3">
+                                <span>{transcript.duration_minutes}min</span>
                                 {transcript.work_items_generated > 0 && (
-                                  <>
-                                    <span>•</span>
-                                    <span className="text-blue-600 font-medium">
-                                      {transcript.work_items_generated} action {transcript.work_items_generated === 1 ? 'item' : 'items'} created
-                                    </span>
-                                  </>
+                                  <span className="text-indigo-500 font-medium">· {transcript.work_items_generated} action {transcript.work_items_generated === 1 ? 'item' : 'items'}</span>
                                 )}
                               </div>
-
-                              {/* Transcript segments */}
-                              <div className="space-y-3 max-h-96 overflow-y-auto bg-neutral-50 border border-neutral-200 rounded-md p-4">
-                                {transcript.transcript_segments.map((segment, idx) => (
-                                  <div key={idx} className="text-sm">
-                                    <div className="font-semibold text-neutral-900 mb-1">
-                                      {segment.speaker}
-                                      <span className="ml-2 text-xs font-normal text-neutral-500">
-                                        {formatTimestamp(segment.timestamp)}
-                                      </span>
-                                    </div>
-                                    <div className="text-neutral-700 leading-relaxed">
-                                      {segment.text}
-                                    </div>
+                              <div className="space-y-3 max-h-80 overflow-y-auto bg-neutral-50 rounded-lg p-3">
+                                {transcript.transcript_segments.map((seg, idx) => (
+                                  <div key={idx} className="text-[12px]">
+                                    <span className="font-semibold text-neutral-700">{seg.speaker}</span>
+                                    <span className="ml-1.5 text-neutral-400 text-[11px]">{formatTimestamp(seg.timestamp)}</span>
+                                    <p className="text-neutral-600 leading-relaxed mt-0.5">{seg.text}</p>
                                   </div>
                                 ))}
                               </div>
@@ -484,44 +390,39 @@ export default function MeetingDetailPanel({
                           )}
                         </div>
                       )}
-
-
                     </div>
 
-                    {/* Footer - Fixed */}
-                    <div className="border-t border-neutral-200 bg-neutral-50 px-6 py-4 space-y-3">
-                      {/* RSVP */}
-                      <div>
-                        <p className="text-[11px] font-medium text-neutral-500 uppercase tracking-wide mb-2">Your response</p>
-                        <RsvpButtons
-                          itemId={event.id}
-                          attendees={event.attendees}
-                          userEmail={userEmail}
-                          onDismiss={(response) => {
-                            const labels: Record<string, string> = { accepted: 'Meeting accepted', tentative: 'Marked as maybe', declined: 'Meeting declined' };
-                            toast.success(labels[response] ?? 'RSVP updated');
-                            onClose();
-                            onRefresh?.();
-                          }}
-                        />
-                      </div>
-                      <div className="flex items-center gap-3">
+                    {/* ── Footer ── */}
+                    <div className="border-t border-neutral-100 px-5 py-4 space-y-3 bg-white">
+                      <RsvpButtons
+                        itemId={event.id}
+                        attendees={event.attendees}
+                        userEmail={userEmail}
+                        onDismiss={(response) => {
+                          const labels: Record<string, string> = { accepted: 'Meeting accepted', tentative: 'Marked as maybe', declined: 'Meeting declined' };
+                          toast.success(labels[response] ?? 'RSVP updated');
+                          onClose();
+                          onRefresh?.();
+                        }}
+                      />
+                      <div className="flex items-center gap-2">
                         <button
                           onClick={onClose}
-                          className="flex-1 px-4 py-2 rounded-md text-sm font-medium text-neutral-700 bg-white border border-neutral-300 hover:bg-neutral-50 transition-colors"
+                          className="flex-1 px-4 py-2 rounded-md text-[13px] font-medium text-neutral-600 bg-neutral-100 hover:bg-neutral-200 transition-colors"
                         >
                           Close
                         </button>
                         {event.meeting_link && (
                           <button
                             onClick={handleJoinMeeting}
-                            className="flex-1 px-4 py-2 rounded-md text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 transition-colors"
+                            className="flex-1 px-4 py-2 rounded-md text-[13px] font-semibold text-white bg-indigo-600 hover:bg-indigo-700 transition-colors"
                           >
-                            Join Meeting
+                            Join meeting
                           </button>
                         )}
                       </div>
                     </div>
+
                   </div>
                 </Dialog.Panel>
               </Transition.Child>
@@ -533,9 +434,6 @@ export default function MeetingDetailPanel({
   );
 }
 
-/**
- * Format timestamp (seconds) to MM:SS
- */
 function formatTimestamp(seconds: number): string {
   const minutes = Math.floor(seconds / 60);
   const secs = seconds % 60;

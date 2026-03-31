@@ -10,6 +10,7 @@ export interface InboxSnapshot {
   createdAt: string
   hasDraft: boolean
   attachmentCount: number
+  isRead: boolean
 }
 
 export async function buildInboxSnapshot(
@@ -19,7 +20,7 @@ export async function buildInboxSnapshot(
 ): Promise<InboxSnapshot[]> {
   const { data } = await supabase
     .from('inbox_items')
-    .select('id, source_data, visual_section, status, created_at')
+    .select('id, source_data, visual_section, status, created_at, is_read')
     .eq('user_id', userId)
     .neq('status', 'dismissed')
     .order('created_at', { ascending: false })
@@ -35,6 +36,7 @@ export async function buildInboxSnapshot(
     createdAt: item.created_at,
     hasDraft: !!(item.source_data?.draft),
     attachmentCount: Array.isArray(item.source_data?.attachments) ? item.source_data.attachments.length : 0,
+    isRead: item.is_read !== false,
   }))
 
   if (!query?.trim()) return items
@@ -59,6 +61,7 @@ export function formatSnapshotForPrompt(items: InboxSnapshot[]): string {
         : 'noted'
       const date = new Date(i.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
       const flags = [
+        !i.isRead ? 'unread' : null,
         i.hasDraft ? 'has-draft' : null,
         i.attachmentCount > 0 ? `has-attachments(${i.attachmentCount})` : null,
       ].filter(Boolean).join(' ')

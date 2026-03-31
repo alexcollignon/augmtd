@@ -31,6 +31,7 @@ interface OutlookMessage {
   receivedDateTime: string;
   internetMessageId: string;
   hasAttachments?: boolean;
+  isRead?: boolean;
 }
 
 export interface OutlookAttachmentMeta {
@@ -109,7 +110,7 @@ export async function fetchUnreadEmails(
     .api('/me/mailFolders/inbox/messages')
     .filter(`receivedDateTime ge ${dateString}`)
     .top(maxResults)
-    .select('id,conversationId,subject,bodyPreview,body,from,toRecipients,ccRecipients,receivedDateTime,internetMessageId,hasAttachments')
+    .select('id,conversationId,subject,bodyPreview,body,from,toRecipients,ccRecipients,receivedDateTime,internetMessageId,hasAttachments,isRead')
     .orderby('receivedDateTime desc')
     .get();
 
@@ -151,6 +152,7 @@ export function parseOutlookMessage(message: OutlookMessage) {
     received_at: new Date(message.receivedDateTime).toISOString(),
     thread_id: message.conversationId, // Outlook conversation ID for threading
     hasAttachments: message.hasAttachments || false,
+    is_read: message.isRead ?? true,
     outlookInternalId: message.id, // Graph API message ID (needed for attachment calls)
     metadata: {
       provider: 'outlook',

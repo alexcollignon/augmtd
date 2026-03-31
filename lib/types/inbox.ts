@@ -250,6 +250,7 @@ export interface InboxItem {
   priority: number;
   status: string;
   needs_review: boolean;
+  is_read: boolean;
 
   // Linked work thread (set when user opens item in Workflows)
   work_thread_id?: string | null;
