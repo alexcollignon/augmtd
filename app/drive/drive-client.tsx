@@ -16,7 +16,9 @@ import {
   FolderOpenIcon,
   MagnifyingGlassIcon,
   TrashIcon,
+  ChatBubbleLeftRightIcon,
 } from '@heroicons/react/24/outline';
+import ChatSidebar from '@/components/shared/chat-sidebar';
 import type { DriveAugmtdFile, DriveFolder } from '@/lib/types/drive';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -1470,6 +1472,7 @@ export default function DriveClient({ initialSources, connections }: DriveClient
   const [showUpload, setShowUpload] = useState(false);
   const [showNewMenu, setShowNewMenu] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [chatOpen, setChatOpen] = useState(false);
 
   // Load folders once
   useEffect(() => {
@@ -1506,6 +1509,8 @@ export default function DriveClient({ initialSources, connections }: DriveClient
   ];
 
   return (
+    <div className="flex h-full overflow-hidden">
+    <div className="flex-1 overflow-y-auto">
     <div className="max-w-5xl mx-auto px-6 py-8">
       {/* Page header */}
       <div className="flex items-center justify-between mb-6">
@@ -1516,11 +1521,19 @@ export default function DriveClient({ initialSources, connections }: DriveClient
           </p>
         </div>
 
-        {/* + New button */}
+        {/* Actions: chat + New button */}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setChatOpen((v) => !v)}
+            title="Ask AI"
+            className={`p-2 border transition-colors ${chatOpen ? 'border-indigo-400 text-indigo-600 bg-indigo-50' : 'border-neutral-300 text-neutral-500 hover:text-neutral-700 hover:bg-neutral-50'}`}
+          >
+            <ChatBubbleLeftRightIcon className="w-4 h-4" />
+          </button>
         <div className="relative">
           <button
             onClick={() => setShowNewMenu((v) => !v)}
-            className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-[13px] font-semibold transition-colors"
+            className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-[13px] font-semibold rounded-md transition-colors"
           >
             <PlusIcon className="w-4 h-4" />
             New
@@ -1543,6 +1556,7 @@ export default function DriveClient({ initialSources, connections }: DriveClient
               </button>
             </div>
           )}
+        </div>
         </div>
       </div>
 
@@ -1639,6 +1653,9 @@ export default function DriveClient({ initialSources, connections }: DriveClient
           }}
         />
       )}
+    </div>
+    </div>
+    <ChatSidebar isOpen={chatOpen} onClose={() => setChatOpen(false)} context="drive" />
     </div>
   );
 }

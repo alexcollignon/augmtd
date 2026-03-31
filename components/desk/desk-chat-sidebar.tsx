@@ -402,7 +402,7 @@ export default function DeskChatSidebar({
   const isEmpty = messages.length === 0;
 
   return (
-    <div className="w-80 flex-shrink-0 border-l border-neutral-200 bg-white flex flex-col min-h-0">
+    <div className="w-[380px] flex-shrink-0 border-l border-neutral-200 bg-white flex flex-col min-h-0">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-100 flex-shrink-0">
         <h3 className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wider">AI ASSISTANT</h3>

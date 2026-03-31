@@ -78,7 +78,7 @@ export default function KanbanColumn({
 
   return (
     <div
-      className={`flex flex-col min-h-[200px] rounded transition-colors ${
+      className={`flex flex-col min-h-[200px] rounded-xl transition-colors ${
         isDragOver ? 'bg-neutral-100' : 'bg-neutral-50'
       }`}
       onDragOver={handleDragOver}
@@ -86,7 +86,7 @@ export default function KanbanColumn({
       onDrop={handleDrop}
     >
       {/* Column header */}
-      <div className="flex items-center gap-2 px-3 py-2.5 border-b border-neutral-200">
+      <div className="flex items-center gap-2 px-3 py-2.5">
         <span className={`w-2 h-2 rounded-full flex-shrink-0 ${COLUMN_DOT[id]}`} />
         <span className={`text-[11px] font-semibold uppercase tracking-wide ${COLUMN_HEADER_COLOR[id]}`}>
           {label}
@@ -100,7 +100,7 @@ export default function KanbanColumn({
       <div className="flex-1 p-2 space-y-2">
         {/* Inline task input (top of Todo) */}
         {addingTask && id === 'todo' && (
-          <div className="bg-white border border-indigo-200 px-3 py-2">
+          <div className="bg-white border border-indigo-200 rounded-lg px-3 py-2">
             <input
               ref={inputRef}
               type="text"

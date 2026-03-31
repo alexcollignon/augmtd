@@ -168,7 +168,7 @@ export async function POST(request: NextRequest) {
       focusedCard,
       meetingContext,
     } = body as {
-      context?: 'inbox' | 'desk' | 'meeting';
+      context?: 'inbox' | 'desk' | 'meeting' | 'drive';
       message: string;
       history: Array<{ role: 'user' | 'assistant'; content: string }>;
       sources?: string[];
@@ -380,6 +380,10 @@ REPLY MODE — follow exactly:
 
     if (context === 'meeting') {
       systemPrompt += `\n\nYou are a meeting assistant. You have the full context of this meeting above. Help the user understand outcomes, draft follow-up emails, create workflows, or identify next steps.\nRelevant action tokens:\n- REPLY_DRAFT when the user asks to draft a follow-up email or any email related to the meeting.\n- OPEN_WORKFLOW when the user wants to start a workflow or generate a document based on meeting outcomes.\n- OPEN_PROCESS when the user wants to navigate to a specific active process referenced in the meeting.`;
+    }
+
+    if (context === 'drive') {
+      systemPrompt += `\n\nYou are a document and knowledge assistant on the Drive page. Help the user find files, understand what's in their knowledge base, and decide what to generate or connect. You can suggest workflows for creating new documents based on existing files.`;
     }
 
     const userContent = fileContext

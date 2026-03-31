@@ -11,7 +11,7 @@ import WorkDetailInline from '@/components/inbox/work-detail-inline';
 import AiChatPanel from '@/components/shared/ai-chat-panel';
 import MeetingsColumn from '@/components/inbox/meetings-column';
 import OnboardingModal from '@/components/onboarding-modal';
-import { ArrowPathIcon, SparklesIcon, Bars3Icon, QueueListIcon, ArchiveBoxArrowDownIcon, XMarkIcon, MagnifyingGlassIcon, PencilSquareIcon, CalendarIcon, RectangleGroupIcon, TrashIcon } from '@heroicons/react/24/outline';
+import { ArrowPathIcon, ChatBubbleLeftRightIcon, Bars3Icon, QueueListIcon, ArchiveBoxArrowDownIcon, XMarkIcon, MagnifyingGlassIcon, PencilSquareIcon, CalendarIcon, RectangleGroupIcon, TrashIcon } from '@heroicons/react/24/outline';
 import ComposePanel from '@/components/inbox/compose-panel';
 import { toast } from 'sonner';
 import type { CalendarEvent } from '@/lib/types/meetings';
@@ -662,23 +662,20 @@ export function InboxPageClient({
               {/* View + density toggles */}
               <div className="flex-shrink-0 flex items-center justify-between pl-2.5 pr-1 border-b border-neutral-100 h-10">
                 {/* Segmented view tabs */}
-                <div className="flex items-center h-full gap-0.5">
+                <div className="flex items-center bg-neutral-100 rounded-full p-0.5">
                   {(['chronological', 'smart'] as const).map((key) => {
                     const labels = { chronological: 'Standard', smart: 'Smart' };
                     return (
                       <button
                         key={key}
                         onClick={() => handleViewMode(key)}
-                        className={`relative px-1.5 h-full text-[12px] font-medium transition-colors ${
+                        className={`px-2.5 py-0.5 text-[11px] font-medium rounded-full transition-colors ${
                           viewMode === key
-                            ? 'text-indigo-600'
-                            : 'text-neutral-400 hover:text-neutral-600'
+                            ? 'bg-white text-neutral-800 shadow-sm'
+                            : 'text-neutral-500 hover:text-neutral-700'
                         }`}
                       >
                         {labels[key]}
-                        {viewMode === key && (
-                          <span className="absolute bottom-0 left-0 right-0 h-[2px] bg-indigo-500" />
-                        )}
                       </button>
                     );
                   })}
@@ -784,14 +781,14 @@ export function InboxPageClient({
                       </span>
                       <button
                         onClick={() => setBulkArchiveConfirmPending(true)}
-                        className="flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-indigo-700 border border-indigo-200 bg-white hover:bg-indigo-50 transition-colors"
+                        className="flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-indigo-700 border border-indigo-200 bg-white rounded-md hover:bg-indigo-50 transition-colors"
                       >
                         <ArchiveBoxArrowDownIcon className="w-3 h-3" />
                         Archive
                       </button>
                       <button
                         onClick={() => setBulkDeleteConfirmPending(true)}
-                        className="flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-red-600 border border-red-200 bg-white hover:bg-red-50 transition-colors"
+                        className="flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-red-600 border border-red-200 bg-white rounded-md hover:bg-red-50 transition-colors"
                       >
                         <TrashIcon className="w-3 h-3" />
                         Delete
@@ -876,14 +873,13 @@ export function InboxPageClient({
                 <button
                   onClick={() => setShowDesk(v => !v)}
                   title="On Your Desk"
-                  className={`flex-shrink-0 flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold border transition-colors ${
+                  className={`flex-shrink-0 p-1.5 border rounded-md transition-colors ${
                     showDesk
                       ? 'bg-indigo-600 border-indigo-600 text-white'
                       : 'border-neutral-300 text-neutral-600 hover:bg-neutral-50'
                   }`}
                 >
-                  <RectangleGroupIcon className="w-3 h-3" />
-                  On Your Desk
+                  <RectangleGroupIcon className="w-3.5 h-3.5" />
                 </button>
 
                 {/* Ask AI toggle */}
@@ -897,28 +893,26 @@ export function InboxPageClient({
                     }
                   }}
                   title="Ask AI"
-                  className={`flex-shrink-0 flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold border transition-colors ${
+                  className={`flex-shrink-0 p-1.5 border rounded-md transition-colors ${
                     rightPanel === 'chat' && !composeMode
                       ? 'bg-indigo-600 border-indigo-600 text-white'
                       : 'border-indigo-400 text-indigo-500 hover:bg-indigo-50'
                   }`}
                 >
-                  <SparklesIcon className="w-3 h-3" />
-                  Ask AI
+                  <ChatBubbleLeftRightIcon className="w-3.5 h-3.5" />
                 </button>
 
                 {/* Calendar toggle */}
                 <button
                   onClick={() => setRightPanel(rightPanel === 'calendar' ? null : 'calendar')}
                   title="Toggle calendar"
-                  className={`flex-shrink-0 flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold border transition-colors ${
+                  className={`flex-shrink-0 p-1.5 border rounded-md transition-colors ${
                     rightPanel === 'calendar'
                       ? 'bg-neutral-100 border-neutral-300 text-neutral-700'
                       : 'border-neutral-300 text-neutral-500 hover:bg-neutral-50'
                   }`}
                 >
-                  <CalendarIcon className="w-3 h-3" />
-                  Calendar
+                  <CalendarIcon className="w-3.5 h-3.5" />
                 </button>
 
               </div>
@@ -964,7 +958,7 @@ export function InboxPageClient({
               />
             )}
             {rightPanel === 'chat' && (
-              <div className="w-[300px] flex-shrink-0 border-l border-neutral-200 flex flex-col">
+              <div className="w-[380px] flex-shrink-0 border-l border-neutral-200 flex flex-col">
                 <AiChatPanel
                   context="inbox"
                   composeDraft={composeMode ? composeDraft : undefined}

@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { MicrophoneIcon, FolderIcon, PlusIcon } from '@heroicons/react/24/outline';
+import { MicrophoneIcon, FolderIcon, PlusIcon, ChatBubbleLeftRightIcon, ChevronLeftIcon } from '@heroicons/react/24/outline';
 import type { DriveFolder } from '@/lib/types/drive';
 import type { CalendarEvent } from '@/lib/types/meetings';
 import TranscriptListCard from '@/components/meetings/transcript-list-card';
@@ -11,6 +11,7 @@ import NewMeetingModal from '@/components/meetings/new-meeting-modal';
 import CalendarSidebar from '@/components/meetings/calendar-sidebar';
 import WeekCalendar from '@/components/meetings/week-calendar';
 import MeetingFolderBrowser from '@/components/meetings/meeting-folder-browser';
+import ChatSidebar from '@/components/shared/chat-sidebar';
 
 interface Transcript {
   id: string;
@@ -61,6 +62,7 @@ export default function MeetingsPageClient({ userEmail }: { userEmail: string })
   const [loading, setLoading] = useState(true);
   const [showCapture, setShowCapture] = useState(false);
   const [showNewMeeting, setShowNewMeeting] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
   const [seenIds, setSeenIds] = useState<Set<string>>(loadSeenIds);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'recent' | 'folders'>('recent');
@@ -235,15 +237,28 @@ export default function MeetingsPageClient({ userEmail }: { userEmail: string })
         )}
         {calendarView === 'week' && (
           <div className="absolute right-0 top-0 bottom-0 z-20 w-[680px] bg-white border-l border-neutral-100 shadow-xl flex flex-col">
-            <WeekCalendar
-              meetings={upcoming}
-              userEmail={userEmail}
-              botStateMap={botStateMap}
-              onScheduled={handleScheduled}
-              onCancelled={handleCancelled}
-              onRefresh={fetchAll}
-              onNewMeeting={(date) => { setShowNewMeeting(true); }}
-            />
+            <div className="flex-shrink-0 h-10 flex items-center justify-between px-3 border-b border-neutral-200">
+              <button
+                onClick={() => setCalendarView('month')}
+                className="flex items-center gap-1.5 text-[13px] text-neutral-500 hover:text-neutral-800 transition-colors"
+              >
+                <ChevronLeftIcon className="w-3.5 h-3.5" />
+                <span className="font-medium">Back</span>
+              </button>
+              <span className="text-[13px] font-semibold text-neutral-700">Calendar</span>
+              <div className="w-6" />
+            </div>
+            <div className="flex-1 min-h-0">
+              <WeekCalendar
+                meetings={upcoming}
+                userEmail={userEmail}
+                botStateMap={botStateMap}
+                onScheduled={handleScheduled}
+                onCancelled={handleCancelled}
+                onRefresh={fetchAll}
+                onNewMeeting={(date) => { setShowNewMeeting(true); }}
+              />
+            </div>
           </div>
         )}
         <div className="max-w-2xl mx-auto px-6 py-6">
@@ -451,8 +466,15 @@ export default function MeetingsPageClient({ userEmail }: { userEmail: string })
       <div className="flex-shrink-0 w-[280px] border-l border-neutral-100 bg-white flex flex-col">
         {/* Sidebar header: toggle + title */}
         <div className="flex-shrink-0 flex items-center justify-between px-3 py-2.5 border-b border-neutral-100">
-          <span className="text-[11px] font-semibold text-neutral-400 uppercase tracking-wide">Calendar</span>
+          <span className="text-[13px] font-semibold text-neutral-700">Calendar</span>
           <div className="flex items-center gap-1.5">
+          <button
+            onClick={() => setChatOpen((v) => !v)}
+            title="Ask AI"
+            className={`p-1 transition-colors ${chatOpen ? 'text-indigo-600' : 'text-neutral-400 hover:text-neutral-600'}`}
+          >
+            <ChatBubbleLeftRightIcon className="w-4 h-4" />
+          </button>
           <button
             onClick={() => setShowNewMeeting(true)}
             title="New meeting"
@@ -460,18 +482,18 @@ export default function MeetingsPageClient({ userEmail }: { userEmail: string })
           >
             <PlusIcon className="w-3.5 h-3.5" />
           </button>
-          <div className="flex items-center border border-neutral-200 overflow-hidden">
+          <div className="flex items-center bg-neutral-100 rounded-full p-0.5">
             <button
               onClick={() => setCalendarView('month')}
               title="Month view"
-              className={`px-2 py-1 text-[11px] font-medium transition-colors ${calendarView === 'month' ? 'bg-neutral-100 text-neutral-700' : 'text-neutral-400 hover:text-neutral-600'}`}
+              className={`px-2.5 py-0.5 text-[11px] font-medium rounded-full transition-colors ${calendarView === 'month' ? 'bg-white text-neutral-800 shadow-sm' : 'text-neutral-500 hover:text-neutral-700'}`}
             >
               Month
             </button>
             <button
               onClick={() => setCalendarView('week')}
               title="Week view"
-              className={`px-2 py-1 text-[11px] font-medium border-l border-neutral-200 transition-colors ${calendarView === 'week' ? 'bg-neutral-100 text-neutral-700' : 'text-neutral-400 hover:text-neutral-600'}`}
+              className={`px-2.5 py-0.5 text-[11px] font-medium rounded-full transition-colors ${calendarView === 'week' ? 'bg-white text-neutral-800 shadow-sm' : 'text-neutral-500 hover:text-neutral-700'}`}
             >
               Week
             </button>
@@ -499,6 +521,12 @@ export default function MeetingsPageClient({ userEmail }: { userEmail: string })
           )}
         </div>
       </div>
+
+      <ChatSidebar
+        isOpen={chatOpen}
+        onClose={() => setChatOpen(false)}
+        context="meeting"
+      />
 
       <CaptureModal
         isOpen={showCapture}

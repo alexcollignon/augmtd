@@ -70,18 +70,22 @@ export default function EmailListSections({ items, selectedId, onSelect, compact
               }
             </button>
 
-            {!isCollapsed && sectionItems.map(item => (
-              <EmailListCard
-                key={item.id}
-                item={item}
-                isSelected={selectedId === item.id}
-                onSelect={onSelect}
-                compact={compact}
-                isChecked={selectedIds?.has(item.id) ?? false}
-                onToggleCheck={onToggleSelect}
-                hasAnySelected={hasAnySelected}
-              />
-            ))}
+            {!isCollapsed && (
+              <div className="px-1 py-0.5 space-y-0.5">
+                {sectionItems.map(item => (
+                  <EmailListCard
+                    key={item.id}
+                    item={item}
+                    isSelected={selectedId === item.id}
+                    onSelect={onSelect}
+                    compact={compact}
+                    isChecked={selectedIds?.has(item.id) ?? false}
+                    onToggleCheck={onToggleSelect}
+                    hasAnySelected={hasAnySelected}
+                  />
+                ))}
+              </div>
+            )}
           </div>
         );
       })}

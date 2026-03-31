@@ -46,13 +46,7 @@ export default function MeetingsColumn({ isOpen, onToggle, meetings, loading, us
               <span className="font-medium">Back</span>
             </button>
             <span className="text-[13px] font-semibold text-neutral-700">Calendar</span>
-            <button
-              onClick={() => { setInitialDate(undefined); setShowNewForm(true); }}
-              title="New meeting"
-              className="p-1 text-indigo-400 hover:text-indigo-600 transition-colors"
-            >
-              <PlusIcon className="w-3.5 h-3.5" />
-            </button>
+            <div className="w-6" />
           </div>
           <div className="flex-1 min-h-0">
             <WeekCalendar
@@ -72,15 +66,22 @@ export default function MeetingsColumn({ isOpen, onToggle, meetings, loading, us
           <div className="flex-shrink-0 h-10 flex items-center justify-between px-3 border-b border-neutral-200">
             <span className="text-[13px] font-semibold text-neutral-700">Calendar</span>
             <div className="flex items-center gap-1.5">
-              <div className="flex items-center border border-neutral-200 overflow-hidden">
+              <button
+                onClick={() => { setInitialDate(undefined); setShowNewForm(true); }}
+                title="New meeting"
+                className="p-1 text-indigo-400 hover:text-indigo-600 transition-colors"
+              >
+                <PlusIcon className="w-3.5 h-3.5" />
+              </button>
+              <div className="flex items-center bg-neutral-100 rounded-full p-0.5">
                 <button
                   onClick={() => setCalendarView('month')}
-                  className="px-2 py-0.5 text-[11px] font-medium text-neutral-400 hover:text-neutral-600 transition-colors"
+                  className="px-2.5 py-0.5 text-[11px] font-medium rounded-full transition-colors text-neutral-500 hover:text-neutral-700"
                 >
                   Month
                 </button>
                 <button
-                  className="px-2 py-0.5 text-[11px] font-medium border-l border-neutral-200 bg-neutral-100 text-neutral-700"
+                  className="px-2.5 py-0.5 text-[11px] font-medium rounded-full bg-white text-neutral-800 shadow-sm"
                 >
                   Week
                 </button>
@@ -124,21 +125,6 @@ export default function MeetingsColumn({ isOpen, onToggle, meetings, loading, us
               <span className="text-[13px] font-semibold text-neutral-700">Calendar</span>
             </button>
             <div className="flex items-center gap-1.5">
-              {/* Month / Week toggle */}
-              <div className="flex items-center border border-neutral-200 overflow-hidden">
-                <button
-                  onClick={() => setCalendarView('month')}
-                  className={`px-2 py-0.5 text-[11px] font-medium transition-colors ${calendarView === 'month' ? 'bg-neutral-100 text-neutral-700' : 'text-neutral-400 hover:text-neutral-600'}`}
-                >
-                  Month
-                </button>
-                <button
-                  onClick={() => setCalendarView('week')}
-                  className={`px-2 py-0.5 text-[11px] font-medium border-l border-neutral-200 transition-colors ${calendarView === 'week' ? 'bg-neutral-100 text-neutral-700' : 'text-neutral-400 hover:text-neutral-600'}`}
-                >
-                  Week
-                </button>
-              </div>
               <button
                 onClick={() => { setInitialDate(undefined); setShowNewForm(true); }}
                 title="New meeting"
@@ -146,6 +132,21 @@ export default function MeetingsColumn({ isOpen, onToggle, meetings, loading, us
               >
                 <PlusIcon className="w-3.5 h-3.5" />
               </button>
+              {/* Month / Week toggle */}
+              <div className="flex items-center bg-neutral-100 rounded-full p-0.5">
+                <button
+                  onClick={() => setCalendarView('month')}
+                  className={`px-2.5 py-0.5 text-[11px] font-medium rounded-full transition-colors ${calendarView === 'month' ? 'bg-white text-neutral-800 shadow-sm' : 'text-neutral-500 hover:text-neutral-700'}`}
+                >
+                  Month
+                </button>
+                <button
+                  onClick={() => setCalendarView('week')}
+                  className={`px-2.5 py-0.5 text-[11px] font-medium rounded-full transition-colors ${calendarView === 'week' ? 'bg-white text-neutral-800 shadow-sm' : 'text-neutral-500 hover:text-neutral-700'}`}
+                >
+                  Week
+                </button>
+              </div>
               <button onClick={onToggle} title="Hide calendar" className="p-0.5 hover:opacity-70 transition-opacity">
                 <ChevronRightIcon className="w-3.5 h-3.5 text-neutral-400" />
               </button>

@@ -104,7 +104,7 @@ export default function ConnectionCard({ provider, connection, connectUrl, disco
         <div className={`absolute left-0 top-0 bottom-0 w-[3px] ${config.accentColor}`} />
         <div className="flex items-center justify-between pl-3">
           <div className="flex items-center gap-3">
-            <div className="flex-shrink-0 w-9 h-9 bg-white border border-neutral-200 flex items-center justify-center shadow-sm">
+            <div className="flex-shrink-0 w-9 h-9 bg-white border border-neutral-200 rounded-lg flex items-center justify-center shadow-sm">
               <Image src={config.logo} alt={config.name} width={20} height={20} />
             </div>
             <div>
@@ -114,7 +114,7 @@ export default function ConnectionCard({ provider, connection, connectUrl, disco
           </div>
           <a
             href={connectUrl}
-            className={`px-4 py-2 ${config.buttonBg} ${config.buttonHover} text-white text-[13px] font-semibold transition-all shadow-sm hover:shadow`}
+            className={`px-4 py-2 rounded-md ${config.buttonBg} ${config.buttonHover} text-white text-[13px] font-semibold transition-all shadow-sm hover:shadow`}
           >
             Connect
           </a>
@@ -124,7 +124,7 @@ export default function ConnectionCard({ provider, connection, connectUrl, disco
   }
 
   return (
-    <div className="border border-neutral-200 overflow-hidden">
+    <div className="border border-neutral-200 rounded-xl overflow-hidden">
       {/* Main Card */}
       <div className={`relative p-4 bg-gradient-to-br ${config.bgGradient} border-b ${config.border}`}>
         <div className={`absolute left-0 top-0 bottom-0 w-[3px] ${config.accentColor}`} />
@@ -132,7 +132,7 @@ export default function ConnectionCard({ provider, connection, connectUrl, disco
         <div className="flex items-start justify-between pl-3">
           {/* Left: logo + name + email */}
           <div className="flex items-center gap-3 flex-1 min-w-0">
-            <div className="flex-shrink-0 w-9 h-9 bg-white border border-neutral-200 flex items-center justify-center shadow-sm">
+            <div className="flex-shrink-0 w-9 h-9 bg-white border border-neutral-200 rounded-lg flex items-center justify-center shadow-sm">
               <Image src={config.logo} alt={config.name} width={20} height={20} />
             </div>
             <div className="flex-1 min-w-0">
@@ -153,7 +153,7 @@ export default function ConnectionCard({ provider, connection, connectUrl, disco
             <button
               onClick={handleSync}
               disabled={syncing || syncStatus === 'syncing'}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-[12.5px] font-medium border border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-50 hover:text-neutral-900 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-[12.5px] font-medium border border-neutral-200 bg-white rounded-md text-neutral-700 hover:bg-neutral-50 hover:text-neutral-900 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               <ArrowPathIcon className={`w-3.5 h-3.5 ${syncing || syncStatus === 'syncing' ? 'animate-spin' : ''}`} />
               {syncing || syncStatus === 'syncing' ? 'Syncing…' : 'Sync'}
@@ -166,7 +166,7 @@ export default function ConnectionCard({ provider, connection, connectUrl, disco
                   <input type="hidden" name="connectionId" value={connection.id} />
                   <button
                     type="submit"
-                    className="px-3 py-1.5 text-[12.5px] font-semibold bg-red-500 text-white hover:bg-red-600 transition-colors"
+                    className="px-3 py-1.5 text-[12.5px] font-semibold bg-red-500 text-white rounded-md hover:bg-red-600 transition-colors"
                   >
                     Confirm
                   </button>
@@ -181,7 +181,7 @@ export default function ConnectionCard({ provider, connection, connectUrl, disco
             ) : (
               <button
                 onClick={() => setConfirmDisconnect(true)}
-                className="px-3 py-1.5 text-[12.5px] font-medium border border-neutral-200 bg-white text-red-600 hover:bg-red-50 hover:border-red-200 transition-colors"
+                className="px-3 py-1.5 text-[12.5px] font-medium border border-neutral-200 bg-white rounded-md text-red-600 hover:bg-red-50 hover:border-red-200 transition-colors"
               >
                 Disconnect
               </button>

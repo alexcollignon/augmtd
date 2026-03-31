@@ -25,7 +25,7 @@ export default async function DrivePage() {
   return (
     <div className="flex h-screen bg-gradient-to-br from-neutral-50 to-white">
       <SidebarNav userEmail={user.email} />
-      <main className="flex-1 overflow-y-auto">
+      <main className="flex-1 overflow-hidden flex flex-col">
         <DriveClient
           initialSources={sources ?? []}
           connections={(connections ?? []).map((c) => ({

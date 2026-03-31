@@ -676,7 +676,7 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
                   key={i}
                   onClick={() => handleDownloadAttachment(att.filename)}
                   disabled={downloadingFile === att.filename}
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[12px] bg-neutral-100 hover:bg-neutral-200 border border-neutral-200 text-neutral-700 transition-colors disabled:opacity-50 max-w-[200px]"
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[12px] bg-neutral-100 hover:bg-neutral-200 border border-neutral-200 rounded-md text-neutral-700 transition-colors disabled:opacity-50 max-w-[200px]"
                 >
                   <PaperClipIcon className="w-3 h-3 text-neutral-400 flex-shrink-0" />
                   <span className="truncate">{att.filename}</span>
@@ -782,7 +782,7 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
                 <button
                   onClick={handleSendReply}
                   disabled={isSendingReply || !replyBody.trim()}
-                  className="inline-flex items-center gap-1.5 px-4 py-1.5 text-[12px] font-semibold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  className="inline-flex items-center gap-1.5 px-4 py-1.5 text-[12px] font-semibold bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   {isSendingReply
                     ? <><div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />Sending…</>
@@ -826,7 +826,7 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
                     key={val}
                     onClick={() => handleRsvpWithReply(val, false)}
                     disabled={!!rsvpLoading}
-                    className={`flex-1 inline-flex items-center justify-center gap-1.5 px-4 py-2.5 text-[13px] font-semibold border bg-white disabled:opacity-60 disabled:cursor-not-allowed transition-all shadow-sm ${colorClass}`}
+                    className={`flex-1 inline-flex items-center justify-center gap-1.5 px-4 py-2.5 text-[13px] font-semibold border rounded-lg bg-white disabled:opacity-60 disabled:cursor-not-allowed transition-all shadow-sm ${colorClass}`}
                   >
                     {isThisLoading
                       ? <div className="w-4 h-4 border-2 border-neutral-400 border-t-transparent rounded-full animate-spin" />
@@ -851,7 +851,7 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
                     onReplyOpenChange?.(true);
                     setTimeout(() => replyBoxRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 50);
                   }}
-                  className={`p-2.5 transition-colors border ${
+                  className={`p-2.5 rounded-md transition-colors border ${
                     linkedCalEvent
                       ? 'text-neutral-600 border-neutral-300 hover:bg-neutral-100'
                       : 'text-indigo-600 border-indigo-200 bg-indigo-50 hover:bg-indigo-100'
@@ -868,7 +868,7 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
                     title="Move to folder"
                     onClick={handleOpenMoveMenu}
                     disabled={isMoving}
-                    className="p-2.5 text-neutral-600 hover:bg-neutral-100 disabled:opacity-50 transition-colors border border-neutral-300 flex items-center justify-center"
+                    className="p-2.5 rounded-md text-neutral-600 hover:bg-neutral-100 disabled:opacity-50 transition-colors border border-neutral-300 flex items-center justify-center"
                   >
                     {isMoving ? (
                       <div className="w-4 h-4 border-2 border-neutral-400 border-t-transparent rounded-full animate-spin" />
@@ -955,7 +955,7 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
                     title="Archive"
                     onClick={() => setArchiveConfirmPending(true)}
                     disabled={isArchiving}
-                    className="p-2.5 text-neutral-600 hover:bg-neutral-100 disabled:opacity-50 transition-colors border border-neutral-300 flex items-center justify-center"
+                    className="p-2.5 rounded-md text-neutral-600 hover:bg-neutral-100 disabled:opacity-50 transition-colors border border-neutral-300 flex items-center justify-center"
                   >
                     {isArchiving
                       ? <div className="w-4 h-4 border-2 border-neutral-400 border-t-transparent rounded-full animate-spin" />
@@ -982,7 +982,7 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
                     title="Delete"
                     onClick={() => setDeleteConfirmPending(true)}
                     disabled={isDeleting}
-                    className="p-2.5 text-red-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-50 transition-colors border border-neutral-300 flex items-center justify-center"
+                    className="p-2.5 rounded-md text-red-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-50 transition-colors border border-neutral-300 flex items-center justify-center"
                   >
                     {isDeleting
                       ? <div className="w-4 h-4 border-2 border-red-300 border-t-transparent rounded-full animate-spin" />

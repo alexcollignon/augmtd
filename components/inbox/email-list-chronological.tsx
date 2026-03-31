@@ -60,18 +60,20 @@ export default function EmailListChronological({ items, selectedId, onSelect, co
               {group.label}
             </span>
           </div>
-          {group.items.map(item => (
-            <EmailListCard
-              key={item.id}
-              item={item}
-              isSelected={selectedId === item.id}
-              onSelect={onSelect}
-              compact={compact}
-              isChecked={selectedIds?.has(item.id) ?? false}
-              onToggleCheck={onToggleSelect}
-              hasAnySelected={hasAnySelected}
-            />
-          ))}
+          <div className="px-1 py-0.5 space-y-0.5">
+            {group.items.map(item => (
+              <EmailListCard
+                key={item.id}
+                item={item}
+                isSelected={selectedId === item.id}
+                onSelect={onSelect}
+                compact={compact}
+                isChecked={selectedIds?.has(item.id) ?? false}
+                onToggleCheck={onToggleSelect}
+                hasAnySelected={hasAnySelected}
+              />
+            ))}
+          </div>
         </div>
       ))}
     </div>

@@ -2413,7 +2413,7 @@ export function WorkPageClient({
         <div className="p-3 border-b border-neutral-100">
           <button
             onClick={() => setActiveThreadId(null)}
-            className="w-full flex items-center gap-2 px-3 py-2 text-[12px] font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 transition-colors"
+            className="w-full flex items-center gap-2 px-3 py-2 text-[12px] font-semibold text-indigo-700 bg-indigo-50 rounded-lg hover:bg-indigo-100 transition-colors"
           >
             <PlusIcon className="w-3.5 h-3.5" />
             New
@@ -2687,7 +2687,7 @@ export function WorkPageClient({
                         key={blueprint.id}
                         onClick={() => handleBlueprintSelect(blueprint)}
                         disabled={isCreatingThread}
-                        className="text-left p-3.5 bg-white border border-neutral-200 hover:border-indigo-300 hover:bg-indigo-50/30 transition-all disabled:opacity-40 disabled:cursor-not-allowed group"
+                        className="text-left p-3.5 bg-white border border-neutral-200 rounded-lg hover:border-indigo-300 hover:bg-indigo-50/30 transition-all disabled:opacity-40 disabled:cursor-not-allowed group"
                       >
                         <div className="flex items-start gap-2.5">
                           <Icon className="w-4 h-4 text-neutral-400 group-hover:text-indigo-500 flex-shrink-0 mt-0.5 transition-colors" />

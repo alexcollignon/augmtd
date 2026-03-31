@@ -33,7 +33,7 @@ export default function PoolCard({ item, onConfirm, onDismiss, onSelect }: PoolC
 
   return (
     <div
-      className="group bg-white border border-neutral-100 px-3 py-2 hover:border-neutral-200 hover:shadow-sm transition-all cursor-pointer"
+      className="group bg-white border border-neutral-100 rounded-lg px-3 py-2 hover:border-neutral-200 hover:shadow-sm transition-all cursor-pointer"
       onClick={() => onSelect?.(item.id)}
     >
       {/* Title row */}

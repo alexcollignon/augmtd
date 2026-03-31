@@ -696,63 +696,41 @@ export default function AiChatPanel({
         </div>
       ) : (
         <div className="flex-shrink-0 h-10 flex items-center gap-2.5 px-3 border-b border-neutral-100 bg-white">
-          {/* Mode pill: Assistant | Chat */}
-          <div className="flex items-center bg-neutral-100 rounded-md p-0.5 gap-0.5">
+          {/* Source dropdown */}
+          <div ref={sourceDropdownRef} className="relative">
             <button
-              onClick={() => { if (isChatOnly) toggleChat(); }}
-              className={`text-[11px] font-medium px-2.5 py-1 rounded transition-colors ${
-                !isChatOnly ? 'bg-white text-neutral-800 shadow-sm' : 'text-neutral-400 hover:text-neutral-600'
-              }`}
+              onClick={() => setSourceDropdownOpen(v => !v)}
+              className="flex items-center gap-1 text-[11px] text-neutral-400 hover:text-neutral-700 transition-colors"
             >
-              Assistant
+              <span>{sourceLabel}</span>
+              <ChevronDownIcon className="w-3 h-3 flex-shrink-0" />
             </button>
-            <button
-              onClick={() => { if (!isChatOnly) toggleChat(); }}
-              className={`text-[11px] font-medium px-2.5 py-1 rounded transition-colors ${
-                isChatOnly ? 'bg-white text-neutral-800 shadow-sm' : 'text-neutral-400 hover:text-neutral-600'
-              }`}
-            >
-              Chat
-            </button>
+            {sourceDropdownOpen && (
+              <div className="absolute top-full left-0 mt-1 w-44 bg-white border border-neutral-200 shadow-md z-20 py-1">
+                <button
+                  onClick={() => { onSourcesChange?.(CONTEXT_SOURCE_IDS); setSourceDropdownOpen(false); }}
+                  className={`w-full flex items-center gap-2 px-3 py-1.5 text-[12px] text-left hover:bg-neutral-50 transition-colors ${allActive ? 'text-indigo-700 font-semibold' : 'text-neutral-700'}`}
+                >
+                  <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${allActive ? 'bg-indigo-500' : 'bg-transparent'}`} />
+                  All sources
+                </button>
+                <div className="border-t border-neutral-100 my-1" />
+                {SOURCE_OPTIONS.map(opt => {
+                  const active = !allActive && activeContextSources.includes(opt.id);
+                  return (
+                    <button
+                      key={opt.id}
+                      onClick={() => toggleSource(opt.id)}
+                      className={`w-full flex items-center gap-2 px-3 py-1.5 text-[12px] text-left hover:bg-neutral-50 transition-colors ${active ? 'text-indigo-700 font-semibold' : 'text-neutral-700'}`}
+                    >
+                      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${active ? 'bg-indigo-500' : 'bg-transparent'}`} />
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
-
-          {/* Source dropdown — only in Assistant mode */}
-          {!isChatOnly && (
-            <div ref={sourceDropdownRef} className="relative">
-              <button
-                onClick={() => setSourceDropdownOpen(v => !v)}
-                className="flex items-center gap-1 text-[11px] text-neutral-400 hover:text-neutral-700 transition-colors"
-              >
-                <span>{sourceLabel}</span>
-                <ChevronDownIcon className="w-3 h-3 flex-shrink-0" />
-              </button>
-              {sourceDropdownOpen && (
-                <div className="absolute top-full left-0 mt-1 w-44 bg-white border border-neutral-200 shadow-md z-20 py-1">
-                  <button
-                    onClick={() => { onSourcesChange?.(CONTEXT_SOURCE_IDS); setSourceDropdownOpen(false); }}
-                    className={`w-full flex items-center gap-2 px-3 py-1.5 text-[12px] text-left hover:bg-neutral-50 transition-colors ${allActive ? 'text-indigo-700 font-semibold' : 'text-neutral-700'}`}
-                  >
-                    <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${allActive ? 'bg-indigo-500' : 'bg-transparent'}`} />
-                    All sources
-                  </button>
-                  <div className="border-t border-neutral-100 my-1" />
-                  {SOURCE_OPTIONS.map(opt => {
-                    const active = !allActive && activeContextSources.includes(opt.id);
-                    return (
-                      <button
-                        key={opt.id}
-                        onClick={() => toggleSource(opt.id)}
-                        className={`w-full flex items-center gap-2 px-3 py-1.5 text-[12px] text-left hover:bg-neutral-50 transition-colors ${active ? 'text-indigo-700 font-semibold' : 'text-neutral-700'}`}
-                      >
-                        <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${active ? 'bg-indigo-500' : 'bg-transparent'}`} />
-                        {opt.label}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          )}
 
           <div className="flex-1" />
 

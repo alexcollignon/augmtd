@@ -73,9 +73,9 @@ export default function MeetingCard({ event, userEmail, botState: botStateProp, 
     <>
       <article
         onClick={() => setShowDetail(true)}
-        className={`group relative bg-white border border-neutral-100 hover:bg-neutral-50 transition-colors cursor-pointer overflow-hidden mb-1.5 ${cardOpacity}`}
+        className={`group relative bg-white border border-neutral-100 rounded-lg hover:bg-neutral-50 transition-colors cursor-pointer overflow-hidden mb-1.5 ${cardOpacity}`}
       >
-        <div className={`absolute left-0 top-0 bottom-0 w-[3px] ${accentColor}`} />
+        <div className={`absolute left-0 top-0 bottom-0 w-[3px] rounded-l-lg ${accentColor}`} />
 
         <div className="pl-4 pr-3 py-2">
           {/* Title row */}
@@ -85,7 +85,7 @@ export default function MeetingCard({ event, userEmail, botState: botStateProp, 
             </h3>
             <div className="flex items-center gap-1 flex-shrink-0">
               {event.meeting_status === 'in_progress' && (
-                <span className="text-[10px] font-semibold text-red-600 bg-red-50 px-1.5 py-0.5">Now</span>
+                <span className="text-[10px] font-semibold text-red-600 bg-red-50 px-1.5 py-0.5 rounded-full">Now</span>
               )}
               {isOrganizer && isUpcoming && (
                 <button
@@ -111,7 +111,7 @@ export default function MeetingCard({ event, userEmail, botState: botStateProp, 
               {event.meeting_link && (event.meeting_status === 'starting_soon' || event.meeting_status === 'in_progress') ? (
                 <button
                   onClick={handleJoinMeeting}
-                  className={`inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-semibold text-white transition-colors ${
+                  className={`inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-semibold text-white rounded-full transition-colors ${
                     event.meeting_status === 'in_progress' ? 'bg-red-600 hover:bg-red-700' : 'bg-indigo-600 hover:bg-indigo-700'
                   }`}
                 >
@@ -121,7 +121,7 @@ export default function MeetingCard({ event, userEmail, botState: botStateProp, 
               ) : (
                 <>
                   {rsvpBadge && (
-                    <span className={`text-[10px] font-medium px-1.5 py-0.5 border ${rsvpBadge.className}`}>
+                    <span className={`text-[10px] font-medium px-1.5 py-0.5 border rounded-full ${rsvpBadge.className}`}>
                       {rsvpBadge.label}
                     </span>
                   )}
@@ -180,7 +180,7 @@ export default function MeetingCard({ event, userEmail, botState: botStateProp, 
                 cancellingBot ? (
                   <span className="text-[10px] text-neutral-400 animate-pulse">Removing…</span>
                 ) : (
-                  <span className="group/bot inline-flex items-center gap-1.5 text-[10px] font-medium text-emerald-600 bg-emerald-50 px-2 py-0.5">
+                  <span className="group/bot inline-flex items-center gap-1.5 text-[10px] font-medium text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
                     Assistant scheduled
                     <button
@@ -214,7 +214,7 @@ export default function MeetingCard({ event, userEmail, botState: botStateProp, 
                       else setSchedulingBot(false);
                     } catch { setSchedulingBot(false); }
                   }}
-                  className="inline-flex items-center gap-1 text-[10px] font-medium text-indigo-500 bg-indigo-50 px-2 py-0.5 hover:bg-indigo-100 transition-colors"
+                  className="inline-flex items-center gap-1 text-[10px] font-medium text-indigo-500 bg-indigo-50 px-2 py-0.5 rounded-full hover:bg-indigo-100 transition-colors"
                 >
                   + Send assistant
                 </button>

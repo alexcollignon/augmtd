@@ -127,7 +127,7 @@ export function ProcessesClient({ userId, userEmail, companyName }: Props) {
             </div>
             <button
               onClick={() => router.push('/processes/new')}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 text-white text-[12px] font-medium hover:bg-indigo-700 transition-colors"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 text-white text-[12px] font-medium rounded-md hover:bg-indigo-700 transition-colors"
             >
               <PlusIcon className="w-3.5 h-3.5" />
               New Process
@@ -161,8 +161,8 @@ export function ProcessesClient({ userId, userEmail, companyName }: Props) {
         )}
 
         {/* Tabs */}
-        <div className="flex-shrink-0 px-6 mt-3 border-b border-neutral-200 bg-white">
-          <div className="flex gap-0">
+        <div className="flex-shrink-0 px-6 mt-3 pb-3 bg-white">
+          <div className="flex items-center bg-neutral-100 rounded-full p-0.5 w-fit">
             {([
               ['all', 'All'],
               ['needs_action', 'Needs my action'],
@@ -172,10 +172,10 @@ export function ProcessesClient({ userId, userEmail, companyName }: Props) {
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
-                className={`px-4 py-2.5 text-[12px] font-medium border-b-2 transition-colors ${
+                className={`px-3 py-1 text-[12px] font-medium rounded-full transition-colors ${
                   activeTab === tab
-                    ? 'border-indigo-500 text-indigo-700'
-                    : 'border-transparent text-neutral-500 hover:text-neutral-700'
+                    ? 'bg-white text-neutral-800 shadow-sm'
+                    : 'text-neutral-500 hover:text-neutral-700'
                 }`}
               >
                 {label}

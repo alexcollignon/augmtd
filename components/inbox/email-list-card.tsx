@@ -62,12 +62,12 @@ export default function EmailListCard({ item, isSelected, onSelect, compact = fa
     return (
       <div
         onClick={() => onSelect(item)}
-        className={`w-full text-left relative border-b border-neutral-100 transition-colors cursor-pointer group ${
+        className={`w-full text-left relative rounded-md transition-colors cursor-pointer group ${
           isChecked ? 'bg-indigo-50/60' : isSelected ? 'bg-indigo-50' : 'bg-white hover:bg-neutral-50'
         }`}
       >
         {Checkbox}
-        <div className={`absolute left-0 top-0 bottom-0 w-[3px] ${accentColor}`} />
+        <div className={`absolute left-0 top-0 bottom-0 w-[3px] rounded-l-md ${accentColor}`} />
         <div className="pl-8 pr-3 py-1.5">
           <div className="flex items-baseline justify-between gap-2 mb-0.5">
             <span className={`text-[12px] font-semibold truncate ${isSelected ? 'text-indigo-900' : 'text-neutral-900'}`}>
@@ -90,13 +90,13 @@ export default function EmailListCard({ item, isSelected, onSelect, compact = fa
   return (
     <div
       onClick={() => onSelect(item)}
-      className={`w-full text-left relative border-b border-neutral-100 transition-colors cursor-pointer group ${
+      className={`w-full text-left relative rounded-md transition-colors cursor-pointer group ${
         isChecked ? 'bg-indigo-50/60' : isSelected ? 'bg-indigo-50' : 'bg-white hover:bg-neutral-50'
       }`}
     >
       {Checkbox}
-      {/* Accent bar — hidden when checkbox is visible to avoid overlap */}
-      <div className={`absolute left-0 top-0 bottom-0 w-[3px] ${accentColor}`} />
+      {/* Accent bar */}
+      <div className={`absolute left-0 top-0 bottom-0 w-[3px] rounded-l-md ${accentColor}`} />
 
       <div className="pl-8 pr-3 py-3">
         {/* Row 1: From + time */}
