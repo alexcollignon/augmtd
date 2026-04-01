@@ -13,6 +13,7 @@ import {
   ChevronRightIcon,
   EnvelopeIcon,
   SparklesIcon,
+  ChatBubbleLeftRightIcon,
   ArrowTopRightOnSquareIcon,
   ChevronDownIcon,
 } from '@heroicons/react/24/outline';
@@ -688,10 +689,8 @@ export default function AiChatPanel({
       {/* ── Zone 1: Header ── */}
       <div className="flex-shrink-0 h-10 flex items-center justify-between px-3 border-b border-neutral-200">
         <div className="flex items-center gap-2">
-          <SparklesIcon className="w-4 h-4 text-neutral-500" />
-          <span className="text-[13px] font-semibold text-neutral-700">
-            {context === 'desk' ? 'Assistant' : 'Assistant'}
-          </span>
+          <ChatBubbleLeftRightIcon className="w-4 h-4 text-neutral-500" />
+          <span className="text-[13px] font-semibold text-neutral-700">Assistant</span>
         </div>
         {onClose && (
           <button onClick={onClose} title="Close" className="p-0.5 text-neutral-400 hover:text-neutral-600 transition-colors">

@@ -9,7 +9,7 @@ export default async function DeskPage() {
   if (!user) redirect('/login');
 
   return (
-    <div className="flex h-screen bg-white">
+    <div className="flex h-screen bg-neutral-50">
       <SidebarNav userEmail={user.email} />
       <main className="flex-1 min-w-0 flex flex-col overflow-hidden">
         <DeskPageClient />

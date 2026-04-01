@@ -23,7 +23,7 @@ export default async function DrivePage() {
     .in('provider', ['gmail', 'outlook']);
 
   return (
-    <div className="flex h-screen bg-gradient-to-br from-neutral-50 to-white">
+    <div className="flex h-screen bg-neutral-50">
       <SidebarNav userEmail={user.email} />
       <main className="flex-1 overflow-hidden flex flex-col">
         <DriveClient

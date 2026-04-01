@@ -52,7 +52,7 @@ export default function EmailListChronological({ items, selectedId, onSelect, co
   }, [items]);
 
   return (
-    <div>
+    <div className="pt-1">
       {groups.map(group => (
         <div key={group.label}>
           <div className="h-8 flex items-center px-3 bg-neutral-50 border-b border-neutral-100 sticky top-0 z-10">

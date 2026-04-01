@@ -2401,7 +2401,7 @@ export function WorkPageClient({
   // ─── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex h-screen overflow-hidden bg-white">
+    <div className="flex h-screen overflow-hidden bg-neutral-50">
       <SidebarNav userEmail={userEmail} />
 
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">

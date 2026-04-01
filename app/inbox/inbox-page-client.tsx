@@ -596,7 +596,7 @@ export function InboxPageClient({
   }, [chatHistory, chatStreaming, chatSources, attachedFiles, composeMode, composeDraft, replyIsOpen, replyBody, emailChipActive, emailChipData]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <div className="flex h-screen bg-white overflow-hidden">
+    <div className="flex h-screen bg-neutral-50 overflow-hidden">
       <SidebarNav userEmail={user?.email} />
 
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
@@ -663,10 +663,11 @@ export function InboxPageClient({
         {hasConnection && !showDesk && (
           <div className="flex-1 flex min-h-0 overflow-hidden">
             {/* Left: email list */}
-            <div className="w-[272px] flex-shrink-0 border-r border-neutral-200 flex flex-col bg-white">
+            <div className="w-[272px] flex-shrink-0 flex flex-col bg-neutral-50 p-2">
+              <div className="flex-1 flex flex-col rounded-2xl bg-white shadow-sm overflow-hidden">
 
               {/* View + density toggles */}
-              <div className="flex-shrink-0 flex items-center justify-between pl-2.5 pr-1 border-b border-neutral-100 h-10">
+              <div className="flex-shrink-0 flex items-center justify-between pl-2.5 pr-1 h-10 border-b border-neutral-100">
                 {/* Segmented view tabs */}
                 <div className="relative grid grid-cols-2 bg-neutral-100 rounded-full p-0.5">
                   <div
@@ -846,12 +847,14 @@ export function InboxPageClient({
                   />
                 )}
               </div>
+              </div>
             </div>
 
             {/* Middle: search header + detail/compose */}
-            <div className="flex-1 min-w-0 overflow-hidden flex flex-col border-r border-neutral-200">
+            <div className="flex-1 min-w-0 overflow-hidden flex flex-col bg-neutral-50 p-2">
+              <div className="flex-1 flex flex-col rounded-2xl bg-white shadow-sm overflow-hidden">
               {/* Middle header — search + ask + compose */}
-              <div className="flex-shrink-0 h-10 flex items-center gap-1 px-3 border-b border-neutral-200 bg-white">
+              <div className="flex-shrink-0 h-10 flex items-center gap-1 px-3 border-b border-neutral-100">
                 {/* Search */}
                 <MagnifyingGlassIcon className="w-3.5 h-3.5 text-neutral-400 flex-shrink-0" />
                 <input
@@ -928,39 +931,41 @@ export function InboxPageClient({
 
               </div>
 
-              {composeMode ? (
-                <ComposePanel
-                  draft={composeDraft}
-                  onChange={(fields) => setComposeDraft(prev => ({ ...prev, ...fields }))}
-                  onDiscard={closeChat}
-                  onSent={closeChat}
-                />
-              ) : (
-                <div className="flex-1 min-h-0">
-                  <WorkDetailInline
-                    key={selectedItem?.id ?? 'empty'}
-                    item={selectedItem}
-                    onItemConfirmed={handleItemConfirmed}
-                    onRefreshMeetings={fetchMeetings}
-                    pendingReplyDraft={pendingReplyDraft}
-                    onReplySent={(itemId) => {
-                      setPendingReplyDraft(null);
-                      setReplyBody('');
-                      setReplyIsOpen(false);
-                      handleItemConfirmed([itemId], 'not_my_task');
-                    }}
-                    replyBody={replyBody}
-                    onReplyBodyChange={setReplyBody}
-                    onReplyOpenChange={handleReplyOpenChange}
-                  />
-                </div>
-              )}
+              <div className="flex-1 min-h-0 overflow-hidden">
+                  {composeMode ? (
+                    <ComposePanel
+                      draft={composeDraft}
+                      onChange={(fields) => setComposeDraft(prev => ({ ...prev, ...fields }))}
+                      onDiscard={closeChat}
+                      onSent={closeChat}
+                    />
+                  ) : (
+                    <WorkDetailInline
+                      key={selectedItem?.id ?? 'empty'}
+                      item={selectedItem}
+                      onItemConfirmed={handleItemConfirmed}
+                      onRefreshMeetings={fetchMeetings}
+                      pendingReplyDraft={pendingReplyDraft}
+                      onReplySent={(itemId) => {
+                        setPendingReplyDraft(null);
+                        setReplyBody('');
+                        setReplyIsOpen(false);
+                        handleItemConfirmed([itemId], 'not_my_task');
+                      }}
+                      replyBody={replyBody}
+                      onReplyBodyChange={setReplyBody}
+                      onReplyOpenChange={handleReplyOpenChange}
+                    />
+                  )}
+              </div>
+              </div>
             </div>
 
             {/* Right panel — persistent wrapper, animates open/close */}
-            <div className={`flex-shrink-0 overflow-hidden transition-[width] duration-200 bg-neutral-100 ${rightPanel ? 'w-[316px]' : 'w-0'}`}>
-              {rightPanel === 'calendar' && (
-                <div className="w-full h-full p-2">
+            <div className={`flex-shrink-0 overflow-hidden transition-[width] duration-200 bg-neutral-50 ${rightPanel ? 'w-[316px]' : 'w-0'}`}>
+              <div className="relative w-full h-full p-2">
+                {/* Calendar panel */}
+                <div className={`absolute inset-2 transition-all duration-200 ${rightPanel === 'calendar' ? 'opacity-100 translate-x-0 pointer-events-auto' : 'opacity-0 translate-x-2 pointer-events-none'}`}>
                   <div className="h-full rounded-2xl bg-white shadow-sm overflow-hidden">
                     <MeetingsColumn
                       isOpen={true}
@@ -972,9 +977,8 @@ export function InboxPageClient({
                     />
                   </div>
                 </div>
-              )}
-              {rightPanel === 'chat' && (
-                <div className="w-full h-full p-2">
+                {/* Chat panel */}
+                <div className={`absolute inset-2 transition-all duration-200 ${rightPanel === 'chat' ? 'opacity-100 translate-x-0 pointer-events-auto' : 'opacity-0 -translate-x-2 pointer-events-none'}`}>
                   <div className="h-full flex flex-col rounded-2xl bg-white shadow-sm overflow-hidden">
                   <AiChatPanel
                     context="inbox"
@@ -1012,7 +1016,7 @@ export function InboxPageClient({
                   />
                   </div>
                 </div>
-              )}
+              </div>
             </div>
           </div>
         )}

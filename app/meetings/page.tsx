@@ -9,7 +9,7 @@ export default async function MeetingsPage() {
   if (!user) redirect('/login');
 
   return (
-    <div className="flex h-screen bg-gradient-to-br from-neutral-50 to-white">
+    <div className="flex h-screen bg-neutral-50">
       <SidebarNav userEmail={user.email} />
       <main className="flex-1 min-h-0 flex flex-col">
         <MeetingsPageClient userEmail={user.email ?? ''} />

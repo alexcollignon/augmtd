@@ -46,7 +46,7 @@ export default function EmailListSections({ items, selectedId, onSelect, compact
   };
 
   return (
-    <div>
+    <div className="pt-1">
       {SECTIONS.map(section => {
         const sectionItems = bySection[section.key] || [];
         if (sectionItems.length === 0) return null;

@@ -41,8 +41,8 @@ export default function MeetingsColumn({ isOpen, onToggle, meetings, loading, us
     {/* Week view overlay — only the week grid, positioned left of the existing sidebar */}
     {isOpen && (calendarView === 'week' || weekClosing) && (
       <div
-        className={`fixed top-0 bottom-0 z-40 overflow-hidden bg-white border-l border-neutral-200 flex flex-col ${weekClosing ? 'week-collapse-exit' : 'week-expand-enter'}`}
-        style={{ right: '316px', width: '680px', boxShadow: '-8px 0 24px rgba(0,0,0,0.10)' }}
+        className={`fixed top-2 bottom-2 z-40 overflow-hidden bg-white rounded-l-2xl flex flex-col ${weekClosing ? 'week-collapse-exit' : 'week-expand-enter'}`}
+        style={{ right: '318px', width: '680px', boxShadow: '-4px 0 24px rgba(0,0,0,0.10)' }}
       >
         <div className="flex-shrink-0 h-10 flex items-center justify-between px-3 border-b border-neutral-200">
           <button

@@ -56,7 +56,10 @@ export const TIER_DEFAULTS: Record<TierType, Record<TaskType, ModelEndpoint>> = 
                      baseURL: 'https://api.together.xyz/v1' },
     embeddings:    { provider: 'openai_compatible', model: 'intfloat/multilingual-e5-large-instruct',
                      baseURL: 'https://api.together.xyz/v1' },
-    ocr:           { provider: 'openai_compatible', model: 'Qwen/Qwen3-VL-8B-Instruct',
+    // Qwen3-VL-8B-Instruct deprecated Apr 14 2026 by Together AI.
+    // Their recommended replacement Qwen3.5-9B is text-only (no vision) — OCR on images
+    // will not work in private_shared until a proper VL model is available on Together AI serverless.
+    ocr:           { provider: 'openai_compatible', model: 'Qwen/Qwen3.5-9B',
                      baseURL: 'https://api.together.xyz/v1' },
     assignment:    { provider: 'openai_compatible', model: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
                      baseURL: 'https://api.together.xyz/v1' },
