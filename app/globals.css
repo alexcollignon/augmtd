@@ -46,6 +46,23 @@ body {
   animation: slideInFromRight 180ms ease-out forwards;
 }
 
+/* Desk panel — slides up from below */
+@keyframes deskSlideUp {
+  from { transform: translateY(100%); }
+  to   { transform: translateY(0); }
+}
+.desk-slide-up {
+  animation: deskSlideUp 300ms ease-out forwards;
+}
+
+@keyframes deskSlideDown {
+  from { transform: translateY(0); }
+  to   { transform: translateY(100%); }
+}
+.desk-slide-down {
+  animation: deskSlideDown 300ms ease-in forwards;
+}
+
 /* Scoped styles for rendered HTML email bodies */
 .email-body-html {
   font-size: 13px;

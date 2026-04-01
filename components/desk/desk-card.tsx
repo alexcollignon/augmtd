@@ -46,7 +46,7 @@ export default function DeskCard({ item, onMove, onDismiss, onSelect }: DeskCard
         e.dataTransfer.effectAllowed = 'move';
       }}
       onClick={() => onSelect?.(item.id)}
-      className={`group bg-white border border-neutral-100 rounded-lg px-3 py-2 cursor-pointer transition-all hover:shadow-sm hover:border-neutral-200 ${
+      className={`group bg-neutral-50 rounded-lg px-3 py-2 cursor-pointer transition-all hover:bg-neutral-100 ${
         isDone ? 'opacity-55' : ''
       }`}
     >

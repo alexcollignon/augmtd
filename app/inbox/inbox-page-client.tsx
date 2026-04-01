@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback, useMemo, lazy, Suspense } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -17,7 +17,7 @@ import { toast } from 'sonner';
 import type { CalendarEvent } from '@/lib/types/meetings';
 import type { InboxItem } from '@/lib/types/inbox';
 
-const DeskPageClient = lazy(() => import('@/app/desk/desk-page-client'));
+import DeskPageClient from '@/app/desk/desk-page-client';
 
 type ViewMode = 'chronological' | 'smart';
 type Density = 'normal' | 'compact';
@@ -54,6 +54,12 @@ export function InboxPageClient({
   const [bulkArchiveConfirmPending, setBulkArchiveConfirmPending] = useState(false);
 
   const [showDesk, setShowDesk] = useState(false);
+  const [deskClosing, setDeskClosing] = useState(false);
+
+  const closeDesk = useCallback(() => {
+    setDeskClosing(true);
+    setTimeout(() => { setShowDesk(false); setDeskClosing(false); }, 300);
+  }, []);
 
   // Search state (client-side filter on left list)
   const [searchQuery, setSearchQuery] = useState('');
@@ -638,30 +644,19 @@ export function InboxPageClient({
           </div>
         )}
 
-        {/* Desk view */}
-        {hasConnection && showDesk && (
-          <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
-            <div className="flex-shrink-0 h-10 flex items-center gap-2 px-3 border-b border-neutral-200 bg-white">
-              <button
-                onClick={() => setShowDesk(false)}
-                className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold border bg-indigo-600 border-indigo-600 text-white"
-              >
-                <RectangleGroupIcon className="w-3 h-3" />
-                On Your Desk
-              </button>
-              <span className="text-[11px] text-neutral-400">— click to return to inbox</span>
-            </div>
-            <div className="flex-1 min-h-0 overflow-hidden">
-              <Suspense fallback={<div className="flex items-center justify-center h-full"><div className="w-5 h-5 border-2 border-neutral-300 border-t-transparent rounded-full animate-spin" /></div>}>
-                <DeskPageClient />
-              </Suspense>
-            </div>
-          </div>
-        )}
+        {/* Desk + inbox stacked — desk slides up from below */}
+        {hasConnection && (
+          <div className="flex-1 min-h-0 relative overflow-hidden">
 
-        {/* 3-column layout */}
-        {hasConnection && !showDesk && (
-          <div className="flex-1 flex min-h-0 overflow-hidden">
+            {/* Desk panel — slides up from below, unmounts after close animation */}
+            {(showDesk || deskClosing) && (
+              <div className={`absolute inset-0 z-50 ${deskClosing ? 'desk-slide-down' : 'desk-slide-up'}`}>
+                <DeskPageClient onClose={closeDesk} />
+              </div>
+            )}
+
+            {/* 3-column inbox layout */}
+            <div className="absolute inset-0 flex min-h-0 overflow-hidden">
             {/* Left: email list */}
             <div className="w-[272px] flex-shrink-0 flex flex-col bg-neutral-50 p-2">
               <div className="flex-1 flex flex-col rounded-2xl bg-white shadow-sm overflow-hidden">
@@ -885,7 +880,7 @@ export function InboxPageClient({
 
                 {/* On Your Desk toggle */}
                 <button
-                  onClick={() => setShowDesk(v => !v)}
+                  onClick={() => showDesk ? closeDesk() : setShowDesk(true)}
                   title="On Your Desk"
                   className={`flex-shrink-0 p-1.5 border rounded-md transition-colors ${
                     showDesk
@@ -1017,6 +1012,7 @@ export function InboxPageClient({
                   </div>
                 </div>
               </div>
+            </div>
             </div>
           </div>
         )}

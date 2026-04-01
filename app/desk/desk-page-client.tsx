@@ -2,14 +2,14 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowPathIcon, ChatBubbleLeftRightIcon, PlusIcon } from '@heroicons/react/24/outline';
+import { ArrowPathIcon, ChatBubbleLeftRightIcon, PlusIcon, ChevronDownIcon } from '@heroicons/react/24/outline';
 import type { DeskItem, DeskColumn } from '@/lib/types/desk';
 import { DESK_COLUMNS } from '@/lib/types/desk';
 import KanbanColumn from '@/components/desk/kanban-column';
 import DeskChatSidebar from '@/components/desk/desk-chat-sidebar';
 import CardDetailPanel from '@/components/desk/card-detail-panel';
 
-export default function DeskPageClient() {
+export default function DeskPageClient({ onClose }: { onClose?: () => void }) {
   const router = useRouter();
   const [items, setItems] = useState<DeskItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -178,12 +178,12 @@ export default function DeskPageClient() {
   const selectedItem = items.find((i) => i.id === selectedCardId) ?? null;
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full bg-neutral-50">
       {/* Header */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-neutral-100 bg-white flex-shrink-0">
+      <div className="flex items-center justify-between px-5 py-3 flex-shrink-0">
         <div>
-          <h1 className="text-[15px] font-semibold text-neutral-900">On Your Desk</h1>
-          <p className="text-[12px] text-neutral-500 mt-0.5">
+          <h1 className="text-[14px] font-semibold text-neutral-900">On Your Desk</h1>
+          <p className="text-[11px] text-neutral-400 mt-0.5">
             {loading ? 'Loading…' : activeCount === 0
               ? "You're all caught up."
               : `${activeCount} item${activeCount === 1 ? '' : 's'} need your attention`}
@@ -193,6 +193,15 @@ export default function DeskPageClient() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {onClose && (
+            <button
+              onClick={onClose}
+              title="Back to inbox"
+              className="p-1.5 border border-neutral-200 rounded-md text-neutral-500 hover:bg-white transition-colors"
+            >
+              <ChevronDownIcon className="w-3.5 h-3.5" />
+            </button>
+          )}
           {lastSynced && !syncing && (
             <span className="text-[11px] text-neutral-400">
               Synced {lastSynced.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
@@ -204,7 +213,7 @@ export default function DeskPageClient() {
               setSelectedCardId(null);
               setChatOpen(false);
             }}
-            className="flex-shrink-0 flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold border border-neutral-300 text-neutral-600 hover:bg-neutral-50 transition-colors"
+            className="flex-shrink-0 flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-semibold rounded-md border border-neutral-200 text-neutral-600 hover:bg-white transition-colors"
             title="Add task"
           >
             <PlusIcon className="w-3 h-3" />
@@ -215,7 +224,7 @@ export default function DeskPageClient() {
             className={`flex-shrink-0 p-1.5 border rounded-md transition-colors ${
               chatOpen
                 ? 'bg-indigo-600 border-indigo-600 text-white'
-                : 'border-indigo-400 text-indigo-500 hover:bg-indigo-50'
+                : 'border-neutral-200 text-neutral-500 hover:bg-white'
             }`}
             title="Ask AI"
           >
@@ -224,7 +233,7 @@ export default function DeskPageClient() {
           <button
             onClick={triggerSync}
             disabled={syncing}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium text-neutral-600 border border-neutral-200 hover:bg-neutral-50 transition-colors disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-medium text-neutral-600 rounded-md border border-neutral-200 hover:bg-white transition-colors disabled:opacity-50"
           >
             <ArrowPathIcon className={`w-3.5 h-3.5 ${syncing ? 'animate-spin' : ''}`} />
             {syncing ? 'Syncing…' : 'Sync'}
@@ -234,7 +243,7 @@ export default function DeskPageClient() {
 
       {/* Board + sidebars */}
       <div className="flex flex-row flex-1 overflow-hidden">
-        <div className="flex-1 overflow-x-auto px-6 py-6">
+        <div className="flex-1 overflow-x-auto px-4 pt-2 pb-4">
           {loading ? (
             <div className="grid grid-cols-5 gap-4">
               {DESK_COLUMNS.map((col) => (
@@ -271,17 +280,20 @@ export default function DeskPageClient() {
           />
         )}
 
-        <DeskChatSidebar
-          isOpen={chatOpen}
-          onClose={() => setChatOpen(false)}
-          boardItems={items}
-          onDeskMove={handleMove}
-          onDeskDismiss={handleDismiss}
-          onDeskConfirm={handleConfirm}
-          onOpenWorkflow={handleOpenWorkflow}
-          onOpenProcess={handleOpenProcess}
-          onTaskCreated={handleTaskCreated}
-        />
+        {/* Persistent chat wrapper — animates width like inbox right panel */}
+        <div className={`flex-shrink-0 overflow-hidden transition-[width] duration-200 ${chatOpen ? 'w-[380px]' : 'w-0'}`}>
+          <DeskChatSidebar
+            isOpen={chatOpen}
+            onClose={() => setChatOpen(false)}
+            boardItems={items}
+            onDeskMove={handleMove}
+            onDeskDismiss={handleDismiss}
+            onDeskConfirm={handleConfirm}
+            onOpenWorkflow={handleOpenWorkflow}
+            onOpenProcess={handleOpenProcess}
+            onTaskCreated={handleTaskCreated}
+          />
+        </div>
       </div>
     </div>
   );
