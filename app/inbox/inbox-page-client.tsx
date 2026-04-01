@@ -964,8 +964,8 @@ export function InboxPageClient({
             {/* Right panel — persistent wrapper, animates open/close */}
             <div className={`flex-shrink-0 overflow-hidden transition-[width] duration-200 bg-neutral-50 ${rightPanel ? 'w-[316px]' : 'w-0'}`}>
               <div className="relative w-full h-full p-2">
-                {/* Calendar panel */}
-                <div className={`absolute inset-2 transition-all duration-200 ${rightPanel === 'calendar' ? 'opacity-100 translate-x-0 pointer-events-auto' : 'opacity-0 translate-x-2 pointer-events-none'}`}>
+                {/* Calendar panel — no transform (would break position:fixed week overlay) */}
+                <div className={`absolute inset-2 transition-opacity duration-200 ${rightPanel === 'calendar' ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}>
                   <div className="h-full rounded-2xl bg-white shadow-sm overflow-hidden">
                     <MeetingsColumn
                       isOpen={true}
