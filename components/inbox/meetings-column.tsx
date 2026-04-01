@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import {
   CalendarIcon,
+  ChatBubbleLeftRightIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   PlusIcon,
@@ -19,9 +20,10 @@ interface MeetingsColumnProps {
   loading: boolean;
   userEmail: string;
   onRefresh?: () => void;
+  onChatOpen?: () => void;
 }
 
-export default function MeetingsColumn({ isOpen, onToggle, meetings, loading, userEmail, onRefresh }: MeetingsColumnProps) {
+export default function MeetingsColumn({ isOpen, onToggle, meetings, loading, userEmail, onRefresh, onChatOpen }: MeetingsColumnProps) {
   const [showNewForm, setShowNewForm] = useState(false);
   const [initialDate, setInitialDate] = useState<Date | undefined>(undefined);
   const [botStateMap, setBotStateMap] = useState<Map<string, string>>(new Map());
@@ -82,23 +84,30 @@ export default function MeetingsColumn({ isOpen, onToggle, meetings, loading, us
       >
         {isOpen ? (
           <>
-            <button
-              onClick={onToggle}
-              title="Hide calendar"
-              className="flex items-center gap-2 hover:opacity-70 transition-opacity"
-            >
-              <CalendarIcon className="w-4 h-4 text-neutral-500" />
-              <span className="text-[13px] font-semibold text-neutral-700">Calendar</span>
-            </button>
+            {/* Left: Calendar (active) + Chat toggle */}
+            <div className="flex items-center gap-1.5">
+              <div className="p-1.5 border rounded-md bg-indigo-600 border-indigo-600 text-white">
+                <CalendarIcon className="w-3.5 h-3.5" />
+              </div>
+              {onChatOpen && (
+                <button
+                  onClick={onChatOpen}
+                  title="Ask AI"
+                  className="p-1.5 border border-neutral-200 text-neutral-500 hover:bg-neutral-50 rounded-md transition-colors"
+                >
+                  <ChatBubbleLeftRightIcon className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+            {/* Right: + and Month/Week pill and close */}
             <div className="flex items-center gap-1.5">
               <button
                 onClick={() => { setInitialDate(undefined); setShowNewForm(true); }}
                 title="New meeting"
-                className="p-1 text-indigo-400 hover:text-indigo-600 transition-colors"
+                className="p-1 text-neutral-400 hover:text-neutral-600 transition-colors"
               >
                 <PlusIcon className="w-3.5 h-3.5" />
               </button>
-              {/* Month / Week toggle */}
               <div className="relative grid grid-cols-2 bg-neutral-100 rounded-full p-0.5">
                 <div
                   className="absolute inset-y-0.5 w-[calc(50%-2px)] rounded-full bg-white shadow-sm pointer-events-none"
@@ -120,8 +129,8 @@ export default function MeetingsColumn({ isOpen, onToggle, meetings, loading, us
                   Week
                 </button>
               </div>
-              <button onClick={onToggle} title="Hide calendar" className="p-0.5 hover:opacity-70 transition-opacity">
-                <ChevronRightIcon className="w-3.5 h-3.5 text-neutral-400" />
+              <button onClick={onToggle} title="Close" className="p-1 text-neutral-400 hover:text-neutral-600 transition-colors">
+                <ChevronRightIcon className="w-3.5 h-3.5" />
               </button>
             </div>
           </>

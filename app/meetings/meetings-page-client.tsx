@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { MicrophoneIcon, FolderIcon, PlusIcon, ChatBubbleLeftRightIcon, ChevronLeftIcon } from '@heroicons/react/24/outline';
+import { MicrophoneIcon, FolderIcon, PlusIcon, ChatBubbleLeftRightIcon, ChevronLeftIcon, ChevronRightIcon, CalendarIcon } from '@heroicons/react/24/outline';
 import type { DriveFolder } from '@/lib/types/drive';
 import type { CalendarEvent } from '@/lib/types/meetings';
 import TranscriptListCard from '@/components/meetings/transcript-list-card';
@@ -26,6 +26,7 @@ interface Transcript {
   summary?: string | null;
   processedAt?: string | null;
   folderId?: string | null;
+  attendees?: Array<{ email: string; name?: string }>;
 }
 
 function mapTranscripts(raw: any[]): Transcript[] {
@@ -42,6 +43,7 @@ function mapTranscripts(raw: any[]): Transcript[] {
     summary: t.summary,
     processedAt: t.updated_at ?? null,
     folderId: t.folder_id ?? null,
+    attendees: t.calendar_events?.attendees ?? [],
   }));
 }
 
@@ -62,11 +64,17 @@ export default function MeetingsPageClient({ userEmail }: { userEmail: string })
   const [loading, setLoading] = useState(true);
   const [showCapture, setShowCapture] = useState(false);
   const [showNewMeeting, setShowNewMeeting] = useState(false);
-  const [chatOpen, setChatOpen] = useState(false);
+  const [rightPanel, setRightPanel] = useState<'calendar' | 'chat' | null>('calendar');
   const [seenIds, setSeenIds] = useState<Set<string>>(loadSeenIds);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'recent' | 'folders'>('recent');
   const [calendarView, setCalendarView] = useState<'month' | 'week'>('month');
+  const [weekClosing, setWeekClosing] = useState(false);
+
+  const closeWeekView = () => {
+    setWeekClosing(true);
+    setTimeout(() => { setCalendarView('month'); setWeekClosing(false); }, 200);
+  };
   const [folders, setFolders] = useState<DriveFolder[]>([]);
   const [folderPopoverFor, setFolderPopoverFor] = useState<string | null>(null);
   const [newFolderForRecent, setNewFolderForRecent] = useState<string | null>(null);
@@ -228,39 +236,41 @@ export default function MeetingsPageClient({ userEmail }: { userEmail: string })
   const hasActivity = processingList.length > 0 || failedList.length > 0;
 
   return (
-    <div className="relative flex h-full overflow-hidden">
-      {/* ── Main content ── */}
-      <div className="flex-1 relative overflow-y-auto">
-        {/* Week view overlay — backdrop dismisses on click */}
-        {calendarView === 'week' && (
-          <div className="absolute inset-0 z-10" onClick={() => setCalendarView('month')} />
-        )}
-        {calendarView === 'week' && (
-          <div className="absolute right-0 top-0 bottom-0 z-20 w-[680px] bg-white border-l border-neutral-100 shadow-xl flex flex-col week-slide-enter">
-            <div className="flex-shrink-0 h-10 flex items-center justify-between px-3 border-b border-neutral-200">
-              <button
-                onClick={() => setCalendarView('month')}
-                className="flex items-center gap-1.5 text-[13px] text-neutral-500 hover:text-neutral-800 transition-colors"
-              >
-                <ChevronLeftIcon className="w-3.5 h-3.5" />
-                <span className="font-medium">Back</span>
-              </button>
-              <span className="text-[13px] font-semibold text-neutral-700">Calendar</span>
-              <div className="w-6" />
-            </div>
-            <div className="flex-1 min-h-0">
-              <WeekCalendar
-                meetings={upcoming}
-                userEmail={userEmail}
-                botStateMap={botStateMap}
-                onScheduled={handleScheduled}
-                onCancelled={handleCancelled}
-                onRefresh={fetchAll}
-                onNewMeeting={(date) => { setShowNewMeeting(true); }}
-              />
-            </div>
+    <div className="relative flex h-full overflow-hidden bg-neutral-50">
+      {/* Week view overlay — fixed like inbox, bypasses layout constraints */}
+      {(calendarView === 'week' || weekClosing) && (
+        <div
+          className={`fixed top-2 bottom-2 z-40 overflow-hidden bg-white rounded-l-2xl flex flex-col ${weekClosing ? 'week-collapse-exit' : 'week-expand-enter'}`}
+          style={{ right: '284px', width: '680px', boxShadow: '-4px 0 24px rgba(0,0,0,0.10)' }}
+        >
+          <div className="flex-shrink-0 h-10 flex items-center justify-between px-3 border-b border-neutral-200">
+            <button
+              onClick={closeWeekView}
+              className="flex items-center gap-1.5 text-[13px] text-neutral-500 hover:text-neutral-800 transition-colors"
+            >
+              <ChevronLeftIcon className="w-3.5 h-3.5" />
+              <span className="font-medium">Back</span>
+            </button>
+            <span className="text-[13px] font-semibold text-neutral-700">Calendar</span>
+            <div className="w-6" />
           </div>
-        )}
+          <div className="flex-1 min-h-0">
+            <WeekCalendar
+              meetings={upcoming}
+              userEmail={userEmail}
+              botStateMap={botStateMap}
+              onScheduled={handleScheduled}
+              onCancelled={handleCancelled}
+              onRefresh={fetchAll}
+              onNewMeeting={(date) => { setShowNewMeeting(true); }}
+            />
+          </div>
+        </div>
+      )}
+      {/* ── Main content ── */}
+      <div className="flex-1 overflow-hidden flex flex-col bg-neutral-50 p-2 pr-0">
+        <div className="flex-1 flex flex-col rounded-2xl bg-white shadow-sm overflow-hidden">
+        <div className="flex-1 overflow-y-auto">
         <div className="max-w-2xl mx-auto px-6 py-6">
 
           {/* Header */}
@@ -272,7 +282,7 @@ export default function MeetingsPageClient({ userEmail }: { userEmail: string })
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setShowCapture(true)}
-                className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 transition-colors"
+                className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-md transition-colors"
               >
                 <MicrophoneIcon className="w-4 h-4" />
                 Capture
@@ -296,32 +306,30 @@ export default function MeetingsPageClient({ userEmail }: { userEmail: string })
           )}
 
           {/* Tabs */}
-          <div className="flex items-center gap-0 border-b border-neutral-200 mb-5">
-            <button
-              onClick={() => setActiveTab('recent')}
-              className={`px-4 py-2 text-[13px] font-medium border-b-2 -mb-px transition-colors ${
-                activeTab === 'recent'
-                  ? 'border-indigo-600 text-indigo-600'
-                  : 'border-transparent text-neutral-500 hover:text-neutral-700'
-              }`}
-            >
-              Recent
-              {hasActivity && (
-                <span className="ml-1.5 inline-flex items-center justify-center w-4 h-4 text-[10px] font-semibold rounded-full bg-amber-100 text-amber-700">
-                  {processingList.length + failedList.length}
-                </span>
-              )}
-            </button>
-            <button
-              onClick={() => setActiveTab('folders')}
-              className={`px-4 py-2 text-[13px] font-medium border-b-2 -mb-px transition-colors ${
-                activeTab === 'folders'
-                  ? 'border-indigo-600 text-indigo-600'
-                  : 'border-transparent text-neutral-500 hover:text-neutral-700'
-              }`}
-            >
-              Folders
-            </button>
+          <div className="flex items-center mb-5">
+            <div className="relative grid grid-cols-2 bg-neutral-100 rounded-full p-0.5">
+              <div
+                className="absolute inset-y-0.5 w-[calc(50%-2px)] rounded-full bg-white shadow-sm pointer-events-none transition-all duration-180"
+                style={{ left: activeTab === 'folders' ? '50%' : '2px' }}
+              />
+              <button
+                onClick={() => setActiveTab('recent')}
+                className={`relative z-10 px-4 py-1 text-[12px] font-medium rounded-full transition-colors duration-180 flex items-center justify-center gap-1.5 ${activeTab === 'recent' ? 'text-neutral-800' : 'text-neutral-500 hover:text-neutral-700'}`}
+              >
+                Recent
+                {hasActivity && (
+                  <span className="inline-flex items-center justify-center w-4 h-4 text-[10px] font-semibold rounded-full bg-amber-100 text-amber-700">
+                    {processingList.length + failedList.length}
+                  </span>
+                )}
+              </button>
+              <button
+                onClick={() => setActiveTab('folders')}
+                className={`relative z-10 px-4 py-1 text-[12px] font-medium rounded-full transition-colors duration-180 ${activeTab === 'folders' ? 'text-neutral-800' : 'text-neutral-500 hover:text-neutral-700'}`}
+              >
+                Folders
+              </button>
+            </div>
           </div>
 
           {/* ── Recent tab ── */}
@@ -363,7 +371,7 @@ export default function MeetingsPageClient({ userEmail }: { userEmail: string })
                   </div>
                 )}
                 {!loading && recentList.length === 0 && (
-                  <div className="py-8 text-center border border-dashed border-neutral-200">
+                  <div className="py-8 text-center rounded-lg border border-dashed border-neutral-200">
                     <MicrophoneIcon className="w-8 h-8 text-neutral-300 mx-auto mb-2" />
                     <p className="text-[13px] text-neutral-500 font-medium">No recordings yet</p>
                     <p className="text-[12px] text-neutral-400 mt-1">
@@ -371,7 +379,7 @@ export default function MeetingsPageClient({ userEmail }: { userEmail: string })
                     </p>
                     <button
                       onClick={() => setShowCapture(true)}
-                      className="inline-block mt-3 px-4 py-1.5 text-[12px] font-medium text-indigo-600 border border-indigo-200 hover:bg-indigo-50 transition-colors"
+                      className="inline-block mt-3 px-4 py-1.5 text-[12px] font-medium text-indigo-600 border border-indigo-200 rounded-md hover:bg-indigo-50 transition-colors"
                     >
                       Capture meeting
                     </button>
@@ -460,80 +468,111 @@ export default function MeetingsPageClient({ userEmail }: { userEmail: string })
             />
           )}
         </div>
+        </div>
+        </div>
       </div>
 
-      {/* ── Right column — fixed width, hosts toggle ── */}
-      <div className="flex-shrink-0 w-[280px] border-l border-neutral-100 bg-white flex flex-col">
-        {/* Sidebar header: toggle + title */}
-        <div className="flex-shrink-0 flex items-center justify-between px-3 py-2.5 border-b border-neutral-100">
-          <span className="text-[13px] font-semibold text-neutral-700">Calendar</span>
-          <div className="flex items-center gap-1.5">
-          <button
-            onClick={() => setChatOpen((v) => !v)}
-            title="Ask AI"
-            className={`p-1 transition-colors ${chatOpen ? 'text-indigo-600' : 'text-neutral-400 hover:text-neutral-600'}`}
-          >
-            <ChatBubbleLeftRightIcon className="w-4 h-4" />
+      {/* ── Right column ── */}
+      {/* ── Right column ── */}
+      <div className={`flex-shrink-0 bg-neutral-50 flex flex-col transition-[width] duration-200 overflow-hidden ${rightPanel ? 'w-[284px]' : 'w-12'}`}>
+        {/* Closed — icon strip */}
+        <div className={`flex flex-col items-center pt-3 gap-1.5 transition-opacity duration-150 ${rightPanel ? 'opacity-0 pointer-events-none absolute' : 'opacity-100'}`}>
+          <button onClick={() => setRightPanel('calendar')} title="Calendar" className="p-1.5 border border-neutral-200 text-neutral-500 hover:bg-white rounded-md transition-colors">
+            <CalendarIcon className="w-3.5 h-3.5" />
           </button>
-          <button
-            onClick={() => setShowNewMeeting(true)}
-            title="New meeting"
-            className="p-1 text-indigo-400 hover:text-indigo-600 transition-colors"
-          >
-            <PlusIcon className="w-3.5 h-3.5" />
+          <button onClick={() => setRightPanel('chat')} title="Ask AI" className="p-1.5 border border-neutral-200 text-neutral-500 hover:bg-white rounded-md transition-colors">
+            <ChatBubbleLeftRightIcon className="w-3.5 h-3.5" />
           </button>
-          <div className="relative grid grid-cols-2 bg-neutral-100 rounded-full p-0.5">
-            <div
-              className="absolute inset-y-0.5 w-[calc(50%-2px)] rounded-full bg-white shadow-sm pointer-events-none"
-              style={{
-                left: calendarView === 'week' ? '50%' : '2px',
-                transition: 'left 180ms ease-in-out',
-              }}
-            />
-            <button
-              onClick={() => setCalendarView('month')}
-              title="Month view"
-              className={`relative z-10 px-2.5 py-0.5 text-[11px] font-medium rounded-full text-center transition-colors duration-180 ${calendarView === 'month' ? 'text-neutral-800' : 'text-neutral-500 hover:text-neutral-700'}`}
-            >
-              Month
-            </button>
-            <button
-              onClick={() => setCalendarView('week')}
-              title="Week view"
-              className={`relative z-10 px-2.5 py-0.5 text-[11px] font-medium rounded-full text-center transition-colors duration-180 ${calendarView === 'week' ? 'text-neutral-800' : 'text-neutral-500 hover:text-neutral-700'}`}
-            >
-              Week
-            </button>
-          </div>
-          </div>
         </div>
 
-        {/* Sidebar content */}
-        <div className="flex-1 overflow-y-auto px-3 py-3">
-          {loading ? (
-            <div className="animate-pulse space-y-3">
-              <div className="h-3 bg-neutral-100 rounded w-1/2" />
-              <div className="h-40 bg-neutral-100 rounded" />
+        {/* Open — full panel */}
+        <div className={`flex-1 flex flex-col p-2 min-h-0 transition-opacity duration-150 ${rightPanel ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+        <div className="flex-1 flex flex-col rounded-2xl bg-white shadow-sm overflow-hidden">
+          {/* Header */}
+          <div className="flex-shrink-0 h-10 flex items-center justify-between px-3 border-b border-neutral-100">
+            {rightPanel === 'chat' ? (
+              <>
+                <div className="flex items-center gap-2">
+                  <ChatBubbleLeftRightIcon className="w-3.5 h-3.5 text-neutral-400" />
+                  <span className="text-[12px] font-semibold text-neutral-700">Assistant</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <button onClick={() => setRightPanel('calendar')} title="Calendar" className="p-1.5 border border-neutral-200 rounded-md text-neutral-500 hover:bg-neutral-50 transition-colors">
+                    <CalendarIcon className="w-3.5 h-3.5" />
+                  </button>
+                  <button onClick={() => setRightPanel(null)} title="Close" className="p-1 text-neutral-400 hover:text-neutral-600 transition-colors">
+                    <ChevronRightIcon className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="flex items-center gap-1.5">
+                  <div className="p-1.5 border rounded-md bg-indigo-600 border-indigo-600 text-white">
+                    <CalendarIcon className="w-3.5 h-3.5" />
+                  </div>
+                  <button onClick={() => setRightPanel('chat')} title="Ask AI" className="p-1.5 border border-neutral-200 rounded-md text-neutral-500 hover:bg-neutral-50 transition-colors">
+                    <ChatBubbleLeftRightIcon className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button onClick={() => setShowNewMeeting(true)} title="New meeting" className="p-1 text-neutral-400 hover:text-neutral-600 transition-colors">
+                    <PlusIcon className="w-3.5 h-3.5" />
+                  </button>
+                  <div className="relative grid grid-cols-2 bg-neutral-100 rounded-full p-0.5">
+                    <div
+                      className="absolute inset-y-0.5 w-[calc(50%-2px)] rounded-full bg-white shadow-sm pointer-events-none"
+                      style={{ left: calendarView === 'week' && !weekClosing ? '50%' : '2px', transition: 'left 180ms ease-in-out' }}
+                    />
+                    <button
+                      onClick={() => calendarView === 'week' ? closeWeekView() : setCalendarView('month')}
+                      className={`relative z-10 px-2.5 py-0.5 text-[11px] font-medium rounded-full text-center transition-colors duration-180 ${calendarView === 'month' && !weekClosing ? 'text-neutral-800' : 'text-neutral-500 hover:text-neutral-700'}`}
+                    >Month</button>
+                    <button
+                      onClick={() => setCalendarView('week')}
+                      className={`relative z-10 px-2.5 py-0.5 text-[11px] font-medium rounded-full text-center transition-colors duration-180 ${calendarView === 'week' && !weekClosing ? 'text-neutral-800' : 'text-neutral-500 hover:text-neutral-700'}`}
+                    >Week</button>
+                  </div>
+                  <button onClick={() => setRightPanel(null)} title="Close" className="p-1 text-neutral-400 hover:text-neutral-600 transition-colors">
+                    <ChevronRightIcon className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* Body — cross-fade between calendar and chat */}
+          <div className="relative flex-1 min-h-0 overflow-hidden">
+            <div className={`absolute inset-0 overflow-y-auto px-3 py-3 transition-opacity duration-200 ${rightPanel === 'calendar' ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}>
+              {loading ? (
+                <div className="animate-pulse space-y-3">
+                  <div className="h-3 bg-neutral-100 rounded w-1/2" />
+                  <div className="h-40 bg-neutral-100 rounded" />
+                </div>
+              ) : (
+                <CalendarSidebar
+                  meetings={upcoming}
+                  userEmail={userEmail}
+                  botStateMap={botStateMap}
+                  onScheduled={handleScheduled}
+                  onCancelled={handleCancelled}
+                  onRefresh={fetchAll}
+                  onNewMeeting={() => setShowNewMeeting(true)}
+                />
+              )}
             </div>
-          ) : (
-            <CalendarSidebar
-              meetings={upcoming}
-              userEmail={userEmail}
-              botStateMap={botStateMap}
-              onScheduled={handleScheduled}
-              onCancelled={handleCancelled}
-              onRefresh={fetchAll}
-              onNewMeeting={() => setShowNewMeeting(true)}
-            />
-          )}
+            <div className={`absolute inset-0 flex flex-col transition-opacity duration-200 ${rightPanel === 'chat' ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}>
+              <ChatSidebar
+                inline
+                isOpen={rightPanel === 'chat'}
+                onClose={() => setRightPanel('calendar')}
+                context="meeting"
+              />
+            </div>
+          </div>
+        </div>
         </div>
       </div>
-
-      <ChatSidebar
-        isOpen={chatOpen}
-        onClose={() => setChatOpen(false)}
-        context="meeting"
-      />
 
       <CaptureModal
         isOpen={showCapture}

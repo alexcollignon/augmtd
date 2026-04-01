@@ -10,6 +10,7 @@ import {
   DocumentTextIcon,
   PaperClipIcon,
   XMarkIcon,
+  CalendarIcon,
   ChevronRightIcon,
   EnvelopeIcon,
   SparklesIcon,
@@ -76,6 +77,7 @@ export interface AiChatPanelProps {
   chatInputRef: RefObject<HTMLTextAreaElement | null>;
   onSendMessage: (message: string) => void;
   onClose?: () => void;
+  onSwitchToCalendar?: () => void;
 
   // Sources (inbox shows toggle UI)
   chatSources?: string[];
@@ -576,6 +578,7 @@ export default function AiChatPanel({
   chatInputRef,
   onSendMessage,
   onClose,
+  onSwitchToCalendar,
   chatSources = CONTEXT_SOURCE_IDS,
   onSourcesChange,
   attachedFiles = [],
@@ -692,11 +695,18 @@ export default function AiChatPanel({
           <ChatBubbleLeftRightIcon className="w-4 h-4 text-neutral-500" />
           <span className="text-[13px] font-semibold text-neutral-700">Assistant</span>
         </div>
-        {onClose && (
-          <button onClick={onClose} title="Close" className="p-0.5 text-neutral-400 hover:text-neutral-600 transition-colors">
-            <ChevronRightIcon className="w-3.5 h-3.5" />
-          </button>
-        )}
+        <div className="flex items-center gap-1.5">
+          {onSwitchToCalendar && (
+            <button onClick={onSwitchToCalendar} title="Calendar" className="p-1.5 border border-neutral-200 text-neutral-500 hover:bg-neutral-50 rounded-md transition-colors">
+              <CalendarIcon className="w-3.5 h-3.5" />
+            </button>
+          )}
+          {onClose && (
+            <button onClick={onClose} title="Close" className="p-1 text-neutral-400 hover:text-neutral-600 transition-colors">
+              <ChevronRightIcon className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
       </div>
 
       {/* ── Email context chip (inbox only) ── */}

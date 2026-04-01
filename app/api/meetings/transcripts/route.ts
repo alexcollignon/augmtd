@@ -11,7 +11,7 @@ export async function GET() {
 
     const { data: transcripts, error } = await supabase
       .from('meeting_transcripts')
-      .select('id, title, start_time, end_time, duration_minutes, work_items_generated, processed, source, summary, calendar_event_id, bot_state, updated_at, folder_id')
+      .select('id, title, start_time, end_time, duration_minutes, work_items_generated, processed, source, summary, calendar_event_id, bot_state, updated_at, folder_id, calendar_events(attendees)')
       .eq('user_id', user.id)
       .order('start_time', { ascending: false })
       .limit(50);

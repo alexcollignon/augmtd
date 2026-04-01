@@ -891,38 +891,25 @@ export function InboxPageClient({
                   <RectangleGroupIcon className="w-3.5 h-3.5" />
                 </button>
 
-                {/* Ask AI toggle */}
-                <button
-                  onClick={() => {
-                    if (rightPanel === 'chat' && !composeMode) {
-                      setRightPanel('calendar');
-                    } else {
-                      setComposeMode(false);
-                      openChat();
-                    }
-                  }}
-                  title="Ask AI"
-                  className={`flex-shrink-0 p-1.5 border rounded-md transition-colors ${
-                    rightPanel === 'chat' && !composeMode
-                      ? 'bg-indigo-600 border-indigo-600 text-white'
-                      : 'border-neutral-300 text-neutral-500 hover:bg-neutral-50'
-                  }`}
-                >
-                  <ChatBubbleLeftRightIcon className="w-3.5 h-3.5" />
-                </button>
-
-                {/* Calendar toggle */}
-                <button
-                  onClick={() => setRightPanel(rightPanel === 'calendar' ? null : 'calendar')}
-                  title="Toggle calendar"
-                  className={`flex-shrink-0 p-1.5 border rounded-md transition-colors ${
-                    rightPanel === 'calendar'
-                      ? 'bg-indigo-600 border-indigo-600 text-white'
-                      : 'border-neutral-300 text-neutral-500 hover:bg-neutral-50'
-                  }`}
-                >
-                  <CalendarIcon className="w-3.5 h-3.5" />
-                </button>
+                {/* Chat + Calendar — only shown when right panel is closed */}
+                {!rightPanel && (
+                  <>
+                    <button
+                      onClick={() => { setComposeMode(false); openChat(); }}
+                      title="Ask AI"
+                      className="flex-shrink-0 p-1.5 border border-neutral-300 text-neutral-500 hover:bg-neutral-50 rounded-md transition-colors"
+                    >
+                      <ChatBubbleLeftRightIcon className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={() => setRightPanel('calendar')}
+                      title="Calendar"
+                      className="flex-shrink-0 p-1.5 border border-neutral-300 text-neutral-500 hover:bg-neutral-50 rounded-md transition-colors"
+                    >
+                      <CalendarIcon className="w-3.5 h-3.5" />
+                    </button>
+                  </>
+                )}
 
               </div>
 
@@ -969,6 +956,7 @@ export function InboxPageClient({
                       loading={meetingsLoading}
                       userEmail={user?.email || ''}
                       onRefresh={fetchMeetings}
+                      onChatOpen={() => { setComposeMode(false); openChat(); }}
                     />
                   </div>
                 </div>
@@ -986,6 +974,7 @@ export function InboxPageClient({
                     emailChipActive={emailChipActive}
                     emailChipData={emailChipData ?? undefined}
                     onDismissEmailChip={() => setChipDismissed(true)}
+                    onSwitchToCalendar={() => setRightPanel('calendar')}
                     onClose={closeChat}
                     history={chatHistory}
                     streamingContent={streamingContent}

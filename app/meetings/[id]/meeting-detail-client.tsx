@@ -5,13 +5,12 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
   ClockIcon,
-  UserGroupIcon,
   CheckCircleIcon,
   BoltIcon,
   VideoCameraIcon,
   MicrophoneIcon,
   TrashIcon,
-  SparklesIcon,
+  ChatBubbleLeftRightIcon,
   FolderIcon,
 } from '@heroicons/react/24/outline';
 import type { DriveFolder } from '@/lib/types/drive';
@@ -94,6 +93,20 @@ const RISK_DOT: Record<Risk['severity'], string> = {
   medium: 'bg-amber-400',
   low: 'bg-neutral-300',
 };
+
+function attendeeColor(key: string): string {
+  const colors = [
+    'bg-indigo-100 text-indigo-700',
+    'bg-violet-100 text-violet-700',
+    'bg-blue-100 text-blue-700',
+    'bg-emerald-100 text-emerald-700',
+    'bg-amber-100 text-amber-700',
+    'bg-rose-100 text-rose-700',
+  ];
+  let hash = 0;
+  for (const c of key) hash = (hash * 31 + c.charCodeAt(0)) & 0xffff;
+  return colors[hash % colors.length];
+}
 
 function getInitials(name?: string | null, email?: string | null): string {
   if (name) {
@@ -211,8 +224,22 @@ export default function MeetingDetailClient({
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(event.folder_id ?? null);
   const [folderPopoverOpen, setFolderPopoverOpen] = useState(false);
   const [movingFolder, setMovingFolder] = useState(false);
+  const [confirmedIds, setConfirmedIds] = useState<Set<string>>(new Set());
   const { primary } = formatMeetingTime(event.start_time, event.end_time);
   const duration = calculateDuration(event.start_time, event.end_time);
+
+  const handleConfirmToDesk = async (item: ActionItem) => {
+    try {
+      const res = await fetch('/api/desk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: item.workTitle, kanban_column: 'todo' }),
+      });
+      if (res.ok) {
+        setConfirmedIds((prev) => new Set(prev).add(item.id));
+      }
+    } catch {}
+  };
 
   const handleOpenWorkflow = (title: string, skill?: string) => {
     const params = new URLSearchParams();
@@ -256,9 +283,11 @@ export default function MeetingDetailClient({
   transcript?.keyMoments?.forEach((km) => keyMomentMap.set(km.segmentIndex, km));
 
   return (
-    <div className="flex h-full min-h-0">
-      <div className="flex-1 overflow-y-auto">
-        <div className="max-w-2xl mx-auto px-6 py-8">
+    <div className="flex h-full min-h-0 bg-neutral-50">
+      <div className="flex-1 overflow-y-auto p-4">
+        <div className="max-w-2xl mx-auto">
+        <div className="rounded-2xl bg-white shadow-sm overflow-hidden">
+        <div className="px-6 py-8">
           {/* Breadcrumb */}
           <div className="flex items-center gap-1.5 text-[12px] text-neutral-400 mb-4">
             <Link href="/meetings" className="hover:text-neutral-600 transition-colors">Meetings</Link>
@@ -274,15 +303,14 @@ export default function MeetingDetailClient({
                 {localProcessed && transcript && (
                   <button
                     onClick={() => setChatOpen((v) => !v)}
-                    className={`flex items-center gap-1.5 px-2.5 py-1.5 text-[12px] font-medium transition-colors ${
+                    className={`p-1.5 border rounded-md transition-colors ${
                       chatOpen
-                        ? 'bg-indigo-100 text-indigo-700 hover:bg-indigo-200'
-                        : 'text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50'
+                        ? 'bg-indigo-600 border-indigo-600 text-white'
+                        : 'border-neutral-200 text-neutral-500 hover:bg-neutral-50'
                     }`}
                     title="Ask AI about this meeting"
                   >
-                    <SparklesIcon className="w-3.5 h-3.5" />
-                    Ask AI
+                    <ChatBubbleLeftRightIcon className="w-3.5 h-3.5" />
                   </button>
                 )}
                 {transcript && !confirmDelete && (
@@ -319,12 +347,6 @@ export default function MeetingDetailClient({
                 <ClockIcon className="w-3.5 h-3.5" />
                 {primary} · {duration}min
               </span>
-              {event.attendees.length > 0 && (
-                <span className="flex items-center gap-1">
-                  <UserGroupIcon className="w-3.5 h-3.5" />
-                  {event.attendees.map((a) => a.name?.split(' ')[0] || a.email?.split('@')[0]).join(', ')}
-                </span>
-              )}
               {event.meeting_link && (
                 <a
                   href={event.meeting_link}
@@ -405,23 +427,27 @@ export default function MeetingDetailClient({
               )}
             </div>
 
-            {/* Attendee avatar chips */}
+            {/* Attendee list */}
             {event.attendees.length > 0 && (
-              <div className="flex items-center gap-1.5 mt-3">
-                {event.attendees.slice(0, 5).map((a, i) => (
-                  <div
-                    key={i}
-                    title={a.name || a.email || undefined}
-                    className="w-6 h-6 rounded-full bg-neutral-200 flex items-center justify-center text-[10px] font-medium text-neutral-600 flex-shrink-0"
-                  >
-                    {getInitials(a.name, a.email)}
-                  </div>
-                ))}
-                {event.attendees.length > 5 && (
-                  <div className="w-6 h-6 rounded-full bg-neutral-200 flex items-center justify-center text-[10px] font-medium text-neutral-600 flex-shrink-0">
-                    +{event.attendees.length - 5}
-                  </div>
-                )}
+              <div className="mt-4">
+                <p className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wide mb-2">
+                  Attendees ({event.attendees.length})
+                </p>
+                <div className="flex flex-col gap-1.5">
+                  {event.attendees.map((a, i) => {
+                    const key = a.email ?? a.name ?? String(i);
+                    const color = attendeeColor(key);
+                    const label = a.name || a.email || '?';
+                    return (
+                      <div key={i} className="flex items-center gap-2.5">
+                        <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-semibold flex-shrink-0 ${color}`}>
+                          {getInitials(a.name, a.email)}
+                        </div>
+                        <span className="text-[13px] text-neutral-700 truncate">{label}</span>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             )}
 
@@ -481,7 +507,7 @@ export default function MeetingDetailClient({
 
           {/* Failed state */}
           {transcript && localBotState === 'failed' && (
-            <div className="flex items-center justify-between gap-4 px-4 py-3 mb-6 bg-red-50 border border-red-100">
+            <div className="flex items-center justify-between gap-4 px-4 py-3 mb-6 bg-red-50 rounded-lg">
               <div>
                 <p className="text-[13px] font-medium text-red-700">Transcription failed</p>
                 <p className="text-[12px] text-red-500 mt-0.5">
@@ -503,7 +529,7 @@ export default function MeetingDetailClient({
 
           {/* No transcript yet — show recorder */}
           {!transcript && (
-            <div className="border border-dashed border-neutral-200 p-6 mb-6">
+            <div className="rounded-lg border border-dashed border-neutral-200 p-6 mb-6">
               <h2 className="text-[13px] font-semibold text-neutral-900 mb-1">Record this meeting</h2>
               <p className="text-[12px] text-neutral-500 mb-4">
                 Use your microphone to capture the conversation. Transcript and action items will be generated automatically.
@@ -516,13 +542,43 @@ export default function MeetingDetailClient({
             </div>
           )}
 
-          {/* Summary */}
-          {transcript?.summary && (
+          {/* Action items */}
+          {actionItems.length > 0 && (
             <section className="mb-6">
-              <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2">Summary</h2>
-              <p className="text-[13px] text-neutral-700 leading-relaxed bg-neutral-50 border border-neutral-100 px-4 py-3">
-                {transcript.summary}
-              </p>
+              <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2">
+                Action items ({actionItems.length})
+              </h2>
+              <div className="space-y-1.5">
+                {actionItems.map((item) => (
+                  <div key={item.id} className="flex items-start gap-3 px-4 py-2.5 bg-neutral-50 rounded-lg">
+                    <BoltIcon className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[13px] font-medium text-neutral-800">{item.workTitle}</p>
+                      {item.whyMatters && (
+                        <p className="text-[11px] text-neutral-500 mt-0.5">{item.whyMatters}</p>
+                      )}
+                      {item.assignee && (
+                        <span className="inline-block mt-1 text-[10px] text-neutral-500 bg-neutral-100 px-1.5 py-0.5">
+                          {item.assignee}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex-shrink-0 flex flex-col items-end gap-1 mt-0.5">
+                      <span className="text-[10px] font-medium text-neutral-400 capitalize">{item.category}</span>
+                      {confirmedIds.has(item.id) ? (
+                        <span className="text-[10px] font-medium text-emerald-600">✓ Added</span>
+                      ) : (
+                        <button
+                          onClick={() => handleConfirmToDesk(item)}
+                          className="text-[10px] font-medium text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 px-1.5 py-0.5 rounded transition-colors"
+                        >
+                          Confirm
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
             </section>
           )}
 
@@ -534,7 +590,7 @@ export default function MeetingDetailClient({
               </h2>
               <div className="space-y-1.5">
                 {transcript.decisions.map((d, i) => (
-                  <div key={i} className="flex items-start gap-3 px-4 py-2.5 bg-white border border-neutral-100">
+                  <div key={i} className="flex items-start gap-3 px-4 py-2.5 bg-neutral-50 rounded-lg">
                     <CheckCircleIcon className="w-4 h-4 text-blue-500 flex-shrink-0 mt-0.5" />
                     <div className="flex-1 min-w-0">
                       <p className="text-[13px] text-neutral-800">{d.text}</p>
@@ -550,31 +606,13 @@ export default function MeetingDetailClient({
             </section>
           )}
 
-          {/* Action items */}
-          {actionItems.length > 0 && (
+          {/* Summary */}
+          {transcript?.summary && (
             <section className="mb-6">
-              <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2">
-                Action items ({actionItems.length})
-              </h2>
-              <div className="space-y-1.5">
-                {actionItems.map((item) => (
-                  <div key={item.id} className="flex items-start gap-3 px-4 py-2.5 bg-white border border-neutral-100">
-                    <BoltIcon className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-[13px] font-medium text-neutral-800">{item.workTitle}</p>
-                      {item.whyMatters && (
-                        <p className="text-[11px] text-neutral-500 mt-0.5">{item.whyMatters}</p>
-                      )}
-                      {item.assignee && (
-                        <span className="inline-block mt-1 text-[10px] text-neutral-500 bg-neutral-100 px-1.5 py-0.5">
-                          {item.assignee}
-                        </span>
-                      )}
-                    </div>
-                    <span className="flex-shrink-0 text-[10px] font-medium text-neutral-400 capitalize mt-0.5">{item.category}</span>
-                  </div>
-                ))}
-              </div>
+              <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2">Summary</h2>
+              <p className="text-[13px] text-neutral-700 leading-relaxed bg-neutral-50 rounded-lg px-4 py-3">
+                {transcript.summary}
+              </p>
             </section>
           )}
 
@@ -586,7 +624,7 @@ export default function MeetingDetailClient({
               </h2>
               <div className="space-y-1.5">
                 {risks.map((risk, i) => (
-                  <div key={i} className="flex items-start gap-3 px-4 py-2.5 bg-white border border-neutral-100">
+                  <div key={i} className="flex items-start gap-3 px-4 py-2.5 bg-neutral-50 rounded-lg">
                     <span className={`w-2 h-2 rounded-full flex-shrink-0 mt-1.5 ${RISK_DOT[risk.severity]}`} />
                     <p className="text-[13px] text-neutral-800 flex-1 min-w-0">{risk.text}</p>
                   </div>
@@ -638,7 +676,7 @@ export default function MeetingDetailClient({
                   {transcript.transcriptSegments.length} segments{durationSeconds != null && ` · ${fmtDuration(durationSeconds)}`}
                 </span>
               </h2>
-              <div className="space-y-0.5 border border-neutral-100 bg-white max-h-[500px] overflow-y-auto">
+              <div className="space-y-0.5 rounded-lg bg-neutral-50 max-h-[500px] overflow-y-auto">
                 {transcript.transcriptSegments.map((seg, idx) => {
                   const km = keyMomentMap.get(idx);
                   return (
@@ -670,15 +708,19 @@ export default function MeetingDetailClient({
             </div>
           )}
         </div>
-      </div>
+        </div>
+        </div>
+        </div>
 
-      <MeetingChatSidebar
-        isOpen={chatOpen}
-        onClose={() => setChatOpen(false)}
-        meetingContext={buildMeetingContext()}
-        onOpenWorkflow={handleOpenWorkflow}
-        onOpenProcess={handleOpenProcess}
-      />
+      <div className={`flex-shrink-0 overflow-hidden transition-[width] duration-200 ${chatOpen ? 'w-[380px]' : 'w-0'}`}>
+        <MeetingChatSidebar
+          isOpen={chatOpen}
+          onClose={() => setChatOpen(false)}
+          meetingContext={buildMeetingContext()}
+          onOpenWorkflow={handleOpenWorkflow}
+          onOpenProcess={handleOpenProcess}
+        />
+      </div>
     </div>
   );
 }
