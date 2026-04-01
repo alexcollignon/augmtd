@@ -5,7 +5,6 @@ import { toast } from 'sonner';
 import {
   EnvelopeIcon,
   CalendarIcon,
-  ArrowTopRightOnSquareIcon,
   ArrowUturnLeftIcon,
   PaperAirplaneIcon,
   ChevronRightIcon,
@@ -16,8 +15,6 @@ import {
   ArchiveBoxArrowDownIcon,
   FolderArrowDownIcon,
   XMarkIcon,
-  SparklesIcon,
-  BookmarkIcon,
   PlayIcon,
   QuestionMarkCircleIcon,
   TrashIcon,
@@ -27,7 +24,6 @@ import type { InboxItem } from '@/lib/types/inbox';
 import RsvpButtons from './rsvp-buttons';
 import KbFilePicker from './kb-file-picker';
 import { createClient } from '@/lib/supabase/client';
-import type { SavedWorkflow } from '@/lib/types/work-blueprints';
 
 interface PendingAttachment {
   filename: string;
@@ -44,10 +40,10 @@ interface WorkDetailInlineProps {
   replyBody: string;
   onReplyBodyChange: (body: string) => void;
   onReplyOpenChange?: (open: boolean) => void;
+  onOpenWorkflowPanel?: () => void;
 }
 
-export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeetings, pendingReplyDraft, onReplySent, replyBody, onReplyBodyChange, onReplyOpenChange }: WorkDetailInlineProps) {
-  const [isOpeningWorkflow, setIsOpeningWorkflow] = useState(false);
+export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeetings, pendingReplyDraft, onReplySent, replyBody, onReplyBodyChange, onReplyOpenChange, onOpenWorkflowPanel }: WorkDetailInlineProps) {
   const [expandedEmails, setExpandedEmails] = useState<Record<number, boolean>>({});
   const [downloadingFile, setDownloadingFile] = useState<string | null>(null);
   const [replyOpen, setReplyOpen] = useState(false);
@@ -73,13 +69,6 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
   const [showNewFolderInput, setShowNewFolderInput] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
   const newFolderInputRef = useRef<HTMLInputElement>(null);
-  const [suggestedWorkflows, setSuggestedWorkflows] = useState<Array<Pick<SavedWorkflow, 'id' | 'name' | 'deliverable_types'> & { score: number }>>([]);
-  const [aiSuggestion, setAiSuggestion] = useState<string | null>(null);
-  const [isSuggesting, setIsSuggesting] = useState(false);
-  const [showWorkflowPanel, setShowWorkflowPanel] = useState(false);
-  const [panelTop, setPanelTop] = useState(0);
-  const [freshPrompt, setFreshPrompt] = useState('');
-  const rootRef = useRef<HTMLDivElement>(null);
   const [linkedCalEvent, setLinkedCalEvent] = useState<{ id: string; attendees: any[] } | null>(null);
   const [rsvpLoading, setRsvpLoading] = useState<string | null>(null); // which response is loading
 
@@ -200,75 +189,6 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
     return () => document.removeEventListener('mousedown', handler);
   }, [showMoveMenu]);
 
-  // Fetch ranked workflow suggestions + AI suggestion for this item
-  // AbortController cancels in-flight requests when item changes; ref prevents duplicate fetches
-  const _suggestFetchedForRef = useRef<string | null>(null);
-  const _suggestAbortRef = useRef<AbortController | null>(null);
-  useEffect(() => {
-    if (!item?.id) return;
-    if (_suggestFetchedForRef.current === item.id) return; // already have results for this item
-    _suggestAbortRef.current?.abort();
-    const ctrl = new AbortController();
-    _suggestAbortRef.current = ctrl;
-    setIsSuggesting(true);
-    setAiSuggestion(null);
-    setSuggestedWorkflows([]);
-    setFreshPrompt('');
-    setShowWorkflowPanel(false);
-    fetch(`/api/inbox/${item.id}/suggest-workflows`, { method: 'POST', signal: ctrl.signal })
-      .then(r => r.json())
-      .then(({ rankedWorkflows, aiSuggestion: suggestion }) => {
-        _suggestFetchedForRef.current = item.id;
-        setSuggestedWorkflows(rankedWorkflows ?? []);
-        setAiSuggestion(suggestion ?? null);
-      })
-      .catch(e => { if (e?.name !== 'AbortError') console.error('[suggest-workflows]', e); })
-      .finally(() => setIsSuggesting(false));
-    return () => ctrl.abort();
-  }, [item?.id]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const handleRunWithWorkflow = async (workflowId: string) => {
-    setIsOpeningWorkflow(true);
-    try {
-      const res = await fetch(`/api/work/saved-workflows/${workflowId}/run`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ inboxItemId: item.id }),
-      });
-      if (res.ok) {
-        const { threadId } = await res.json();
-        window.location.href = `/work?thread=${threadId}`;
-      } else {
-        toast.error('Failed to run workflow. Please try again.');
-      }
-    } catch {
-      toast.error('Failed to run workflow. Please try again.');
-    } finally {
-      setIsOpeningWorkflow(false);
-    }
-  };
-
-  const handleOpenInWorkflows = async (prompt?: string) => {
-    setIsOpeningWorkflow(true);
-    try {
-      const response = await fetch(`/api/inbox/${item.id}/open-workflow`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(prompt ? { prompt } : {}),
-      });
-      if (response.ok) {
-        const { threadId } = await response.json();
-        const view = item.execution_status === 'ready' ? '&view=document' : '';
-        window.location.href = `/work?thread=${threadId}${view}`;
-      } else {
-        toast.error('Failed to open workflow. Please try again.');
-      }
-    } catch {
-      toast.error('Failed to open workflow. Please try again.');
-    } finally {
-      setIsOpeningWorkflow(false);
-    }
-  };
 
   const handleRsvpWithReply = async (response: 'accepted' | 'tentative' | 'declined', _sendEmail: boolean) => {
     if (!linkedCalEvent || rsvpLoading) return;
@@ -481,7 +401,7 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
   };
 
   return (
-    <div ref={rootRef} className="flex flex-col h-full bg-neutral-100">
+    <div className="flex flex-col h-full bg-neutral-100">
       {/* Header */}
       <div className="flex-shrink-0 px-6 py-4 border-b border-neutral-200 bg-white">
         <h2 className="text-[17px] font-semibold text-neutral-900 leading-tight">
@@ -1017,165 +937,14 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
               {/* Workflows */}
               <button
                 title="Workflows"
-                onClick={() => {
-                  if (!isOpeningWorkflow) {
-                    if (rootRef.current) setPanelTop(rootRef.current.getBoundingClientRect().top);
-                    setShowWorkflowPanel(true);
-                  }
-                }}
-                disabled={isOpeningWorkflow}
-                className="p-2.5 text-indigo-500 hover:bg-indigo-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors border border-indigo-200 flex items-center justify-center"
+                onClick={() => onOpenWorkflowPanel?.()}
+                className="p-2.5 text-indigo-500 hover:bg-indigo-50 transition-colors border border-indigo-200 rounded-md flex items-center justify-center"
               >
-                {isOpeningWorkflow
-                  ? <div className="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
-                  : <PlayIcon className="w-4 h-4" />
-                }
+                <PlayIcon className="w-4 h-4" />
               </button>
           </div>
         </div>
       </div>
-
-      {/* Backdrop — only when panel is open */}
-      {showWorkflowPanel && (
-        <div className="fixed inset-0 z-30" onClick={() => setShowWorkflowPanel(false)} />
-      )}
-
-      {/* Workflow suggestions panel — always in DOM, slides over calendar column */}
-      <div
-        className={`fixed right-0 bottom-0 w-[272px] z-40 bg-white border-l border-neutral-200 shadow-xl flex flex-col transition-[transform,opacity] duration-200 ease-in-out ${
-          showWorkflowPanel ? 'translate-x-0 opacity-100' : 'translate-x-full opacity-0 pointer-events-none'
-        }`}
-        style={{ top: panelTop }}
-      >
-          {/* Header */}
-          <div className="flex-shrink-0 flex items-center justify-between px-4 py-3 border-b border-neutral-200">
-            <div className="flex items-center gap-2">
-              <SparklesIcon className="w-4 h-4 text-indigo-500" />
-              <span className="text-[13px] font-semibold text-neutral-900">Run a workflow</span>
-            </div>
-            <button
-              onClick={() => setShowWorkflowPanel(false)}
-              className="text-neutral-400 hover:text-neutral-700 transition-colors"
-            >
-              <XMarkIcon className="w-4 h-4" />
-            </button>
-          </div>
-
-          {/* Content */}
-          <div className="flex-1 overflow-y-auto px-4 py-4 space-y-2">
-            {/* Active/existing thread for this item */}
-            {item.work_thread_id && (
-              <button
-                onClick={() => { window.location.href = `/work?thread=${item.work_thread_id}`; }}
-                className="w-full flex items-center justify-between px-3 py-2.5 bg-green-50 border border-green-300 hover:bg-green-100 transition-colors group text-left mb-1"
-              >
-                <div className="flex items-center gap-2 min-w-0">
-                  <div className="w-2 h-2 rounded-full bg-green-500 flex-shrink-0" />
-                  <span className="text-[13px] font-medium text-green-900 truncate">Continue in Workflows</span>
-                </div>
-                <ChevronRightIcon className="w-3.5 h-3.5 text-green-500 flex-shrink-0 ml-2" />
-              </button>
-            )}
-
-            {isSuggesting ? (
-              <>
-                {/* Loading skeletons */}
-                <div className="p-3 border border-indigo-100 bg-indigo-50/50 space-y-2">
-                  <div className="flex items-center gap-2">
-                    <div className="w-3.5 h-3.5 rounded bg-indigo-200 animate-pulse flex-shrink-0" />
-                    <div className="h-3 bg-indigo-200 animate-pulse rounded flex-1" />
-                  </div>
-                  <div className="h-3 bg-indigo-100 animate-pulse rounded w-3/4 ml-5" />
-                </div>
-                {[1, 2].map(i => (
-                  <div key={i} className="flex items-center gap-2 px-3 py-2.5 border border-neutral-200 bg-white">
-                    <div className="w-3.5 h-3.5 rounded bg-neutral-200 animate-pulse flex-shrink-0" />
-                    <div className="h-3 bg-neutral-200 animate-pulse rounded flex-1" />
-                    <div className="h-3 bg-neutral-100 animate-pulse rounded w-8 flex-shrink-0" />
-                  </div>
-                ))}
-                <div className="flex items-center justify-between px-3 py-2.5 border border-dashed border-neutral-200">
-                  <div className="h-3 bg-neutral-100 animate-pulse rounded w-16" />
-                  <div className="w-3.5 h-3.5 rounded bg-neutral-100 animate-pulse flex-shrink-0" />
-                </div>
-              </>
-            ) : (
-              <>
-                {/* AI suggestion */}
-                {aiSuggestion && (
-                  <div className="border border-indigo-200 bg-indigo-50 overflow-hidden">
-                    <div className="flex items-start gap-2 px-3 pt-3 pb-2.5">
-                      <SparklesIcon className="w-3.5 h-3.5 text-indigo-400 flex-shrink-0 mt-0.5" />
-                      <p className="text-[12.5px] text-indigo-900 leading-snug">{aiSuggestion}</p>
-                    </div>
-                    <button
-                      onClick={() => { setShowWorkflowPanel(false); handleOpenInWorkflows(); }}
-                      disabled={isOpeningWorkflow}
-                      className="w-full flex items-center justify-center gap-1.5 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-[12px] font-semibold disabled:opacity-50 transition-colors"
-                    >
-                      Run this
-                      <ChevronRightIcon className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                )}
-
-                {/* Ranked saved workflows */}
-                {suggestedWorkflows.map(wf => (
-                  <button
-                    key={wf.id}
-                    onClick={() => { setShowWorkflowPanel(false); handleRunWithWorkflow(wf.id); }}
-                    disabled={isOpeningWorkflow}
-                    className="w-full flex items-center justify-between px-3 py-2.5 bg-white border border-neutral-200 hover:border-indigo-300 hover:bg-indigo-50/50 transition-colors group disabled:opacity-50 text-left"
-                  >
-                    <div className="flex items-center gap-2 min-w-0">
-                      <BookmarkIcon className="w-3.5 h-3.5 text-neutral-400 flex-shrink-0" />
-                      <span className="text-[13px] font-medium text-neutral-900 group-hover:text-indigo-700 truncate">{wf.name}</span>
-                    </div>
-                    <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
-                      {wf.deliverable_types.length > 0 && (
-                        <span className="text-[11px] text-neutral-400">{wf.deliverable_types.join('+')}</span>
-                      )}
-                      {wf.score >= 0.3 && (
-                        <span className="text-[11px] text-neutral-400">{Math.round(wf.score * 100)}%</span>
-                      )}
-                      <ChevronRightIcon className="w-3.5 h-3.5 text-neutral-300 group-hover:text-indigo-400 transition-colors" />
-                    </div>
-                  </button>
-                ))}
-
-                {/* Start fresh — custom prompt */}
-                <div className="border border-dashed border-neutral-300 mt-1">
-                  <textarea
-                    rows={2}
-                    value={freshPrompt}
-                    onChange={e => setFreshPrompt(e.target.value)}
-                    onKeyDown={e => {
-                      if (e.key === 'Enter' && !e.shiftKey && freshPrompt.trim()) {
-                        e.preventDefault();
-                        setShowWorkflowPanel(false);
-                        handleOpenInWorkflows(freshPrompt.trim());
-                      }
-                    }}
-                    placeholder="What do you want to do with this email?"
-                    className="w-full px-3 py-2.5 text-[12.5px] text-neutral-700 placeholder:text-neutral-400 bg-transparent outline-none resize-none leading-snug"
-                  />
-                  {freshPrompt.trim() && (
-                    <div className="px-3 pb-2.5 flex justify-end">
-                      <button
-                        onClick={() => { setShowWorkflowPanel(false); handleOpenInWorkflows(freshPrompt.trim()); }}
-                        disabled={isOpeningWorkflow}
-                        className="text-[12px] font-semibold text-indigo-600 hover:text-indigo-800 disabled:opacity-50 flex items-center gap-0.5 transition-colors"
-                      >
-                        Open
-                        <ArrowTopRightOnSquareIcon className="w-3 h-3 ml-0.5" />
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </>
-            )}
-          </div>
-        </div>
 
     </div>
   );

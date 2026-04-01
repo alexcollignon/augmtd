@@ -9,6 +9,7 @@ import EmailListSections from '@/components/inbox/email-list-sections';
 import EmailListChronological from '@/components/inbox/email-list-chronological';
 import WorkDetailInline from '@/components/inbox/work-detail-inline';
 import AiChatPanel from '@/components/shared/ai-chat-panel';
+import WorkflowPanel from '@/components/inbox/workflow-panel';
 import MeetingsColumn from '@/components/inbox/meetings-column';
 import OnboardingModal from '@/components/onboarding-modal';
 import { ArrowPathIcon, ChatBubbleLeftRightIcon, SparklesIcon, Bars3Icon, QueueListIcon, ArchiveBoxArrowDownIcon, XMarkIcon, MagnifyingGlassIcon, PencilSquareIcon, CalendarIcon, RectangleGroupIcon, TrashIcon } from '@heroicons/react/24/outline';
@@ -65,7 +66,7 @@ export function InboxPageClient({
   const [searchQuery, setSearchQuery] = useState('');
 
   // Right panel + compose state
-  const [rightPanel, setRightPanel] = useState<'calendar' | 'chat' | null>('calendar');
+  const [rightPanel, setRightPanel] = useState<'calendar' | 'chat' | 'workflow' | null>('calendar');
   const [composeMode, setComposeMode] = useState(false);
   const [composeDraft, setComposeDraft] = useState({ to: '', cc: '', subject: '', body: '' });
   // AI-drafted reply flow
@@ -846,7 +847,7 @@ export function InboxPageClient({
             </div>
 
             {/* Middle: search header + detail/compose */}
-            <div className="flex-1 min-w-0 overflow-hidden flex flex-col bg-neutral-50 p-2">
+            <div className="flex-1 min-w-0 overflow-hidden flex flex-col bg-neutral-50 pl-2 pt-2 pb-2">
               <div className="flex-1 flex flex-col rounded-2xl bg-white shadow-sm overflow-hidden">
               {/* Middle header — search + ask + compose */}
               <div className="flex-shrink-0 h-10 flex items-center gap-1 px-3 border-b border-neutral-100">
@@ -891,25 +892,6 @@ export function InboxPageClient({
                   <RectangleGroupIcon className="w-3.5 h-3.5" />
                 </button>
 
-                {/* Chat + Calendar — only shown when right panel is closed */}
-                {!rightPanel && (
-                  <>
-                    <button
-                      onClick={() => { setComposeMode(false); openChat(); }}
-                      title="Ask AI"
-                      className="flex-shrink-0 p-1.5 border border-neutral-300 text-neutral-500 hover:bg-neutral-50 rounded-md transition-colors"
-                    >
-                      <ChatBubbleLeftRightIcon className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                      onClick={() => setRightPanel('calendar')}
-                      title="Calendar"
-                      className="flex-shrink-0 p-1.5 border border-neutral-300 text-neutral-500 hover:bg-neutral-50 rounded-md transition-colors"
-                    >
-                      <CalendarIcon className="w-3.5 h-3.5" />
-                    </button>
-                  </>
-                )}
 
               </div>
 
@@ -937,6 +919,7 @@ export function InboxPageClient({
                       replyBody={replyBody}
                       onReplyBodyChange={setReplyBody}
                       onReplyOpenChange={handleReplyOpenChange}
+                      onOpenWorkflowPanel={() => setRightPanel('workflow')}
                     />
                   )}
               </div>
@@ -944,8 +927,18 @@ export function InboxPageClient({
             </div>
 
             {/* Right panel — persistent wrapper, animates open/close */}
-            <div className={`flex-shrink-0 overflow-hidden transition-[width] duration-200 bg-neutral-50 ${rightPanel ? 'w-[316px]' : 'w-0'}`}>
-              <div className="relative w-full h-full p-2">
+            <div className={`flex-shrink-0 bg-neutral-50 flex flex-col transition-[width] duration-200 overflow-hidden ${rightPanel ? 'w-[316px]' : 'w-12'}`}>
+              {/* Closed — icon strip */}
+              <div className={`flex flex-col items-center pt-3 gap-1.5 transition-opacity duration-150 ${rightPanel ? 'opacity-0 pointer-events-none absolute' : 'opacity-100'}`}>
+                <button onClick={() => setRightPanel('calendar')} title="Calendar" className="p-2 rounded-xl bg-white shadow-sm text-neutral-500 hover:bg-neutral-50 transition-colors">
+                  <CalendarIcon className="w-4 h-4" />
+                </button>
+                <button onClick={() => { setComposeMode(false); openChat(); }} title="Ask AI" className="p-2 rounded-xl bg-white shadow-sm text-neutral-500 hover:bg-neutral-50 transition-colors">
+                  <ChatBubbleLeftRightIcon className="w-4 h-4" />
+                </button>
+              </div>
+              {/* Open — full panel */}
+              <div className={`flex-1 relative p-2 min-h-0 transition-opacity duration-150 ${rightPanel ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
                 {/* Calendar panel — no transform (would break position:fixed week overlay) */}
                 <div className={`absolute inset-2 transition-opacity duration-200 ${rightPanel === 'calendar' ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}>
                   <div className="h-full rounded-2xl bg-white shadow-sm overflow-hidden">
@@ -998,6 +991,12 @@ export function InboxPageClient({
                     onOpenWorkflow={handleOpenWorkflow}
                     onOpenProcess={handleOpenProcess}
                   />
+                  </div>
+                </div>
+                {/* Workflow panel */}
+                <div className={`absolute inset-2 transition-all duration-200 ${rightPanel === 'workflow' ? 'opacity-100 translate-x-0 pointer-events-auto' : 'opacity-0 -translate-x-2 pointer-events-none'}`}>
+                  <div className="h-full flex flex-col rounded-2xl bg-white shadow-sm overflow-hidden">
+                    <WorkflowPanel item={selectedItem} onClose={() => setRightPanel(null)} />
                   </div>
                 </div>
               </div>

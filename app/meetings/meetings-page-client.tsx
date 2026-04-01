@@ -477,11 +477,11 @@ export default function MeetingsPageClient({ userEmail }: { userEmail: string })
       <div className={`flex-shrink-0 bg-neutral-50 flex flex-col transition-[width] duration-200 overflow-hidden ${rightPanel ? 'w-[284px]' : 'w-12'}`}>
         {/* Closed — icon strip */}
         <div className={`flex flex-col items-center pt-3 gap-1.5 transition-opacity duration-150 ${rightPanel ? 'opacity-0 pointer-events-none absolute' : 'opacity-100'}`}>
-          <button onClick={() => setRightPanel('calendar')} title="Calendar" className="p-1.5 border border-neutral-200 text-neutral-500 hover:bg-white rounded-md transition-colors">
-            <CalendarIcon className="w-3.5 h-3.5" />
+          <button onClick={() => setRightPanel('calendar')} title="Calendar" className="p-2 rounded-xl bg-white shadow-sm text-neutral-500 hover:bg-neutral-50 transition-colors">
+            <CalendarIcon className="w-4 h-4" />
           </button>
-          <button onClick={() => setRightPanel('chat')} title="Ask AI" className="p-1.5 border border-neutral-200 text-neutral-500 hover:bg-white rounded-md transition-colors">
-            <ChatBubbleLeftRightIcon className="w-3.5 h-3.5" />
+          <button onClick={() => setRightPanel('chat')} title="Ask AI" className="p-2 rounded-xl bg-white shadow-sm text-neutral-500 hover:bg-neutral-50 transition-colors">
+            <ChatBubbleLeftRightIcon className="w-4 h-4" />
           </button>
         </div>
 
