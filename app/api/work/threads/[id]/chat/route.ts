@@ -544,7 +544,7 @@ async function executeChatTool(
       const filter = (input.filter as string) || 'recent work';
       const snapshot = await buildInboxSnapshot(ctx.userId, filter, ctx.supabase);
       const result = formatSnapshotForPrompt(snapshot) || 'No recent emails found.';
-      const count = snapshot?.items?.length ?? 0;
+      const count = snapshot?.length ?? 0;
       const summary = count > 0 ? `Found ${count} recent item${count > 1 ? 's' : ''}` : 'No recent emails found';
       return { result, summary };
     }
