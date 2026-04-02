@@ -608,6 +608,7 @@ export function ChatInputBar({
           {/* Mention */}
           <button
             onClick={() => {
+              if (mentionQuery !== null) return; // already open, don't insert another @
               const el = textareaRef.current;
               if (!el) return;
               const pos = el.selectionStart ?? value.length;
