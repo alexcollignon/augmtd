@@ -205,7 +205,8 @@ export async function POST(
 
     // Mention context — fetch details for each mentioned item
     if (mentions.length > 0) {
-      const mentionBlocks = await buildMentionContext(mentions, user.id, adminClient);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const mentionBlocks = await buildMentionContext(mentions, user.id, adminClient as any);
       if (mentionBlocks) contextParts.push(mentionBlocks);
     }
 
