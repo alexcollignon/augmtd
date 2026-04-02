@@ -226,7 +226,8 @@ export async function POST(
       userId: user.id,
       threadId,
       supabase,
-      adminClient,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      adminClient: adminClient as any,
       thread,
       userContextBlock: userContextBlock || undefined,
     };
