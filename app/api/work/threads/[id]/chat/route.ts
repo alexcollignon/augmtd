@@ -552,7 +552,7 @@ async function executeChatTool(
     case 'get_calendar_context': {
       const calCtx = await getCalendarContext(ctx.userId, ctx.supabase);
       const result = formatCalendarContextForChat(calCtx) || 'No upcoming calendar events found.';
-      const eventCount = calCtx?.upcomingEvents?.length ?? 0;
+      const eventCount = calCtx?.upcomingMeetings?.length ?? 0;
       const summary = eventCount > 0 ? `Found ${eventCount} upcoming event${eventCount > 1 ? 's' : ''}` : 'No upcoming events';
       return { result, summary };
     }
