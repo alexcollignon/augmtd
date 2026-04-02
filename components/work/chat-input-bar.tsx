@@ -164,6 +164,19 @@ export function ChatInputBar({
     return () => document.removeEventListener('mousedown', handleClick);
   }, [sourcesOpen]);
 
+  // Close mention dropdown on outside click (portal is outside wrapperRef)
+  useEffect(() => {
+    if (!showMentionDropdown) return;
+    function handleClick(e: MouseEvent) {
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
+        setMentionQuery(null);
+        setMentionMode('categories');
+      }
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [showMentionDropdown]);
+
   const fetchMentions = useCallback(async (q: string, type?: MentionChip['type']) => {
     setMentionLoading(true);
     try {
