@@ -297,7 +297,7 @@ export async function POST(
                   send({ type: 'clarification_request', ...(clarification as object) });
                 }
 
-                if (artifact) {
+                if (artifact && artifact.id) {
                   allArtifactIds.push(artifact.id);
                   send({ type: 'artifact_ready', artifact: { id: artifact.id, type: artifact.type, title: artifact.title } });
                 }
