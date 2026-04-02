@@ -205,8 +205,7 @@ export async function POST(
 
     // Mention context — fetch details for each mentioned item
     if (mentions.length > 0) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const mentionBlocks = await buildMentionContext(mentions, user.id, adminClient as any);
+      const mentionBlocks = await buildMentionContext(mentions, user.id, adminClient);
       if (mentionBlocks) contextParts.push(mentionBlocks);
     }
 
@@ -226,8 +225,7 @@ export async function POST(
       userId: user.id,
       threadId,
       supabase,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      adminClient: adminClient as any,
+      adminClient,
       thread,
       userContextBlock: userContextBlock || undefined,
     };
@@ -501,7 +499,8 @@ interface RunContext {
   userId: string;
   threadId: string;
   supabase: Awaited<ReturnType<typeof createClient>>;
-  adminClient: ReturnType<typeof import('@supabase/supabase-js')['createClient']>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  adminClient: any;
   thread: { user_attachments?: unknown };
   userContextBlock?: string;
 }
@@ -689,7 +688,8 @@ async function executeChatTool(
 async function generateAutoTitle(
   firstMessage: string,
   anthropic: Anthropic,
-  adminClient: ReturnType<typeof import('@supabase/supabase-js')['createClient']>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  adminClient: any,
   threadId: string
 ): Promise<string | undefined> {
   try {
@@ -717,7 +717,8 @@ async function generateAutoTitle(
 async function buildMentionContext(
   mentions: Array<{ id: string; type: string; label: string; subtitle?: string }>,
   userId: string,
-  adminClient: ReturnType<typeof import('@supabase/supabase-js')['createClient']>
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  adminClient: any
 ): Promise<string | null> {
   const lines: string[] = [];
 
