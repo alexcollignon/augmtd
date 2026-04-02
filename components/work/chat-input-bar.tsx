@@ -608,7 +608,13 @@ export function ChatInputBar({
           {/* Mention */}
           <button
             onClick={() => {
-              if (mentionQuery !== null) return; // already open, don't insert another @
+              if (mentionQuery !== null) {
+                // Dropdown open but nothing chosen — close and strip the trailing @
+                setValue(v => v.replace(/@[^@\s]*$/, ''));
+                setMentionQuery(null);
+                setMentionMode('categories');
+                return;
+              }
               const el = textareaRef.current;
               if (!el) return;
               const pos = el.selectionStart ?? value.length;
