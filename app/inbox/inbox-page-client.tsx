@@ -92,6 +92,7 @@ export function InboxPageClient({
   const optimisticSyncTriggered = useRef(false);
   const isSyncingRef = useRef(false);
   const preSyncCountRef = useRef<number | null>(null);
+  const outlookLastPolledRef = useRef<number>(0);
 
   // Restore persisted preferences after mount (avoids SSR hydration mismatch)
   useEffect(() => {
@@ -304,6 +305,17 @@ export function InboxPageClient({
           } else {
             toast.success('Inbox up to date');
           }
+        }
+
+        // Outlook has no reliable push catchup mechanism — poll every 2 minutes while inbox is open
+        const hasOutlook = connections.some(c => c.provider === 'outlook');
+        if (hasOutlook && !isCurrentlySyncing && Date.now() - outlookLastPolledRef.current > 2 * 60 * 1000) {
+          outlookLastPolledRef.current = Date.now();
+          fetch('/api/connections/sync', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ provider: 'outlook' }),
+          }).catch(() => {});
         }
       }
     }

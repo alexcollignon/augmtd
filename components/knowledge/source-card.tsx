@@ -79,9 +79,9 @@ export default function SourceCard({ source, onSync, onRemove }: SourceCardProps
   }[source.status];
 
   return (
-    <div className="flex items-center gap-4 p-4 bg-white border border-neutral-200 hover:border-neutral-300 transition-colors">
+    <div className="flex items-center gap-4 p-4 bg-white border border-neutral-200 rounded-lg hover:border-neutral-300 transition-colors">
       {/* Provider badge */}
-      <div className={`flex-shrink-0 w-9 h-9 border flex items-center justify-center text-[10px] font-bold tracking-wide ${providerColor}`}>
+      <div className={`flex-shrink-0 w-9 h-9 border rounded-lg flex items-center justify-center text-[10px] font-bold tracking-wide ${providerColor}`}>
         {providerInitials}
       </div>
 
@@ -95,8 +95,12 @@ export default function SourceCard({ source, onSync, onRemove }: SourceCardProps
             {statusDot}
             {statusLabel}
           </span>
-          <span className="text-neutral-300">•</span>
-          <span>{source.file_count} file{source.file_count !== 1 ? 's' : ''}</span>
+          {(source.status !== 'indexing' && source.status !== 'pending') || source.file_count > 0 ? (
+            <>
+              <span className="text-neutral-300">•</span>
+              <span>{source.file_count} file{source.file_count !== 1 ? 's' : ''}</span>
+            </>
+          ) : null}
           {source.last_synced_at && (
             <>
               <span className="text-neutral-300">•</span>
@@ -104,6 +108,9 @@ export default function SourceCard({ source, onSync, onRemove }: SourceCardProps
             </>
           )}
         </div>
+        {(source.status === 'indexing' || source.status === 'pending') && (
+          <p className="text-[11px] text-neutral-400 mt-0.5">Large folders may take a minute…</p>
+        )}
       </div>
 
       {/* Actions */}
@@ -112,7 +119,7 @@ export default function SourceCard({ source, onSync, onRemove }: SourceCardProps
           onClick={handleSync}
           disabled={syncing || source.status === 'indexing'}
           title="Sync now"
-          className="p-1.5 text-neutral-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          className="p-1.5 rounded-md text-neutral-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         >
           <ArrowPathIcon className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />
         </button>
@@ -121,7 +128,7 @@ export default function SourceCard({ source, onSync, onRemove }: SourceCardProps
           <button
             onClick={handleRemove}
             disabled={removing}
-            className="px-2 py-1 text-[11px] font-semibold text-white bg-red-500 hover:bg-red-600 transition-colors"
+            className="px-2 py-1 text-[11px] font-semibold text-white bg-red-500 hover:bg-red-600 rounded-md transition-colors"
           >
             {removing ? '…' : 'Remove'}
           </button>
@@ -129,7 +136,7 @@ export default function SourceCard({ source, onSync, onRemove }: SourceCardProps
           <button
             onClick={handleRemove}
             title="Remove source"
-            className="p-1.5 text-neutral-400 hover:text-red-500 hover:bg-red-50 transition-colors"
+            className="p-1.5 rounded-md text-neutral-400 hover:text-red-500 hover:bg-red-50 transition-colors"
           >
             <XMarkIcon className="w-4 h-4" />
           </button>

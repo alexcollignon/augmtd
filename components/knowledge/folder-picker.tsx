@@ -20,6 +20,7 @@ interface FolderPickerProps {
   provider: 'google_drive' | 'onedrive';
   connectionId: string;
   onSelect: (folderId: string, folderName: string, fileIds?: string[]) => void;
+  disabled?: boolean;
 }
 
 function formatBytes(bytes: number | null): string {
@@ -34,7 +35,7 @@ const ROOT_LABEL: Record<string, string> = {
   onedrive: 'OneDrive',
 };
 
-export default function FolderPicker({ provider, connectionId, onSelect }: FolderPickerProps) {
+export default function FolderPicker({ provider, connectionId, onSelect, disabled }: FolderPickerProps) {
   const [breadcrumb, setBreadcrumb] = useState<BreadcrumbEntry[]>([
     { id: null, name: ROOT_LABEL[provider] },
   ]);
@@ -115,7 +116,16 @@ export default function FolderPicker({ provider, connectionId, onSelect }: Folde
   const connectDisabled = selectedIds.size === 0 && atRoot;
 
   return (
-    <div className="border border-neutral-200 bg-white">
+    <div className={`border border-neutral-200 bg-white relative ${disabled ? 'pointer-events-none' : ''}`}>
+      {disabled && (
+        <div className="absolute inset-0 bg-white/70 flex items-center justify-center z-10 rounded">
+          <svg className="animate-spin w-4 h-4 text-indigo-500" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+          </svg>
+          <span className="ml-2 text-[12px] text-neutral-600 font-medium">Connecting…</span>
+        </div>
+      )}
       {/* Breadcrumb + Connect bar */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-neutral-100 bg-neutral-50">
         {/* Breadcrumb */}

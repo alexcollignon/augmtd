@@ -7,16 +7,36 @@
   --foreground: #171717;
 }
 
+html, body {
+  height: 100%;
+}
+
 body {
   color: var(--foreground);
   background: #F9FAFB; /* Light gray background */
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica', 'Arial', sans-serif;
+  overflow: hidden;
 }
 
 @layer utilities {
   .text-balance {
     text-wrap: balance;
   }
+}
+
+@keyframes prompt-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-prompt-in {
+  animation: prompt-in 220ms ease-out;
 }
 
 /* Week calendar — expands left from the sidebar edge */

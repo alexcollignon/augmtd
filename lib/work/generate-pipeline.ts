@@ -328,13 +328,13 @@ ${requirementsContext ? `\nCALL REQUIREMENTS (authoritative — use these exact 
 YOUR TASK (Step ${step.number} of ${plan.steps?.length ?? '?'}): ${step.action}
 ${attachmentForPrompt ? `\nSOURCE MATERIAL:\n${attachmentForPrompt}` : ''}${previousContext}
 
-Execute this step thoroughly. Output the specific results, data, analysis, or content this step produces. Be concrete — actual numbers, actual text, actual structure. Do not explain what you are going to do, just do it.`;
+Execute this step now. Write only the output — no introduction, no commentary. Output the specific results, data, analysis, or content this step produces. Be concrete — actual numbers, actual text, actual structure.`;
 
   const completion = await aiCreate(client, {
     model,
     max_tokens: maxTokens,
     messages: [
-      { role: 'system', content: `You are executing a single step in a professional workflow for a ${userContext}. Perform the task described and output the results directly. No preamble, no meta-commentary — only the output of the work itself. When drawing on source material sections, cite inline as [Source: filename § section].${skillReasoning ? `\n\n${skillReasoning}` : ''}` },
+      { role: 'system', content: `You are executing a single step in a professional workflow${userContext ? ` for a ${userContext}` : ''}. Perform the task described and output the results directly. No preamble, no meta-commentary — only the output of the work itself. Begin your response with the actual content immediately. When drawing on source material sections, cite inline as [Source: filename § section].${skillReasoning ? `\n\n${skillReasoning}` : ''}` },
       { role: 'user', content: userPrompt },
     ],
   });
@@ -401,7 +401,7 @@ export function buildGeneratePrompt(
 
   if (type === 'email') {
     return {
-      systemPrompt: `You generate structured email content in JSON. Return ONLY valid JSON — no markdown, no explanation.
+      systemPrompt: `You generate structured email content in JSON. Your entire response must be a single valid JSON object. Start your response with { and end with }. Do not write anything before { or after }.
 
 JSON format:
 {
@@ -431,7 +431,7 @@ Return the JSON email structure.`,
 
   if (type === 'presentation') {
     return {
-      systemPrompt: `You generate structured presentation content in JSON. Return ONLY valid JSON — no markdown, no explanation. Keep total JSON under 3500 characters.
+      systemPrompt: `You generate structured presentation content in JSON. Your entire response must be a single valid JSON object. Start your response with { and end with }. Do not write anything before { or after }. Keep total JSON under 3500 characters.
 
 JSON format:
 {
@@ -462,7 +462,7 @@ Return the JSON presentation structure.`,
 
   if (type === 'spreadsheet') {
     return {
-      systemPrompt: `You generate structured spreadsheet content in JSON. Return ONLY valid JSON — no markdown, no explanation. Keep total JSON under 3500 characters.
+      systemPrompt: `You generate structured spreadsheet content in JSON. Your entire response must be a single valid JSON object. Start your response with { and end with }. Do not write anything before { or after }. Keep total JSON under 3500 characters.
 
 JSON format:
 {
@@ -500,7 +500,7 @@ Return the JSON spreadsheet structure.`,
   const mandatorySections = mandatorySectionsMatch ? mandatorySectionsMatch[1].trim() : undefined;
 
   return {
-    systemPrompt: `You generate structured document content in JSON. Return ONLY valid JSON — no markdown, no explanation. Keep total JSON under ${maxJsonChars ?? 4000} characters.
+    systemPrompt: `You generate structured document content in JSON. Your entire response must be a single valid JSON object. Start your response with { and end with }. Do not write anything before { or after }. Keep total JSON under ${maxJsonChars ?? 4000} characters.
 
 JSON format:
 {
@@ -554,7 +554,21 @@ function sanitizeJsonString(raw: string): string {
 }
 
 export function parseAndValidateContent(type: DeliverableType, rawText: string): ArtifactContent {
-  const stripped = rawText.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
+  // Strip OSS model preamble patterns before brace search:
+  // - <think>...</think> reasoning blocks (Qwen, DeepSeek)
+  // - Markdown code fences
+  // - Common courtesy prefixes ("Here is the JSON:", "Sure, here's the result:", etc.)
+  let stripped = rawText
+    .replace(/<think>[\s\S]*?<\/think>/gi, '')
+    .replace(/^```(?:json)?\s*/im, '')
+    .replace(/```\s*$/im, '')
+    .trim();
+  // Strip leading prose lines before the first { — e.g. "Here is the JSON:\n{"
+  const preambleEnd = stripped.search(/\{/);
+  if (preambleEnd > 0) {
+    stripped = stripped.slice(preambleEnd);
+  }
+
   const firstBrace = stripped.indexOf('{');
   const lastBrace = stripped.lastIndexOf('}');
   if (firstBrace === -1 || lastBrace === -1) throw new Error('No JSON object in response');
@@ -588,7 +602,8 @@ export interface GeneratePipelineParams {
   conversationContext: string;
   userContext: string;
   adminClient: SupabaseClient;
-  toolRegistry?: import('@/lib/mcp/types').MCPTool[]; // passed by routes but not used by pipeline yet
+  toolRegistry?: import('@/lib/mcp/types').MCPTool[];
+  maxGenerationTokens?: number;
 }
 
 export interface PipelineResult {
@@ -852,7 +867,7 @@ function inferTypeFromGeneratorStep(step: any, plan: any, generatorIndex: number
  * DB write is intentionally omitted — callers handle appending to the artifacts array.
  */
 export async function runFullPipeline(params: GeneratePipelineParams): Promise<PipelineResult> {
-  const { userId, threadId, plan, emailAttachments, userAttachments = [], conversationContext, userContext, adminClient } = params;
+  const { userId, threadId, plan, emailAttachments, userAttachments = [], conversationContext, userContext, adminClient, maxGenerationTokens: callerMaxGenerationTokens } = params;
   const { client, model } = await getAIClient(userId, 'generation', adminClient);
 
   const allSteps = (plan.steps || []).slice(0, 6);
@@ -933,7 +948,7 @@ export async function runFullPipeline(params: GeneratePipelineParams): Promise<P
           attachmentContext: contextBundle.flat, conversationContext, userContext,
           adminClient, stepAction: step.action,
           skillGeneration, pageSize: skillPageSize,
-          maxGenerationTokens: skillMaxGenerationTokens,
+          maxGenerationTokens: skillMaxGenerationTokens ?? callerMaxGenerationTokens,
           maxStepOutputsChars: skillMaxStepOutputsChars,
           maxJsonChars: skillMaxJsonChars,
           requirementsContext,
@@ -975,7 +990,7 @@ export async function runFullPipeline(params: GeneratePipelineParams): Promise<P
           stepOutputs: intermediateOutputs, attachmentContext: contextBundle.flat,
           conversationContext, userContext, adminClient,
           skillGeneration, pageSize: skillPageSize,
-          maxGenerationTokens: skillMaxGenerationTokens,
+          maxGenerationTokens: skillMaxGenerationTokens ?? callerMaxGenerationTokens,
           maxStepOutputsChars: skillMaxStepOutputsChars,
           maxJsonChars: skillMaxJsonChars,
           requirementsContext,

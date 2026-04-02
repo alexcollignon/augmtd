@@ -7,7 +7,7 @@ import { usePathname } from 'next/navigation';
 import {
   InboxIcon,
   BriefcaseIcon,
-  CircleStackIcon,
+  FolderIcon,
   ClockIcon,
   Cog6ToothIcon,
   ArrowRightOnRectangleIcon,
@@ -36,7 +36,7 @@ export default function SidebarNav({ userEmail }: SidebarNavProps) {
     { name: 'Inbox', href: '/inbox', icon: InboxIcon },
     { name: 'Work', href: '/work', icon: BriefcaseIcon },
     { name: 'Meetings', href: '/meetings', icon: CalendarDaysIcon },
-    { name: 'Drive', href: '/drive', icon: CircleStackIcon },
+    { name: 'Drive', href: '/drive', icon: FolderIcon },
     ...(isSuperAdmin ? [{ name: 'Platform Admin', href: '/platform-admin', icon: ShieldCheckIcon }] : []),
   ];
 

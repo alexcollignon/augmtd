@@ -20,7 +20,7 @@ export function WorkspaceTabBar() {
         }`}
       >
         <Square2StackIcon className="w-3.5 h-3.5" />
-        Studio
+        Chat
       </Link>
       <Link
         href="/processes"
