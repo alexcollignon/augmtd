@@ -1,6 +1,7 @@
 'use client';
 
-import { PaperClipIcon, CheckIcon } from '@heroicons/react/24/outline';
+import { useState } from 'react';
+import { PaperClipIcon, CheckIcon, TrashIcon, XMarkIcon, ArchiveBoxArrowDownIcon } from '@heroicons/react/24/outline';
 import type { InboxItem } from '@/lib/types/inbox';
 
 
@@ -12,6 +13,8 @@ interface EmailListCardProps {
   isChecked?: boolean;
   onToggleCheck?: (id: string) => void;
   hasAnySelected?: boolean;
+  onDelete?: (id: string) => void;
+  onArchive?: (id: string) => void;
 }
 
 function formatTime(dateStr: string): string {
@@ -23,7 +26,8 @@ function formatTime(dateStr: string): string {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
-export default function EmailListCard({ item, isSelected, onSelect, compact = false, isChecked = false, onToggleCheck, hasAnySelected = false }: EmailListCardProps) {
+export default function EmailListCard({ item, isSelected, onSelect, compact = false, isChecked = false, onToggleCheck, hasAnySelected = false, onDelete, onArchive }: EmailListCardProps) {
+  const [pendingAction, setPendingAction] = useState<'delete' | 'archive' | null>(null);
   const sourceData = item.source_data;
 
   const fromDisplay = sourceData?.from_name || sourceData?.from || '';
@@ -36,6 +40,12 @@ export default function EmailListCard({ item, isSelected, onSelect, compact = fa
 
   const isUnread = item.is_read === false;
   const checkboxVisible = isChecked || hasAnySelected;
+
+  const handleConfirm = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (pendingAction === 'delete') onDelete?.(item.id);
+    else if (pendingAction === 'archive') onArchive?.(item.id);
+  };
 
   // pointer-events-none when hidden so the invisible zone doesn't intercept card clicks
   const Checkbox = (
@@ -88,24 +98,72 @@ export default function EmailListCard({ item, isSelected, onSelect, compact = fa
 
   return (
     <div
-      onClick={() => onSelect(item)}
+      onClick={() => { if (!pendingAction) onSelect(item); }}
       className={`w-full text-left relative rounded-md transition-colors cursor-pointer group ${
         isChecked ? 'bg-indigo-50/60' : isSelected ? 'bg-indigo-50' : 'bg-white hover:bg-neutral-50'
       }`}
     >
       {Checkbox}
       <div className="pl-8 pr-3 py-3">
-        {/* Row 1: From + time */}
-        <div className="flex items-baseline justify-between gap-2 mb-0.5">
+        {/* Row 1: From + time/actions */}
+        <div className="flex items-center justify-between gap-2 mb-0.5">
           <div className="flex items-center gap-1.5 min-w-0">
             {isUnread && <span className="w-2 h-2 rounded-full bg-indigo-500 flex-shrink-0" />}
             <span className={`text-[13px] truncate ${isUnread ? 'font-bold' : 'font-semibold'} ${isSelected ? 'text-indigo-900' : 'text-neutral-900'}`}>
               {fromDisplay}
             </span>
           </div>
-          {timeDisplay && (
-            <span className={`text-[10px] flex-shrink-0 ${isUnread ? 'text-indigo-500 font-medium' : 'text-neutral-400'}`}>{timeDisplay}</span>
-          )}
+
+          {/* Right slot — timestamp stays pinned right; icons overlay it on hover */}
+          <div className="relative flex items-center flex-shrink-0">
+            {pendingAction ? (
+              <div className="flex items-center gap-0.5">
+                <span className="text-[10px] text-neutral-500 mr-0.5">
+                  {pendingAction === 'delete' ? 'Delete?' : 'Archive?'}
+                </span>
+                <button
+                  onClick={handleConfirm}
+                  className={`p-0.5 rounded transition-colors ${pendingAction === 'delete' ? 'text-red-500 hover:text-red-600' : 'text-neutral-500 hover:text-neutral-700'}`}
+                  title="Confirm"
+                >
+                  <CheckIcon className="w-3.5 h-3.5" strokeWidth={2.5} />
+                </button>
+                <button
+                  onClick={(e) => { e.stopPropagation(); setPendingAction(null); }}
+                  className="p-0.5 rounded text-neutral-400 hover:text-neutral-600 transition-colors"
+                  title="Cancel"
+                >
+                  <XMarkIcon className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ) : (
+              <>
+                {timeDisplay && (
+                  <span className={`text-[10px] ${isUnread ? 'text-indigo-500 font-medium' : 'text-neutral-400'} group-hover:invisible`}>{timeDisplay}</span>
+                )}
+                <div className="absolute right-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                  {onArchive && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setPendingAction('archive'); }}
+                      className="p-0.5 rounded text-neutral-400 hover:text-neutral-600"
+                      title="Archive"
+                    >
+                      <ArchiveBoxArrowDownIcon className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                  {onDelete && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setPendingAction('delete'); }}
+                      className="p-0.5 rounded text-neutral-400 hover:text-red-500"
+                      title="Delete"
+                    >
+                      <TrashIcon className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
         </div>
 
         {/* Row 2: Subject */}

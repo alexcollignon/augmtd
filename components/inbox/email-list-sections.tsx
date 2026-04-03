@@ -13,6 +13,8 @@ interface EmailListSectionsProps {
   compact?: boolean;
   selectedIds?: Set<string>;
   onToggleSelect?: (id: string) => void;
+  onDelete?: (id: string) => void;
+  onArchive?: (id: string) => void;
 }
 
 const SECTIONS: Array<{ key: ItemType; label: string; dim?: boolean }> = [
@@ -23,7 +25,7 @@ const SECTIONS: Array<{ key: ItemType; label: string; dim?: boolean }> = [
   { key: 'fyi',      label: 'Noted', dim: true },
 ];
 
-export default function EmailListSections({ items, selectedId, onSelect, compact = false, selectedIds, onToggleSelect }: EmailListSectionsProps) {
+export default function EmailListSections({ items, selectedId, onSelect, compact = false, selectedIds, onToggleSelect, onDelete, onArchive }: EmailListSectionsProps) {
   const hasAnySelected = (selectedIds?.size ?? 0) > 0;
   const [collapsed, setCollapsed] = useState<Set<ItemType>>(new Set());
 
@@ -82,6 +84,8 @@ export default function EmailListSections({ items, selectedId, onSelect, compact
                     isChecked={selectedIds?.has(item.id) ?? false}
                     onToggleCheck={onToggleSelect}
                     hasAnySelected={hasAnySelected}
+                    onDelete={onDelete}
+                    onArchive={onArchive}
                   />
                 ))}
               </div>

@@ -460,6 +460,22 @@ export function InboxPageClient({
     isRead: (selectedItem as any).is_read !== false,
   } : null;
 
+  const handleDeleteItem = useCallback(async (itemId: string) => {
+    setInboxItems(prev => prev.filter(i => i.id !== itemId));
+    setSelectedItem(prev => (prev?.id === itemId ? null : prev));
+    await fetch(`/api/inbox/${itemId}/dismiss`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason: 'deleted_from_list' }),
+    });
+  }, []);
+
+  const handleArchiveItem = useCallback(async (itemId: string) => {
+    setInboxItems(prev => prev.filter(i => i.id !== itemId));
+    setSelectedItem(prev => (prev?.id === itemId ? null : prev));
+    await fetch(`/api/inbox/${itemId}/archive-source`, { method: 'POST' });
+  }, []);
+
   const handleChatAction = useCallback(async (type: string, itemId: string) => {
     if (type === 'archive') {
       const res = await fetch(`/api/inbox/${itemId}/archive-source`, { method: 'POST' });
@@ -843,6 +859,8 @@ export function InboxPageClient({
                     compact={density === 'compact'}
                     selectedIds={selectedIds}
                     onToggleSelect={handleToggleSelect}
+                    onDelete={handleDeleteItem}
+                    onArchive={handleArchiveItem}
                   />
                 ) : (
                   <EmailListSections
@@ -852,6 +870,8 @@ export function InboxPageClient({
                     compact={density === 'compact'}
                     selectedIds={selectedIds}
                     onToggleSelect={handleToggleSelect}
+                    onDelete={handleDeleteItem}
+                    onArchive={handleArchiveItem}
                   />
                 )}
               </div>
