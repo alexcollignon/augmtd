@@ -86,26 +86,27 @@ async function prefetchContext(
   // Task/work references → desk items
   if (TASK_RE.test(message)) {
     fetches.push(
-      supabase
-        .from('desk_items')
-        .select('title, urgency, kanban_column')
-        .eq('user_id', userId)
-        .in('kanban_column', ['todo', 'in_progress', 'waiting'])
-        .order('position', { ascending: true })
-        .limit(10)
-        .then(({ data }) => {
-          if (data && data.length > 0) {
-            const labels: Record<string, string> = { todo: 'To Do', in_progress: 'In Progress', waiting: 'Waiting' };
-            parts.push(
-              'YOUR CURRENT TASKS:\n' +
-              data.map((t: any) => {
-                const col = labels[t.kanban_column] ?? t.kanban_column;
-                const urg = t.urgency ? ` [${t.urgency}]` : '';
-                return `- ${t.title}${urg} (${col})`;
-              }).join('\n')
-            );
-          }
-        }).catch(() => {})
+      Promise.resolve(
+        supabase
+          .from('desk_items')
+          .select('title, urgency, kanban_column')
+          .eq('user_id', userId)
+          .in('kanban_column', ['todo', 'in_progress', 'waiting'])
+          .order('position', { ascending: true })
+          .limit(10)
+      ).then(({ data }) => {
+        if (data && data.length > 0) {
+          const labels: Record<string, string> = { todo: 'To Do', in_progress: 'In Progress', waiting: 'Waiting' };
+          parts.push(
+            'YOUR CURRENT TASKS:\n' +
+            data.map((t: any) => {
+              const col = labels[t.kanban_column] ?? t.kanban_column;
+              const urg = t.urgency ? ` [${t.urgency}]` : '';
+              return `- ${t.title}${urg} (${col})`;
+            }).join('\n')
+          );
+        }
+      }).catch(() => {})
     );
   }
 
