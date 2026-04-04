@@ -492,7 +492,7 @@ export async function POST(
               if (!choice) continue;
 
               const delta = choice.delta;
-              const finishReason = choice.finish_reason;
+              const finishReason = choice.finish_reason as string | null;
 
               // Stream text delta — suppress once XML tool call markers appear
               if (delta?.content) {
@@ -551,7 +551,8 @@ export async function POST(
                   messages.push({ role: 'assistant', content: cleanText || null, tool_calls: syntheticToolCalls });
 
                   const toolResultMessages: OpenAI.Chat.ChatCompletionToolMessageParam[] = [];
-                  for (const tc of syntheticToolCalls) {
+                  for (const _tc of syntheticToolCalls) {
+                    const tc = _tc as { id: string; function: { name: string; arguments: string } };
                     let toolInput: Record<string, unknown> = {};
                     try { toolInput = JSON.parse(tc.function.arguments); } catch {}
 
@@ -601,7 +602,8 @@ export async function POST(
 
                 const toolResultMessages: OpenAI.Chat.ChatCompletionToolMessageParam[] = [];
 
-                for (const tc of toolCalls) {
+                for (const _tc of toolCalls) {
+                  const tc = _tc as { id: string; function: { name: string; arguments: string } };
                   let toolInput: Record<string, unknown>;
                   try {
                     toolInput = JSON.parse(tc.function.arguments);
