@@ -1,8 +1,9 @@
 'use client';
 
-import { SparklesIcon, CheckCircleIcon, DocumentTextIcon } from '@heroicons/react/24/outline';
+import { SparklesIcon, CheckCircleIcon, DocumentTextIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import { ArrowPathIcon } from '@heroicons/react/20/solid';
 import { ClarificationWidget, ClarificationData } from './clarification-widget';
+import { MENTION_ICONS, MENTION_COLORS, MentionChip } from './chat-input-bar';
 
 // ── Markdown renderer ─────────────────────────────────────────────────────────
 
@@ -57,8 +58,56 @@ export function MarkdownText({ content, cursor }: { content: string; cursor?: bo
           );
         }
 
+        // Table detection: all lines are pipe-delimited and at least one is a separator row
+        const isTableBlock =
+          lines.length >= 2 &&
+          lines.every(l => l.trim().startsWith('|') && l.trim().endsWith('|')) &&
+          lines.some(l => /^\|[\s|:-]+\|$/.test(l.trim()));
+
+        if (isTableBlock) {
+          const parseRow = (line: string) =>
+            line.trim().split('|').slice(1, -1).map(c => c.trim());
+          const dataRows = lines.filter(l => !/^\|[\s|:-]+\|$/.test(l.trim()));
+          if (dataRows.length === 0) return null;
+          const [headerRow, ...bodyRows] = dataRows;
+          const headers = parseRow(headerRow);
+          return (
+            <div key={bi} className="overflow-x-auto rounded-lg border border-neutral-200">
+              <table className="w-full text-[13px] border-collapse">
+                <thead className="bg-neutral-50">
+                  <tr>
+                    {headers.map((h, i) => (
+                      <th key={i} className="text-left px-3 py-2 text-[11.5px] font-medium text-neutral-500 uppercase tracking-wide border-b border-neutral-200">
+                        {renderInline(h)}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {bodyRows.map((row, ri) => (
+                    <tr key={ri} className="border-b border-neutral-100 last:border-0">
+                      {parseRow(row).map((cell, ci) => (
+                        <td key={ci} className="px-3 py-2 text-neutral-700 leading-snug">
+                          {renderInline(cell)}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          );
+        }
+
         // Heading detection
         const firstLine = lines[0];
+        if (firstLine.startsWith('# ')) {
+          return (
+            <p key={bi} className="text-[15px] font-semibold text-neutral-900">
+              {renderInline(firstLine.slice(2))}
+            </p>
+          );
+        }
         if (firstLine.startsWith('### ')) {
           return (
             <p key={bi} className="text-[13px] font-semibold text-neutral-700 uppercase tracking-wide">
@@ -102,10 +151,13 @@ export interface ToolStatus {
 }
 
 export function ChatToolChip({ tool }: { tool: ToolStatus }) {
+  const isFailed = tool.status === 'done' && tool.summary?.toLowerCase().includes('failed');
   return (
-    <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-neutral-100 text-[12px] text-neutral-500">
+    <div className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[12px] ${isFailed ? 'bg-red-50 text-red-500' : 'bg-neutral-100 text-neutral-500'}`}>
       {tool.status === 'loading' ? (
         <ArrowPathIcon className="w-3 h-3 animate-spin flex-shrink-0" />
+      ) : isFailed ? (
+        <ExclamationTriangleIcon className="w-3 h-3 text-red-400 flex-shrink-0" />
       ) : (
         <CheckCircleIcon className="w-3 h-3 text-green-500 flex-shrink-0" />
       )}
@@ -121,11 +173,14 @@ export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   created_at: string;
+  mentions?: Array<{ id: string; type: string; label: string }>;
   metadata?: {
     tool_calls?: Array<{ name: string; summary?: string }>;
     artifact_ids?: string[];
     citations?: string[];
     clarification?: ClarificationData;
+    error?: boolean;
+    attachments?: Array<{ id: string; name: string }>;
   };
 }
 
@@ -148,34 +203,90 @@ interface Props {
   isLastAssistantMessage?: boolean;
   onViewArtifact?: (artifactId: string) => void;
   onClarificationConfirm?: (choices: { sources: string[]; options: Record<string, string> }) => void;
+  onRetry?: () => void;
 }
 
-export function ChatMessageBubble({ message, isLastAssistantMessage, onViewArtifact, onClarificationConfirm }: Props) {
+export function ChatMessageBubble({ message, isLastAssistantMessage, onViewArtifact, onClarificationConfirm, onRetry }: Props) {
   if (message.role === 'user') {
+    const mentions = message.mentions ?? [];
+    const attachments = message.metadata?.attachments ?? [];
+    const hasChips = mentions.length > 0 || attachments.length > 0;
     return (
-      <div className="flex justify-end">
-        <div className="max-w-[85%] bg-neutral-100 rounded-2xl rounded-br-sm px-4 py-2.5">
-          <p className="text-[13.5px] text-neutral-800 leading-relaxed whitespace-pre-wrap">
-            {message.content}
-          </p>
+      <div className="space-y-1.5">
+        {hasChips && (
+          <div className="flex justify-end">
+            <div className="flex flex-wrap justify-end gap-1 max-w-[75%]">
+              {mentions.map((m) => {
+                const type = m.type as MentionChip['type'];
+                const Icon = MENTION_ICONS[type];
+                const colors = MENTION_COLORS[type] ?? 'bg-neutral-100 text-neutral-600 border-neutral-200';
+                return (
+                  <span
+                    key={`mention:${m.type}:${m.id}`}
+                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[11.5px] ${colors}`}
+                  >
+                    {Icon && <Icon className="w-3 h-3 flex-shrink-0" />}
+                    {m.label}
+                  </span>
+                );
+              })}
+              {attachments.map((a) => (
+                <span
+                  key={`attach:${a.id}`}
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[11.5px] bg-neutral-50 text-neutral-600 border-neutral-200"
+                >
+                  <DocumentTextIcon className="w-3 h-3 flex-shrink-0 text-neutral-400" />
+                  {a.name}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+        <div className="flex justify-end">
+          <div className="max-w-[75%] bg-neutral-100 rounded-2xl rounded-br-sm px-4 py-2.5">
+            <p className="text-[13.5px] text-neutral-800 leading-relaxed whitespace-pre-wrap">
+              {message.content}
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Assistant error state
+  if (message.metadata?.error) {
+    return (
+      <div className="flex gap-3">
+        <div className="flex-1 min-w-0 flex items-center gap-2">
+          <p className="text-[13px] text-neutral-400">Something went wrong.</p>
+          {onRetry && (
+            <button
+              onClick={onRetry}
+              className="flex items-center gap-1 text-[12.5px] text-indigo-500 hover:text-indigo-700 transition-colors"
+            >
+              <ArrowPathIcon className="w-3.5 h-3.5" />
+              Try again
+            </button>
+          )}
         </div>
       </div>
     );
   }
 
   // Assistant message
-  const toolCalls = message.metadata?.tool_calls ?? [];
+  const rawToolCalls = message.metadata?.tool_calls ?? [];
+  // Deduplicate by tool name — one chip per tool type, last result wins
+  const toolCalls = rawToolCalls.reduce<typeof rawToolCalls>((acc, t) => {
+    const idx = acc.findIndex(x => x.name === t.name);
+    if (idx >= 0) { acc[idx] = t; return acc; }
+    return [...acc, t];
+  }, []);
   const artifactIds = message.metadata?.artifact_ids ?? [];
   const citations = message.metadata?.citations ?? [];
   const clarification = message.metadata?.clarification;
 
   return (
     <div className="flex gap-3">
-      {/* Avatar */}
-      <div className="w-5 h-5 rounded-full bg-indigo-50 flex items-center justify-center flex-shrink-0 mt-0.5">
-        <SparklesIcon className="w-3 h-3 text-indigo-500" />
-      </div>
-
       <div className="flex-1 min-w-0 space-y-2">
         {/* Tool call chips (from saved metadata) — hide internal meta tools */}
         {toolCalls.filter(t => t.name !== 'request_clarification').length > 0 && (
@@ -206,6 +317,17 @@ export function ChatMessageBubble({ message, isLastAssistantMessage, onViewArtif
               </button>
             ))}
           </div>
+        )}
+
+        {/* Generation failure — retry button */}
+        {toolCalls.some(t => t.summary?.toLowerCase().includes('failed')) && artifactIds.length === 0 && onRetry && (
+          <button
+            onClick={onRetry}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-50 text-[12.5px] text-red-600 hover:bg-red-100 transition-colors"
+          >
+            <ArrowPathIcon className="w-3.5 h-3.5" />
+            Retry generation
+          </button>
         )}
 
         {/* KB citation chips */}
@@ -240,25 +362,27 @@ interface StreamingMessageProps {
 }
 
 export function StreamingMessage({ text, tools, clarification, onClarificationConfirm }: StreamingMessageProps) {
+  // Strip <think> blocks (DeepSeek reasoning) — they render as invisible HTML and hide the loading dots
+  const displayText = text
+    .replace(/<think>[\s\S]*?<\/think>/gi, '')
+    .replace(/<think>[\s\S]*$/gi, '')  // unclosed block (still reasoning)
+    .trim();
+
   return (
     <div className="flex gap-3">
-      <div className="w-5 h-5 rounded-full bg-indigo-50 flex items-center justify-center flex-shrink-0 mt-0.5">
-        <SparklesIcon className="w-3 h-3 text-indigo-500" />
-      </div>
-
       <div className="flex-1 min-w-0 space-y-2">
         {/* Active tool chips — hide internal meta tools */}
         {tools.filter(t => t.name !== 'request_clarification').length > 0 && (
           <div className="flex flex-wrap gap-1.5">
-            {tools.filter(t => t.name !== 'request_clarification').map(t => (
-              <ChatToolChip key={t.id} tool={t} />
+            {tools.filter(t => t.name !== 'request_clarification').map((t, i) => (
+              <ChatToolChip key={`${t.id}-${i}`} tool={t} />
             ))}
           </div>
         )}
 
         {/* Streaming text */}
-        {text ? (
-          <MarkdownText content={text} cursor />
+        {displayText ? (
+          <MarkdownText content={displayText} cursor />
         ) : !clarification ? (
           <div className="flex gap-1 pt-1">
             <span className="w-1.5 h-1.5 bg-neutral-300 rounded-full animate-bounce [animation-delay:0ms]" />

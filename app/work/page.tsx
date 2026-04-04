@@ -47,6 +47,7 @@ export default async function WorkPage({
 
   return (
     <WorkPageClient
+      userId={user.id}
       userEmail={profile?.email || user.email}
       userFullName={profile?.full_name}
       hasCompletedOnboarding={hasCompletedIdentity}

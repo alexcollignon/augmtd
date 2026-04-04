@@ -1,38 +1,22 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { ChatInputBar, SourceId, MentionChip } from './chat-input-bar';
-
-const FALLBACK_PROMPTS = [
-  'What should I work on today?',
-  'Draft a client update email',
-  'Summarize my upcoming meetings',
-  'Create a weekly status report',
-];
+import { ChatInputBar, SourceId, MentionChip, AttachmentChip } from './chat-input-bar';
 
 interface Props {
   onStart: (message: string, sources: SourceId[], mentions: MentionChip[]) => void;
   userFirstName?: string;
   savedWorkflows?: Array<{ id: string; name: string; prompt: string }>;
+  onAttach?: (files: File[]) => void;
+  onRemoveAttachment?: (id: string) => void;
+  attachments?: AttachmentChip[];
 }
 
-export function ChatEmptyState({ onStart, userFirstName, savedWorkflows = [] }: Props) {
+export function ChatEmptyState({ onStart, userFirstName, savedWorkflows = [], onAttach, onRemoveAttachment, attachments }: Props) {
   const name = userFirstName?.split(' ')[0];
   const heading = name ? `What's on the agenda, ${name}?` : "What's on the agenda?";
 
-  const [prompts, setPrompts] = useState<string[]>([]);
-
-  useEffect(() => {
-    fetch('/api/work/quick-prompts')
-      .then(r => r.json())
-      .then(data => {
-        setPrompts(data.prompts?.length ? data.prompts : FALLBACK_PROMPTS);
-      })
-      .catch(() => setPrompts(FALLBACK_PROMPTS));
-  }, []);
-
   function start(message: string) {
-    onStart(message, ['kb', 'inbox', 'calendar', 'processes'], []);
+    onStart(message, ['kb', 'inbox', 'calendar', 'processes', 'desk'], []);
   }
 
   return (
@@ -42,24 +26,13 @@ export function ChatEmptyState({ onStart, userFirstName, savedWorkflows = [] }: 
       </h1>
 
       <div className="w-full max-w-[580px]">
-        <ChatInputBar onSubmit={onStart} autoFocus />
-      </div>
-
-      {/* Quick prompts */}
-      <div className="mt-6 flex flex-col items-center gap-2.5">
-        {prompts.map((prompt, i) => (
-          <button
-            key={prompt}
-            onClick={() => start(prompt)}
-            style={{
-              animationDelay: `${i * 80}ms`,
-              animationFillMode: 'both',
-            }}
-            className="text-[13px] text-neutral-500 hover:text-neutral-800 transition-colors animate-prompt-in"
-          >
-            {prompt}
-          </button>
-        ))}
+        <ChatInputBar
+          onSubmit={onStart}
+          onAttach={onAttach}
+          onRemoveAttachment={onRemoveAttachment}
+          attachments={attachments}
+          autoFocus
+        />
       </div>
 
       {/* Saved workflows */}

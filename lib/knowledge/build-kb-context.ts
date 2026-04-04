@@ -11,6 +11,7 @@ interface KBContextOptions {
 export interface KBContextResult {
   context: string
   filenames: string[]
+  fileGroups: Array<{ fileId: string; filename: string }>
 }
 
 export async function buildKBContext(
@@ -32,17 +33,22 @@ export async function buildKBContext(
       threshold,
     })
 
-    if (groups.length === 0) return { context: '', filenames: [] }
+    if (groups.length === 0) return { context: '', filenames: [], fileGroups: [] }
 
-    const sections = groups.map((g) => `[${g.filename}]\n${g.contextText}`)
+    const sections = groups.map((g) => {
+      const summaryLine = g.summary ? `Summary: ${g.summary}\n` : '';
+      return `[${g.filename}]\n${summaryLine}${g.contextText}`;
+    })
     const joined = sections.join('\n\n')
     const filenames = groups.map((g) => g.filename)
+    const fileGroups = groups.map((g) => ({ fileId: g.fileId, filename: g.filename }))
 
     return {
       context: `RELEVANT KNOWLEDGE BASE (from your indexed files — use this content when answering):\n\n${joined.slice(0, maxTotalChars)}`,
       filenames,
+      fileGroups,
     }
   } catch {
-    return { context: '', filenames: [] }
+    return { context: '', filenames: [], fileGroups: [] }
   }
 }

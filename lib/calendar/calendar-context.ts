@@ -75,7 +75,10 @@ export async function getCalendarContext(
           title: meeting.title,
           start_time: meeting.start_time,
           end_time: meeting.end_time,
-          attendees: (meeting.attendees as any[]).map((a: any) => a.email || a.name).filter(Boolean),
+          attendees: (meeting.attendees as any[]).map((a: any) => {
+            if (a.name && a.email) return `${a.name} <${a.email}>`;
+            return a.name || a.email || '';
+          }).filter(Boolean),
           rsvpStatus,
         };
       });

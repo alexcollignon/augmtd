@@ -119,7 +119,43 @@ export async function searchKnowledgeGrouped(
   }
   groups.sort((a, b) => (topRrfByFile.get(b.fileId) ?? 0) - (topRrfByFile.get(a.fileId) ?? 0));
 
+  // Entity gate: if the query contains a specific named identifier (e.g. "Z100", "ISO27001"),
+  // only return files whose filename or summary mention it. If nothing matches, return empty
+  // so the AI reports "not found" rather than serving unrelated documents.
+  const entities = extractQueryEntities(query);
+  if (entities.length > 0) {
+    const matched = groups.filter(g => {
+      const haystack = `${g.filename} ${g.summary ?? ''}`.toLowerCase();
+      return entities.some(e => haystack.includes(e.toLowerCase()));
+    });
+    return matched.slice(0, fileLimit);
+  }
+
   return groups.slice(0, fileLimit);
+}
+
+/**
+ * Extract specific named identifiers from a query: alphanumeric codes (Z100, GPT-4),
+ * quoted strings, and uncommon ALL-CAPS tokens. Generic words like "AI", "OR", "AND"
+ * are excluded. Returns empty array for fully generic queries.
+ */
+function extractQueryEntities(query: string): string[] {
+  const entities: string[] = [];
+
+  // Quoted strings — highest specificity
+  const quoted = query.match(/"([^"]+)"/g)?.map(s => s.slice(1, -1)) ?? [];
+  entities.push(...quoted);
+
+  // Alphanumeric codes: letters+digits mixed, optionally hyphenated (Z100, GPT-4, ISO27001)
+  const codes = query.match(/\b(?:[A-Za-z]+\d[\w-]*|\d+[A-Za-z][\w-]*)\b/g) ?? [];
+  entities.push(...codes);
+
+  // ALL-CAPS words (2+ chars) excluding common English/domain words
+  const COMMON = new Set(['AI', 'OR', 'AND', 'FOR', 'THE', 'IN', 'OF', 'TO', 'A', 'AN', 'IS', 'IT', 'MY', 'ME', 'US', 'DO', 'KB', 'PDF', 'DOC']);
+  const caps = query.match(/\b[A-Z]{2,}\b/g)?.filter(w => !COMMON.has(w)) ?? [];
+  entities.push(...caps);
+
+  return [...new Set(entities)];
 }
 
 function buildCitation(filename: string, heading: string | null, chunkIndex: number): string {

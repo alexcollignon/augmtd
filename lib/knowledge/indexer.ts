@@ -588,6 +588,7 @@ export interface IndexArtifactParams {
   mimeType: string;
   userId: string;
   emailBody?: string;         // body text for email artifacts (skips buffer download)
+  threadId?: string;          // if provided, cleans up KB entry if thread was deleted mid-index
 }
 
 /**
@@ -596,7 +597,7 @@ export interface IndexArtifactParams {
  * All errors are silently caught — this is fire-and-forget.
  */
 export async function indexArtifact(params: IndexArtifactParams, adminClient: SupabaseClient): Promise<void> {
-  const { artifactId, storagePath, filename, userId, emailBody } = params;
+  const { artifactId, storagePath, filename, userId, emailBody, threadId } = params;
   let { mimeType } = params;
 
   try {
@@ -672,6 +673,20 @@ export async function indexArtifact(params: IndexArtifactParams, adminClient: Su
       }));
 
       await adminClient.from('knowledge_chunks').insert(chunkRows);
+    }
+
+    // Race-condition guard: if the thread was deleted while indexing was in flight,
+    // clean up the KB entry we just created so it doesn't become orphaned.
+    if (threadId) {
+      const { data: alive } = await adminClient
+        .from('work_threads')
+        .select('id')
+        .eq('id', threadId)
+        .maybeSingle();
+      if (!alive) {
+        await adminClient.from('knowledge_chunks').delete().eq('file_id', fileId);
+        await adminClient.from('knowledge_files').delete().eq('id', fileId);
+      }
     }
   } catch (err) {
     console.error('[indexArtifact] Failed to index artifact', artifactId, err);

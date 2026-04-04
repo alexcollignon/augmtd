@@ -55,10 +55,10 @@ function sourceColor(type: string): string {
 
 export function ClarificationWidget({ data, isResolved, onConfirm }: Props) {
   const [selectedSources, setSelectedSources] = useState<Set<string>>(
-    new Set((data.sources ?? []).map(s => s.id))
+    new Set((Array.isArray(data.sources) ? data.sources : []).map(s => s.id))
   );
   const [selectedOptions, setSelectedOptions] = useState<Record<string, string>>(
-    Object.fromEntries((data.options ?? []).map(o => [o.key, o.default ?? o.choices[0]]))
+    Object.fromEntries((Array.isArray(data.options) ? data.options : []).map(o => [o.key, o.default ?? o.choices[0]]))
   );
 
   function toggleSource(id: string) {
@@ -78,13 +78,13 @@ export function ClarificationWidget({ data, isResolved, onConfirm }: Props) {
 
   function handleConfirm() {
     onConfirm({
-      sources: (data.sources ?? []).filter(s => selectedSources.has(s.id)).map(s => s.title),
+      sources: (Array.isArray(data.sources) ? data.sources : []).filter(s => selectedSources.has(s.id)).map(s => s.title),
       options: selectedOptions,
     });
   }
 
-  const hasSources = (data.sources ?? []).length > 0;
-  const hasOptions = (data.options ?? []).length > 0;
+  const hasSources = (Array.isArray(data.sources) ? data.sources : []).length > 0;
+  const hasOptions = (Array.isArray(data.options) ? data.options : []).length > 0;
 
   return (
     <div className={`rounded-xl border overflow-hidden transition-opacity ${isResolved ? 'opacity-60' : 'border-neutral-200 bg-white'}`}>
@@ -107,11 +107,11 @@ export function ClarificationWidget({ data, isResolved, onConfirm }: Props) {
                 Sources to include
               </p>
               <div className="flex flex-wrap gap-1.5">
-                {(data.sources ?? []).map(source => {
+                {(Array.isArray(data.sources) ? data.sources : []).map((source, i) => {
                   const active = selectedSources.has(source.id);
                   return (
                     <button
-                      key={source.id}
+                      key={source.id ?? i}
                       onClick={() => toggleSource(source.id)}
                       disabled={isResolved}
                       className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-[12px] transition-all ${
@@ -135,8 +135,8 @@ export function ClarificationWidget({ data, isResolved, onConfirm }: Props) {
           )}
 
           {/* Options */}
-          {hasOptions && (data.options ?? []).map(option => (
-            <div key={option.key} className="space-y-1.5">
+          {hasOptions && (Array.isArray(data.options) ? data.options : []).map((option, i) => (
+            <div key={option.key ?? i} className="space-y-1.5">
               <p className="text-[11px] font-medium text-neutral-400 uppercase tracking-wide">
                 {option.label}
               </p>

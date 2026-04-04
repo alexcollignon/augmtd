@@ -14,7 +14,8 @@ export function formatCalendarContextForChat(ctx: CalendarContext): string {
     const end = new Date(m.end_time).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
     const rsvp = (m as any).rsvpStatus;
     const tag = rsvp === 'accepted' ? '' : rsvp === 'tentative' ? ' [maybe]' : rsvp === 'declined' ? ' [declined]' : ' [pending — not yet accepted]';
-    lines.push(`- ${start}–${end}: ${m.title}${tag}`);
+    const attendeeStr = m.attendees?.length ? `\n  Attendees: ${m.attendees.slice(0, 8).join(', ')}` : '';
+    lines.push(`- ${start}–${end}: ${m.title}${tag}${attendeeStr}`);
   }
   return lines.join('\n');
 }

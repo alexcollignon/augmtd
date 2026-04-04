@@ -99,6 +99,17 @@ function getArtifactExt(type: string) {
 const PLAN_SEPARATOR = '---PLAN_UPDATE---';
 const KICKSTART_PREFIX = 'Generate a document for this process step:';
 
+// Clip text at PLAN_SEPARATOR, also trimming any partial prefix of the separator
+// that sits at the end of the buffer (avoids briefly showing e.g. "---PLAN_UP").
+function clipAtSeparator(text: string): string {
+  const idx = text.indexOf(PLAN_SEPARATOR);
+  if (idx !== -1) return text.slice(0, idx);
+  for (let len = PLAN_SEPARATOR.length - 1; len > 0; len--) {
+    if (text.endsWith(PLAN_SEPARATOR.slice(0, len))) return text.slice(0, -len);
+  }
+  return text;
+}
+
 export function ProcessStepStudioPanel({ processId, step, previousSteps, onClose, onStepCompleted, onThreadFound }: Props) {
   const [thread, setThread] = useState<WorkThread | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -227,14 +238,9 @@ export function ProcessStepStudioPanel({ processId, step, previousSteps, onClose
       const { value, done } = await reader.read();
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
-      const displayPart = buffer.includes(PLAN_SEPARATOR)
-        ? buffer.slice(0, buffer.indexOf(PLAN_SEPARATOR))
-        : buffer;
-      setStreamingText(displayPart);
+      setStreamingText(clipAtSeparator(buffer));
     }
-    return buffer.includes(PLAN_SEPARATOR)
-      ? buffer.slice(0, buffer.indexOf(PLAN_SEPARATOR))
-      : buffer;
+    return clipAtSeparator(buffer);
   }, []);
 
   const sendMessage = useCallback(async (text: string, overrideThreadId?: string) => {

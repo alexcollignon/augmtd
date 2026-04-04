@@ -244,6 +244,7 @@ export async function POST(
         filename: `${artifact.title}.${getFileExt(artifact.type)}`,
         mimeType: getMimeType(artifact.type),
         userId: user.id,
+        threadId,
         emailBody: artifact.type === 'email'
           ? (artifact.content as EmailContent)?.body
           : undefined,

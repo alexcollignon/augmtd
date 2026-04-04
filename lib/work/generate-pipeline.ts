@@ -572,8 +572,26 @@ export function parseAndValidateContent(type: DeliverableType, rawText: string):
   const firstBrace = stripped.indexOf('{');
   const lastBrace = stripped.lastIndexOf('}');
   if (firstBrace === -1 || lastBrace === -1) throw new Error('No JSON object in response');
-  const raw = sanitizeJsonString(stripped.slice(firstBrace, lastBrace + 1));
-  const content = JSON.parse(raw);
+  // Remove trailing commas before parsing (common LLM output issue: {..., } or [..., ])
+  // Remove literal ellipsis in arrays/objects — DeepSeek abbreviates: ["a", "b", ...] or [...]
+  const raw = sanitizeJsonString(stripped.slice(firstBrace, lastBrace + 1))
+    .replace(/,\s*\.{3}\s*(?=[}\]])/g, '')      // trailing: ["a", "b", ...] → ["a", "b"]
+    .replace(/\[\s*\.{3}\s*\]/g, '[]')           // sole: [...] → []
+    .replace(/\{\s*\.{3}\s*\}/g, '{}')           // sole: {...} → {}
+    .replace(/,(\s*[}\]])/g, '$1');
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let content: any;
+  try {
+    content = JSON.parse(raw);
+  } catch {
+    // Fallback: quote unquoted object keys (JS object-literal style, e.g. `{ title: "..." }`)
+    const repaired = raw
+      .replace(/,\s*\.{3}\s*(?=[}\]])/g, '')
+      .replace(/\[\s*\.{3}\s*\]/g, '[]')
+      .replace(/\{\s*\.{3}\s*\}/g, '{}')
+      .replace(/([{,]\s*)([a-zA-Z_$][a-zA-Z0-9_$]*)\s*:/g, '$1"$2":');
+    content = JSON.parse(repaired);
+  }
 
   if (type === 'email') {
     if (!content.subject || !content.body) throw new Error('Invalid email shape');
@@ -657,7 +675,7 @@ export async function assembleArtifactFromSteps(params: {
   skillReview?: string;
 }): Promise<DocumentArtifact> {
   const { userId, threadId, type, plan, stepOutputs, attachmentContext, conversationContext, userContext, adminClient, stepAction, skillGeneration, pageSize, maxGenerationTokens, maxStepOutputsChars, maxJsonChars, requirementsContext, skillReview } = params;
-  const { client, model } = await getAIClient(userId, 'generation', adminClient);
+  const { client, model, endpoint } = await getAIClient(userId, 'generation', adminClient);
 
   const deadlineLine = plan.deadline ? `\nDeadline: ${new Date(plan.deadline).toLocaleDateString()}` : '';
   const { systemPrompt, userPrompt, maxTokens } = buildGeneratePrompt(type, plan, {
@@ -674,9 +692,14 @@ export async function assembleArtifactFromSteps(params: {
     requirementsContext,
   });
 
+  // Enable JSON mode for providers that support it — eliminates parsing failures
+  // from unquoted keys, trailing commas, and other LLM JSON issues.
+  const supportsJsonMode = ['openai', 'azure_openai', 'fireworks'].includes(endpoint.provider);
+
   const completion = await aiCreate(client, {
     model,
     max_tokens: maxTokens,
+    ...(supportsJsonMode ? { response_format: { type: 'json_object' as const } } : {}),
     messages: [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userPrompt },

@@ -7,13 +7,14 @@
 // Phase 6 adds: process integration + polish
 
 import { useState, useEffect, useRef } from 'react';
+import { createClient } from '@/lib/supabase/client';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { ChevronRightIcon, PlusIcon, RectangleStackIcon, Square2StackIcon } from '@heroicons/react/24/outline';
 import SidebarNav from '@/components/sidebar-nav';
 import { ChatThreadSidebar, ChatThread } from '@/components/work/chat-thread-sidebar';
 import { ChatEmptyState } from '@/components/work/chat-empty-state';
-import { ChatInputBar, SourceId, AttachmentChip, MentionChip } from '@/components/work/chat-input-bar';
+import { ChatInputBar, SourceId, AttachmentChip, MentionChip, MENTION_ICONS, MENTION_COLORS } from '@/components/work/chat-input-bar';
 import { ChatMessageBubble, StreamingMessage, ChatMessage, ToolStatus } from '@/components/work/chat-message';
 import { ClarificationData } from '@/components/work/clarification-widget';
 import OnboardingModal from '@/components/onboarding-modal';
@@ -36,6 +37,7 @@ interface WorkThread extends ChatThread {
 }
 
 export interface WorkPageClientProps {
+  userId?: string;
   userEmail?: string;
   userFullName?: string;
   hasCompletedOnboarding: boolean;
@@ -54,6 +56,7 @@ export interface WorkPageClientProps {
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export function WorkPageClient({
+  userId,
   userEmail,
   userFullName,
   hasCompletedOnboarding,
@@ -70,15 +73,67 @@ export function WorkPageClient({
     initialActiveThreadId || null
   );
   const [pendingInput, setPendingInput] = useState<string | null>(initialChatInput || null);
+  const [pendingMentions, setPendingMentions] = useState<MentionChip[]>([]);
+  const [pendingFiles, setPendingFiles] = useState<Array<{ id: string; file: File }>>([]);
+  const [pendingAttachmentMeta, setPendingAttachmentMeta] = useState<Array<{ id: string; name: string }>>([]);
+  const [isAttachUploading, setIsAttachUploading] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [artifactPanelOpen, setArtifactPanelOpen] = useState(false);
   const [activeArtifactId, setActiveArtifactId] = useState<string | null>(null);
 
   const activeThread = threads.find((t) => t.id === activeThreadId) ?? null;
 
+  // ── Realtime: keep thread list in sync ───────────────────────────────────
+  useEffect(() => {
+    if (!userId) return;
+    const supabase = createClient();
+    const channel = supabase
+      .channel(`work_threads:${userId}`)
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'work_threads',
+        filter: `user_id=eq.${userId}`,
+      }, (payload) => {
+        if (payload.eventType === 'INSERT') {
+          const t = payload.new as any;
+          const newThread: WorkThread = {
+            id: t.id, title: t.title, plan: t.plan ?? null,
+            artifact: t.artifact ?? null, artifacts: t.artifacts ?? [],
+            status: t.status, created_at: t.created_at, updated_at: t.updated_at,
+            auto_generated: t.auto_generated, saved_workflow_id: t.saved_workflow_id,
+            is_generating: t.is_generating, process_id: t.process_id ?? null,
+            process_step_index: t.process_step_index ?? null, process_title: null,
+          };
+          setThreads(prev => prev.some(x => x.id === t.id) ? prev : [newThread, ...prev]);
+        } else if (payload.eventType === 'UPDATE') {
+          const t = payload.new as any;
+          setThreads(prev => prev.map(x => x.id === t.id
+            ? { ...x, title: t.title, artifacts: t.artifacts ?? x.artifacts,
+                artifact: t.artifact ?? x.artifact, updated_at: t.updated_at,
+                is_generating: t.is_generating, status: t.status }
+            : x
+          ));
+        } else if (payload.eventType === 'DELETE') {
+          const id = (payload.old as any).id;
+          setThreads(prev => prev.filter(x => x.id !== id));
+        }
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [userId]);
+
   // ── Thread CRUD ──────────────────────────────────────────────────────────
 
-  async function handleCreateThread(message?: string, _sources?: SourceId[]) {
+  function handlePreAttach(files: File[]) {
+    setPendingFiles(prev => [...prev, ...files.map(f => ({ id: crypto.randomUUID(), file: f }))]);
+  }
+
+  function handlePreRemoveAttachment(chipId: string) {
+    setPendingFiles(prev => prev.filter(p => p.id !== chipId));
+  }
+
+  async function handleCreateThread(message?: string, _sources?: SourceId[], mentions?: MentionChip[]) {
     if (isCreating) return;
     setIsCreating(true);
     try {
@@ -113,9 +168,30 @@ export function WorkPageClient({
         process_title: null,
       };
 
+      // Switch UI immediately — don't wait for upload
+      const filesToUpload = pendingFiles;
+      setPendingFiles([]);
       setThreads((prev) => [newThread, ...prev]);
       setActiveThreadId(id);
       if (message) setPendingInput(message);
+      if (mentions?.length) setPendingMentions(mentions);
+
+      if (filesToUpload.length > 0 && id) {
+        // Upload in background; block auto-send until metadata is ready
+        setIsAttachUploading(true);
+        const formData = new FormData();
+        for (const { file } of filesToUpload) formData.append('file', file);
+        fetch(`/api/work/threads/${id}/chat-attach`, { method: 'POST', body: formData })
+          .then(async (uploadRes) => {
+            if (uploadRes.ok) {
+              const { attachments } = await uploadRes.json();
+              const meta = (attachments as Array<{ chatAttachId: string; filename: string }>).map(a => ({ id: a.chatAttachId, name: a.filename }));
+              setPendingAttachmentMeta(meta);
+            }
+            setIsAttachUploading(false);
+          })
+          .catch(() => { setIsAttachUploading(false); });
+      }
     } catch (err) {
       console.error(err);
     } finally {
@@ -137,6 +213,7 @@ export function WorkPageClient({
     if (activeThreadId === id) {
       setActiveThreadId(null);
       setPendingInput(null);
+      setPendingMentions([]);
     }
     await fetch(`/api/work/threads/${id}`, { method: 'DELETE' });
   }
@@ -144,6 +221,10 @@ export function WorkPageClient({
   function handleSelectThread(id: string) {
     setActiveThreadId(id);
     setPendingInput(null);
+    setPendingMentions([]);
+    setPendingFiles([]);
+    setPendingAttachmentMeta([]);
+    setIsAttachUploading(false);
     setArtifactPanelOpen(false);
     setActiveArtifactId(null);
   }
@@ -191,7 +272,7 @@ export function WorkPageClient({
           {/* New chat — pinned above thread list */}
           <div className="px-2 pt-2 flex-shrink-0">
             <button
-              onClick={() => { setActiveThreadId(null); setPendingInput(null); }}
+              onClick={() => { setActiveThreadId(null); setPendingInput(null); setPendingMentions([]); setPendingFiles([]); setPendingAttachmentMeta([]); setIsAttachUploading(false); }}
               className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[12.5px] text-neutral-600 hover:bg-neutral-50 transition-colors"
             >
               <PlusIcon className="w-3.5 h-3.5 flex-shrink-0" />
@@ -217,7 +298,10 @@ export function WorkPageClient({
             <ActiveChatView
               thread={activeThread}
               pendingInput={pendingInput}
-              onPendingInputConsumed={() => setPendingInput(null)}
+              pendingMentions={pendingMentions}
+              pendingAttachmentMeta={pendingAttachmentMeta}
+              isAttachUploading={isAttachUploading}
+              onPendingInputConsumed={() => { setPendingInput(null); setPendingMentions([]); setPendingAttachmentMeta([]); }}
               onTitleUpdate={handleThreadTitleUpdate}
               onArtifactsUpdate={handleThreadArtifactsUpdate}
               onViewArtifact={handleViewArtifact}
@@ -228,6 +312,9 @@ export function WorkPageClient({
               onStart={handleCreateThread}
               userFirstName={userFullName}
               savedWorkflows={initialSavedWorkflows}
+              onAttach={handlePreAttach}
+              onRemoveAttachment={handlePreRemoveAttachment}
+              attachments={pendingFiles.map(({ id, file }) => ({ id, name: file.name, size: file.size }))}
             />
           )}
         </div>
@@ -262,6 +349,9 @@ export function WorkPageClient({
 interface ActiveChatViewProps {
   thread: WorkThread;
   pendingInput: string | null;
+  pendingMentions?: MentionChip[];
+  pendingAttachmentMeta?: Array<{ id: string; name: string }>;
+  isAttachUploading?: boolean;
   onPendingInputConsumed: () => void;
   onTitleUpdate: (id: string, title: string) => void;
   onArtifactsUpdate: (id: string, artifacts: DocumentArtifact[]) => void;
@@ -272,6 +362,9 @@ interface ActiveChatViewProps {
 function ActiveChatView({
   thread,
   pendingInput,
+  pendingMentions = [],
+  pendingAttachmentMeta = [],
+  isAttachUploading = false,
   onPendingInputConsumed,
   onTitleUpdate,
   onArtifactsUpdate,
@@ -289,6 +382,7 @@ function ActiveChatView({
   const [stepCompleting, setStepCompleting] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const hasSentPending = useRef(false);
+  const lastUserInputRef = useRef<{ content: string; mentions: MentionChip[] } | null>(null);
 
   const isProcessThread = !!(thread.process_id && thread.process_step_index != null);
   const hasArtifacts = (thread.artifacts?.length ?? 0) > 0;
@@ -304,13 +398,17 @@ function ActiveChatView({
     setStreamingTools([]);
     setStreamingClarification(null);
 
-    fetch(`/api/work/threads/${thread.id}/chat`)
+    const controller = new AbortController();
+
+    fetch(`/api/work/threads/${thread.id}/chat`, { signal: controller.signal })
       .then(r => r.json())
       .then(data => {
         setMessages(data.messages || []);
         setIsLoading(false);
       })
-      .catch(() => setIsLoading(false));
+      .catch((err) => { if (err.name !== 'AbortError') setIsLoading(false); });
+
+    return () => controller.abort();
   }, [thread.id]);
 
   // Attachment handlers
@@ -342,19 +440,44 @@ function ActiveChatView({
 
   // Auto-send pendingInput once messages are loaded and it hasn't been sent yet
   useEffect(() => {
-    if (!pendingInput || isLoading || isStreaming || hasSentPending.current) return;
+    if (!pendingInput || isLoading || isStreaming || isAttachUploading || hasSentPending.current) return;
     hasSentPending.current = true;
     onPendingInputConsumed();
-    handleSubmit(pendingInput, ['kb', 'inbox', 'calendar', 'processes'], []);
-  }, [pendingInput, isLoading]); // eslint-disable-line react-hooks/exhaustive-deps
+    handleSubmit(pendingInput, ['kb', 'inbox', 'calendar', 'processes', 'desk'], pendingMentions, pendingAttachmentMeta);
+  }, [pendingInput, isLoading, isAttachUploading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-scroll
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, streamingText, streamingTools]);
 
-  async function handleSubmit(message: string, sources: SourceId[], mentions: MentionChip[]) {
+  function handleRetry() {
+    if (!lastUserInputRef.current || isStreaming) return;
+    const { content, mentions } = lastUserInputRef.current;
+    setMessages(prev => {
+      const last = prev[prev.length - 1];
+      const isError = last?.metadata?.error;
+      const isGenerationFailure = last?.role === 'assistant' &&
+        last?.metadata?.tool_calls?.some(t => t.summary?.toLowerCase().includes('failed')) &&
+        (!last?.metadata?.artifact_ids || last.metadata.artifact_ids.length === 0);
+      if (isError || isGenerationFailure) {
+        const secondLast = prev[prev.length - 2];
+        if (secondLast?.role === 'user') return prev.slice(0, -2);
+        return prev.slice(0, -1);
+      }
+      return prev;
+    });
+    handleSubmit(content, ['kb', 'inbox', 'calendar', 'processes', 'desk'], mentions);
+  }
+
+  async function handleSubmit(message: string, sources: SourceId[], mentions: MentionChip[], extraAttachments?: Array<{ id: string; name: string }>) {
     if (isStreaming || !message.trim()) return;
+    lastUserInputRef.current = { content: message, mentions };
+
+    const currentAttachments = [
+      ...chatAttachments.map(a => ({ id: a.id, name: a.name })),
+      ...(extraAttachments ?? []),
+    ];
 
     // Optimistic user message
     const userMsg: ChatMessage = {
@@ -362,8 +485,11 @@ function ActiveChatView({
       role: 'user',
       content: message,
       created_at: new Date().toISOString(),
+      mentions: mentions.length > 0 ? mentions : undefined,
+      metadata: currentAttachments.length > 0 ? { attachments: currentAttachments } : undefined,
     };
     setMessages(prev => [...prev, userMsg]);
+    setChatAttachments([]);
     setIsStreaming(true);
     setStreamingText('');
     setStreamingTools([]);
@@ -372,7 +498,7 @@ function ActiveChatView({
       const res = await fetch(`/api/work/threads/${thread.id}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: message, sources, mentions }),
+        body: JSON.stringify({ content: message, sources, mentions, attachments: currentAttachments }),
       });
 
       if (!res.ok || !res.body) throw new Error('Stream failed');
@@ -404,8 +530,15 @@ function ActiveChatView({
               setStreamingText(accText);
 
             } else if (event.type === 'tool_start') {
-              const tool: ToolStatus = { id: event.id, name: event.name, status: 'loading', label: event.label };
-              accTools = [...accTools, tool];
+              const existingIdx = accTools.findIndex(t => t.name === event.name);
+              if (existingIdx >= 0) {
+                // Same tool firing again — update in place (merge into one chip)
+                accTools = accTools.map((t, i) =>
+                  i === existingIdx ? { ...t, id: event.id, status: 'loading' as const, label: event.label } : t
+                );
+              } else {
+                accTools = [...accTools, { id: event.id, name: event.name, status: 'loading' as const, label: event.label }];
+              }
               setStreamingTools([...accTools]);
 
             } else if (event.type === 'tool_result') {
@@ -430,6 +563,18 @@ function ActiveChatView({
             } else if (event.type === 'artifact_ready') {
               accArtifactIds.push(event.artifact.id);
               onArtifactReady?.(event.artifact.id);
+
+            } else if (event.type === 'text_set') {
+              // Server stripped XML tool call leak — replace accumulated text
+              accText = event.content ?? '';
+              setStreamingText(accText);
+
+            } else if (event.type === 'title_update') {
+              // Auto-rename arrives asynchronously (fire-and-forget on server)
+              if (event.title) onTitleUpdate(thread.id, event.title);
+
+            } else if (event.type === 'error') {
+              throw new Error('stream_error');
 
             } else if (event.type === 'done') {
               // Finalise assistant message
@@ -473,12 +618,12 @@ function ActiveChatView({
       }
     } catch (err) {
       console.error('[ActiveChatView] stream error:', err);
-      // Add error message
       setMessages(prev => [...prev, {
         id: crypto.randomUUID(),
         role: 'assistant',
-        content: 'Something went wrong. Please try again.',
+        content: '',
         created_at: new Date().toISOString(),
+        metadata: { error: true },
       }]);
     } finally {
       setIsStreaming(false);
@@ -540,7 +685,7 @@ function ActiveChatView({
       {/* Messages */}
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-[680px] mx-auto px-6 py-8 space-y-6">
-          {isLoading && (
+          {isLoading && !pendingInput && (
             <div className="space-y-6 animate-pulse">
               {/* Assistant skeleton */}
               <div className="flex gap-3">
@@ -566,11 +711,79 @@ function ActiveChatView({
             </div>
           )}
 
+          {isLoading && pendingInput && (
+            <div className="space-y-6">
+              <div className="space-y-1.5">
+                {(pendingMentions.length > 0 || pendingAttachmentMeta.length > 0) && (
+                  <div className="flex justify-end">
+                    <div className="flex flex-wrap justify-end gap-1 max-w-[75%]">
+                      {pendingMentions.map((m) => {
+                        const Icon = MENTION_ICONS[m.type];
+                        const colors = MENTION_COLORS[m.type] ?? 'bg-neutral-100 text-neutral-600 border-neutral-200';
+                        return (
+                          <span key={`${m.type}:${m.id}`} className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[11.5px] ${colors}`}>
+                            {Icon && <Icon className="w-3 h-3 flex-shrink-0" />}{m.label}
+                          </span>
+                        );
+                      })}
+                      {pendingAttachmentMeta.map((a) => (
+                        <span key={`attach:${a.id}`} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[11.5px] bg-neutral-50 text-neutral-600 border-neutral-200">
+                          {a.name}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <div className="flex justify-end">
+                  <div className="max-w-[75%] bg-neutral-100 rounded-2xl rounded-br-sm px-4 py-2.5">
+                    <p className="text-[13.5px] text-neutral-800 leading-relaxed whitespace-pre-wrap">{pendingInput}</p>
+                  </div>
+                </div>
+              </div>
+              <div className="flex gap-1 pt-1">
+                <span className="w-1.5 h-1.5 bg-neutral-300 rounded-full animate-bounce [animation-delay:0ms]" />
+                <span className="w-1.5 h-1.5 bg-neutral-300 rounded-full animate-bounce [animation-delay:150ms]" />
+                <span className="w-1.5 h-1.5 bg-neutral-300 rounded-full animate-bounce [animation-delay:300ms]" />
+              </div>
+            </div>
+          )}
+
           {!isLoading && (
             <div key={thread.id} className="space-y-6 animate-prompt-in">
               {messages.length === 0 && !isStreaming && !pendingInput && (
                 <div className="flex items-center justify-center h-24">
                   <p className="text-[13px] text-neutral-400">Start the conversation below</p>
+                </div>
+              )}
+
+              {/* Show pending message in the gap between isLoading→false and the optimistic setMessages firing */}
+              {pendingInput && messages.length === 0 && !isStreaming && (
+                <div className="space-y-1.5">
+                  {(pendingMentions.length > 0 || pendingAttachmentMeta.length > 0) && (
+                    <div className="flex justify-end">
+                      <div className="flex flex-wrap justify-end gap-1 max-w-[75%]">
+                        {pendingMentions.map((m) => {
+                          const Icon = MENTION_ICONS[m.type];
+                          const colors = MENTION_COLORS[m.type] ?? 'bg-neutral-100 text-neutral-600 border-neutral-200';
+                          return (
+                            <span key={`${m.type}:${m.id}`} className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[11.5px] ${colors}`}>
+                              {Icon && <Icon className="w-3 h-3 flex-shrink-0" />}{m.label}
+                            </span>
+                          );
+                        })}
+                        {pendingAttachmentMeta.map((a) => (
+                          <span key={`attach:${a.id}`} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[11.5px] bg-neutral-50 text-neutral-600 border-neutral-200">
+                            {a.name}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  <div className="flex justify-end">
+                    <div className="max-w-[75%] bg-neutral-100 rounded-2xl rounded-br-sm px-4 py-2.5">
+                      <p className="text-[13.5px] text-neutral-800 leading-relaxed whitespace-pre-wrap">{pendingInput}</p>
+                    </div>
+                  </div>
                 </div>
               )}
 
@@ -587,6 +800,7 @@ function ActiveChatView({
                 isLastAssistantMessage={isLastAssistant}
                 onViewArtifact={onViewArtifact}
                 onClarificationConfirm={handleClarificationConfirm}
+                onRetry={handleRetry}
               />
             );
           })}

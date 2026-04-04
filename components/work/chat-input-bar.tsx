@@ -6,7 +6,6 @@ import {
   PaperAirplaneIcon,
   PaperClipIcon,
   AtSymbolIcon,
-  ChevronDownIcon,
   ChevronRightIcon,
   ChevronLeftIcon,
   EnvelopeIcon,
@@ -14,6 +13,7 @@ import {
   DocumentTextIcon,
   Cog6ToothIcon,
   UserIcon,
+  ClipboardDocumentListIcon,
 } from '@heroicons/react/24/outline';
 
 export const CHAT_SOURCES = [
@@ -21,6 +21,7 @@ export const CHAT_SOURCES = [
   { id: 'inbox', label: 'Inbox & emails' },
   { id: 'calendar', label: 'Calendar' },
   { id: 'processes', label: 'Active processes' },
+  { id: 'desk', label: 'Tasks' },
 ] as const;
 
 export type SourceId = (typeof CHAT_SOURCES)[number]['id'];
@@ -33,27 +34,29 @@ export interface AttachmentChip {
 
 export interface MentionChip {
   id: string;
-  type: 'email' | 'meeting' | 'kb' | 'process' | 'contact';
+  type: 'email' | 'meeting' | 'kb' | 'process' | 'contact' | 'desk';
   label: string;
   subtitle?: string;
 }
 
 // ── Mention helpers ────────────────────────────────────────────────────────────
 
-const MENTION_ICONS: Record<MentionChip['type'], React.ElementType> = {
+export const MENTION_ICONS: Record<MentionChip['type'], React.ElementType> = {
   email: EnvelopeIcon,
   meeting: CalendarIcon,
   kb: DocumentTextIcon,
   process: Cog6ToothIcon,
   contact: UserIcon,
+  desk: ClipboardDocumentListIcon,
 };
 
-const MENTION_COLORS: Record<MentionChip['type'], string> = {
+export const MENTION_COLORS: Record<MentionChip['type'], string> = {
   email: 'bg-blue-50 text-blue-700 border-blue-200',
   meeting: 'bg-violet-50 text-violet-700 border-violet-200',
   kb: 'bg-amber-50 text-amber-700 border-amber-200',
   process: 'bg-emerald-50 text-emerald-700 border-emerald-200',
   contact: 'bg-indigo-50 text-indigo-700 border-indigo-200',
+  desk: 'bg-orange-50 text-orange-700 border-orange-200',
 };
 
 const MENTION_ICON_BG: Record<MentionChip['type'], string> = {
@@ -62,9 +65,11 @@ const MENTION_ICON_BG: Record<MentionChip['type'], string> = {
   kb: 'bg-amber-50 text-amber-500',
   process: 'bg-emerald-50 text-emerald-500',
   contact: 'bg-indigo-50 text-indigo-500',
+  desk: 'bg-orange-50 text-orange-500',
 };
 
 const CATEGORIES: { type: MentionChip['type']; label: string }[] = [
+  { type: 'desk',    label: 'Tasks' },
   { type: 'email',   label: 'Emails' },
   { type: 'meeting', label: 'Meetings' },
   { type: 'kb',      label: 'Drive & Knowledge base' },
@@ -114,10 +119,6 @@ export function ChatInputBar({
   threadId,
 }: Props) {
   const [value, setValue] = useState(defaultValue);
-  const [sourcesOpen, setSourcesOpen] = useState(false);
-  const [activeSources, setActiveSources] = useState<Set<SourceId>>(
-    new Set(['kb', 'inbox', 'calendar', 'processes'])
-  );
 
   // Mention dropdown state
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
@@ -151,18 +152,6 @@ export function ChatInputBar({
     el.style.height = 'auto';
     el.style.height = `${Math.min(el.scrollHeight, 128)}px`;
   }, [value]);
-
-  // Close sources dropdown on outside click
-  useEffect(() => {
-    if (!sourcesOpen) return;
-    function handleClick(e: MouseEvent) {
-      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
-        setSourcesOpen(false);
-      }
-    }
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, [sourcesOpen]);
 
   // Close mention dropdown on outside click (portal is outside wrapperRef)
   useEffect(() => {
@@ -348,15 +337,7 @@ export function ChatInputBar({
     setPendingMentions([]);
     setMentionQuery(null);
     setSelectedCategory(null);
-    onSubmit?.(msg, Array.from(activeSources), submitMentions);
-  }
-
-  function toggleSource(id: SourceId) {
-    setActiveSources((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
+    onSubmit?.(msg, ['kb', 'inbox', 'calendar', 'processes'], submitMentions);
   }
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -364,15 +345,6 @@ export function ChatInputBar({
     if (files.length > 0) onAttach?.(files);
     e.target.value = '';
   }
-
-  const sourceLabel =
-    activeSources.size === CHAT_SOURCES.length
-      ? 'All sources'
-      : activeSources.size === 0
-      ? 'No sources'
-      : Array.from(activeSources)
-          .map((id) => CHAT_SOURCES.find((s) => s.id === id)?.label.split(' ')[0])
-          .join(' · ');
 
   const canSend = value.trim().length > 0 && !disabled && !loading;
   const hasChips = attachments.length > 0 || allMentions.length > 0;
@@ -396,9 +368,11 @@ export function ChatInputBar({
             left: dropdownRect.left,
             width: dropdownRect.right - dropdownRect.left,
             bottom: window.innerHeight - dropdownRect.bottom + 8,
+            maxHeight: dropdownRect.bottom - 16,
             zIndex: 9999,
           }}
-          className="bg-white rounded-xl shadow-lg border border-neutral-200 overflow-hidden"
+          onMouseDown={(e) => e.stopPropagation()}
+          className="bg-white rounded-xl shadow-lg border border-neutral-200 overflow-y-auto"
         >
 
           {/* ── Category layer ── */}
@@ -491,34 +465,6 @@ export function ChatInputBar({
       {/* Mention dropdown — portal to escape overflow:hidden ancestors */}
       {mentionDropdown}
 
-      {/* Sources dropdown */}
-      {sourcesOpen && (
-        <div className="absolute bottom-full left-0 mb-2 w-52 bg-white rounded-xl shadow-lg border border-neutral-200 py-1.5 z-20">
-          {CHAT_SOURCES.map((source) => (
-            <button
-              key={source.id}
-              onClick={() => toggleSource(source.id)}
-              className="w-full flex items-center gap-2.5 px-3 py-1.5 hover:bg-neutral-50 text-[13px] text-neutral-700 transition-colors"
-            >
-              <div
-                className={`w-3.5 h-3.5 rounded border flex items-center justify-center flex-shrink-0 transition-colors ${
-                  activeSources.has(source.id)
-                    ? 'bg-indigo-600 border-indigo-600'
-                    : 'border-neutral-300'
-                }`}
-              >
-                {activeSources.has(source.id) && (
-                  <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 12 12" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-                    <polyline points="2,6 5,9 10,3" />
-                  </svg>
-                )}
-              </div>
-              {source.label}
-            </button>
-          ))}
-        </div>
-      )}
-
       {/* Hidden file input */}
       <input
         ref={fileInputRef}
@@ -592,19 +538,6 @@ export function ChatInputBar({
 
         {/* Controls row */}
         <div className="flex items-center gap-0.5 px-3 pb-3 pt-1">
-          {/* Sources */}
-          <button
-            onClick={() => setSourcesOpen((v) => !v)}
-            className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[12px] transition-colors ${
-              sourcesOpen
-                ? 'bg-neutral-100 text-neutral-700'
-                : 'text-neutral-500 hover:bg-neutral-100 hover:text-neutral-700'
-            }`}
-          >
-            <span>{sourceLabel}</span>
-            <ChevronDownIcon className={`w-3 h-3 transition-transform ${sourcesOpen ? 'rotate-180' : ''}`} />
-          </button>
-
           {/* Mention */}
           <button
             onClick={() => {

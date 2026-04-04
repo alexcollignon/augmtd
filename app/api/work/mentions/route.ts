@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 
 interface MentionResult {
-  type: 'email' | 'meeting' | 'kb' | 'process' | 'contact';
+  type: 'email' | 'meeting' | 'kb' | 'process' | 'contact' | 'desk';
   id: string;
   label: string;
   subtitle?: string;
@@ -31,7 +31,7 @@ export async function GET(request: NextRequest) {
     const { searchParams } = request.nextUrl;
     const q = searchParams.get('q') ?? '';
     const typesParam = searchParams.get('types');
-    const allTypes = ['email', 'meeting', 'kb', 'process', 'contact'] as const;
+    const allTypes = ['email', 'meeting', 'kb', 'process', 'contact', 'desk'] as const;
     const requestedTypes = typesParam
       ? (typesParam.split(',').filter((t) => allTypes.includes(t as (typeof allTypes)[number])) as (typeof allTypes)[number][])
       : [...allTypes];
@@ -125,6 +125,20 @@ export async function GET(request: NextRequest) {
       queries.contact = contactQuery as unknown as Promise<{ data: any[] | null; error: unknown }>;
     }
 
+    if (requestedTypes.includes('desk')) {
+      let deskQuery = supabase
+        .from('desk_items')
+        .select('id, title, urgency, kanban_column')
+        .eq('user_id', user.id)
+        .in('kanban_column', ['todo', 'in_progress', 'waiting'])
+        .order('position', { ascending: true })
+        .limit(limit);
+      if (hasQuery) {
+        deskQuery = deskQuery.ilike('title', like);
+      }
+      queries.desk = deskQuery as unknown as Promise<{ data: any[] | null; error: unknown }>;
+    }
+
     const keys = Object.keys(queries) as (typeof allTypes)[number][];
     const results = await Promise.all(keys.map((k) => queries[k]));
 
@@ -176,6 +190,19 @@ export async function GET(request: NextRequest) {
               subtitle: row.contact_email as string,
             });
             break;
+          case 'desk': {
+            const colLabels: Record<string, string> = {
+              todo: 'To Do', in_progress: 'In Progress', waiting: 'Waiting',
+            };
+            const urgency = row.urgency ? ` · ${String(row.urgency).toUpperCase()}` : '';
+            mentions.push({
+              type: 'desk',
+              id: row.id as string,
+              label: row.title as string,
+              subtitle: `${colLabels[row.kanban_column as string] ?? row.kanban_column}${urgency}`,
+            });
+            break;
+          }
         }
       }
     });

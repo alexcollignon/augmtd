@@ -28,6 +28,7 @@ export type ProviderType =
   | 'anthropic'         // api.anthropic.com (via OpenAI-compat endpoint)
   | 'azure_openai'      // {resource}.openai.azure.com
   | 'openai_compatible' // Any OpenAI-compatible endpoint (vLLM, Ollama, Modal, etc.)
+  | 'fireworks'         // api.fireworks.ai — serverless OSS models
 
 export interface ModelEndpoint {
   provider: ProviderType

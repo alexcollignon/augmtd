@@ -275,14 +275,45 @@ async function deleteWorkThreads(
       threadIds = (data || []).map((t: { id: string }) => t.id);
 
       const allPaths = new Set<string>();
+      const allArtifactIds = new Set<string>();
       for (const t of (data || [])) {
-        const arr = (t as any).artifacts as Array<{ storage_path?: string }> | null;
-        if (arr) { for (const a of arr) { if (a.storage_path) allPaths.add(a.storage_path); } }
-        const legacy = (t as any).artifact?.storage_path;
-        if (legacy) allPaths.add(legacy);
+        const arr = (t as any).artifacts as Array<{ id?: string; storage_path?: string }> | null;
+        if (arr) {
+          for (const a of arr) {
+            if (a.storage_path) allPaths.add(a.storage_path);
+            if (a.id) allArtifactIds.add(a.id);
+          }
+        }
+        const legacy = (t as any).artifact as { id?: string; storage_path?: string } | null;
+        if (legacy?.storage_path) allPaths.add(legacy.storage_path);
+        if (legacy?.id) allArtifactIds.add(legacy.id);
       }
       if (allPaths.size > 0) {
         await adminSupabase.storage.from('work-artifacts').remove([...allPaths]);
+      }
+
+      // Clean up KB entries for artifacts in these threads
+      const kbFileIdSet = new Set<string>();
+      if (allArtifactIds.size > 0) {
+        const { data: kbByArtifact } = await adminSupabase
+          .from('knowledge_files')
+          .select('id')
+          .in('provider_file_id', [...allArtifactIds])
+          .eq('user_id', userId);
+        kbByArtifact?.forEach((f: { id: string }) => kbFileIdSet.add(f.id));
+      }
+      if (allPaths.size > 0) {
+        const { data: kbByPath } = await adminSupabase
+          .from('knowledge_files')
+          .select('id')
+          .in('storage_path', [...allPaths])
+          .eq('user_id', userId);
+        kbByPath?.forEach((f: { id: string }) => kbFileIdSet.add(f.id));
+      }
+      if (kbFileIdSet.size > 0) {
+        const kbFileIds = [...kbFileIdSet];
+        await adminSupabase.from('knowledge_chunks').delete().in('file_id', kbFileIds);
+        await adminSupabase.from('knowledge_files').delete().in('id', kbFileIds);
       }
     }
   }

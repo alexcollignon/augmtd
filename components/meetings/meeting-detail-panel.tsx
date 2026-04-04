@@ -12,6 +12,8 @@ import {
   MicrophoneIcon,
   PencilSquareIcon,
   TrashIcon,
+  ClipboardDocumentIcon,
+  CheckIcon,
 } from '@heroicons/react/24/outline';
 import type { CalendarEvent } from '@/lib/types/meetings';
 import {
@@ -70,6 +72,26 @@ function rsvpBadge(status?: string): { label: string; className: string } | null
   if (status === 'tentative' || status === 'tentativelyaccepted') return { label: 'Maybe', className: 'bg-amber-50 text-amber-600' };
   if (status === 'declined') return { label: 'Declined', className: 'bg-neutral-100 text-neutral-500' };
   return null;
+}
+
+function CopyLinkButton({ link }: { link: string }) {
+  const [copied, setCopied] = useState(false);
+  function handleCopy(e: React.MouseEvent) {
+    e.stopPropagation();
+    navigator.clipboard.writeText(link).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  }
+  return (
+    <button
+      onClick={handleCopy}
+      className="flex items-center gap-1 text-[12px] text-neutral-400 hover:text-neutral-600 transition-colors flex-shrink-0"
+    >
+      {copied ? <CheckIcon className="w-3 h-3 text-green-500" /> : <ClipboardDocumentIcon className="w-3 h-3" />}
+      {copied ? 'Copied!' : 'Copy link'}
+    </button>
+  );
 }
 
 export default function MeetingDetailPanel({
@@ -213,13 +235,16 @@ export default function MeetingDetailPanel({
 
                       {/* Join link */}
                       {event.meeting_link && (
-                        <button
-                          onClick={handleJoinMeeting}
-                          className="mt-2.5 flex items-center gap-1.5 text-[13px] font-medium text-blue-600 hover:text-blue-700 transition-colors"
-                        >
-                          <VideoCameraIcon className="w-3.5 h-3.5" />
-                          {isMeet ? 'Join with Google Meet' : 'Join meeting'}
-                        </button>
+                        <div className="mt-2.5 flex items-center gap-2">
+                          <button
+                            onClick={handleJoinMeeting}
+                            className="flex items-center gap-1.5 text-[13px] font-medium text-blue-600 hover:text-blue-700 transition-colors"
+                          >
+                            <VideoCameraIcon className="w-3.5 h-3.5" />
+                            {isMeet ? 'Join with Google Meet' : 'Join meeting'}
+                          </button>
+                          <CopyLinkButton link={event.meeting_link} />
+                        </div>
                       )}
                     </div>
 

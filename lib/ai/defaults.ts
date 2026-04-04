@@ -22,7 +22,7 @@ export const TIER_DEFAULTS: Record<TierType, Record<TaskType, ModelEndpoint>> = 
     embeddings:    { provider: 'openai',     model: 'text-embedding-3-small', dimensions: 1024 },
     ocr:           { provider: 'openai',     model: 'gpt-4o' },
     assignment:    { provider: 'openai',     model: 'gpt-4o-mini' },
-    conversation:  { provider: 'anthropic',  model: 'claude-haiku-4-5-20251001',
+    conversation:  { provider: 'anthropic',  model: 'claude-sonnet-4-6',
                      baseURL: 'https://api.anthropic.com/v1' },
   },
 
@@ -40,31 +40,28 @@ export const TIER_DEFAULTS: Record<TierType, Record<TaskType, ModelEndpoint>> = 
     conversation:  { provider: 'azure_openai', model: 'gpt-4o-mini', apiVersion: '2024-02-01' },
   },
 
-  // ── Private shared — Together AI (fully private, no data leaves to OpenAI/Anthropic)
-  // DeepSeek-V3.1 for planning/generation. Llama-3.3-70B for classification/summarization/assignment.
-  // Qwen3-VL-8B for OCR (32B not serverless on Together AI). multilingual-e5 for embeddings (514 token limit).
-  // conversation: Qwen/Qwen3.5-9B — replaced mistralai/Mistral-Small-24B-Instruct-2501 (deprecated Mar 2026 by Together AI).
-  // Upgrade paths: OCR → Qwen3-VL-32B (needs dedicated endpoint). Embeddings → bge-large (flaky serverless).
+  // ── Private shared — Fireworks AI (fully private, no data leaves to OpenAI/Anthropic)
+  // DeepSeek-V3.1 for planning/generation/conversation (~50% cheaper than Together AI).
+  // Llama-3.3-70B for classification/summarization/assignment.
+  // Qwen3-VL-30B for OCR — real vision model (replaced Together AI's text-only Qwen3.5-9B stopgap).
+  // Embeddings stay on Together AI — switching would require re-indexing all KB content.
   private_shared: {
-    planning:      { provider: 'openai_compatible', model: 'deepseek-ai/DeepSeek-V3.1',
-                     baseURL: 'https://api.together.xyz/v1' },
-    generation:    { provider: 'openai_compatible', model: 'deepseek-ai/DeepSeek-V3.1',
-                     baseURL: 'https://api.together.xyz/v1' },
-    summarization: { provider: 'openai_compatible', model: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
-                     baseURL: 'https://api.together.xyz/v1' },
-    classification:{ provider: 'openai_compatible', model: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
-                     baseURL: 'https://api.together.xyz/v1' },
+    planning:      { provider: 'fireworks', model: 'accounts/fireworks/models/deepseek-v3p2',
+                     baseURL: 'https://api.fireworks.ai/inference/v1' },
+    generation:    { provider: 'fireworks', model: 'accounts/fireworks/models/deepseek-v3p2',
+                     baseURL: 'https://api.fireworks.ai/inference/v1' },
+    summarization: { provider: 'fireworks', model: 'accounts/fireworks/models/llama-v3p3-70b-instruct',
+                     baseURL: 'https://api.fireworks.ai/inference/v1' },
+    classification:{ provider: 'fireworks', model: 'accounts/fireworks/models/llama-v3p3-70b-instruct',
+                     baseURL: 'https://api.fireworks.ai/inference/v1' },
     embeddings:    { provider: 'openai_compatible', model: 'intfloat/multilingual-e5-large-instruct',
                      baseURL: 'https://api.together.xyz/v1' },
-    // Qwen3-VL-8B-Instruct deprecated Apr 14 2026 by Together AI.
-    // Their recommended replacement Qwen3.5-9B is text-only (no vision) — OCR on images
-    // will not work in private_shared until a proper VL model is available on Together AI serverless.
-    ocr:           { provider: 'openai_compatible', model: 'Qwen/Qwen3.5-9B',
-                     baseURL: 'https://api.together.xyz/v1' },
-    assignment:    { provider: 'openai_compatible', model: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
-                     baseURL: 'https://api.together.xyz/v1' },
-    conversation:  { provider: 'openai_compatible', model: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
-                     baseURL: 'https://api.together.xyz/v1' },
+    ocr:           { provider: 'fireworks', model: 'accounts/fireworks/models/qwen3-vl-30b-a3b-instruct',
+                     baseURL: 'https://api.fireworks.ai/inference/v1' },
+    assignment:    { provider: 'fireworks', model: 'accounts/fireworks/models/llama-v3p3-70b-instruct',
+                     baseURL: 'https://api.fireworks.ai/inference/v1' },
+    conversation:  { provider: 'fireworks', model: 'accounts/fireworks/models/deepseek-v3p2',
+                     baseURL: 'https://api.fireworks.ai/inference/v1' },
   },
 
   // ── Private client — client's own cloud ──────────────────────────────────────

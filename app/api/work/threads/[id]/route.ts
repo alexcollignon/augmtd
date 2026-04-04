@@ -93,7 +93,7 @@ export async function DELETE(
     // Load artifact(s) + process link before deleting so we can clean up storage and reset the step
     const { data: thread } = await supabase
       .from('work_threads')
-      .select('artifact, artifacts, process_id, process_step_index')
+      .select('artifact, artifacts, user_attachments, process_id, process_step_index')
       .eq('id', threadId)
       .eq('user_id', user.id)
       .single();
@@ -118,7 +118,11 @@ export async function DELETE(
     if (legacyArtifact?.storage_path) allPaths.add(legacyArtifact.storage_path);
     if (legacyArtifact?.id) allArtifactIds.add(legacyArtifact.id);
 
-    if (allPaths.size > 0 || allArtifactIds.size > 0) {
+    // Collect chat-attachment storage paths (email-attachments bucket)
+    const userAttachments = ((thread as any)?.user_attachments as Array<{ storagePath?: string }>) || [];
+    const attachmentPaths = userAttachments.map(a => a.storagePath).filter(Boolean) as string[];
+
+    if (allPaths.size > 0 || allArtifactIds.size > 0 || attachmentPaths.length > 0) {
       const adminClient = (await import('@supabase/supabase-js')).createClient(
         process.env.NEXT_PUBLIC_SUPABASE_URL!,
         process.env.SUPABASE_SERVICE_ROLE_KEY!
@@ -128,8 +132,12 @@ export async function DELETE(
         await adminClient.storage.from('work-artifacts').remove([...allPaths]);
       }
 
-      // Clean up KB entries — look up by both provider_file_id (artifact UUID) and
-      // storage_path (more reliable if UUID matching misses for any reason)
+      if (attachmentPaths.length > 0) {
+        await adminClient.storage.from('email-attachments').remove(attachmentPaths);
+      }
+
+      // Clean up KB entries — look up by artifact IDs, artifact storage paths,
+      // and chat-attachment storage paths
       const kbFileIdSet = new Set<string>();
 
       if (allArtifactIds.size > 0) {
@@ -141,11 +149,12 @@ export async function DELETE(
         data?.forEach((f: { id: string }) => kbFileIdSet.add(f.id));
       }
 
-      if (allPaths.size > 0) {
+      const allKBPaths = [...allPaths, ...attachmentPaths];
+      if (allKBPaths.length > 0) {
         const { data } = await adminClient
           .from('knowledge_files')
           .select('id')
-          .in('storage_path', [...allPaths])
+          .in('storage_path', allKBPaths)
           .eq('user_id', user.id);
         data?.forEach((f: { id: string }) => kbFileIdSet.add(f.id));
       }

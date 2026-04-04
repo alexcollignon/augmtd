@@ -37,6 +37,14 @@ export default function ComposePanel({ draft, onChange, onDiscard, onSent }: Com
   const [showAttachMenu, setShowAttachMenu] = useState(false);
   const [kbPickerOpen, setKbPickerOpen] = useState(false);
   const attachFileInputRef = useRef<HTMLInputElement>(null);
+  const bodyRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
+  }, [draft.body]);
 
   // Recipient suggestions
   const [toSuggestions, setToSuggestions] = useState<ContactSuggestion[]>([]);
@@ -137,7 +145,7 @@ export default function ComposePanel({ draft, onChange, onDiscard, onSent }: Com
   };
 
   return (
-    <div className="flex-1 min-h-0 flex flex-col">
+    <div className="flex flex-col overflow-y-auto h-full">
       {/* Header */}
       <div className="flex-shrink-0 flex items-center justify-between px-4 py-2.5 border-b border-neutral-200">
         <span className="text-[13px] font-semibold text-neutral-900">New email</span>
@@ -219,10 +227,12 @@ export default function ComposePanel({ draft, onChange, onDiscard, onSent }: Com
 
       {/* Body */}
       <textarea
+        ref={bodyRef}
         value={draft.body}
         onChange={e => onChange({ body: e.target.value })}
         placeholder="Write your message..."
-        className="flex-1 min-h-0 px-4 py-3 text-[13px] text-neutral-800 placeholder-neutral-400 bg-transparent outline-none resize-none"
+        rows={5}
+        className="px-4 py-3 text-[13px] text-neutral-800 placeholder-neutral-400 bg-transparent outline-none resize-none overflow-y-auto min-h-[120px] max-h-80"
       />
 
       {/* Attachment chips */}

@@ -79,6 +79,7 @@ function resolveApiKey(endpoint: ModelEndpoint, config: TenantConfig): string {
     case 'anthropic':     return process.env.ANTHROPIC_API_KEY ?? ''
     case 'azure_openai':  return process.env.AZURE_OPENAI_API_KEY ?? process.env.OPENAI_API_KEY ?? ''
     case 'openai_compatible': return process.env.AUGMTD_AI_KEY ?? process.env.OPENAI_API_KEY ?? ''
+    case 'fireworks':     return process.env.AUGMTD_FIREWORKS_AI_KEY ?? ''
     default:              return process.env.OPENAI_API_KEY ?? ''
   }
 }

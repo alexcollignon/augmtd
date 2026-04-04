@@ -15,6 +15,7 @@ import {
   VideoCameraIcon,
   ChevronRightIcon,
   PaperClipIcon,
+  ClipboardDocumentIcon,
 } from '@heroicons/react/24/outline';
 import type { InboxItem } from '@/lib/types/inbox';
 import { isExecutable } from '@/lib/types/inbox';
@@ -27,6 +28,26 @@ interface WorkDetailPanelProps {
   isOpen: boolean;
   onClose: () => void;
   batchItems?: InboxItem[]; // If provided, this is a batch view
+}
+
+function CopyLinkButton({ link }: { link: string }) {
+  const [copied, setCopied] = useState(false);
+  function handleCopy(e: React.MouseEvent) {
+    e.stopPropagation();
+    navigator.clipboard.writeText(link).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  }
+  return (
+    <button
+      onClick={handleCopy}
+      className="flex items-center gap-1 text-[12px] text-neutral-400 hover:text-neutral-600 transition-colors flex-shrink-0"
+    >
+      {copied ? <CheckIcon className="w-3 h-3 text-green-500" /> : <ClipboardDocumentIcon className="w-3 h-3" />}
+      {copied ? 'Copied!' : 'Copy link'}
+    </button>
+  );
 }
 
 export default function WorkDetailPanel({ item, isOpen, onClose, batchItems }: WorkDetailPanelProps) {
@@ -510,19 +531,24 @@ export default function WorkDetailPanel({ item, isOpen, onClose, batchItems }: W
                             )}
 
                             {/* Meeting Link */}
-                            {(sourceData?.meeting_link || sourceData?.calendar_event?.meeting_link) && (
-                              <div className="flex items-start gap-3">
-                                <VideoCameraIcon className="w-5 h-5 text-indigo-600 flex-shrink-0 mt-0.5" />
-                                <a
-                                  href={sourceData?.meeting_link || sourceData?.calendar_event?.meeting_link}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="text-[13px] text-indigo-600 hover:text-indigo-800 hover:underline font-medium"
-                                >
-                                  Join Meeting
-                                </a>
-                              </div>
-                            )}
+                            {(sourceData?.meeting_link || sourceData?.calendar_event?.meeting_link) && (() => {
+                              const link = sourceData?.meeting_link || sourceData?.calendar_event?.meeting_link;
+                              const isMeet = link?.includes('meet.google.com');
+                              return (
+                                <div className="flex items-center gap-2">
+                                  <VideoCameraIcon className="w-5 h-5 text-indigo-600 flex-shrink-0" />
+                                  <a
+                                    href={link}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-[13px] text-indigo-600 hover:text-indigo-800 hover:underline font-medium"
+                                  >
+                                    {isMeet ? 'Join with Google Meet' : 'Join meeting'}
+                                  </a>
+                                  <CopyLinkButton link={link!} />
+                                </div>
+                              );
+                            })()}
 
                             {/* Location */}
                             {(sourceData?.location || sourceData?.calendar_event?.location) && (

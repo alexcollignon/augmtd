@@ -3,6 +3,7 @@ import { SupabaseClient } from '@supabase/supabase-js'
 export interface InboxSnapshot {
   id: string
   fromName: string
+  fromEmail: string
   subject: string
   snippet: string
   visualSection: string
@@ -29,6 +30,7 @@ export async function buildInboxSnapshot(
   const items: InboxSnapshot[] = (data ?? []).map((item: any) => ({
     id: item.id,
     fromName: item.source_data?.from_name || item.source_data?.from || 'Unknown',
+    fromEmail: item.source_data?.from_address || '',
     subject: item.source_data?.subject || '(no subject)',
     snippet: (item.source_data?.snippet || item.source_data?.body || '').slice(0, 200),
     visualSection: item.visual_section || 'noted',
@@ -65,7 +67,8 @@ export function formatSnapshotForPrompt(items: InboxSnapshot[]): string {
         i.hasDraft ? 'has-draft' : null,
         i.attachmentCount > 0 ? `has-attachments(${i.attachmentCount})` : null,
       ].filter(Boolean).join(' ')
-      return `[${i.id}] From: ${i.fromName} | Subject: ${i.subject} | ${section}${flags ? ` ${flags}` : ''} | ${date}${i.snippet ? ` | "${i.snippet.slice(0, 100)}"` : ''}`
+      const fromField = i.fromEmail ? `${i.fromName} <${i.fromEmail}>` : i.fromName
+      return `[${i.id}] From: ${fromField} | Subject: ${i.subject} | ${section}${flags ? ` ${flags}` : ''} | ${date}${i.snippet ? ` | "${i.snippet.slice(0, 100)}"` : ''}`
     })
     .join('\n')
 }
