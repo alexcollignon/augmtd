@@ -435,6 +435,12 @@ export async function POST(
           try { controller.enqueue(encoder.encode(': keep-alive\n\n')); } catch { /* stream closed */ }
         }, 15000);
 
+        // When the user confirms a clarification, we know generate_document will be called.
+        // Send an early chip so the user sees feedback immediately during the <think> phase.
+        if (routeMode === 'force_generate') {
+          send({ type: 'tool_start', name: 'generate_document', id: 'pre-generate', label: 'Generating document' });
+        }
+
         try {
           let continueLoop = true;
           let turnIndex = 0;
@@ -583,8 +589,16 @@ export async function POST(
 
               } else if (finishReason === 'tool_calls') {
                 sawFinish = true;
+                const cleanTurnText = stripXmlToolCalls(turnText);
                 // Strip <think> blocks so fullAssistantText stays clean for empty-response detection
-                fullAssistantText += stripXmlToolCalls(turnText);
+                fullAssistantText += cleanTurnText;
+
+                // Flush any accumulated text BEFORE firing tool events so the UI renders
+                // text above tool chips/clarification widgets, not after them.
+                // This matters when <think> suppressed all text deltas (xmlStreamSuppressed = true).
+                if (cleanTurnText && xmlStreamSuppressed) {
+                  send({ type: 'text_set', content: cleanTurnText });
+                }
 
                 const toolCalls: OpenAI.Chat.ChatCompletionMessageToolCall[] =
                   Array.from(toolCallAccum.values()).map(tc => ({
@@ -1273,9 +1287,9 @@ async function executeChatTool(
       };
 
       const maxTokensMap: Record<string, number> = {
-        word: 3500,
-        excel: 2500,
-        pptx: 2500,
+        word: 5000,
+        excel: 3000,
+        pptx: 3000,
         email: 800,
       };
 

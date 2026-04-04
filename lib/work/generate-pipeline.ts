@@ -500,7 +500,7 @@ Return the JSON spreadsheet structure.`,
   const mandatorySections = mandatorySectionsMatch ? mandatorySectionsMatch[1].trim() : undefined;
 
   return {
-    systemPrompt: `You generate structured document content in JSON. Your entire response must be a single valid JSON object. Start your response with { and end with }. Do not write anything before { or after }. Keep total JSON under ${maxJsonChars ?? 4000} characters.
+    systemPrompt: `You generate structured document content in JSON. Your entire response must be a single valid JSON object. Start your response with { and end with }. Do not write anything before { or after }. Keep total JSON under ${maxJsonChars ?? 5000} characters.
 
 JSON format:
 {
@@ -528,13 +528,14 @@ ${attachmentContext ? `\nSOURCE MATERIAL:\n${attachmentContext}` : ''}
 CONVERSATION CONTEXT: ${conversationContext || '(none)'}
 
 Return the JSON document structure.`,
-    maxTokens: maxGenerationTokens ?? 2000,
+    maxTokens: maxGenerationTokens ?? 3500,
   };
 }
 
 function sanitizeJsonString(raw: string): string {
   // Escape literal control characters inside JSON string values.
-  // LLMs frequently emit raw newlines/tabs within strings, breaking JSON.parse.
+  // Uses lookahead to detect stray inner quotes (e.g. "the "Basic" plan") without
+  // mis-toggling the inString tracker — the root cause of the "array element" parse errors.
   let inString = false;
   let escaped = false;
   let result = '';
@@ -542,15 +543,103 @@ function sanitizeJsonString(raw: string): string {
     const ch = raw[i];
     if (escaped) { result += ch; escaped = false; continue; }
     if (ch === '\\') { escaped = true; result += ch; continue; }
-    if (ch === '"') { inString = !inString; result += ch; continue; }
+    if (ch === '"') {
+      if (!inString) {
+        inString = true;
+        result += ch;
+        continue;
+      }
+      // Potentially closing — look ahead past whitespace to see the next meaningful char.
+      // A real closing quote is followed by a JSON structural character.
+      let j = i + 1;
+      while (j < raw.length && (raw[j] === ' ' || raw[j] === '\t' || raw[j] === '\r' || raw[j] === '\n')) j++;
+      const next = j < raw.length ? raw[j] : '';
+      if (next === '' || next === ',' || next === '}' || next === ']' || next === ':') {
+        // Legitimate closing quote
+        inString = false;
+        result += ch;
+      } else {
+        // Stray inner quote (e.g. model wrote "Basic" plan without escaping) — escape it
+        result += '\\"';
+      }
+      continue;
+    }
     if (inString) {
       if (ch === '\n') { result += '\\n'; continue; }
       if (ch === '\r') { result += '\\r'; continue; }
       if (ch === '\t') { result += '\\t'; continue; }
+      // Escape any other control character (\x00–\x1F)
+      const code = ch.charCodeAt(0);
+      if (code < 0x20) { result += `\\u${code.toString(16).padStart(4, '0')}`; continue; }
     }
     result += ch;
   }
   return result;
+}
+
+// Closes unclosed arrays/objects left by token-truncated model output, and applies
+// standard LLM-output repairs (trailing commas, ellipsis abbreviations, unquoted keys).
+function repairJson(s: string): string {
+  // Standard cleanup
+  s = s
+    .replace(/,\s*\.{3}\s*(?=[}\]])/g, '')
+    .replace(/\[\s*\.{3}\s*\]/g, '[]')
+    .replace(/\{\s*\.{3}\s*\}/g, '{}')
+    .replace(/,(\s*[}\]])/g, '$1')
+    .replace(/([{,]\s*)([a-zA-Z_$][a-zA-Z0-9_$]*)\s*:/g, '$1"$2":');
+
+  // Walk to find unclosed structures
+  let inStr = false;
+  let esc = false;
+  const stack: string[] = [];
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (esc) { esc = false; continue; }
+    if (ch === '\\' && inStr) { esc = true; continue; }
+    if (ch === '"') { inStr = !inStr; continue; }
+    if (inStr) continue;
+    if (ch === '{') stack.push('}');
+    else if (ch === '[') stack.push(']');
+    else if (ch === '}' || ch === ']') { if (stack.length > 0 && stack[stack.length - 1] === ch) stack.pop(); }
+  }
+
+  // If truncated inside a string value, close it first
+  if (inStr) s += '"';
+  // Remove any trailing comma before we close
+  s = s.replace(/,\s*$/, '');
+  // Close all open structures in reverse order
+  s += stack.reverse().join('');
+  return s;
+}
+
+function buildRescueSystemPrompt(type: DeliverableType): string {
+  // Do NOT include literal template JSON — DeepSeek echoes it verbatim instead of filling real content.
+  const shape = type === 'email'
+    ? 'an object with string fields: subject, body, and optionally to'
+    : type === 'presentation'
+    ? 'an object with a string title field and a slides array, where each slide has string title, string layout, and bullets string array'
+    : type === 'spreadsheet'
+    ? 'an object with a string title field and a sheets array, where each sheet has string name, string array headers, and rows (array of string arrays)'
+    : 'an object with a string title field and a sections array, where each section has string heading, integer level (1 or 2), and paragraphs string array';
+  return `You are a JSON extraction assistant. The user will provide broken or partial document output. Your job is to extract all actual content from it and return it as a single valid JSON object.\n\nThe output shape must be ${shape}.\n\nRules:\n- Output ONLY the JSON object. No explanation, no markdown fences, no text before or after.\n- Start your response with { and end with }.\n- Use real content from the input, not placeholder values like "..." or "col1".\n- Keep it concise — under 1800 characters total.`;
+}
+
+// Extracts only the first complete JSON object from a string (stops at the matching closing }).
+// Prevents "Unexpected non-whitespace character after JSON" when prose follows the JSON.
+function extractFirstJsonObject(s: string): string {
+  let depth = 0;
+  let inStr = false;
+  let esc = false;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (esc) { esc = false; continue; }
+    if (ch === '\\' && inStr) { esc = true; continue; }
+    if (ch === '"') { inStr = !inStr; continue; }
+    if (inStr) continue;
+    if (ch === '{') depth++;
+    else if (ch === '}') { depth--; if (depth === 0) return s.slice(0, i + 1); }
+  }
+  return s; // incomplete — return as-is so repairJson can close it
 }
 
 export function parseAndValidateContent(type: DeliverableType, rawText: string): ArtifactContent {
@@ -569,43 +658,80 @@ export function parseAndValidateContent(type: DeliverableType, rawText: string):
     stripped = stripped.slice(preambleEnd);
   }
 
-  const firstBrace = stripped.indexOf('{');
-  const lastBrace = stripped.lastIndexOf('}');
-  if (firstBrace === -1 || lastBrace === -1) throw new Error('No JSON object in response');
-  // Remove trailing commas before parsing (common LLM output issue: {..., } or [..., ])
-  // Remove literal ellipsis in arrays/objects — DeepSeek abbreviates: ["a", "b", ...] or [...]
-  const raw = sanitizeJsonString(stripped.slice(firstBrace, lastBrace + 1))
-    .replace(/,\s*\.{3}\s*(?=[}\]])/g, '')      // trailing: ["a", "b", ...] → ["a", "b"]
-    .replace(/\[\s*\.{3}\s*\]/g, '[]')           // sole: [...] → []
-    .replace(/\{\s*\.{3}\s*\}/g, '{}')           // sole: {...} → {}
-    .replace(/,(\s*[}\]])/g, '$1');
+  // Search for the start of an actual JSON object: { followed by optional whitespace then " or }
+  // This skips echoed prompt phrases like "Start your response with { and end with }"
+  // which are not valid JSON objects.
+  const jsonObjectRe = /\{\s*["}]/;
+  let jsonStart = stripped.search(jsonObjectRe);
+  if (jsonStart === -1) {
+    // DeepSeek sometimes puts the entire JSON inside <think> and emits nothing after </think>.
+    // Fall back to searching the raw unstripped text.
+    jsonStart = rawText.search(jsonObjectRe);
+    if (jsonStart === -1) throw new Error('No JSON object in response');
+    stripped = rawText.slice(jsonStart);
+    jsonStart = 0;
+  }
+
+  // Extract only the first complete JSON object (bracket-depth tracking).
+  // Prevents prose appended after the closing } from breaking JSON.parse.
+  const extracted = extractFirstJsonObject(stripped.slice(jsonStart));
+  // Use the full remaining string from the first { — repairJson will close any truncated structures.
+  const sanitized = sanitizeJsonString(extracted);
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let content: any;
+  // Tier 1: light repair (trailing commas, ellipsis)
   try {
-    content = JSON.parse(raw);
-  } catch {
-    // Fallback: quote unquoted object keys (JS object-literal style, e.g. `{ title: "..." }`)
-    const repaired = raw
+    const light = sanitized
       .replace(/,\s*\.{3}\s*(?=[}\]])/g, '')
       .replace(/\[\s*\.{3}\s*\]/g, '[]')
       .replace(/\{\s*\.{3}\s*\}/g, '{}')
-      .replace(/([{,]\s*)([a-zA-Z_$][a-zA-Z0-9_$]*)\s*:/g, '$1"$2":');
-    content = JSON.parse(repaired);
+      .replace(/,(\s*[}\]])/g, '$1');
+    content = JSON.parse(light);
+  } catch {
+    // Tier 2: full repair including truncation closing + unquoted key quoting
+    try {
+      content = JSON.parse(repairJson(sanitized));
+    } catch (e2) {
+      console.error('[parseAndValidateContent] All parse attempts failed. Raw (first 500):', sanitized.slice(0, 500));
+      throw e2;
+    }
   }
 
   if (type === 'email') {
-    if (!content.subject || !content.body) throw new Error('Invalid email shape');
+    if (content.subject == null || content.body == null) throw new Error('Invalid email shape');
     return content as EmailContent;
   }
   if (type === 'presentation') {
     if (!content.title || !Array.isArray(content.slides)) throw new Error('Invalid presentation shape');
+    // Ensure each slide is an object (model sometimes collapses to strings)
+    content.slides = content.slides.map((s: any) =>
+      typeof s === 'object' && s !== null ? s : { title: String(s), layout: 'content', bullets: [] }
+    );
     return content as PptxContent;
   }
   if (type === 'spreadsheet') {
     if (!content.title || !Array.isArray(content.sheets)) throw new Error('Invalid spreadsheet shape');
+    for (const sheet of content.sheets) {
+      if (!Array.isArray(sheet.rows)) sheet.rows = [];
+      // Promote first row to headers if headers field is missing
+      if (!Array.isArray(sheet.headers)) {
+        if (sheet.rows.length > 0) {
+          sheet.headers = (sheet.rows[0] as any[]).map(String);
+          sheet.rows = sheet.rows.slice(1);
+        } else {
+          sheet.headers = [];
+        }
+      }
+    }
     return content as XlsxContent;
   }
   if (!content.title || !Array.isArray(content.sections)) throw new Error('Invalid document shape');
+  // Ensure every section has paragraphs and a numeric level (guards against truncated sections)
+  for (const section of content.sections) {
+    if (!Array.isArray(section.paragraphs)) section.paragraphs = [];
+    if (typeof section.level !== 'number') section.level = 1;
+  }
   return content as DocContent;
 }
 
@@ -696,9 +822,12 @@ export async function assembleArtifactFromSteps(params: {
   // from unquoted keys, trailing commas, and other LLM JSON issues.
   const supportsJsonMode = ['openai', 'azure_openai', 'fireworks'].includes(endpoint.provider);
 
+  // Fireworks non-streaming API rejects max_tokens > 4096. Cap it.
+  const effectiveMaxTokens = endpoint.provider === 'fireworks' ? Math.min(maxTokens, 4096) : maxTokens;
+
   const completion = await aiCreate(client, {
     model,
-    max_tokens: maxTokens,
+    max_tokens: effectiveMaxTokens,
     ...(supportsJsonMode ? { response_format: { type: 'json_object' as const } } : {}),
     messages: [
       { role: 'system', content: systemPrompt },
@@ -707,7 +836,26 @@ export async function assembleArtifactFromSteps(params: {
   });
 
   const rawText = completion.choices[0]?.message?.content ?? '{}';
-  const content = parseAndValidateContent(type, rawText);
+  let content: ArtifactContent;
+  try {
+    content = parseAndValidateContent(type, rawText);
+  } catch (primaryErr) {
+    console.warn('[assembleArtifact] Primary parse failed, attempting rescue call:', (primaryErr as Error).message);
+    const rescueCompletion = await aiCreate(client, {
+      model,
+      max_tokens: 2000,
+      ...(supportsJsonMode ? { response_format: { type: 'json_object' as const } } : {}),
+      messages: [
+        { role: 'system', content: buildRescueSystemPrompt(type) },
+        {
+          role: 'user',
+          content: `The following JSON output failed to parse. Extract all valid content and return it as a well-formed JSON object. Keep it under 1800 characters total.\n\nBROKEN OUTPUT:\n${rawText.slice(0, 4000)}`,
+        },
+      ],
+    });
+    const rescueText = rescueCompletion.choices[0]?.message?.content ?? '{}';
+    content = parseAndValidateContent(type, rescueText);
+  }
 
   // QA pass — runs when skill has a skillReview brief (non-fatal)
   // Uses the conversation task model (lighter, more reliable for structured JSON output)
@@ -1013,9 +1161,10 @@ export async function runFullPipeline(params: GeneratePipelineParams): Promise<P
           stepOutputs: intermediateOutputs, attachmentContext: contextBundle.flat,
           conversationContext, userContext, adminClient,
           skillGeneration, pageSize: skillPageSize,
-          maxGenerationTokens: skillMaxGenerationTokens ?? callerMaxGenerationTokens,
-          maxStepOutputsChars: skillMaxStepOutputsChars,
-          maxJsonChars: skillMaxJsonChars,
+          // Fallback: use a tighter budget to guarantee parseable output
+          maxGenerationTokens: Math.min(skillMaxGenerationTokens ?? callerMaxGenerationTokens ?? 3500, 2500),
+          maxStepOutputsChars: 1500,
+          maxJsonChars: 2500,
           requirementsContext,
           skillReview,
         });

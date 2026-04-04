@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   ChevronRightIcon,
   ArrowDownTrayIcon,
@@ -125,7 +125,8 @@ function PptxPreview({ content }: { content: PptxContent }) {
 }
 
 function XlsxPreview({ content }: { content: XlsxContent }) {
-  const sheet = content.sheets[0];
+  const [activeIdx, setActiveIdx] = useState(0);
+  const sheet = content.sheets[activeIdx] ?? content.sheets[0];
   if (!sheet) return <p className="text-[13px] text-neutral-400">No data</p>;
 
   return (
@@ -133,9 +134,17 @@ function XlsxPreview({ content }: { content: XlsxContent }) {
       {content.sheets.length > 1 && (
         <div className="flex gap-1.5 flex-wrap mb-3">
           {content.sheets.map((s, i) => (
-            <span key={i} className="px-2 py-0.5 rounded-md bg-neutral-100 text-[11px] text-neutral-600">
+            <button
+              key={i}
+              onClick={() => setActiveIdx(i)}
+              className={`px-2.5 py-1 rounded-md text-[11px] transition-colors ${
+                i === activeIdx
+                  ? 'bg-neutral-200 text-neutral-800 font-medium'
+                  : 'bg-neutral-100 text-neutral-600 hover:bg-neutral-200'
+              }`}
+            >
               {s.name}
-            </span>
+            </button>
           ))}
         </div>
       )}
@@ -330,9 +339,11 @@ export function ChatArtifactPanel({
 
   // Sync active tab when activeArtifactId changes from parent
   // (e.g. when "View document" is clicked in a message)
-  if (activeArtifactId && activeArtifactId !== activeId) {
-    setActiveId(activeArtifactId);
-  }
+  useEffect(() => {
+    if (activeArtifactId && activeArtifactId !== activeId) {
+      setActiveId(activeArtifactId);
+    }
+  }, [activeArtifactId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const artifact = artifacts.find(a => a.id === activeId) ?? artifacts[artifacts.length - 1] ?? null;
 
