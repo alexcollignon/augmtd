@@ -60,19 +60,18 @@ export async function createBotsForCalendarEvents(
     return { created: 0, errors: [] };
   }
 
-  // Check if user has meeting assistant enabled + get name for bot display
+  // Bots are only created when the user explicitly clicks "Send assistant" in the UI.
+  // This function only handles orphan recovery — re-queuing bots that were explicitly
+  // scheduled but whose Hetzner job was lost (e.g. container restart).
+
+  // Fetch profile for bot name display
   const { data: profile } = await supabase
     .from('profiles')
-    .select('attendee_enabled, full_name')
+    .select('full_name')
     .eq('id', userId)
     .single();
 
-  if (!profile?.attendee_enabled) {
-    return { created: 0, errors: [] };
-  }
-
-  // Derive bot name: "Alex's Assistant"
-  const firstName = profile.full_name?.split(' ')[0] ?? 'Your';
+  const firstName = profile?.full_name?.split(' ')[0] ?? 'Your';
   const botName = `${firstName}'s Assistant`;
 
   // Get a fresh Google OAuth access token for the user (used to authenticate the bot browser session)
@@ -96,66 +95,10 @@ export async function createBotsForCalendarEvents(
     console.warn('[MeetingBot] Could not get Google access token — bot will join as guest:', err);
   }
 
-  // Find upcoming events (next 2 weeks) with Google Meet links but no bot created yet
   const now = new Date();
   const twoWeeksFromNow = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
-
-  const { data: events } = await supabase
-    .from('calendar_events')
-    .select('id, title, meeting_link, start_time')
-    .eq('user_id', userId)
-    .gte('start_time', now.toISOString())
-    .lte('start_time', twoWeeksFromNow.toISOString())
-    .is('attendee_bot_id', null)
-    .not('meeting_link', 'is', null)
-    .neq('attendee_bot_state', 'cancelled')
-    .order('start_time', { ascending: true })
-    .limit(50);
-
-  if (!events || events.length === 0) {
-    return { created: 0, errors: [] };
-  }
-
-  console.log(`[MeetingBot] Found ${events.length} events to create bots for (user: ${userId})`);
-
   let created = 0;
   const errors: string[] = [];
-
-  for (const event of events) {
-    try {
-      // Only Google Meet is supported
-      if (!event.meeting_link?.includes('meet.google.com')) continue;
-
-      console.log(`[MeetingBot] Creating bot for: ${event.title}`);
-
-      const meetingStart = new Date(event.start_time);
-      const minJoinTime = new Date(now.getTime() + 2 * 60 * 1000);
-      const joinAt = meetingStart > minJoinTime ? meetingStart : minJoinTime;
-
-      const { createMeetingBot } = await import('@/lib/integrations/meeting-bot/client');
-      const result = await createMeetingBot(event.meeting_link, joinAt, event.id, userId, botName, googleAccessToken);
-      const bot = { id: result.botId, state: 'scheduled' };
-
-      const { error } = await supabase
-        .from('calendar_events')
-        .update({
-          attendee_bot_id: bot.id,
-          attendee_bot_state: bot.state,
-          attendee_bot_created_at: new Date().toISOString(),
-        })
-        .eq('id', event.id);
-
-      if (error) {
-        errors.push(`Failed to save bot for event ${event.id}: ${error.message}`);
-      } else {
-        created++;
-        console.log(`[MeetingBot] Scheduled bot ${bot.id} for: ${event.title} (joins at ${joinAt.toISOString()})`);
-      }
-    } catch (error: any) {
-      console.error(`[MeetingBot] Error creating bot for event ${event.id}:`, error);
-      errors.push(`Event ${event.title}: ${error.message}`);
-    }
-  }
 
   // --- Orphan recovery: re-queue bots whose Hetzner job was lost (e.g. after container restart) ---
   const { data: scheduledEvents } = await supabase
@@ -603,8 +546,13 @@ Rules for other fields:
     const response = completion.choices[0]?.message?.content?.trim();
     if (!response) throw new Error('No response');
 
-    // Strip markdown fences if present, then find the first complete JSON object
-    const stripped = response.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
+    // Strip <think>...</think> blocks (DeepSeek reasoning traces) then markdown fences,
+    // then find the first complete JSON object.
+    const stripped = response
+      .replace(/<think>[\s\S]*?<\/think>/g, '')
+      .replace(/^```(?:json)?\n?/, '')
+      .replace(/\n?```$/, '')
+      .trim();
     const jsonStart = stripped.indexOf('{');
     const jsonEnd = stripped.lastIndexOf('}');
     if (jsonStart === -1 || jsonEnd === -1) throw new Error('No JSON object in response');

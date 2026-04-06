@@ -22,6 +22,7 @@ interface Transcript {
   summary?: string | null;
   processedAt?: string | null;
   folderId?: string | null;
+  hasRecording: boolean;
   attendees?: Array<{ email: string; name?: string }>;
 }
 

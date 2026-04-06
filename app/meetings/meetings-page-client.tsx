@@ -35,6 +35,7 @@ interface Transcript {
   summary?: string | null;
   processedAt?: string | null;
   folderId?: string | null;
+  hasRecording: boolean;
   attendees?: Array<{ email: string; name?: string }>;
 }
 
@@ -52,6 +53,7 @@ function mapTranscripts(raw: any[]): Transcript[] {
     summary: t.summary,
     processedAt: t.updated_at ?? null,
     folderId: t.folder_id ?? null,
+    hasRecording: !!t.recording_storage_path,
     attendees: t.calendar_events?.attendees ?? [],
   }));
 }
@@ -256,6 +258,28 @@ export default function MeetingsPageClient({ userEmail }: { userEmail: string })
     router.push(`/processes/${processId}`);
   };
 
+  const handleDeleteTranscript = async (transcriptId: string) => {
+    setTranscripts((prev) => prev.filter((t) => t.id !== transcriptId));
+    try {
+      await fetch(`/api/meetings/recording/${transcriptId}`, { method: 'DELETE' });
+    } catch {
+      fetchAll();
+    }
+  };
+
+  const handleRetryFailed = async (transcriptId: string) => {
+    setTranscripts((prev) =>
+      prev.map((t) =>
+        t.id === transcriptId ? { ...t, processed: false, botState: 'processing' } : t
+      )
+    );
+    try {
+      await fetch(`/api/meetings/recording/${transcriptId}/retry`, { method: 'POST' });
+    } catch {
+      fetchAll();
+    }
+  };
+
   // Derived
   const upcomingNonCompleted = upcoming.filter((m) => m.meeting_status !== 'completed');
   const liveBots: Array<{ title: string; state: 'joining' | 'recording'; calendarEventId: string | null; startedAt?: string }> = [];
@@ -279,7 +303,7 @@ export default function MeetingsPageClient({ userEmail }: { userEmail: string })
 
   const cutoff = Date.now() - TWENTY_FOUR_HOURS;
   const isNew = (t: Transcript) =>
-    !seenIds.has(t.id) && t.processed && t.processedAt != null &&
+    !seenIds.has(t.id) && t.processed && t.botState !== 'failed' && t.processedAt != null &&
     new Date(t.processedAt).getTime() > cutoff;
 
   // Determine if live notepad should show — only when NOT already inside an inline note
@@ -414,11 +438,12 @@ export default function MeetingsPageClient({ userEmail }: { userEmail: string })
                 filterPersonEmail={filterPersonEmail}
                 onSelectMeeting={(id) => {
                   setSelectedMeetingId(id);
-                  
                   setActiveMeetingContext(null);
                   setChatAutoMessage(undefined);
                   setSelectedFolderId(null);
                 }}
+                onDeleteTranscript={handleDeleteTranscript}
+                onRetryFailed={handleRetryFailed}
                 isNew={isNew}
               />
             )}

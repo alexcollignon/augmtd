@@ -1,10 +1,13 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import {
   MicrophoneIcon,
   DocumentTextIcon,
   ComputerDesktopIcon,
+  XMarkIcon,
+  ArrowPathIcon,
+  CheckIcon,
 } from '@heroicons/react/24/outline';
 import type { CalendarEvent } from '@/lib/types/meetings';
 
@@ -21,6 +24,7 @@ interface Transcript {
   summary?: string | null;
   processedAt?: string | null;
   folderId?: string | null;
+  hasRecording: boolean;
   attendees?: Array<{ email: string; name?: string }>;
 }
 
@@ -29,6 +33,8 @@ interface MeetingsHomeProps {
   transcripts: Transcript[];
   filterPersonEmail: string | null;
   onSelectMeeting: (id: string) => void;
+  onDeleteTranscript: (transcriptId: string) => void;
+  onRetryFailed: (transcriptId: string) => void;
   isNew: (t: Transcript) => boolean;
 }
 
@@ -125,8 +131,12 @@ export default function MeetingsHome({
   transcripts,
   filterPersonEmail,
   onSelectMeeting,
+  onDeleteTranscript,
+  onRetryFailed,
   isNew,
 }: MeetingsHomeProps) {
+  const [retryingIds, setRetryingIds] = useState<Set<string>>(new Set());
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const now = new Date();
   const todayStr = now.toDateString();
   const tomorrowStr = new Date(now.getTime() + 86400000).toDateString();
@@ -146,16 +156,17 @@ export default function MeetingsHome({
     return { label, events };
   }, [upcoming]); // eslint-disable-line
 
-  // In-progress transcripts (created but not yet processed)
+  // In-progress transcripts — server auto-fails stuck rows after 2h before returning this list
   const inProgress = useMemo(() =>
-    transcripts.filter((t) => !t.processed && t.botState !== 'failed')
+    transcripts
+      .filter((t) => !t.processed && t.botState !== 'failed')
       .sort((a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime()),
   [transcripts]);
 
   // Recent notes grouped by date
   const recentByDate = useMemo(() => {
     let list = transcripts
-      .filter((t) => t.processed && t.botState !== 'failed')
+      .filter((t) => t.processed)
       .sort((a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime());
     if (filterPersonEmail) {
       list = list.filter((t) => t.attendees?.some((a) => a.email === filterPersonEmail));
@@ -232,27 +243,55 @@ export default function MeetingsHome({
             {inProgress.map((t) => {
               const { label, pulse } = progressStatus(t);
               return (
-                <button
-                  key={t.id}
-                  onClick={() => onSelectMeeting(t.calendarEventId ?? t.id)}
-                  className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-neutral-50 transition-colors text-left"
-                >
-                  <div className="w-8 h-8 rounded-lg bg-neutral-100 flex items-center justify-center flex-shrink-0">
-                    <SourceIcon source={t.source} />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-[13px] font-medium text-neutral-800 truncate">{t.title || 'Untitled'}</p>
-                    <div className="flex items-center gap-1.5 mt-0.5">
-                      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${pulse ? 'bg-amber-400 animate-pulse' : 'bg-emerald-400'}`} />
-                      <span className="text-[11px] text-neutral-400">{label}</span>
+                <div key={t.id} className="group/ip relative flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-neutral-50 transition-colors">
+                  <button
+                    onClick={() => onSelectMeeting(t.calendarEventId ?? t.id)}
+                    className="flex items-center gap-3 flex-1 min-w-0 text-left"
+                  >
+                    <div className="w-8 h-8 rounded-lg bg-neutral-100 flex items-center justify-center flex-shrink-0">
+                      <SourceIcon source={t.source} />
                     </div>
-                  </div>
-                  <div className="flex-shrink-0">
-                    <p className="text-[11px] text-neutral-400">
-                      {new Date(t.startTime).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
-                    </p>
-                  </div>
-                </button>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[13px] font-medium text-neutral-800 truncate">{t.title || 'Untitled'}</p>
+                      <div className="flex items-center gap-1.5 mt-0.5">
+                        <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${pulse ? 'bg-amber-400 animate-pulse' : 'bg-emerald-400'}`} />
+                        <span className="text-[11px] text-neutral-400">{label}</span>
+                      </div>
+                    </div>
+                    <div className="flex-shrink-0">
+                      <p className="text-[11px] text-neutral-400">
+                        {new Date(t.startTime).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
+                      </p>
+                    </div>
+                  </button>
+                  {confirmDeleteId === t.id ? (
+                    <div className="flex items-center gap-1 flex-shrink-0">
+                      <span className="text-[11px] text-neutral-500 mr-0.5">Remove?</span>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); onDeleteTranscript(t.id); setConfirmDeleteId(null); }}
+                        className="p-1 rounded hover:bg-red-100 text-red-500"
+                        title="Confirm remove"
+                      >
+                        <CheckIcon className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(null); }}
+                        className="p-1 rounded hover:bg-neutral-200 text-neutral-400"
+                        title="Cancel"
+                      >
+                        <XMarkIcon className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(t.id); }}
+                      title="Remove"
+                      className="opacity-0 group-hover/ip:opacity-100 transition-opacity p-1 rounded hover:bg-neutral-200 text-neutral-400 hover:text-neutral-600 flex-shrink-0"
+                    >
+                      <XMarkIcon className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
               );
             })}
           </div>
@@ -278,34 +317,94 @@ export default function MeetingsHome({
                 {group.label}
               </p>
               <div className="space-y-0.5">
-                {group.items.map((t) => (
-                  <button
-                    key={t.id}
-                    onClick={() => onSelectMeeting(t.calendarEventId ?? t.id)}
-                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-neutral-50 transition-colors text-left"
-                  >
-                    <div className="w-8 h-8 rounded-lg bg-neutral-100 flex items-center justify-center flex-shrink-0">
-                      <SourceIcon source={t.source} />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1.5">
-                        <p className="text-[13px] font-medium text-neutral-800 truncate">{t.title}</p>
-                        {isNew(t) && <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 flex-shrink-0" />}
+                {group.items.map((t) => {
+                  if (t.botState === 'failed') {
+                    return (
+                      <div
+                        key={t.id}
+                        className="flex items-center gap-3 px-3 py-2.5 rounded-lg"
+                      >
+                        <div className="w-8 h-8 rounded-lg bg-red-50 flex items-center justify-center flex-shrink-0">
+                          <SourceIcon source={t.source} />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-[13px] font-medium text-neutral-400 truncate">{t.title || 'Untitled'}</p>
+                          <p className="text-[11px] text-red-400 mt-0.5">Processing failed</p>
+                        </div>
+                        <div className="flex items-center gap-1.5 flex-shrink-0">
+                          {t.hasRecording && (
+                            <button
+                              onClick={() => {
+                                setRetryingIds((prev) => new Set(prev).add(t.id));
+                                onRetryFailed(t.id);
+                              }}
+                              disabled={retryingIds.has(t.id)}
+                              className="flex items-center gap-1 text-[11px] font-medium text-indigo-600 hover:text-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              <ArrowPathIcon className={`w-3 h-3 ${retryingIds.has(t.id) ? 'animate-spin' : ''}`} />
+                              Retry
+                            </button>
+                          )}
+                          {confirmDeleteId === t.id ? (
+                            <div className="flex items-center gap-1">
+                              <span className="text-[11px] text-neutral-500 mr-0.5">Remove?</span>
+                              <button
+                                onClick={() => { onDeleteTranscript(t.id); setConfirmDeleteId(null); }}
+                                className="p-1 rounded hover:bg-red-100 text-red-500"
+                                title="Confirm remove"
+                              >
+                                <CheckIcon className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => setConfirmDeleteId(null)}
+                                className="p-1 rounded hover:bg-neutral-200 text-neutral-400"
+                                title="Cancel"
+                              >
+                                <XMarkIcon className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() => setConfirmDeleteId(t.id)}
+                              className="p-1 rounded hover:bg-neutral-100 text-neutral-400 hover:text-neutral-600"
+                              title="Remove"
+                            >
+                              <XMarkIcon className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
                       </div>
-                      {(t.attendees?.length ?? 0) > 0 && (
-                        <AttendeeAvatars attendees={t.attendees!} />
-                      )}
-                    </div>
-                    <div className="flex-shrink-0 text-right">
-                      <p className="text-[11px] text-neutral-400">
-                        {new Date(t.startTime).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
-                      </p>
-                      {t.workItemsGenerated > 0 && (
-                        <p className="text-[10px] text-blue-500 font-medium">{t.workItemsGenerated} items</p>
-                      )}
-                    </div>
-                  </button>
-                ))}
+                    );
+                  }
+                  return (
+                    <button
+                      key={t.id}
+                      onClick={() => onSelectMeeting(t.calendarEventId ?? t.id)}
+                      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-neutral-50 transition-colors text-left"
+                    >
+                      <div className="w-8 h-8 rounded-lg bg-neutral-100 flex items-center justify-center flex-shrink-0">
+                        <SourceIcon source={t.source} />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <p className="text-[13px] font-medium text-neutral-800 truncate">{t.title}</p>
+                          {isNew(t) && <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 flex-shrink-0" />}
+                        </div>
+                        {(t.attendees?.length ?? 0) > 0 && (
+                          <AttendeeAvatars attendees={t.attendees!} />
+                        )}
+                      </div>
+                      <div className="flex-shrink-0 text-right">
+                        <p className="text-[11px] text-neutral-400">
+                          {new Date(t.startTime).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
+                        </p>
+                        {t.workItemsGenerated > 0 && (
+                          <p className="text-[10px] text-blue-500 font-medium">{t.workItemsGenerated} items</p>
+                        )}
+                      </div>
+                    </button>
+                  );
+                })}
               </div>
             </section>
           ))}
