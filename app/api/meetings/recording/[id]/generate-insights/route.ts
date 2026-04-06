@@ -31,7 +31,7 @@ export async function POST(
 
   const { data: transcript } = await adminClient
     .from('meeting_transcripts')
-    .select('id, user_id, calendar_event_id, title, start_time, end_time, transcript_segments, source, recording_storage_path')
+    .select('id, user_id, calendar_event_id, title, start_time, end_time, transcript_segments, source, recording_storage_path, notes_structured')
     .eq('id', transcriptId)
     .maybeSingle();
 
@@ -46,6 +46,9 @@ export async function POST(
 
   // storeTranscriptAndGenerateWork with existingTranscriptId skips the insert/update
   // of segments (already done by Hetzner) and goes straight to insights + inbox items.
+  const notesStructured = transcript.notes_structured as { live_notes?: string } | null;
+  const liveNotes = notesStructured?.live_notes || undefined;
+
   await storeTranscriptAndGenerateWork(
     transcript.user_id,
     transcript.calendar_event_id ?? null,
@@ -59,6 +62,7 @@ export async function POST(
       source: transcript.source ?? 'bot',
       recordingStoragePath: transcript.recording_storage_path ?? undefined,
       existingTranscriptId: transcriptId,
+      liveNotes,
     }
   );
 

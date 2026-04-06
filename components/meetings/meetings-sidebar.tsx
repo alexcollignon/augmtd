@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { ChevronDownIcon, ChevronUpIcon, XMarkIcon, MicrophoneIcon } from '@heroicons/react/24/outline';
 import type { CalendarEvent } from '@/lib/types/meetings';
+import { useRecording } from '@/hooks/useRecording';
 import MeetingCard from './meeting-card';
 import CaptureModal from './capture-modal';
 
@@ -18,6 +19,7 @@ export default function MeetingsSidebar({ userId, userEmail, isOpen, onClose }: 
   const [loading, setLoading] = useState(true);
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set(['tomorrow', 'this_week']));
   const [showCapture, setShowCapture] = useState(false);
+  const sidebarRecording = useRecording();
 
   // Fetch meetings from calendar_events
   useEffect(() => {
@@ -127,7 +129,7 @@ export default function MeetingsSidebar({ userId, userEmail, isOpen, onClose }: 
         </div>
       </div>
 
-      <CaptureModal isOpen={showCapture} onClose={() => setShowCapture(false)} />
+      <CaptureModal isOpen={showCapture} onClose={() => setShowCapture(false)} recording={sidebarRecording} />
 
       {/* Scrollable content */}
       <div className="flex-1 overflow-y-auto px-5 py-4 bg-neutral-50/30">

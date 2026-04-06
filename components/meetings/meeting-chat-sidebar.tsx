@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { PaperAirplaneIcon, SparklesIcon, ArrowTopRightOnSquareIcon, ChatBubbleLeftRightIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
+import { PaperAirplaneIcon, SparklesIcon, ArrowTopRightOnSquareIcon, ChatBubbleLeftRightIcon, ChevronRightIcon, CalendarIcon } from '@heroicons/react/24/outline';
 
 interface ChatMessage {
   role: 'user' | 'assistant';
@@ -37,6 +37,12 @@ interface MeetingChatSidebarProps {
   meetingContext: MeetingChatContext;
   onOpenWorkflow: (title: string, skill?: string) => void;
   onOpenProcess: (processId: string) => void;
+  /** When true, renders without the outer w-[380px] wrapper — parent controls width */
+  inline?: boolean;
+  /** Auto-send a message when the component mounts with this value */
+  autoMessage?: string;
+  /** Called when the user clicks the switch-panel button (e.g. to open AssistantPanel) */
+  onSwitchPanel?: () => void;
 }
 
 const QUICK_PROMPTS = [
@@ -214,6 +220,9 @@ export default function MeetingChatSidebar({
   meetingContext,
   onOpenWorkflow,
   onOpenProcess,
+  inline,
+  autoMessage,
+  onSwitchPanel,
 }: MeetingChatSidebarProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputValue, setInputValue] = useState('');
@@ -224,6 +233,17 @@ export default function MeetingChatSidebar({
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // Auto-send a message (e.g. "Draft a follow-up email...")
+  const autoMessageSent = useRef(false);
+  useEffect(() => {
+    if (autoMessage && isOpen && !autoMessageSent.current && messages.length === 0) {
+      autoMessageSent.current = true;
+      // Small delay to let the component render first
+      const t = setTimeout(() => sendMessage(autoMessage), 200);
+      return () => clearTimeout(t);
+    }
+  }, [autoMessage, isOpen]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const sendMessage = useCallback(async (text: string) => {
     if (!text.trim() || streaming) return;
@@ -280,17 +300,24 @@ export default function MeetingChatSidebar({
   const isEmpty = messages.length === 0;
 
   return (
-    <div className="w-[380px] flex-shrink-0 h-full bg-neutral-50 pt-2 pr-2 pb-2 flex flex-col">
-      <div className="flex-1 flex flex-col rounded-2xl bg-white shadow-sm overflow-hidden min-h-0">
+    <div className={inline ? 'flex flex-col h-full' : 'w-[380px] flex-shrink-0 h-full bg-neutral-50 pt-2 pr-2 pb-2 flex flex-col'}>
+      <div className={inline ? 'flex-1 flex flex-col overflow-hidden min-h-0' : 'flex-1 flex flex-col rounded-2xl bg-white shadow-sm overflow-hidden min-h-0'}>
         {/* Header */}
         <div className="h-10 flex items-center justify-between px-3 border-b border-neutral-100 flex-shrink-0">
           <div className="flex items-center gap-2">
             <ChatBubbleLeftRightIcon className="w-3.5 h-3.5 text-neutral-400" />
             <span className="text-[12px] font-semibold text-neutral-700">Assistant</span>
           </div>
-          <button onClick={onClose} className="p-1 text-neutral-400 hover:text-neutral-600 transition-colors">
-            <ChevronRightIcon className="w-3.5 h-3.5" />
-          </button>
+          <div className="flex items-center gap-1">
+            {onSwitchPanel && (
+              <button onClick={onSwitchPanel} title="Calendar" className="p-1 text-neutral-400 hover:text-neutral-600 transition-colors">
+                <CalendarIcon className="w-3.5 h-3.5" />
+              </button>
+            )}
+            <button onClick={onClose} className="p-1 text-neutral-400 hover:text-neutral-600 transition-colors">
+              <ChevronRightIcon className="w-3.5 h-3.5" />
+            </button>
+          </div>
         </div>
 
         {/* Messages */}

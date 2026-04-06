@@ -4,6 +4,7 @@ import React from 'react';
 
 const BOT_STEPS = ['Joining', 'Recording', 'Transcribing', 'Analyzing', 'Ready'];
 const RECORDING_STEPS = ['Transcribing', 'Analyzing', 'Ready'];
+const TEXT_STEPS = ['Analyzing', 'Ready'];
 
 function getActiveStep(
   source: string,
@@ -11,6 +12,7 @@ function getActiveStep(
   botState: string | null,
   processed: boolean,
 ): number {
+  if (source === 'text') return processed ? 2 : 0;
   if (processed) return source === 'bot' ? 5 : 3; // past last step = all done
   if (source === 'bot') {
     // Prefer botState as primary signal — always accurate from transcript row
@@ -29,7 +31,7 @@ function getActiveStep(
 }
 
 interface ProcessingPipelineProps {
-  source: 'bot' | 'recording' | 'upload';
+  source: 'bot' | 'recording' | 'upload' | 'text';
   attendeeBotState?: string | null;
   botState: string | null;
   processed: boolean;
@@ -41,7 +43,7 @@ export default function ProcessingPipeline({
   botState,
   processed,
 }: ProcessingPipelineProps) {
-  const steps = source === 'bot' ? BOT_STEPS : RECORDING_STEPS;
+  const steps = source === 'bot' ? BOT_STEPS : source === 'text' ? TEXT_STEPS : RECORDING_STEPS;
   const activeStep = getActiveStep(source, attendeeBotState, botState, processed);
 
   return (

@@ -18,6 +18,7 @@ export interface ProcessAudioFileParams {
   source: 'bot' | 'recording' | 'upload';
   adminClient: SupabaseClient;
   existingTranscriptId?: string; // update pending row instead of inserting
+  liveNotes?: string; // user notes taken during the meeting, used as AI anchors
 }
 
 /**
@@ -25,7 +26,7 @@ export interface ProcessAudioFileParams {
  * and store transcript + generate work items.
  */
 export async function processAudioFile(params: ProcessAudioFileParams): Promise<void> {
-  const { userId, calendarEventId, title, startTime, endTime, storagePath, source, adminClient, existingTranscriptId } = params;
+  const { userId, calendarEventId, title, startTime, endTime, storagePath, source, adminClient, existingTranscriptId, liveNotes } = params;
 
   console.log(`[TranscriptionPipeline] Starting transcription for: ${title} (${storagePath})`);
 
@@ -57,7 +58,7 @@ export async function processAudioFile(params: ProcessAudioFileParams): Promise<
       endTime,
       segments, // already normalized { speaker, text, timestamp }
       adminClient,
-      { source, recordingStoragePath: storagePath, existingTranscriptId }
+      { source, recordingStoragePath: storagePath, existingTranscriptId, liveNotes }
     );
 
     console.log(`[TranscriptionPipeline] Done: ${title}`);

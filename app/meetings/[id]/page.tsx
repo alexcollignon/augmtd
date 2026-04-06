@@ -27,7 +27,7 @@ export default async function MeetingDetailPage({
   // Load transcript if exists
   const { data: transcriptRaw } = await supabase
     .from('meeting_transcripts')
-    .select('id, summary, decisions, risks, suggested_next_step, key_moments, transcript_segments, duration_minutes, work_items_generated, source, recording_storage_path, bot_state, processed')
+    .select('id, summary, decisions, risks, suggested_next_step, key_moments, transcript_segments, duration_minutes, work_items_generated, source, recording_storage_path, bot_state, processed, notes_structured, template_id')
     .eq('calendar_event_id', id)
     .eq('user_id', user.id)
     .order('created_at', { ascending: false })
@@ -62,6 +62,8 @@ export default async function MeetingDetailPage({
         source: transcriptRaw.source ?? 'bot',
         botState: transcriptRaw.bot_state ?? null,
         processed: transcriptRaw.processed ?? false,
+        notesStructured: (transcriptRaw as any).notes_structured ?? null,
+        templateId: (transcriptRaw as any).template_id ?? 'default',
       }
     : null;
 

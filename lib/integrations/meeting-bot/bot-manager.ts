@@ -39,7 +39,7 @@ interface MeetingRisk {
 }
 
 interface MeetingInsights {
-  summary: string;
+  document: string;
   decisions: MeetingDecision[];
   actionItems: ExtractedActionItem[];
   keyMoments: KeyMoment[];
@@ -235,7 +235,7 @@ export async function storeTranscriptAndGenerateWork(
   endTime: string,
   transcript: any,
   supabase: SupabaseClient,
-  options?: { source?: 'bot' | 'recording' | 'upload'; recordingStoragePath?: string; existingTranscriptId?: string }
+  options?: { source?: 'bot' | 'recording' | 'upload'; recordingStoragePath?: string; existingTranscriptId?: string; liveNotes?: string }
 ): Promise<void> {
   const durationMinutes = Math.round(
     (new Date(endTime).getTime() - new Date(startTime).getTime()) / (1000 * 60)
@@ -304,7 +304,22 @@ export async function storeTranscriptAndGenerateWork(
 
   console.log(`[MeetingBot] Stored transcript ${transcriptRecord.id}`);
 
-  const insights = await extractMeetingInsights(userId, title, normalizedSegments, supabase);
+  // Collect live notes — from options (in-person) or calendar_events.metadata (bot)
+  let liveNotes = options?.liveNotes || '';
+  if (!liveNotes && calendarEventId) {
+    try {
+      const { data: eventRow } = await supabase
+        .from('calendar_events')
+        .select('metadata')
+        .eq('id', calendarEventId)
+        .single();
+      if (eventRow?.metadata?.live_notes) {
+        liveNotes = eventRow.metadata.live_notes;
+      }
+    } catch {}
+  }
+
+  const insights = await extractMeetingInsights(userId, title, normalizedSegments, supabase, liveNotes || undefined);
   const keyTopics = extractKeyTopics(normalizedSegments);
 
   let workItemsCreated = 0;
@@ -352,17 +367,23 @@ export async function storeTranscriptAndGenerateWork(
     }
   }
 
+  const transcriptUpdate: Record<string, any> = {
+    processed: true,
+    work_items_generated: workItemsCreated,
+    summary: insights.document || null,
+    decisions: insights.decisions,
+    key_moments: insights.keyMoments,
+    risks: insights.risks ?? [],
+    suggested_next_step: insights.suggested_next_step ?? null,
+    notes_structured: {
+      document: insights.document || '',
+      live_notes: liveNotes || '',
+    },
+  };
+
   await supabase
     .from('meeting_transcripts')
-    .update({
-      processed: true,
-      work_items_generated: workItemsCreated,
-      summary: insights.summary || null,
-      decisions: insights.decisions,
-      key_moments: insights.keyMoments,
-      risks: insights.risks ?? [],
-      suggested_next_step: insights.suggested_next_step ?? null,
-    })
+    .update(transcriptUpdate)
     .eq('id', transcriptRecord.id);
 
   // Fire-and-forget: index transcript text into KB so it's searchable in Drive
@@ -477,11 +498,24 @@ export async function reprocessTranscripts(
 /**
  * Extract full meeting insights in a single AI call.
  */
-async function extractMeetingInsights(
+/**
+ * Convert plain text into pseudo-segments for AI extraction.
+ * Each paragraph becomes one segment with speaker 'Note'.
+ */
+export function textToSegments(text: string): Array<{ speaker: string; text: string; timestamp: number }> {
+  return text.split(/\n\n+/).filter((p) => p.trim()).map((para, i) => ({
+    speaker: 'Note',
+    text: para.trim(),
+    timestamp: i * 60,
+  }));
+}
+
+export async function extractMeetingInsights(
   userId: string,
   meetingTitle: string,
   segments: any[],
-  supabase: SupabaseClient
+  supabase: SupabaseClient,
+  liveNotes?: string,
 ): Promise<MeetingInsights> {
   try {
     const { client: openai, model: defaultModel } = await getAIClient(userId, 'planning', supabase);
@@ -492,27 +526,33 @@ async function extractMeetingInsights(
       .map((s, i) => `[${i}] [${s.speaker}]: ${s.text}`)
       .join('\n');
 
-    const prompt = `${userContext ? userContext + '\n\n' : ''}You are analysing a meeting transcript. Reason step by step (internally) before producing output:
-1. What was the purpose of this meeting?
-2. What was actually decided (not just discussed)?
-3. What risks or blockers were raised, explicitly or implicitly?
-4. What actions follow, and who owns each one?
-5. Given the user's role and responsibilities, what is the single most important next step for them?
+    const isTextNote = segments.every((s: any) => s.speaker === 'Note');
+
+    const notesBlock = liveNotes?.trim()
+      ? `The participant wrote these notes during the meeting:\n<notes>\n${liveNotes.trim()}\n</notes>\n\nUse these as your structural skeleton — expand each point with precise context and exact wording from the transcript. Preserve the participant's framing and sequencing. Do not introduce new top-level sections that aren't grounded in the notes.`
+      : '';
+
+    const documentInstruction = liveNotes?.trim()
+      ? `Expand the participant's notes with precise detail and exact context from the transcript. Keep their structure and voice. Capture every decision, commitment, open question, and risk — miss nothing. No redundancy: each fact once.`
+      : `Write what a thoughtful participant would capture. Open with 1–2 tight sentences on what this meeting was and its key outcome (no "The meeting was..." opener). Capture every decision, commitment, open question, and risk — miss nothing. No redundancy: each fact once.`;
+
+    const prompt = `${userContext ? userContext + '\n\n' : ''}You are producing clean meeting notes. Your output must read like a thoughtful colleague's notebook entry — precise, dense with useful detail, nothing wasted.
 
 Meeting: "${meetingTitle}"
-
-Transcript (each line prefixed with segment index [N]):
+${notesBlock ? '\n' + notesBlock + '\n' : ''}
+${isTextNote ? 'These are written notes (no audio transcript).' : 'Transcript (each line prefixed with segment index [N]):'}
 ${transcriptText}
 
 Return a JSON object with exactly these fields:
+
 {
-  "summary": "2-3 sentence plain text summary of what was discussed and decided",
+  "document": "<meeting note — see rules below>",
   "decisions": [
-    { "text": "What was decided", "owner": "Name or null", "date": "YYYY-MM-DD or null" }
+    { "text": "Concrete thing decided", "owner": "Name or null", "date": "YYYY-MM-DD or null" }
   ],
   "actionItems": [
     {
-      "action": "What needs to be done",
+      "action": "Specific task",
       "assignee": "Name or null",
       "priority": 75,
       "context": "Why this matters",
@@ -522,20 +562,26 @@ Return a JSON object with exactly these fields:
     }
   ],
   "risks": [
-    { "text": "Risk or blocker description", "severity": "high" }
+    { "text": "Blocker or risk raised", "severity": "high" }
   ],
   "keyMoments": [
-    { "segmentIndex": 5, "type": "decision", "text": "Brief label for this moment" }
+    { "segmentIndex": 0, "type": "decision", "text": "Brief label" }
   ],
-  "suggested_next_step": "Single sentence — the most important thing for the user to do next"
+  "suggested_next_step": "Single sentence — most important thing for the user to do next, or null"
 }
 
-Rules:
-- decisions: concrete things that were agreed/decided (not tasks). Max 8.
-- actionItems: specific tasks requiring action. Max 10. category: "todo" | "waiting_for" | "project". Set isUserTask=true if assignee matches the user above or is unassigned.
-- risks: blockers or risks raised explicitly or implicitly. Max 6. severity: "high" | "medium" | "low".
-- keyMoments: up to 6 notable segments. type: "decision" | "risk" | "commitment". segmentIndex must match a real [N] from the transcript.
-- suggested_next_step: single sentence, most important action for the user given their role. Null if unclear.
+Rules for the document field:
+- ${documentInstruction}
+- Use ## section headers only when they genuinely group distinct content. A short or simple meeting may not need any headers — tight prose is better than forced sections.
+- If follow-up actions were discussed, close with a ## Next Steps section (bullet list, owner after em dash, e.g. "- Review the contract — Alex").
+- Be proportional to the meeting length: a 5-minute call gets a tight paragraph, not 6 padded sections.
+- Write in clear direct prose. No corporate jargon. No AI-report patterns like "The discussion covered..." or "It was noted that...".
+
+Rules for other fields:
+- decisions: concrete things agreed or decided (not tasks). Max 8. Must be grounded in the transcript.
+- actionItems: specific tasks. Max 10. category: "todo" | "waiting_for" | "project". isUserTask=true if assignee matches user or is unassigned.
+- risks: blockers or concerns raised explicitly or implicitly. Max 6. severity: "high" | "medium" | "low".
+- keyMoments: up to 6 notable segments. type: "decision" | "risk" | "commitment". segmentIndex must be a real [N] from the transcript.
 - Return ONLY the JSON object, no other text.`;
 
     const completion = await openai.chat.completions.create({
@@ -556,7 +602,7 @@ Rules:
 
     console.log(`[MeetingBot] Extracted insights: ${parsed.decisions?.length ?? 0} decisions, ${parsed.actionItems?.length ?? 0} actions, ${parsed.risks?.length ?? 0} risks, ${parsed.keyMoments?.length ?? 0} key moments`);
     return {
-      summary: parsed.summary ?? '',
+      document: parsed.document ?? '',
       decisions: parsed.decisions ?? [],
       actionItems: parsed.actionItems ?? [],
       risks: parsed.risks ?? [],
@@ -566,8 +612,80 @@ Rules:
   } catch (error) {
     console.error('[MeetingBot] Error extracting meeting insights:', error);
     const actionItems = await extractActionItemsWithAI(userId, meetingTitle, segments, supabase);
-    return { summary: '', decisions: [], actionItems, risks: [], keyMoments: [], suggested_next_step: null };
+    return { document: '', decisions: [], actionItems, risks: [], keyMoments: [], suggested_next_step: null };
   }
+}
+
+/**
+ * Re-run insight extraction on an existing transcript with a different template.
+ * Looks up the transcript by calendar_event_id or transcript id, re-runs AI, updates DB.
+ */
+export async function reEnhanceTranscript(
+  userId: string,
+  eventOrTranscriptId: string,
+  templateId: string,
+  supabase: SupabaseClient,
+): Promise<MeetingInsights> {
+  // Try calendar_event_id first, then transcript id
+  let transcript: any = null;
+  const { data: byEvent } = await supabase
+    .from('meeting_transcripts')
+    .select('id, title, transcript_segments, notes_structured, calendar_event_id')
+    .eq('calendar_event_id', eventOrTranscriptId)
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  transcript = byEvent;
+
+  if (!transcript) {
+    const { data: byId } = await supabase
+      .from('meeting_transcripts')
+      .select('id, title, transcript_segments, notes_structured, calendar_event_id')
+      .eq('id', eventOrTranscriptId)
+      .eq('user_id', userId)
+      .maybeSingle();
+    transcript = byId;
+  }
+
+  if (!transcript) throw new Error('Transcript not found');
+
+  const segments = transcript.transcript_segments ?? [];
+  const liveNotes = transcript.notes_structured?.live_notes || '';
+
+  // Get template for custom instructions
+  const { getTemplate } = await import('@/lib/meetings/templates');
+  const template = getTemplate(templateId);
+
+  // Re-run extraction (template instructions are built into the prompt via liveNotes enrichment)
+  let templateHint = '';
+  if (template && templateId !== 'default') {
+    templateHint = `\n\nFormat the analysis according to the "${template.name}" template. Focus on these sections:\n${template.sections.map((s) => `- ${s.label}: ${s.instruction}`).join('\n')}\n`;
+  }
+
+  const combinedNotes = [liveNotes, templateHint].filter(Boolean).join('\n');
+  const insights = await extractMeetingInsights(userId, transcript.title, segments, supabase, combinedNotes || undefined);
+
+  // Update transcript
+  const update: Record<string, any> = {
+    summary: insights.document || null,
+    decisions: insights.decisions,
+    key_moments: insights.keyMoments,
+    risks: insights.risks ?? [],
+    suggested_next_step: insights.suggested_next_step ?? null,
+    template_id: templateId,
+    notes_structured: {
+      document: insights.document || '',
+      live_notes: liveNotes,
+    },
+  };
+
+  await supabase
+    .from('meeting_transcripts')
+    .update(update)
+    .eq('id', transcript.id);
+
+  return insights;
 }
 
 /**

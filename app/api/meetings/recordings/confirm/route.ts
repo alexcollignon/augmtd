@@ -15,13 +15,15 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { storagePath, calendarEventId, title, startTime, endTime, source = 'recording' } = body as {
+    const { storagePath, calendarEventId, title, startTime, endTime, source = 'recording', liveNotes, existingNoteId } = body as {
       storagePath: string;
       calendarEventId?: string;
       title: string;
       startTime: string;
       endTime: string;
       source?: 'recording' | 'upload';
+      liveNotes?: string;
+      existingNoteId?: string;
     };
 
     if (!storagePath || !title || !startTime || !endTime) {
@@ -42,34 +44,80 @@ export async function POST(request: NextRequest) {
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
 
-    // Pre-insert a pending transcript row so the UI shows it immediately
-    const pendingId = randomUUID();
-    const { error: pendingError } = await adminClient
-      .from('meeting_transcripts')
-      .insert({
-        id: pendingId,
-        user_id: user.id,
-        meeting_id: calendarEventId ?? randomUUID(),
-        calendar_event_id: calendarEventId ?? null,
-        title,
-        start_time: startTime,
-        end_time: endTime,
-        duration_minutes: 0,
-        source,
-        recording_storage_path: storagePath,
-        transcript: '',
-        transcript_segments: [],
-        attendees: [],
-        processed: false,
-        bot_state: 'processing',
-      });
+    // If an existing text note row exists for this session, promote it to a recording
+    // instead of creating a duplicate row.
+    const userId = user.id;
+    let transcriptId: string;
+    let mergedLiveNotes = liveNotes;
 
-    if (pendingError) {
-      console.error('[Recordings/Confirm] Failed to insert pending row:', pendingError);
+    console.log('[Confirm] existingNoteId received:', existingNoteId);
+
+    if (existingNoteId) {
+      const { data: existing, error: lookupError } = await adminClient
+        .from('meeting_transcripts')
+        .select('id, transcript')
+        .eq('id', existingNoteId)
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      console.log('[Confirm] existing note lookup:', existing?.id ?? 'NOT FOUND', lookupError?.message ?? '');
+
+      if (existing) {
+        // Use the typed text as liveNotes context for the transcription
+        const typedNotes = (existing.transcript as string | null)?.replace(/^"|"$/g, '').trim();
+        if (typedNotes) mergedLiveNotes = [typedNotes, liveNotes].filter(Boolean).join('\n\n');
+
+        await adminClient
+          .from('meeting_transcripts')
+          .update({
+            source,
+            recording_storage_path: storagePath,
+            bot_state: 'processing',
+            processed: false,
+            transcript: '',
+            transcript_segments: [],
+            notes_structured: { live_notes: mergedLiveNotes || '', document: '' },
+          })
+          .eq('id', existing.id)
+          .eq('user_id', userId);
+
+        transcriptId = existing.id;
+      } else {
+        // Note not found — fall through to normal insert
+        transcriptId = await insertPendingRow();
+      }
+    } else {
+      transcriptId = await insertPendingRow();
+    }
+
+    async function insertPendingRow(): Promise<string> {
+      const newId = randomUUID();
+      const { error } = await adminClient
+        .from('meeting_transcripts')
+        .insert({
+          id: newId,
+          user_id: userId,
+          meeting_id: calendarEventId ?? randomUUID(),
+          calendar_event_id: calendarEventId ?? null,
+          title,
+          start_time: startTime,
+          end_time: endTime,
+          duration_minutes: 0,
+          source,
+          recording_storage_path: storagePath,
+          transcript: '',
+          transcript_segments: [],
+          attendees: [],
+          processed: false,
+          bot_state: 'processing',
+          notes_structured: mergedLiveNotes ? { live_notes: mergedLiveNotes, document: '' } : null,
+        });
+      if (error) console.error('[Recordings/Confirm] Failed to insert pending row:', error);
+      return newId;
     }
 
     const botServiceUrl = process.env.MEETING_BOT_SERVICE_URL;
-    if (botServiceUrl && !pendingError) {
+    if (botServiceUrl) {
       // Delegate to Hetzner transcription worker — returns 202 immediately
       fetch(`${botServiceUrl}/transcribe`, {
         method: 'POST',
@@ -79,16 +127,17 @@ export async function POST(request: NextRequest) {
         },
         body: JSON.stringify({
           storagePath,
-          transcriptId: pendingId,
+          transcriptId,
           calendarEventId: calendarEventId ?? undefined,
-          userId: user.id,
+          userId,
           source,
+          liveNotes: mergedLiveNotes || undefined,
         }),
       }).catch((err) => console.error('[Recordings/Confirm] Failed to call Hetzner /transcribe:', err));
     } else {
-      // Fallback: synchronous (local dev without bot service, or if pending insert failed)
+      // Fallback: synchronous (local dev without bot service)
       processAudioFile({
-        userId: user.id,
+        userId,
         calendarEventId: calendarEventId ?? null,
         title,
         startTime,
@@ -96,13 +145,14 @@ export async function POST(request: NextRequest) {
         storagePath,
         source,
         adminClient,
-        existingTranscriptId: pendingError ? undefined : pendingId,
+        existingTranscriptId: transcriptId,
+        liveNotes: mergedLiveNotes || undefined,
       }).catch((err) => {
         console.error('[Recordings/Confirm] Transcription pipeline error:', err);
       });
     }
 
-    return NextResponse.json({ success: true, transcriptId: pendingId });
+    return NextResponse.json({ success: true, transcriptId });
   } catch (error) {
     console.error('[Recordings/Confirm] Error:', error);
     return NextResponse.json({ error: String(error) }, { status: 500 });

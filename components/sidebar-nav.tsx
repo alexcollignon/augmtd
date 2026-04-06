@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import {
   InboxIcon,
   BriefcaseIcon,
@@ -16,13 +16,22 @@ import {
   ShieldCheckIcon,
   CalendarDaysIcon,
 } from '@heroicons/react/24/outline';
+import { useRecordingContext } from '@/context/recording-context';
 
 interface SidebarNavProps {
   userEmail?: string;
 }
 
+function formatElapsed(secs: number) {
+  const m = Math.floor(secs / 60);
+  const s = secs % 60;
+  return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+}
+
 export default function SidebarNav({ userEmail }: SidebarNavProps) {
   const pathname = usePathname();
+  const router = useRouter();
+  const recording = useRecordingContext();
   const [showUserMenu, setShowUserMenu] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -158,6 +167,29 @@ export default function SidebarNav({ userEmail }: SidebarNavProps) {
           );
         })}
       </nav>
+
+      {/* Recording indicator */}
+      {(recording.state === 'recording' || recording.state === 'uploading') && (
+        <div className="flex justify-center pb-2">
+          <button
+            onClick={() => router.push('/meetings')}
+            title={recording.state === 'uploading' ? 'Uploading recording…' : `Recording — ${formatElapsed(recording.elapsed)} — click to return`}
+            className="flex flex-col items-center gap-0.5 p-1.5 rounded-lg hover:bg-neutral-200/60 transition-colors"
+          >
+            <span className={`w-2 h-2 rounded-full ${recording.state === 'uploading' ? 'bg-amber-400' : 'bg-red-500 animate-pulse'}`} />
+            {recording.state === 'recording' && (
+              <span className="text-[9px] font-semibold text-red-500 tabular-nums leading-none">
+                {formatElapsed(recording.elapsed)}
+              </span>
+            )}
+            {recording.state === 'uploading' && (
+              <span className="text-[9px] font-semibold text-amber-500 leading-none">
+                {recording.uploadProgress}%
+              </span>
+            )}
+          </button>
+        </div>
+      )}
 
       {/* User profile + popover */}
       <div ref={menuRef} className="relative flex justify-center pb-3 pt-1">

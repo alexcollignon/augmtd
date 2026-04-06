@@ -1,14 +1,15 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
 import {
   XMarkIcon,
   MicrophoneIcon,
   LockClosedIcon,
   VideoCameraIcon,
   ChevronLeftIcon,
+  ArrowDownTrayIcon,
 } from '@heroicons/react/24/outline';
+import type { UseRecordingReturn } from '@/hooks/useRecording';
 import MeetingRecorder from './meeting-recorder';
 
 interface CaptureModalProps {
@@ -17,6 +18,7 @@ interface CaptureModalProps {
   calendarEventId?: string;
   prefilledTitle?: string;
   onBotSent?: () => void;
+  recording: UseRecordingReturn;
 }
 
 type Mode = null | 'record' | 'bot';
@@ -27,45 +29,63 @@ export default function CaptureModal({
   calendarEventId,
   prefilledTitle = '',
   onBotSent,
+  recording,
 }: CaptureModalProps) {
-  const router = useRouter();
   const [mode, setMode] = useState<Mode>(null);
   const [title, setTitle] = useState(prefilledTitle);
-  const [transcribing, setTranscribing] = useState(false);
 
   const [botUrl, setBotUrl] = useState('');
   const [botState, setBotState] = useState<'idle' | 'sending' | 'done' | 'error'>('idle');
   const [botError, setBotError] = useState('');
 
+  const isRecording = recording.state === 'recording';
+  const isPostRecording = recording.state === 'uploading' || recording.state === 'processing' || recording.state === 'done';
+
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen && !isRecording && !isPostRecording) {
       setMode(null);
       setTitle(prefilledTitle);
-      setTranscribing(false);
       setBotUrl('');
       setBotState('idle');
       setBotError('');
     }
-  }, [isOpen, prefilledTitle]);
+    // When opening while already recording, go straight to record mode
+    if (isOpen && isRecording) {
+      setMode('record');
+    }
+  }, [isOpen, prefilledTitle, isRecording, isPostRecording]);
 
   useEffect(() => {
     if (!isOpen) return;
-    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const handler = (e: KeyboardEvent) => {
+      // ESC is a no-op while recording — don't close
+      if (e.key === 'Escape' && !isRecording) onClose();
+    };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, [isOpen, onClose]);
+  }, [isOpen, onClose, isRecording]);
 
   if (!isOpen) return null;
 
+  const handleClose = () => {
+    // If recording, just minimize (close modal overlay, recording continues)
+    onClose();
+  };
+
+  const handleBackdropClick = () => {
+    // Backdrop click is a no-op while recording
+    if (!isRecording) onClose();
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={onClose} />
+      <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={handleBackdropClick} />
 
       <div className="relative w-full max-w-[380px] mx-4 bg-white rounded-2xl shadow-xl flex flex-col max-h-[90vh] overflow-y-auto">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-neutral-100">
           <div className="flex items-center gap-2">
-            {mode && (
+            {mode && !isRecording && !isPostRecording && (
               <button
                 onClick={() => setMode(null)}
                 className="p-1 hover:bg-neutral-100 rounded-md transition-colors text-neutral-400 hover:text-neutral-600"
@@ -77,19 +97,27 @@ export default function CaptureModal({
               <h2 className="text-[15px] font-bold text-neutral-900">
                 {mode === 'record' ? 'Record meeting' : mode === 'bot' ? 'Meeting assistant' : 'Capture Meeting'}
               </h2>
-              {!mode && (
+              {!mode && !isPostRecording && (
                 <p className="text-[12px] text-neutral-400 mt-0.5">Record in-person or send an AI assistant</p>
               )}
             </div>
           </div>
-          <button onClick={onClose} className="p-1.5 hover:bg-neutral-100 rounded-md transition-colors">
-            <XMarkIcon className="w-4 h-4 text-neutral-400" />
+          <button
+            onClick={handleClose}
+            className="p-1.5 hover:bg-neutral-100 rounded-md transition-colors"
+            title={isRecording ? 'Minimize — recording continues in background' : 'Close'}
+          >
+            {isRecording ? (
+              <ArrowDownTrayIcon className="w-4 h-4 text-neutral-400" />
+            ) : (
+              <XMarkIcon className="w-4 h-4 text-neutral-400" />
+            )}
           </button>
         </div>
 
         <div className="px-5 py-5 flex flex-col gap-4">
           {/* Mode picker */}
-          {!mode && !transcribing && (
+          {!mode && !isPostRecording && (
             <div className="grid grid-cols-2 gap-3">
               <button
                 onClick={() => setMode('record')}
@@ -120,27 +148,34 @@ export default function CaptureModal({
           )}
 
           {/* Record mode */}
-          {mode === 'record' && !transcribing && (
+          {mode === 'record' && !isPostRecording && (
             <div className="flex flex-col gap-4">
-              <div>
-                <label className="block text-[11px] font-medium text-neutral-500 mb-1.5">Meeting title</label>
-                <input
-                  type="text"
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  placeholder="e.g. Q2 Revenue Planning"
-                  className="w-full px-3 py-2 text-[13px] border border-neutral-200 rounded-md outline-none focus:border-indigo-400 placeholder:text-neutral-400"
-                />
-              </div>
+              {!isRecording && (
+                <div>
+                  <label className="block text-[11px] font-medium text-neutral-500 mb-1.5">Meeting title</label>
+                  <input
+                    type="text"
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    placeholder="e.g. Q2 Revenue Planning"
+                    className="w-full px-3 py-2 text-[13px] border border-neutral-200 rounded-md outline-none focus:border-indigo-400 placeholder:text-neutral-400"
+                  />
+                </div>
+              )}
               <MeetingRecorder
-                calendarEventId={calendarEventId}
-                meetingTitle={title || 'Untitled meeting'}
-                onTranscriptReady={() => {
-                  new BroadcastChannel('meetings-updated').postMessage('recorded');
-                  setTranscribing(true);
-                  setMode(null);
-                }}
+                state={recording.state}
+                elapsed={recording.elapsed}
+                uploadProgress={recording.uploadProgress}
+                errorMessage={recording.errorMessage}
+                onStart={() => recording.startRecording(title || 'Untitled meeting', calendarEventId)}
+                onStop={recording.stopAndUpload}
+                onReset={recording.reset}
               />
+              {isRecording && (
+                <p className="text-[11px] text-neutral-400">
+                  You can close this panel — recording will continue in the background.
+                </p>
+              )}
             </div>
           )}
 
@@ -209,23 +244,23 @@ export default function CaptureModal({
           )}
 
           {/* Success states */}
-          {(botState === 'done' || transcribing) && (
+          {(botState === 'done' || isPostRecording) && (
             <div className="flex flex-col gap-3">
               <div className="flex items-start gap-3 px-4 py-3 bg-emerald-50 rounded-lg border border-emerald-100">
                 <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse flex-shrink-0 mt-1.5" />
                 <div>
                   <p className="text-[13px] font-semibold text-emerald-800">
-                    {transcribing ? 'Transcribing your meeting…' : 'Assistant joining in ~30 seconds'}
+                    {isPostRecording ? 'Transcribing your meeting…' : 'Assistant joining in ~30 seconds'}
                   </p>
                   <p className="text-[11px] text-emerald-600 mt-0.5">
-                    {transcribing
+                    {isPostRecording
                       ? 'Action items will appear in your inbox once done. You can close this.'
                       : 'The transcript will appear in Recent meetings once the call ends.'}
                   </p>
                 </div>
               </div>
               <button
-                onClick={() => { onClose(); if (transcribing) router.refresh(); }}
+                onClick={onClose}
                 className="w-full py-2 text-[13px] font-medium text-neutral-600 border border-neutral-200 rounded-md hover:bg-neutral-50 transition-colors"
               >
                 Close
@@ -234,7 +269,7 @@ export default function CaptureModal({
           )}
 
           {/* Privacy badge */}
-          {!transcribing && botState !== 'done' && (
+          {!isPostRecording && botState !== 'done' && !isRecording && (
             <div className="bg-neutral-50 rounded-lg px-4 py-3 flex items-start gap-3 border border-neutral-100">
               <LockClosedIcon className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0 mt-0.5" />
               <p className="text-[11px] text-neutral-500">

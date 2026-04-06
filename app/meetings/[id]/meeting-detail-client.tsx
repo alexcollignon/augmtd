@@ -18,6 +18,8 @@ import type { CalendarEvent } from '@/lib/types/meetings';
 import { formatMeetingTime, calculateDuration } from '@/lib/types/meetings';
 import LinkedWorkPanel from '@/components/meetings/linked-work-panel';
 import MeetingRecorder from '@/components/meetings/meeting-recorder';
+import { useRecording } from '@/hooks/useRecording';
+import { getTemplateNames } from '@/lib/meetings/templates';
 import ProcessingPipeline from '@/components/meetings/processing-pipeline';
 import MeetingChatSidebar, { type MeetingChatContext } from '@/components/meetings/meeting-chat-sidebar';
 
@@ -54,6 +56,16 @@ interface ActionItem {
   category: string;
 }
 
+interface EnhancedNote {
+  user_note: string;
+  context: string;
+}
+
+interface NotesStructured {
+  enhanced_notes?: EnhancedNote[];
+  live_notes?: string;
+}
+
 interface MeetingTranscript {
   id: string;
   summary: string | null;
@@ -63,6 +75,8 @@ interface MeetingTranscript {
   durationMinutes: number;
   workItemsGenerated: number;
   source: string;
+  notesStructured?: NotesStructured | null;
+  templateId?: string;
 }
 
 interface MeetingDetailClientProps {
@@ -130,6 +144,7 @@ export default function MeetingDetailClient({
 }: MeetingDetailClientProps) {
   const router = useRouter();
   const [transcriptKey, setTranscriptKey] = useState(0);
+  const detailRecording = useRecording(() => setTranscriptKey((k) => k + 1));
   const [retrying, setRetrying] = useState(false);
   const [retryError, setRetryError] = useState<string | null>(null);
 
@@ -427,27 +442,29 @@ export default function MeetingDetailClient({
               )}
             </div>
 
-            {/* Attendee list */}
+            {/* Attendees as readable text */}
             {event.attendees.length > 0 && (
-              <div className="mt-4">
-                <p className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wide mb-2">
-                  Attendees ({event.attendees.length})
-                </p>
-                <div className="flex flex-col gap-1.5">
-                  {event.attendees.map((a, i) => {
+              <div className="mt-3 flex items-center gap-2">
+                <div className="flex -space-x-1.5">
+                  {event.attendees.slice(0, 6).map((a, i) => {
                     const key = a.email ?? a.name ?? String(i);
                     const color = attendeeColor(key);
-                    const label = a.name || a.email || '?';
                     return (
-                      <div key={i} className="flex items-center gap-2.5">
-                        <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-semibold flex-shrink-0 ${color}`}>
-                          {getInitials(a.name, a.email)}
-                        </div>
-                        <span className="text-[13px] text-neutral-700 truncate">{label}</span>
+                      <div
+                        key={i}
+                        title={a.name || a.email || '?'}
+                        className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-semibold ring-2 ring-white ${color}`}
+                      >
+                        {getInitials(a.name, a.email)}
                       </div>
                     );
                   })}
                 </div>
+                <span className="text-[12px] text-neutral-500">
+                  {event.attendees.length <= 3
+                    ? event.attendees.map((a) => (a.name || a.email || '').split(/\s+/)[0]).join(', ')
+                    : `${event.attendees.slice(0, 2).map((a) => (a.name || a.email || '').split(/\s+/)[0]).join(', ')} & ${event.attendees.length - 2} others`}
+                </span>
               </div>
             )}
 
@@ -535,46 +552,27 @@ export default function MeetingDetailClient({
                 Use your microphone to capture the conversation. Transcript and action items will be generated automatically.
               </p>
               <MeetingRecorder
-                calendarEventId={event.id}
-                meetingTitle={event.title}
-                onTranscriptReady={() => setTranscriptKey((k) => k + 1)}
+                state={detailRecording.state}
+                elapsed={detailRecording.elapsed}
+                uploadProgress={detailRecording.uploadProgress}
+                errorMessage={detailRecording.errorMessage}
+                onStart={() => detailRecording.startRecording(event.title, event.id)}
+                onStop={detailRecording.stopAndUpload}
+                onReset={detailRecording.reset}
               />
             </div>
           )}
 
-          {/* Action items */}
-          {actionItems.length > 0 && (
-            <section className="mb-6">
-              <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2">
-                Action items ({actionItems.length})
-              </h2>
-              <div className="space-y-1.5">
-                {actionItems.map((item) => (
-                  <div key={item.id} className="flex items-start gap-3 px-4 py-2.5 bg-neutral-50 rounded-lg">
-                    <BoltIcon className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-[13px] font-medium text-neutral-800">{item.workTitle}</p>
-                      {item.whyMatters && (
-                        <p className="text-[11px] text-neutral-500 mt-0.5">{item.whyMatters}</p>
-                      )}
-                      {item.assignee && (
-                        <span className="inline-block mt-1 text-[10px] text-neutral-500 bg-neutral-100 px-1.5 py-0.5">
-                          {item.assignee}
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex-shrink-0 flex flex-col items-end gap-1 mt-0.5">
-                      <span className="text-[10px] font-medium text-neutral-400 capitalize">{item.category}</span>
-                      {confirmedIds.has(item.id) ? (
-                        <span className="text-[10px] font-medium text-emerald-600">✓ Added</span>
-                      ) : (
-                        <button
-                          onClick={() => handleConfirmToDesk(item)}
-                          className="text-[10px] font-medium text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 px-1.5 py-0.5 rounded transition-colors"
-                        >
-                          Confirm
-                        </button>
-                      )}
+          {/* Enhanced notes — user notes with AI context (Granola-style) */}
+          {transcript?.notesStructured?.enhanced_notes && transcript.notesStructured.enhanced_notes.length > 0 && (
+            <section className="mb-8">
+              <h2 className="text-[11px] font-semibold text-neutral-400 uppercase tracking-wide mb-3">Your Notes</h2>
+              <div className="space-y-4">
+                {transcript.notesStructured.enhanced_notes.map((note, i) => (
+                  <div key={i}>
+                    <p className="text-[14px] font-medium text-neutral-900 leading-relaxed">{note.user_note}</p>
+                    <div className="mt-1.5 border-l-2 border-neutral-200 pl-3">
+                      <p className="text-[13px] text-neutral-500 leading-relaxed">{note.context}</p>
                     </div>
                   </div>
                 ))}
@@ -582,18 +580,28 @@ export default function MeetingDetailClient({
             </section>
           )}
 
-          {/* Decisions */}
+          {/* Summary */}
+          {transcript?.summary && (
+            <section className="mb-6">
+              <h2 className="text-[11px] font-semibold text-neutral-400 uppercase tracking-wide mb-2">Summary</h2>
+              <p className="text-[14px] text-neutral-700 leading-relaxed">
+                {transcript.summary}
+              </p>
+            </section>
+          )}
+
+          {/* Decisions — clean document style */}
           {transcript && transcript.decisions?.length > 0 && (
             <section className="mb-6">
-              <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2">
-                Decisions ({transcript.decisions.length})
+              <h2 className="text-[11px] font-semibold text-neutral-400 uppercase tracking-wide mb-2">
+                Decisions
               </h2>
-              <div className="space-y-1.5">
+              <div className="space-y-2">
                 {transcript.decisions.map((d, i) => (
-                  <div key={i} className="flex items-start gap-3 px-4 py-2.5 bg-neutral-50 rounded-lg">
-                    <CheckCircleIcon className="w-4 h-4 text-blue-500 flex-shrink-0 mt-0.5" />
+                  <div key={i} className="flex items-start gap-2">
+                    <CheckCircleIcon className="w-4 h-4 text-blue-400 flex-shrink-0 mt-0.5" />
                     <div className="flex-1 min-w-0">
-                      <p className="text-[13px] text-neutral-800">{d.text}</p>
+                      <p className="text-[13px] text-neutral-800 leading-relaxed">{d.text}</p>
                       {(d.owner || d.date) && (
                         <p className="text-[11px] text-neutral-400 mt-0.5">
                           {[d.owner, d.date].filter(Boolean).join(' · ')}
@@ -606,27 +614,49 @@ export default function MeetingDetailClient({
             </section>
           )}
 
-          {/* Summary */}
-          {transcript?.summary && (
+          {/* Action items — checkbox style */}
+          {actionItems.length > 0 && (
             <section className="mb-6">
-              <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2">Summary</h2>
-              <p className="text-[13px] text-neutral-700 leading-relaxed bg-neutral-50 rounded-lg px-4 py-3">
-                {transcript.summary}
-              </p>
+              <h2 className="text-[11px] font-semibold text-neutral-400 uppercase tracking-wide mb-2">
+                Action Items
+              </h2>
+              <div className="space-y-2">
+                {actionItems.map((item) => (
+                  <div key={item.id} className="flex items-start gap-2.5">
+                    {confirmedIds.has(item.id) ? (
+                      <CheckCircleIcon className="w-4 h-4 text-emerald-500 flex-shrink-0 mt-0.5" />
+                    ) : (
+                      <button
+                        onClick={() => handleConfirmToDesk(item)}
+                        className="w-4 h-4 rounded border border-neutral-300 flex-shrink-0 mt-0.5 hover:border-indigo-400 transition-colors"
+                        title="Add to desk"
+                      />
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <p className={`text-[13px] leading-relaxed ${confirmedIds.has(item.id) ? 'text-neutral-400 line-through' : 'text-neutral-800'}`}>
+                        {item.workTitle}
+                        {item.assignee && (
+                          <span className="ml-1.5 text-[11px] text-neutral-400 font-normal">— {item.assignee}</span>
+                        )}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </section>
           )}
 
           {/* Risks / Blockers */}
           {risks.length > 0 && (
             <section className="mb-6">
-              <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2">
-                Risks &amp; Blockers ({risks.length})
+              <h2 className="text-[11px] font-semibold text-neutral-400 uppercase tracking-wide mb-2">
+                Risks &amp; Blockers
               </h2>
-              <div className="space-y-1.5">
+              <div className="space-y-2">
                 {risks.map((risk, i) => (
-                  <div key={i} className="flex items-start gap-3 px-4 py-2.5 bg-neutral-50 rounded-lg">
+                  <div key={i} className="flex items-start gap-2">
                     <span className={`w-2 h-2 rounded-full flex-shrink-0 mt-1.5 ${RISK_DOT[risk.severity]}`} />
-                    <p className="text-[13px] text-neutral-800 flex-1 min-w-0">{risk.text}</p>
+                    <p className="text-[13px] text-neutral-800 leading-relaxed flex-1 min-w-0">{risk.text}</p>
                   </div>
                 ))}
               </div>
@@ -635,9 +665,9 @@ export default function MeetingDetailClient({
 
           {/* Suggested next step */}
           {suggestedNextStep && (
-            <div className="mb-6 flex items-start gap-2 pl-1">
+            <div className="mb-6 flex items-start gap-2">
               <span className="text-indigo-400 text-[13px] flex-shrink-0 mt-0.5">✦</span>
-              <p className="text-[12px] text-neutral-600 leading-relaxed">{suggestedNextStep}</p>
+              <p className="text-[13px] text-neutral-600 leading-relaxed">{suggestedNextStep}</p>
             </div>
           )}
 

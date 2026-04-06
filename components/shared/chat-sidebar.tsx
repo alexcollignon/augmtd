@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { PaperAirplaneIcon, SparklesIcon, ChatBubbleLeftRightIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
+import { PaperAirplaneIcon, SparklesIcon, ChatBubbleLeftRightIcon, ChevronRightIcon, CalendarIcon } from '@heroicons/react/24/outline';
 
 interface ChatMessage {
   role: 'user' | 'assistant';
@@ -13,9 +13,11 @@ interface ChatSidebarProps {
   onClose: () => void;
   context: 'meeting' | 'drive';
   inline?: boolean;
+  /** Called when the user clicks the switch-panel button */
+  onSwitchPanel?: () => void;
 }
 
-export default function ChatSidebar({ isOpen, onClose, context, inline = false }: ChatSidebarProps) {
+export default function ChatSidebar({ isOpen, onClose, context, inline = false, onSwitchPanel }: ChatSidebarProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [streaming, setStreaming] = useState(false);
@@ -171,7 +173,27 @@ export default function ChatSidebar({ isOpen, onClose, context, inline = false }
   );
 
   if (inline) {
-    return <div className="flex flex-col h-full min-h-0">{inner}</div>;
+    return (
+      <div className="flex flex-col h-full min-h-0">
+        <div className="h-10 flex items-center justify-between px-3 border-b border-neutral-100 flex-shrink-0">
+          <div className="flex items-center gap-2">
+            <ChatBubbleLeftRightIcon className="w-3.5 h-3.5 text-neutral-400" />
+            <span className="text-[12px] font-semibold text-neutral-700">Assistant</span>
+          </div>
+          <div className="flex items-center gap-1">
+            {onSwitchPanel && (
+              <button onClick={onSwitchPanel} title="Calendar" className="p-1 text-neutral-400 hover:text-neutral-600 transition-colors">
+                <CalendarIcon className="w-3.5 h-3.5" />
+              </button>
+            )}
+            <button onClick={onClose} className="p-1 text-neutral-400 hover:text-neutral-600 transition-colors">
+              <ChevronRightIcon className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+        {inner}
+      </div>
+    );
   }
 
   return (

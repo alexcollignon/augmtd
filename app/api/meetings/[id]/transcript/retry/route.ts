@@ -26,15 +26,29 @@ export async function POST(
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   );
 
-  // Find the failed transcript for this event
-  const { data: transcript } = await adminClient
+  // Find the failed transcript — by calendar_event_id first, then by id directly (ad-hoc)
+  let transcript: { id: string; recording_storage_path: string | null; title: string; start_time: string; end_time: string; source: string } | null = null;
+
+  const { data: byEvent } = await adminClient
     .from('meeting_transcripts')
-    .select('id, recording_storage_path, title, start_time, end_time, source, user_id')
+    .select('id, recording_storage_path, title, start_time, end_time, source')
     .eq('calendar_event_id', calendarEventId)
     .eq('user_id', user.id)
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle();
+
+  if (byEvent) {
+    transcript = byEvent;
+  } else {
+    const { data: byId } = await adminClient
+      .from('meeting_transcripts')
+      .select('id, recording_storage_path, title, start_time, end_time, source')
+      .eq('id', calendarEventId)
+      .eq('user_id', user.id)
+      .maybeSingle();
+    transcript = byId ?? null;
+  }
 
   if (!transcript) {
     return NextResponse.json({ error: 'No transcript found for this event' }, { status: 404 });
@@ -81,7 +95,7 @@ export async function POST(
     startTime: transcript.start_time,
     endTime: transcript.end_time,
     storagePath: transcript.recording_storage_path,
-    source: transcript.source ?? 'bot',
+    source: (transcript.source ?? 'bot') as 'recording' | 'bot' | 'upload',
     adminClient,
     existingTranscriptId: transcript.id,
   });

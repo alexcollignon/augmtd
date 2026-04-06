@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import NextTopLoader from 'nextjs-toploader';
 import { Toaster } from 'sonner';
+import { RecordingProvider } from '@/context/recording-context';
 
 export const metadata: Metadata = {
   title: "AUGMTD - Your Personal Digital Twin",
@@ -22,7 +23,9 @@ export default function RootLayout({
           showSpinner={false}
           shadow="0 0 10px #8B5CF6,0 0 5px #8B5CF6"
         />
-        {children}
+        <RecordingProvider>
+          {children}
+        </RecordingProvider>
         <Toaster position="bottom-right" richColors />
       </body>
     </html>

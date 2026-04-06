@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { MicrophoneIcon, CloudArrowUpIcon } from '@heroicons/react/24/outline';
+import { MicrophoneIcon, CloudArrowUpIcon, DocumentTextIcon } from '@heroicons/react/24/outline';
 
 interface TranscriptListCardProps {
   id: string;
@@ -12,7 +12,7 @@ interface TranscriptListCardProps {
   workItemsGenerated: number;
   processed: boolean;
   botState: string | null;
-  source: 'bot' | 'recording' | 'upload';
+  source: 'bot' | 'recording' | 'upload' | 'text';
   summary?: string | null;
   isNew?: boolean;
   attendees?: Array<{ email: string; name?: string }>;
@@ -41,6 +41,18 @@ function initials(attendee: { email: string; name?: string }): string {
     return parts.length >= 2 ? (parts[0][0] + parts[parts.length - 1][0]).toUpperCase() : parts[0].slice(0, 2).toUpperCase();
   }
   return attendee.email.slice(0, 2).toUpperCase();
+}
+
+function firstName(attendee: { email: string; name?: string }): string {
+  if (attendee.name) return attendee.name.trim().split(/\s+/)[0];
+  return attendee.email.split('@')[0];
+}
+
+function attendeeLabel(attendees: Array<{ email: string; name?: string }>): string {
+  if (attendees.length === 0) return '';
+  if (attendees.length === 1) return firstName(attendees[0]);
+  if (attendees.length === 2) return `${firstName(attendees[0])} & ${firstName(attendees[1])}`;
+  return `${firstName(attendees[0])}, ${firstName(attendees[1])} & ${attendees.length - 2} other${attendees.length - 2 > 1 ? 's' : ''}`;
 }
 
 function firstSentence(text: string): string {
@@ -74,8 +86,8 @@ export default function TranscriptListCard({
     ? { label: 'Failed', className: 'text-red-700 bg-red-50' }
     : null;
 
-  const sourceLabel = source === 'bot' ? 'Online' : source === 'recording' ? 'In-person' : 'Upload';
-  const SourceIcon = source === 'upload' ? CloudArrowUpIcon : MicrophoneIcon;
+  const sourceLabel = source === 'bot' ? 'Online' : source === 'recording' ? 'In-person' : source === 'text' ? 'Note' : 'Upload';
+  const SourceIcon = source === 'text' ? DocumentTextIcon : source === 'upload' ? CloudArrowUpIcon : MicrophoneIcon;
 
   const bulletSummary = summary ? firstSentence(summary) : null;
   const visibleAttendees = attendees.slice(0, 5);
@@ -116,24 +128,24 @@ export default function TranscriptListCard({
         )}
 
         {/* Attendees + action items row */}
-        {(visibleAttendees.length > 0 || workItemsGenerated > 0) && (
+        {(attendees.length > 0 || workItemsGenerated > 0) && (
           <div className="flex items-center justify-between mt-2">
-            {visibleAttendees.length > 0 ? (
-              <div className="flex items-center">
+            {attendees.length > 0 ? (
+              <div className="flex items-center gap-2">
                 <div className="flex -space-x-1">
                   {visibleAttendees.map((a) => (
                     <div
                       key={a.email}
                       title={a.name || a.email}
-                      className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-semibold ring-1 ring-white ${avatarColor(a.email)}`}
+                      className={`w-4 h-4 rounded-full flex items-center justify-center text-[8px] font-semibold ring-1 ring-white ${avatarColor(a.email)}`}
                     >
                       {initials(a)}
                     </div>
                   ))}
                 </div>
-                {extraCount > 0 && (
-                  <span className="ml-1.5 text-[10px] text-neutral-400">+{extraCount}</span>
-                )}
+                <span className="text-[11px] text-neutral-500 truncate max-w-[200px]">
+                  {attendeeLabel(attendees)}
+                </span>
               </div>
             ) : <div />}
 

@@ -10,6 +10,7 @@ import {
   ArrowLeftIcon,
 } from '@heroicons/react/24/outline';
 import MeetingRecorder from '@/components/meetings/meeting-recorder';
+import { useRecording } from '@/hooks/useRecording';
 
 type Mode = null | 'record' | 'upload';
 
@@ -18,6 +19,7 @@ export default function CaptureClient() {
   const searchParams = useSearchParams();
   const prefilledEventId = searchParams.get('calendarEventId') ?? undefined;
   const prefilledTitle = searchParams.get('title') ?? '';
+  const captureRecording = useRecording(() => setTimeout(() => router.push('/meetings'), 1500));
 
   const [mode, setMode] = useState<Mode>(null);
   const [title, setTitle] = useState(prefilledTitle);
@@ -163,9 +165,13 @@ export default function CaptureClient() {
             {mode === 'record' && (
               <div>
                 <MeetingRecorder
-                  calendarEventId={prefilledEventId}
-                  meetingTitle={title || 'Untitled meeting'}
-                  onTranscriptReady={() => setTimeout(() => router.push('/meetings'), 1500)}
+                  state={captureRecording.state}
+                  elapsed={captureRecording.elapsed}
+                  uploadProgress={captureRecording.uploadProgress}
+                  errorMessage={captureRecording.errorMessage}
+                  onStart={() => captureRecording.startRecording(title || 'Untitled meeting', prefilledEventId)}
+                  onStop={captureRecording.stopAndUpload}
+                  onReset={captureRecording.reset}
                 />
               </div>
             )}

@@ -17,12 +17,21 @@ export async function DELETE(
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   );
 
-  // Fetch transcript(s) for this calendar event
-  const { data: transcripts } = await adminClient
+  // Fetch transcript(s) — first by calendar_event_id, fall back to transcript id directly
+  let { data: transcripts } = await adminClient
     .from('meeting_transcripts')
     .select('id, recording_storage_path')
     .eq('calendar_event_id', calendarEventId)
     .eq('user_id', user.id);
+
+  if (!transcripts || transcripts.length === 0) {
+    const { data: byId } = await adminClient
+      .from('meeting_transcripts')
+      .select('id, recording_storage_path')
+      .eq('id', calendarEventId)
+      .eq('user_id', user.id);
+    transcripts = byId ?? [];
+  }
 
   if (transcripts && transcripts.length > 0) {
     const transcriptIds = transcripts.map((t) => t.id);

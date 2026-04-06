@@ -1,16 +1,25 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { MicrophoneIcon, FolderIcon, PlusIcon, ChatBubbleLeftRightIcon, ChevronLeftIcon, ChevronRightIcon, CalendarIcon } from '@heroicons/react/24/outline';
+import {
+  MicrophoneIcon,
+  ChatBubbleLeftRightIcon,
+  ChevronRightIcon,
+  CalendarIcon,
+} from '@heroicons/react/24/outline';
+import { useRouter } from 'next/navigation';
 import type { DriveFolder } from '@/lib/types/drive';
 import type { CalendarEvent } from '@/lib/types/meetings';
-import TranscriptListCard from '@/components/meetings/transcript-list-card';
-import ActiveBotCard from '@/components/meetings/active-bot-card';
+import { useRecordingContext } from '@/context/recording-context';
 import CaptureModal from '@/components/meetings/capture-modal';
 import NewMeetingModal from '@/components/meetings/new-meeting-modal';
+import MeetingsLeftPanel from '@/components/meetings/meetings-left-panel';
+import FolderDetailView from '@/components/meetings/folder-detail-view';
+import LiveNotepad from '@/components/meetings/live-notepad';
+import InlineNoteView from '@/components/meetings/inline-note-view';
+import MeetingsHome from '@/components/meetings/meetings-home';
 import CalendarSidebar from '@/components/meetings/calendar-sidebar';
-import WeekCalendar from '@/components/meetings/week-calendar';
-import MeetingFolderBrowser from '@/components/meetings/meeting-folder-browser';
+import MeetingChatSidebar, { type MeetingChatContext } from '@/components/meetings/meeting-chat-sidebar';
 import ChatSidebar from '@/components/shared/chat-sidebar';
 
 interface Transcript {
@@ -22,7 +31,7 @@ interface Transcript {
   workItemsGenerated: number;
   processed: boolean;
   botState: string | null;
-  source: 'bot' | 'recording' | 'upload';
+  source: 'bot' | 'recording' | 'upload' | 'text';
   summary?: string | null;
   processedAt?: string | null;
   folderId?: string | null;
@@ -57,31 +66,37 @@ function loadSeenIds(): Set<string> {
 }
 
 export default function MeetingsPageClient({ userEmail }: { userEmail: string }) {
+  const router = useRouter();
   const [upcoming, setUpcoming] = useState<CalendarEvent[]>([]);
   const [transcripts, setTranscripts] = useState<Transcript[]>([]);
   const [botStateMap, setBotStateMap] = useState<Map<string, string>>(new Map());
   const [pendingAdhoc, setPendingAdhoc] = useState<{ initiatedAt: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const [showCapture, setShowCapture] = useState(false);
+  const [captureMode, setCaptureMode] = useState<'record' | 'bot' | null>(null);
   const [showNewMeeting, setShowNewMeeting] = useState(false);
-  const [rightPanel, setRightPanel] = useState<'calendar' | 'chat' | null>('calendar');
+  const [rightPanel, setRightPanel] = useState<'chat' | 'calendar' | null>('calendar');
+  const [filterPersonEmail, setFilterPersonEmail] = useState<string | null>(null);
   const [seenIds, setSeenIds] = useState<Set<string>>(loadSeenIds);
-  const [cancellingId, setCancellingId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'recent' | 'folders'>('recent');
-  const [calendarView, setCalendarView] = useState<'month' | 'week'>('month');
-  const [weekClosing, setWeekClosing] = useState(false);
+  const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
+  const [selectedMeetingId, setSelectedMeetingId] = useState<string | null>(null);
+  const [showAdHocNote, setShowAdHocNote] = useState(false);
+  const [inlineNoteKey, setInlineNoteKey] = useState(0);
+  const [activeMeetingContext, setActiveMeetingContext] = useState<MeetingChatContext | null>(null);
+  const [chatAutoMessage, setChatAutoMessage] = useState<string | undefined>(undefined);
 
-  const closeWeekView = () => {
-    setWeekClosing(true);
-    setTimeout(() => { setCalendarView('month'); setWeekClosing(false); }, 200);
-  };
+  // Bot live notes (for meetings where the bot is recording)
+  const [botLiveNotes, setBotLiveNotes] = useState('');
+  const [activeBotEvent, setActiveBotEvent] = useState<CalendarEvent | null>(null);
+  const botNotesTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const [folders, setFolders] = useState<DriveFolder[]>([]);
-  const [folderPopoverFor, setFolderPopoverFor] = useState<string | null>(null);
-  const [newFolderForRecent, setNewFolderForRecent] = useState<string | null>(null);
-  const [newFolderForRecentName, setNewFolderForRecentName] = useState('');
 
   const isActiveRef = useRef(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Global recording hook — survives page navigation
+  const recording = useRecordingContext();
 
   const fetchAll = useCallback(async () => {
     try {
@@ -91,13 +106,19 @@ export default function MeetingsPageClient({ userEmail }: { userEmail: string })
       ]);
 
       const events: CalendarEvent[] = meetingsData.meetings ?? [];
-      setUpcoming(events.filter((m) => m.meeting_status !== 'completed'));
+      setUpcoming(events);
 
       const newMap = new Map<string, string>();
       for (const e of events) {
         if (e.attendee_bot_state) newMap.set(e.id, e.attendee_bot_state);
       }
       setBotStateMap(newMap);
+
+      // Detect active bot recording for live notepad
+      const recordingEvent = events.find(
+        (e) => e.attendee_bot_state === 'recording' || e.attendee_bot_state === 'joining'
+      );
+      setActiveBotEvent(recordingEvent ?? null);
 
       const mapped = mapTranscripts(transcriptsData.transcripts ?? []);
       setTranscripts(mapped);
@@ -123,21 +144,46 @@ export default function MeetingsPageClient({ userEmail }: { userEmail: string })
     fetchAll().finally(() => setLoading(false));
   }, [fetchAll]);
 
+  // Refresh when a recording completes (broadcast from global RecordingProvider)
+  useEffect(() => {
+    const ch = new BroadcastChannel('meetings-updated');
+    ch.onmessage = () => fetchAll();
+    return () => ch.close();
+  }, [fetchAll]);
+
   useEffect(() => {
     fetch('/api/drive/folders')
       .then((r) => r.json())
       .then((data) => setFolders(Array.isArray(data) ? data : (data.folders ?? [])));
   }, []);
 
+  // Debounced save of bot live notes to metadata
+  const saveBotLiveNotes = useCallback((notes: string, eventId: string) => {
+    if (botNotesTimerRef.current) clearTimeout(botNotesTimerRef.current);
+    botNotesTimerRef.current = setTimeout(() => {
+      fetch(`/api/meetings/${eventId}/live-notes`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ liveNotes: notes }),
+      }).catch(() => {});
+    }, 2000);
+  }, []);
+
+  const handleBotLiveNotesChange = (notes: string) => {
+    setBotLiveNotes(notes);
+    if (activeBotEvent) saveBotLiveNotes(notes, activeBotEvent.id);
+  };
+
   // Adaptive polling
   useEffect(() => {
     const liveStates = new Set(['joining', 'recording', 'scheduled']);
-    const hasLiveBot = upcoming.some((e) => {
+    const upcomingNonCompleted = upcoming.filter((m) => m.meeting_status !== 'completed');
+    const hasLiveBot = upcomingNonCompleted.some((e) => {
       const state = botStateMap.get(e.id) ?? e.attendee_bot_state ?? '';
       return liveStates.has(state);
     });
     const hasProcessing = transcripts.some((t) => !t.processed);
-    const isActive = hasLiveBot || hasProcessing || pendingAdhoc !== null;
+    const isActive = hasLiveBot || hasProcessing || pendingAdhoc !== null || recording.state === 'recording';
     isActiveRef.current = isActive;
 
     if (intervalRef.current) clearInterval(intervalRef.current);
@@ -145,7 +191,7 @@ export default function MeetingsPageClient({ userEmail }: { userEmail: string })
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
-  }, [upcoming, transcripts, botStateMap, pendingAdhoc, fetchAll]);
+  }, [upcoming, transcripts, botStateMap, pendingAdhoc, fetchAll, recording.state]);
 
   // Mark seen after 3s
   useEffect(() => {
@@ -162,50 +208,58 @@ export default function MeetingsPageClient({ userEmail }: { userEmail: string })
   const handleScheduled = (eventId: string) => setBotStateMap((prev) => new Map(prev).set(eventId, 'scheduled'));
   const handleCancelled = (eventId: string) => setBotStateMap((prev) => new Map(prev).set(eventId, 'cancelled'));
 
-  const handleCancel = async (eventId: string) => {
-    setCancellingId(eventId);
-    try {
-      const res = await fetch(`/api/meetings/${eventId}/cancel-bot`, { method: 'DELETE' });
-      if (res.ok) setBotStateMap((prev) => new Map(prev).set(eventId, 'cancelled'));
-    } finally {
-      setCancellingId(null);
+  const handleCreateFolder = async (name: string) => {
+    const res = await fetch('/api/drive/folders', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+    if (res.ok) {
+      const folder: DriveFolder = await res.json();
+      setFolders((prev) => [...prev, folder]);
     }
   };
 
-  const handleMoveTranscriptToFolder = (transcriptId: string, folderId: string | null) => {
-    setTranscripts((prev) =>
-      prev.map((t) => (t.id === transcriptId ? { ...t, folderId } : t))
-    );
-  };
-
-  const handleMoveRecentToFolder = async (transcriptId: string, folderId: string | null) => {
-    await fetch(`/api/meetings/recording/${transcriptId}/folder`, {
+  const handleRenameFolder = async (id: string, name: string) => {
+    const res = await fetch(`/api/drive/folders/${id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ folderId }),
+      body: JSON.stringify({ name }),
     });
-    handleMoveTranscriptToFolder(transcriptId, folderId);
-    setFolderPopoverFor(null);
+    if (res.ok) {
+      const updated: DriveFolder = await res.json();
+      setFolders((prev) => prev.map((f) => (f.id === id ? updated : f)));
+    }
   };
 
-  const handleCreateFolderAndMoveRecent = async (transcriptId: string, name: string) => {
-    if (!name.trim()) return;
-    const fRes = await fetch('/api/drive/folders', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: name.trim() }),
-    });
-    if (!fRes.ok) return;
-    const folder: DriveFolder = await fRes.json();
-    setFolders((prev) => [...prev, folder]);
-    await handleMoveRecentToFolder(transcriptId, folder.id);
-    setNewFolderForRecent(null);
-    setNewFolderForRecentName('');
+  const handleDeleteFolder = async (id: string) => {
+    const res = await fetch(`/api/drive/folders/${id}`, { method: 'DELETE' });
+    if (res.ok) {
+      setFolders((prev) => prev.filter((f) => f.id !== id));
+      if (selectedFolderId === id) setSelectedFolderId(null);
+    }
+  };
+
+  const handleRequestChat = (autoMessage?: string) => {
+    setChatAutoMessage(autoMessage);
+    setRightPanel('chat');
+  };
+
+  const handleOpenWorkflow = (title: string, skill?: string) => {
+    const params = new URLSearchParams();
+    if (title) params.set('title', title);
+    if (skill) params.set('skill', skill);
+    router.push(`/work/new${params.toString() ? `?${params.toString()}` : ''}`);
+  };
+
+  const handleOpenProcess = (processId: string) => {
+    router.push(`/processes/${processId}`);
   };
 
   // Derived
+  const upcomingNonCompleted = upcoming.filter((m) => m.meeting_status !== 'completed');
   const liveBots: Array<{ title: string; state: 'joining' | 'recording'; calendarEventId: string | null; startedAt?: string }> = [];
-  for (const e of upcoming) {
+  for (const e of upcomingNonCompleted) {
     const state = botStateMap.get(e.id) ?? (e.attendee_bot_state ?? '');
     if (state === 'joining' || state === 'recording') {
       liveBots.push({ title: e.title, state, calendarEventId: e.id, startedAt: e.start_time });
@@ -222,362 +276,234 @@ export default function MeetingsPageClient({ userEmail }: { userEmail: string })
     liveBots.push({ title: t.title || 'Ad-hoc meeting', state: t.botState === 'recording' ? 'recording' : 'joining', calendarEventId: null, startedAt: t.startTime });
   }
 
-  const processingList = transcripts.filter(
-    (t) => !t.processed && !(t.source === 'bot' && t.calendarEventId === null && (t.botState === 'joining' || t.botState === 'recording'))
-  );
-  const failedList = transcripts.filter((t) => t.processed && t.botState === 'failed');
-  const recentList = transcripts.filter((t) => t.processed && t.botState !== 'failed' && (t.folderId ?? null) === null).slice(0, 20);
 
   const cutoff = Date.now() - TWENTY_FOUR_HOURS;
   const isNew = (t: Transcript) =>
     !seenIds.has(t.id) && t.processed && t.processedAt != null &&
     new Date(t.processedAt).getTime() > cutoff;
 
-  const hasActivity = processingList.length > 0 || failedList.length > 0;
+  // Determine if live notepad should show — only when NOT already inside an inline note
+  // (inline note handles recording display itself)
+  const showInlineNoteActive = !!(selectedMeetingId || showAdHocNote);
+  const showLiveNotepad = (recording.state === 'recording' || (activeBotEvent?.attendee_bot_state === 'recording')) && !showInlineNoteActive;
+  const selectedFolder = selectedFolderId ? folders.find((f) => f.id === selectedFolderId) : null;
+
+  // Determine center panel content
+  const showInlineNote = !showLiveNotepad && !selectedFolder && showInlineNoteActive;
+  const isHome = !showInlineNote && !selectedFolder && !showLiveNotepad;
 
   return (
     <div className="relative flex h-full overflow-hidden bg-neutral-50">
-      {/* Week view overlay — fixed like inbox, bypasses layout constraints */}
-      {(calendarView === 'week' || weekClosing) && (
-        <div
-          className={`fixed top-2 bottom-2 z-40 overflow-hidden bg-white rounded-l-2xl flex flex-col ${weekClosing ? 'week-collapse-exit' : 'week-expand-enter'}`}
-          style={{ right: '284px', width: '680px', boxShadow: '-4px 0 24px rgba(0,0,0,0.10)' }}
-        >
-          <div className="flex-shrink-0 h-10 flex items-center justify-between px-3 border-b border-neutral-200">
-            <button
-              onClick={closeWeekView}
-              className="flex items-center gap-1.5 text-[13px] text-neutral-500 hover:text-neutral-800 transition-colors"
-            >
-              <ChevronLeftIcon className="w-3.5 h-3.5" />
-              <span className="font-medium">Back</span>
-            </button>
-            <span className="text-[13px] font-semibold text-neutral-700">Calendar</span>
-            <div className="w-6" />
-          </div>
-          <div className="flex-1 min-h-0">
-            <WeekCalendar
-              meetings={upcoming}
-              userEmail={userEmail}
-              botStateMap={botStateMap}
-              onScheduled={handleScheduled}
-              onCancelled={handleCancelled}
-              onRefresh={fetchAll}
-              onNewMeeting={(date) => { setShowNewMeeting(true); }}
-            />
-          </div>
-        </div>
-      )}
+      {/* ── Left panel — meetings nav ── */}
+      <MeetingsLeftPanel
+        transcripts={transcripts}
+        folders={folders}
+        selectedFolderId={selectedFolderId}
+        onSelectFolder={(id) => {
+          setSelectedFolderId(id);
+          setSelectedMeetingId(null);
+          
+          setFilterPersonEmail(null);
+        }}
+        onCreateFolder={handleCreateFolder}
+        selectedMeetingId={selectedMeetingId}
+        onSelectMeeting={(id) => {
+          setSelectedMeetingId(id);
+          
+          setActiveMeetingContext(null);
+          setChatAutoMessage(undefined);
+          if (id) setSelectedFolderId(null);
+        }}
+        filterPersonEmail={filterPersonEmail}
+        onFilterPerson={(email) => {
+          setFilterPersonEmail(email);
+          setSelectedMeetingId(null);
+          setSelectedFolderId(null);
+          
+        }}
+        onNewNote={() => {
+          setSelectedMeetingId(null);
+          setSelectedFolderId(null);
+          setShowAdHocNote(true);
+          setInlineNoteKey((k) => k + 1);
+        }}
+        onNavigateHome={() => {
+          setSelectedMeetingId(null);
+          setSelectedFolderId(null);
+          setShowAdHocNote(false);
+          setFilterPersonEmail(null);
+          setActiveMeetingContext(null);
+          if (rightPanel === 'chat') setRightPanel(null);
+        }}
+        isHome={!selectedMeetingId && !selectedFolderId && !showAdHocNote && !showLiveNotepad}
+      />
+
       {/* ── Main content ── */}
       <div className="flex-1 overflow-hidden flex flex-col bg-neutral-50 p-2 pr-0">
         <div className="flex-1 flex flex-col rounded-2xl bg-white shadow-sm overflow-hidden">
-        <div className="flex-1 overflow-y-auto">
-        <div className="max-w-2xl mx-auto px-6 py-6">
-
-          {/* Header */}
-          <div className="flex items-center justify-between mb-5">
-            <div>
-              <h1 className="text-xl font-semibold text-neutral-900">Meetings</h1>
-              <p className="text-[13px] text-neutral-500 mt-0.5">Capture, search, and turn conversations into actions</p>
-            </div>
+          {/* Main header */}
+          <div className="flex-shrink-0 h-10 flex items-center justify-between px-4 border-b border-neutral-100">
             <div className="flex items-center gap-2">
-              <button
-                onClick={() => setShowCapture(true)}
-                className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-md transition-colors"
-              >
-                <MicrophoneIcon className="w-4 h-4" />
-                Capture
-              </button>
+              <h2 className="text-[13px] font-semibold text-neutral-700">
+                {selectedFolder ? selectedFolder.name
+                  : showLiveNotepad ? recording.recordingTitle || activeBotEvent?.title || 'Meeting'
+                  : 'Meetings'}
+              </h2>
+            </div>
+            <div className="flex items-center gap-1.5">
+              {!showInlineNote && (
+                <button
+                  onClick={() => setShowCapture(true)}
+                  className="flex items-center gap-1.5 px-3 py-1 text-[11px] font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-md transition-colors"
+                >
+                  <MicrophoneIcon className="w-3 h-3" />
+                  Capture
+                </button>
+              )}
             </div>
           </div>
 
-          {/* Live bot banner */}
-          {liveBots.length > 0 && (
-            <div className="mb-5 space-y-1.5">
-              {liveBots.map((bot, i) => (
-                <ActiveBotCard
-                  key={bot.calendarEventId ?? `adhoc-${i}`}
-                  title={bot.title}
-                  state={bot.state}
-                  calendarEventId={bot.calendarEventId}
-                  startedAt={bot.startedAt}
-                />
-              ))}
-            </div>
-          )}
-
-          {/* Tabs */}
-          <div className="flex items-center mb-5">
-            <div className="relative grid grid-cols-2 bg-neutral-100 rounded-full p-0.5">
-              <div
-                className="absolute inset-y-0.5 w-[calc(50%-2px)] rounded-full bg-white shadow-sm pointer-events-none transition-all duration-180"
-                style={{ left: activeTab === 'folders' ? '50%' : '2px' }}
+          {/* Main body */}
+          <div className="flex-1 overflow-y-auto">
+            {showLiveNotepad ? (
+              <LiveNotepad
+                title={recording.state === 'recording' ? recording.recordingTitle : (activeBotEvent?.title ?? 'Meeting')}
+                elapsed={recording.state === 'recording' ? recording.elapsed : 0}
+                notes={recording.state === 'recording' ? recording.liveNotes : botLiveNotes}
+                onNotesChange={recording.state === 'recording' ? recording.setLiveNotes : handleBotLiveNotesChange}
+                source={recording.state === 'recording' ? 'recording' : 'bot'}
               />
-              <button
-                onClick={() => setActiveTab('recent')}
-                className={`relative z-10 px-4 py-1 text-[12px] font-medium rounded-full transition-colors duration-180 flex items-center justify-center gap-1.5 ${activeTab === 'recent' ? 'text-neutral-800' : 'text-neutral-500 hover:text-neutral-700'}`}
-              >
-                Recent
-                {hasActivity && (
-                  <span className="inline-flex items-center justify-center w-4 h-4 text-[10px] font-semibold rounded-full bg-amber-100 text-amber-700">
-                    {processingList.length + failedList.length}
-                  </span>
-                )}
-              </button>
-              <button
-                onClick={() => setActiveTab('folders')}
-                className={`relative z-10 px-4 py-1 text-[12px] font-medium rounded-full transition-colors duration-180 ${activeTab === 'folders' ? 'text-neutral-800' : 'text-neutral-500 hover:text-neutral-700'}`}
-              >
-                Folders
-              </button>
-            </div>
+            ) : selectedFolder ? (
+              /* Folder detail view */
+              <FolderDetailView
+                folder={selectedFolder}
+                transcripts={transcripts}
+                folders={folders}
+                onRename={handleRenameFolder}
+                onDelete={handleDeleteFolder}
+                isNew={isNew}
+              />
+            ) : showInlineNote ? (
+              /* Inline note view — works for both scheduled (eventId set) and ad-hoc (eventId null) */
+              <InlineNoteView
+                key={inlineNoteKey}
+                eventId={selectedMeetingId ?? null}
+                onBack={() => {
+                  setSelectedMeetingId(null);
+                  setShowAdHocNote(false);
+                  setActiveMeetingContext(null);
+                }}
+                onMeetingContextReady={setActiveMeetingContext}
+                onRequestChat={handleRequestChat}
+                onCreated={(id) => {
+                  setShowAdHocNote(false);
+                  setSelectedMeetingId(id);
+                  fetchAll();
+                }}
+                onNewBot={() => {
+                  setCaptureMode('bot');
+                  setShowCapture(true);
+                }}
+                onStartRecording={(title, calendarEventId, noteId) => recording.startRecording(title, calendarEventId, noteId)}
+              />
+            ) : (
+              /* Default: Home screen */
+              <MeetingsHome
+                upcoming={upcoming}
+                transcripts={transcripts}
+                filterPersonEmail={filterPersonEmail}
+                onSelectMeeting={(id) => {
+                  setSelectedMeetingId(id);
+                  
+                  setActiveMeetingContext(null);
+                  setChatAutoMessage(undefined);
+                  setSelectedFolderId(null);
+                }}
+                isNew={isNew}
+              />
+            )}
           </div>
-
-          {/* ── Recent tab ── */}
-          {activeTab === 'recent' && (
-            <div>
-              {/* Transcribing */}
-              {processingList.length > 0 && (
-                <section className="mb-6">
-                  <h2 className="text-[11px] font-semibold text-amber-600 uppercase tracking-wide mb-3 flex items-center gap-2">
-                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse inline-block" />
-                    Transcribing ({processingList.length})
-                  </h2>
-                  <div className="space-y-1.5">
-                    {processingList.map((t) => <TranscriptListCard key={t.id} {...t} />)}
-                  </div>
-                </section>
-              )}
-
-              {/* Failed */}
-              {failedList.length > 0 && (
-                <section className="mb-6">
-                  <h2 className="text-[11px] font-semibold text-red-500 uppercase tracking-wide mb-3">
-                    Transcription failed ({failedList.length})
-                  </h2>
-                  <div className="space-y-1.5">
-                    {failedList.map((t) => <TranscriptListCard key={t.id} {...t} />)}
-                  </div>
-                </section>
-              )}
-
-              {/* Recent meetings */}
-              <section>
-                <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-3">
-                  Recent meetings
-                </h2>
-                {loading && (
-                  <div className="space-y-1.5">
-                    {[1, 2, 3].map((i) => <div key={i} className="h-16 bg-neutral-100 animate-pulse" />)}
-                  </div>
-                )}
-                {!loading && recentList.length === 0 && (
-                  <div className="py-8 text-center rounded-lg border border-dashed border-neutral-200">
-                    <MicrophoneIcon className="w-8 h-8 text-neutral-300 mx-auto mb-2" />
-                    <p className="text-[13px] text-neutral-500 font-medium">No recordings yet</p>
-                    <p className="text-[12px] text-neutral-400 mt-1">
-                      Use the Capture button to record or send an assistant to your next meeting.
-                    </p>
-                    <button
-                      onClick={() => setShowCapture(true)}
-                      className="inline-block mt-3 px-4 py-1.5 text-[12px] font-medium text-indigo-600 border border-indigo-200 rounded-md hover:bg-indigo-50 transition-colors"
-                    >
-                      Capture meeting
-                    </button>
-                  </div>
-                )}
-                {!loading && recentList.length > 0 && (
-                  <div className="space-y-1.5">
-                    {recentList.map((t) => (
-                      <div key={t.id} className="group relative">
-                        <TranscriptListCard {...t} isNew={isNew(t)} />
-                        {folderPopoverFor === t.id && (
-                          <div className="fixed inset-0 z-20" onClick={() => setFolderPopoverFor(null)} />
-                        )}
-                        <div className={`absolute right-2 top-1/2 -translate-y-1/2 items-center z-30 ${folderPopoverFor === t.id ? 'flex' : 'hidden group-hover:flex'}`}>
-                          <div className="relative">
-                            <button
-                              onClick={(e) => { e.stopPropagation(); setFolderPopoverFor(folderPopoverFor === t.id ? null : t.id); }}
-                              className="flex items-center gap-1 px-2 py-1 text-[11px] text-neutral-400 hover:text-neutral-700 bg-white border border-neutral-100 hover:border-neutral-200 shadow-sm transition-colors"
-                              title="Move to folder"
-                            >
-                              <FolderIcon className="w-3 h-3" />
-                            </button>
-                            {folderPopoverFor === t.id && (
-                              <div className="absolute right-0 top-full mt-1 z-30 bg-white border border-neutral-200 shadow-md min-w-[160px] py-1">
-                                {folders.filter((f) => !f.is_system).map((folder) => (
-                                  <button
-                                    key={folder.id}
-                                    onClick={() => handleMoveRecentToFolder(t.id, folder.id)}
-                                    className="w-full text-left px-3 py-1.5 text-[12px] flex items-center gap-1.5 hover:bg-neutral-50 transition-colors text-neutral-600"
-                                  >
-                                    <FolderIcon className="w-3 h-3 flex-shrink-0" />
-                                    <span className="truncate">{folder.name}</span>
-                                  </button>
-                                ))}
-                                <div className={folders.filter((f) => !f.is_system).length > 0 ? 'border-t border-neutral-100 mt-1 pt-1' : ''}>
-                                  {newFolderForRecent === t.id ? (
-                                    <div className="px-2 py-1.5 flex items-center gap-1">
-                                      <input
-                                        autoFocus
-                                        value={newFolderForRecentName}
-                                        onChange={(e) => setNewFolderForRecentName(e.target.value)}
-                                        onKeyDown={(e) => {
-                                          if (e.key === 'Enter') handleCreateFolderAndMoveRecent(t.id, newFolderForRecentName);
-                                          if (e.key === 'Escape') { setNewFolderForRecent(null); setNewFolderForRecentName(''); }
-                                        }}
-                                        placeholder="Folder name"
-                                        className="flex-1 min-w-0 border border-neutral-200 px-1.5 py-0.5 text-[11px] focus:outline-none focus:border-indigo-400"
-                                      />
-                                      <button
-                                        onClick={() => handleCreateFolderAndMoveRecent(t.id, newFolderForRecentName)}
-                                        className="px-1.5 py-0.5 bg-indigo-600 text-white text-[11px]"
-                                      >
-                                        Go
-                                      </button>
-                                    </div>
-                                  ) : (
-                                    <button
-                                      onClick={() => { setNewFolderForRecent(t.id); setNewFolderForRecentName(''); }}
-                                      className="w-full text-left px-3 py-1.5 text-[12px] text-indigo-600 hover:bg-indigo-50 flex items-center gap-1.5 transition-colors"
-                                    >
-                                      <PlusIcon className="w-3 h-3" />
-                                      New folder…
-                                    </button>
-                                  )}
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </section>
-            </div>
-          )}
-
-          {/* ── Folders tab ── */}
-          {activeTab === 'folders' && !loading && (
-            <MeetingFolderBrowser
-              transcripts={transcripts.filter((t) => t.processed && t.botState !== 'failed')}
-              folders={folders}
-              onFoldersChange={setFolders}
-              onTranscriptMoved={handleMoveTranscriptToFolder}
-              isNew={isNew}
-            />
-          )}
-        </div>
-        </div>
         </div>
       </div>
 
       {/* ── Right column ── */}
-      {/* ── Right column ── */}
-      <div className={`flex-shrink-0 bg-neutral-50 flex flex-col transition-[width] duration-200 overflow-hidden ${rightPanel ? 'w-[284px]' : 'w-12'}`}>
+      <div className={`flex-shrink-0 bg-neutral-50 flex flex-col transition-[width] duration-200 overflow-hidden ${rightPanel ? 'w-[316px]' : 'w-12'}`}>
         {/* Closed — icon strip */}
         <div className={`flex flex-col items-center pt-3 gap-1.5 transition-opacity duration-150 ${rightPanel ? 'opacity-0 pointer-events-none absolute' : 'opacity-100'}`}>
-          <button onClick={() => setRightPanel('calendar')} title="Calendar" className="p-2 rounded-xl bg-white shadow-sm text-neutral-500 hover:bg-neutral-50 transition-colors">
+          <button
+            onClick={() => setRightPanel('calendar')}
+            title="Calendar"
+            className="p-2 rounded-xl bg-white shadow-sm text-neutral-500 hover:bg-neutral-50 transition-colors"
+          >
             <CalendarIcon className="w-4 h-4" />
           </button>
-          <button onClick={() => setRightPanel('chat')} title="Ask AI" className="p-2 rounded-xl bg-white shadow-sm text-neutral-500 hover:bg-neutral-50 transition-colors">
-            <ChatBubbleLeftRightIcon className="w-4 h-4" />
-          </button>
+          {!isHome && (
+            <button
+              onClick={() => {
+                setChatAutoMessage(undefined);
+                setRightPanel('chat');
+              }}
+              title="AI Chat"
+              className="p-2 rounded-xl bg-white shadow-sm text-neutral-500 hover:bg-neutral-50 transition-colors"
+            >
+              <ChatBubbleLeftRightIcon className="w-4 h-4" />
+            </button>
+          )}
         </div>
 
         {/* Open — full panel */}
-        <div className={`flex-1 flex flex-col p-2 min-h-0 transition-opacity duration-150 ${rightPanel ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
-        <div className="flex-1 flex flex-col rounded-2xl bg-white shadow-sm overflow-hidden">
-          {/* Header */}
-          <div className="flex-shrink-0 h-10 flex items-center justify-between px-3 border-b border-neutral-100">
-            {rightPanel === 'chat' ? (
-              <>
-                <div className="flex items-center gap-2">
-                  <ChatBubbleLeftRightIcon className="w-3.5 h-3.5 text-neutral-400" />
-                  <span className="text-[12px] font-semibold text-neutral-700">Assistant</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <button onClick={() => setRightPanel('calendar')} title="Calendar" className="p-1.5 border border-neutral-200 rounded-md text-neutral-500 hover:bg-neutral-50 transition-colors">
-                    <CalendarIcon className="w-3.5 h-3.5" />
-                  </button>
-                  <button onClick={() => setRightPanel(null)} title="Close" className="p-1 text-neutral-400 hover:text-neutral-600 transition-colors">
-                    <ChevronRightIcon className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="flex items-center gap-1.5">
-                  <div className="p-1.5 border rounded-md bg-indigo-600 border-indigo-600 text-white">
-                    <CalendarIcon className="w-3.5 h-3.5" />
-                  </div>
-                  <button onClick={() => setRightPanel('chat')} title="Ask AI" className="p-1.5 border border-neutral-200 rounded-md text-neutral-500 hover:bg-neutral-50 transition-colors">
-                    <ChatBubbleLeftRightIcon className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <button onClick={() => setShowNewMeeting(true)} title="New meeting" className="p-1 text-neutral-400 hover:text-neutral-600 transition-colors">
-                    <PlusIcon className="w-3.5 h-3.5" />
-                  </button>
-                  <div className="relative grid grid-cols-2 bg-neutral-100 rounded-full p-0.5">
-                    <div
-                      className="absolute inset-y-0.5 w-[calc(50%-2px)] rounded-full bg-white shadow-sm pointer-events-none"
-                      style={{ left: calendarView === 'week' && !weekClosing ? '50%' : '2px', transition: 'left 180ms ease-in-out' }}
-                    />
-                    <button
-                      onClick={() => calendarView === 'week' ? closeWeekView() : setCalendarView('month')}
-                      className={`relative z-10 px-2.5 py-0.5 text-[11px] font-medium rounded-full text-center transition-colors duration-180 ${calendarView === 'month' && !weekClosing ? 'text-neutral-800' : 'text-neutral-500 hover:text-neutral-700'}`}
-                    >Month</button>
-                    <button
-                      onClick={() => setCalendarView('week')}
-                      className={`relative z-10 px-2.5 py-0.5 text-[11px] font-medium rounded-full text-center transition-colors duration-180 ${calendarView === 'week' && !weekClosing ? 'text-neutral-800' : 'text-neutral-500 hover:text-neutral-700'}`}
-                    >Week</button>
-                  </div>
-                  <button onClick={() => setRightPanel(null)} title="Close" className="p-1 text-neutral-400 hover:text-neutral-600 transition-colors">
-                    <ChevronRightIcon className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-
-          {/* Body — cross-fade between calendar and chat */}
-          <div className="relative flex-1 min-h-0 overflow-hidden">
-            <div className={`absolute inset-0 overflow-y-auto px-3 py-3 transition-opacity duration-200 ${rightPanel === 'calendar' ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}>
-              {loading ? (
-                <div className="animate-pulse space-y-3">
-                  <div className="h-3 bg-neutral-100 rounded w-1/2" />
-                  <div className="h-40 bg-neutral-100 rounded" />
-                </div>
-              ) : (
-                <CalendarSidebar
-                  meetings={upcoming}
-                  userEmail={userEmail}
-                  botStateMap={botStateMap}
-                  onScheduled={handleScheduled}
-                  onCancelled={handleCancelled}
-                  onRefresh={fetchAll}
-                  onNewMeeting={() => setShowNewMeeting(true)}
-                />
-              )}
-            </div>
-            <div className={`absolute inset-0 flex flex-col transition-opacity duration-200 ${rightPanel === 'chat' ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}>
-              <ChatSidebar
-                inline
-                isOpen={rightPanel === 'chat'}
-                onClose={() => setRightPanel('calendar')}
-                context="meeting"
+        <div className={`flex-1 relative p-2 min-h-0 transition-opacity duration-150 ${rightPanel ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+          {/* Calendar panel — opacity-only (no transform: avoids position:fixed overlay bugs) */}
+          <div className={`absolute inset-2 transition-opacity duration-200 ${rightPanel === 'calendar' ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}>
+            <div className="h-full flex flex-col rounded-2xl bg-white shadow-sm overflow-hidden">
+              <CalendarSidebar
+                meetings={upcoming}
+                userEmail={userEmail}
+                botStateMap={botStateMap}
+                onScheduled={handleScheduled}
+                onCancelled={handleCancelled}
+                onRefresh={fetchAll}
+                onNewMeeting={() => setShowNewMeeting(true)}
+                onClose={() => setRightPanel(null)}
+                onOpenChat={() => { setChatAutoMessage(undefined); setRightPanel('chat'); }}
+                showViewToggle
               />
             </div>
           </div>
-        </div>
+
+          {/* Chat panel */}
+          <div className={`absolute inset-2 transition-all duration-200 ${rightPanel === 'chat' ? 'opacity-100 translate-x-0 pointer-events-auto' : 'opacity-0 -translate-x-2 pointer-events-none'}`}>
+            <div className="h-full flex flex-col rounded-2xl bg-white shadow-sm overflow-hidden">
+              {activeMeetingContext ? (
+                <MeetingChatSidebar
+                  inline
+                  isOpen
+                  onClose={() => { setRightPanel(null); setChatAutoMessage(undefined); }}
+                  meetingContext={activeMeetingContext}
+                  onOpenWorkflow={handleOpenWorkflow}
+                  onOpenProcess={handleOpenProcess}
+                  autoMessage={chatAutoMessage}
+                  onSwitchPanel={() => setRightPanel('calendar')}
+                />
+              ) : (
+                <ChatSidebar
+                  inline
+                  isOpen
+                  onClose={() => setRightPanel(null)}
+                  context="meeting"
+                  onSwitchPanel={() => setRightPanel('calendar')}
+                />
+              )}
+            </div>
+          </div>
         </div>
       </div>
 
       <CaptureModal
         isOpen={showCapture}
-        onClose={() => setShowCapture(false)}
+        onClose={() => { setShowCapture(false); setCaptureMode(null); }}
         onBotSent={() => setPendingAdhoc({ initiatedAt: new Date().toISOString() })}
+        recording={recording}
       />
       <NewMeetingModal
         isOpen={showNewMeeting}

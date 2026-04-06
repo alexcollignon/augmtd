@@ -24,6 +24,7 @@ import {
 import { createClient } from '@/lib/supabase/client';
 import RsvpButtons from '@/components/inbox/rsvp-buttons';
 import MeetingRecorder from '@/components/meetings/meeting-recorder';
+import { useRecording } from '@/hooks/useRecording';
 
 interface TranscriptSegment {
   speaker: string;
@@ -106,6 +107,7 @@ export default function MeetingDetailPanel({
   onEdit,
   onDelete,
 }: MeetingDetailPanelProps) {
+  const panelRecording = useRecording(() => setTranscriptKey(k => k + 1));
   const { primary } = formatMeetingTime(event.start_time, event.end_time);
   const duration = calculateDuration(event.start_time, event.end_time);
   const vipAttendees = getVIPAttendees(event.attendees);
@@ -377,9 +379,13 @@ export default function MeetingDetailPanel({
                         <div className="px-5 py-4 border-b border-neutral-100">
                           <p className="text-[11px] font-medium text-neutral-400 mb-2.5 uppercase tracking-wide">Record in-person</p>
                           <MeetingRecorder
-                            calendarEventId={event.id}
-                            meetingTitle={event.title}
-                            onTranscriptReady={() => setTranscriptKey(k => k + 1)}
+                            state={panelRecording.state}
+                            elapsed={panelRecording.elapsed}
+                            uploadProgress={panelRecording.uploadProgress}
+                            errorMessage={panelRecording.errorMessage}
+                            onStart={() => panelRecording.startRecording(event.title, event.id)}
+                            onStop={panelRecording.stopAndUpload}
+                            onReset={panelRecording.reset}
                           />
                         </div>
                       )}

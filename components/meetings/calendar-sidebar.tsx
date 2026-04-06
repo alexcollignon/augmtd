@@ -2,10 +2,11 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { ChevronDownIcon, ChevronUpIcon } from '@heroicons/react/24/outline';
+import { ChevronDownIcon, ChevronUpIcon, CalendarIcon, ChatBubbleLeftRightIcon, ChevronRightIcon, ChevronLeftIcon, PlusIcon } from '@heroicons/react/24/outline';
 import type { CalendarEvent } from '@/lib/types/meetings';
 import MeetingCard from '@/components/meetings/meeting-card';
 import MonthCalendar from '@/components/meetings/month-calendar';
+import WeekCalendar from '@/components/meetings/week-calendar';
 
 interface CalendarSidebarProps {
   meetings: CalendarEvent[];
@@ -14,7 +15,11 @@ interface CalendarSidebarProps {
   onScheduled: (eventId: string) => void;
   onCancelled: (eventId: string) => void;
   onRefresh?: () => void;
-  onNewMeeting?: (date: Date) => void;
+  onNewMeeting?: (date?: Date) => void;
+  onClose?: () => void;
+  onOpenChat?: () => void;
+  /** When true, shows the + button and Month/Week pill toggle in the header */
+  showViewToggle?: boolean;
 }
 
 function getBotStateChip(state?: string | null) {
@@ -207,10 +212,20 @@ export default function CalendarSidebar({
   onCancelled,
   onRefresh,
   onNewMeeting,
+  onClose,
+  onOpenChat,
+  showViewToggle,
 }: CalendarSidebarProps) {
   const now = new Date();
   const todayStr = now.toDateString();
   const [selectedDateStr, setSelectedDateStr] = useState(todayStr);
+  const [calendarView, setCalendarView] = useState<'month' | 'week'>('month');
+  const [weekClosing, setWeekClosing] = useState(false);
+
+  const closeWeekView = () => {
+    setWeekClosing(true);
+    setTimeout(() => { setCalendarView('month'); setWeekClosing(false); }, 200);
+  };
 
   const completedToday = meetings.filter(m =>
     m.meeting_status === 'completed' &&
@@ -218,7 +233,96 @@ export default function CalendarSidebar({
   );
 
   return (
-    <div>
+    <>
+      {/* Week view overlay — fixed, appears to the left of the right panel */}
+      {showViewToggle && (calendarView === 'week' || weekClosing) && (
+        <div
+          className={`fixed top-2 bottom-2 z-40 overflow-hidden bg-white rounded-l-2xl flex flex-col ${weekClosing ? 'week-collapse-exit' : 'week-expand-enter'}`}
+          style={{ right: '316px', width: '680px', boxShadow: '-4px 0 24px rgba(0,0,0,0.10)' }}
+        >
+          <div className="flex-shrink-0 h-10 flex items-center justify-between px-3 border-b border-neutral-200">
+            <button
+              onClick={closeWeekView}
+              className="flex items-center gap-1.5 text-[13px] text-neutral-500 hover:text-neutral-800 transition-colors"
+            >
+              <ChevronLeftIcon className="w-3.5 h-3.5" />
+              <span className="font-medium">Back</span>
+            </button>
+            <span className="text-[13px] font-semibold text-neutral-700">Calendar</span>
+            <div className="w-6" />
+          </div>
+          <div className="flex-1 min-h-0">
+            <WeekCalendar
+              meetings={meetings}
+              userEmail={userEmail}
+              botStateMap={botStateMap}
+              onScheduled={onScheduled}
+              onCancelled={onCancelled}
+              onRefresh={onRefresh}
+              onNewMeeting={(date) => onNewMeeting?.(date)}
+            />
+          </div>
+        </div>
+      )}
+
+      <div className="flex flex-col h-full overflow-hidden">
+      {/* Header — matches inbox MeetingsColumn style */}
+      {showViewToggle && (
+        <div className="flex-shrink-0 h-10 flex items-center justify-between px-3 border-b border-neutral-100">
+          {/* Left: active Calendar icon + Chat toggle */}
+          <div className="flex items-center gap-1.5">
+            <div className="p-1.5 border rounded-md bg-indigo-600 border-indigo-600 text-white">
+              <CalendarIcon className="w-3.5 h-3.5" />
+            </div>
+            {onOpenChat && (
+              <button
+                onClick={onOpenChat}
+                title="AI Chat"
+                className="p-1.5 border border-neutral-200 text-neutral-500 hover:bg-neutral-50 rounded-md transition-colors"
+              >
+                <ChatBubbleLeftRightIcon className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+          {/* Right: + button, Month/Week pill, close */}
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => onNewMeeting?.()}
+              title="New meeting"
+              className="p-1 text-neutral-400 hover:text-neutral-600 transition-colors"
+            >
+              <PlusIcon className="w-3.5 h-3.5" />
+            </button>
+            <div className="relative grid grid-cols-2 bg-neutral-100 rounded-full p-0.5">
+              <div
+                className="absolute inset-y-0.5 w-[calc(50%-2px)] rounded-full bg-white shadow-sm pointer-events-none"
+                style={{
+                  left: calendarView === 'week' && !weekClosing ? '50%' : '2px',
+                  transition: 'left 180ms ease-in-out',
+                }}
+              />
+              <button
+                onClick={() => calendarView === 'week' && closeWeekView()}
+                className={`relative z-10 px-2.5 py-0.5 text-[11px] font-medium rounded-full text-center transition-colors duration-180 ${calendarView === 'month' && !weekClosing ? 'text-neutral-800' : 'text-neutral-500 hover:text-neutral-700'}`}
+              >
+                Month
+              </button>
+              <button
+                onClick={() => setCalendarView('week')}
+                className={`relative z-10 px-2.5 py-0.5 text-[11px] font-medium rounded-full text-center transition-colors duration-180 ${calendarView === 'week' && !weekClosing ? 'text-neutral-800' : 'text-neutral-500 hover:text-neutral-700'}`}
+              >
+                Week
+              </button>
+            </div>
+            {onClose && (
+              <button onClick={onClose} title="Close" className="p-1 text-neutral-400 hover:text-neutral-600 transition-colors">
+                <ChevronRightIcon className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+      <div className="flex-1 overflow-y-auto">
       <MonthCalendar
         meetings={meetings}
         userEmail={userEmail}
@@ -239,6 +343,8 @@ export default function CalendarSidebar({
         />
         <CompletedTodaySection meetings={completedToday} />
       </div>
+      </div>
     </div>
+    </>
   );
 }
