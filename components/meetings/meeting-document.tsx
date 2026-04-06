@@ -119,6 +119,7 @@ function RenderedDocument({ content }: { content: string }) {
 
     // Bullet list with optional indented sub-bullets
     if (line.startsWith('- ') || line.startsWith('* ')) {
+      const ulKey = i; // capture before inner loop advances i
       type BulletItem = { text: string; subs: string[] };
       const bullets: BulletItem[] = [];
       while (i < lines.length) {
@@ -136,7 +137,7 @@ function RenderedDocument({ content }: { content: string }) {
         }
       }
       elements.push(
-        <ul key={i} className="space-y-2 mb-3">
+        <ul key={ulKey} className="space-y-2 mb-3">
           {bullets.map((b, bi) => (
             <li key={bi}>
               <div className="flex items-start gap-2 text-[13px] text-neutral-700 leading-relaxed">

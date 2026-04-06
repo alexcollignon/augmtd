@@ -34,7 +34,7 @@ export async function POST(req: NextRequest) {
       transcript: noteBody,
       transcript_segments: [],
       attendees: [],
-      processed: false,
+      processed: true,
     })
     .select('id')
     .single();

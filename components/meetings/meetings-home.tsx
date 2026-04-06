@@ -157,16 +157,37 @@ export default function MeetingsHome({
   }, [upcoming]); // eslint-disable-line
 
   // In-progress transcripts — server auto-fails stuck rows after 2h before returning this list
-  const inProgress = useMemo(() =>
-    transcripts
+  // Deduplicate by calendarEventId: when a user both records and takes notes in the same meeting,
+  // two rows can briefly coexist. Keep the highest-priority source (recording > bot > upload > text).
+  const inProgress = useMemo(() => {
+    const all = transcripts
       .filter((t) => !t.processed && t.botState !== 'failed')
-      .sort((a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime()),
-  [transcripts]);
+      .sort((a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime());
+    const sourcePriority: Record<string, number> = { recording: 3, bot: 2, upload: 1, text: 0 };
+    const seen = new Map<string, Transcript>();
+    for (const t of all) {
+      const key = t.calendarEventId ?? t.id;
+      const existing = seen.get(key);
+      if (!existing || (sourcePriority[t.source] ?? 0) > (sourcePriority[existing.source] ?? 0)) {
+        seen.set(key, t);
+      }
+    }
+    return Array.from(seen.values()).sort((a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime());
+  }, [transcripts]);
 
   // Recent notes grouped by date
   const recentByDate = useMemo(() => {
-    let list = transcripts
-      .filter((t) => t.processed)
+    // Deduplicate by calendarEventId (same race condition as inProgress can produce two processed rows)
+    const sourcePriorityR: Record<string, number> = { recording: 3, bot: 2, upload: 1, text: 0 };
+    const seenR = new Map<string, Transcript>();
+    for (const t of transcripts.filter((t) => t.processed)) {
+      const key = t.calendarEventId ?? t.id;
+      const existing = seenR.get(key);
+      if (!existing || (sourcePriorityR[t.source] ?? 0) > (sourcePriorityR[existing.source] ?? 0)) {
+        seenR.set(key, t);
+      }
+    }
+    let list = Array.from(seenR.values())
       .sort((a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime());
     if (filterPersonEmail) {
       list = list.filter((t) => t.attendees?.some((a) => a.email === filterPersonEmail));
