@@ -518,7 +518,7 @@ export async function extractMeetingInsights(
   liveNotes?: string,
 ): Promise<MeetingInsights> {
   try {
-    const { client: openai, model: defaultModel } = await getAIClient(userId, 'planning', supabase);
+    const { client: openai, model: defaultModel, endpoint } = await getAIClient(userId, 'planning', supabase);
 
     const userContext = await buildUserContextBlock(userId, supabase);
 
@@ -529,14 +529,14 @@ export async function extractMeetingInsights(
     const isTextNote = segments.every((s: any) => s.speaker === 'Note');
 
     const notesBlock = liveNotes?.trim()
-      ? `The participant wrote these notes during the meeting:\n<notes>\n${liveNotes.trim()}\n</notes>\n\nUse these as your structural skeleton — expand each point with precise context and exact wording from the transcript. Preserve the participant's framing and sequencing. Do not introduce new top-level sections that aren't grounded in the notes.`
+      ? `The participant wrote these notes during the meeting:\n<notes>\n${liveNotes.trim()}\n</notes>`
       : '';
 
     const documentInstruction = liveNotes?.trim()
-      ? `Expand the participant's notes with precise detail and exact context from the transcript. Keep their structure and voice. Capture every decision, commitment, open question, and risk — miss nothing. No redundancy: each fact once.`
-      : `Write what a thoughtful participant would capture. Open with 1–2 tight sentences on what this meeting was and its key outcome (no "The meeting was..." opener). Capture every decision, commitment, open question, and risk — miss nothing. No redundancy: each fact once.`;
+      ? `Each note becomes a top-level bullet. Add 1–2 indented sub-bullets (starting with "  - ") with supporting detail and exact context from the transcript. Convert first-person notes ("I agreed to...") to meeting-level past tense ("Alex agreed to..."). Don't show the raw note text — rephrase it as a clean bullet.`
+      : `Produce top-level bullets covering what happened, what was decided, and what matters. For each bullet, add 1–2 indented sub-bullets ("  - ") with supporting detail from the transcript if it adds meaningful context. Skip sub-bullets for simple facts.`;
 
-    const prompt = `${userContext ? userContext + '\n\n' : ''}You are producing clean meeting notes. Your output must read like a thoughtful colleague's notebook entry — precise, dense with useful detail, nothing wasted.
+    const prompt = `${userContext ? userContext + '\n\n' : ''}You are producing clean meeting notes in the style of a smart colleague's bullet-point notebook.
 
 Meeting: "${meetingTitle}"
 ${notesBlock ? '\n' + notesBlock + '\n' : ''}
@@ -571,11 +571,14 @@ Return a JSON object with exactly these fields:
 }
 
 Rules for the document field:
+- Format: one optional context sentence (max 15 words, only if the meeting title alone isn't self-explanatory), then bullet list. Bullets are the primary format — not prose paragraphs.
 - ${documentInstruction}
-- Use ## section headers only when they genuinely group distinct content. A short or simple meeting may not need any headers — tight prose is better than forced sections.
-- If follow-up actions were discussed, close with a ## Next Steps section (bullet list, owner after em dash, e.g. "- Review the contract — Alex").
-- Be proportional to the meeting length: a 5-minute call gets a tight paragraph, not 6 padded sections.
-- Write in clear direct prose. No corporate jargon. No AI-report patterns like "The discussion covered..." or "It was noted that...".
+- Past tense throughout. Meeting-level perspective — never first person. Names over pronouns.
+- Capture every decision, commitment, open question, and risk — miss nothing. No redundancy: each fact once.
+- Use ## section headers only for genuinely distinct groups in longer meetings (30+ min). Short meetings: no headers, just bullets.
+- If follow-up actions were discussed, close with ## Next Steps (bullet list, owner after em dash, e.g. "- Review the contract — Alex").
+- Short meetings (< 10 min): 3–6 bullets max. No padding, no filler.
+- Never write: "The meeting covered...", "It was noted that...", "The discussion included...".
 
 Rules for other fields:
 - decisions: concrete things agreed or decided (not tasks). Max 8. Must be grounded in the transcript.
@@ -584,6 +587,8 @@ Rules for other fields:
 - keyMoments: up to 6 notable segments. type: "decision" | "risk" | "commitment". segmentIndex must be a real [N] from the transcript.
 - Return ONLY the JSON object, no other text.`;
 
+    // Use json_object mode for providers that support it (OpenAI, Fireworks, Azure)
+    const supportsJsonMode = endpoint.provider !== 'anthropic';
     const completion = await openai.chat.completions.create({
       model: defaultModel,
       messages: [
@@ -592,13 +597,18 @@ Rules for other fields:
       ],
       temperature: 0.3,
       max_tokens: 3000,
+      ...(supportsJsonMode ? { response_format: { type: 'json_object' } } : {}),
     });
 
     const response = completion.choices[0]?.message?.content?.trim();
     if (!response) throw new Error('No response');
 
-    const cleaned = response.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
-    const parsed = JSON.parse(cleaned) as MeetingInsights;
+    // Strip markdown fences if present, then find the first complete JSON object
+    const stripped = response.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
+    const jsonStart = stripped.indexOf('{');
+    const jsonEnd = stripped.lastIndexOf('}');
+    if (jsonStart === -1 || jsonEnd === -1) throw new Error('No JSON object in response');
+    const parsed = JSON.parse(stripped.slice(jsonStart, jsonEnd + 1)) as MeetingInsights;
 
     console.log(`[MeetingBot] Extracted insights: ${parsed.decisions?.length ?? 0} decisions, ${parsed.actionItems?.length ?? 0} actions, ${parsed.risks?.length ?? 0} risks, ${parsed.keyMoments?.length ?? 0} key moments`);
     return {

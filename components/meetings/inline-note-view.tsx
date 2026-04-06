@@ -261,8 +261,8 @@ export default function InlineNoteView({
   // Retry stuck processing
   const [retrying, setRetrying] = useState(false);
 
-  // Post-capture UI
-  const [confirmedIds, setConfirmedIds] = useState<Set<string>>(new Set());
+  // Post-capture UI — confirmedDeskIds maps actionItem.id → desk_item.id for undo/delete
+  const [confirmedDeskIds, setConfirmedDeskIds] = useState<Map<string, string>>(new Map());
   const [dismissedIds, setDismissedIds] = useState<Set<string>>(new Set());
   const [audioDuration, setAudioDuration] = useState<number | null>(null);
   const [highlightedSegment, setHighlightedSegment] = useState<number | null>(null);
@@ -490,12 +490,29 @@ export default function InlineNoteView({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: item.workTitle, kanban_column: 'todo' }),
       });
-      if (res.ok) setConfirmedIds((prev) => new Set(prev).add(item.id));
+      if (res.ok) {
+        const { item: deskItem } = await res.json();
+        setConfirmedDeskIds((prev) => new Map(prev).set(item.id, deskItem.id));
+      }
     } catch {}
+  };
+
+  const handleUndoConfirm = async (actionItemId: string) => {
+    const deskItemId = confirmedDeskIds.get(actionItemId);
+    if (deskItemId) {
+      try {
+        await fetch(`/api/desk/${deskItemId}`, { method: 'DELETE' });
+      } catch {}
+    }
+    setConfirmedDeskIds((prev) => { const m = new Map(prev); m.delete(actionItemId); return m; });
   };
 
   const handleDismissItem = (itemId: string) => {
     setDismissedIds((prev) => new Set(prev).add(itemId));
+  };
+
+  const handleUndoDismiss = (itemId: string) => {
+    setDismissedIds((prev) => { const s = new Set(prev); s.delete(itemId); return s; });
   };
 
   const handleCitationClick = (segmentIndex: number) => {
@@ -525,6 +542,12 @@ const handleRetry = async () => {
     if (!event) return;
     setDeleting(true);
     try {
+      // Remove any manually-added desk items for this meeting's action items
+      const deskDeletePromises = Array.from(confirmedDeskIds.values()).map((deskItemId) =>
+        fetch(`/api/desk/${deskItemId}`, { method: 'DELETE' }).catch(() => {})
+      );
+      await Promise.all(deskDeletePromises);
+
       await fetch(`/api/meetings/${event.id}/transcript`, { method: 'DELETE' });
       new BroadcastChannel('meetings-updated').postMessage('deleted');
       onBack();
@@ -798,7 +821,21 @@ const handleRetry = async () => {
         </div>
       )}
 
-      {!transcript && recording.state !== 'recording' && recording.state !== 'uploading' && (
+      {recording.state === 'uploading' && (
+        <div className="flex items-center gap-2 mb-4 text-[12px] text-neutral-500">
+          <span className="w-3 h-3 rounded-full border-2 border-neutral-300 border-t-indigo-500 animate-spin flex-shrink-0" />
+          Uploading recording…
+        </div>
+      )}
+
+      {recording.state === 'processing' && (
+        <div className="flex items-center gap-2 mb-4 text-[12px] text-neutral-500">
+          <span className="w-3 h-3 rounded-full border-2 border-neutral-300 border-t-indigo-500 animate-spin flex-shrink-0" />
+          Transcribing and analysing…
+        </div>
+      )}
+
+      {!transcript && recording.state !== 'recording' && recording.state !== 'uploading' && recording.state !== 'processing' && (
         <div className="flex items-center gap-2 mb-4 flex-wrap">
           {/* Time until (scheduled only) */}
           {!isAdHoc && (
@@ -887,7 +924,7 @@ const handleRetry = async () => {
 
 
       {/* ── ZONE B — Note textarea (below pills) ── */}
-      {!transcript && (
+      {!transcript && recording.state !== 'uploading' && recording.state !== 'processing' && (
         <div className="mb-5">
           <textarea
             value={noteBody}
@@ -1016,7 +1053,7 @@ const handleRetry = async () => {
         <section className="mb-6 pt-4 border-t border-neutral-100">
           <div className="space-y-px">
             {actionItems.map((item) => {
-              const isMine = confirmedIds.has(item.id);
+              const isMine = confirmedDeskIds.has(item.id);
               const isNotMine = dismissedIds.has(item.id);
               const isPending = !isMine && !isNotMine;
               return (
@@ -1038,12 +1075,28 @@ const handleRetry = async () => {
                     {item.assignee && <span className="ml-1.5 text-[11px] text-neutral-400">— {item.assignee}</span>}
                   </p>
 
-                  {/* Status label or action buttons */}
+                  {/* Status label + undo, or action buttons */}
                   {isMine && (
-                    <span className="text-[10px] text-emerald-600 font-medium flex-shrink-0">Added to desk</span>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <span className="text-[10px] text-emerald-600 font-medium">Added to desk</span>
+                      <button
+                        onClick={() => handleUndoConfirm(item.id)}
+                        className="text-[10px] text-neutral-400 hover:text-neutral-600 opacity-0 group-hover:opacity-100 transition-opacity"
+                      >
+                        Undo
+                      </button>
+                    </div>
                   )}
                   {isNotMine && (
-                    <span className="text-[10px] text-neutral-400 flex-shrink-0">Not mine</span>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <span className="text-[10px] text-neutral-400">Not mine</span>
+                      <button
+                        onClick={() => handleUndoDismiss(item.id)}
+                        className="text-[10px] text-neutral-400 hover:text-neutral-600 opacity-0 group-hover:opacity-100 transition-opacity"
+                      >
+                        Undo
+                      </button>
+                    </div>
                   )}
                   {isPending && (
                     <div className="flex items-center gap-1 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
