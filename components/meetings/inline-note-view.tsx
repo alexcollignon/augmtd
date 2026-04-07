@@ -396,8 +396,9 @@ export default function InlineNoteView({
   }, [noteId]); // noteId state (not ref) so effect fires when it's set
 
   // Sync botScheduled from actual event data (persists across remounts)
+  // 'scheduled'/'joining'/'recording' all count as "bot is active" — suppresses Send assistant button.
   useEffect(() => {
-    if (event?.attendee_bot_state === 'scheduled') setBotScheduled(true);
+    if (['scheduled', 'joining', 'recording'].includes(event?.attendee_bot_state ?? '')) setBotScheduled(true);
     else if (event?.attendee_bot_state === 'cancelled' || event?.attendee_bot_state === null) setBotScheduled(false);
   }, [event?.attendee_bot_state]);
 
@@ -1188,8 +1189,10 @@ const handleRetry = async () => {
           )}
           {!isAdHoc && hasGoogleMeetLink && isAfterStart && botScheduled && (
             <span className="text-[12px] text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-full font-medium flex items-center gap-1.5">
-              <ComputerDesktopIcon className="w-3 h-3" />
-              Assistant in meeting
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse flex-shrink-0" />
+              {event?.attendee_bot_state === 'joining' ? 'Assistant joining…'
+                : event?.attendee_bot_state === 'recording' ? 'Assistant in meeting'
+                : 'Assistant scheduled'}
             </span>
           )}
 
@@ -1221,8 +1224,8 @@ const handleRetry = async () => {
             </span>
           )}
 
-          {/* Record in person — hidden while bot is active */}
-          {!adHocBotActive && (
+          {/* Record in person — hidden while bot is active (ad-hoc or scheduled) */}
+          {!adHocBotActive && !botScheduled && (
             <button
               onClick={async () => {
                 const resolvedNoteId = await flushNoteSave();
@@ -1240,7 +1243,7 @@ const handleRetry = async () => {
           )}
 
           {/* Finish — triggers AI analysis. Hidden while bot is active. */}
-          {(noteBody.trim() || adHocTitle.trim() || (isDraftNote && event?.id === transcript?.id)) && !adHocBotActive && (
+          {(noteBody.trim() || adHocTitle.trim() || (isDraftNote && event?.id === transcript?.id)) && !adHocBotActive && !botScheduled && (
             <button
               onClick={handleProcessNote}
               disabled={noteProcessing}

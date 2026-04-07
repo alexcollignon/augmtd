@@ -327,7 +327,8 @@ export default function MeetingsPageClient({ userEmail }: { userEmail: string })
   // Determine if live notepad should show — only when NOT already inside an inline note
   // (inline note handles recording display itself)
   const showInlineNoteActive = !!(selectedMeetingId || showAdHocNote);
-  const showLiveNotepad = (recording.state === 'recording' || (activeBotEvent?.attendee_bot_state === 'recording')) && !showInlineNoteActive;
+  // LiveNotepad is only for in-person recording. Scheduled bot meetings use InlineNoteView directly.
+  const showLiveNotepad = recording.state === 'recording' && !showInlineNoteActive;
   const selectedFolder = selectedFolderId ? folders.find((f) => f.id === selectedFolderId) : null;
 
   // Determine center panel content
@@ -388,7 +389,7 @@ export default function MeetingsPageClient({ userEmail }: { userEmail: string })
             <div className="flex items-center gap-2">
               <h2 className="text-[13px] font-semibold text-neutral-700">
                 {selectedFolder ? selectedFolder.name
-                  : showLiveNotepad ? recording.recordingTitle || activeBotEvent?.title || 'Meeting'
+                  : showLiveNotepad ? recording.recordingTitle || 'Meeting'
                   : 'Meetings'}
               </h2>
             </div>
@@ -409,11 +410,11 @@ export default function MeetingsPageClient({ userEmail }: { userEmail: string })
           <div className="flex-1 overflow-y-auto">
             {showLiveNotepad ? (
               <LiveNotepad
-                title={recording.state === 'recording' ? recording.recordingTitle : (activeBotEvent?.title ?? 'Meeting')}
-                elapsed={recording.state === 'recording' ? recording.elapsed : 0}
-                notes={recording.state === 'recording' ? recording.liveNotes : botLiveNotes}
-                onNotesChange={recording.state === 'recording' ? recording.setLiveNotes : handleBotLiveNotesChange}
-                source={recording.state === 'recording' ? 'recording' : 'bot'}
+                title={recording.recordingTitle || 'Meeting'}
+                elapsed={recording.elapsed}
+                notes={recording.liveNotes}
+                onNotesChange={recording.setLiveNotes}
+                source="recording"
               />
             ) : selectedFolder ? (
               /* Folder detail view */

@@ -49,6 +49,7 @@ async def run_transcription(
         title = 'Ad-hoc meeting'
         start_time = now_iso
         end_time = now_iso
+        got_calendar_event = False
         if not transcript_id and calendar_event_id:
             async with httpx.AsyncClient(timeout=15.0) as client:
                 resp = await client.get(
@@ -65,9 +66,84 @@ async def run_transcription(
                     title = rows[0].get('title', 'Meeting')
                     start_time = rows[0].get('start_time', '')
                     end_time = rows[0].get('end_time', '')
+                    got_calendar_event = True
 
-        # 2. Pre-insert pending row if this is a new transcription
-        if not transcript_id:
+        # 1b. Check for an existing text note to PATCH in-place (1-row architecture).
+        # Avoids creating a second row when the user had already taken notes for this meeting.
+        # Try two patterns:
+        #   A) Scheduled meetings: text note has calendar_event_id = calendarEventId (different id)
+        #   B) Ad-hoc meetings:   text note has id = calendarEventId (noteId was passed as calendarEventId)
+        existing_note_id: str | None = None
+        existing_live_notes: str = ''
+        if calendar_event_id and not transcript_id:
+            _sb_headers = {
+                'Authorization': f'Bearer {SUPABASE_SERVICE_ROLE_KEY}',
+                'apikey': SUPABASE_SERVICE_ROLE_KEY,
+            }
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                # Pattern A: scheduled — text note linked via calendar_event_id column
+                check_a = await client.get(
+                    f'{SUPABASE_URL}/rest/v1/meeting_transcripts',
+                    params={
+                        'calendar_event_id': f'eq.{calendar_event_id}',
+                        'source': 'eq.text',
+                        'user_id': f'eq.{user_id}',
+                        'select': 'id,transcript',
+                        'limit': '1',
+                    },
+                    headers=_sb_headers,
+                )
+                rows_a = check_a.json() if check_a.status_code == 200 else []
+                if rows_a:
+                    existing_note_id = rows_a[0]['id']
+                    existing_live_notes = rows_a[0].get('transcript', '') or ''
+
+                # Pattern B: ad-hoc — text note id == calendarEventId
+                if not existing_note_id:
+                    check_b = await client.get(
+                        f'{SUPABASE_URL}/rest/v1/meeting_transcripts',
+                        params={
+                            'id': f'eq.{calendar_event_id}',
+                            'source': 'eq.text',
+                            'user_id': f'eq.{user_id}',
+                            'select': 'id,transcript',
+                        },
+                        headers=_sb_headers,
+                    )
+                    rows_b = check_b.json() if check_b.status_code == 200 else []
+                    if rows_b:
+                        existing_note_id = rows_b[0]['id']
+                        existing_live_notes = rows_b[0].get('transcript', '') or ''
+
+        # 2. PATCH existing text note in-place OR pre-insert a new row
+        if existing_note_id:
+            # In-place update: preserve user's notes as live_notes, flip source to bot
+            transcript_id = existing_note_id
+            patch_fields: dict = {
+                'source': 'bot',
+                'recording_storage_path': storage_path,
+                'bot_state': 'processing',
+                'processed': False,
+                'notes_structured': {'live_notes': existing_live_notes},
+            }
+            # Only overwrite title/times when we have real calendar event data
+            if got_calendar_event:
+                patch_fields.update({'title': title, 'start_time': start_time, 'end_time': end_time})
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                patch_resp = await client.patch(
+                    f'{SUPABASE_URL}/rest/v1/meeting_transcripts',
+                    params={'id': f'eq.{existing_note_id}'},
+                    headers={
+                        'Authorization': f'Bearer {SUPABASE_SERVICE_ROLE_KEY}',
+                        'apikey': SUPABASE_SERVICE_ROLE_KEY,
+                        'Content-Type': 'application/json',
+                        'Prefer': 'return=minimal',
+                    },
+                    json=patch_fields,
+                )
+                patch_resp.raise_for_status()
+            logger.info(f'[Transcription] Patched existing text note {transcript_id} → source=bot')
+        elif not transcript_id:
             transcript_id = str(uuid4())
             async with httpx.AsyncClient(timeout=15.0) as client:
                 ins_resp = await client.post(
