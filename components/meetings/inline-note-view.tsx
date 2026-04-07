@@ -259,6 +259,9 @@ export default function InlineNoteView({
   // Ad-hoc bot send state (inline — no modal)
   const [adHocBotSending, setAdHocBotSending] = useState(false);
   const [adHocBotSent, setAdHocBotSent] = useState(false);
+  const [adHocBotState, setAdHocBotState] = useState<string | null>(null); // 'joining' | 'recording' | null
+  const [adHocBotFailed, setAdHocBotFailed] = useState(false); // true after 2-min timeout with no transcript
+  const adHocBotPollCountRef = useRef(0);
 
   // Prep brief
   const [prepBrief, setPrepBrief] = useState<{
@@ -406,17 +409,58 @@ export default function InlineNoteView({
       .catch(() => {});
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Poll for the bot transcript after "Send assistant" is clicked.
+  // Hetzner creates the row asynchronously (joining → recording → processing).
+  // When found, switch to the bot transcript's InlineNoteView via onCreated.
+  // Fallback: after 24 polls (~2 minutes) with no result, restore "Finish".
+  useEffect(() => {
+    if (!adHocBotSent || !noteIdRef.current) return;
+    adHocBotPollCountRef.current = 0;
+
+    const interval = setInterval(async () => {
+      adHocBotPollCountRef.current += 1;
+
+      // 2-minute timeout: 24 × 5s = 120s
+      if (adHocBotPollCountRef.current > 24) {
+        clearInterval(interval);
+        setAdHocBotFailed(true);
+        return;
+      }
+
+      try {
+        const res = await fetch(`/api/meetings/bot/linked/${noteIdRef.current}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.notFound) return;
+
+        // Bot transcript found — update indicator state
+        setAdHocBotState(data.botState);
+
+        // Once the bot has moved past joining/recording (i.e. it's processing or done),
+        // navigate to the bot transcript view so the user sees the result naturally.
+        if (data.botState !== 'joining' && data.botState !== 'recording') {
+          clearInterval(interval);
+          onCreated?.(data.id);
+        }
+      } catch {}
+    }, 5000);
+
+    return () => clearInterval(interval);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [adHocBotSent]);
+
   // handleBack: for ad-hoc notes, delete the row if user navigated away without writing anything.
   const handleBack = useCallback(async () => {
     // Delete the note row if user navigated away without writing anything.
     // Applies to: fresh ad-hoc notes (isAdHoc) and ad-hoc drafts returned via Live section
     // (detected by synthetic event: event.id === transcript.id).
     const isSyntheticEvent = event && transcript && event.id === transcript.id;
-    if (noteIdRef.current && !noteBody.trim() && !adHocTitle.trim() && (isAdHoc || isSyntheticEvent)) {
+    // Skip deletion if bot was sent — text note holds live notes that generate-insights needs
+    if (!adHocBotSent && noteIdRef.current && !noteBody.trim() && !adHocTitle.trim() && (isAdHoc || isSyntheticEvent)) {
       await fetch(`/api/meetings/notes/${noteIdRef.current}`, { method: 'DELETE' }).catch(() => {});
     }
     onBack();
-  }, [isAdHoc, noteBody, adHocTitle, event, transcript, onBack]);
+  }, [isAdHoc, adHocBotSent, noteBody, adHocTitle, event, transcript, onBack]);
 
   // For ad-hoc mode: when recording completes, go back so user finds the new note in Recent
   useEffect(() => {
@@ -1064,33 +1108,48 @@ const handleRetry = async () => {
           )}
 
 
-          {/* Record in person — uses page-level recording hook (survives navigation) */}
-          <button
-            onClick={async () => {
-              // Flush any pending note save first so we have a noteId to merge into
-              const resolvedNoteId = await flushNoteSave();
-              console.log('[Record] flushNoteSave resolved noteId:', resolvedNoteId);
-              onStartRecording?.(
-                isAdHoc ? (adHocTitle || 'Ad-hoc meeting') : (event?.title ?? 'Meeting'),
-                isAdHoc ? undefined : event?.id,
-                resolvedNoteId ?? undefined,
-              );
-            }}
-            className="flex items-center gap-1.5 px-2.5 py-1 text-[12px] font-medium text-neutral-700 bg-neutral-100 hover:bg-neutral-200 rounded-full transition-colors"
-          >
-            <MicrophoneIcon className="w-3 h-3" />
-            Record in person
-          </button>
+          {/* Bot joining/recording indicator — replaces Record + Finish when bot was sent */}
+          {adHocBotSent && !adHocBotFailed && (
+            <span className="flex items-center gap-1.5 text-[12px] font-medium text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full">
+              <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${adHocBotState === 'recording' ? 'bg-emerald-500 animate-pulse' : 'bg-emerald-400 animate-pulse'}`} />
+              {adHocBotState === 'recording' ? 'Recording — notes will be combined with transcript' : 'Assistant joining…'}
+            </span>
+          )}
 
-          {/* Finish — triggers AI analysis when there's a title or body */}
-          {(noteBody.trim() || adHocTitle.trim() || (isDraftNote && event?.id === transcript?.id)) && (
+          {/* Bot failure fallback — reappears after 2-minute timeout */}
+          {adHocBotFailed && (
+            <span className="text-[12px] text-amber-700 bg-amber-50 px-2.5 py-1 rounded-full">
+              Bot didn&apos;t join —
+            </span>
+          )}
+
+          {/* Record in person — hidden when bot was sent */}
+          {!adHocBotSent && (
+            <button
+              onClick={async () => {
+                const resolvedNoteId = await flushNoteSave();
+                onStartRecording?.(
+                  isAdHoc ? (adHocTitle || 'Ad-hoc meeting') : (event?.title ?? 'Meeting'),
+                  isAdHoc ? undefined : event?.id,
+                  resolvedNoteId ?? undefined,
+                );
+              }}
+              className="flex items-center gap-1.5 px-2.5 py-1 text-[12px] font-medium text-neutral-700 bg-neutral-100 hover:bg-neutral-200 rounded-full transition-colors"
+            >
+              <MicrophoneIcon className="w-3 h-3" />
+              Record in person
+            </button>
+          )}
+
+          {/* Finish — triggers AI analysis. Hidden when bot is in charge (bot sent + not failed). */}
+          {(noteBody.trim() || adHocTitle.trim() || (isDraftNote && event?.id === transcript?.id)) && (!adHocBotSent || adHocBotFailed) && (
             <button
               onClick={handleProcessNote}
               disabled={noteProcessing}
               className="flex items-center gap-1.5 px-2.5 py-1 text-[12px] font-medium text-indigo-600 border border-indigo-200 hover:bg-indigo-50 disabled:opacity-50 rounded-full transition-colors"
             >
               <SparklesIcon className="w-3 h-3" />
-              {noteProcessing ? 'Processing…' : 'Finish'}
+              {noteProcessing ? 'Processing…' : adHocBotFailed ? 'Finish (process notes)' : 'Finish'}
             </button>
           )}
         </div>
@@ -1107,7 +1166,9 @@ const handleRetry = async () => {
               setNoteBody(e.target.value);
               debouncedNoteBodySave(e.target.value);
             }}
-            placeholder={isAdHoc
+            placeholder={adHocBotSent
+              ? 'Jot live notes — they\'ll be combined with the transcript when the meeting ends…'
+              : isAdHoc
               ? 'Write what was discussed, decided, or any action items…'
               : 'Jot down key points before or during the meeting…'}
             rows={5}

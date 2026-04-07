@@ -49,10 +49,9 @@ export async function POST(
   const notesStructured = transcript.notes_structured as { live_notes?: string } | null;
   let liveNotes = notesStructured?.live_notes || '';
 
-  // For scheduled bot meetings, also check calendar_events.metadata.live_notes —
-  // that's where the LiveNotepad saves notes while the bot is recording.
-  // Merge both sources so the AI gets the full context.
   if (transcript.calendar_event_id) {
+    // For scheduled bot meetings: check calendar_events.metadata.live_notes
+    // (LiveNotepad saves there while bot records).
     const { data: calEvent } = await adminClient
       .from('calendar_events')
       .select('metadata')
@@ -61,6 +60,20 @@ export async function POST(
     const calLiveNotes = (calEvent?.metadata as any)?.live_notes || '';
     if (calLiveNotes && calLiveNotes !== liveNotes) {
       liveNotes = [liveNotes, calLiveNotes].filter(Boolean).join('\n\n');
+    }
+
+    // For ad-hoc bot meetings linked to a text note: also read the text note's
+    // typed content (transcript field). This captures notes the user typed in
+    // InlineNoteView before the UI switched to the bot transcript view.
+    const { data: linkedTextNote } = await adminClient
+      .from('meeting_transcripts')
+      .select('transcript')
+      .eq('id', transcript.calendar_event_id)
+      .eq('source', 'text')
+      .maybeSingle();
+    const textNoteContent = (linkedTextNote?.transcript as string) || '';
+    if (textNoteContent && !liveNotes.includes(textNoteContent)) {
+      liveNotes = [textNoteContent, liveNotes].filter(Boolean).join('\n\n');
     }
   }
 
