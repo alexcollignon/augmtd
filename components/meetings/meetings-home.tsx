@@ -25,6 +25,7 @@ interface Transcript {
   processedAt?: string | null;
   folderId?: string | null;
   hasRecording: boolean;
+  hasDocument?: boolean;
   attendees?: Array<{ email: string; name?: string }>;
 }
 
@@ -156,12 +157,27 @@ export default function MeetingsHome({
     return { label, events };
   }, [upcoming]); // eslint-disable-line
 
-  // In-progress transcripts — server auto-fails stuck rows after 2h before returning this list
-  // Deduplicate by calendarEventId: when a user both records and takes notes in the same meeting,
-  // two rows can briefly coexist. Keep the highest-priority source (recording > bot > upload > text).
+  // Live: bot currently in meeting OR draft text note (saved but AI not yet run)
+  const live = useMemo(() => {
+    const items = transcripts.filter((t) =>
+      // Bot actively joining/recording — user can still take notes
+      (t.source === 'bot' && !t.processed && (t.botState === 'recording' || t.botState === 'joining')) ||
+      // Draft text note — processed flag is true but no AI document/summary yet
+      (t.source === 'text' && t.processed && !t.hasDocument && !t.summary && t.botState !== 'failed')
+    );
+    return items.sort((a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime());
+  }, [transcripts]);
+
+  // In-progress transcripts — AI processing phase only (bot left / recording uploaded)
+  // Excludes bot recording/joining (those are in Live) and draft text notes.
+  // Deduplicate by calendarEventId: keep highest-priority source (recording > bot > upload > text).
   const inProgress = useMemo(() => {
     const all = transcripts
-      .filter((t) => !t.processed && t.botState !== 'failed')
+      .filter((t) =>
+        !t.processed && t.botState !== 'failed' &&
+        // Exclude bot recording/joining — those show in Live
+        !(t.source === 'bot' && (t.botState === 'recording' || t.botState === 'joining'))
+      )
       .sort((a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime());
     const sourcePriority: Record<string, number> = { recording: 3, bot: 2, upload: 1, text: 0 };
     const seen = new Map<string, Transcript>();
@@ -180,7 +196,11 @@ export default function MeetingsHome({
     // Deduplicate by calendarEventId (same race condition as inProgress can produce two processed rows)
     const sourcePriorityR: Record<string, number> = { recording: 3, bot: 2, upload: 1, text: 0 };
     const seenR = new Map<string, Transcript>();
-    for (const t of transcripts.filter((t) => t.processed)) {
+    // Exclude draft text notes (no document, no summary, not failed) — they live in the Live section
+    for (const t of transcripts.filter((t) =>
+      t.processed &&
+      !(t.source === 'text' && !t.hasDocument && !t.summary && t.botState !== 'failed')
+    )) {
       const key = t.calendarEventId ?? t.id;
       const existing = seenR.get(key);
       if (!existing || (sourcePriorityR[t.source] ?? 0) > (sourcePriorityR[existing.source] ?? 0)) {
@@ -256,6 +276,80 @@ export default function MeetingsHome({
         </section>
       )}
 
+      {/* ── Live — bot recording or open draft note ── */}
+      {live.length > 0 && (
+        <section className="mb-8">
+          <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-3">Live</h2>
+          <div className="space-y-0.5">
+            {live.map((t) => {
+              const isBot = t.source === 'bot';
+              const isDraft = t.source === 'text';
+              return (
+                <div key={t.id} className="group/lv relative flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-neutral-50 transition-colors">
+                  <button
+                    onClick={() => onSelectMeeting(t.calendarEventId ?? t.id)}
+                    className="flex items-center gap-3 flex-1 min-w-0 text-left"
+                  >
+                    <div className="w-8 h-8 rounded-lg bg-neutral-100 flex items-center justify-center flex-shrink-0">
+                      <SourceIcon source={t.source} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[13px] font-medium text-neutral-800 truncate">{t.title || 'Untitled meeting'}</p>
+                      <div className="flex items-center gap-1.5 mt-0.5">
+                        {isBot && (
+                          <>
+                            <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse flex-shrink-0" />
+                            <span className="text-[11px] text-neutral-400">
+                              {t.botState === 'joining' ? 'Bot joining…' : 'Bot recording'}
+                            </span>
+                          </>
+                        )}
+                        {isDraft && (
+                          <>
+                            <span className="w-1.5 h-1.5 rounded-full bg-blue-400 flex-shrink-0" />
+                            <span className="text-[11px] text-neutral-400">Open note</span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                    <span className="text-[11px] text-neutral-400 flex-shrink-0 mr-1">
+                      {new Date(t.startTime).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  </button>
+                  {confirmDeleteId === t.id ? (
+                    <div className="flex items-center gap-1 flex-shrink-0">
+                      <span className="text-[11px] text-neutral-500 mr-0.5">Remove?</span>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); onDeleteTranscript(t.id); setConfirmDeleteId(null); }}
+                        className="p-1 rounded hover:bg-red-100 text-red-500"
+                        title="Confirm remove"
+                      >
+                        <CheckIcon className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(null); }}
+                        className="p-1 rounded hover:bg-neutral-200 text-neutral-400"
+                        title="Cancel"
+                      >
+                        <XMarkIcon className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(t.id); }}
+                      title="Remove"
+                      className="opacity-0 group-hover/lv:opacity-100 transition-opacity p-1 rounded hover:bg-neutral-200 text-neutral-400 hover:text-neutral-600 flex-shrink-0"
+                    >
+                      <XMarkIcon className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
       {/* ── In progress ── */}
       {inProgress.length > 0 && (
         <section className="mb-8">
@@ -321,7 +415,7 @@ export default function MeetingsHome({
 
       {/* ── Recent notes ── */}
       {recentByDate.length === 0 ? (
-        inProgress.length === 0 && (
+        inProgress.length === 0 && live.length === 0 && (
           <div className="py-12 text-center">
             <MicrophoneIcon className="w-8 h-8 text-neutral-200 mx-auto mb-2" />
             <p className="text-[13px] text-neutral-500 font-medium">No notes yet</p>

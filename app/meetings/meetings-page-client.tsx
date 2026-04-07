@@ -36,6 +36,7 @@ interface Transcript {
   processedAt?: string | null;
   folderId?: string | null;
   hasRecording: boolean;
+  hasDocument?: boolean;
   attendees?: Array<{ email: string; name?: string }>;
 }
 
@@ -54,6 +55,7 @@ function mapTranscripts(raw: any[]): Transcript[] {
     processedAt: t.updated_at ?? null,
     folderId: t.folder_id ?? null,
     hasRecording: !!t.recording_storage_path,
+    hasDocument: !!t.has_document,
     attendees: t.calendar_events?.attendees ?? [],
   }));
 }
@@ -96,6 +98,11 @@ export default function MeetingsPageClient({ userEmail }: { userEmail: string })
 
   const isActiveRef = useRef(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Refs so fetchAll can read current nav state without being in its dep array
+  const selectedMeetingIdRef = useRef<string | null>(null);
+  const showAdHocNoteRef = useRef(false);
+  useEffect(() => { selectedMeetingIdRef.current = selectedMeetingId; }, [selectedMeetingId]);
+  useEffect(() => { showAdHocNoteRef.current = showAdHocNote; }, [showAdHocNote]);
 
   // Global recording hook — survives page navigation
   const recording = useRecordingContext();
@@ -124,6 +131,17 @@ export default function MeetingsPageClient({ userEmail }: { userEmail: string })
 
       const mapped = mapTranscripts(transcriptsData.transcripts ?? []);
       setTranscripts(mapped);
+
+      // If an ad-hoc bot meeting is actively recording/joining and the user has no meeting
+      // open (e.g. they navigated away and came back), auto-open the InlineNoteView for it
+      // so they can still take live notes.
+      const activeAdHocBot = mapped.find(
+        (t) => t.source === 'bot' && t.calendarEventId === null && !t.processed &&
+          (t.botState === 'recording' || t.botState === 'joining')
+      );
+      if (activeAdHocBot && !selectedMeetingIdRef.current && !showAdHocNoteRef.current) {
+        setSelectedMeetingId(activeAdHocBot.id);
+      }
 
       setPendingAdhoc((prev) => {
         if (!prev) return null;
@@ -416,9 +434,11 @@ export default function MeetingsPageClient({ userEmail }: { userEmail: string })
                   setSelectedMeetingId(null);
                   setShowAdHocNote(false);
                   setActiveMeetingContext(null);
+                  fetchAll();
                 }}
                 onMeetingContextReady={setActiveMeetingContext}
                 onRequestChat={handleRequestChat}
+                onNoteRowCreated={() => fetchAll()}
                 onCreated={(id) => {
                   setShowAdHocNote(false);
                   setSelectedMeetingId(id);

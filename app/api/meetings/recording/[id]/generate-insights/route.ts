@@ -47,7 +47,24 @@ export async function POST(
   // storeTranscriptAndGenerateWork with existingTranscriptId skips the insert/update
   // of segments (already done by Hetzner) and goes straight to insights + inbox items.
   const notesStructured = transcript.notes_structured as { live_notes?: string } | null;
-  const liveNotes = notesStructured?.live_notes || undefined;
+  let liveNotes = notesStructured?.live_notes || '';
+
+  // For scheduled bot meetings, also check calendar_events.metadata.live_notes —
+  // that's where the LiveNotepad saves notes while the bot is recording.
+  // Merge both sources so the AI gets the full context.
+  if (transcript.calendar_event_id) {
+    const { data: calEvent } = await adminClient
+      .from('calendar_events')
+      .select('metadata')
+      .eq('id', transcript.calendar_event_id)
+      .maybeSingle();
+    const calLiveNotes = (calEvent?.metadata as any)?.live_notes || '';
+    if (calLiveNotes && calLiveNotes !== liveNotes) {
+      liveNotes = [liveNotes, calLiveNotes].filter(Boolean).join('\n\n');
+    }
+  }
+
+  const liveNotesForAI = liveNotes || undefined;
 
   await storeTranscriptAndGenerateWork(
     transcript.user_id,
@@ -62,7 +79,7 @@ export async function POST(
       source: transcript.source ?? 'bot',
       recordingStoragePath: transcript.recording_storage_path ?? undefined,
       existingTranscriptId: transcriptId,
-      liveNotes,
+      liveNotes: liveNotesForAI,
     }
   );
 

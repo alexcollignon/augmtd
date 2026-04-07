@@ -539,7 +539,7 @@ Rules for other fields:
         { role: 'user', content: prompt },
       ],
       temperature: 0.3,
-      max_tokens: 3000,
+      max_tokens: 4000,
       ...(supportsJsonMode ? { response_format: { type: 'json_object' } } : {}),
     });
 
@@ -548,8 +548,11 @@ Rules for other fields:
 
     // Strip <think>...</think> blocks (DeepSeek reasoning traces) then markdown fences,
     // then find the first complete JSON object.
+    // Also strip unclosed <think> blocks — happens when a long reasoning trace hits the token limit
+    // and the closing </think> is never emitted, causing the regex not to match.
     const stripped = response
       .replace(/<think>[\s\S]*?<\/think>/g, '')
+      .replace(/<think>[\s\S]*/g, '')
       .replace(/^```(?:json)?\n?/, '')
       .replace(/\n?```$/, '')
       .trim();

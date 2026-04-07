@@ -2,6 +2,31 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 
 /**
+ * DELETE /api/meetings/notes/[id]
+ * Remove a text note (only the owner, only source=text).
+ * Used for cleanup when user navigates away from an empty new note.
+ */
+export async function DELETE(
+  _req: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const { id } = await params;
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const { error } = await supabase
+    .from('meeting_transcripts')
+    .delete()
+    .eq('id', id)
+    .eq('user_id', user.id)
+    .eq('source', 'text');
+
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  return NextResponse.json({ success: true });
+}
+
+/**
  * PATCH /api/meetings/notes/[id]
  * Update title and/or body of a text-only note.
  */

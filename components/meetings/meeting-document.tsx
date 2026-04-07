@@ -8,6 +8,15 @@ interface MeetingDocumentProps {
   editable?: boolean;
 }
 
+type ToolbarAction = 'bullet' | 'sub-bullet' | 'header' | 'bold';
+
+const TOOLBAR_BUTTONS: { icon: string; label: string; action: ToolbarAction; iconCls?: string }[] = [
+  { icon: 'B',  label: 'Bold',         action: 'bold',       iconCls: 'font-bold' },
+  { icon: '•',  label: 'Bullet',       action: 'bullet' },
+  { icon: '◦',  label: 'Sub-bullet',   action: 'sub-bullet' },
+  { icon: '##', label: 'Header',       action: 'header',     iconCls: 'font-mono tracking-tight' },
+];
+
 export default function MeetingDocument({ document: initialDoc, eventId, editable = true }: MeetingDocumentProps) {
   const [content, setContent] = useState(initialDoc);
   const [editing, setEditing] = useState(false);
@@ -39,12 +48,12 @@ export default function MeetingDocument({ document: initialDoc, eventId, editabl
     } catch { setSaveState('idle'); }
   }, [eventId]);
 
-  const handleChange = (value: string) => {
+  const handleChange = useCallback((value: string) => {
     setContent(value);
     adjustHeight();
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => save(value), 1500);
-  };
+  }, [save]);
 
   const handleClick = () => {
     if (!editable || editing) return;
@@ -61,6 +70,71 @@ export default function MeetingDocument({ document: initialDoc, eventId, editabl
     setEditing(false);
   };
 
+  // Insert markdown at cursor without losing focus.
+  // Line-level actions (bullet / sub-bullet / header) toggle the prefix on the current line.
+  // Inline actions (bold) wrap the selection or insert a placeholder.
+  const insertAtCursor = useCallback((action: ToolbarAction) => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+
+    const val = ta.value;
+    const selStart = ta.selectionStart;
+    const selEnd = ta.selectionEnd;
+
+    if (action === 'bold') {
+      const selected = val.slice(selStart, selEnd);
+      const replacement = selected ? `**${selected}**` : '**bold**';
+      const newVal = val.slice(0, selStart) + replacement + val.slice(selEnd);
+      handleChange(newVal);
+      setTimeout(() => {
+        if (selected) {
+          ta.selectionStart = selStart + 2;
+          ta.selectionEnd = selStart + 2 + selected.length;
+        } else {
+          ta.selectionStart = selStart + 2;
+          ta.selectionEnd = selStart + 6; // select "bold"
+        }
+        ta.focus();
+      }, 0);
+      return;
+    }
+
+    // Line-level: find bounds of the current line
+    const lineStart = val.lastIndexOf('\n', selStart - 1) + 1;
+    const lineEndRaw = val.indexOf('\n', selStart);
+    const lineEnd = lineEndRaw === -1 ? val.length : lineEndRaw;
+    const currentLine = val.slice(lineStart, lineEnd);
+
+    const prefixMap: Record<Exclude<ToolbarAction, 'bold'>, string> = {
+      'bullet': '- ',
+      'sub-bullet': '  - ',
+      'header': '## ',
+    };
+    const prefix = prefixMap[action as Exclude<ToolbarAction, 'bold'>];
+
+    let newLine: string;
+    let cursorDelta: number;
+
+    if (currentLine.startsWith(prefix)) {
+      // Toggle off
+      newLine = currentLine.slice(prefix.length);
+      cursorDelta = -prefix.length;
+    } else {
+      // Strip any existing line prefix before applying the new one
+      const stripped = currentLine.replace(/^(## |  - |  \* |- |\* )/, '');
+      newLine = prefix + stripped;
+      cursorDelta = newLine.length - currentLine.length;
+    }
+
+    const newVal = val.slice(0, lineStart) + newLine + val.slice(lineEnd);
+    handleChange(newVal);
+    setTimeout(() => {
+      const newCursor = Math.max(lineStart + prefix.length, selStart + cursorDelta);
+      ta.selectionStart = ta.selectionEnd = newCursor;
+      ta.focus();
+    }, 0);
+  }, [handleChange]);
+
   return (
     <div className="relative">
       {/* Rendered view — hidden while editing */}
@@ -71,8 +145,27 @@ export default function MeetingDocument({ document: initialDoc, eventId, editabl
         <RenderedDocument content={content} />
       </div>
 
-      {/* Textarea — visible while editing, styled to match rendered output */}
-      <div className={editing ? 'block relative' : 'hidden'}>
+      {/* Edit mode */}
+      <div className={editing ? 'block' : 'hidden'}>
+        {/* Toolbar */}
+        <div className="flex items-center gap-0.5 mb-1.5 border-b border-neutral-100 pb-1.5">
+          {TOOLBAR_BUTTONS.map(({ icon, label, action, iconCls }) => (
+            <button
+              key={action}
+              title={label}
+              onMouseDown={(e) => { e.preventDefault(); insertAtCursor(action); }}
+              className="flex items-center gap-1 px-2 py-0.5 text-[11px] text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100 rounded transition-colors select-none"
+            >
+              <span className={iconCls}>{icon}</span>
+              <span>{label}</span>
+            </button>
+          ))}
+          <span className="ml-auto text-[10px] text-neutral-300 pointer-events-none">
+            {saveState === 'saving' ? 'Saving…' : saveState === 'saved' ? 'Saved' : ''}
+          </span>
+        </div>
+
+        {/* Textarea */}
         <textarea
           ref={textareaRef}
           value={content}
@@ -81,11 +174,6 @@ export default function MeetingDocument({ document: initialDoc, eventId, editabl
           placeholder="Meeting notes…"
           className="w-full text-[13px] text-neutral-700 leading-relaxed outline-none resize-none bg-transparent overflow-hidden"
         />
-        {saveState !== 'idle' && (
-          <span className="absolute bottom-1 right-0 text-[10px] text-neutral-400 pointer-events-none">
-            {saveState === 'saving' ? 'Saving…' : 'Saved'}
-          </span>
-        )}
       </div>
     </div>
   );

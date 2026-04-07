@@ -25,14 +25,21 @@ export async function GET() {
 
     const { data: transcripts, error } = await supabase
       .from('meeting_transcripts')
-      .select('id, title, start_time, end_time, duration_minutes, work_items_generated, processed, source, summary, calendar_event_id, bot_state, updated_at, folder_id, recording_storage_path, calendar_events(attendees)')
+      .select('id, title, start_time, end_time, duration_minutes, work_items_generated, processed, source, summary, calendar_event_id, bot_state, updated_at, folder_id, recording_storage_path, notes_structured, calendar_events(attendees)')
       .eq('user_id', user.id)
       .order('start_time', { ascending: false })
       .limit(50);
 
     if (error) throw error;
 
-    return NextResponse.json({ transcripts: transcripts ?? [] });
+    // Compute has_document server-side and strip the full notes_structured blob to keep payload small
+    const mapped = (transcripts ?? []).map((t) => ({
+      ...t,
+      has_document: !!(t.notes_structured as any)?.document,
+      notes_structured: undefined,
+    }));
+
+    return NextResponse.json({ transcripts: mapped });
   } catch (error) {
     console.error('[Meetings/Transcripts] Error:', error);
     return NextResponse.json({ error: String(error) }, { status: 500 });

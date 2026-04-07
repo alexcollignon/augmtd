@@ -14,7 +14,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Bot service not configured' }, { status: 500 });
   }
 
-  const { meetingUrl } = await request.json() as { meetingUrl: string };
+  const body = await request.json() as { meetingUrl: string; calendarEventId?: string; title?: string };
+  const { meetingUrl, calendarEventId, title } = body;
   if (!meetingUrl?.includes('meet.google.com')) {
     return NextResponse.json({ error: 'Only Google Meet URLs are supported' }, { status: 400 });
   }
@@ -49,7 +50,7 @@ export async function POST(request: NextRequest) {
   // Join in 30 seconds (gives user time to start the call)
   const joinAt = new Date(Date.now() + 30 * 1000);
 
-  const result = await createMeetingBot(meetingUrl, joinAt, '', user.id, botName, googleAccessToken);
+  const result = await createMeetingBot(meetingUrl, joinAt, calendarEventId ?? '', user.id, botName, googleAccessToken);
 
   return NextResponse.json({ success: true, botId: result.botId });
 }

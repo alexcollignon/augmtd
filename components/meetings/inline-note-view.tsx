@@ -7,6 +7,7 @@ import {
   MicrophoneIcon,
   VideoCameraIcon,
   ArrowLeftIcon,
+  ArrowPathIcon,
   TrashIcon,
   EnvelopeIcon,
   ComputerDesktopIcon,
@@ -85,6 +86,7 @@ interface InlineNoteViewProps {
   onMeetingContextReady?: (ctx: MeetingChatContext) => void;
   onRequestChat?: (autoMessage?: string) => void;
   onCreated?: (id: string) => void;
+  onNoteRowCreated?: () => void;
   onNewBot?: () => void;
   onStartRecording?: (title: string, calendarEventId?: string, noteId?: string) => void;
 }
@@ -216,6 +218,7 @@ export default function InlineNoteView({
   onMeetingContextReady,
   onRequestChat,
   onCreated,
+  onNoteRowCreated,
   onNewBot,
   onStartRecording,
 }: InlineNoteViewProps) {
@@ -241,12 +244,21 @@ export default function InlineNoteView({
   const [noteSaving, setNoteSaving] = useState(false);
   const [noteProcessing, setNoteProcessing] = useState(false);
   const noteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const noteIdRef = useRef<string | null>(null);      // mirrors noteId, updated synchronously
+  const creatingNoteRef = useRef(false);              // guard: only one POST ever in-flight
+  const createOnOpenFiredRef = useRef(false);         // guard: survives StrictMode fake-unmount
+  // Live notes typed while bot is recording — saved to transcript.notes_structured.live_notes
+  const [botLiveNotes, setBotLiveNotes] = useState('');
+  const botLiveNotesTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Capture state
   const [botScheduled, setBotScheduled] = useState(false);
   const [scheduling, setScheduling] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
+  // Ad-hoc bot send state (inline — no modal)
+  const [adHocBotSending, setAdHocBotSending] = useState(false);
+  const [adHocBotSent, setAdHocBotSent] = useState(false);
 
   // Prep brief
   const [prepBrief, setPrepBrief] = useState<{
@@ -260,6 +272,7 @@ export default function InlineNoteView({
 
   // Retry stuck processing
   const [retrying, setRetrying] = useState(false);
+  const [reanalyzing, setReanalyzing] = useState(false);
 
   // Post-capture UI — confirmedDeskIds maps actionItem.id → desk_item.id for undo/delete
   const [confirmedDeskIds, setConfirmedDeskIds] = useState<Map<string, string>>(new Map());
@@ -282,6 +295,30 @@ export default function InlineNoteView({
       setTranscript(data.transcript);
       setActionItems(data.actionItems ?? []);
       setAudioUrl(data.audioUrl);
+      // If this is a draft text note (saved but not yet AI-processed), wire up the note ID
+      // so every keystroke goes to PATCH (not POST), and restore any saved body content.
+      // NOTE: rawTranscript can be empty (title-only note) — still need to set noteIdRef.
+      if (
+        data.transcript?.source === 'text' &&
+        data.transcript?.processed &&
+        !data.transcript?.notesStructured?.document &&
+        !data.transcript?.summary
+      ) {
+        noteIdRef.current = data.transcript.id;
+        setNoteId(data.transcript.id);
+        if (data.transcript.rawTranscript) {
+          setNoteBody(data.transcript.rawTranscript);
+        }
+      }
+      // Synthetic event: /full creates a fake event from the transcript when no real calendar
+      // event exists (ad-hoc notes navigated back via Live section). Restore the editable title.
+      if (data.event && data.transcript && data.event.id === data.transcript.id) {
+        setAdHocTitle(data.event.title || '');
+      }
+      // Restore any live notes typed while the bot was recording
+      if (data.transcript?.notesStructured?.live_notes) {
+        setBotLiveNotes(data.transcript.notesStructured.live_notes);
+      }
       if (data.transcript?.processed && onMeetingContextReady) {
         onMeetingContextReady({
           title: data.event.title,
@@ -338,10 +375,48 @@ export default function InlineNoteView({
     return () => clearInterval(interval);
   }, [transcript?.processed, transcript?.botState, fetchData]);
 
-  // Cleanup note debounce on unmount
+  // Cleanup debounce timers on unmount
   useEffect(() => {
-    return () => { if (noteTimerRef.current) clearTimeout(noteTimerRef.current); };
+    return () => {
+      if (noteTimerRef.current) clearTimeout(noteTimerRef.current);
+      if (botLiveNotesTimerRef.current) clearTimeout(botLiveNotesTimerRef.current);
+    };
   }, []);
+
+  // Create-on-open for ad-hoc notes: immediately create a DB row so every keystroke is a PATCH,
+  // eliminating the race condition where rapid typing fired multiple POSTs.
+  // The row appears in the "Live" section straight away via onNoteRowCreated → fetchAll.
+  // createOnOpenFiredRef (a ref, not state) survives React StrictMode's fake-unmount so only
+  // one POST fires even though the effect runs twice in development.
+  useEffect(() => {
+    if (!isAdHoc || createOnOpenFiredRef.current) return;
+    createOnOpenFiredRef.current = true;
+    fetch('/api/meetings/notes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: '', body: '' }),
+    })
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => {
+        if (!data?.id) return;
+        noteIdRef.current = data.id;
+        setNoteId(data.id);
+        onNoteRowCreated?.();
+      })
+      .catch(() => {});
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // handleBack: for ad-hoc notes, delete the row if user navigated away without writing anything.
+  const handleBack = useCallback(async () => {
+    // Delete the note row if user navigated away without writing anything.
+    // Applies to: fresh ad-hoc notes (isAdHoc) and ad-hoc drafts returned via Live section
+    // (detected by synthetic event: event.id === transcript.id).
+    const isSyntheticEvent = event && transcript && event.id === transcript.id;
+    if (noteIdRef.current && !noteBody.trim() && !adHocTitle.trim() && (isAdHoc || isSyntheticEvent)) {
+      await fetch(`/api/meetings/notes/${noteIdRef.current}`, { method: 'DELETE' }).catch(() => {});
+    }
+    onBack();
+  }, [isAdHoc, noteBody, adHocTitle, event, transcript, onBack]);
 
   // For ad-hoc mode: when recording completes, go back so user finds the new note in Recent
   useEffect(() => {
@@ -378,6 +453,7 @@ export default function InlineNoteView({
       });
       if (res.ok) {
         const data = await res.json();
+        noteIdRef.current = data.id;
         setNoteId(data.id);
         return data.id as string;
       }
@@ -385,44 +461,60 @@ export default function InlineNoteView({
     return null;
   }, [noteBody, noteId, adHocTitle, event?.title, eventId]);
 
-  const debouncedNoteBodySave = useCallback((body: string, currentNoteId: string | null) => {
+  const debouncedNoteBodySave = useCallback((body: string) => {
     if (noteTimerRef.current) clearTimeout(noteTimerRef.current);
+    // First save (no existing row): fire immediately so navigating away doesn't lose the note.
+    // Subsequent saves (PATCH): debounce 2s to avoid hammering the API while typing.
+    const delay = noteIdRef.current ? 2000 : 0;
     noteTimerRef.current = setTimeout(async () => {
-      if (!body.trim()) return;
+      // Skip only if both body and title are empty — don't skip a title-only save
+      if (!body.trim() && !(adHocTitle || event?.title)) return;
       setNoteSaving(true);
       try {
-        if (!currentNoteId) {
-          const res = await fetch('/api/meetings/notes', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              title: adHocTitle || event?.title || 'Untitled note',
-              body,
-              calendarEventId: eventId ?? undefined,
-            }),
-          });
-          if (res.ok) {
-            const data = await res.json();
-            setNoteId(data.id);
-            // Keep recording hook in sync so stopAndUpload merges into this row
-            recording.setRecordingNoteId(data.id);
+        if (!noteIdRef.current) {
+          // Guard: if a POST is already in-flight, skip — the in-flight one will complete first
+          // and noteIdRef.current will be set before any subsequent debounce fires.
+          if (creatingNoteRef.current) return;
+          creatingNoteRef.current = true;
+          try {
+            const res = await fetch('/api/meetings/notes', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                title: adHocTitle || event?.title || 'Untitled note',
+                body,
+                calendarEventId: eventId ?? undefined,
+              }),
+            });
+            if (res.ok) {
+              const data = await res.json();
+              noteIdRef.current = data.id;
+              setNoteId(data.id);
+              // Keep recording hook in sync so stopAndUpload merges into this row
+              recording.setRecordingNoteId(data.id);
+            }
+          } finally {
+            creatingNoteRef.current = false;
           }
         } else {
-          await fetch(`/api/meetings/notes/${currentNoteId}`, {
+          await fetch(`/api/meetings/notes/${noteIdRef.current}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ body }),
+            body: JSON.stringify({
+              title: adHocTitle || event?.title || 'Untitled meeting',
+              body,
+            }),
           });
         }
       } catch {} finally { setNoteSaving(false); }
-    }, 2000);
+    }, delay);
   }, [eventId, adHocTitle, event?.title]);
 
   const handleProcessNote = async () => {
     if (!noteBody.trim() && !adHocTitle.trim()) return;
     setNoteProcessing(true);
     try {
-      let id = noteId;
+      let id = noteIdRef.current ?? noteId;
       if (!id) {
         const res = await fetch('/api/meetings/notes', {
           method: 'POST',
@@ -436,6 +528,7 @@ export default function InlineNoteView({
         if (!res.ok) return;
         const data = await res.json();
         id = data.id;
+        noteIdRef.current = data.id;
         setNoteId(id);
       } else {
         if (noteTimerRef.current) clearTimeout(noteTimerRef.current);
@@ -474,6 +567,28 @@ export default function InlineNoteView({
       const res = await fetch(`/api/meetings/${event.id}/cancel-bot`, { method: 'DELETE' });
       if (res.ok) setBotScheduled(false);
     } catch {} finally { setCancelling(false); }
+  };
+
+  const handleSendAdHocBot = async () => {
+    if (!adHocLink.trim() || adHocBotSending) return;
+    setAdHocBotSending(true);
+    try {
+      const res = await fetch('/api/meetings/bot/adhoc', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          meetingUrl: adHocLink.trim(),
+          calendarEventId: noteIdRef.current ?? undefined,
+          title: adHocTitle || 'Ad-hoc meeting',
+        }),
+      });
+      if (res.ok) {
+        setAdHocBotSent(true);
+        onNoteRowCreated?.(); // refresh list so MeetingsHome deduplication works
+      }
+    } catch {} finally {
+      setAdHocBotSending(false);
+    }
   };
 
   const handleCopyLink = async () => {
@@ -538,6 +653,31 @@ const handleRetry = async () => {
     } catch {} finally { setRetrying(false); }
   };
 
+  const handleReanalyze = async () => {
+    if (!transcript || reanalyzing) return;
+    setReanalyzing(true);
+    try {
+      const id = eventId ?? transcript.id;
+      await fetch(`/api/meetings/${id}/re-enhance`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ templateId: 'default' }),
+      });
+      await fetchData();
+    } catch {} finally { setReanalyzing(false); }
+  };
+
+  const saveBotLiveNotes = useCallback((notes: string, transcriptId: string) => {
+    if (botLiveNotesTimerRef.current) clearTimeout(botLiveNotesTimerRef.current);
+    botLiveNotesTimerRef.current = setTimeout(() => {
+      fetch(`/api/meetings/recording/${transcriptId}/live-notes`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ liveNotes: notes }),
+      }).catch(() => {});
+    }, 1500);
+  }, []);
+
   const handleDelete = async () => {
     if (!event) return;
     setDeleting(true);
@@ -574,7 +714,7 @@ const handleRetry = async () => {
     return (
       <div className="px-6 py-8 text-center">
         <p className="text-[13px] text-neutral-500">{error ?? 'Meeting not found'}</p>
-        <button onClick={onBack} className="mt-2 text-[12px] text-indigo-600 hover:underline">
+        <button onClick={handleBack} className="mt-2 text-[12px] text-indigo-600 hover:underline">
           ← Back to meetings
         </button>
       </div>
@@ -598,13 +738,17 @@ const handleRetry = async () => {
   transcript?.keyMoments?.forEach((km) => keyMomentMap.set(km.segmentIndex, km));
   const risks = transcript?.risks ?? [];
 
+  // Draft text note: saved to DB but AI hasn't run yet — show full active-phase UI
+  const isDraftNote = !!transcript && transcript.source === 'text' &&
+    transcript.processed && !transcript.notesStructured?.document && !transcript.summary;
+
   return (
     <div className="px-6 py-8 max-w-2xl mx-auto">
 
       {/* Back */}
       <div className="flex items-center gap-2 mb-4">
         <button
-          onClick={onBack}
+          onClick={handleBack}
           className="p-1 hover:bg-neutral-100 rounded-md transition-colors text-neutral-400 hover:text-neutral-600"
         >
           <ArrowLeftIcon className="w-4 h-4" />
@@ -614,14 +758,20 @@ const handleRetry = async () => {
 
       {/* ── ZONE A — Meeting info ── */}
       <div className="mb-5">
-        {isAdHoc ? (
+        {/* Show editable ad-hoc form for: new notes (isAdHoc) OR ad-hoc drafts returned via Live
+            section (isDraftNote with a synthetic event — event.id === transcript.id) */}
+        {(isAdHoc || (isDraftNote && event?.id === transcript?.id)) ? (
           /* Ad-hoc: editable fields */
           <div className="space-y-2">
             <input
               autoFocus
               type="text"
               value={adHocTitle}
-              onChange={(e) => setAdHocTitle(e.target.value)}
+              onChange={(e) => {
+                setAdHocTitle(e.target.value);
+                // Trigger debounced save so title is persisted even without body changes
+                debouncedNoteBodySave(noteBody);
+              }}
               placeholder="Meeting title"
               className="w-full text-xl font-semibold text-neutral-900 outline-none placeholder:text-neutral-300 bg-transparent"
             />
@@ -634,18 +784,28 @@ const handleRetry = async () => {
                 placeholder="Meeting link (optional — for sending assistant)"
                 className={`flex-1 text-[12px] text-blue-600 outline-none bg-transparent placeholder:text-neutral-300 rounded transition-all duration-300 ${linkFlash ? 'ring-2 ring-indigo-400 bg-indigo-50 px-1' : ''}`}
               />
-              <button
-                onClick={() => { if (adHocLink.trim()) onNewBot?.(); else { setLinkFlash(true); linkInputRef.current?.focus(); setTimeout(() => setLinkFlash(false), 1200); } }}
-                disabled={!adHocLink.trim()}
-                className={`flex items-center gap-1.5 px-2.5 py-1 text-[12px] font-medium rounded-full transition-colors flex-shrink-0 ${
-                  adHocLink.trim()
-                    ? 'text-white bg-indigo-600 hover:bg-indigo-700'
-                    : 'text-neutral-400 bg-neutral-100 opacity-60 cursor-not-allowed'
-                }`}
-              >
-                <ComputerDesktopIcon className="w-3 h-3" />
-                Send assistant
-              </button>
+              {adHocBotSent ? (
+                <span className="flex items-center gap-1.5 text-[12px] text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-full font-medium flex-shrink-0">
+                  <ComputerDesktopIcon className="w-3 h-3" />
+                  Assistant joining…
+                </span>
+              ) : (
+                <button
+                  onClick={() => {
+                    if (adHocLink.trim()) handleSendAdHocBot();
+                    else { setLinkFlash(true); linkInputRef.current?.focus(); setTimeout(() => setLinkFlash(false), 1200); }
+                  }}
+                  disabled={adHocBotSending}
+                  className={`flex items-center gap-1.5 px-2.5 py-1 text-[12px] font-medium rounded-full transition-colors flex-shrink-0 ${
+                    adHocLink.trim()
+                      ? 'text-white bg-indigo-600 hover:bg-indigo-700'
+                      : 'text-neutral-400 bg-neutral-100 opacity-60 cursor-not-allowed'
+                  }`}
+                >
+                  <ComputerDesktopIcon className="w-3 h-3" />
+                  {adHocBotSending ? 'Sending…' : 'Send assistant'}
+                </button>
+              )}
             </div>
           </div>
         ) : (
@@ -760,13 +920,27 @@ const handleRetry = async () => {
               </button>
             </div>
           )}
-          {/* Show user's typed notes while processing */}
-          {transcript.notesStructured?.live_notes && (
+          {/* Live note-taking while bot is recording; read-only once transcribing */}
+          {(transcript.botState === 'recording' || transcript.botState === 'joining') ? (
+            <div className="mt-3 px-4 py-3 bg-neutral-50 border border-neutral-100 rounded-lg">
+              <p className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wide mb-2">Your notes</p>
+              <textarea
+                value={botLiveNotes}
+                onChange={(e) => {
+                  setBotLiveNotes(e.target.value);
+                  saveBotLiveNotes(e.target.value, transcript.id);
+                }}
+                placeholder="Jot down key points while the assistant records…"
+                rows={4}
+                className="w-full text-[13px] text-neutral-700 leading-relaxed outline-none placeholder:text-neutral-400 bg-transparent resize-none"
+              />
+            </div>
+          ) : botLiveNotes ? (
             <div className="mt-3 px-4 py-3 bg-neutral-50 border border-neutral-100 rounded-b-lg">
               <p className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wide mb-2">Your notes</p>
-              <p className="text-[13px] text-neutral-600 leading-relaxed whitespace-pre-wrap">{transcript.notesStructured.live_notes}</p>
+              <p className="text-[13px] text-neutral-600 leading-relaxed whitespace-pre-wrap">{botLiveNotes}</p>
             </div>
-          )}
+          ) : null}
         </div>
       )}
 
@@ -835,7 +1009,7 @@ const handleRetry = async () => {
         </div>
       )}
 
-      {!transcript && recording.state !== 'recording' && recording.state !== 'uploading' && recording.state !== 'processing' && (
+      {(!transcript || isDraftNote) && recording.state !== 'recording' && recording.state !== 'uploading' && recording.state !== 'processing' && (
         <div className="flex items-center gap-2 mb-4 flex-wrap">
           {/* Time until (scheduled only) */}
           {!isAdHoc && (
@@ -908,15 +1082,15 @@ const handleRetry = async () => {
             Record in person
           </button>
 
-          {/* Process with AI — when note body has content */}
-          {noteBody.trim() && (
+          {/* Finish — triggers AI analysis when there's a title or body */}
+          {(noteBody.trim() || adHocTitle.trim() || (isDraftNote && event?.id === transcript?.id)) && (
             <button
               onClick={handleProcessNote}
               disabled={noteProcessing}
               className="flex items-center gap-1.5 px-2.5 py-1 text-[12px] font-medium text-indigo-600 border border-indigo-200 hover:bg-indigo-50 disabled:opacity-50 rounded-full transition-colors"
             >
               <SparklesIcon className="w-3 h-3" />
-              {noteProcessing ? 'Processing…' : 'Process with AI'}
+              {noteProcessing ? 'Processing…' : 'Finish'}
             </button>
           )}
         </div>
@@ -924,13 +1098,14 @@ const handleRetry = async () => {
 
 
       {/* ── ZONE B — Note textarea (below pills) ── */}
-      {!transcript && recording.state !== 'uploading' && recording.state !== 'processing' && (
+      {/* Also shown for draft text notes (saved but not yet AI-processed) so the user can keep editing */}
+      {(!transcript || isDraftNote) && recording.state !== 'uploading' && recording.state !== 'processing' && (
         <div className="mb-5">
           <textarea
             value={noteBody}
             onChange={(e) => {
               setNoteBody(e.target.value);
-              debouncedNoteBodySave(e.target.value, noteId);
+              debouncedNoteBodySave(e.target.value);
             }}
             placeholder={isAdHoc
               ? 'Write what was discussed, decided, or any action items…'
@@ -1037,19 +1212,29 @@ const handleRetry = async () => {
 
       {/* ── ZONE D — Post-capture content ── */}
 
-      {/* Meeting document — primary note view */}
-      {transcript?.processed && (
+      {/* Meeting document — primary note view (hidden for draft text notes not yet AI-processed) */}
+      {transcript?.processed && !isDraftNote && (
         <section className="mb-6">
           <MeetingDocument
             document={transcript.notesStructured?.document || transcript.summary || ''}
             eventId={eventId ?? null}
             editable
           />
+          {!transcript.notesStructured?.document && !transcript.summary && (
+            <button
+              onClick={handleReanalyze}
+              disabled={reanalyzing}
+              className="mt-2 flex items-center gap-1.5 text-[12px] text-indigo-600 hover:text-indigo-700 disabled:opacity-50"
+            >
+              <ArrowPathIcon className={`w-3.5 h-3.5 ${reanalyzing ? 'animate-spin' : ''}`} />
+              {reanalyzing ? 'Analyzing…' : 'Re-analyze with AI'}
+            </button>
+          )}
         </section>
       )}
 
       {/* Action items */}
-      {transcript?.processed && actionItems.length > 0 && (
+      {transcript?.processed && !isDraftNote && actionItems.length > 0 && (
         <section className="mb-6 pt-4 border-t border-neutral-100">
           <div className="space-y-px">
             {actionItems.map((item) => {
