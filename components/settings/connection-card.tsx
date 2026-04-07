@@ -16,30 +16,36 @@ interface ConnectionCardProps {
 export default function ConnectionCard({ provider, connection, connectUrl, disconnectUrl }: ConnectionCardProps) {
   const [showSettings, setShowSettings] = useState(false);
   const [syncStatus, setSyncStatus] = useState(connection?.sync_status || 'ready');
+  const [connectionStatus, setConnectionStatus] = useState(connection?.status || 'active');
   const [syncing, setSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [confirmDisconnect, setConfirmDisconnect] = useState(false);
   const supabase = createClient();
 
-  // Poll for sync status updates
+  // Poll for sync status + connection status updates
   useEffect(() => {
     if (!connection) return;
 
     const pollInterval = setInterval(async () => {
       const { data } = await supabase
         .from('connections')
-        .select('sync_status')
+        .select('sync_status, status')
         .eq('id', connection.id)
         .single();
 
-      if (data && data.sync_status !== syncStatus) {
-        setSyncStatus(data.sync_status);
-        if (syncing && data.sync_status !== 'syncing') setSyncing(false);
+      if (data) {
+        if (data.sync_status !== syncStatus) {
+          setSyncStatus(data.sync_status);
+          if (syncing && data.sync_status !== 'syncing') setSyncing(false);
+        }
+        if (data.status !== connectionStatus) {
+          setConnectionStatus(data.status);
+        }
       }
     }, 2000);
 
     return () => clearInterval(pollInterval);
-  }, [connection, syncStatus, syncing, supabase]);
+  }, [connection, syncStatus, connectionStatus, syncing, supabase]);
 
   const providerConfig = {
     gmail: {
@@ -83,6 +89,11 @@ export default function ConnectionCard({ provider, connection, connectUrl, disco
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Sync failed');
+
+      if (data.action === 'reconnect') {
+        setConnectionStatus('needs_reconnect');
+        return;
+      }
 
       setSyncMessage({
         type: 'success',
@@ -138,10 +149,17 @@ export default function ConnectionCard({ provider, connection, connectUrl, disco
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2">
                 <p className="text-[14px] font-semibold text-neutral-900">{config.name}</p>
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-green-100 text-green-700 text-[10px] font-semibold uppercase tracking-wide">
-                  <span className="w-1 h-1 rounded-full bg-green-500" />
-                  Active
-                </span>
+                {connectionStatus === 'needs_reconnect' ? (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-100 text-amber-700 text-[10px] font-semibold uppercase tracking-wide">
+                    <span className="w-1 h-1 rounded-full bg-amber-500" />
+                    Reconnect required
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-green-100 text-green-700 text-[10px] font-semibold uppercase tracking-wide">
+                    <span className="w-1 h-1 rounded-full bg-green-500" />
+                    Active
+                  </span>
+                )}
               </div>
               <p className="text-[12px] text-neutral-600 mt-0.5 truncate">{connection.metadata?.email}</p>
             </div>
@@ -149,15 +167,25 @@ export default function ConnectionCard({ provider, connection, connectUrl, disco
 
           {/* Right: action buttons */}
           <div className="flex items-center gap-2 flex-shrink-0 ml-3">
-            {/* Sync button */}
-            <button
-              onClick={handleSync}
-              disabled={syncing || syncStatus === 'syncing'}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-[12.5px] font-medium border border-neutral-200 bg-white rounded-md text-neutral-700 hover:bg-neutral-50 hover:text-neutral-900 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            >
-              <ArrowPathIcon className={`w-3.5 h-3.5 ${syncing || syncStatus === 'syncing' ? 'animate-spin' : ''}`} />
-              {syncing || syncStatus === 'syncing' ? 'Syncing…' : 'Sync'}
-            </button>
+            {/* Sync / Reconnect button */}
+            {connectionStatus === 'needs_reconnect' ? (
+              <a
+                href={connectUrl}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-[12.5px] font-semibold border border-amber-300 bg-amber-50 rounded-md text-amber-700 hover:bg-amber-100 transition-colors"
+              >
+                <ArrowPathIcon className="w-3.5 h-3.5" />
+                Reconnect
+              </a>
+            ) : (
+              <button
+                onClick={handleSync}
+                disabled={syncing || syncStatus === 'syncing'}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-[12.5px] font-medium border border-neutral-200 bg-white rounded-md text-neutral-700 hover:bg-neutral-50 hover:text-neutral-900 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                <ArrowPathIcon className={`w-3.5 h-3.5 ${syncing || syncStatus === 'syncing' ? 'animate-spin' : ''}`} />
+                {syncing || syncStatus === 'syncing' ? 'Syncing…' : 'Sync'}
+              </button>
+            )}
 
             {/* Disconnect */}
             {confirmDisconnect ? (
@@ -238,7 +266,7 @@ export default function ConnectionCard({ provider, connection, connectUrl, disco
               <span
                 className={`inline-flex items-center gap-1 ${isPushActive ? 'text-green-700' : 'text-amber-700'}`}
                 title={isPushActive
-                  ? `Live push — expires ${new Date(connection.push_expires_at).toLocaleDateString()}`
+                  ? `Live push — expires ${new Date(connection.push_expires_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
                   : 'Push subscription expired or not registered — emails arrive on manual sync only'}
               >
                 <span className={`w-1.5 h-1.5 rounded-full ${isPushActive ? 'bg-green-500' : 'bg-amber-400'}`} />

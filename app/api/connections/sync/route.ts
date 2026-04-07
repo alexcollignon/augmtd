@@ -101,19 +101,33 @@ export async function POST(request: NextRequest) {
           console.log(`[Sync Order] ✓ Emails synced: ${emailResult.emailsFetched} emails`);
         }
 
-        return { calendarResult, botResult, emailResult, error: null };
+        const needsReconnect = calendarResult.errors.some((e: string) => e.includes('invalid_grant')) ||
+          emailResult.errors.some((e: string) => e.includes('invalid_grant'));
+        if (needsReconnect) {
+          await adminSupabase.from('connections').update({ status: 'needs_reconnect' }).eq('id', connection.id);
+          console.warn(`[Sync] Marked connection ${connection.id} as needs_reconnect (invalid_grant)`);
+        }
+
+        return { calendarResult, botResult, emailResult, error: null, needsReconnect };
       } catch (err) {
         console.error(`Sync error for ${connection.provider}:`, err);
+        const needsReconnect = String(err).includes('invalid_grant');
+        if (needsReconnect) {
+          await adminSupabase.from('connections').update({ status: 'needs_reconnect' }).eq('id', connection.id);
+          console.warn(`[Sync] Marked connection ${connection.id} as needs_reconnect (invalid_grant)`);
+        }
         return {
           calendarResult: { synced: 0, errors: [String(err)] },
           botResult: { created: 0, errors: [] },
           emailResult: { emailsFetched: 0, inboxItemsCreated: 0, errors: [] },
           error: String(err),
+          needsReconnect,
         };
       }
     }));
 
     // Aggregate results
+    const anyNeedsReconnect = results.some(r => r.needsReconnect);
     const totalEventsSynced = results.reduce((sum, r) => sum + r.calendarResult.synced, 0);
     const totalEmailsFetched = results.reduce((sum, r) => sum + r.emailResult.emailsFetched, 0);
     let totalInboxItemsCreated = results.reduce((sum, r) => sum + r.emailResult.inboxItemsCreated, 0);
@@ -145,7 +159,8 @@ export async function POST(request: NextRequest) {
       botsCreated: totalBotsCreated,
       meetingPrepItems: meetingPrepItemsCreated,
       inboxItemsCreated: totalInboxItemsCreated,
-      errors: errors.length > 0 ? errors : undefined
+      errors: errors.length > 0 ? errors : undefined,
+      ...(anyNeedsReconnect && { action: 'reconnect' }),
     });
 
   } catch (error) {

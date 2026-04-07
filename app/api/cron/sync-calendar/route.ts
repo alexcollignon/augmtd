@@ -69,6 +69,12 @@ export async function GET(request: NextRequest) {
       totalEventsSynced += calendarResult.synced;
       errors.push(...calendarResult.errors);
 
+      if (calendarResult.errors.some((e: string) => e.includes('invalid_grant'))) {
+        await supabase.from('connections').update({ status: 'needs_reconnect' }).eq('id', connection.id);
+        console.warn(`[SyncCalendar] Marked connection ${connection.id} as needs_reconnect (invalid_grant)`);
+        continue;
+      }
+
       if (calendarResult.synced > 0) {
         // Analyze calendar patterns to build meeting_behavior profile
         console.log(`[SyncCalendar] Analyzing calendar patterns...`);
