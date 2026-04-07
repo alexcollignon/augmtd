@@ -861,16 +861,17 @@ const handleRetry = async () => {
                 ref={linkInputRef}
                 type="text"
                 value={adHocLink}
-                onChange={(e) => setAdHocLink(e.target.value)}
+                onChange={(e) => { if (!adHocBotSent) setAdHocLink(e.target.value); }}
+                readOnly={adHocBotSent}
                 placeholder="Meeting link (optional — for sending assistant)"
                 className={`flex-1 text-[12px] text-blue-600 outline-none bg-transparent placeholder:text-neutral-300 rounded transition-all duration-300 ${linkFlash ? 'ring-2 ring-indigo-400 bg-indigo-50 px-1' : ''}`}
               />
-              {adHocBotSent ? (
+              {adHocBotSent && adHocBotStatus === 'sent' ? (
                 <span className="flex items-center gap-1.5 text-[12px] text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-full font-medium flex-shrink-0">
                   <ComputerDesktopIcon className="w-3 h-3" />
                   Assistant joining…
                 </span>
-              ) : (
+              ) : !adHocBotSent ? (
                 <button
                   onClick={() => {
                     if (adHocLink.trim()) handleSendAdHocBot();
@@ -886,7 +887,7 @@ const handleRetry = async () => {
                   <ComputerDesktopIcon className="w-3 h-3" />
                   {adHocBotSending ? 'Sending…' : 'Send assistant'}
                 </button>
-              )}
+              ) : null}
             </div>
           </div>
         ) : (
