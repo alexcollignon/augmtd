@@ -1,6 +1,7 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect } from 'react';
+import { getBotSession, type BotSessionStatus } from '@/lib/meetings/bot-session';
 import {
   MicrophoneIcon,
   DocumentTextIcon,
@@ -138,6 +139,8 @@ export default function MeetingsHome({
 }: MeetingsHomeProps) {
   const [retryingIds, setRetryingIds] = useState<Set<string>>(new Set());
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  // Bot session statuses for draft text notes — read from localStorage
+  const [botSessions, setBotSessions] = useState<Map<string, BotSessionStatus>>(new Map());
   const now = new Date();
   const todayStr = now.toDateString();
   const tomorrowStr = new Date(now.getTime() + 86400000).toDateString();
@@ -156,6 +159,20 @@ export default function MeetingsHome({
       : new Date(nearestDateStr).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
     return { label, events };
   }, [upcoming]); // eslint-disable-line
+
+  // Read bot session statuses from localStorage for draft text notes in the Live section.
+  // Re-reads whenever transcripts change (new note appears, status updates on return).
+  useEffect(() => {
+    const map = new Map<string, BotSessionStatus>();
+    for (const t of transcripts) {
+      if (t.source !== 'text' || t.hasDocument || t.summary) continue;
+      const session = getBotSession(t.id);
+      if (session && session.status !== 'done' && session.status !== 'failed') {
+        map.set(t.id, session.status);
+      }
+    }
+    setBotSessions(map);
+  }, [transcripts]);
 
   // Live: bot currently in meeting OR draft text note (saved but AI not yet run)
   const live = useMemo(() => {
@@ -304,12 +321,33 @@ export default function MeetingsHome({
                             </span>
                           </>
                         )}
-                        {isDraft && (
-                          <>
-                            <span className="w-1.5 h-1.5 rounded-full bg-blue-400 flex-shrink-0" />
-                            <span className="text-[11px] text-neutral-400">Open note</span>
-                          </>
-                        )}
+                        {isDraft && (() => {
+                          const botStatus = botSessions.get(t.id);
+                          if (botStatus === 'sent') return (
+                            <>
+                              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse flex-shrink-0" />
+                              <span className="text-[11px] text-amber-600">Joining soon</span>
+                            </>
+                          );
+                          if (botStatus === 'in_meeting') return (
+                            <>
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse flex-shrink-0" />
+                              <span className="text-[11px] text-emerald-600">In meeting</span>
+                            </>
+                          );
+                          if (botStatus === 'processing') return (
+                            <>
+                              <span className="w-2.5 h-2.5 rounded-full border-2 border-neutral-300 border-t-neutral-500 animate-spin flex-shrink-0" />
+                              <span className="text-[11px] text-neutral-500">Transcribing</span>
+                            </>
+                          );
+                          return (
+                            <>
+                              <span className="w-1.5 h-1.5 rounded-full bg-blue-400 flex-shrink-0" />
+                              <span className="text-[11px] text-neutral-400">Open note</span>
+                            </>
+                          );
+                        })()}
                       </div>
                     </div>
                     <span className="text-[11px] text-neutral-400 flex-shrink-0 mr-1">

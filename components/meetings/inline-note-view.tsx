@@ -23,6 +23,7 @@ import { formatMeetingTime, calculateDuration } from '@/lib/types/meetings';
 import LinkedWorkPanel from '@/components/meetings/linked-work-panel';
 import ProcessingPipeline from '@/components/meetings/processing-pipeline';
 import MeetingDocument from '@/components/meetings/meeting-document';
+import { getBotSession, setBotSession, clearBotSession, type BotSessionStatus } from '@/lib/meetings/bot-session';
 
 interface TranscriptSegment {
   speaker: string;
@@ -257,11 +258,15 @@ export default function InlineNoteView({
   const [cancelling, setCancelling] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
   // Ad-hoc bot send state (inline — no modal)
+  // adHocBotStatus mirrors localStorage so UI stays in sync even after remount.
   const [adHocBotSending, setAdHocBotSending] = useState(false);
   const [adHocBotSent, setAdHocBotSent] = useState(false);
-  const [adHocBotState, setAdHocBotState] = useState<string | null>(null); // 'joining' | 'recording' | null
-  const [adHocBotFailed, setAdHocBotFailed] = useState(false); // true after 2-min timeout with no transcript
+  const [adHocBotStatus, setAdHocBotStatus] = useState<BotSessionStatus | null>(null);
   const adHocBotPollCountRef = useRef(0);
+
+  // Derived helpers
+  const adHocBotFailed = adHocBotStatus === 'failed';
+  const adHocBotActive = adHocBotSent && adHocBotStatus !== 'failed' && adHocBotStatus !== 'done';
 
   // Prep brief
   const [prepBrief, setPrepBrief] = useState<{
@@ -365,6 +370,20 @@ export default function InlineNoteView({
       .finally(() => setPrepLoading(false));
   }, [eventId, transcript, loading]);
 
+  // Restore bot session state from localStorage when returning to a draft note.
+  // This ensures adHocBotSent + polling resume after the user navigates away and back.
+  // Runs whenever noteId is resolved (create-on-open for new notes, fetchData for returning drafts).
+  useEffect(() => {
+    const id = noteIdRef.current;
+    if (!id) return;
+    const session = getBotSession(id);
+    if (!session || session.status === 'done' || session.status === 'failed') return;
+    // Restore — polling effect triggers because adHocBotSent becomes true
+    setAdHocBotSent(true);
+    setAdHocBotStatus(session.status);
+    adHocBotPollCountRef.current = 0;
+  }, [noteId]); // noteId state (not ref) so effect fires when it's set
+
   // Sync botScheduled from actual event data (persists across remounts)
   useEffect(() => {
     if (event?.attendee_bot_state === 'scheduled') setBotScheduled(true);
@@ -410,12 +429,19 @@ export default function InlineNoteView({
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Poll for the bot transcript after "Send assistant" is clicked.
-  // Hetzner creates the row asynchronously (joining → recording → processing).
-  // When found, switch to the bot transcript's InlineNoteView via onCreated.
-  // Fallback: after 24 polls (~2 minutes) with no result, restore "Finish".
+  // Status machine: sent → in_meeting (after 30s) → processing → done / failed
+  // All transitions are mirrored to localStorage so state survives navigation.
   useEffect(() => {
     if (!adHocBotSent || !noteIdRef.current) return;
+    const noteId = noteIdRef.current;
     adHocBotPollCountRef.current = 0;
+
+    const advance = (status: BotSessionStatus, botTranscriptId?: string) => {
+      const existing = getBotSession(noteId);
+      if (!existing) return;
+      setBotSession(noteId, { ...existing, status, ...(botTranscriptId ? { botTranscriptId } : {}) });
+      setAdHocBotStatus(status);
+    };
 
     const interval = setInterval(async () => {
       adHocBotPollCountRef.current += 1;
@@ -423,23 +449,30 @@ export default function InlineNoteView({
       // 2-minute timeout: 24 × 5s = 120s
       if (adHocBotPollCountRef.current > 24) {
         clearInterval(interval);
-        setAdHocBotFailed(true);
+        advance('failed');
         return;
       }
 
+      // After 30s (6 polls) with no transcript row yet, bot has likely joined
+      if (adHocBotPollCountRef.current === 6) {
+        const cur = getBotSession(noteId);
+        if (cur?.status === 'sent') advance('in_meeting');
+      }
+
       try {
-        const res = await fetch(`/api/meetings/bot/linked/${noteIdRef.current}`);
+        const res = await fetch(`/api/meetings/bot/linked/${noteId}`);
         if (!res.ok) return;
         const data = await res.json();
         if (data.notFound) return;
 
-        // Bot transcript found — update indicator state
-        setAdHocBotState(data.botState);
-
-        // Once the bot has moved past joining/recording (i.e. it's processing or done),
-        // navigate to the bot transcript view so the user sees the result naturally.
-        if (data.botState !== 'joining' && data.botState !== 'recording') {
+        // Transcript row found — Hetzner has finished recording
+        if (!data.processed) {
+          advance('processing', data.id);
+        } else {
+          // Fully processed — navigate and clean up
+          advance('done', data.id);
           clearInterval(interval);
+          clearBotSession(noteId);
           onCreated?.(data.id);
         }
       } catch {}
@@ -455,12 +488,12 @@ export default function InlineNoteView({
     // Applies to: fresh ad-hoc notes (isAdHoc) and ad-hoc drafts returned via Live section
     // (detected by synthetic event: event.id === transcript.id).
     const isSyntheticEvent = event && transcript && event.id === transcript.id;
-    // Skip deletion if bot was sent — text note holds live notes that generate-insights needs
-    if (!adHocBotSent && noteIdRef.current && !noteBody.trim() && !adHocTitle.trim() && (isAdHoc || isSyntheticEvent)) {
+    // Skip deletion if bot is active — text note holds live notes that generate-insights needs
+    if (!adHocBotActive && noteIdRef.current && !noteBody.trim() && !adHocTitle.trim() && (isAdHoc || isSyntheticEvent)) {
       await fetch(`/api/meetings/notes/${noteIdRef.current}`, { method: 'DELETE' }).catch(() => {});
     }
     onBack();
-  }, [isAdHoc, adHocBotSent, noteBody, adHocTitle, event, transcript, onBack]);
+  }, [isAdHoc, adHocBotActive, noteBody, adHocTitle, event, transcript, onBack]);
 
   // For ad-hoc mode: when recording completes, go back so user finds the new note in Recent
   useEffect(() => {
@@ -627,8 +660,12 @@ export default function InlineNoteView({
         }),
       });
       if (res.ok) {
+        const nid = noteIdRef.current;
+        if (nid) setBotSession(nid, { sentAt: new Date().toISOString(), status: 'sent' });
         setAdHocBotSent(true);
-        onNoteRowCreated?.(); // refresh list so MeetingsHome deduplication works
+        setAdHocBotStatus('sent');
+        adHocBotPollCountRef.current = 0;
+        onNoteRowCreated?.();
       }
     } catch {} finally {
       setAdHocBotSending(false);
@@ -1108,11 +1145,23 @@ const handleRetry = async () => {
           )}
 
 
-          {/* Bot joining/recording indicator — replaces Record + Finish when bot was sent */}
-          {adHocBotSent && !adHocBotFailed && (
+          {/* Bot status indicator — replaces Record + Finish while bot is active */}
+          {adHocBotActive && adHocBotStatus === 'sent' && (
+            <span className="flex items-center gap-1.5 text-[12px] font-medium text-amber-700 bg-amber-50 px-2.5 py-1 rounded-full">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse flex-shrink-0" />
+              Assistant joining in ~30s
+            </span>
+          )}
+          {adHocBotActive && adHocBotStatus === 'in_meeting' && (
             <span className="flex items-center gap-1.5 text-[12px] font-medium text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full">
-              <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${adHocBotState === 'recording' ? 'bg-emerald-500 animate-pulse' : 'bg-emerald-400 animate-pulse'}`} />
-              {adHocBotState === 'recording' ? 'Recording — notes will be combined with transcript' : 'Assistant joining…'}
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse flex-shrink-0" />
+              Assistant in meeting — write live notes below
+            </span>
+          )}
+          {adHocBotActive && adHocBotStatus === 'processing' && (
+            <span className="flex items-center gap-1.5 text-[12px] font-medium text-neutral-500 bg-neutral-100 px-2.5 py-1 rounded-full">
+              <span className="w-3 h-3 rounded-full border-2 border-neutral-300 border-t-neutral-500 animate-spin flex-shrink-0" />
+              Transcribing…
             </span>
           )}
 
@@ -1123,8 +1172,8 @@ const handleRetry = async () => {
             </span>
           )}
 
-          {/* Record in person — hidden when bot was sent */}
-          {!adHocBotSent && (
+          {/* Record in person — hidden while bot is active */}
+          {!adHocBotActive && (
             <button
               onClick={async () => {
                 const resolvedNoteId = await flushNoteSave();
@@ -1141,8 +1190,8 @@ const handleRetry = async () => {
             </button>
           )}
 
-          {/* Finish — triggers AI analysis. Hidden when bot is in charge (bot sent + not failed). */}
-          {(noteBody.trim() || adHocTitle.trim() || (isDraftNote && event?.id === transcript?.id)) && (!adHocBotSent || adHocBotFailed) && (
+          {/* Finish — triggers AI analysis. Hidden while bot is active. */}
+          {(noteBody.trim() || adHocTitle.trim() || (isDraftNote && event?.id === transcript?.id)) && !adHocBotActive && (
             <button
               onClick={handleProcessNote}
               disabled={noteProcessing}
