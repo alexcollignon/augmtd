@@ -41,14 +41,14 @@ export const TIER_DEFAULTS: Record<TierType, Record<TaskType, ModelEndpoint>> = 
   },
 
   // ── Private shared — Fireworks AI (fully private, no data leaves to OpenAI/Anthropic)
-  // DeepSeek-V3.1 for planning/generation/conversation (~50% cheaper than Together AI).
+  // Kimi K2 Instruct for planning/generation/conversation (stronger than DeepSeek V3.2 on agentic/coding).
   // Llama-3.3-70B for classification/summarization/assignment.
   // Qwen3-VL-30B for OCR — real vision model (replaced Together AI's text-only Qwen3.5-9B stopgap).
   // Embeddings stay on Together AI — switching would require re-indexing all KB content.
   private_shared: {
-    planning:      { provider: 'fireworks', model: 'accounts/fireworks/models/deepseek-v3p2',
+    planning:      { provider: 'fireworks', model: 'accounts/fireworks/models/kimi-k2-instruct-0905',
                      baseURL: 'https://api.fireworks.ai/inference/v1' },
-    generation:    { provider: 'fireworks', model: 'accounts/fireworks/models/deepseek-v3p2',
+    generation:    { provider: 'fireworks', model: 'accounts/fireworks/models/kimi-k2-instruct-0905',
                      baseURL: 'https://api.fireworks.ai/inference/v1' },
     summarization: { provider: 'fireworks', model: 'accounts/fireworks/models/llama-v3p3-70b-instruct',
                      baseURL: 'https://api.fireworks.ai/inference/v1' },
@@ -60,7 +60,7 @@ export const TIER_DEFAULTS: Record<TierType, Record<TaskType, ModelEndpoint>> = 
                      baseURL: 'https://api.fireworks.ai/inference/v1' },
     assignment:    { provider: 'fireworks', model: 'accounts/fireworks/models/llama-v3p3-70b-instruct',
                      baseURL: 'https://api.fireworks.ai/inference/v1' },
-    conversation:  { provider: 'fireworks', model: 'accounts/fireworks/models/deepseek-v3p2',
+    conversation:  { provider: 'fireworks', model: 'accounts/fireworks/models/kimi-k2-instruct-0905',
                      baseURL: 'https://api.fireworks.ai/inference/v1' },
   },
 
