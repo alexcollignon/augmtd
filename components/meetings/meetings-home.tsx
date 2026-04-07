@@ -176,11 +176,15 @@ export default function MeetingsHome({
 
   // Live: bot currently in meeting OR draft text note (saved but AI not yet run)
   const live = useMemo(() => {
+    // Hide text notes whose ID is already referenced by a linked bot/recording transcript
+    const linkedNoteIds = new Set(
+      transcripts.filter(t => t.source !== 'text' && t.calendarEventId).map(t => t.calendarEventId!)
+    );
     const items = transcripts.filter((t) =>
       // Bot actively joining/recording — user can still take notes
       (t.source === 'bot' && !t.processed && (t.botState === 'recording' || t.botState === 'joining')) ||
-      // Draft text note — processed flag is true but no AI document/summary yet
-      (t.source === 'text' && t.processed && !t.hasDocument && !t.summary && t.botState !== 'failed')
+      // Draft text note — only if no linked bot transcript has taken over
+      (!linkedNoteIds.has(t.id) && t.source === 'text' && t.processed && !t.hasDocument && !t.summary && t.botState !== 'failed')
     );
     return items.sort((a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime());
   }, [transcripts]);

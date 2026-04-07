@@ -56,7 +56,7 @@ function mapTranscripts(raw: any[]): Transcript[] {
     folderId: t.folder_id ?? null,
     hasRecording: !!t.recording_storage_path,
     hasDocument: !!t.has_document,
-    attendees: t.calendar_events?.attendees ?? [],
+    attendees: (t.attendees as any[]) ?? [],
   }));
 }
 

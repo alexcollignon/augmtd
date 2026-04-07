@@ -21,7 +21,7 @@ export async function GET(
 
   const { data } = await supabase
     .from('meeting_transcripts')
-    .select('id, bot_state')
+    .select('id, bot_state, processed')
     .eq('calendar_event_id', noteId)
     .eq('user_id', user.id)
     .eq('source', 'bot')
@@ -31,5 +31,5 @@ export async function GET(
 
   if (!data) return NextResponse.json({ notFound: true });
 
-  return NextResponse.json({ id: data.id, botState: data.bot_state });
+  return NextResponse.json({ id: data.id, botState: data.bot_state, processed: data.processed });
 }
