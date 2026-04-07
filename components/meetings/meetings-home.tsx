@@ -308,7 +308,7 @@ export default function MeetingsHome({
               return (
                 <div key={t.id} className="group/lv relative flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-neutral-50 transition-colors">
                   <button
-                    onClick={() => onSelectMeeting(t.calendarEventId ?? t.id)}
+                    onClick={() => onSelectMeeting(t.source === 'bot' && t.processed ? t.id : (t.calendarEventId ?? t.id))}
                     className="flex items-center gap-3 flex-1 min-w-0 text-left"
                   >
                     <div className="w-8 h-8 rounded-lg bg-neutral-100 flex items-center justify-center flex-shrink-0">
@@ -402,7 +402,7 @@ export default function MeetingsHome({
               return (
                 <div key={t.id} className="group/ip relative flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-neutral-50 transition-colors">
                   <button
-                    onClick={() => onSelectMeeting(t.calendarEventId ?? t.id)}
+                    onClick={() => onSelectMeeting(t.source === 'bot' && t.processed ? t.id : (t.calendarEventId ?? t.id))}
                     className="flex items-center gap-3 flex-1 min-w-0 text-left"
                   >
                     <div className="w-8 h-8 rounded-lg bg-neutral-100 flex items-center justify-center flex-shrink-0">
@@ -536,7 +536,7 @@ export default function MeetingsHome({
                   return (
                     <button
                       key={t.id}
-                      onClick={() => onSelectMeeting(t.calendarEventId ?? t.id)}
+                      onClick={() => onSelectMeeting(t.source === 'bot' && t.processed ? t.id : (t.calendarEventId ?? t.id))}
                       className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-neutral-50 transition-colors text-left"
                     >
                       <div className="w-8 h-8 rounded-lg bg-neutral-100 flex items-center justify-center flex-shrink-0">
