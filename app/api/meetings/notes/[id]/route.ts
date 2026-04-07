@@ -48,12 +48,16 @@ export async function PATCH(
     return NextResponse.json({ error: 'Nothing to update' }, { status: 400 });
   }
 
-  const { error } = await supabase
+  // Title-only updates are allowed for any source (bot, recording, upload, text).
+  // Body updates remain restricted to text notes only.
+  const isTitleOnly = body.title !== undefined && body.body === undefined;
+  const baseQuery = supabase
     .from('meeting_transcripts')
     .update(update)
     .eq('id', id)
-    .eq('user_id', user.id)
-    .eq('source', 'text');
+    .eq('user_id', user.id);
+
+  const { error } = await (isTitleOnly ? baseQuery : baseQuery.eq('source', 'text'));
 
   if (error) {
     console.error('[Notes] Failed to update text note:', error);

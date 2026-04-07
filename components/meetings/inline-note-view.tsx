@@ -239,6 +239,10 @@ export default function InlineNoteView({
   const [linkFlash, setLinkFlash] = useState(false);
   const linkInputRef = useRef<HTMLInputElement>(null);
 
+  // Inline title edit (scheduled / processed view)
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState('');
+
   // Note body (always present, saved before processing)
   const [noteBody, setNoteBody] = useState('');
   const [noteId, setNoteId] = useState<string | null>(null);
@@ -894,7 +898,35 @@ const handleRetry = async () => {
           /* Scheduled: pre-filled header */
           <>
             <div className="flex items-start justify-between gap-4 mb-2">
-              <h1 className="text-xl font-semibold text-neutral-900">{event!.title}</h1>
+              {editingTitle ? (
+              <input
+                autoFocus
+                type="text"
+                value={titleDraft}
+                onChange={(e) => setTitleDraft(e.target.value)}
+                onBlur={async () => {
+                  setEditingTitle(false);
+                  const trimmed = titleDraft.trim();
+                  if (!trimmed || trimmed === event!.title || !transcript) return;
+                  setEvent((ev: any) => ({ ...ev, title: trimmed }));
+                  await fetch(`/api/meetings/notes/${transcript.id}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ title: trimmed }),
+                  });
+                }}
+                onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') { setEditingTitle(false); } }}
+                className="w-full text-xl font-semibold text-neutral-900 outline-none bg-transparent border-b border-neutral-300 focus:border-indigo-400 pb-0.5"
+              />
+            ) : (
+              <h1
+                className="text-xl font-semibold text-neutral-900 cursor-text hover:text-neutral-700 transition-colors"
+                onClick={() => { setTitleDraft(event!.title); setEditingTitle(true); }}
+                title="Click to edit title"
+              >
+                {event!.title}
+              </h1>
+            )}
               <div className="flex items-center gap-1.5 flex-shrink-0">
                 {transcript?.processed && onRequestChat && (
                   <button

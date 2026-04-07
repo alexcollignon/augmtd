@@ -324,10 +324,13 @@ export async function storeTranscriptAndGenerateWork(
     },
   };
 
-  await supabase
+  const { error: finalUpdateError } = await supabase
     .from('meeting_transcripts')
     .update(transcriptUpdate)
     .eq('id', transcriptRecord.id);
+  if (finalUpdateError) {
+    console.error('[MeetingBot] Failed to mark transcript processed:', finalUpdateError);
+  }
 
   // Fire-and-forget: index transcript text into KB so it's searchable in Drive
   if (transcriptText.trim()) {
