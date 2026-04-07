@@ -363,6 +363,13 @@ export default function InlineNoteView({
     fetchData();
   }, [fetchData, eventId]);
 
+  // Poll for text notes that are being processed by AI (user navigated away mid-processing and returned)
+  useEffect(() => {
+    if (!transcript || transcript.source !== 'text' || transcript.processed || transcript.botState !== 'processing') return;
+    const interval = setInterval(() => { fetchData(); }, 3000);
+    return () => clearInterval(interval);
+  }, [transcript?.source, transcript?.processed, transcript?.botState, fetchData]);
+
   // Prep brief for upcoming scheduled meetings
   useEffect(() => {
     if (!eventId || transcript || loading) return;
@@ -860,7 +867,7 @@ const handleRetry = async () => {
               placeholder="Meeting title"
               className="w-full text-xl font-semibold text-neutral-900 outline-none placeholder:text-neutral-300 bg-transparent"
             />
-            <div className="flex items-center gap-2">
+            {!noteProcessing && <div className="flex items-center gap-2">
               <input
                 ref={linkInputRef}
                 type="text"
@@ -892,7 +899,7 @@ const handleRetry = async () => {
                   {adHocBotSending ? 'Sending…' : 'Send assistant'}
                 </button>
               ) : null}
-            </div>
+            </div>}
           </div>
         ) : (
           /* Scheduled: pre-filled header */
@@ -1123,7 +1130,16 @@ const handleRetry = async () => {
         </div>
       )}
 
-      {(!transcript || isDraftNote) && recording.state !== 'recording' && recording.state !== 'uploading' && recording.state !== 'processing' && (
+      {noteProcessing && (
+        <div className="flex items-center gap-2 mb-4">
+          <span className="flex items-center gap-1.5 text-[12px] font-medium text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-full">
+            <span className="w-3 h-3 rounded-full border-2 border-indigo-200 border-t-indigo-500 animate-spin flex-shrink-0" />
+            Generating brief…
+          </span>
+        </div>
+      )}
+
+      {(!transcript || isDraftNote) && !noteProcessing && recording.state !== 'recording' && recording.state !== 'uploading' && recording.state !== 'processing' && (
         <div className="flex items-center gap-2 mb-4 flex-wrap">
           {/* Time until (scheduled only) */}
           {!isAdHoc && (
@@ -1244,7 +1260,9 @@ const handleRetry = async () => {
         <div className="mb-5">
           <textarea
             value={noteBody}
+            readOnly={noteProcessing}
             onChange={(e) => {
+              if (noteProcessing) return;
               setNoteBody(e.target.value);
               debouncedNoteBodySave(e.target.value);
             }}

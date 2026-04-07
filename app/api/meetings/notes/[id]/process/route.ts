@@ -31,6 +31,12 @@ export async function POST(
     return NextResponse.json({ error: 'Note is empty — write some text before processing' }, { status: 400 });
   }
 
+  // Mark as in-progress before running AI so navigating away + back shows "Processing..."
+  await supabase
+    .from('meeting_transcripts')
+    .update({ processed: false, bot_state: 'processing' })
+    .eq('id', id);
+
   // Convert text to pseudo-segments
   const segments = textToSegments(transcript.transcript);
 
