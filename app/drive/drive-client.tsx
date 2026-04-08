@@ -15,11 +15,9 @@ import {
   ArrowPathIcon,
   FolderOpenIcon,
   MagnifyingGlassIcon,
-  ChatBubbleLeftRightIcon,
   LinkIcon,
   ChevronLeftIcon,
 } from '@heroicons/react/24/outline';
-import ChatSidebar from '@/components/shared/chat-sidebar';
 import type { DriveAugmtdFile, DriveFolder } from '@/lib/types/drive';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -1190,7 +1188,6 @@ export default function DriveClient({ initialSources, connections }: DriveClient
   const [kbFiles, setKbFiles] = useState<KnowledgeFile[]>([]);
   const [showUpload, setShowUpload] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [rightPanel, setRightPanel] = useState<'chat' | null>(null);
   const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
 
@@ -1339,28 +1336,6 @@ export default function DriveClient({ initialSources, connections }: DriveClient
           </div>
         </div>
 
-        {/* Right strip — chat */}
-        <div className={`flex-shrink-0 bg-neutral-50 flex flex-col transition-[width] duration-200 overflow-hidden ${rightPanel ? 'w-[316px]' : 'w-12'}`}>
-          <div className={`flex flex-col items-center pt-3 gap-1.5 transition-opacity duration-150 ${rightPanel ? 'opacity-0 pointer-events-none absolute' : 'opacity-100'}`}>
-            <button onClick={() => setRightPanel('chat')} title="Ask AI" className="p-2 rounded-xl bg-white shadow-sm text-neutral-500 hover:bg-neutral-50 transition-colors">
-              <ChatBubbleLeftRightIcon className="w-4 h-4" />
-            </button>
-          </div>
-          <div className={`flex-1 flex flex-col p-2 min-h-0 transition-opacity duration-150 ${rightPanel ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
-            <div className="flex-1 flex flex-col rounded-2xl bg-white shadow-sm overflow-hidden">
-              <div className="flex-shrink-0 h-10 flex items-center justify-between px-3 border-b border-neutral-100">
-                <div className="flex items-center gap-2">
-                  <ChatBubbleLeftRightIcon className="w-3.5 h-3.5 text-neutral-400" />
-                  <span className="text-[12px] font-semibold text-neutral-700">Assistant</span>
-                </div>
-                <button onClick={() => setRightPanel(null)} className="p-1 text-neutral-400 hover:text-neutral-600 transition-colors">
-                  <ChevronRightIcon className="w-3.5 h-3.5" />
-                </button>
-              </div>
-              <ChatSidebar isOpen={true} onClose={() => setRightPanel(null)} context="drive" inline />
-            </div>
-          </div>
-        </div>
 
       </div>
 

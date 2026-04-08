@@ -360,7 +360,7 @@ export default function DeskChatSidebar({
       const res = await fetch('/api/assistant/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ context: 'desk', message: text, history, boardItems }),
+        body: JSON.stringify({ context: 'desk', message: text, history, boardItems, sources: ['kb', 'calendar'] }),
       });
 
       if (!res.ok || !res.body) throw new Error('Request failed');
