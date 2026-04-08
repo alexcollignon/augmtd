@@ -58,6 +58,8 @@ You help users manage their inbox, handle emails, prioritize tasks, reference pr
 
 {{PROCESS_LIST}}
 
+{{CONTACTS_SECTION}}
+
 {{FOCUSED_ITEM}}
 
 {{INBOX_SNAPSHOT_SECTION}}
@@ -94,17 +96,19 @@ MEETING_SUGGESTION:{"title":"...","duration_minutes":30,"attendees":["email@exam
   If a FOCUSED EMAIL or FOCUSED CARD is shown, use the sender's email as attendee.
   Omit attendee if email address is unknown.
 
-OPEN_COMPOSE:{"to":"...","subject":"...","body":"..."}
+OPEN_COMPOSE:{"to":"...","cc":"...","bcc":"...","subject":"...","body":"..."}
 → User wants to write a NEW email. Always emit when composing intent is clear. to:"" if unknown.
+  cc and bcc are optional — only include if the user explicitly mentions them.
   Do not combine with ACTION or MEETING_SUGGESTION.
 
-REPLY_DRAFT:{"body":"..."}
+REPLY_DRAFT:{"body":"...","cc":"...","bcc":"..."}
 → REQUIRED when user asks to draft, write, or suggest a reply to an email or board email item.
   Triggers: "draft a reply", "reply to X", "write a response", "suggest a reply", "how should I respond".
   ALWAYS emit this token — do NOT write the reply as plain text prose.
   Write a short intro sentence first (e.g. "Here's a draft:"), then emit the token on the next line.
   If a FOCUSED EMAIL or FOCUSED CARD (email type) is shown, reply to that. Otherwise use the inbox snapshot.
   Body: complete reply text only — no subject line.
+  cc and bcc are optional — only include if the user explicitly asks to CC or BCC someone.
   Format: greeting, blank line, body paragraphs separated by blank lines, blank line, sign-off line, then name on the next line. Never add a comma before the name.
   Use \\n for newlines inside the JSON string. No extra commas.
   Do not combine with OPEN_COMPOSE.
@@ -227,6 +231,7 @@ export async function POST(request: NextRequest) {
       indexedFilesResult,
       processListResult,
       workThreadsResult,
+      contactsResult,
     ] = await Promise.all([
       fetchInbox
         ? buildInboxSnapshot(user.id, message, supabase)
@@ -255,6 +260,16 @@ export async function POST(request: NextRequest) {
         .eq('user_id', user.id)
         .order('updated_at', { ascending: false })
         .limit(5),
+      // Key contacts — only for meeting context
+      context === 'meeting'
+        ? supabase
+            .from('relationship_graph')
+            .select('contact_name, contact_email, relationship_type, importance, last_interaction, typical_topics')
+            .eq('user_id', user.id)
+            .gte('importance', 0.3)
+            .order('importance', { ascending: false })
+            .limit(10)
+        : Promise.resolve({ data: [] }),
     ]);
 
     const snapshotText = formatSnapshotForPrompt(snapshot);
@@ -282,6 +297,22 @@ export async function POST(request: NextRequest) {
     const processList = processes.length
       ? 'ACTIVE PROCESSES (reference these when the user asks about ongoing work):\n' +
         processes.map(p => `- "${p.title}" [id: ${p.id}] — ${p.status}${p.current_step_index != null ? `, step ${p.current_step_index + 1}` : ''}`).join('\n')
+      : '';
+
+    // Contacts block — meeting surface only
+    const contacts = (contactsResult.data ?? []) as Array<{
+      contact_name: string; contact_email: string; relationship_type: string;
+      last_interaction: string | null; typical_topics: string[] | null;
+    }>;
+    const contactsBlock = contacts.length
+      ? 'KEY CONTACTS (from your network — use these when drafting emails or identifying attendees):\n' +
+        contacts.map(c => {
+          const parts = [`- ${c.contact_name}${c.contact_email ? ` <${c.contact_email}>` : ''}`];
+          if (c.relationship_type) parts.push(c.relationship_type);
+          if (c.last_interaction) parts.push(`last contact: ${new Date(c.last_interaction).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`);
+          if (c.typical_topics?.length) parts.push(`topics: ${c.typical_topics.slice(0, 3).join(', ')}`);
+          return parts.join(' — ');
+        }).join('\n')
       : '';
 
     // Meeting context block
@@ -343,6 +374,7 @@ Column: ${focusedCard.column}${focusedCard.urgency ? `\nUrgency: ${focusedCard.u
       .replace('{{CALENDAR_CONTEXT}}', calendarText || '')
       .replace('{{WORKFLOW_HISTORY}}', workflowHistory || '')
       .replace('{{PROCESS_LIST}}', processList || '')
+      .replace('{{CONTACTS_SECTION}}', contactsBlock || '')
       .replace('{{FOCUSED_ITEM}}', focusedMeetingBlock || focusedItemBlock || '')
       .replace('{{INBOX_SNAPSHOT_SECTION}}', inboxSnapshotSection || '')
       .replace('{{BOARD_CONTEXT_SECTION}}', boardContextSection || '')

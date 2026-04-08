@@ -106,7 +106,7 @@ export interface AiChatPanelProps {
   composeDraft?: ComposeDraft;
   onUpdateComposeDraft?: (fields: Partial<ComposeDraft>) => void;
   onOpenCompose?: (draft: Partial<ComposeDraft>) => void;
-  onUseAsReply?: (body: string) => void;
+  onUseAsReply?: (body: string, cc?: string, bcc?: string) => void;
   replyDraft?: string;
   onUpdateReplyDraft?: (body: string) => void;
 
@@ -246,7 +246,7 @@ function parseContent(raw: string) {
   const actions: ParsedAction[] = [];
   let meetingSuggestion: MeetingSuggestion | null = null;
   let updateDraft: Partial<ComposeDraft> | null = null;
-  let replyDraft: { body: string } | null = null;
+  let replyDraft: { body: string; cc?: string; bcc?: string } | null = null;
   let openCompose: Partial<ComposeDraft> | null = null;
   let openWorkflow: ParsedOpenWorkflow | null = null;
   let openProcess: ParsedOpenProcess | null = null;
@@ -454,7 +454,7 @@ function MessageContent({
   onAction?: (type: string, itemId: string) => Promise<void>;
   onUpdateComposeDraft?: (fields: Partial<ComposeDraft>) => void;
   onOpenCompose?: (draft: Partial<ComposeDraft>) => void;
-  onUseAsReply?: (body: string) => void;
+  onUseAsReply?: (body: string, cc?: string, bcc?: string) => void;
   mode?: 'inbox' | 'compose' | 'reply';
   onUpdateReplyDraft?: (body: string) => void;
   connectionId?: string | null;
@@ -511,7 +511,7 @@ function MessageContent({
       {/* Reply draft — both surfaces */}
       {replyDraft?.body && mode !== 'reply' && (
         <button
-          onClick={() => onUseAsReply?.(replyDraft.body)}
+          onClick={() => onUseAsReply?.(replyDraft.body, replyDraft.cc, replyDraft.bcc)}
           className="mt-2 px-3 py-1.5 text-[12px] font-semibold text-white bg-indigo-600 hover:bg-indigo-700 transition-colors rounded-lg inline-flex items-center gap-1.5"
         >
           <PaperAirplaneIcon className="w-3.5 h-3.5" />

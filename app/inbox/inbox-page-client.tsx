@@ -70,7 +70,7 @@ export function InboxPageClient({
   const [composeMode, setComposeMode] = useState(false);
   const [composeDraft, setComposeDraft] = useState({ to: '', cc: '', subject: '', body: '' });
   // AI-drafted reply flow
-  const [pendingReplyDraft, setPendingReplyDraft] = useState<string | null>(null);
+  const [pendingReplyDraft, setPendingReplyDraft] = useState<{ body: string; cc?: string; bcc?: string } | null>(null);
   const [replyIsOpen, setReplyIsOpen] = useState(false);
   const [replyBody, setReplyBody] = useState('');
   const autoFiredReplyRef = useRef(false);
@@ -520,8 +520,8 @@ export function InboxPageClient({
     setRightPanel('chat');
   }, []);
 
-  const handleUseAsReply = useCallback((body: string) => {
-    setPendingReplyDraft(body);
+  const handleUseAsReply = useCallback((body: string, cc?: string, bcc?: string) => {
+    setPendingReplyDraft({ body, cc, bcc });
   }, []);
 
   const handleReplyOpenChange = useCallback((open: boolean) => {
@@ -610,14 +610,9 @@ export function InboxPageClient({
         if (m) {
           const parsed = JSON.parse(m[1]);
           if (parsed?.body) {
-            if (replyIsOpen) {
-              // Box already open — just update the body
-              setReplyBody(parsed.body);
-            } else {
-              // Box not open — use pendingReplyDraft to trigger WorkDetailInline's open+fill effect
-              setPendingReplyDraft(parsed.body);
-              autoFiredReplyRef.current = true;
-            }
+            // Always go through pendingReplyDraft so WorkDetailInline can handle cc/bcc too
+            setPendingReplyDraft({ body: parsed.body, cc: parsed.cc, bcc: parsed.bcc });
+            autoFiredReplyRef.current = true;
           }
         }
       } catch {}

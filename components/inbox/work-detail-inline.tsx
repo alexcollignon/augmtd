@@ -35,7 +35,7 @@ interface WorkDetailInlineProps {
   item: InboxItem | null;
   onItemConfirmed?: (ids: string[], action: 'confirm_as_mine' | 'not_my_task') => void;
   onRefreshMeetings?: () => void;
-  pendingReplyDraft?: string | null;
+  pendingReplyDraft?: { body: string; cc?: string; bcc?: string } | null;
   onReplySent?: (itemId: string) => void;
   replyBody: string;
   onReplyBodyChange: (body: string) => void;
@@ -164,7 +164,9 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
   // Open + fill reply box when a pending draft arrives from chat (Use as reply path)
   useEffect(() => {
     if (pendingReplyDraft != null) {
-      onReplyBodyChange(pendingReplyDraft);
+      onReplyBodyChange(pendingReplyDraft.body);
+      if (pendingReplyDraft.cc) { setReplyCc(pendingReplyDraft.cc); setShowReplyCc(true); }
+      if (pendingReplyDraft.bcc) { setReplyBcc(pendingReplyDraft.bcc); setShowReplyBcc(true); }
       setReplyOpen(true);
       onReplyOpenChange?.(true);
       setTimeout(() => replyBoxRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 50);
