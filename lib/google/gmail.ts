@@ -184,6 +184,24 @@ export function parseGmailMessage(message: GmailMessage) {
   };
 }
 
+/**
+ * Fetch all messages in a Gmail thread by threadId.
+ * Returns full message objects in the same shape as fetchUnreadEmails, suitable for parseGmailMessage.
+ */
+export async function fetchGmailThread(
+  encryptedTokens: string,
+  threadId: string,
+  onTokenRefresh?: GmailTokenRefreshCallback,
+): Promise<GmailMessage[]> {
+  const gmail = await getGmailClient(encryptedTokens, onTokenRefresh);
+  const response = await gmail.users.threads.get({
+    userId: 'me',
+    id: threadId,
+    format: 'full',
+  });
+  return (response.data.messages || []) as GmailMessage[];
+}
+
 export async function fetchGmailAttachment(
   encryptedTokens: string,
   messageId: string,

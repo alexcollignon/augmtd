@@ -55,12 +55,14 @@ import {
   fetchUnreadEmails as fetchGmailEmails,
   parseGmailMessage,
   fetchGmailAttachment,
+  fetchGmailThread,
 } from '@/lib/google/gmail';
 import {
   fetchUnreadEmails as fetchOutlookEmails,
   parseOutlookMessage,
   fetchOutlookAttachments,
   fetchOutlookAttachmentContent,
+  fetchOutlookConversation,
 } from '@/lib/microsoft/outlook';
 import { extractTextFromAttachment } from '@/lib/attachments/text-extractor';
 import { processEmail } from '@/lib/ai/email-processor';
@@ -272,6 +274,122 @@ async function getUserContext(
   } catch (error) {
     console.error('[Sync] Error fetching user context:', error);
     return undefined;
+  }
+}
+
+/**
+ * Backfill all historical messages in a thread that are not yet in the DB.
+ * These rows are context-only — no inbox_item is created for them.
+ * Non-fatal: any error is logged and swallowed so the main sync continues.
+ */
+async function backfillThreadHistory(params: {
+  connection: any;
+  storedEmail: any;
+  encryptedTokens: string;
+  adminSupabase: SupabaseClient;
+  onGmailTokenRefresh?: (newTokens: string) => Promise<void>;
+  onOutlookTokenRefresh?: (newTokens: { accessToken: string; refreshToken: string; expiresOn: string }) => Promise<void>;
+}): Promise<void> {
+  const { connection, storedEmail, encryptedTokens, adminSupabase, onGmailTokenRefresh, onOutlookTokenRefresh } = params;
+
+  try {
+    const threadId = storedEmail.thread_id;
+    if (!threadId) return; // Single-message thread — nothing to backfill
+
+    // Check if this thread was already fully backfilled by looking at the oldest stored email
+    const { data: oldestRow } = await adminSupabase
+      .from('emails')
+      .select('id, metadata')
+      .eq('user_id', connection.user_id)
+      .eq('thread_id', threadId)
+      .order('received_at', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    if ((oldestRow?.metadata as any)?.thread_backfilled === true) return;
+
+    // Fetch all messages in the thread from the provider
+    let fetchedMessages: any[] = [];
+    try {
+      if (connection.provider === 'gmail') {
+        const raw = await fetchGmailThread(encryptedTokens, threadId, onGmailTokenRefresh);
+        // Single-message threads need no backfill
+        if (raw.length <= 1) {
+          if (oldestRow) {
+            await adminSupabase
+              .from('emails')
+              .update({ metadata: { ...(oldestRow.metadata as any), thread_backfilled: true } })
+              .eq('id', oldestRow.id);
+          }
+          return;
+        }
+        fetchedMessages = raw.map(m => parseGmailMessage(m));
+      } else if (connection.provider === 'outlook') {
+        const raw = await fetchOutlookConversation(encryptedTokens, threadId, onOutlookTokenRefresh);
+        if (raw.length <= 1) {
+          if (oldestRow) {
+            await adminSupabase
+              .from('emails')
+              .update({ metadata: { ...(oldestRow.metadata as any), thread_backfilled: true } })
+              .eq('id', oldestRow.id);
+          }
+          return;
+        }
+        fetchedMessages = raw.map(m => parseOutlookMessage(m));
+      } else {
+        return;
+      }
+    } catch (err) {
+      console.warn(`[ThreadBackfill] Provider API call failed for thread ${threadId}:`, err);
+      return;
+    }
+
+    // Get message_ids already stored in DB for this thread
+    const { data: existingRows } = await adminSupabase
+      .from('emails')
+      .select('message_id')
+      .eq('user_id', connection.user_id)
+      .eq('thread_id', threadId);
+
+    const knownMessageIds = new Set((existingRows || []).map((r: any) => r.message_id).filter(Boolean));
+
+    // Filter to messages not yet in DB
+    const userEmail = connection.metadata?.email || connection.provider_account_id;
+    const rowsToInsert = fetchedMessages
+      .filter(m => m.message_id && !knownMessageIds.has(m.message_id))
+      .map(m => {
+        // Strip parser-only fields before insert
+        const { attachments: _a, hasAttachments: _ha, outlookInternalId: _oid, html_body: _hb, ...dbFields } = m as any;
+        return stripNulls({
+          user_id: connection.user_id,
+          connection_id: connection.id,
+          ...dbFields,
+          is_from_user: (m.from_address || '').toLowerCase() === (userEmail || '').toLowerCase(),
+          metadata: { ...m.metadata, thread_context_only: true },
+        }) as Record<string, unknown>;
+      });
+
+    if (rowsToInsert.length > 0) {
+      const { error } = await adminSupabase
+        .from('emails')
+        .upsert(rowsToInsert, { onConflict: 'message_id', ignoreDuplicates: true });
+      if (error) {
+        console.warn(`[ThreadBackfill] Insert error for thread ${threadId}:`, error.message);
+      } else {
+        console.log(`[ThreadBackfill] Inserted ${rowsToInsert.length} historical messages for thread ${threadId}`);
+      }
+    }
+
+    // Mark thread as backfilled on the oldest row
+    const anchorId = oldestRow?.id;
+    if (anchorId) {
+      await adminSupabase
+        .from('emails')
+        .update({ metadata: { ...(oldestRow.metadata as any), thread_backfilled: true } })
+        .eq('id', anchorId);
+    }
+  } catch (err) {
+    console.warn(`[ThreadBackfill] Unexpected error:`, err);
   }
 }
 
@@ -529,6 +647,12 @@ export async function syncEmailsForConnection(
             continue;
           }
 
+          // Context-only backfill rows should never become inbox items
+          if ((existingEmail.metadata as any)?.thread_context_only) {
+            console.log(`    ⏭️  Skipping context-only backfill row`);
+            continue;
+          }
+
           // Email stored but no inbox item — recover it
           console.log(`    ♻️  Email exists but no inbox item — recovering`);
 
@@ -661,6 +785,31 @@ export async function syncEmailsForConnection(
           console.log(`    ✓ Learning signals queued, skipping inbox item (sent email)\n`);
           continue; // Skip to next email (already stored for context)
         }
+
+        // Backfill full thread history so AI sees complete context (non-fatal)
+        await backfillThreadHistory({
+          connection,
+          storedEmail,
+          encryptedTokens,
+          adminSupabase,
+          onGmailTokenRefresh: connection.provider === 'gmail'
+            ? async (newTokens: string) => {
+                await adminSupabase
+                  .from('connections')
+                  .update({ metadata: { ...connection.metadata, tokens: newTokens } })
+                  .eq('id', connection.id);
+              }
+            : undefined,
+          onOutlookTokenRefresh: connection.provider === 'outlook'
+            ? async (newTokens: { accessToken: string; refreshToken: string; expiresOn: string }) => {
+                const newEncryptedTokens = Buffer.from(JSON.stringify(newTokens)).toString('base64');
+                await adminSupabase
+                  .from('connections')
+                  .update({ metadata: { ...connection.metadata, tokens: newEncryptedTokens } })
+                  .eq('id', connection.id);
+              }
+            : undefined,
+        }).catch(err => console.warn(`[ThreadBackfill] Non-fatal error for thread ${storedEmail.thread_id}:`, err));
 
         // ==== BATCH AI FAST-PATH (before attachments — noise/fyi skip attachment fetching entirely) ====
         if (emailClass === 'noise') {

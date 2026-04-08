@@ -163,6 +163,37 @@ export function parseOutlookMessage(message: OutlookMessage) {
   };
 }
 
+/**
+ * Fetch all messages in an Outlook conversation by conversationId.
+ * Follows nextLink pagination and caps at 200 messages.
+ */
+export async function fetchOutlookConversation(
+  encryptedTokens: string,
+  conversationId: string,
+  onTokenRefresh?: TokenRefreshCallback,
+): Promise<OutlookMessage[]> {
+  const client = await getGraphClient(encryptedTokens, onTokenRefresh);
+  const MAX_MESSAGES = 200;
+  const results: OutlookMessage[] = [];
+
+  let response = await client
+    .api('/me/messages')
+    .filter(`conversationId eq '${conversationId}'`)
+    .orderby('receivedDateTime asc')
+    .select('id,conversationId,subject,bodyPreview,body,from,toRecipients,ccRecipients,receivedDateTime,internetMessageId,hasAttachments,isRead')
+    .top(50)
+    .get();
+
+  while (response) {
+    const messages: OutlookMessage[] = response.value || [];
+    results.push(...messages);
+    if (results.length >= MAX_MESSAGES || !response['@odata.nextLink']) break;
+    response = await client.api(response['@odata.nextLink']).get();
+  }
+
+  return results.slice(0, MAX_MESSAGES);
+}
+
 export async function fetchOutlookAttachments(
   encryptedTokens: string,
   outlookMessageId: string
