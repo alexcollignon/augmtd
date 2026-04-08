@@ -2,7 +2,7 @@ export type ModelFamily = 'claude' | 'llama' | 'deepseek' | 'gpt' | 'unknown'
 
 export function detectModelFamily(model: string): ModelFamily {
   const m = model.toLowerCase()
-  if (m.startsWith('claude')) return 'claude'
+  if (m.startsWith('claude') || m.includes('claude')) return 'claude'
   if (m.includes('llama')) return 'llama'
   if (m.includes('deepseek')) return 'deepseek'
   if (m.startsWith('gpt') || m.startsWith('o1') || m.startsWith('o3') || m.startsWith('o4')) return 'gpt'

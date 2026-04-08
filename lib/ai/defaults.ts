@@ -64,6 +64,22 @@ export const TIER_DEFAULTS: Record<TierType, Record<TaskType, ModelEndpoint>> = 
                      baseURL: 'https://api.fireworks.ai/inference/v1' },
   },
 
+  // ── Bedrock private — AWS Bedrock + Claude Haiku 4.5 ─────────────────────────
+  // Structural data isolation: Anthropic has zero access to prompts (AWS-managed infra).
+  // Claude Haiku 4.5 for all tasks. Embeddings stay on Together AI (re-indexing not worth it).
+  // SOC2/HIPAA-eligible, GDPR data residency via regional endpoints.
+  bedrock_private: {
+    planning:       { provider: 'bedrock', model: 'eu.anthropic.claude-haiku-4-5-20251001-v1:0', maxTokensDefault: 4096 },
+    generation:     { provider: 'bedrock', model: 'eu.anthropic.claude-haiku-4-5-20251001-v1:0', maxTokensDefault: 4096 },
+    summarization:  { provider: 'bedrock', model: 'eu.anthropic.claude-haiku-4-5-20251001-v1:0', maxTokensDefault: 4096 },
+    classification: { provider: 'bedrock', model: 'eu.anthropic.claude-haiku-4-5-20251001-v1:0', maxTokensDefault: 4096 },
+    embeddings:     { provider: 'openai_compatible', model: 'intfloat/multilingual-e5-large-instruct',
+                      baseURL: 'https://api.together.xyz/v1' },
+    ocr:            { provider: 'bedrock', model: 'eu.anthropic.claude-haiku-4-5-20251001-v1:0', maxTokensDefault: 4096 },
+    assignment:     { provider: 'bedrock', model: 'eu.anthropic.claude-haiku-4-5-20251001-v1:0', maxTokensDefault: 4096 },
+    conversation:   { provider: 'bedrock', model: 'eu.anthropic.claude-haiku-4-5-20251001-v1:0', maxTokensDefault: 4096 },
+  },
+
   // ── Private client — client's own cloud ──────────────────────────────────────
   // baseURLs come from tenant_configs.endpoints at runtime.
   // Model names are typical defaults — clients can override per task.

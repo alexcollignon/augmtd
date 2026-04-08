@@ -36,7 +36,7 @@ export default function SidebarNav({ userEmail }: SidebarNavProps) {
   const menuRef = useRef<HTMLDivElement>(null);
 
   // Tier toggle state
-  const [tier, setTier] = useState<'standard' | 'private_shared' | null>(null);
+  const [tier, setTier] = useState<'standard' | 'private_shared' | 'bedrock_private' | null>(null);
   const [tierLoading, setTierLoading] = useState(false);
   const [isSuperAdmin, setIsSuperAdmin] = useState(false);
   const [processNotifCount, setProcessNotifCount] = useState(0);
@@ -76,7 +76,10 @@ export default function SidebarNav({ userEmail }: SidebarNavProps) {
 
   const toggleTier = useCallback(async () => {
     if (tierLoading || tier === null) return;
-    const next = tier === 'standard' ? 'private_shared' : 'standard';
+    const next =
+      tier === 'standard' ? 'private_shared' :
+      tier === 'private_shared' ? 'bedrock_private' :
+      'standard';
     setTierLoading(true);
     try {
       const res = await fetch('/api/settings/tier', {
@@ -104,7 +107,18 @@ export default function SidebarNav({ userEmail }: SidebarNavProps) {
   }, [showUserMenu]);
 
   const userInitial = userEmail?.[0]?.toUpperCase() ?? '?';
-  const isPrivate = tier === 'private_shared';
+  const tierLabel =
+    tier === 'bedrock_private' ? 'Bedrock AI — click to switch to Public' :
+    tier === 'private_shared'  ? 'Private AI — click to switch to Bedrock' :
+                                 'Public AI — click to switch to Private';
+  const tierIcon =
+    tier === 'bedrock_private' ? <ShieldCheckIcon className="w-4 h-4" /> :
+    tier === 'private_shared'  ? <LockClosedIcon className="w-4 h-4" /> :
+                                 <GlobeAltIcon className="w-4 h-4" />;
+  const tierClass =
+    tier === 'bedrock_private' ? 'bg-violet-50 text-violet-600 hover:bg-violet-100' :
+    tier === 'private_shared'  ? 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100' :
+                                 'text-neutral-400 hover:bg-neutral-200 hover:text-neutral-600';
 
   return (
     <div className="flex h-screen w-14 flex-col bg-neutral-50 flex-shrink-0">
@@ -127,18 +141,10 @@ export default function SidebarNav({ userEmail }: SidebarNavProps) {
         <button
           onClick={toggleTier}
           disabled={tierLoading || tier === null}
-          title={isPrivate ? 'Private AI — click to switch' : 'Public AI — click to switch'}
-          className={`p-2 rounded-lg transition-colors ${
-            isPrivate
-              ? 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100'
-              : 'text-neutral-400 hover:bg-neutral-200 hover:text-neutral-600'
-          } ${tierLoading ? 'opacity-50 cursor-wait' : 'cursor-pointer'}`}
+          title={tierLabel}
+          className={`p-2 rounded-lg transition-colors ${tierClass} ${tierLoading ? 'opacity-50 cursor-wait' : 'cursor-pointer'}`}
         >
-          {isPrivate ? (
-            <LockClosedIcon className="w-4 h-4" />
-          ) : (
-            <GlobeAltIcon className="w-4 h-4" />
-          )}
+          {tierIcon}
         </button>
       </div>
 

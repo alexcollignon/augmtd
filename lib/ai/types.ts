@@ -15,11 +15,12 @@ export type TaskType =
 // ─── Tier types ────────────────────────────────────────────────────────────────
 
 export type TierType =
-  | 'standard'        // OpenAI / Anthropic APIs — no privacy guarantees
-  | 'professional'    // Azure OpenAI / AWS Bedrock — contractual privacy, EU residency
-  | 'private_shared'  // AUGMTD-managed private GPU infra (Modal) — open source models
-  | 'private_client'  // Client's own cloud (AWS/Azure/GCP) — AUGMTD orchestrates
-  | 'on_prem'         // Client's own hardware — air-gapped
+  | 'standard'          // OpenAI / Anthropic APIs — no privacy guarantees
+  | 'professional'      // Azure OpenAI / AWS Bedrock — contractual privacy, EU residency
+  | 'private_shared'    // AUGMTD-managed private GPU infra (Modal) — open source models
+  | 'bedrock_private'   // AWS Bedrock + Claude Haiku 4.5 — structural isolation, SOC2/HIPAA
+  | 'private_client'    // Client's own cloud (AWS/Azure/GCP) — AUGMTD orchestrates
+  | 'on_prem'           // Client's own hardware — air-gapped
 
 // ─── Model endpoint ─────────────────────────────────────────────────────────────
 
@@ -29,6 +30,7 @@ export type ProviderType =
   | 'azure_openai'      // {resource}.openai.azure.com
   | 'openai_compatible' // Any OpenAI-compatible endpoint (vLLM, Ollama, Modal, etc.)
   | 'fireworks'         // api.fireworks.ai — serverless OSS models
+  | 'bedrock'           // AWS Bedrock — structural data isolation, SigV4 auth
 
 export interface ModelEndpoint {
   provider: ProviderType

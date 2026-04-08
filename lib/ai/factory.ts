@@ -3,6 +3,7 @@ import type { Chat } from 'openai/resources'
 import { SupabaseClient } from '@supabase/supabase-js'
 import type { TaskType, TierType, ModelEndpoint, TenantConfig, ResolvedClient } from './types'
 import { TIER_DEFAULTS } from './defaults'
+import { createBedrockAdapter } from './bedrock-adapter'
 
 // ─── Tenant config cache ────────────────────────────────────────────────────────
 // Module-level cache — persists for the lifetime of the server process.
@@ -44,6 +45,17 @@ function buildClient(endpoint: ModelEndpoint, config: TenantConfig): OpenAI {
   const cacheKey = endpoint.baseURL ?? endpoint.provider
 
   if (!clientCache.has(cacheKey)) {
+    // Bedrock uses its own SDK with AWS SigV4 auth — wrap in OpenAI-compat adapter
+    if (endpoint.provider === 'bedrock') {
+      const adapter = createBedrockAdapter({
+        awsRegion: process.env.AWS_BEDROCK_REGION ?? 'us-east-1',
+        awsAccessKey: process.env.AWS_BEDROCK_ACCESS_KEY,
+        awsSecretKey: process.env.AWS_BEDROCK_SECRET_KEY,
+      })
+      clientCache.set(cacheKey, adapter)
+      return clientCache.get(cacheKey)!
+    }
+
     const apiKey = resolveApiKey(endpoint, config)
     const defaultHeaders: Record<string, string> = {}
 
@@ -71,6 +83,9 @@ function buildClient(endpoint: ModelEndpoint, config: TenantConfig): OpenAI {
 }
 
 function resolveApiKey(endpoint: ModelEndpoint, config: TenantConfig): string {
+  // Bedrock uses AWS IAM credentials, not API keys
+  if (endpoint.provider === 'bedrock') return ''
+
   // Private client/on-prem: use tenant's own API key if provided
   if (config.encryptedApiKeys?.ai) return config.encryptedApiKeys.ai
 
