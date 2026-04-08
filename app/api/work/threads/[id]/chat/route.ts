@@ -327,7 +327,10 @@ export async function POST(
 
     // Attachment context from thread files
     const userAttachments = ((thread as any).user_attachments || []) as Array<{
+      chatAttachId?: string;
       filename: string;
+      mimeType?: string;
+      storagePath?: string;
       extractedText: string | null;
     }>;
     if (userAttachments.some(a => a.extractedText)) {
@@ -403,6 +406,55 @@ export async function POST(
       { role: 'system', content: systemFinal },
       ...trimmedHistory,
     ];
+
+    // Vision: inject image attachments from the current message as base64 content blocks.
+    // Download from storage → data URI so all providers (including Bedrock) get base64 format.
+    if (attachments.length > 0) {
+      const imageAttachRecords = userAttachments.filter((ua: any) =>
+        ua.mimeType?.startsWith('image/') &&
+        ua.storagePath &&
+        attachments.some((a: { id: string }) => a.id === ua.chatAttachId)
+      );
+      if (imageAttachRecords.length > 0) {
+        const downloadResults = await Promise.all(
+          imageAttachRecords.map(async (ua: any) => {
+            try {
+              const { data, error } = await adminClient.storage.from('email-attachments').download(ua.storagePath);
+              if (error || !data) return null;
+              let buf = Buffer.from(await data.arrayBuffer());
+              let mime = ua.mimeType as string;
+              // Resize if needed — Bedrock and others cap image payloads at 5 MB
+              const { resizeImageIfNeeded } = await import('@/lib/attachments/resize-image');
+              ({ buffer: buf, mimeType: mime } = await resizeImageIfNeeded(buf, mime));
+              const b64 = buf.toString('base64');
+              return { dataUri: `data:${mime};base64,${b64}` };
+            } catch {
+              return null;
+            }
+          })
+        );
+        const imageBlocks = downloadResults
+          .filter((r): r is { dataUri: string } => r !== null)
+          .map((r) => ({
+            type: 'image_url' as const,
+            image_url: { url: r.dataUri },
+          }));
+        if (imageBlocks.length > 0) {
+          const lastIdx = messages.findLastIndex((m: OpenAI.Chat.ChatCompletionMessageParam) => m.role === 'user');
+          if (lastIdx !== -1) {
+            const lastMsg = messages[lastIdx];
+            const textContent = typeof lastMsg.content === 'string' ? lastMsg.content : '';
+            messages[lastIdx] = {
+              role: 'user',
+              content: [
+                { type: 'text', text: textContent || '(see attached images)' },
+                ...imageBlocks,
+              ],
+            };
+          }
+        }
+      }
+    }
 
     // Build run context for document generation
     const runContext = {
@@ -1501,18 +1553,115 @@ async function buildMentionContext(
           break;
         }
         case 'contact': {
-          const { data } = await adminClient
+          const { data: contact } = await adminClient
             .from('relationship_graph')
-            .select('contact_name, contact_email, relationship_type, typical_topics, last_interaction')
+            .select('contact_name, contact_email, relationship_type, typical_topics, last_interaction, interaction_frequency')
             .eq('id', m.id)
             .eq('user_id', userId)
             .single();
-          if (data) {
-            lines.push(
-              `[CONTACT] ${data.contact_name} (${data.contact_email}) — ${data.relationship_type}` +
-              (data.typical_topics?.length ? `\nTopics: ${(data.typical_topics as string[]).slice(0, 4).join(', ')}` : '')
-            );
+          if (!contact) break;
+
+          const { contact_email, contact_name } = contact;
+
+          const [fromEmailsRes, toEmailsRes, meetingsRes, deskRes] = await Promise.all([
+            // Emails FROM this contact
+            adminClient
+              .from('emails')
+              .select('subject, received_at, body')
+              .eq('user_id', userId)
+              .ilike('from_address', contact_email)
+              .order('received_at', { ascending: false })
+              .limit(8),
+            // Emails TO/CC this contact
+            adminClient
+              .from('emails')
+              .select('subject, from_address, from_name, received_at, body')
+              .eq('user_id', userId)
+              .or(`to_addresses.cs.{"${contact_email}"},cc_addresses.cs.{"${contact_email}"}`)
+              .order('received_at', { ascending: false })
+              .limit(8),
+            // Calendar events they attended
+            adminClient
+              .from('calendar_events')
+              .select('title, start_time')
+              .eq('user_id', userId)
+              .contains('attendees', JSON.stringify([{ email: contact_email }]))
+              .order('start_time', { ascending: false })
+              .limit(5),
+            // Active desk items mentioning them
+            adminClient
+              .from('desk_items')
+              .select('title, urgency, kanban_column, ai_context')
+              .eq('user_id', userId)
+              .or(`title.ilike.%${contact_name || contact_email}%,ai_context.ilike.%${contact_email}%`)
+              .not('kanban_column', 'eq', 'done')
+              .limit(5),
+          ]);
+
+          // Merge + deduplicate emails by subject+date
+          const seenKeys = new Set<string>();
+          const allEmails = [
+            ...(fromEmailsRes.data ?? []),
+            ...(toEmailsRes.data ?? []),
+          ]
+            .filter(e => {
+              const key = `${e.subject}|${e.received_at}`;
+              if (seenKeys.has(key)) return false;
+              seenKeys.add(key);
+              return true;
+            })
+            .sort((a, b) => new Date(b.received_at).getTime() - new Date(a.received_at).getTime())
+            .slice(0, 10);
+
+          const parts: string[] = [];
+
+          // Header line
+          const headerParts = [
+            `[CONTACT] ${contact_name || contact_email}${contact_name ? ` <${contact_email}>` : ''}`,
+            contact.relationship_type || null,
+            contact.interaction_frequency ? `${contact.interaction_frequency} interactions` : null,
+            contact.last_interaction
+              ? `last contact: ${new Date(contact.last_interaction).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
+              : null,
+          ].filter(Boolean);
+          parts.push(headerParts.join(' — '));
+
+          if ((contact.typical_topics as string[] | null)?.length) {
+            parts.push(`Topics: ${(contact.typical_topics as string[]).slice(0, 4).join(', ')}`);
           }
+
+          if (allEmails.length > 0) {
+            parts.push(`\nRecent emails (${allEmails.length}):`);
+            for (const e of allEmails) {
+              const date = new Date(e.received_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+              const snippet = e.body ? e.body.slice(0, 100).replace(/\s+/g, ' ') + '…' : '';
+              parts.push(`  · "${e.subject || '(no subject)'}" — ${date}${snippet ? ` — "${snippet}"` : ''}`);
+            }
+          }
+
+          const meetings = meetingsRes.data ?? [];
+          if (meetings.length > 0) {
+            parts.push(`\nShared meetings (${meetings.length}):`);
+            for (const ev of meetings) {
+              const date = new Date(ev.start_time).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+              parts.push(`  · "${ev.title}" — ${date}`);
+            }
+          }
+
+          const deskItems = deskRes.data ?? [];
+          if (deskItems.length > 0) {
+            const colLabels: Record<string, string> = { todo: 'To Do', in_progress: 'In Progress', waiting: 'Waiting', pool: 'Pool' };
+            parts.push(`\nActive work items (${deskItems.length}):`);
+            for (const item of deskItems) {
+              parts.push(
+                `  · [${colLabels[item.kanban_column] ?? item.kanban_column}] "${item.title}"` +
+                (item.urgency ? ` (${item.urgency})` : '') +
+                (item.ai_context ? ` — ${String(item.ai_context).slice(0, 100)}` : '')
+              );
+            }
+          }
+
+          lines.push(parts.join('\n'));
           break;
         }
         case 'desk': {

@@ -1338,6 +1338,23 @@ export async function syncEmailsForConnection(
       }
     } // End Phase 2 batch loop
 
+    // === Phase 3: Contact graph population (non-fatal) ===
+    try {
+      const { upsertContacts } = await import('@/lib/contacts/extract-contacts')
+      const _userEmail = connection.metadata?.email || connection.provider_account_id || ''
+      const _emailRows = processQueue.map(q => ({
+        from_address: q.storedEmail.from_address,
+        from_name: q.storedEmail.from_name ?? null,
+        to_addresses: q.storedEmail.to_addresses ?? null,
+        cc_addresses: q.storedEmail.cc_addresses ?? null,
+        received_at: q.storedEmail.received_at ?? null,
+      }))
+      await upsertContacts({ userId: connection.user_id, userEmail: _userEmail, emails: _emailRows, adminSupabase })
+      console.log(`[Contacts] Updated relationship_graph from ${_emailRows.length} email(s)`)
+    } catch (_contactErr) {
+      console.warn('[Contacts] Non-fatal: failed to update relationship_graph', _contactErr)
+    }
+
     // Update sync status
     await adminSupabase
       .from('connections')

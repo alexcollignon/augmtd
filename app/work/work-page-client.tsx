@@ -83,6 +83,11 @@ export function WorkPageClient({
 
   const activeThread = threads.find((t) => t.id === activeThreadId) ?? null;
 
+  // ── One-time contact backfill — seeds relationship_graph if empty ────────
+  useEffect(() => {
+    fetch('/api/connections/backfill-contacts', { method: 'POST' }).catch(() => {});
+  }, []);
+
   // ── Realtime: keep thread list in sync ───────────────────────────────────
   useEffect(() => {
     if (!userId) return;

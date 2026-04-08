@@ -243,7 +243,10 @@ async function summarizeChunks(
 /** GPT-4o vision OCR for image files (JPEG, PNG, WebP). Buffer sent as base64. */
 async function extractImageWithOCR(buffer: Buffer, mimeType: string, filename: string, userId: string, supabase: SupabaseClient): Promise<string | null> {
   try {
-    const base64 = buffer.toString('base64');
+    const { resizeImageIfNeeded } = await import('@/lib/attachments/resize-image');
+    const resized = await resizeImageIfNeeded(buffer, mimeType);
+    const base64 = resized.buffer.toString('base64');
+    mimeType = resized.mimeType;
     const { client, model } = await getAIClient(userId, 'ocr', supabase);
     const res = await client.chat.completions.create({
       model,
