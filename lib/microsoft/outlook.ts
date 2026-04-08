@@ -297,6 +297,8 @@ interface SendOutlookReplyParams {
   messageId: string;
   body: string;
   attachments?: import('@/lib/google/gmail').EmailAttachment[];
+  cc?: string;
+  bcc?: string;
 }
 
 /**
@@ -435,7 +437,7 @@ export async function trashOutlookMessage(
 }
 
 export async function sendOutlookReply(params: SendOutlookReplyParams): Promise<string> {
-  const { encryptedTokens, messageId, body, attachments = [] } = params;
+  const { encryptedTokens, messageId, body, attachments = [], cc, bcc } = params;
 
   // Decode tokens and refresh if needed (mirrors getGraphClient logic)
   const tokens = JSON.parse(Buffer.from(encryptedTokens, 'base64').toString());
@@ -467,6 +469,8 @@ export async function sendOutlookReply(params: SendOutlookReplyParams): Promise<
             contentType: 'HTML',
             content: plainTextToHtml(body),
           },
+          ...(cc ? { ccRecipients: cc.split(',').map(a => ({ emailAddress: { address: a.trim() } })) } : {}),
+          ...(bcc ? { bccRecipients: bcc.split(',').map(a => ({ emailAddress: { address: a.trim() } })) } : {}),
           ...(attachments.length > 0 ? {
             attachments: attachments.map(att => ({
               '@odata.type': '#microsoft.graph.fileAttachment',

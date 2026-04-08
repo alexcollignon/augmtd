@@ -229,6 +229,8 @@ interface SendGmailReplyParams {
   inReplyTo?: string;
   references?: string;
   attachments?: EmailAttachment[];
+  cc?: string;
+  bcc?: string;
 }
 
 /**
@@ -464,7 +466,7 @@ export async function trashGmailThread(
 }
 
 export async function sendGmailReply(params: SendGmailReplyParams): Promise<string> {
-  const { encryptedTokens, threadId, to, subject, body, inReplyTo, references, attachments = [] } = params;
+  const { encryptedTokens, threadId, to, subject, body, inReplyTo, references, attachments = [], cc, bcc } = params;
 
   const gmail = await getGmailClient(encryptedTokens);
 
@@ -477,6 +479,8 @@ export async function sendGmailReply(params: SendGmailReplyParams): Promise<stri
     const boundary = `boundary_${randomId()}`;
     const lines: string[] = [
       `To: ${to}`,
+      ...(cc ? [`Cc: ${cc}`] : []),
+      ...(bcc ? [`Bcc: ${bcc}`] : []),
       `Subject: ${subjectLine}`,
       'MIME-Version: 1.0',
       `Content-Type: multipart/mixed; boundary="${boundary}"`,
@@ -502,6 +506,8 @@ export async function sendGmailReply(params: SendGmailReplyParams): Promise<stri
   } else {
     const messageParts = [
       `To: ${to}`,
+      ...(cc ? [`Cc: ${cc}`] : []),
+      ...(bcc ? [`Bcc: ${bcc}`] : []),
       `Subject: ${subjectLine}`,
       'Content-Type: text/html; charset=utf-8',
       'MIME-Version: 1.0',

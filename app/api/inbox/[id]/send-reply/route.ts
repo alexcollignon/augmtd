@@ -16,7 +16,7 @@ export async function POST(
     }
 
     const { id } = await params;
-    const { customMessage, attachments: rawAttachments } = await request.json();
+    const { customMessage, attachments: rawAttachments, cc, bcc } = await request.json();
     const attachments: EmailAttachment[] = (rawAttachments || []).map((a: { filename: string; content: string; mimeType: string }) => ({
       filename: a.filename,
       content: Buffer.from(a.content, 'base64'),
@@ -73,6 +73,8 @@ export async function POST(
         inReplyTo: sourceData.message_id,
         references: sourceData.references,
         attachments,
+        cc: cc || undefined,
+        bcc: bcc || undefined,
       });
     } else if (sourceData.provider === 'outlook') {
       // Graph API needs the internal Outlook ID (not the RFC 2822 internet message ID).
@@ -93,6 +95,8 @@ export async function POST(
         messageId: outlookMessageId,
         body: messageBody,
         attachments,
+        cc: cc || undefined,
+        bcc: bcc || undefined,
       });
     } else {
       return NextResponse.json(

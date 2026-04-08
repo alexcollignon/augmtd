@@ -49,6 +49,10 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
   const [replyOpen, setReplyOpen] = useState(false);
   const [isSendingReply, setIsSendingReply] = useState(false);
   const [replyAttachments, setReplyAttachments] = useState<PendingAttachment[]>([]);
+  const [replyCc, setReplyCc] = useState('');
+  const [replyBcc, setReplyBcc] = useState('');
+  const [showReplyCc, setShowReplyCc] = useState(false);
+  const [showReplyBcc, setShowReplyBcc] = useState(false);
   const [showAttachMenu, setShowAttachMenu] = useState(false);
   const [kbPickerOpen, setKbPickerOpen] = useState(false);
   const replyBoxRef = useRef<HTMLDivElement>(null);
@@ -252,7 +256,12 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
       const res = await fetch(`/api/inbox/${item.id}/send-reply`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ customMessage: replyBody, attachments: replyAttachments }),
+        body: JSON.stringify({
+          customMessage: replyBody,
+          attachments: replyAttachments,
+          cc: replyCc.trim() || undefined,
+          bcc: replyBcc.trim() || undefined,
+        }),
       });
       if (!res.ok) throw new Error('Send failed');
       toast.success('Reply sent');
@@ -260,6 +269,10 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
       onReplyOpenChange?.(false);
       onReplyBodyChange('');
       setReplyAttachments([]);
+      setReplyCc('');
+      setReplyBcc('');
+      setShowReplyCc(false);
+      setShowReplyBcc(false);
       onReplySent?.(item.id);
     } catch {
       toast.error('Could not send reply');
@@ -635,13 +648,55 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
                 <ArrowUturnLeftIcon className="w-3.5 h-3.5" />
                 Reply to {sourceData?.from_name || sourceData?.from || 'sender'}
               </span>
-              <button
-                onClick={() => { setReplyOpen(false); onReplyOpenChange?.(false); onReplyBodyChange(''); }}
-                className="text-neutral-400 hover:text-neutral-600 transition-colors"
-              >
-                <XMarkIcon className="w-4 h-4" />
-              </button>
+              <div className="flex items-center gap-2">
+                {!showReplyCc && (
+                  <button
+                    onClick={() => setShowReplyCc(true)}
+                    className="text-[11px] text-neutral-400 hover:text-neutral-600 transition-colors"
+                  >
+                    CC
+                  </button>
+                )}
+                {!showReplyBcc && (
+                  <button
+                    onClick={() => setShowReplyBcc(true)}
+                    className="text-[11px] text-neutral-400 hover:text-neutral-600 transition-colors"
+                  >
+                    BCC
+                  </button>
+                )}
+                <button
+                  onClick={() => { setReplyOpen(false); onReplyOpenChange?.(false); onReplyBodyChange(''); setReplyCc(''); setReplyBcc(''); setShowReplyCc(false); setShowReplyBcc(false); }}
+                  className="text-neutral-400 hover:text-neutral-600 transition-colors"
+                >
+                  <XMarkIcon className="w-4 h-4" />
+                </button>
+              </div>
             </div>
+            {showReplyCc && (
+              <div className="flex items-center gap-2 px-4 py-2 border-b border-neutral-100">
+                <span className="text-[11px] font-semibold text-neutral-400 w-8 flex-shrink-0">CC</span>
+                <input
+                  type="text"
+                  value={replyCc}
+                  onChange={e => setReplyCc(e.target.value)}
+                  placeholder="cc@example.com"
+                  className="flex-1 text-[13px] text-neutral-800 placeholder-neutral-400 bg-transparent outline-none"
+                />
+              </div>
+            )}
+            {showReplyBcc && (
+              <div className="flex items-center gap-2 px-4 py-2 border-b border-neutral-100">
+                <span className="text-[11px] font-semibold text-neutral-400 w-8 flex-shrink-0">BCC</span>
+                <input
+                  type="text"
+                  value={replyBcc}
+                  onChange={e => setReplyBcc(e.target.value)}
+                  placeholder="bcc@example.com"
+                  className="flex-1 text-[13px] text-neutral-800 placeholder-neutral-400 bg-transparent outline-none"
+                />
+              </div>
+            )}
             <div className="px-4 pt-3 pb-2">
               <textarea
                 ref={replyTextareaRef}
@@ -711,7 +766,7 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
 
               <div className="flex items-center gap-2">
                 <button
-                  onClick={() => { setReplyOpen(false); onReplyOpenChange?.(false); onReplyBodyChange(''); setReplyAttachments([]); }}
+                  onClick={() => { setReplyOpen(false); onReplyOpenChange?.(false); onReplyBodyChange(''); setReplyAttachments([]); setReplyCc(''); setReplyBcc(''); setShowReplyCc(false); setShowReplyBcc(false); }}
                   disabled={isSendingReply}
                   className="px-3 py-1.5 text-[12px] font-medium text-neutral-500 hover:text-neutral-700 disabled:opacity-50 transition-colors"
                 >
