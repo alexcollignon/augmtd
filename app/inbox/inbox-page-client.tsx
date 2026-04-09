@@ -171,8 +171,10 @@ export function InboxPageClient({
     const justConnected = successParam === 'outlook_connected' || successParam === 'gmail_connected';
 
     if (justConnected && hasConnection) {
+      if (optimisticSyncTriggered.current) return;
       setIsSyncing(true);
       optimisticSyncTriggered.current = true;
+      periodicSyncRef.current = Date.now();
       window.history.replaceState({}, '', '/inbox');
       fetch('/api/connections/sync', { method: 'POST' }).catch(() => {
         setIsSyncing(false);
