@@ -10,7 +10,6 @@ import SettingsLeftPanel from '@/components/settings/settings-left-panel';
 import SettingsPageClient from './settings-page-client';
 import CompanyPageClient from '../company/company-page-client';
 import CompanyPending from '../company/company-pending';
-import { getUserIdentity } from '@/lib/context/work-patterns-service';
 import { getMyCompany } from '@/lib/company/get-my-company';
 
 interface Props {
@@ -80,7 +79,6 @@ export default async function SettingsPage({ searchParams }: Props) {
   // ── Account tab data ───────────────────────────────────────────────────────
   let connections: any[] = [];
   let profile: any = null;
-  let identity: any = null;
 
   if (tab === 'account') {
     const { data: conns } = await supabase
@@ -97,7 +95,6 @@ export default async function SettingsPage({ searchParams }: Props) {
       .single();
     profile = prof;
 
-    identity = await getUserIdentity(user.id, supabase);
   }
 
   const gmailConnections = connections.filter(c => c.provider === 'gmail');
@@ -129,8 +126,7 @@ export default async function SettingsPage({ searchParams }: Props) {
                   <IdentitySection
                     userEmail={user.email ?? ''}
                     initialName={profile?.full_name ?? ''}
-                    initialDepartment={identity?.department ?? ''}
-                    initialRole={identity?.jobRole ?? ''}
+                    avatarUrl={connections.map((c: any) => c.metadata?.picture).find((p: any) => typeof p === 'string' && p.length > 0) ?? null}
                   />
                 </section>
 

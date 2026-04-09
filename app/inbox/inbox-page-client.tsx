@@ -11,7 +11,6 @@ import WorkDetailInline from '@/components/inbox/work-detail-inline';
 import AiChatPanel from '@/components/shared/ai-chat-panel';
 import WorkflowPanel from '@/components/inbox/workflow-panel';
 import MeetingsColumn from '@/components/inbox/meetings-column';
-import OnboardingModal from '@/components/onboarding-modal';
 import { ArrowPathIcon, ChatBubbleLeftRightIcon, SparklesIcon, Bars3Icon, QueueListIcon, ArchiveBoxArrowDownIcon, XMarkIcon, MagnifyingGlassIcon, PencilSquareIcon, CalendarIcon, RectangleGroupIcon, TrashIcon } from '@heroicons/react/24/outline';
 import ComposePanel from '@/components/inbox/compose-panel';
 import { toast } from 'sonner';
@@ -42,7 +41,6 @@ export function InboxPageClient({
   const [hasConnection, setHasConnection] = useState(initialHasConnection);
   const [inboxItems, setInboxItems] = useState<InboxItem[]>(initialInboxItems);
   const [selectedItem, setSelectedItem] = useState<InboxItem | null>(null);
-  const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [meetings, setMeetings] = useState<CalendarEvent[]>([]);
   const [meetingsLoading, setMeetingsLoading] = useState(true);
@@ -117,15 +115,6 @@ export function InboxPageClient({
     localStorage.setItem('inboxDensity', d);
   };
 
-  // Check actual context profile to decide whether to show onboarding
-  useEffect(() => {
-    fetch('/api/context/onboarding')
-      .then(r => r.json())
-      .then(data => {
-        if (!data.completed) setIsOnboardingOpen(true);
-      })
-      .catch(() => {}); // non-fatal
-  }, []);
 
   // Sync connection state
   useEffect(() => {
@@ -1049,13 +1038,6 @@ export function InboxPageClient({
           </div>
         )}
       </div>
-
-      <OnboardingModal
-        isOpen={isOnboardingOpen}
-        onClose={() => setIsOnboardingOpen(false)}
-        userEmail={user?.email}
-        userFullName={initialUserFullName}
-      />
 
     </div>
   );

@@ -1,56 +1,25 @@
 'use client';
 
 import { useState } from 'react';
+import Image from 'next/image';
 import { CheckIcon, XMarkIcon, PencilIcon } from '@heroicons/react/24/outline';
-import { Department } from '@/lib/types/work-blueprints';
-
-const DEPARTMENTS: { value: Department; label: string }[] = [
-  { value: 'Operations', label: 'Operations' },
-  { value: 'Finance', label: 'Finance' },
-  { value: 'Sales', label: 'Sales' },
-  { value: 'Marketing', label: 'Marketing' },
-  { value: 'Product', label: 'Product' },
-  { value: 'Engineering', label: 'Engineering' },
-  { value: 'Customer Success', label: 'Customer Success' },
-  { value: 'Human Resources', label: 'Human Resources' },
-  { value: 'Legal', label: 'Legal' },
-  { value: 'Compliance', label: 'Compliance' },
-  { value: 'Risk', label: 'Risk' },
-  { value: 'Data & Analytics', label: 'Data & Analytics' },
-  { value: 'Executive', label: 'Executive' },
-  { value: 'Other', label: 'Other' },
-];
 
 interface IdentitySectionProps {
   initialName: string;
-  initialDepartment: string;
-  initialRole: string;
   userEmail: string;
+  avatarUrl?: string | null;
 }
 
-export default function IdentitySection({
-  initialName,
-  initialDepartment,
-  initialRole,
-  userEmail,
-}: IdentitySectionProps) {
+export default function IdentitySection({ initialName, userEmail, avatarUrl }: IdentitySectionProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
-
   const [name, setName] = useState(initialName);
-  const [department, setDepartment] = useState(initialDepartment);
-  const [role, setRole] = useState(initialRole);
-
   const [draftName, setDraftName] = useState(initialName);
-  const [draftDepartment, setDraftDepartment] = useState(initialDepartment);
-  const [draftRole, setDraftRole] = useState(initialRole);
 
   const startEditing = () => {
     setDraftName(name);
-    setDraftDepartment(department);
-    setDraftRole(role);
     setError(null);
     setSaved(false);
     setIsEditing(true);
@@ -62,8 +31,8 @@ export default function IdentitySection({
   };
 
   const handleSave = async () => {
-    if (!draftName.trim() || !draftDepartment || !draftRole.trim()) {
-      setError('All fields are required');
+    if (!draftName.trim()) {
+      setError('Name is required');
       return;
     }
 
@@ -74,18 +43,12 @@ export default function IdentitySection({
       const res = await fetch('/api/context/onboarding', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          fullName: draftName.trim(),
-          department: draftDepartment,
-          role: draftRole.trim(),
-        }),
+        body: JSON.stringify({ fullName: draftName.trim() }),
       });
 
       if (!res.ok) throw new Error('Failed to save');
 
       setName(draftName.trim());
-      setDepartment(draftDepartment);
-      setRole(draftRole.trim());
       setIsEditing(false);
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
@@ -151,32 +114,19 @@ export default function IdentitySection({
       )}
 
       {!isEditing ? (
-        <div className="space-y-4">
-          <div className="flex items-center gap-3">
-            <div className="flex-shrink-0 w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center text-[15px] font-semibold text-indigo-700 select-none">
-              {nameInitial}
-            </div>
-            <div>
-              <p className="text-[14px] font-medium text-neutral-900">
-                {name || <span className="text-neutral-400 italic text-[13px]">Name not set</span>}
-              </p>
-              <p className="text-[12px] text-neutral-400 mt-0.5">{userEmail}</p>
-            </div>
+        <div className="flex items-center gap-3">
+          <div className="flex-shrink-0 w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center text-[15px] font-semibold text-indigo-700 select-none overflow-hidden">
+            {avatarUrl ? (
+              <Image src={avatarUrl} alt="" width={40} height={40} className="w-full h-full object-cover rounded-full" unoptimized />
+            ) : (
+              nameInitial
+            )}
           </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div className="px-4 py-3 bg-neutral-50 rounded-xl border border-neutral-100">
-              <p className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wide mb-1">Department</p>
-              <p className="text-[13px] text-neutral-900">
-                {department || <span className="text-neutral-400 italic">Not set</span>}
-              </p>
-            </div>
-            <div className="px-4 py-3 bg-neutral-50 rounded-xl border border-neutral-100">
-              <p className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wide mb-1">Role</p>
-              <p className="text-[13px] text-neutral-900">
-                {role || <span className="text-neutral-400 italic">Not set</span>}
-              </p>
-            </div>
+          <div>
+            <p className="text-[14px] font-medium text-neutral-900">
+              {name || <span className="text-neutral-400 italic text-[13px]">Name not set</span>}
+            </p>
+            <p className="text-[12px] text-neutral-400 mt-0.5">{userEmail}</p>
           </div>
         </div>
       ) : (
@@ -187,36 +137,11 @@ export default function IdentitySection({
               type="text"
               value={draftName}
               onChange={(e) => setDraftName(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleSave()}
               placeholder="Your full name"
+              autoFocus
               className="mt-1.5 w-full text-[13px] text-neutral-900 bg-white border border-neutral-200 rounded-lg focus:border-indigo-400 focus:outline-none px-3 py-2"
             />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wide">Department</label>
-              <select
-                value={draftDepartment}
-                onChange={(e) => setDraftDepartment(e.target.value)}
-                className="mt-1.5 w-full text-[13px] text-neutral-900 bg-white border border-neutral-200 rounded-lg focus:border-indigo-400 focus:outline-none px-3 py-2"
-              >
-                <option value="">Select…</option>
-                {DEPARTMENTS.map((d) => (
-                  <option key={d.value} value={d.value}>
-                    {d.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wide">Role</label>
-              <input
-                type="text"
-                value={draftRole}
-                onChange={(e) => setDraftRole(e.target.value)}
-                placeholder="e.g. Senior Product Manager"
-                className="mt-1.5 w-full text-[13px] text-neutral-900 bg-white border border-neutral-200 rounded-lg focus:border-indigo-400 focus:outline-none px-3 py-2"
-              />
-            </div>
           </div>
           <p className="text-[11px] text-neutral-400">{userEmail}</p>
         </div>

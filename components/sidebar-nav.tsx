@@ -33,6 +33,14 @@ export default function SidebarNav({ userEmail }: SidebarNavProps) {
   const router = useRouter();
   const recording = useRecordingContext();
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch('/api/user/avatar')
+      .then(r => r.json())
+      .then(d => { if (d.pictureUrl) setAvatarUrl(d.pictureUrl); })
+      .catch(() => {});
+  }, []);
   const menuRef = useRef<HTMLDivElement>(null);
 
   // Tier toggle state
@@ -250,11 +258,15 @@ export default function SidebarNav({ userEmail }: SidebarNavProps) {
         <button
           onClick={() => setShowUserMenu((v) => !v)}
           title={userEmail ?? 'Account'}
-          className={`w-8 h-8 rounded-full flex items-center justify-center text-[11px] font-semibold text-indigo-700 select-none transition-colors ${
+          className={`w-8 h-8 rounded-full flex items-center justify-center text-[11px] font-semibold text-indigo-700 select-none transition-colors overflow-hidden ${
             showUserMenu ? 'bg-indigo-200' : 'bg-indigo-100 hover:bg-indigo-200'
           }`}
         >
-          {userInitial}
+          {avatarUrl ? (
+            <Image src={avatarUrl} alt="" width={32} height={32} className="w-full h-full object-cover rounded-full" unoptimized />
+          ) : (
+            userInitial
+          )}
         </button>
       </div>
     </div>

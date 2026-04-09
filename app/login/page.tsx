@@ -1,78 +1,50 @@
 'use client';
 
-import { createClient } from '@/lib/supabase/client';
 import { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import Link from 'next/link';
 import Image from 'next/image';
 
 function LoginForm() {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
-  const [isSuccess, setIsSuccess] = useState(false);
   const router = useRouter();
   const searchParams = useSearchParams();
-  const supabase = createClient();
 
-  // Check for auth callback errors and session expiration
   useEffect(() => {
     const error = searchParams?.get('error');
     const session = searchParams?.get('session');
 
     if (error === 'auth_callback_failed') {
       setMessage('Authentication failed. Please try again.');
-      // Clean URL after showing message
+      router.replace('/login');
+    } else if (error === 'oauth_denied') {
+      setMessage('Sign-in was cancelled.');
+      router.replace('/login');
+    } else if (error === 'session_failed') {
+      setMessage('Could not establish session. Please try again.');
+      router.replace('/login');
+    } else if (error === 'oauth_init_failed') {
+      setMessage('Could not start sign-in. Please try again.');
       router.replace('/login');
     } else if (session === 'expired') {
-      setMessage('Your session has expired. Please log in again.');
-      // Clean URL after showing message
+      setMessage('Your session has expired. Please sign in again.');
       router.replace('/login');
     }
   }, [searchParams, router]);
 
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    setMessage('');
-
-    try {
-      const { error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-
-      if (error) throw error;
-
-      // Check if user has Gmail connection
-      const { data: { user } } = await supabase.auth.getUser();
-      // Always redirect to inbox (onboarding modal will show if no connection)
-      router.push('/inbox');
-      router.refresh();
-    } catch (error: any) {
-      setMessage(error.message);
-    } finally {
-      setLoading(false);
-    }
+  const handleGoogleLogin = () => {
+    window.location.href = '/api/auth/gmail-signup/connect';
   };
 
-  const handleGoogleLogin = async () => {
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: {
-        redirectTo: `${window.location.origin}/auth/callback`,
-      },
-    });
-
-    if (error) setMessage(error.message);
+  const handleMicrosoftLogin = () => {
+    window.location.href = '/api/auth/outlook-signup/connect';
   };
+
 
   return (
     <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-primary-50/30 via-white to-gray-50">
       <div className="w-full max-w-md p-10 bg-white rounded-lg border border-gray-100 shadow-xl">
+        {/* Logo */}
         <div className="text-center mb-10">
-          {/* Logo with better visibility */}
           <div className="flex justify-center mb-8">
             <div className="relative">
               <div className="absolute inset-0 bg-gradient-to-br from-primary-500 to-primary-600 rounded-lg blur-xl opacity-30"></div>
@@ -87,80 +59,49 @@ function LoginForm() {
               </div>
             </div>
           </div>
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">
-            Welcome back
-          </h1>
-          <p className="text-gray-500 text-base">
-            Sign in to your AUGMTD account
-          </p>
+          <h1 className="text-3xl font-bold text-gray-900 mb-2">Get started</h1>
+          <p className="text-gray-500 text-base">Sign in or create your AUGMTD account</p>
         </div>
 
-        <form onSubmit={handleLogin} className="space-y-5">
-          <div>
-            <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
-              Email address
-            </label>
-            <input
-              id="email"
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-              autoComplete="email"
-              className="w-full px-4 py-3.5 text-gray-900 bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent focus:bg-white transition-all"
-              placeholder="you@example.com"
-            />
+        {/* Error message */}
+        {message && (
+          <div className="mb-6 p-4 rounded-lg border bg-red-50 border-red-100">
+            <p className="text-sm text-red-600">{message}</p>
           </div>
+        )}
 
-          <div>
-            <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-2">
-              Password
-            </label>
-            <input
-              id="password"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-              minLength={6}
-              autoComplete="current-password"
-              className="w-full px-4 py-3.5 text-gray-900 bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent focus:bg-white transition-all"
-              placeholder="At least 6 characters"
-            />
-            <p className="text-xs text-gray-500 mt-2">
-              Must be at least 6 characters
-            </p>
-          </div>
-
-          {message && (
-            <div className={`p-4 rounded-lg border ${
-              isSuccess
-                ? 'bg-green-50 border-green-100'
-                : 'bg-red-50 border-red-100'
-            }`}>
-              <p className={`text-sm ${isSuccess ? 'text-green-600' : 'text-red-600'}`}>
-                {message}
-              </p>
-            </div>
-          )}
+        {/* OAuth buttons */}
+        <div className="space-y-3">
+          <button
+            onClick={handleGoogleLogin}
+            className="w-full flex items-center justify-center gap-3 py-3.5 px-4 bg-white border border-gray-200 rounded-lg text-gray-700 font-medium hover:bg-gray-50 hover:border-gray-300 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 transition-all duration-200 shadow-sm"
+          >
+            {/* Google "G" icon */}
+            <svg width="20" height="20" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
+              <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
+              <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
+              <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
+              <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
+            </svg>
+            Continue with Google
+          </button>
 
           <button
-            type="submit"
-            disabled={loading}
-            className="w-full py-3.5 bg-gradient-to-r from-primary-600 to-primary-700 text-white text-base font-semibold rounded-lg hover:from-primary-700 hover:to-primary-800 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-lg shadow-primary-500/25 hover:shadow-xl hover:shadow-primary-500/30 hover:-translate-y-0.5 active:translate-y-0"
+            onClick={handleMicrosoftLogin}
+            className="w-full flex items-center justify-center gap-3 py-3.5 px-4 bg-white border border-gray-200 rounded-lg text-gray-700 font-medium hover:bg-gray-50 hover:border-gray-300 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 transition-all duration-200 shadow-sm"
           >
-            {loading ? 'Signing in...' : 'Sign in'}
+            {/* Microsoft icon */}
+            <svg width="20" height="20" viewBox="0 0 23 23" xmlns="http://www.w3.org/2000/svg">
+              <path fill="#f3f3f3" d="M0 0h23v23H0z"/>
+              <path fill="#f35325" d="M1 1h10v10H1z"/>
+              <path fill="#81bc06" d="M12 1h10v10H12z"/>
+              <path fill="#05a6f0" d="M1 12h10v10H1z"/>
+              <path fill="#ffba08" d="M12 12h10v10H12z"/>
+            </svg>
+            Continue with Microsoft
           </button>
-        </form>
-
-        <div className="mt-8 text-center">
-          <p className="text-sm text-gray-500">
-            Don't have an account?{' '}
-            <Link href="/signup" className="text-primary-600 hover:text-primary-700 font-semibold transition-colors">
-              Sign up
-            </Link>
-          </p>
         </div>
+
       </div>
     </div>
   );

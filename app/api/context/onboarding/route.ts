@@ -1,104 +1,49 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { initializeUserContext } from '@/lib/context/profile-adapter';
-import { saveOnboardingData, hasCompletedOnboarding } from '@/lib/context/work-patterns-service';
-import { Department } from '@/lib/types/work-blueprints';
 
 export async function GET() {
-  try {
-    const supabase = await createClient();
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-    const completed = await hasCompletedOnboarding(user.id, supabase);
-    return NextResponse.json({ completed });
-  } catch (error) {
-    console.error('[Onboarding] Status check error:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
-  }
-}
-
-interface OnboardingRequest {
-  fullName: string;
-  department: Department;
-  role: string;
+  // Onboarding modal removed — always report completed
+  return NextResponse.json({ completed: true });
 }
 
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createClient();
-
-    // Get current user
     const { data: { user }, error: userError } = await supabase.auth.getUser();
     if (userError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Parse request body
-    const { fullName, department, role }: OnboardingRequest = await request.json();
+    const { fullName } = await request.json();
 
-    if (!fullName?.trim() || !department || !role?.trim()) {
-      return NextResponse.json(
-        { error: 'Full name, department, and role are required' },
-        { status: 400 }
-      );
+    if (!fullName?.trim()) {
+      return NextResponse.json({ error: 'Full name is required' }, { status: 400 });
     }
 
-    // Save to profiles table
-    const { error: profileError } = await supabase
-      .from('profiles')
-      .upsert({
-        id: user.id,
-        full_name: fullName.trim(),
-        email: user.email,
-      });
+    // Save name to profiles table
+    await supabase.from('profiles').upsert({
+      id: user.id,
+      full_name: fullName.trim(),
+      email: user.email,
+    });
 
-    if (profileError) {
-      console.error('[Onboarding] Failed to update profile:', profileError);
-      // Continue anyway - not critical
-    }
-
-    // Initialize modular context profiles
+    // Initialize context profiles (name only — no department/role)
     try {
       await initializeUserContext(
         user.id,
         fullName.trim(),
-        role.trim(),
+        '',
         user.email || '',
         supabase
       );
-    } catch (saveError) {
-      console.error('[Onboarding] Failed to initialize context profiles:', saveError);
-      return NextResponse.json(
-        { error: 'Failed to save information' },
-        { status: 500 }
-      );
+    } catch (err) {
+      console.error('[Onboarding] Failed to initialize context profiles:', err);
     }
-
-    // Save work patterns onboarding data (department + jobRole)
-    try {
-      await saveOnboardingData(
-        user.id,
-        {
-          department: department,
-          jobRole: role.trim(),
-        },
-        supabase
-      );
-    } catch (workPatternsError) {
-      console.error('[Onboarding] Failed to save work patterns data:', workPatternsError);
-      // Continue anyway - not critical for initial onboarding
-    }
-
-    console.log('[Onboarding] Successfully saved user info for', user.id, '- Department:', department, 'Role:', role);
 
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('[Onboarding] Error:', error);
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

@@ -5,6 +5,11 @@ import { createServerClient } from '@supabase/ssr';
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
+  // Redirect /signup to /login — OAuth handles both new and existing users
+  if (pathname === '/signup') {
+    return NextResponse.redirect(new URL('/login', request.url));
+  }
+
   // Update session cookies first
   let supabaseResponse = await updateSession(request);
 

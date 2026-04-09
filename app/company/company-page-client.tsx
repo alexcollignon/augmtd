@@ -13,6 +13,7 @@ import {
   CheckIcon,
 } from '@heroicons/react/24/outline';
 import type { MyCompany, CompanyInvitation } from '@/lib/types/company';
+import DeleteAccountModal from '@/components/settings/delete-account-modal';
 
 interface Member {
   id: string;
@@ -65,6 +66,7 @@ export default function CompanyPageClient({ company, members: initialMembers, in
   const [inviteError, setInviteError] = useState('');
   const [inviteSuccess, setInviteSuccess] = useState('');
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Member | null>(null);
   const [joinCode, setJoinCode] = useState<string | null>(company.join_code ?? null);
   const [codeLoading, setCodeLoading] = useState(false);
   const [codeCopied, setCodeCopied] = useState(false);
@@ -297,6 +299,15 @@ export default function CompanyPageClient({ company, members: initialMembers, in
                   >
                     Remove
                   </button>
+                  {company.role === 'owner' && (
+                    <button
+                      onClick={() => setDeleteTarget(member)}
+                      disabled={actionLoading === member.user_id}
+                      className="text-[11px] text-red-400 hover:text-red-600 px-2 py-1 rounded-md hover:bg-red-50 transition-colors disabled:opacity-50"
+                    >
+                      Delete account
+                    </button>
+                  )}
                 </div>
               )}
               {member.isCurrentUser && company.role !== 'owner' && (
@@ -401,6 +412,13 @@ export default function CompanyPageClient({ company, members: initialMembers, in
           </div>
         </section>
       )}
+
+      <DeleteAccountModal
+        isOpen={deleteTarget !== null}
+        member={deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        onDeleted={(userId) => setMembers(prev => prev.filter(m => m.user_id !== userId))}
+      />
     </>
   );
 }
