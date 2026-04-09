@@ -13,7 +13,7 @@ interface Props {
 
 export function ChatEmptyState({ onStart, userFirstName, savedWorkflows = [], onAttach, onRemoveAttachment, attachments }: Props) {
   const name = userFirstName?.split(' ')[0];
-  const heading = name ? `What's on the agenda, ${name}?` : "What's on the agenda?";
+  const heading = name ? `What's on your mind, ${name}?` : "What's on your mind?";
 
   function start(message: string) {
     onStart(message, ['kb', 'inbox', 'calendar', 'processes', 'desk'], []);

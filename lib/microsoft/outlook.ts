@@ -176,10 +176,11 @@ export async function fetchOutlookConversation(
   const MAX_MESSAGES = 200;
   const results: OutlookMessage[] = [];
 
+  // Note: combining $filter with $orderby on /me/messages causes InefficientFilter (400).
+  // Fetch unordered and sort client-side instead.
   let response = await client
     .api('/me/messages')
     .filter(`conversationId eq '${conversationId}'`)
-    .orderby('receivedDateTime asc')
     .select('id,conversationId,subject,bodyPreview,body,from,toRecipients,ccRecipients,receivedDateTime,internetMessageId,hasAttachments,isRead')
     .top(50)
     .get();
@@ -191,6 +192,7 @@ export async function fetchOutlookConversation(
     response = await client.api(response['@odata.nextLink']).get();
   }
 
+  results.sort((a, b) => new Date(a.receivedDateTime).getTime() - new Date(b.receivedDateTime).getTime());
   return results.slice(0, MAX_MESSAGES);
 }
 

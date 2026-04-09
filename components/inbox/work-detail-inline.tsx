@@ -25,6 +25,56 @@ import RsvpButtons from './rsvp-buttons';
 import KbFilePicker from './kb-file-picker';
 import { createClient } from '@/lib/supabase/client';
 
+function IframeEmailBody({ html, plain }: { html: string | null; plain: string | null }) {
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MessageEvent) => {
+      if (e.source === iframeRef.current?.contentWindow && e.data?.type === 'email-height') {
+        iframeRef.current.style.height = Math.min(e.data.height + 24, 800) + 'px';
+      }
+    };
+    window.addEventListener('message', handler);
+    return () => window.removeEventListener('message', handler);
+  }, []);
+
+  if (!html) {
+    return (
+      <div className="px-4 py-3 text-[13px] text-neutral-700 leading-relaxed whitespace-pre-wrap break-words max-h-[500px] overflow-y-auto">
+        {plain?.trim()}
+      </div>
+    );
+  }
+
+  const srcDoc = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<base target="_blank">
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 14px; line-height: 1.6; color: #333; margin: 0; padding: 16px; word-break: break-word; }
+  img { max-width: 100% !important; height: auto; }
+  img[width="1"], img[height="1"], img[src^="cid:"] { display: none !important; }
+  table { max-width: 100%; }
+  a { color: inherit; }
+</style>
+</head>
+<body>${html}<script>window.addEventListener('load',function(){window.parent.postMessage({type:'email-height',height:document.body.scrollHeight},'*');});<\/script></body>
+</html>`;
+
+  return (
+    <iframe
+      ref={iframeRef}
+      srcDoc={srcDoc}
+      sandbox="allow-popups allow-popups-to-escape-sandbox allow-scripts"
+      className="w-full border-none block"
+      style={{ height: '400px' }}
+    />
+  );
+}
+
 interface PendingAttachment {
   filename: string;
   content: string; // base64
@@ -75,6 +125,23 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
   const newFolderInputRef = useRef<HTMLInputElement>(null);
   const [linkedCalEvent, setLinkedCalEvent] = useState<{ id: string; attendees: any[] } | null>(null);
   const [rsvpLoading, setRsvpLoading] = useState<string | null>(null); // which response is loading
+  const [fetchedHtmlBody, setFetchedHtmlBody] = useState<string | null>(null);
+
+  // Fetch html_body from emails table when not present in source_data (emails synced before the fix)
+  useEffect(() => {
+    setFetchedHtmlBody(null);
+    const sd = item?.source_data as any;
+    if (!sd?.email_id || sd?.html_body) return;
+    const supabase = createClient();
+    supabase
+      .from('emails')
+      .select('html_body')
+      .eq('id', sd.email_id)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (data?.html_body) setFetchedHtmlBody(data.html_body);
+      });
+  }, [item?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Look up matching calendar event — by time range first, then by title from invite subject
   useEffect(() => {
@@ -514,61 +581,27 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
         ) : null}
 
         {/* Latest email body */}
-        {(sourceData?.html_body || sourceData?.body) && (() => {
-          const raw = (sourceData.html_body || sourceData.body) as string;
-          const isHtml = !!sourceData.html_body || /<[a-z][\s\S]*>/i.test(raw);
-
-          // Sanitise HTML: strip head/style/script, normalise to consistent typography
-          const sanitiseHtml = (html: string): string => {
-            let h = html;
-            // Remove non-visual blocks
-            h = h.replace(/<head[\s\S]*?<\/head>/gi, '');
-            h = h.replace(/<style[\s\S]*?<\/style>/gi, '');
-            h = h.replace(/<script[\s\S]*?<\/script>/gi, '');
-            // Extract body content
-            const bodyMatch = h.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
-            if (bodyMatch) h = bodyMatch[1];
-            // Strip inline styles and classes so our CSS controls typography
-            h = h.replace(/\s+style=(?:"[^"]*"|'[^']*')/gi, '');
-            h = h.replace(/\s+class=(?:"[^"]*"|'[^']*')/gi, '');
-            // Strip legacy presentational attributes (bgcolor, color, face, size, align…)
-            h = h.replace(/\s+(?:bgcolor|color|face|size|align|valign|width|height|border|cellpadding|cellspacing)=(?:"[^"]*"|'[^']*'|\S+)/gi, '');
-            // Unwrap <font> tags, keep their content
-            h = h.replace(/<\/?font[^>]*>/gi, '');
-            // Fix double-encoded HTML entities (e.g. &amp;#199; → &#199;, &amp;amp; → &amp;)
-            h = h.replace(/&amp;(#\w+;)/g, '&$1');
-            h = h.replace(/&amp;([a-zA-Z]+;)/g, '&$1');
-            return h.slice(0, 8000);
-          };
-
-          return (
-            <div className="border border-neutral-200 bg-white rounded-lg shadow-sm overflow-hidden">
-              <div className="flex items-baseline justify-between px-4 pt-3 pb-2 border-b border-neutral-100">
-                <span className="text-[13px] font-semibold text-neutral-800 truncate">
-                  {sourceData.from_name || sourceData.from || 'Unknown'}
+        {(sourceData?.html_body || sourceData?.body) && (
+          <div className="border border-neutral-200 bg-white rounded-lg shadow-sm overflow-hidden">
+            <div className="flex items-baseline justify-between px-4 pt-3 pb-2 border-b border-neutral-100">
+              <span className="text-[13px] font-semibold text-neutral-800 truncate">
+                {sourceData.from_name || sourceData.from || 'Unknown'}
+              </span>
+              {sourceData.received_at && (
+                <span className="text-[11px] text-neutral-400 flex-shrink-0 ml-3">
+                  {new Date(sourceData.received_at).toLocaleString('en-US', {
+                    month: 'short', day: 'numeric',
+                    hour: 'numeric', minute: '2-digit', hour12: true,
+                  })}
                 </span>
-                {sourceData.received_at && (
-                  <span className="text-[11px] text-neutral-400 flex-shrink-0 ml-3">
-                    {new Date(sourceData.received_at).toLocaleString('en-US', {
-                      month: 'short', day: 'numeric',
-                      hour: 'numeric', minute: '2-digit', hour12: true,
-                    })}
-                  </span>
-                )}
-              </div>
-              {isHtml ? (
-                <div
-                  className="px-4 py-3 email-body-html overflow-x-auto max-h-[500px] overflow-y-auto"
-                  dangerouslySetInnerHTML={{ __html: sanitiseHtml(raw) }}
-                />
-              ) : (
-                <div className="px-4 py-3 text-[13px] text-neutral-700 leading-relaxed whitespace-pre-wrap break-words max-h-[500px] overflow-y-auto">
-                  {stripHtml(raw).trim()}
-                </div>
               )}
             </div>
-          );
-        })()}
+            <IframeEmailBody
+              html={(sourceData.html_body as string | null) ?? fetchedHtmlBody}
+              plain={sourceData.body as string | null}
+            />
+          </div>
+        )}
 
         {/* Thread — older messages only, all collapsed */}
         {sourceData?.thread_history && sourceData.thread_history.length > 1 && (

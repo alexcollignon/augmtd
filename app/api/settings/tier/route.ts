@@ -24,7 +24,7 @@ export async function POST(request: NextRequest) {
   if (error || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const { tier } = await request.json();
-  if (tier !== 'standard' && tier !== 'private_shared' && tier !== 'bedrock_private') {
+  if (tier !== 'standard' && tier !== 'private_shared' && tier !== 'bedrock_private' && tier !== 'bedrock_optimised') {
     return NextResponse.json({ error: 'Invalid tier' }, { status: 400 });
   }
 

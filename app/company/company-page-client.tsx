@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
-  BuildingOfficeIcon,
+  BuildingOffice2Icon,
   UserPlusIcon,
   XMarkIcon,
   ClockIcon,
@@ -12,7 +12,7 @@ import {
   ClipboardDocumentIcon,
   CheckIcon,
 } from '@heroicons/react/24/outline';
-import type { MyCompany, CompanyMember, CompanyInvitation } from '@/lib/types/company';
+import type { MyCompany, CompanyInvitation } from '@/lib/types/company';
 
 interface Member {
   id: string;
@@ -31,13 +31,13 @@ interface Props {
   members: Member[];
   invitations: CompanyInvitation[];
   currentUserId: string;
-  embedded?: boolean; // true when rendered inside settings tabs (no outer page header)
+  embedded?: boolean;
 }
 
 const ROLE_COLORS: Record<string, string> = {
-  owner: 'bg-indigo-50 text-indigo-700 border-indigo-200',
-  admin: 'bg-amber-50 text-amber-700 border-amber-200',
-  member: 'bg-neutral-50 text-neutral-600 border-neutral-200',
+  owner: 'bg-indigo-50 text-indigo-700',
+  admin: 'bg-amber-50 text-amber-700',
+  member: 'bg-neutral-100 text-neutral-600',
 };
 
 const PLAN_COLORS: Record<string, string> = {
@@ -46,7 +46,15 @@ const PLAN_COLORS: Record<string, string> = {
   enterprise: 'bg-indigo-50 text-indigo-700',
 };
 
-export default function CompanyPageClient({ company, members: initialMembers, invitations: initialInvitations, currentUserId, embedded = false }: Props) {
+function getInitial(member: Member): string {
+  return (member.full_name?.[0] ?? member.email?.[0] ?? '?').toUpperCase();
+}
+
+function formatDate(dateStr: string): string {
+  return new Date(dateStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+export default function CompanyPageClient({ company, members: initialMembers, invitations: initialInvitations, currentUserId }: Props) {
   const router = useRouter();
   const [members, setMembers] = useState(initialMembers);
   const [invitations, setInvitations] = useState(initialInvitations);
@@ -159,103 +167,93 @@ export default function CompanyPageClient({ company, members: initialMembers, in
     setTimeout(() => setCodeCopied(false), 2000);
   }
 
-  function getInitial(member: Member): string {
-    return (member.full_name?.[0] ?? member.email?.[0] ?? '?').toUpperCase();
-  }
-
-  function formatDate(dateStr: string): string {
-    return new Date(dateStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-  }
-
   return (
-    <div className={embedded ? '' : 'max-w-4xl mx-auto px-6 lg:px-8 py-8 lg:py-12'}>
-      {/* Header */}
-      <div className="flex items-start justify-between mb-8">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-indigo-50 flex items-center justify-center">
-            <BuildingOfficeIcon className="w-5 h-5 text-indigo-500" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-2xl font-bold text-neutral-900">{company.name}</h1>
-              <span className={`text-[11px] font-semibold px-2 py-0.5 capitalize ${PLAN_COLORS[company.plan]}`}>
-                {company.plan}
-              </span>
-            </div>
-            <p className="text-[13px] text-neutral-500 mt-0.5">{members.length} member{members.length !== 1 ? 's' : ''}</p>
-          </div>
-        </div>
-        {isAdmin && (
-          <button
-            onClick={() => { setShowInviteForm(v => !v); setInviteError(''); setInviteSuccess(''); }}
-            className="flex items-center gap-1.5 px-3 py-2 bg-indigo-600 text-white text-[13px] font-semibold hover:bg-indigo-700 transition-colors"
-          >
-            <UserPlusIcon className="w-4 h-4" />
-            Invite member
-          </button>
-        )}
-      </div>
-
-      {/* Invite form */}
-      {showInviteForm && (
-        <div className="bg-white border border-indigo-200 p-5 mb-6 shadow-sm">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-[14px] font-semibold text-neutral-900">Invite a team member</h3>
-            <button onClick={() => setShowInviteForm(false)} className="text-neutral-400 hover:text-neutral-600">
-              <XMarkIcon className="w-4 h-4" />
-            </button>
-          </div>
-          <form onSubmit={handleInvite} className="flex items-end gap-3">
-            <div className="flex-1">
-              <label className="block text-[11px] font-medium text-neutral-600 mb-1">Email address</label>
-              <input
-                type="email"
-                value={inviteEmail}
-                onChange={e => setInviteEmail(e.target.value)}
-                placeholder="colleague@company.com"
-                className="w-full px-3 py-2 text-[13px] border border-neutral-300 focus:outline-none focus:border-indigo-400 placeholder:text-neutral-400"
-                autoFocus
-              />
+    <>
+      {/* ── Company header ── */}
+      <section className="px-6 py-5 border-b border-neutral-100">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-full bg-indigo-50 flex items-center justify-center flex-shrink-0">
+              <BuildingOffice2Icon className="w-4.5 h-4.5 text-indigo-500" />
             </div>
             <div>
-              <label className="block text-[11px] font-medium text-neutral-600 mb-1">Role</label>
-              <select
-                value={inviteRole}
-                onChange={e => setInviteRole(e.target.value as 'admin' | 'member')}
-                className="px-3 py-2 text-[13px] border border-neutral-300 focus:outline-none focus:border-indigo-400 bg-white"
-              >
-                <option value="member">Member</option>
-                <option value="admin">Admin</option>
-              </select>
+              <div className="flex items-center gap-2">
+                <h3 className="text-[14px] font-semibold text-neutral-900">{company.name}</h3>
+                <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full capitalize ${PLAN_COLORS[company.plan] ?? 'bg-neutral-100 text-neutral-600'}`}>
+                  {company.plan}
+                </span>
+              </div>
+              <p className="text-[11px] text-neutral-400 mt-0.5">{members.length} member{members.length !== 1 ? 's' : ''}</p>
             </div>
+          </div>
+          {isAdmin && (
             <button
-              type="submit"
-              disabled={inviteLoading || !inviteEmail.trim()}
-              className="px-4 py-2 bg-indigo-600 text-white text-[13px] font-semibold hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+              onClick={() => { setShowInviteForm(v => !v); setInviteError(''); setInviteSuccess(''); }}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 text-white text-[12px] font-medium rounded-lg hover:bg-indigo-700 transition-colors"
             >
-              {inviteLoading ? 'Sending…' : 'Send invite'}
+              <UserPlusIcon className="w-3.5 h-3.5" />
+              Invite
             </button>
-          </form>
-          {inviteError && <p className="text-[12px] text-red-600 mt-2">{inviteError}</p>}
-          {inviteSuccess && <p className="text-[12px] text-green-600 mt-2">{inviteSuccess}</p>}
+          )}
         </div>
-      )}
 
-      {/* Members */}
-      <div className="bg-white border border-neutral-200 shadow-sm mb-6">
-        <div className="px-5 py-3.5 border-b border-neutral-100">
-          <h2 className="text-[13px] font-semibold text-neutral-900">Team members</h2>
-        </div>
+        {/* Invite form */}
+        {showInviteForm && (
+          <div className="mt-4 p-4 bg-neutral-50 rounded-xl border border-neutral-200">
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-[13px] font-medium text-neutral-900">Invite a team member</p>
+              <button onClick={() => setShowInviteForm(false)} className="text-neutral-400 hover:text-neutral-600">
+                <XMarkIcon className="w-4 h-4" />
+              </button>
+            </div>
+            <form onSubmit={handleInvite} className="flex items-end gap-3">
+              <div className="flex-1">
+                <label className="block text-[10px] font-semibold text-neutral-400 uppercase tracking-wide mb-1.5">Email address</label>
+                <input
+                  type="email"
+                  value={inviteEmail}
+                  onChange={e => setInviteEmail(e.target.value)}
+                  placeholder="colleague@company.com"
+                  className="w-full px-3 py-2 text-[13px] border border-neutral-200 rounded-lg focus:outline-none focus:border-indigo-400 placeholder:text-neutral-300 bg-white"
+                  autoFocus
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-semibold text-neutral-400 uppercase tracking-wide mb-1.5">Role</label>
+                <select
+                  value={inviteRole}
+                  onChange={e => setInviteRole(e.target.value as 'admin' | 'member')}
+                  className="px-3 py-2 text-[13px] border border-neutral-200 rounded-lg focus:outline-none focus:border-indigo-400 bg-white"
+                >
+                  <option value="member">Member</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </div>
+              <button
+                type="submit"
+                disabled={inviteLoading || !inviteEmail.trim()}
+                className="px-4 py-2 bg-indigo-600 text-white text-[13px] font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+              >
+                {inviteLoading ? 'Sending…' : 'Send invite'}
+              </button>
+            </form>
+            {inviteError && <p className="text-[12px] text-red-600 mt-2">{inviteError}</p>}
+            {inviteSuccess && <p className="text-[12px] text-green-600 mt-2">{inviteSuccess}</p>}
+          </div>
+        )}
+      </section>
+
+      {/* ── Team members ── */}
+      <section className="px-6 py-5 border-b border-neutral-100">
+        <h3 className="text-[14px] font-semibold text-neutral-900 mb-3">Team members</h3>
         <div className="divide-y divide-neutral-100">
           {members.map(member => (
-            <div key={member.id} className="flex items-center gap-3 px-5 py-3.5">
-              {/* Avatar */}
-              <div className="w-8 h-8 bg-indigo-100 flex items-center justify-center text-[12px] font-semibold text-indigo-700 flex-shrink-0">
+            <div key={member.id} className="flex items-center gap-3 py-3">
+              <div className="w-7 h-7 rounded-full bg-indigo-100 flex items-center justify-center text-[11px] font-semibold text-indigo-700 flex-shrink-0">
                 {getInitial(member)}
               </div>
-              {/* Info */}
               <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5">
                   <span className="text-[13px] font-medium text-neutral-800 truncate">
                     {member.full_name || member.email}
                   </span>
@@ -264,25 +262,22 @@ export default function CompanyPageClient({ company, members: initialMembers, in
                   )}
                 </div>
                 {member.full_name && (
-                  <p className="text-[11px] text-neutral-500 truncate">{member.email}</p>
+                  <p className="text-[11px] text-neutral-400 truncate">{member.email}</p>
                 )}
               </div>
-              {/* Role badge */}
-              <span className={`text-[11px] font-semibold px-2 py-0.5 border capitalize ${ROLE_COLORS[member.role]}`}>
+              <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full capitalize ${ROLE_COLORS[member.role] ?? 'bg-neutral-100 text-neutral-600'}`}>
                 {member.role}
               </span>
-              {/* Joined */}
               <span className="text-[11px] text-neutral-400 hidden sm:block">
-                Joined {formatDate(member.joined_at)}
+                {formatDate(member.joined_at)}
               </span>
-              {/* Actions (admin only, not on self if owner) */}
               {isAdmin && !member.isCurrentUser && member.role !== 'owner' && (
-                <div className="flex items-center gap-1 ml-2">
+                <div className="flex items-center gap-1 ml-1">
                   {member.role === 'member' ? (
                     <button
                       onClick={() => handleChangeRole(member.user_id, 'admin')}
                       disabled={actionLoading === member.user_id}
-                      className="text-[11px] text-neutral-500 hover:text-indigo-600 px-2 py-1 hover:bg-indigo-50 transition-colors disabled:opacity-50"
+                      className="text-[11px] text-neutral-400 hover:text-indigo-600 px-2 py-1 rounded-md hover:bg-indigo-50 transition-colors disabled:opacity-50"
                     >
                       Make admin
                     </button>
@@ -290,7 +285,7 @@ export default function CompanyPageClient({ company, members: initialMembers, in
                     <button
                       onClick={() => handleChangeRole(member.user_id, 'member')}
                       disabled={actionLoading === member.user_id}
-                      className="text-[11px] text-neutral-500 hover:text-neutral-800 px-2 py-1 hover:bg-neutral-50 transition-colors disabled:opacity-50"
+                      className="text-[11px] text-neutral-400 hover:text-neutral-700 px-2 py-1 rounded-md hover:bg-neutral-50 transition-colors disabled:opacity-50"
                     >
                       Make member
                     </button>
@@ -298,18 +293,17 @@ export default function CompanyPageClient({ company, members: initialMembers, in
                   <button
                     onClick={() => handleRemoveMember(member.user_id)}
                     disabled={actionLoading === member.user_id}
-                    className="text-[11px] text-red-400 hover:text-red-600 px-2 py-1 hover:bg-red-50 transition-colors disabled:opacity-50"
+                    className="text-[11px] text-neutral-400 hover:text-red-500 px-2 py-1 rounded-md hover:bg-red-50 transition-colors disabled:opacity-50"
                   >
                     Remove
                   </button>
                 </div>
               )}
-              {/* Self leave */}
               {member.isCurrentUser && company.role !== 'owner' && (
                 <button
                   onClick={() => handleRemoveMember(member.user_id)}
                   disabled={actionLoading === member.user_id}
-                  className="text-[11px] text-neutral-400 hover:text-red-500 ml-2 disabled:opacity-50"
+                  className="text-[11px] text-neutral-400 hover:text-red-500 ml-1 disabled:opacity-50 transition-colors"
                 >
                   Leave
                 </button>
@@ -317,78 +311,69 @@ export default function CompanyPageClient({ company, members: initialMembers, in
             </div>
           ))}
         </div>
-      </div>
+      </section>
 
-      {/* Join code */}
+      {/* ── Join code ── */}
       {isAdmin && (
-        <div className="bg-white border border-neutral-200 shadow-sm mb-6">
-          <div className="px-5 py-3.5 border-b border-neutral-100 flex items-center gap-2">
-            <KeyIcon className="w-4 h-4 text-neutral-400" />
-            <h2 className="text-[13px] font-semibold text-neutral-900">Team join code</h2>
+        <section className="px-6 py-5 border-b border-neutral-100">
+          <div className="flex items-center gap-2 mb-1">
+            <h3 className="text-[14px] font-semibold text-neutral-900">Join code</h3>
           </div>
-          <div className="px-5 py-4">
-            <div className="flex items-center gap-3 mb-3">
-              {joinCode ? (
-                <span className="font-mono text-[20px] font-bold tracking-[0.2em] text-neutral-900 bg-neutral-50 border border-neutral-200 px-3 py-1.5 select-all">
-                  {joinCode}
-                </span>
-              ) : (
-                <span className="text-[13px] text-neutral-400 italic">No active code</span>
-              )}
-            </div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <button
-                onClick={handleGenerateCode}
-                disabled={codeLoading}
-                className="px-3 py-1.5 text-[12px] font-medium border border-neutral-300 text-neutral-700 hover:bg-neutral-50 disabled:opacity-50 transition-colors"
-              >
-                {codeLoading ? 'Generating…' : joinCode ? 'Regenerate' : 'Generate'}
-              </button>
-              {joinCode && (
-                <>
-                  <button
-                    onClick={handleCopyCode}
-                    className="flex items-center gap-1 px-3 py-1.5 text-[12px] font-medium border border-neutral-300 text-neutral-700 hover:bg-neutral-50 transition-colors"
-                  >
-                    {codeCopied ? <CheckIcon className="w-3.5 h-3.5" /> : <ClipboardDocumentIcon className="w-3.5 h-3.5" />}
-                    {codeCopied ? 'Copied' : 'Copy'}
-                  </button>
-                  <button
-                    onClick={handleDisableCode}
-                    disabled={codeLoading}
-                    className="px-3 py-1.5 text-[12px] font-medium border border-red-200 text-red-500 hover:bg-red-50 disabled:opacity-50 transition-colors"
-                  >
-                    Disable
-                  </button>
-                </>
-              )}
-            </div>
-            {joinCode && (
-              <p className="text-[11px] text-neutral-400 mt-3">
-                Share this code with teammates. Regenerating invalidates the previous code.
-              </p>
+          <p className="text-[12px] text-neutral-400 mb-4">Share this code with teammates so they can join your company.</p>
+          <div className="flex items-center gap-3 mb-3">
+            {joinCode ? (
+              <span className="font-mono text-[18px] font-bold tracking-[0.2em] text-neutral-900 bg-neutral-50 border border-neutral-200 rounded-xl px-4 py-2 select-all">
+                {joinCode}
+              </span>
+            ) : (
+              <span className="text-[13px] text-neutral-400 italic">No active code</span>
             )}
           </div>
-        </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              onClick={handleGenerateCode}
+              disabled={codeLoading}
+              className="px-3 py-1.5 text-[12px] font-medium border border-neutral-200 text-neutral-700 rounded-lg hover:bg-neutral-50 disabled:opacity-50 transition-colors"
+            >
+              {codeLoading ? 'Generating…' : joinCode ? 'Regenerate' : 'Generate code'}
+            </button>
+            {joinCode && (
+              <>
+                <button
+                  onClick={handleCopyCode}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium border border-neutral-200 text-neutral-700 rounded-lg hover:bg-neutral-50 transition-colors"
+                >
+                  {codeCopied ? <CheckIcon className="w-3.5 h-3.5 text-green-600" /> : <ClipboardDocumentIcon className="w-3.5 h-3.5" />}
+                  {codeCopied ? 'Copied' : 'Copy'}
+                </button>
+                <button
+                  onClick={handleDisableCode}
+                  disabled={codeLoading}
+                  className="px-3 py-1.5 text-[12px] font-medium border border-red-200 text-red-500 rounded-lg hover:bg-red-50 disabled:opacity-50 transition-colors"
+                >
+                  Disable
+                </button>
+              </>
+            )}
+          </div>
+        </section>
       )}
 
-      {/* Pending invitations */}
+      {/* ── Pending invitations ── */}
       {isAdmin && invitations.length > 0 && (
-        <div className="bg-white border border-neutral-200 shadow-sm">
-          <div className="px-5 py-3.5 border-b border-neutral-100">
-            <h2 className="text-[13px] font-semibold text-neutral-900">
-              Pending invitations
-              <span className="ml-2 text-[11px] font-normal text-neutral-500">{invitations.length}</span>
-            </h2>
-          </div>
+        <section className="px-6 py-5 border-b border-neutral-100">
+          <h3 className="text-[14px] font-semibold text-neutral-900 mb-3">
+            Pending invitations
+            <span className="ml-2 text-[11px] font-normal text-neutral-400">{invitations.length}</span>
+          </h3>
           <div className="divide-y divide-neutral-100">
             {invitations.map(inv => (
-              <div key={inv.id} className="flex items-center gap-3 px-5 py-3.5">
+              <div key={inv.id} className="flex items-center gap-3 py-3">
                 <ClockIcon className="w-4 h-4 text-neutral-300 flex-shrink-0" />
                 <div className="flex-1 min-w-0">
                   <span className="text-[13px] text-neutral-700 truncate">{inv.email}</span>
                 </div>
-                <span className={`text-[11px] font-semibold px-2 py-0.5 border capitalize ${ROLE_COLORS[inv.role]}`}>
+                <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full capitalize ${ROLE_COLORS[inv.role] ?? 'bg-neutral-100 text-neutral-600'}`}>
                   {inv.role}
                 </span>
                 <span className="text-[11px] text-neutral-400 hidden sm:block">
@@ -397,23 +382,25 @@ export default function CompanyPageClient({ company, members: initialMembers, in
                 <button
                   onClick={() => handleRevokeInvite(inv.token, inv.id)}
                   disabled={actionLoading === inv.id}
-                  className="text-[11px] text-neutral-400 hover:text-red-500 ml-2 disabled:opacity-50"
+                  className="text-[11px] text-neutral-400 hover:text-red-500 ml-1 disabled:opacity-50 transition-colors"
                 >
                   Revoke
                 </button>
               </div>
             ))}
           </div>
-        </div>
+        </section>
       )}
 
-      {/* Company role note */}
+      {/* ── Owner note ── */}
       {company.role === 'owner' && (
-        <div className="flex items-center gap-2 mt-6 text-[11px] text-neutral-400">
-          <ShieldCheckIcon className="w-3.5 h-3.5" />
-          You are the owner of this company. Transfer ownership is available in Settings.
-        </div>
+        <section className="px-6 py-4">
+          <div className="flex items-center gap-2 text-[11px] text-neutral-400">
+            <ShieldCheckIcon className="w-3.5 h-3.5 flex-shrink-0" />
+            You are the owner of this company.
+          </div>
+        </section>
       )}
-    </div>
+    </>
   );
 }

@@ -32,7 +32,6 @@ export default function DataManagementSection({ connections }: DataManagementSec
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ connectionId: selectedScope }),
       });
-
       if (res.ok) {
         setResult('success');
         setConfirming(false);
@@ -47,19 +46,19 @@ export default function DataManagementSection({ connections }: DataManagementSec
   };
 
   return (
-    <div className="bg-white border border-neutral-200 p-6 mb-6 shadow-sm">
-      <h3 className="text-[15px] font-semibold text-neutral-900 mb-1">Data Management</h3>
-      <p className="text-[13px] text-neutral-500 mb-4">
-        Permanently delete synced data — emails, calendar events, meeting transcripts, attachments, and knowledge base files.
+    <>
+      <h3 className="text-[14px] font-semibold text-neutral-900 mb-1">Data Management</h3>
+      <p className="text-[12px] text-neutral-400 mb-4">
+        Permanently delete synced emails, calendar events, transcripts, and attachments.
       </p>
 
       {result === 'success' && (
-        <div className="mb-4 px-3 py-2 bg-green-50 border border-green-200 text-[13px] text-green-700">
+        <div className="mb-4 px-3 py-2 bg-green-50 border border-green-200 rounded-lg text-[13px] text-green-700">
           Data deleted successfully.
         </div>
       )}
       {result === 'error' && (
-        <div className="mb-4 px-3 py-2 bg-red-50 border border-red-200 text-[13px] text-red-600">
+        <div className="mb-4 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-[13px] text-red-600">
           Something went wrong. Please try again.
         </div>
       )}
@@ -68,7 +67,7 @@ export default function DataManagementSection({ connections }: DataManagementSec
         <select
           value={selectedScope}
           onChange={e => { setSelectedScope(e.target.value); setConfirming(false); setResult(null); }}
-          className="flex-1 max-w-xs px-3 py-2 border border-neutral-200 text-[13px] text-neutral-900 bg-white focus:outline-none focus:border-neutral-400"
+          className="flex-1 max-w-xs px-3 py-2 border border-neutral-200 rounded-lg text-[13px] text-neutral-900 bg-white focus:outline-none focus:border-neutral-400"
           disabled={deleting}
         >
           <option value="all">All accounts</option>
@@ -83,7 +82,7 @@ export default function DataManagementSection({ connections }: DataManagementSec
           <button
             onClick={() => { setConfirming(true); setResult(null); }}
             disabled={deleting}
-            className="flex items-center gap-2 px-4 py-2 border border-red-200 text-red-600 hover:bg-red-50 font-semibold text-[13px] transition-colors disabled:opacity-40"
+            className="flex items-center gap-2 px-4 py-2 border border-red-200 text-red-600 hover:bg-red-50 font-medium text-[13px] rounded-lg transition-colors disabled:opacity-40"
           >
             <TrashIcon className="w-4 h-4" />
             Delete data
@@ -92,32 +91,32 @@ export default function DataManagementSection({ connections }: DataManagementSec
       </div>
 
       {confirming && (
-        <div className="mt-4 p-4 bg-red-50 border border-red-200">
+        <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-xl">
           <p className="text-[13px] text-red-800 font-medium mb-1">
             Delete all synced data for {selectedLabel}?
           </p>
           <p className="text-[12px] text-red-600 mb-3">
-            This will permanently remove all emails, calendar events, meeting transcripts, attachment files
+            This will permanently remove all emails, calendar events, meeting transcripts, and attachment files
             {selectedScope === 'all' ? ', and knowledge base files' : ''}. This cannot be undone.
           </p>
           <div className="flex items-center gap-2">
             <button
               onClick={handleConfirm}
               disabled={deleting}
-              className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-semibold text-[13px] transition-colors disabled:opacity-60"
+              className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-medium text-[13px] rounded-lg transition-colors disabled:opacity-60"
             >
-              {deleting ? 'Deleting...' : 'Confirm delete'}
+              {deleting ? 'Deleting…' : 'Confirm delete'}
             </button>
             <button
               onClick={() => setConfirming(false)}
               disabled={deleting}
-              className="px-4 py-2 border border-neutral-200 text-neutral-600 hover:bg-neutral-50 font-semibold text-[13px] transition-colors"
+              className="px-4 py-2 border border-neutral-200 text-neutral-600 hover:bg-neutral-50 font-medium text-[13px] rounded-lg transition-colors"
             >
               Cancel
             </button>
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }

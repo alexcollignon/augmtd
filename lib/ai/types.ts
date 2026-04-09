@@ -18,7 +18,8 @@ export type TierType =
   | 'standard'          // OpenAI / Anthropic APIs — no privacy guarantees
   | 'professional'      // Azure OpenAI / AWS Bedrock — contractual privacy, EU residency
   | 'private_shared'    // AUGMTD-managed private GPU infra (Modal) — open source models
-  | 'bedrock_private'   // AWS Bedrock + Claude Haiku 4.5 — structural isolation, SOC2/HIPAA
+  | 'bedrock_private'    // AWS Bedrock + Claude Haiku 4.5 — structural isolation, SOC2/HIPAA
+  | 'bedrock_optimised' // Bedrock (chat/gen/ocr) + Fireworks (email/background) — cost-optimised hybrid
   | 'private_client'    // Client's own cloud (AWS/Azure/GCP) — AUGMTD orchestrates
   | 'on_prem'           // Client's own hardware — air-gapped
 

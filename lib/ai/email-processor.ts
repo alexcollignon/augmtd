@@ -376,7 +376,7 @@ function formatCalendarContext(calendarContext: CalendarContext | undefined): st
  * Main processing function - detects signals and determines work state
  */
 export async function processEmail(email: EmailData, supabase: SupabaseClient): Promise<ProcessedEmail> {
-  const { client: openai, model: defaultModel, endpoint } = await getAIClient(email.user_id!, 'classification', supabase);
+  const { client: openai, model: defaultModel, endpoint } = await getAIClient(email.user_id!, 'planning', supabase);
 
   // Format thread context if available
   const threadContextSection = formatThreadContext(email.thread_context);

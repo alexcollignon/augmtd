@@ -92,7 +92,7 @@ export function InboxPageClient({
   const optimisticSyncTriggered = useRef(false);
   const isSyncingRef = useRef(false);
   const preSyncCountRef = useRef<number | null>(null);
-  const outlookLastPolledRef = useRef<number>(0);
+  const periodicSyncRef = useRef<number>(0);
 
   // Restore persisted preferences after mount (avoids SSR hydration mismatch)
   useEffect(() => {
@@ -192,31 +192,55 @@ export function InboxPageClient({
     }
   }, [searchParams, hasConnection]);
 
-  // Realtime subscription — new items appear instantly without polling
+  // Realtime subscription — new items appear instantly without polling.
+  // Auto-reconnects on WebSocket drop (CHANNEL_ERROR / TIMED_OUT / CLOSED).
   useEffect(() => {
     const supabase = createClient();
-    const channel = supabase
-      .channel(`inbox_items:${user.id}`)
-      .on('postgres_changes', {
-        event: '*',
-        schema: 'public',
-        table: 'inbox_items',
-        filter: `user_id=eq.${user.id}`,
-      }, (payload) => {
-        if (payload.eventType === 'INSERT') {
-          const item = payload.new as InboxItem;
-          if (item.status === 'pending') {
-            setInboxItems(prev => prev.some(i => i.id === item.id) ? prev : [item, ...prev]);
-            setSelectedItem(prev => prev ?? item);
+    let currentChannel: ReturnType<typeof supabase.channel> | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let destroyed = false;
+
+    function subscribe() {
+      if (destroyed) return;
+      currentChannel = supabase
+        .channel(`inbox_items:${user.id}`)
+        .on('postgres_changes', {
+          event: '*',
+          schema: 'public',
+          table: 'inbox_items',
+          filter: `user_id=eq.${user.id}`,
+        }, (payload) => {
+          if (payload.eventType === 'INSERT') {
+            const item = payload.new as InboxItem;
+            if (item.status === 'pending') {
+              setInboxItems(prev => prev.some(i => i.id === item.id) ? prev : [item, ...prev]);
+              setSelectedItem(prev => prev ?? item);
+            }
+          } else if (payload.eventType === 'UPDATE') {
+            setInboxItems(prev => prev.map(i => i.id === (payload.new as any).id ? payload.new as InboxItem : i));
+          } else if (payload.eventType === 'DELETE') {
+            setInboxItems(prev => prev.filter(i => i.id !== (payload.old as any).id));
           }
-        } else if (payload.eventType === 'UPDATE') {
-          setInboxItems(prev => prev.map(i => i.id === (payload.new as any).id ? payload.new as InboxItem : i));
-        } else if (payload.eventType === 'DELETE') {
-          setInboxItems(prev => prev.filter(i => i.id !== (payload.old as any).id));
-        }
-      })
-      .subscribe();
-    return () => { supabase.removeChannel(channel); };
+        })
+        .subscribe((status) => {
+          if (destroyed) return;
+          if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+            const staleChannel = currentChannel;
+            currentChannel = null;
+            reconnectTimer = setTimeout(() => {
+              if (staleChannel) supabase.removeChannel(staleChannel);
+              subscribe();
+            }, 3000);
+          }
+        });
+    }
+
+    subscribe();
+    return () => {
+      destroyed = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (currentChannel) supabase.removeChannel(currentChannel);
+    };
   }, [user.id]);
 
   // Poll for sync status only (inbox items arrive via Realtime above)
@@ -307,15 +331,12 @@ export function InboxPageClient({
           }
         }
 
-        // Outlook has no reliable push catchup mechanism — poll every 2 minutes while inbox is open
-        const hasOutlook = connections.some(c => c.provider === 'outlook');
-        if (hasOutlook && !isCurrentlySyncing && Date.now() - outlookLastPolledRef.current > 2 * 60 * 1000) {
-          outlookLastPolledRef.current = Date.now();
-          fetch('/api/connections/sync', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ provider: 'outlook' }),
-          }).catch(() => {});
+        // Periodic catch-up sync — every 2 minutes regardless of provider mix.
+        // Catches missed push notifications (Outlook) and Realtime WebSocket drops (Gmail).
+        // Works the same whether the user has Gmail-only, Outlook-only, or both.
+        if (connections && connections.length > 0 && !isCurrentlySyncing && Date.now() - periodicSyncRef.current > 2 * 60 * 1000) {
+          periodicSyncRef.current = Date.now();
+          fetch('/api/connections/sync', { method: 'POST' }).catch(() => {});
         }
       }
     }
@@ -463,11 +484,7 @@ export function InboxPageClient({
   const handleDeleteItem = useCallback(async (itemId: string) => {
     setInboxItems(prev => prev.filter(i => i.id !== itemId));
     setSelectedItem(prev => (prev?.id === itemId ? null : prev));
-    await fetch(`/api/inbox/${itemId}/dismiss`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ reason: 'deleted_from_list' }),
-    });
+    await fetch(`/api/inbox/${itemId}/delete-source`, { method: 'POST' });
   }, []);
 
   const handleArchiveItem = useCallback(async (itemId: string) => {

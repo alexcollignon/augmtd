@@ -75,6 +75,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Immediately mark all connections as syncing so the inbox polling
+    // loop sees 'syncing' status from the very first poll, regardless of
+    // how long calendar sync and bot creation take before emails start.
+    const connectionIds = connections.map((c) => c.id);
+    await adminSupabase
+      .from('connections')
+      .update({ sync_status: 'syncing', sync_started_at: new Date().toISOString() })
+      .in('id', connectionIds);
+    console.log(`[Sync] Marked ${connectionIds.length} connection(s) as syncing upfront`);
+
     // Process all connections in parallel — within each, calendar → bots → emails order is preserved
     const results = await Promise.all(connections.map(async (connection) => {
       try {

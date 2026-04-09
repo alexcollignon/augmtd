@@ -80,6 +80,28 @@ export const TIER_DEFAULTS: Record<TierType, Record<TaskType, ModelEndpoint>> = 
     conversation:   { provider: 'bedrock', model: 'eu.anthropic.claude-haiku-4-5-20251001-v1:0', maxTokensDefault: 4096 },
   },
 
+  // ── Bedrock optimised — Bedrock for user-facing, Fireworks for background ────
+  // Conversation / generation / OCR stay on AWS Bedrock EU (Claude Haiku 4.5) for
+  // quality and data-residency guarantees on interactive work.
+  // Email triage, summarization, assignment → Llama 3.3 70B on Fireworks (cheap).
+  // processEmail (planning task) → Kimi K2 on Fireworks (frontier quality, 46% cheaper).
+  // Embeddings stay on Together AI — same as private_shared, no re-indexing needed.
+  bedrock_optimised: {
+    conversation:  { provider: 'bedrock',           model: 'eu.anthropic.claude-haiku-4-5-20251001-v1:0', maxTokensDefault: 4096 },
+    generation:    { provider: 'bedrock',           model: 'eu.anthropic.claude-haiku-4-5-20251001-v1:0', maxTokensDefault: 4096 },
+    ocr:           { provider: 'bedrock',           model: 'eu.anthropic.claude-haiku-4-5-20251001-v1:0', maxTokensDefault: 4096 },
+    planning:      { provider: 'fireworks',         model: 'accounts/fireworks/models/kimi-k2-instruct-0905',
+                     baseURL: 'https://api.fireworks.ai/inference/v1' },
+    classification:{ provider: 'fireworks',         model: 'accounts/fireworks/models/llama-v3p3-70b-instruct',
+                     baseURL: 'https://api.fireworks.ai/inference/v1' },
+    summarization: { provider: 'fireworks',         model: 'accounts/fireworks/models/llama-v3p3-70b-instruct',
+                     baseURL: 'https://api.fireworks.ai/inference/v1' },
+    assignment:    { provider: 'fireworks',         model: 'accounts/fireworks/models/llama-v3p3-70b-instruct',
+                     baseURL: 'https://api.fireworks.ai/inference/v1' },
+    embeddings:    { provider: 'openai_compatible', model: 'intfloat/multilingual-e5-large-instruct',
+                     baseURL: 'https://api.together.xyz/v1' },
+  },
+
   // ── Private client — client's own cloud ──────────────────────────────────────
   // baseURLs come from tenant_configs.endpoints at runtime.
   // Model names are typical defaults — clients can override per task.

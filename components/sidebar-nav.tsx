@@ -36,7 +36,7 @@ export default function SidebarNav({ userEmail }: SidebarNavProps) {
   const menuRef = useRef<HTMLDivElement>(null);
 
   // Tier toggle state
-  const [tier, setTier] = useState<'standard' | 'private_shared' | 'bedrock_private' | null>(null);
+  const [tier, setTier] = useState<'standard' | 'private_shared' | 'bedrock_private' | 'bedrock_optimised' | null>(null);
   const [tierLoading, setTierLoading] = useState(false);
   const [isSuperAdmin, setIsSuperAdmin] = useState(false);
   const [processNotifCount, setProcessNotifCount] = useState(0);
@@ -77,8 +77,9 @@ export default function SidebarNav({ userEmail }: SidebarNavProps) {
   const toggleTier = useCallback(async () => {
     if (tierLoading || tier === null) return;
     const next =
-      tier === 'standard' ? 'private_shared' :
-      tier === 'private_shared' ? 'bedrock_private' :
+      tier === 'standard'           ? 'private_shared' :
+      tier === 'private_shared'     ? 'bedrock_private' :
+      tier === 'bedrock_private'    ? 'bedrock_optimised' :
       'standard';
     setTierLoading(true);
     try {
@@ -108,17 +109,20 @@ export default function SidebarNav({ userEmail }: SidebarNavProps) {
 
   const userInitial = userEmail?.[0]?.toUpperCase() ?? '?';
   const tierLabel =
-    tier === 'bedrock_private' ? 'Bedrock AI — click to switch to Public' :
-    tier === 'private_shared'  ? 'Private AI — click to switch to Bedrock' :
-                                 'Public AI — click to switch to Private';
+    tier === 'bedrock_optimised' ? 'Bedrock Optimised — click to switch to Public' :
+    tier === 'bedrock_private'   ? 'Bedrock AI — click to switch to Bedrock Optimised' :
+    tier === 'private_shared'    ? 'Private AI — click to switch to Bedrock' :
+                                   'Public AI — click to switch to Private';
   const tierIcon =
-    tier === 'bedrock_private' ? <ShieldCheckIcon className="w-4 h-4" /> :
-    tier === 'private_shared'  ? <LockClosedIcon className="w-4 h-4" /> :
-                                 <GlobeAltIcon className="w-4 h-4" />;
+    tier === 'bedrock_optimised' ? <ShieldCheckIcon className="w-4 h-4" /> :
+    tier === 'bedrock_private'   ? <ShieldCheckIcon className="w-4 h-4" /> :
+    tier === 'private_shared'    ? <LockClosedIcon className="w-4 h-4" /> :
+                                   <GlobeAltIcon className="w-4 h-4" />;
   const tierClass =
-    tier === 'bedrock_private' ? 'bg-violet-50 text-violet-600 hover:bg-violet-100' :
-    tier === 'private_shared'  ? 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100' :
-                                 'text-neutral-400 hover:bg-neutral-200 hover:text-neutral-600';
+    tier === 'bedrock_optimised' ? 'bg-amber-50 text-amber-600 hover:bg-amber-100' :
+    tier === 'bedrock_private'   ? 'bg-violet-50 text-violet-600 hover:bg-violet-100' :
+    tier === 'private_shared'    ? 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100' :
+                                   'text-neutral-400 hover:bg-neutral-200 hover:text-neutral-600';
 
   return (
     <div className="flex h-screen w-14 flex-col bg-neutral-50 flex-shrink-0">
