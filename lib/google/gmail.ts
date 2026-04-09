@@ -98,6 +98,44 @@ export async function fetchUnreadEmails(
   }
 }
 
+export async function fetchSentEmails(
+  encryptedTokens: string,
+  maxResults: number = 25,
+  syncWindowDays: number = 7,
+  onTokenRefresh?: GmailTokenRefreshCallback,
+  lastSync?: string,
+): Promise<GmailMessage[]> {
+  try {
+    const gmail = await getGmailClient(encryptedTokens, onTokenRefresh);
+    const timeFilter = lastSync
+      ? `after:${Math.floor(new Date(lastSync).getTime() / 1000)}`
+      : `newer_than:${syncWindowDays}d`;
+    const query = `${timeFilter} in:sent -is:spam`;
+
+    const response = await gmail.users.messages.list({
+      userId: 'me',
+      q: query,
+      maxResults,
+    });
+
+    const messages = response.data.messages || [];
+    const fullMessages = await Promise.all(
+      messages.map(async (msg) => {
+        const fullMsg = await gmail.users.messages.get({
+          userId: 'me',
+          id: msg.id!,
+          format: 'full',
+        });
+        return fullMsg.data as GmailMessage;
+      })
+    );
+    return fullMessages;
+  } catch (error) {
+    console.error('Error fetching Gmail sent emails:', error);
+    throw error;
+  }
+}
+
 export function parseGmailMessage(message: GmailMessage) {
   const headers = message.payload?.headers || [];
 
@@ -164,8 +202,15 @@ export function parseGmailMessage(message: GmailMessage) {
       .filter(addr => addr && addr.includes('@')); // Only valid email addresses
   };
 
+  const rawReferences = getHeader('References');
+  const referencesIds = rawReferences.trim()
+    ? rawReferences.trim().split(/\s+/).filter(Boolean)
+    : [];
+
   return {
     message_id: getHeader('Message-ID'),
+    in_reply_to: getHeader('In-Reply-To').trim() || null,
+    references_ids: referencesIds.length > 0 ? referencesIds : null,
     from_address,
     from_name,
     to_addresses: parseEmailAddresses(getHeader('To')),

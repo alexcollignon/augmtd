@@ -53,12 +53,14 @@ function stripNulls(v: unknown): unknown {
 
 import {
   fetchUnreadEmails as fetchGmailEmails,
+  fetchSentEmails as fetchGmailSentEmails,
   parseGmailMessage,
   fetchGmailAttachment,
   fetchGmailThread,
 } from '@/lib/google/gmail';
 import {
   fetchUnreadEmails as fetchOutlookEmails,
+  fetchSentEmails as fetchOutlookSentEmails,
   parseOutlookMessage,
   fetchOutlookAttachments,
   fetchOutlookAttachmentContent,
@@ -306,7 +308,8 @@ async function backfillThreadHistory(params: {
       .limit(1)
       .maybeSingle();
 
-    if ((oldestRow?.metadata as any)?.thread_backfilled === true) return;
+    const backfilledAt = (oldestRow?.metadata as any)?.thread_backfilled_at;
+    if (backfilledAt && Date.now() - new Date(backfilledAt).getTime() < 2 * 60 * 60 * 1000) return;
 
     // Fetch all messages in the thread from the provider
     let fetchedMessages: any[] = [];
@@ -318,7 +321,7 @@ async function backfillThreadHistory(params: {
           if (oldestRow) {
             await adminSupabase
               .from('emails')
-              .update({ metadata: { ...(oldestRow.metadata as any), thread_backfilled: true } })
+              .update({ metadata: { ...(oldestRow.metadata as any), thread_backfilled_at: new Date().toISOString() } })
               .eq('id', oldestRow.id);
           }
           return;
@@ -330,7 +333,7 @@ async function backfillThreadHistory(params: {
           if (oldestRow) {
             await adminSupabase
               .from('emails')
-              .update({ metadata: { ...(oldestRow.metadata as any), thread_backfilled: true } })
+              .update({ metadata: { ...(oldestRow.metadata as any), thread_backfilled_at: new Date().toISOString() } })
               .eq('id', oldestRow.id);
           }
           return;
@@ -359,11 +362,12 @@ async function backfillThreadHistory(params: {
       .filter(m => m.message_id && !knownMessageIds.has(m.message_id))
       .map(m => {
         // Strip parser-only fields before insert
-        const { attachments: _a, hasAttachments: _ha, outlookInternalId: _oid, html_body: _hb, ...dbFields } = m as any;
+        const { attachments: _a, hasAttachments: _ha, outlookInternalId: _oid, ...dbFields } = m as any;
         return stripNulls({
           user_id: connection.user_id,
           connection_id: connection.id,
           ...dbFields,
+          html_body: (m as any).html_body?.slice(0, 15000) || null,
           is_from_user: (m.from_address || '').toLowerCase() === (userEmail || '').toLowerCase(),
           metadata: { ...m.metadata, thread_context_only: true },
         }) as Record<string, unknown>;
@@ -380,12 +384,12 @@ async function backfillThreadHistory(params: {
       }
     }
 
-    // Mark thread as backfilled on the oldest row
+    // Mark thread as backfilled on the oldest row (timestamp-based for TTL re-runs)
     const anchorId = oldestRow?.id;
     if (anchorId) {
       await adminSupabase
         .from('emails')
-        .update({ metadata: { ...(oldestRow.metadata as any), thread_backfilled: true } })
+        .update({ metadata: { ...(oldestRow.metadata as any), thread_backfilled_at: new Date().toISOString() } })
         .eq('id', anchorId);
     }
   } catch (err) {
@@ -741,7 +745,7 @@ export async function syncEmailsForConnection(
         const { attachments: _att, hasAttachments: _ha, outlookInternalId: _oid, ...emailDbFields } = parsed as any;
 
         // Store email
-        const { data: storedEmail, error: emailError } = await adminSupabase
+        let { data: storedEmail, error: emailError } = await adminSupabase
           .from('emails')
           .insert({
             user_id: connection.user_id,
@@ -753,9 +757,47 @@ export async function syncEmailsForConnection(
           .single();
 
         if (emailError) {
-          console.error('Error storing email:', emailError);
-          result.errors.push(`Failed to store email: ${emailError.message}`);
-          continue;
+          // 23505 = unique_violation on message_id — parallel sync race condition.
+          // The other sync won the insert; look up the existing row and recover normally.
+          if ((emailError as any).code === '23505') {
+            const { data: racedEmail } = await adminSupabase
+              .from('emails')
+              .select('*')
+              .eq('message_id', parsed.message_id)
+              .single();
+            if (racedEmail) {
+              console.log(`    ⚡ Race condition — row inserted by parallel sync, recovering`);
+              // Reuse the existing-email recovery path by falling through with racedEmail
+              const threadIdForCheck2 = parsed.thread_id || parsed.message_id;
+              const { data: orphanCheck2 } = await adminSupabase
+                .from('inbox_items')
+                .select('id')
+                .eq('user_id', connection.user_id)
+                .eq('source', 'email')
+                .eq('source_data->>thread_id', threadIdForCheck2)
+                .limit(1)
+                .maybeSingle();
+              if (orphanCheck2) {
+                console.log(`    ✓ Already exists, skipping`);
+                continue;
+              }
+              if ((racedEmail.metadata as any)?.thread_context_only) {
+                console.log(`    ⏭️  Skipping context-only backfill row`);
+                continue;
+              }
+              // Recover: assign to storedEmail and fall through to normal processing below
+              storedEmail = racedEmail;
+              emailError = null;
+            } else {
+              console.error('Error storing email:', emailError);
+              result.errors.push(`Failed to store email: ${emailError.message}`);
+              continue;
+            }
+          } else {
+            console.error('Error storing email:', emailError);
+            result.errors.push(`Failed to store email: ${emailError.message}`);
+            continue;
+          }
         }
 
         result.emailsFetched++;
@@ -1180,6 +1222,7 @@ export async function syncEmailsForConnection(
                   calendar_event_id: calendarEventId || undefined,
                   isForwarded,
                   thread_history: threadEmails?.map(e => ({
+                    message_id: e.message_id,
                     from: e.from_address,
                     from_name: e.from_name,
                     subject: e.subject,
@@ -1291,6 +1334,7 @@ export async function syncEmailsForConnection(
                 calendar_event_id: calendarEventId || undefined,
                 isForwarded,
                 thread_history: threadEmailsForNew?.map(e => ({
+                  message_id: e.message_id,
                   from: e.from_address,
                   from_name: e.from_name,
                   subject: e.subject,
@@ -1357,6 +1401,56 @@ export async function syncEmailsForConnection(
       console.log(`[Contacts] Updated relationship_graph from ${_emailRows.length} email(s)`)
     } catch (_contactErr) {
       console.warn('[Contacts] Non-fatal: failed to update relationship_graph', _contactErr)
+    }
+
+    // === Phase 4: Sync sent emails (store for thread context, no inbox_item) ===
+    console.log(`[SentSync] Starting sent email sync for ${connection.provider}...`);
+    try {
+      const encryptedTokensForSent = connection.metadata.tokens;
+      const sentWindow = options.syncWindowDays || connection.metadata.sync_window_days || 7;
+      let sentMessages: any[] = [];
+
+      if (connection.provider === 'gmail') {
+        const onGmailRefresh = async (newTokens: string) => {
+          await adminSupabase.from('connections').update({ metadata: { ...connection.metadata, tokens: newTokens } }).eq('id', connection.id);
+        };
+        const raw = await fetchGmailSentEmails(encryptedTokensForSent, 25, sentWindow, onGmailRefresh, connection.last_sync ?? undefined);
+        sentMessages = raw.map(m => parseGmailMessage(m));
+      } else if (connection.provider === 'outlook') {
+        const onOutlookRefresh = async (newTokens: { accessToken: string; refreshToken: string; expiresOn: string }) => {
+          const enc = Buffer.from(JSON.stringify(newTokens)).toString('base64');
+          await adminSupabase.from('connections').update({ metadata: { ...connection.metadata, tokens: enc } }).eq('id', connection.id);
+        };
+        const raw = await fetchOutlookSentEmails(encryptedTokensForSent, 25, sentWindow, onOutlookRefresh, connection.last_sync ?? undefined);
+        sentMessages = raw.map(m => parseOutlookMessage(m));
+      }
+
+      if (sentMessages.length > 0) {
+        const userEmail = connection.metadata?.email || connection.provider_account_id;
+        const sentRows = sentMessages.map(m => {
+          // eslint-disable-next-line @typescript-eslint/no-unused-vars
+          const { attachments: _a, hasAttachments: _ha, outlookInternalId: _oid, ...dbFields } = m as any;
+          return stripNulls({
+            user_id: connection.user_id,
+            connection_id: connection.id,
+            ...dbFields,
+            html_body: (m as any).html_body?.slice(0, 15000) || null,
+            is_from_user: true,
+            is_read: true,
+          }) as Record<string, unknown>;
+        }).filter(r => r.message_id); // must have a message_id for upsert
+
+        const { error: sentErr } = await adminSupabase
+          .from('emails')
+          .upsert(sentRows, { onConflict: 'message_id', ignoreDuplicates: true });
+        if (sentErr) {
+          console.warn(`[SentSync] Upsert error:`, sentErr.message);
+        } else {
+          console.log(`[SentSync] Upserted ${sentRows.length} sent email(s) for thread context`);
+        }
+      }
+    } catch (sentErr) {
+      console.warn(`[SentSync] Non-fatal: failed to sync sent emails`, sentErr);
     }
 
     // Update sync status

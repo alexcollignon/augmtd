@@ -26,17 +26,28 @@ import KbFilePicker from './kb-file-picker';
 import { createClient } from '@/lib/supabase/client';
 
 function IframeEmailBody({ html, plain }: { html: string | null; plain: string | null }) {
-  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const hostRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const handler = (e: MessageEvent) => {
-      if (e.source === iframeRef.current?.contentWindow && e.data?.type === 'email-height') {
-        iframeRef.current.style.height = Math.min(e.data.height + 24, 800) + 'px';
-      }
-    };
-    window.addEventListener('message', handler);
-    return () => window.removeEventListener('message', handler);
-  }, []);
+    const host = hostRef.current;
+    if (!host || !html) return;
+
+    const shadow = host.shadowRoot ?? host.attachShadow({ mode: 'open' });
+    shadow.innerHTML = `<style>
+      :host { display: block; overflow-x: auto; }
+      * { box-sizing: border-box; }
+      body { margin: 0; padding: 0; }
+      img { max-width: 100% !important; height: auto; }
+      img[width="1"], img[height="1"], img[src^="cid:"] { display: none !important; }
+      a { color: inherit; }
+    </style>${html}`;
+
+    // Open all links in a new tab (shadow DOM ignores <base target="_blank">)
+    shadow.querySelectorAll('a[href]').forEach(a => {
+      a.setAttribute('target', '_blank');
+      a.setAttribute('rel', 'noopener noreferrer');
+    });
+  }, [html]);
 
   if (!html) {
     return (
@@ -46,33 +57,7 @@ function IframeEmailBody({ html, plain }: { html: string | null; plain: string |
     );
   }
 
-  const srcDoc = `<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<base target="_blank">
-<style>
-  * { box-sizing: border-box; }
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 14px; line-height: 1.6; color: #333; margin: 0; padding: 16px; word-break: break-word; }
-  img { max-width: 100% !important; height: auto; }
-  img[width="1"], img[height="1"], img[src^="cid:"] { display: none !important; }
-  table { max-width: 100%; }
-  a { color: inherit; }
-</style>
-</head>
-<body>${html}<script>window.addEventListener('load',function(){window.parent.postMessage({type:'email-height',height:document.body.scrollHeight},'*');});<\/script></body>
-</html>`;
-
-  return (
-    <iframe
-      ref={iframeRef}
-      srcDoc={srcDoc}
-      sandbox="allow-popups allow-popups-to-escape-sandbox allow-scripts"
-      className="w-full border-none block"
-      style={{ height: '400px' }}
-    />
-  );
+  return <div ref={hostRef} className="w-full px-4 py-2" />;
 }
 
 interface PendingAttachment {
@@ -95,6 +80,8 @@ interface WorkDetailInlineProps {
 
 export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeetings, pendingReplyDraft, onReplySent, replyBody, onReplyBodyChange, onReplyOpenChange, onOpenWorkflowPanel }: WorkDetailInlineProps) {
   const [expandedEmails, setExpandedEmails] = useState<Record<number, boolean>>({});
+  const [showAllHistory, setShowAllHistory] = useState(false);
+  const [threadEmails, setThreadEmails] = useState<any[] | null>(null);
   const [downloadingFile, setDownloadingFile] = useState<string | null>(null);
   const [replyOpen, setReplyOpen] = useState(false);
   const [isSendingReply, setIsSendingReply] = useState(false);
@@ -125,22 +112,95 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
   const newFolderInputRef = useRef<HTMLInputElement>(null);
   const [linkedCalEvent, setLinkedCalEvent] = useState<{ id: string; attendees: any[] } | null>(null);
   const [rsvpLoading, setRsvpLoading] = useState<string | null>(null); // which response is loading
-  const [fetchedHtmlBody, setFetchedHtmlBody] = useState<string | null>(null);
 
-  // Fetch html_body from emails table when not present in source_data (emails synced before the fix)
+  // Reset thread state on item change
   useEffect(() => {
-    setFetchedHtmlBody(null);
+    setShowAllHistory(false);
+    setExpandedEmails({});
+    setThreadEmails(null);
+  }, [item?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Live thread fetch — query emails table by thread_id so we always see the complete thread.
+  // After the primary query, stitches in emails from other providers using RFC References headers.
+  useEffect(() => {
     const sd = item?.source_data as any;
-    if (!sd?.email_id || sd?.html_body) return;
+    if (!sd) return;
     const supabase = createClient();
-    supabase
-      .from('emails')
-      .select('html_body')
-      .eq('id', sd.email_id)
-      .maybeSingle()
-      .then(({ data }) => {
-        if (data?.html_body) setFetchedHtmlBody(data.html_body);
-      });
+    const threadId = sd.thread_id;
+    if (threadId) {
+      supabase
+        .from('emails')
+        .select('id, message_id, in_reply_to, references_ids, from_address, from_name, to_addresses, cc_addresses, subject, body, html_body, received_at, is_from_user, metadata')
+        .eq('thread_id', threadId)
+        .order('received_at', { ascending: true })
+        .then(async ({ data: primary }) => {
+          const primaryEmails = primary ?? [];
+
+          // Cross-provider stitching via RFC threading headers:
+          // 1. Find emails whose references_ids overlap with our thread's message_ids
+          // 2. Find emails whose message_id appears in our thread's references_ids
+          const primaryMessageIds = primaryEmails.map((e: any) => e.message_id).filter(Boolean);
+          const allReferencedIds = primaryEmails.flatMap((e: any) => e.references_ids || []).filter(Boolean);
+
+          const stitchQueries: Promise<{ data: any[] | null }>[] = [];
+
+          if (primaryMessageIds.length > 0) {
+            // Other-provider emails that reference any message in our thread
+            stitchQueries.push(
+              Promise.resolve(
+                supabase
+                  .from('emails')
+                  .select('id, message_id, in_reply_to, references_ids, from_address, from_name, to_addresses, cc_addresses, subject, body, html_body, received_at, is_from_user, metadata')
+                  .overlaps('references_ids', primaryMessageIds)
+                  .neq('thread_id', threadId)
+              ).then(r => ({ data: r.data }))
+            );
+          }
+
+          if (allReferencedIds.length > 0) {
+            // Emails that our thread references but have a different thread_id (sent from other provider)
+            stitchQueries.push(
+              Promise.resolve(
+                supabase
+                  .from('emails')
+                  .select('id, message_id, in_reply_to, references_ids, from_address, from_name, to_addresses, cc_addresses, subject, body, html_body, received_at, is_from_user, metadata')
+                  .in('message_id', allReferencedIds)
+                  .neq('thread_id', threadId)
+              ).then(r => ({ data: r.data }))
+            );
+          }
+
+          if (stitchQueries.length > 0) {
+            const stitchResults = await Promise.all(stitchQueries);
+            const seen = new Set(primaryEmails.map((e: any) => e.message_id).filter(Boolean));
+            const merged = [...primaryEmails];
+            for (const { data: extra } of stitchResults) {
+              for (const e of (extra || [])) {
+                if (!e.message_id || !seen.has(e.message_id)) {
+                  merged.push(e);
+                  if (e.message_id) seen.add(e.message_id);
+                }
+              }
+            }
+            merged.sort((a, b) => new Date(a.received_at).getTime() - new Date(b.received_at).getTime());
+            setThreadEmails(merged);
+          } else {
+            setThreadEmails(primaryEmails);
+          }
+        });
+    } else if (sd.email_id) {
+      // Single email — no thread
+      supabase
+        .from('emails')
+        .select('id, message_id, in_reply_to, references_ids, from_address, from_name, to_addresses, cc_addresses, subject, body, html_body, received_at, is_from_user, metadata')
+        .eq('id', sd.email_id)
+        .maybeSingle()
+        .then(({ data }) => {
+          setThreadEmails(data ? [data] : []);
+        });
+    } else {
+      setThreadEmails([]);
+    }
   }, [item?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Look up matching calendar event — by time range first, then by title from invite subject
@@ -218,6 +278,25 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
 
   const sourceData = item.source_data;
   const recipientContext = item.recipient_context;
+
+  // Avatar helpers for thread
+  const AVATAR_COLORS = [
+    'bg-indigo-100 text-indigo-700', 'bg-violet-100 text-violet-700',
+    'bg-sky-100 text-sky-700', 'bg-emerald-100 text-emerald-700',
+    'bg-amber-100 text-amber-700', 'bg-rose-100 text-rose-700',
+    'bg-teal-100 text-teal-700', 'bg-orange-100 text-orange-700',
+  ];
+  const avatarColor = (name: string) => {
+    let h = 0;
+    for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) & 0xffff;
+    return AVATAR_COLORS[h % AVATAR_COLORS.length];
+  };
+  const initials = (name: string) =>
+    name.trim().split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase() || '?';
+
+  const handleExpandMsg = useCallback((idx: number) => {
+    setExpandedEmails(prev => ({ ...prev, [idx]: !prev[idx] }));
+  }, []);
   // Reset folder + reply state when item changes
   useEffect(() => {
     setShowMoveMenu(false);
@@ -580,75 +659,133 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
           </div>
         ) : null}
 
-        {/* Latest email body */}
-        {(sourceData?.html_body || sourceData?.body) && (
-          <div className="border border-neutral-200 bg-white rounded-lg shadow-sm overflow-hidden">
-            <div className="flex items-baseline justify-between px-4 pt-3 pb-2 border-b border-neutral-100">
-              <span className="text-[13px] font-semibold text-neutral-800 truncate">
-                {sourceData.from_name || sourceData.from || 'Unknown'}
-              </span>
-              {sourceData.received_at && (
-                <span className="text-[11px] text-neutral-400 flex-shrink-0 ml-3">
-                  {new Date(sourceData.received_at).toLocaleString('en-US', {
-                    month: 'short', day: 'numeric',
-                    hour: 'numeric', minute: '2-digit', hour12: true,
-                  })}
-                </span>
-              )}
-            </div>
-            <IframeEmailBody
-              html={(sourceData.html_body as string | null) ?? fetchedHtmlBody}
-              plain={sourceData.body as string | null}
-            />
-          </div>
-        )}
+        {/* Conversation thread stack — live from emails table, oldest first, latest expanded */}
+        {(() => {
+          const sd = sourceData as any;
+          const currentEmailId: string = sd?.email_id ?? '';
 
-        {/* Thread — older messages only, all collapsed */}
-        {sourceData?.thread_history && sourceData.thread_history.length > 1 && (
-          <div>
-            <h3 className="text-[11px] font-medium text-neutral-400 uppercase tracking-wide mb-2">
-              Thread
-            </h3>
-            <div className="space-y-1">
-              {sourceData.thread_history.slice(0, sourceData.thread_history.length - 1).slice(0, 8).map((msg: any, i: number) => {
-                const isExpanded = !!expandedEmails[i];
-                return (
-                  <div key={i} className="border border-neutral-200 bg-white rounded-md text-[12px]">
-                    <button
-                      onClick={() => setExpandedEmails(prev => ({ ...prev, [i]: !prev[i] }))}
-                      className="w-full flex items-center justify-between px-3 py-2 text-left"
-                    >
-                      <span className="font-medium text-neutral-600 truncate">
-                        {msg.from_name || msg.from}
-                      </span>
-                      <div className="flex items-center gap-2 flex-shrink-0 ml-2">
-                        <span className="text-neutral-400">
-                          {new Date(msg.received_at).toLocaleString('en-US', {
-                            month: 'short', day: 'numeric',
-                            hour: 'numeric', minute: '2-digit', hour12: true,
-                          })}
-                        </span>
-                        <ChevronRightIcon
-                          className={`w-3.5 h-3.5 text-neutral-400 transition-transform duration-150 ${isExpanded ? 'rotate-90' : ''}`}
-                        />
-                      </div>
-                    </button>
-                    {isExpanded && (
-                      <div className="px-3 pb-3 border-t border-neutral-100 pt-2.5">
-                        {msg.subject && msg.subject !== sourceData.subject && (
-                          <p className="text-neutral-400 text-[11px] mb-2">{msg.subject}</p>
-                        )}
-                        <p className="text-[12px] text-neutral-700 leading-relaxed whitespace-pre-wrap">
-                          {msg.snippet}
-                        </p>
-                      </div>
+          // Helper: parse display name from "Name <email>" or bare email
+          const parseName = (addr: string) => {
+            const m = addr.match(/^(.+?)\s*<[^>]+>$/);
+            return m ? m[1].trim() : addr.trim();
+          };
+
+          // Helper: format recipient list (max 2 inline, +N chip)
+          const formatRecipients = (addrs: string[] | null) => {
+            if (!addrs?.length) return null;
+            const names = addrs.map(parseName);
+            if (names.length <= 2) return names.join(', ');
+            return `${names.slice(0, 2).join(', ')} +${names.length - 2}`;
+          };
+
+          // Loading skeleton
+          if (threadEmails === null) {
+            return (
+              <div className="space-y-1.5 animate-pulse">
+                <div className="h-11 bg-neutral-100 rounded-lg" />
+                <div className="h-11 bg-neutral-100 rounded-lg" />
+              </div>
+            );
+          }
+
+          // Split into older + latest
+          const latestIdx = threadEmails.findIndex(e => e.id === currentEmailId);
+          const latest = latestIdx >= 0 ? threadEmails[latestIdx] : threadEmails[threadEmails.length - 1];
+          const older = latestIdx > 0 ? threadEmails.slice(0, latestIdx) : threadEmails.slice(0, -1);
+
+          const ALWAYS_VISIBLE = 2;
+          const hidden = older.length > ALWAYS_VISIBLE ? older.slice(0, older.length - ALWAYS_VISIBLE) : [];
+          const visible = older.length > ALWAYS_VISIBLE ? older.slice(older.length - ALWAYS_VISIBLE) : older;
+
+          const renderOlderMsg = (msg: any, idx: number) => {
+            const name = msg.is_from_user ? 'You' : (msg.from_name || msg.from_address || 'Unknown');
+            const isExpanded = !!expandedEmails[idx];
+            return (
+              <div key={msg.id ?? idx} className="border border-neutral-200 bg-white rounded-lg overflow-hidden">
+                <button
+                  onClick={() => handleExpandMsg(idx)}
+                  className="w-full flex items-center gap-3 px-3 py-2.5 text-left hover:bg-neutral-50 transition-colors"
+                >
+                  <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-semibold flex-shrink-0 ${avatarColor(name)}`}>
+                    {initials(name)}
+                  </div>
+                  <div className="flex-1 min-w-0 flex items-baseline gap-2 overflow-hidden">
+                    <span className="text-[12px] font-semibold text-neutral-700 flex-shrink-0">{name}</span>
+                    {!isExpanded && msg.body && (
+                      <span className="text-[12px] text-neutral-400 truncate block">{msg.body.replace(/\n/g, ' ').trim()}</span>
                     )}
                   </div>
-                );
-              })}
+                  <div className="flex items-center gap-1.5 flex-shrink-0">
+                    <span className="text-[11px] text-neutral-400">
+                      {new Date(msg.received_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true })}
+                    </span>
+                    <ChevronRightIcon className={`w-3.5 h-3.5 text-neutral-300 transition-transform duration-150 ${isExpanded ? 'rotate-90' : ''}`} />
+                  </div>
+                </button>
+                {isExpanded && (
+                  <div className="border-t border-neutral-100">
+                    <IframeEmailBody html={msg.html_body ?? null} plain={msg.body ?? null} />
+                  </div>
+                )}
+              </div>
+            );
+          };
+
+          const latestName = latest ? (latest.is_from_user ? 'You' : (latest.from_name || latest.from_address || 'Unknown')) : (sd?.from_name || sd?.from || 'Unknown');
+          const toStr = latest ? formatRecipients(latest.to_addresses) : formatRecipients(sd?.to_addresses);
+          const ccStr = latest ? formatRecipients(latest.cc_addresses) : formatRecipients(sd?.cc_addresses);
+
+          return (
+            <div className="space-y-1.5">
+              {/* Hidden older messages behind fold */}
+              {hidden.length > 0 && showAllHistory && hidden.map((msg: any, i: number) => renderOlderMsg(msg, i))}
+
+              {/* "Show earlier" pill */}
+              {hidden.length > 0 && (
+                <button
+                  onClick={() => setShowAllHistory(v => !v)}
+                  className="w-full flex items-center justify-center gap-1.5 py-1.5 text-[11px] text-neutral-400 hover:text-neutral-600 transition-colors"
+                >
+                  <ChevronRightIcon className={`w-3 h-3 transition-transform duration-150 ${showAllHistory ? '-rotate-90' : 'rotate-90'}`} />
+                  {showAllHistory ? 'Hide earlier messages' : `Show ${hidden.length} earlier message${hidden.length !== 1 ? 's' : ''}`}
+                </button>
+              )}
+
+              {/* Always-visible older messages */}
+              {visible.map((msg: any, i: number) => renderOlderMsg(msg, hidden.length + i))}
+
+              {/* Latest message — always expanded */}
+              {(latest?.html_body || latest?.body || sd?.html_body || sd?.body) && (
+                <div className="border border-neutral-200 bg-white rounded-lg shadow-sm overflow-hidden">
+                  {/* Header: avatar + sender + date */}
+                  <div className="flex items-center gap-3 px-3 py-2.5 border-b border-neutral-100">
+                    <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-semibold flex-shrink-0 ${avatarColor(latestName)}`}>
+                      {initials(latestName)}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-[13px] font-semibold text-neutral-800 truncate">{latestName}</div>
+                      {toStr && (
+                        <div className="text-[11px] text-neutral-400 truncate">
+                          <span className="font-medium">To:</span> {toStr}
+                          {ccStr && <><span className="ml-2 font-medium">CC:</span> {ccStr}</>}
+                        </div>
+                      )}
+                    </div>
+                    {(latest?.received_at || sd?.received_at) && (
+                      <span className="text-[11px] text-neutral-400 flex-shrink-0">
+                        {new Date(latest?.received_at ?? sd.received_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true })}
+                      </span>
+                    )}
+                  </div>
+                  <IframeEmailBody
+                    html={latest?.html_body ?? (sd?.html_body as string | null)}
+                    plain={latest?.body ?? (sd?.body as string | null)}
+                  />
+                </div>
+              )}
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* Attachments — chips */}
         {sourceData?.attachments && sourceData.attachments.length > 0 && (

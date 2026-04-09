@@ -32,6 +32,7 @@ interface OutlookMessage {
   internetMessageId: string;
   hasAttachments?: boolean;
   isRead?: boolean;
+  internetMessageHeaders?: Array<{ name: string; value: string }>;
 }
 
 export interface OutlookAttachmentMeta {
@@ -110,7 +111,7 @@ export async function fetchUnreadEmails(
     .api('/me/mailFolders/inbox/messages')
     .filter(`receivedDateTime ge ${dateString}`)
     .top(maxResults)
-    .select('id,conversationId,subject,bodyPreview,body,from,toRecipients,ccRecipients,receivedDateTime,internetMessageId,hasAttachments,isRead')
+    .select('id,conversationId,subject,bodyPreview,body,from,toRecipients,ccRecipients,receivedDateTime,internetMessageId,hasAttachments,isRead,internetMessageHeaders')
     .orderby('receivedDateTime desc')
     .get();
 
@@ -140,8 +141,18 @@ export function parseOutlookMessage(message: OutlookMessage) {
   const to_addresses = (message.toRecipients || []).map(r => r.emailAddress.address);
   const cc_addresses = (message.ccRecipients || []).map(r => r.emailAddress.address);
 
+  // Extract RFC threading headers from internetMessageHeaders
+  const getInternetHeader = (name: string) =>
+    (message.internetMessageHeaders || []).find(h => h.name.toLowerCase() === name.toLowerCase())?.value || '';
+  const rawReferences = getInternetHeader('References');
+  const referencesIds = rawReferences.trim()
+    ? rawReferences.trim().split(/\s+/).filter(Boolean)
+    : [];
+
   return {
     message_id: message.internetMessageId || message.id,
+    in_reply_to: getInternetHeader('In-Reply-To').trim() || null,
+    references_ids: referencesIds.length > 0 ? referencesIds : null,
     from_address: message.from.emailAddress.address,
     from_name: message.from.emailAddress.name || message.from.emailAddress.address,
     to_addresses,
@@ -181,7 +192,7 @@ export async function fetchOutlookConversation(
   let response = await client
     .api('/me/messages')
     .filter(`conversationId eq '${conversationId}'`)
-    .select('id,conversationId,subject,bodyPreview,body,from,toRecipients,ccRecipients,receivedDateTime,internetMessageId,hasAttachments,isRead')
+    .select('id,conversationId,subject,bodyPreview,body,from,toRecipients,ccRecipients,receivedDateTime,internetMessageId,hasAttachments,isRead,internetMessageHeaders')
     .top(50)
     .get();
 
@@ -194,6 +205,29 @@ export async function fetchOutlookConversation(
 
   results.sort((a, b) => new Date(a.receivedDateTime).getTime() - new Date(b.receivedDateTime).getTime());
   return results.slice(0, MAX_MESSAGES);
+}
+
+export async function fetchSentEmails(
+  encryptedTokens: string,
+  maxResults: number = 25,
+  syncWindowDays: number = 7,
+  onTokenRefresh?: TokenRefreshCallback,
+  lastSync?: string,
+) {
+  const client = await getGraphClient(encryptedTokens, onTokenRefresh);
+  const dateString = lastSync
+    ? new Date(lastSync).toISOString()
+    : (() => { const d = new Date(); d.setDate(d.getDate() - syncWindowDays); return d.toISOString(); })();
+
+  const messages = await client
+    .api('/me/mailFolders/sentItems/messages')
+    .filter(`receivedDateTime ge ${dateString}`)
+    .top(maxResults)
+    .select('id,conversationId,subject,bodyPreview,body,from,toRecipients,ccRecipients,receivedDateTime,internetMessageId,hasAttachments,isRead,internetMessageHeaders')
+    .orderby('receivedDateTime desc')
+    .get();
+
+  return messages.value as OutlookMessage[];
 }
 
 export async function fetchOutlookAttachments(
