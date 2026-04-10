@@ -42,7 +42,7 @@ export async function middleware(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   // Protected routes - require authentication
-  const protectedRoutes = ['/desk', '/inbox', '/settings', '/activity', '/company', '/processes', '/admin', '/platform-admin', '/drive', '/meetings'];
+  const protectedRoutes = ['/inbox', '/settings', '/activity', '/company', '/processes', '/admin', '/platform-admin', '/drive', '/meetings'];
   const isProtectedRoute = protectedRoutes.some(route =>
     pathname.startsWith(route)
   );
@@ -75,8 +75,7 @@ export async function middleware(request: NextRequest) {
 
   // Redirect authenticated users away from auth routes
   if (isAuthRoute && user) {
-    const deskUrl = new URL('/desk', request.url);
-    return NextResponse.redirect(deskUrl);
+    return NextResponse.redirect(new URL('/inbox', request.url));
   }
 
   // Clear stale cookies on auth pages if no valid user
@@ -104,10 +103,9 @@ export async function middleware(request: NextRequest) {
     return response;
   }
 
-  // Redirect authenticated users from root to desk
+  // Redirect authenticated users from root to inbox
   if (pathname === '/' && user) {
-    const deskUrl = new URL('/desk', request.url);
-    return NextResponse.redirect(deskUrl);
+    return NextResponse.redirect(new URL('/inbox', request.url));
   }
 
   return supabaseResponse;

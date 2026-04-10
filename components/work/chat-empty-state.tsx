@@ -16,7 +16,7 @@ export function ChatEmptyState({ onStart, userFirstName, savedWorkflows = [], on
   const heading = name ? `What's on your mind, ${name}?` : "What's on your mind?";
 
   function start(message: string) {
-    onStart(message, ['kb', 'inbox', 'calendar', 'processes', 'desk'], []);
+    onStart(message, ['kb', 'inbox', 'calendar', 'processes'], []);
   }
 
   return (

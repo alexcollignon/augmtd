@@ -83,33 +83,6 @@ async function prefetchContext(
     );
   }
 
-  // Task/work references → desk items
-  if (TASK_RE.test(message)) {
-    fetches.push(
-      Promise.resolve(
-        supabase
-          .from('desk_items')
-          .select('title, urgency, kanban_column')
-          .eq('user_id', userId)
-          .in('kanban_column', ['todo', 'in_progress', 'waiting'])
-          .order('position', { ascending: true })
-          .limit(10)
-      ).then(({ data }) => {
-        if (data && data.length > 0) {
-          const labels: Record<string, string> = { todo: 'To Do', in_progress: 'In Progress', waiting: 'Waiting' };
-          parts.push(
-            'YOUR CURRENT TASKS:\n' +
-            data.map((t: any) => {
-              const col = labels[t.kanban_column] ?? t.kanban_column;
-              const urg = t.urgency ? ` [${t.urgency}]` : '';
-              return `- ${t.title}${urg} (${col})`;
-            }).join('\n')
-          );
-        }
-      }).catch(() => {})
-    );
-  }
-
   if (fetches.length === 0) return null;
   await Promise.all(fetches);
   return parts.length > 0 ? `<available_context>\n${parts.join('\n\n')}\n</available_context>` : null;
@@ -361,7 +334,7 @@ export async function POST(
     }
 
     // Build tools based on heuristic route — model gets full tool set unless trivially conversational
-    const allSources = ['kb', 'inbox', 'calendar', 'desk'];
+    const allSources = ['kb', 'inbox', 'calendar'];
     const tools = routeMode === 'no_tools'
       ? []
       : buildChatTools(allSources, chatEndpoint.provider, modelFamily);
@@ -944,20 +917,6 @@ function buildChatTools(sources: string[], _provider: string, _modelFamily: stri
     });
   }
 
-  if (sources.includes('desk')) {
-    neutral.push({
-      name: 'get_desk_tasks',
-      description: "Get tasks from the user's desk board (to do, in progress, waiting).",
-      input_schema: {
-        type: 'object',
-        properties: {
-          filter: { type: 'string', description: 'Keyword, urgency (high/medium/low), or status (todo/in_progress/waiting)' },
-        },
-        required: [],
-      },
-    });
-  }
-
   // ── Action tools ────────────────────────────────────────────────────────────
   neutral.push(
     {
@@ -1033,7 +992,6 @@ function toolLabel(name: string): string {
     read_document: 'Reading document',
     get_recent_emails: 'Checking recent emails',
     get_calendar_context: 'Checking calendar',
-    get_desk_tasks: 'Checking your desk',
     request_clarification: 'Preparing options',
     generate_document: 'Generating document',
   };
@@ -1253,44 +1211,6 @@ async function executeChatTool(
       const result = formatCalendarContextForChat(filteredCtx) || 'No calendar events found for that range.';
       const eventCount = meetings.length;
       const summary = eventCount > 0 ? `Found ${eventCount} event${eventCount > 1 ? 's' : ''}` : 'No events found';
-      return { result, summary };
-    }
-
-    case 'get_desk_tasks': {
-      const filter = (input.filter as string | undefined) ?? '';
-      let query = ctx.adminClient
-        .from('desk_items')
-        .select('id, title, description, urgency, kanban_column, source_type, ai_context, synthesis')
-        .eq('user_id', ctx.userId)
-        .in('kanban_column', ['todo', 'in_progress', 'waiting'])
-        .order('position', { ascending: true })
-        .limit(15);
-      // Apply filter: urgency match, status match, or title keyword
-      if (filter) {
-        const f = filter.toLowerCase();
-        if (['high', 'medium', 'low'].includes(f)) {
-          query = query.eq('urgency', f);
-        } else if (['todo', 'in_progress', 'waiting'].includes(f)) {
-          query = query.eq('kanban_column', f);
-        } else {
-          query = query.ilike('title', `%${filter}%`);
-        }
-      }
-      const { data: tasks } = await query;
-      if (!tasks || tasks.length === 0) {
-        return { result: 'No active tasks found on your desk.', summary: 'No tasks found' };
-      }
-      const columnLabels: Record<string, string> = {
-        todo: 'To Do', in_progress: 'In Progress', waiting: 'Waiting',
-      };
-      const lines = tasks.map((t: Record<string, unknown>) => {
-        const col = columnLabels[t.kanban_column as string] ?? String(t.kanban_column);
-        const urgency = t.urgency ? ` [${String(t.urgency).toUpperCase()}]` : '';
-        const context = (t.synthesis || t.ai_context) ? `\n  → ${String(t.synthesis || t.ai_context).slice(0, 120)}` : '';
-        return `- ${t.title}${urgency} (${col})${context}`;
-      });
-      const result = `DESK TASKS (active):\n\n${lines.join('\n')}\n\nList specific task names and details in your response — do not summarize with empty headers.`;
-      const summary = `Found ${tasks.length} task${tasks.length > 1 ? 's' : ''}`;
       return { result, summary };
     }
 
@@ -1563,7 +1483,7 @@ async function buildMentionContext(
 
           const { contact_email, contact_name } = contact;
 
-          const [fromEmailsRes, toEmailsRes, meetingsRes, deskRes] = await Promise.all([
+          const [fromEmailsRes, toEmailsRes, meetingsRes] = await Promise.all([
             // Emails FROM this contact
             adminClient
               .from('emails')
@@ -1587,14 +1507,6 @@ async function buildMentionContext(
               .eq('user_id', userId)
               .contains('attendees', JSON.stringify([{ email: contact_email }]))
               .order('start_time', { ascending: false })
-              .limit(5),
-            // Active desk items mentioning them
-            adminClient
-              .from('desk_items')
-              .select('title, urgency, kanban_column, ai_context')
-              .eq('user_id', userId)
-              .or(`title.ilike.%${contact_name || contact_email}%,ai_context.ilike.%${contact_email}%`)
-              .not('kanban_column', 'eq', 'done')
               .limit(5),
           ]);
 
@@ -1648,41 +1560,7 @@ async function buildMentionContext(
             }
           }
 
-          const deskItems = deskRes.data ?? [];
-          if (deskItems.length > 0) {
-            const colLabels: Record<string, string> = { todo: 'To Do', in_progress: 'In Progress', waiting: 'Waiting', pool: 'Pool' };
-            parts.push(`\nActive work items (${deskItems.length}):`);
-            for (const item of deskItems) {
-              parts.push(
-                `  · [${colLabels[item.kanban_column] ?? item.kanban_column}] "${item.title}"` +
-                (item.urgency ? ` (${item.urgency})` : '') +
-                (item.ai_context ? ` — ${String(item.ai_context).slice(0, 100)}` : '')
-              );
-            }
-          }
-
           lines.push(parts.join('\n'));
-          break;
-        }
-        case 'desk': {
-          const { data } = await adminClient
-            .from('desk_items')
-            .select('title, description, urgency, kanban_column, source_type, ai_context, synthesis')
-            .eq('id', m.id)
-            .eq('user_id', userId)
-            .single();
-          if (data) {
-            const columnLabels: Record<string, string> = {
-              todo: 'To Do', in_progress: 'In Progress', waiting: 'Waiting', done: 'Done', pool: 'Pool',
-            };
-            lines.push(
-              `[TASK] "${data.title}"` +
-              ` — ${columnLabels[data.kanban_column] ?? data.kanban_column}` +
-              (data.urgency ? ` [${String(data.urgency).toUpperCase()}]` : '') +
-              (data.synthesis || data.ai_context ? `\nContext: ${String(data.synthesis || data.ai_context).slice(0, 200)}` : '') +
-              (data.description ? `\nDescription: ${String(data.description).slice(0, 150)}` : '')
-            );
-          }
           break;
         }
       }
@@ -1744,7 +1622,7 @@ function hasSpecificSubject(message: string): boolean {
 // tool_calls deltas when using OpenAI-compatible wrappers. These helpers detect
 // and parse them so we can execute the tools correctly.
 
-const XML_TOOL_NAMES = ['search_knowledge_base', 'get_recent_emails', 'get_calendar_context', 'get_desk_tasks', 'request_clarification', 'generate_document'];
+const XML_TOOL_NAMES = ['search_knowledge_base', 'get_recent_emails', 'get_calendar_context', 'request_clarification', 'generate_document'];
 
 function parseXmlToolCalls(text: string): Array<{ name: string; args: Record<string, unknown> }> | null {
   if (!text.includes('<')) return null;

@@ -11,13 +11,12 @@ import WorkDetailInline from '@/components/inbox/work-detail-inline';
 import AiChatPanel from '@/components/shared/ai-chat-panel';
 import WorkflowPanel from '@/components/inbox/workflow-panel';
 import MeetingsColumn from '@/components/inbox/meetings-column';
-import { ArrowPathIcon, ChatBubbleLeftRightIcon, SparklesIcon, Bars3Icon, QueueListIcon, ArchiveBoxArrowDownIcon, XMarkIcon, MagnifyingGlassIcon, PencilSquareIcon, CalendarIcon, RectangleGroupIcon, TrashIcon } from '@heroicons/react/24/outline';
+import { ArrowPathIcon, ChatBubbleLeftIcon, SparklesIcon, Bars3Icon, QueueListIcon, ArchiveBoxArrowDownIcon, XMarkIcon, MagnifyingGlassIcon, PencilSquareIcon, CalendarDaysIcon, TrashIcon } from '@heroicons/react/24/outline';
 import ComposePanel from '@/components/inbox/compose-panel';
 import { toast } from 'sonner';
 import type { CalendarEvent } from '@/lib/types/meetings';
 import type { InboxItem } from '@/lib/types/inbox';
 
-import DeskPageClient from '@/app/desk/desk-page-client';
 
 type ViewMode = 'chronological' | 'smart';
 type Density = 'normal' | 'compact';
@@ -52,16 +51,15 @@ export function InboxPageClient({
   const [bulkDeleteConfirmPending, setBulkDeleteConfirmPending] = useState(false);
   const [bulkArchiveConfirmPending, setBulkArchiveConfirmPending] = useState(false);
 
-  const [showDesk, setShowDesk] = useState(false);
-  const [deskClosing, setDeskClosing] = useState(false);
-
-  const closeDesk = useCallback(() => {
-    setDeskClosing(true);
-    setTimeout(() => { setShowDesk(false); setDeskClosing(false); }, 300);
-  }, []);
 
   // Search state (client-side filter on left list)
   const [searchQuery, setSearchQuery] = useState('');
+  const [showSearch, setShowSearch] = useState(false);
+
+  useEffect(() => {
+    if (showSearch) searchInputRef.current?.focus();
+    else setSearchQuery('');
+  }, [showSearch]);
 
   // Right panel + compose state
   const [rightPanel, setRightPanel] = useState<'calendar' | 'chat' | 'workflow' | null>('calendar');
@@ -158,7 +156,6 @@ export function InboxPageClient({
     const target = inboxItems.find((i) => i.id === itemId);
     if (target) {
       deepLinkFiredRef.current = itemId;
-      setShowDesk(false);
       handleSelectItem(target);
       window.history.replaceState({}, '', '/inbox');
     }
@@ -676,16 +673,8 @@ export function InboxPageClient({
           </div>
         )}
 
-        {/* Desk + inbox stacked — desk slides up from below */}
         {hasConnection && (
           <div className="flex-1 min-h-0 relative overflow-hidden">
-
-            {/* Desk panel — slides up from below, unmounts after close animation */}
-            {(showDesk || deskClosing) && (
-              <div className={`absolute inset-0 z-50 ${deskClosing ? 'desk-slide-down' : 'desk-slide-up'}`}>
-                <DeskPageClient onClose={closeDesk} />
-              </div>
-            )}
 
             {/* 3-column inbox layout */}
             <div className="absolute inset-0 flex min-h-0 overflow-hidden">
@@ -693,85 +682,93 @@ export function InboxPageClient({
             <div className="w-[272px] flex-shrink-0 flex flex-col bg-neutral-50 p-2">
               <div className="flex-1 flex flex-col rounded-2xl bg-white shadow-sm overflow-hidden">
 
-              {/* View + density toggles */}
-              <div className="flex-shrink-0 flex items-center justify-between pl-2.5 pr-1 h-10 border-b border-neutral-100">
-                {/* Segmented view tabs */}
-                <div className="relative grid grid-cols-2 bg-neutral-100 rounded-full p-0.5">
-                  <div
-                    className="absolute inset-y-0.5 w-[calc(50%-2px)] rounded-full bg-white shadow-sm pointer-events-none"
-                    style={{
-                      left: viewMode === 'smart' ? '50%' : '2px',
-                      transition: 'left 180ms ease-in-out',
-                    }}
-                  />
-                  {(['chronological', 'smart'] as const).map((key) => {
-                    const labels = { chronological: 'Standard', smart: 'Smart' };
-                    return (
-                      <button
-                        key={key}
-                        onClick={() => handleViewMode(key)}
-                        className={`relative z-10 px-2.5 py-0.5 text-[11px] font-medium rounded-full text-center transition-colors duration-180 ${
-                          viewMode === key ? 'text-neutral-800' : 'text-neutral-500 hover:text-neutral-700'
-                        }`}
-                      >
-                        {labels[key]}
-                      </button>
-                    );
-                  })}
+              {/* View + density toggles / search — animated crossfade */}
+              <div className="flex-shrink-0 relative h-10 border-b border-neutral-100 overflow-hidden">
+
+                {/* Toolbar layer — slides up + fades out when search opens */}
+                <div className={`absolute inset-0 flex items-center pl-2.5 pr-1 transition-all duration-200 ease-in-out ${showSearch ? 'opacity-0 -translate-y-2 pointer-events-none' : 'opacity-100 translate-y-0'}`}>
+                  {/* Segmented view tabs */}
+                  <div className="relative grid grid-cols-2 bg-neutral-100 rounded-full p-0.5">
+                    <div
+                      className="absolute inset-y-0.5 w-[calc(50%-2px)] rounded-full bg-white shadow-sm pointer-events-none"
+                      style={{
+                        left: viewMode === 'smart' ? '50%' : '2px',
+                        transition: 'left 180ms ease-in-out',
+                      }}
+                    />
+                    {(['chronological', 'smart'] as const).map((key) => {
+                      const labels = { chronological: 'Standard', smart: 'Smart' };
+                      return (
+                        <button
+                          key={key}
+                          onClick={() => handleViewMode(key)}
+                          className={`relative z-10 px-2.5 py-0.5 text-[11px] font-medium rounded-full text-center transition-colors duration-180 ${
+                            viewMode === key ? 'text-neutral-800' : 'text-neutral-500 hover:text-neutral-700'
+                          }`}
+                        >
+                          {labels[key]}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Density toggles + action icons */}
+                  <div className="flex items-center ml-auto">
+                    <button
+                      onClick={() => handleDensity('normal')}
+                      title="Normal density"
+                      className={`p-1 transition-colors ${density === 'normal' ? 'text-neutral-400' : 'text-neutral-300 hover:text-neutral-400'}`}
+                    >
+                      <QueueListIcon className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={() => handleDensity('compact')}
+                      title="Compact density"
+                      className={`p-1 transition-colors ${density === 'compact' ? 'text-neutral-400' : 'text-neutral-300 hover:text-neutral-400'}`}
+                    >
+                      <Bars3Icon className="w-3.5 h-3.5" />
+                    </button>
+                    <div className="w-px h-3.5 bg-neutral-200 mx-1" />
+                    <button
+                      onClick={() => { if (isSyncing) return; preSyncCountRef.current = inboxItems.length; setIsSyncing(true); fetch('/api/connections/sync', { method: 'POST' }).catch(() => setIsSyncing(false)); }}
+                      disabled={isSyncing}
+                      title={isSyncing ? 'Syncing…' : 'Sync inbox'}
+                      className="p-1 transition-colors text-neutral-400 hover:text-neutral-600 disabled:opacity-50"
+                    >
+                      <ArrowPathIcon className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+                    </button>
+                    <button
+                      onClick={() => setShowSearch(true)}
+                      title="Search inbox"
+                      className="p-1 transition-colors text-neutral-400 hover:text-neutral-600"
+                    >
+                      <MagnifyingGlassIcon className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
 
-                {/* Density toggles + action icons */}
-                <div className="flex items-center">
-                  {/* Density — subtle toggles */}
-                  <button
-                    onClick={() => handleDensity('normal')}
-                    title="Normal density"
-                    className={`p-1 transition-colors ${
-                      density === 'normal' ? 'text-neutral-400' : 'text-neutral-300 hover:text-neutral-400'
-                    }`}
-                  >
-                    <QueueListIcon className="w-3.5 h-3.5" />
-                  </button>
-                  <button
-                    onClick={() => handleDensity('compact')}
-                    title="Compact density"
-                    className={`p-1 transition-colors ${
-                      density === 'compact' ? 'text-neutral-400' : 'text-neutral-300 hover:text-neutral-400'
-                    }`}
-                  >
-                    <Bars3Icon className="w-3.5 h-3.5" />
-                  </button>
-                  {/* Divider */}
-                  <div className="w-px h-3.5 bg-neutral-200 mx-1" />
-                  {/* Compose — action icon, indigo tint */}
-                  <button
-                    onClick={() => {
-                      setComposeMode(true);
-                      setRightPanel('chat');
-                      setTimeout(() => chatInputRef.current?.focus(), 50);
+                {/* Search layer — slides up from below + fades in when search opens */}
+                <div className={`absolute inset-0 flex items-center pl-2.5 pr-1 transition-all duration-200 ease-in-out ${showSearch ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2 pointer-events-none'}`}>
+                  <MagnifyingGlassIcon className="w-3.5 h-3.5 text-neutral-400 flex-shrink-0" />
+                  <input
+                    ref={searchInputRef}
+                    type="text"
+                    value={searchQuery}
+                    onChange={e => setSearchQuery(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Escape') setShowSearch(false);
                     }}
-                    title="Compose new email"
-                    className={`p-1 transition-colors ${
-                      composeMode ? 'text-indigo-500' : 'text-neutral-400 hover:text-indigo-500'
-                    }`}
-                  >
-                    <PencilSquareIcon className="w-3.5 h-3.5" />
-                  </button>
-                  {/* Sync — action icon */}
+                    placeholder="Search inbox..."
+                    className="flex-1 mx-2 text-[12px] text-neutral-700 placeholder-neutral-400 bg-transparent outline-none min-w-0"
+                  />
                   <button
-                    onClick={() => {
-                      if (isSyncing) return;
-                      preSyncCountRef.current = inboxItems.length;
-                      setIsSyncing(true);
-                      fetch('/api/connections/sync', { method: 'POST' }).catch(() => setIsSyncing(false));
-                    }}
-                    disabled={isSyncing}
-                    title={isSyncing ? 'Syncing…' : 'Sync inbox'}
-                    className="p-1 transition-colors text-neutral-400 hover:text-neutral-600 disabled:opacity-50"
+                    onClick={() => setShowSearch(false)}
+                    className="flex-shrink-0 p-0.5 text-neutral-400 hover:text-neutral-600 transition-colors"
                   >
-                    <ArrowPathIcon className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+                    <XMarkIcon className="w-3.5 h-3.5" />
                   </button>
                 </div>
+
               </div>
 
               {/* Bulk action bar */}
@@ -793,7 +790,7 @@ export function InboxPageClient({
                       <span className="text-[11px] font-semibold text-indigo-800 flex-1">
                         Archive {selectedIds.size} email{selectedIds.size > 1 ? 's' : ''}?
                       </span>
-                      <button onClick={() => { setBulkArchiveConfirmPending(false); handleBulkArchive(); }} className="px-2.5 py-1 text-[11px] font-semibold bg-indigo-600 text-white hover:bg-indigo-700 transition-colors">
+                      <button onClick={() => { setBulkArchiveConfirmPending(false); handleBulkArchive(); }} className="px-2.5 py-1 text-[11px] font-semibold bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors">
                         Confirm
                       </button>
                       <button onClick={() => setBulkArchiveConfirmPending(false)} className="p-1 text-indigo-400 hover:text-indigo-700 transition-colors" title="Cancel">
@@ -806,7 +803,7 @@ export function InboxPageClient({
                       <span className="text-[11px] font-semibold text-red-800 flex-1">
                         Delete {selectedIds.size} email{selectedIds.size > 1 ? 's' : ''}?
                       </span>
-                      <button onClick={() => { setBulkDeleteConfirmPending(false); handleBulkDelete(); }} className="px-2.5 py-1 text-[11px] font-semibold bg-red-600 text-white hover:bg-red-700 transition-colors">
+                      <button onClick={() => { setBulkDeleteConfirmPending(false); handleBulkDelete(); }} className="px-2.5 py-1 text-[11px] font-semibold bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors">
                         Confirm
                       </button>
                       <button onClick={() => setBulkDeleteConfirmPending(false)} className="p-1 text-red-400 hover:text-red-700 transition-colors" title="Cancel">
@@ -881,55 +878,19 @@ export function InboxPageClient({
               </div>
             </div>
 
-            {/* Middle: search header + detail/compose */}
+            {/* Middle: detail/compose */}
             <div className="flex-1 min-w-0 overflow-hidden flex flex-col bg-neutral-50 pl-2 pt-2 pb-2">
-              <div className="flex-1 flex flex-col rounded-2xl bg-white shadow-sm overflow-hidden">
-              {/* Middle header — search + ask + compose */}
-              <div className="flex-shrink-0 h-10 flex items-center gap-1 px-3 border-b border-neutral-100">
-                {/* Search */}
-                <MagnifyingGlassIcon className="w-3.5 h-3.5 text-neutral-400 flex-shrink-0" />
-                <input
-                  ref={searchInputRef}
-                  type="text"
-                  value={searchQuery}
-                  onChange={e => setSearchQuery(e.target.value)}
-                  onKeyDown={e => {
-                    if (e.key === 'Escape') {
-                      setSearchQuery('');
-                      searchInputRef.current?.blur();
-                    }
-                  }}
-                  placeholder="Search inbox..."
-                  className="flex-1 text-[12px] text-neutral-700 placeholder-neutral-400 bg-transparent outline-none min-w-0"
-                />
-                {searchQuery && (
+              <div className="relative flex-1 flex flex-col rounded-2xl bg-white shadow-sm overflow-hidden">
+                {/* Compose button — top-right, inline with email title */}
+                {!composeMode && (
                   <button
-                    onClick={() => setSearchQuery('')}
-                    className="flex-shrink-0 p-0.5 text-neutral-400 hover:text-neutral-600 transition-colors"
+                    onClick={() => { setComposeMode(true); setRightPanel('chat'); setTimeout(() => chatInputRef.current?.focus(), 50); }}
+                    title="Compose new email"
+                    className="absolute top-[14px] right-5 z-10 p-1.5 rounded-lg text-neutral-400 hover:text-indigo-500 hover:bg-neutral-50 transition-colors"
                   >
-                    <XMarkIcon className="w-3.5 h-3.5" />
+                    <PencilSquareIcon className="w-4 h-4" />
                   </button>
                 )}
-
-                {/* Divider */}
-                <div className="w-px h-4 bg-neutral-200 mx-1 flex-shrink-0" />
-
-                {/* On Your Desk toggle */}
-                <button
-                  onClick={() => showDesk ? closeDesk() : setShowDesk(true)}
-                  title="On Your Desk"
-                  className={`flex-shrink-0 p-1.5 border rounded-md transition-colors ${
-                    showDesk
-                      ? 'bg-indigo-600 border-indigo-600 text-white'
-                      : 'border-neutral-300 text-neutral-600 hover:bg-neutral-50'
-                  }`}
-                >
-                  <RectangleGroupIcon className="w-3.5 h-3.5" />
-                </button>
-
-
-              </div>
-
               <div className="flex-1 min-h-0 overflow-hidden">
                   {composeMode ? (
                     <ComposePanel
@@ -966,10 +927,10 @@ export function InboxPageClient({
               {/* Closed — icon strip */}
               <div className={`flex flex-col items-center pt-3 gap-1.5 transition-opacity duration-150 ${rightPanel ? 'opacity-0 pointer-events-none absolute' : 'opacity-100'}`}>
                 <button onClick={() => setRightPanel('calendar')} title="Calendar" className="p-2 rounded-xl bg-white shadow-sm text-neutral-500 hover:bg-neutral-50 transition-colors">
-                  <CalendarIcon className="w-4 h-4" />
+                  <CalendarDaysIcon className="w-4 h-4" />
                 </button>
                 <button onClick={() => { setComposeMode(false); openChat(); }} title="Ask AI" className="p-2 rounded-xl bg-white shadow-sm text-neutral-500 hover:bg-neutral-50 transition-colors">
-                  <ChatBubbleLeftRightIcon className="w-4 h-4" />
+                  <ChatBubbleLeftIcon className="w-4 h-4" />
                 </button>
               </div>
               {/* Open — full panel */}

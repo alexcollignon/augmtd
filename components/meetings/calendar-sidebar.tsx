@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { ChevronDownIcon, ChevronUpIcon, CalendarIcon, ChatBubbleLeftRightIcon, ChevronRightIcon, ChevronLeftIcon, PlusIcon } from '@heroicons/react/24/outline';
+import { ChevronDownIcon, ChevronUpIcon, CalendarDaysIcon, ChatBubbleLeftIcon, ChevronRightIcon, ChevronLeftIcon, PlusIcon } from '@heroicons/react/24/outline';
 import type { CalendarEvent } from '@/lib/types/meetings';
 import MeetingCard from '@/components/meetings/meeting-card';
 import MonthCalendar from '@/components/meetings/month-calendar';
@@ -272,7 +272,7 @@ export default function CalendarSidebar({
           {/* Left: active Calendar icon + Chat toggle */}
           <div className="flex items-center gap-1.5">
             <div className="p-1.5 border rounded-md bg-indigo-600 border-indigo-600 text-white">
-              <CalendarIcon className="w-3.5 h-3.5" />
+              <CalendarDaysIcon className="w-3.5 h-3.5" />
             </div>
             {onOpenChat && (
               <button
@@ -280,7 +280,7 @@ export default function CalendarSidebar({
                 title="AI Chat"
                 className="p-1.5 border border-neutral-200 text-neutral-500 hover:bg-neutral-50 rounded-md transition-colors"
               >
-                <ChatBubbleLeftRightIcon className="w-3.5 h-3.5" />
+                <ChatBubbleLeftIcon className="w-3.5 h-3.5" />
               </button>
             )}
           </div>

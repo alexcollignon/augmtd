@@ -268,7 +268,7 @@ export default function ComposePanel({ draft, onChange, onDiscard, onSent }: Com
           <button
             onClick={handleSend}
             disabled={!draft.to.trim() || isSending}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-semibold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-semibold bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             {isSending ? (
               <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />

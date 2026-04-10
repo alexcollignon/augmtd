@@ -239,22 +239,8 @@ export default function MeetingDetailClient({
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(event.folder_id ?? null);
   const [folderPopoverOpen, setFolderPopoverOpen] = useState(false);
   const [movingFolder, setMovingFolder] = useState(false);
-  const [confirmedIds, setConfirmedIds] = useState<Set<string>>(new Set());
   const { primary } = formatMeetingTime(event.start_time, event.end_time);
   const duration = calculateDuration(event.start_time, event.end_time);
-
-  const handleConfirmToDesk = async (item: ActionItem) => {
-    try {
-      const res = await fetch('/api/desk', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: item.workTitle, kanban_column: 'todo' }),
-      });
-      if (res.ok) {
-        setConfirmedIds((prev) => new Set(prev).add(item.id));
-      }
-    } catch {}
-  };
 
   const handleOpenWorkflow = (title: string, skill?: string) => {
     const params = new URLSearchParams();
@@ -623,17 +609,9 @@ export default function MeetingDetailClient({
               <div className="space-y-2">
                 {actionItems.map((item) => (
                   <div key={item.id} className="flex items-start gap-2.5">
-                    {confirmedIds.has(item.id) ? (
-                      <CheckCircleIcon className="w-4 h-4 text-emerald-500 flex-shrink-0 mt-0.5" />
-                    ) : (
-                      <button
-                        onClick={() => handleConfirmToDesk(item)}
-                        className="w-4 h-4 rounded border border-neutral-300 flex-shrink-0 mt-0.5 hover:border-indigo-400 transition-colors"
-                        title="Add to desk"
-                      />
-                    )}
+                    <div className="w-1.5 h-1.5 rounded-full bg-neutral-300 flex-shrink-0 mt-1.5" />
                     <div className="flex-1 min-w-0">
-                      <p className={`text-[13px] leading-relaxed ${confirmedIds.has(item.id) ? 'text-neutral-400 line-through' : 'text-neutral-800'}`}>
+                      <p className="text-[13px] leading-relaxed text-neutral-800">
                         {item.workTitle}
                         {item.assignee && (
                           <span className="ml-1.5 text-[11px] text-neutral-400 font-normal">— {item.assignee}</span>

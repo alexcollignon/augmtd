@@ -49,34 +49,7 @@ export async function POST(request: NextRequest) {
     //    Messages cascade automatically via FK.
     await deleteWorkThreads(adminSupabase, userId, isAll ? null : connectionId);
 
-    // 3. Delete desk_items derived from this connection's inbox items
-    if (isAll) {
-      await adminSupabase.from('desk_items').delete().eq('user_id', userId);
-    } else {
-      // Always clear meeting_action desk items regardless of connection scope
-      await adminSupabase
-        .from('desk_items')
-        .delete()
-        .eq('user_id', userId)
-        .eq('source_type', 'meeting_action');
-      // Find inbox_item IDs for this connection before deleting them
-      const { data: connItems } = await adminSupabase
-        .from('inbox_items')
-        .select('id')
-        .eq('user_id', userId)
-        .eq('connection_id', connectionId);
-      const connItemIds = (connItems || []).map((i: { id: string }) => i.id);
-      if (connItemIds.length > 0) {
-        await adminSupabase
-          .from('desk_items')
-          .delete()
-          .eq('user_id', userId)
-          .eq('source_type', 'email')
-          .in('source_id', connItemIds);
-      }
-    }
-
-    // 4. Delete inbox_items (email + meeting sourced)
+    // 3. Delete inbox_items (email + meeting sourced)
     if (isAll) {
       await adminSupabase.from('inbox_items').delete().eq('user_id', userId);
     } else {
@@ -110,7 +83,7 @@ export async function POST(request: NextRequest) {
       calendarEventIds = (data || []).map(e => e.id);
     }
 
-    // 6. Delete meeting transcripts, linked inbox_items, desk_items, and recordings from storage
+    // 6. Delete meeting transcripts, linked inbox_items, and recordings from storage
     {
       // Fetch all transcripts in scope: calendar-linked + ad-hoc (calendar_event_id IS NULL, isAll only)
       let transcriptQuery = adminSupabase
@@ -136,22 +109,6 @@ export async function POST(request: NextRequest) {
           .delete()
           .eq('user_id', userId)
           .in('source_meeting_transcript_id', transcriptIds);
-
-        // Delete linked desk_items (meeting_action cards)
-        const { data: meetingInboxItems } = await adminSupabase
-          .from('inbox_items')
-          .select('id')
-          .eq('user_id', userId)
-          .eq('source', 'meeting');
-        const meetingInboxIds = (meetingInboxItems || []).map((i: { id: string }) => i.id);
-        if (meetingInboxIds.length > 0) {
-          await adminSupabase
-            .from('desk_items')
-            .delete()
-            .eq('user_id', userId)
-            .eq('source_type', 'meeting_action')
-            .in('source_id', meetingInboxIds);
-        }
 
         // Delete recording files from storage
         const storagePaths = (transcripts || [])

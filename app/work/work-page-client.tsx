@@ -442,7 +442,7 @@ function ActiveChatView({
     if (!pendingInput || isLoading || isStreaming || isAttachUploading || hasSentPending.current) return;
     hasSentPending.current = true;
     onPendingInputConsumed();
-    handleSubmit(pendingInput, ['kb', 'inbox', 'calendar', 'processes', 'desk'], pendingMentions, pendingAttachmentMeta);
+    handleSubmit(pendingInput, ['kb', 'inbox', 'calendar', 'processes'], pendingMentions, pendingAttachmentMeta);
   }, [pendingInput, isLoading, isAttachUploading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-scroll
@@ -466,7 +466,7 @@ function ActiveChatView({
       }
       return prev;
     });
-    handleSubmit(content, ['kb', 'inbox', 'calendar', 'processes', 'desk'], mentions);
+    handleSubmit(content, ['kb', 'inbox', 'calendar', 'processes'], mentions);
   }
 
   async function handleSubmit(message: string, sources: SourceId[], mentions: MentionChip[], extraAttachments?: Array<{ id: string; name: string }>) {

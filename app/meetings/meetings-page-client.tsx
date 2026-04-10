@@ -3,9 +3,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   MicrophoneIcon,
-  ChatBubbleLeftRightIcon,
+  ChatBubbleLeftIcon,
   ChevronRightIcon,
-  CalendarIcon,
+  CalendarDaysIcon,
 } from '@heroicons/react/24/outline';
 import { useRouter } from 'next/navigation';
 import type { DriveFolder } from '@/lib/types/drive';
@@ -481,7 +481,7 @@ export default function MeetingsPageClient({ userEmail }: { userEmail: string })
             title="Calendar"
             className="p-2 rounded-xl bg-white shadow-sm text-neutral-500 hover:bg-neutral-50 transition-colors"
           >
-            <CalendarIcon className="w-4 h-4" />
+            <CalendarDaysIcon className="w-4 h-4" />
           </button>
           {!isHome && (
             <button
@@ -492,7 +492,7 @@ export default function MeetingsPageClient({ userEmail }: { userEmail: string })
               title="AI Chat"
               className="p-2 rounded-xl bg-white shadow-sm text-neutral-500 hover:bg-neutral-50 transition-colors"
             >
-              <ChatBubbleLeftRightIcon className="w-4 h-4" />
+              <ChatBubbleLeftIcon className="w-4 h-4" />
             </button>
           )}
         </div>

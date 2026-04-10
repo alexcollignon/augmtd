@@ -13,7 +13,6 @@ import {
   DocumentTextIcon,
   Cog6ToothIcon,
   UserIcon,
-  ClipboardDocumentListIcon,
 } from '@heroicons/react/24/outline';
 
 export const CHAT_SOURCES = [
@@ -21,7 +20,6 @@ export const CHAT_SOURCES = [
   { id: 'inbox', label: 'Inbox & emails' },
   { id: 'calendar', label: 'Calendar' },
   { id: 'processes', label: 'Active processes' },
-  { id: 'desk', label: 'Tasks' },
 ] as const;
 
 export type SourceId = (typeof CHAT_SOURCES)[number]['id'];
@@ -34,7 +32,7 @@ export interface AttachmentChip {
 
 export interface MentionChip {
   id: string;
-  type: 'email' | 'meeting' | 'kb' | 'process' | 'contact' | 'desk';
+  type: 'email' | 'meeting' | 'kb' | 'process' | 'contact';
   label: string;
   subtitle?: string;
 }
@@ -47,7 +45,6 @@ export const MENTION_ICONS: Record<MentionChip['type'], React.ElementType> = {
   kb: DocumentTextIcon,
   process: Cog6ToothIcon,
   contact: UserIcon,
-  desk: ClipboardDocumentListIcon,
 };
 
 export const MENTION_COLORS: Record<MentionChip['type'], string> = {
@@ -56,7 +53,6 @@ export const MENTION_COLORS: Record<MentionChip['type'], string> = {
   kb: 'bg-amber-50 text-amber-700 border-amber-200',
   process: 'bg-emerald-50 text-emerald-700 border-emerald-200',
   contact: 'bg-indigo-50 text-indigo-700 border-indigo-200',
-  desk: 'bg-orange-50 text-orange-700 border-orange-200',
 };
 
 const MENTION_ICON_BG: Record<MentionChip['type'], string> = {
@@ -65,11 +61,9 @@ const MENTION_ICON_BG: Record<MentionChip['type'], string> = {
   kb: 'bg-amber-50 text-amber-500',
   process: 'bg-emerald-50 text-emerald-500',
   contact: 'bg-indigo-50 text-indigo-500',
-  desk: 'bg-orange-50 text-orange-500',
 };
 
 const CATEGORIES: { type: MentionChip['type']; label: string }[] = [
-  { type: 'desk',    label: 'Tasks' },
   { type: 'email',   label: 'Emails' },
   { type: 'meeting', label: 'Meetings' },
   { type: 'kb',      label: 'Drive & Knowledge base' },

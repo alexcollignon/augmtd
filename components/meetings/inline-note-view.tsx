@@ -286,8 +286,8 @@ export default function InlineNoteView({
   const [retrying, setRetrying] = useState(false);
   const [reanalyzing, setReanalyzing] = useState(false);
 
-  // Post-capture UI — confirmedDeskIds maps actionItem.id → desk_item.id for undo/delete
-  const [confirmedDeskIds, setConfirmedDeskIds] = useState<Map<string, string>>(new Map());
+  // Post-capture UI — local "mine" tracking for action items
+  const [confirmedIds, setConfirmedIds] = useState<Set<string>>(new Set());
   const [dismissedIds, setDismissedIds] = useState<Set<string>>(new Set());
   const [audioDuration, setAudioDuration] = useState<number | null>(null);
   const [highlightedSegment, setHighlightedSegment] = useState<number | null>(null);
@@ -691,28 +691,12 @@ export default function InlineNoteView({
     setTimeout(() => setLinkCopied(false), 2000);
   };
 
-  const handleConfirmToDesk = async (item: ActionItem) => {
-    try {
-      const res = await fetch('/api/desk', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: item.workTitle, kanban_column: 'todo' }),
-      });
-      if (res.ok) {
-        const { item: deskItem } = await res.json();
-        setConfirmedDeskIds((prev) => new Map(prev).set(item.id, deskItem.id));
-      }
-    } catch {}
+  const handleConfirmItem = (itemId: string) => {
+    setConfirmedIds((prev) => new Set(prev).add(itemId));
   };
 
-  const handleUndoConfirm = async (actionItemId: string) => {
-    const deskItemId = confirmedDeskIds.get(actionItemId);
-    if (deskItemId) {
-      try {
-        await fetch(`/api/desk/${deskItemId}`, { method: 'DELETE' });
-      } catch {}
-    }
-    setConfirmedDeskIds((prev) => { const m = new Map(prev); m.delete(actionItemId); return m; });
+  const handleUndoConfirm = (actionItemId: string) => {
+    setConfirmedIds((prev) => { const s = new Set(prev); s.delete(actionItemId); return s; });
   };
 
   const handleDismissItem = (itemId: string) => {
@@ -775,12 +759,6 @@ const handleRetry = async () => {
     if (!event) return;
     setDeleting(true);
     try {
-      // Remove any manually-added desk items for this meeting's action items
-      const deskDeletePromises = Array.from(confirmedDeskIds.values()).map((deskItemId) =>
-        fetch(`/api/desk/${deskItemId}`, { method: 'DELETE' }).catch(() => {})
-      );
-      await Promise.all(deskDeletePromises);
-
       await fetch(`/api/meetings/${event.id}/transcript`, { method: 'DELETE' });
       new BroadcastChannel('meetings-updated').postMessage('deleted');
       onBack();
@@ -1402,7 +1380,7 @@ const handleRetry = async () => {
         <section className="mb-6 pt-4 border-t border-neutral-100">
           <div className="space-y-px">
             {actionItems.map((item) => {
-              const isMine = confirmedDeskIds.has(item.id);
+              const isMine = confirmedIds.has(item.id);
               const isNotMine = dismissedIds.has(item.id);
               const isPending = !isMine && !isNotMine;
               return (
@@ -1427,7 +1405,7 @@ const handleRetry = async () => {
                   {/* Status label + undo, or action buttons */}
                   {isMine && (
                     <div className="flex items-center gap-2 flex-shrink-0">
-                      <span className="text-[10px] text-emerald-600 font-medium">Added to desk</span>
+                      <span className="text-[10px] text-emerald-600 font-medium">Mine</span>
                       <button
                         onClick={() => handleUndoConfirm(item.id)}
                         className="text-[10px] text-neutral-400 hover:text-neutral-600 opacity-0 group-hover:opacity-100 transition-opacity"
@@ -1450,7 +1428,7 @@ const handleRetry = async () => {
                   {isPending && (
                     <div className="flex items-center gap-1 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
                       <button
-                        onClick={() => handleConfirmToDesk(item)}
+                        onClick={() => handleConfirmItem(item.id)}
                         className="px-2 py-0.5 text-[11px] font-medium text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded transition-colors"
                       >
                         Mine

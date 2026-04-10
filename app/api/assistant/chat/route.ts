@@ -6,42 +6,7 @@ import { buildKBContext } from '@/lib/knowledge/build-kb-context';
 import { getCalendarContext } from '@/lib/calendar/calendar-context';
 import { formatCalendarContextForChat } from '@/lib/calendar/format-calendar-context';
 import { buildUserContextBlock } from '@/lib/context/build-user-context';
-import type { DeskItem, DeskColumn } from '@/lib/types/desk';
-
 export const maxDuration = 60;
-
-// ── Board context builder ────────────────────────────────────────────────────
-
-const COLUMN_LABELS: Record<DeskColumn, string> = {
-  pool: 'Pool (unconfirmed)',
-  todo: 'To Do',
-  in_progress: 'In Progress',
-  waiting: 'Waiting',
-  done: 'Done',
-};
-
-function buildBoardContext(boardItems: DeskItem[]): string {
-  const grouped: Partial<Record<DeskColumn, DeskItem[]>> = {};
-  for (const item of boardItems) {
-    if (!grouped[item.column]) grouped[item.column] = [];
-    grouped[item.column]!.push(item);
-  }
-  const colOrder: DeskColumn[] = ['pool', 'todo', 'in_progress', 'waiting', 'done'];
-  const lines: string[] = [];
-  for (const col of colOrder) {
-    const items = grouped[col];
-    if (!items?.length) continue;
-    lines.push(`[${COLUMN_LABELS[col]}]`);
-    for (const item of items) {
-      const src = item.sourceType === 'email' ? 'EMAIL'
-        : item.sourceType === 'meeting_action' ? 'MEETING'
-        : item.sourceType === 'manual' ? 'TASK'
-        : 'PROCESS';
-      lines.push(`  - ${item.title} (${src}) [id:${item.id}]`);
-    }
-  }
-  return lines.join('\n') || 'No items on the board.';
-}
 
 // ── System prompt ────────────────────────────────────────────────────────────
 
@@ -64,12 +29,10 @@ You help users manage their inbox, handle emails, prioritize tasks, reference pr
 
 {{INBOX_SNAPSHOT_SECTION}}
 
-{{BOARD_CONTEXT_SECTION}}
-
 Today is {{TODAY}}.
 
 GENERAL RULES:
-- Answer questions using inbox, KB, calendar, board, and processes — whichever is relevant.
+- Answer questions using inbox, KB, calendar, and processes — whichever is relevant.
 - When KB documents are relevant, summarize their content directly — do not say you can't find something if it appears in the KB.
 - When referencing a specific email, include its ID in square brackets like [uuid] — the UI renders it as a card. ONLY use [uuid] when the user explicitly asked about a specific email. NEVER attach [uuid] to calendar events or meeting descriptions.
 - If multiple matching emails: list them one per line with [id].
@@ -128,25 +91,7 @@ OPEN_WORKFLOW:{"itemId":"...","skill":"...","prefillTitle":"..."}
 OPEN_PROCESS:{"processId":"...","label":"..."}
 → User wants to view or continue a specific active process.
   processId MUST be from the ACTIVE PROCESSES list above — never invent one.
-  Only emit when user clearly intends to navigate to a specific process — not for general questions.
-
-─── DESK TOKENS ───────────────────────────────────────────────────────────────
-
-DESK_ACTION:{"type":"move","itemId":"uuid","column":"todo|in_progress|waiting|done","label":"..."}
-→ User wants to move a board item to a specific column.
-  itemId must be from the CURRENT WORK BOARD list above (use the [id:...] shown).
-  Only when both the item and target column are unambiguous.
-
-DESK_ACTION:{"type":"dismiss","itemId":"uuid","label":"..."}
-→ User wants to remove an item from the board entirely.
-
-DESK_ACTION:{"type":"confirm","itemId":"uuid","label":"..."}
-→ User wants to move a Pool item to To Do. Only valid for items in the Pool column.
-
-DESK_ACTION:create::<title>::<column>
-→ User explicitly asks to create a new task. <title> is the task name. <column> is optional (todo|in_progress|waiting) — defaults to todo.
-  Use ONLY when user explicitly asks to add/create a task. Never invent tasks unprompted.
-  Example: DESK_ACTION:create::Prepare Q2 board report::todo`;
+  Only emit when user clearly intends to navigate to a specific process — not for general questions.`;
 
 // ── Route handler ────────────────────────────────────────────────────────────
 
@@ -169,11 +114,9 @@ export async function POST(request: NextRequest) {
       replyDraft,
       emailContext,
       fileContext,
-      boardItems = [],
-      focusedCard,
       meetingContext,
     } = body as {
-      context?: 'inbox' | 'desk' | 'meeting' | 'drive';
+      context?: 'inbox' | 'meeting' | 'drive';
       message: string;
       history: Array<{ role: 'user' | 'assistant'; content: string }>;
       sources?: string[];
@@ -186,11 +129,6 @@ export async function POST(request: NextRequest) {
         isRead?: boolean;
       };
       fileContext?: string;
-      boardItems?: DeskItem[];
-      focusedCard?: {
-        id: string; title: string; description: string | null;
-        sourceType: string; column: string; urgency: string | null; synthesis: string | null;
-      };
       meetingContext?: {
         title: string;
         date: string;
@@ -349,11 +287,6 @@ export async function POST(request: NextRequest) {
 From: ${emailContext.fromName ? `${emailContext.fromName} <${emailContext.from}>` : emailContext.from}
 Subject: ${emailContext.subject || '(no subject)'}
 Read status: ${emailContext.isRead === false ? 'unread (the user has not yet read this email)' : 'read'}${emailContext.summary ? `\nSummary: ${emailContext.summary}` : ''}${emailContext.keyPoints?.length ? `\nKey points:\n${emailContext.keyPoints.map(p => `- ${p}`).join('\n')}` : ''}${emailContext.body ? `\nBody:\n${emailContext.body.slice(0, 2000)}${emailContext.body.length > 2000 ? '\n[...truncated]' : ''}` : ''}`;
-    } else if (focusedCard) {
-      focusedItemBlock = `FOCUSED CARD — the user has this board item in focus. When they say "this", "it", or "this task", refer to this:
-Title: ${focusedCard.title}
-Source: ${focusedCard.sourceType}
-Column: ${focusedCard.column}${focusedCard.urgency ? `\nUrgency: ${focusedCard.urgency}` : ''}${focusedCard.synthesis || focusedCard.description ? `\nBrief: ${focusedCard.synthesis || focusedCard.description}` : ''}`;
     }
 
     // Inbox snapshot section
@@ -362,11 +295,6 @@ Column: ${focusedCard.column}${focusedCard.urgency ? `\nUrgency: ${focusedCard.u
       : fetchInbox
         ? 'Here is the user\'s current inbox: No active inbox items.'
         : '';
-
-    // Board context section
-    const boardContextSection = context === 'desk'
-      ? `CURRENT WORK BOARD:\n${buildBoardContext(boardItems)}`
-      : '';
 
     let systemPrompt = BASE_SYSTEM_PROMPT
       .replace('{{USER_CONTEXT}}', userContextBlock || '')
@@ -377,7 +305,6 @@ Column: ${focusedCard.column}${focusedCard.urgency ? `\nUrgency: ${focusedCard.u
       .replace('{{CONTACTS_SECTION}}', contactsBlock || '')
       .replace('{{FOCUSED_ITEM}}', focusedMeetingBlock || focusedItemBlock || '')
       .replace('{{INBOX_SNAPSHOT_SECTION}}', inboxSnapshotSection || '')
-      .replace('{{BOARD_CONTEXT_SECTION}}', boardContextSection || '')
       .replace(/{{TODAY}}/g, today);
 
     // Mode addenda
@@ -407,10 +334,6 @@ REPLY MODE — follow exactly:
    Use \\n for newlines inside JSON. Never add extra commas.
 
 5. CRITICAL: Never emit ACTION, OPEN_COMPOSE, or UPDATE_DRAFT in reply mode. MEETING_SUGGESTION allowed only for scheduling queries.`;
-    }
-
-    if (context === 'desk') {
-      systemPrompt += `\n\nYou are on the DESK surface — the user's home screen. Help them prioritize, move tasks, start workflows, and take action on their work. When suggesting task movement use DESK_ACTION tokens. When the user wants to start work on something use OPEN_WORKFLOW.`;
     }
 
     if (context === 'meeting') {

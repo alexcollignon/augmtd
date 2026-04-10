@@ -2,8 +2,8 @@
 
 import { useState } from 'react';
 import {
-  CalendarIcon,
-  ChatBubbleLeftRightIcon,
+  CalendarDaysIcon,
+  ChatBubbleLeftIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   PlusIcon,
@@ -87,7 +87,7 @@ export default function MeetingsColumn({ isOpen, onToggle, meetings, loading, us
             {/* Left: Calendar (active) + Chat toggle */}
             <div className="flex items-center gap-1.5">
               <div className="p-1.5 border rounded-md bg-indigo-600 border-indigo-600 text-white">
-                <CalendarIcon className="w-3.5 h-3.5" />
+                <CalendarDaysIcon className="w-3.5 h-3.5" />
               </div>
               {onChatOpen && (
                 <button
@@ -95,7 +95,7 @@ export default function MeetingsColumn({ isOpen, onToggle, meetings, loading, us
                   title="Ask AI"
                   className="p-1.5 border border-neutral-200 text-neutral-500 hover:bg-neutral-50 rounded-md transition-colors"
                 >
-                  <ChatBubbleLeftRightIcon className="w-3.5 h-3.5" />
+                  <ChatBubbleLeftIcon className="w-3.5 h-3.5" />
                 </button>
               )}
             </div>
@@ -136,7 +136,7 @@ export default function MeetingsColumn({ isOpen, onToggle, meetings, loading, us
           </>
         ) : (
           <button onClick={onToggle} title="Show calendar" className="hover:opacity-70 transition-opacity">
-            <CalendarIcon className="w-4 h-4 text-neutral-400" />
+            <CalendarDaysIcon className="w-4 h-4 text-neutral-400" />
           </button>
         )}
       </div>

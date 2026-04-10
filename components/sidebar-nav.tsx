@@ -5,8 +5,9 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
 import {
-  InboxIcon,
-  BriefcaseIcon,
+  EnvelopeIcon,
+  Squares2X2Icon,
+  VideoCameraIcon,
   FolderIcon,
   ClockIcon,
   Cog6ToothIcon,
@@ -14,7 +15,6 @@ import {
   LockClosedIcon,
   GlobeAltIcon,
   ShieldCheckIcon,
-  CalendarDaysIcon,
 } from '@heroicons/react/24/outline';
 import { useRecordingContext } from '@/context/recording-context';
 
@@ -50,9 +50,9 @@ export default function SidebarNav({ userEmail }: SidebarNavProps) {
   const [processNotifCount, setProcessNotifCount] = useState(0);
 
   const navigation = [
-    { name: 'Inbox', href: '/inbox', icon: InboxIcon },
-    { name: 'Work', href: '/work', icon: BriefcaseIcon },
-    { name: 'Meetings', href: '/meetings', icon: CalendarDaysIcon },
+    { name: 'Inbox', href: '/inbox', icon: EnvelopeIcon },
+    { name: 'Work', href: '/work', icon: Squares2X2Icon },
+    { name: 'Meetings', href: '/meetings', icon: VideoCameraIcon },
     { name: 'Drive', href: '/drive', icon: FolderIcon },
     ...(isSuperAdmin ? [{ name: 'Platform Admin', href: '/platform-admin', icon: ShieldCheckIcon }] : []),
   ];

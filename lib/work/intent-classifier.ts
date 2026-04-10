@@ -2,7 +2,7 @@ import { SupabaseClient } from '@supabase/supabase-js'
 import { getAIClient, aiCreate } from '@/lib/ai/factory'
 
 export type IntentClass = 'conversational' | 'search' | 'document'
-export type SourceHint = 'kb' | 'email' | 'calendar' | 'desk'
+export type SourceHint = 'kb' | 'email' | 'calendar'
 
 export interface ClassifiedIntent {
   intent: IntentClass
@@ -26,7 +26,6 @@ sources (include for search/document, always empty [] for conversational):
 - "kb" — knowledge base / Drive / indexed files
 - "email" — inbox / emails
 - "calendar" — meetings / schedule
-- "desk" — tasks on the user's desk (kanban board: to do, in progress, waiting)
 
 Examples:
 "what's my name" → {"intent":"conversational","sources":[]}
@@ -37,7 +36,7 @@ Examples:
 "draft an email to John about the Q2 proposal" → {"intent":"document","sources":["email"]}
 "write a presentation for tomorrow's board meeting" → {"intent":"document","sources":["kb","calendar"]}
 "make a budget spreadsheet for the Q3 campaign" → {"intent":"document","sources":["kb"]}
-"write a follow-up for the Acme proposal" → {"intent":"document","sources":["desk","email"]}
+"write a follow-up for the Acme proposal" → {"intent":"document","sources":["email"]}
 "i need to create a pricing document" → {"intent":"document","sources":["kb"]}
 "write a follow-up email" → {"intent":"document","sources":["email"]}
 "draft a report" → {"intent":"document","sources":["kb"]}
@@ -45,8 +44,8 @@ Examples:
 "what's in my knowledge base about pricing" → {"intent":"search","sources":["kb"]}
 "when is my next meeting" → {"intent":"search","sources":["calendar"]}
 "summarise my recent emails" → {"intent":"search","sources":["email"]}
-"what am I working on" → {"intent":"search","sources":["desk"]}
-"what's urgent" → {"intent":"search","sources":["desk"]}`
+"what am I working on" → {"intent":"search","sources":["email","calendar"]}
+"what's urgent" → {"intent":"search","sources":["email"]}`
 
 export async function classifyIntent(
   message: string,
@@ -93,7 +92,7 @@ export async function classifyIntent(
       : FALLBACK.intent
 
     const sources: SourceHint[] = Array.isArray(parsed.sources)
-      ? (parsed.sources as string[]).filter((s): s is SourceHint => ['kb', 'email', 'calendar', 'desk'].includes(s))
+      ? (parsed.sources as string[]).filter((s): s is SourceHint => ['kb', 'email', 'calendar'].includes(s))
       : FALLBACK.sources
 
     // specific is computed locally in the route — not trusted from AI

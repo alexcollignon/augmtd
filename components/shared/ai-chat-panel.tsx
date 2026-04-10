@@ -2,7 +2,6 @@
 
 import React, { useEffect, useRef, useState, RefObject, useCallback } from 'react';
 import type { InboxItem } from '@/lib/types/inbox';
-import type { DeskColumn } from '@/lib/types/desk';
 import EmailListCard from '@/components/inbox/email-list-card';
 import MeetingProposalCard from '@/components/inbox/meeting-proposal-card';
 import {
@@ -10,11 +9,11 @@ import {
   DocumentTextIcon,
   PaperClipIcon,
   XMarkIcon,
-  CalendarIcon,
+  CalendarDaysIcon,
   ChevronRightIcon,
   EnvelopeIcon,
   SparklesIcon,
-  ChatBubbleLeftRightIcon,
+  ChatBubbleLeftIcon,
   ArrowTopRightOnSquareIcon,
   ChevronDownIcon,
 } from '@heroicons/react/24/outline';
@@ -39,12 +38,6 @@ interface ParsedAction {
   label: string;
 }
 
-interface ParsedDeskAction {
-  type: 'move' | 'dismiss' | 'confirm';
-  itemId: string;
-  column?: DeskColumn;
-  label: string;
-}
 
 interface ParsedOpenWorkflow {
   itemId: string;
@@ -66,7 +59,7 @@ interface MeetingSuggestion {
 }
 
 export interface AiChatPanelProps {
-  context: 'inbox' | 'desk';
+  context: 'inbox';
 
   // Controlled chat state
   history: ChatMessage[];
@@ -117,10 +110,6 @@ export interface AiChatPanelProps {
   onOpenWorkflow?: (itemId: string, skill?: string, prefillTitle?: string) => void;
   onOpenProcess?: (processId: string, label: string) => void;
 
-  // Desk action handlers
-  onDeskMove?: (itemId: string, column: DeskColumn) => void;
-  onDeskDismiss?: (itemId: string) => void;
-  onDeskConfirm?: (itemId: string) => void;
 }
 
 // ── Token regexes ────────────────────────────────────────────────────────────
@@ -132,8 +121,6 @@ const REPLY_DRAFT_RE = /REPLY_DRAFT:(\{[\s\S]+?\})/;
 const OPEN_COMPOSE_RE = /OPEN_COMPOSE:(\{[\s\S]+?\})/;
 const OPEN_WORKFLOW_RE = /OPEN_WORKFLOW:(\{[\s\S]+?\})/;
 const OPEN_PROCESS_RE = /OPEN_PROCESS:(\{[\s\S]+?\})/;
-const DESK_ACTION_RE = /DESK_ACTION:(\{[\s\S]+?\})/;
-
 // ── Source options ───────────────────────────────────────────────────────────
 
 const SOURCE_OPTIONS = [
@@ -145,13 +132,6 @@ const SOURCE_OPTIONS = [
 const CONTEXT_SOURCE_IDS = SOURCE_OPTIONS.map(s => s.id);
 
 // ── Quick prompts ────────────────────────────────────────────────────────────
-
-const DESK_QUICK_PROMPTS = [
-  "What should I focus on today?",
-  "What's blocking me right now?",
-  "What's high priority?",
-  "Summarize my inbox",
-];
 
 const INBOX_QUICK_PROMPTS = [
   "What's pending in my inbox?",
@@ -250,7 +230,6 @@ function parseContent(raw: string) {
   let openCompose: Partial<ComposeDraft> | null = null;
   let openWorkflow: ParsedOpenWorkflow | null = null;
   let openProcess: ParsedOpenProcess | null = null;
-  let deskAction: ParsedDeskAction | null = null;
 
   const meetingMatch = raw.match(MEETING_RE);
   if (meetingMatch) meetingSuggestion = tryParse(meetingMatch[1]);
@@ -270,9 +249,6 @@ function parseContent(raw: string) {
   const processMatch = raw.match(OPEN_PROCESS_RE);
   if (processMatch) openProcess = tryParse(processMatch[1]);
 
-  const deskMatch = raw.match(DESK_ACTION_RE);
-  if (deskMatch) deskAction = tryParse(deskMatch[1]);
-
   const text = raw
     .replace(ACTION_RE, (match) => {
       const json = match.slice('ACTION:'.length);
@@ -287,13 +263,12 @@ function parseContent(raw: string) {
     .replace(OPEN_COMPOSE_RE, '')
     .replace(OPEN_WORKFLOW_RE, '')
     .replace(OPEN_PROCESS_RE, '')
-    .replace(DESK_ACTION_RE, '')
     .replace(/\nKB_REFS:[^\n]*/g, '')
     .replace(/^INTENT DETECTION:\s*\w+\s*\n?/im, '')
     .replace(/^---+\s*$/gm, '')
     .trim();
 
-  return { text, actions, meetingSuggestion, updateDraft, replyDraft, openCompose, openWorkflow, openProcess, deskAction };
+  return { text, actions, meetingSuggestion, updateDraft, replyDraft, openCompose, openWorkflow, openProcess };
 }
 
 function splitOnRefs(text: string): Array<{ type: 'text' | 'item'; value: string }> {
@@ -322,44 +297,6 @@ function ActionChip({ action, onAction }: {
     setState('loading');
     try { await onAction(action.type, action.itemId); setState('done'); }
     catch { setState('error'); }
-  };
-
-  if (state === 'done') return <span className="text-[11px] text-green-600 font-medium">Done ✓</span>;
-  if (state === 'error') return <span className="text-[11px] text-red-500">Something went wrong</span>;
-
-  return (
-    <div className="inline-flex items-center gap-2 mt-2 px-3 py-1.5 bg-neutral-50 border border-neutral-200 rounded-lg text-[12px]">
-      <span className="text-neutral-600">{action.label}</span>
-      {state === 'loading' ? (
-        <div className="w-3 h-3 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
-      ) : state === 'confirming' ? (
-        <>
-          <button onClick={handleConfirm} className="text-indigo-600 font-semibold hover:text-indigo-800 transition-colors">Confirm</button>
-          <button onClick={() => setState('idle')} className="text-neutral-400 hover:text-neutral-600 transition-colors text-[11px]">✕</button>
-        </>
-      ) : (
-        <button onClick={() => setState('confirming')} className="text-indigo-600 font-semibold hover:text-indigo-800 transition-colors">Do it</button>
-      )}
-    </div>
-  );
-}
-
-function DeskActionChip({ action, onMove, onDismiss, onConfirm }: {
-  action: ParsedDeskAction;
-  onMove?: (itemId: string, column: DeskColumn) => void;
-  onDismiss?: (itemId: string) => void;
-  onConfirm?: (itemId: string) => void;
-}) {
-  const [state, setState] = useState<'idle' | 'confirming' | 'loading' | 'done' | 'error'>('idle');
-
-  const handleConfirm = async () => {
-    setState('loading');
-    try {
-      if (action.type === 'move' && action.column) onMove?.(action.itemId, action.column);
-      else if (action.type === 'dismiss') onDismiss?.(action.itemId);
-      else if (action.type === 'confirm') onConfirm?.(action.itemId);
-      setState('done');
-    } catch { setState('error'); }
   };
 
   if (state === 'done') return <span className="text-[11px] text-green-600 font-medium">Done ✓</span>;
@@ -443,12 +380,9 @@ function MessageContent({
   connectionId,
   onOpenWorkflow,
   onOpenProcess,
-  onDeskMove,
-  onDeskDismiss,
-  onDeskConfirm,
 }: {
   content: string;
-  context: 'inbox' | 'desk';
+  context: 'inbox';
   inboxItems?: InboxItem[];
   onSelectItem?: (item: InboxItem) => void;
   onAction?: (type: string, itemId: string) => Promise<void>;
@@ -460,14 +394,11 @@ function MessageContent({
   connectionId?: string | null;
   onOpenWorkflow?: (itemId: string, skill?: string, prefillTitle?: string) => void;
   onOpenProcess?: (processId: string, label: string) => void;
-  onDeskMove?: (itemId: string, column: DeskColumn) => void;
-  onDeskDismiss?: (itemId: string) => void;
-  onDeskConfirm?: (itemId: string) => void;
 }) {
   const kbSources = parseKBSources(content);
   const {
     text, actions, meetingSuggestion, updateDraft, replyDraft,
-    openCompose, openWorkflow, openProcess, deskAction,
+    openCompose, openWorkflow, openProcess,
   } = parseContent(content);
   const parts = splitOnRefs(text);
 
@@ -541,16 +472,6 @@ function MessageContent({
         <OpenProcessChip process={openProcess} onOpenProcess={onOpenProcess} />
       )}
 
-      {/* Desk action chip — desk only */}
-      {context === 'desk' && deskAction && (
-        <DeskActionChip
-          action={deskAction}
-          onMove={onDeskMove}
-          onDismiss={onDeskDismiss}
-          onConfirm={onDeskConfirm}
-        />
-      )}
-
       {/* KB sources */}
       {kbSources.length > 0 && (
         <div className="flex flex-wrap gap-1.5 mt-3 pt-3 border-t border-neutral-100">
@@ -600,9 +521,6 @@ export default function AiChatPanel({
   onAction,
   onOpenWorkflow,
   onOpenProcess,
-  onDeskMove,
-  onDeskDismiss,
-  onDeskConfirm,
 }: AiChatPanelProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -662,9 +580,7 @@ export default function AiChatPanel({
 
   const showFileChips = attachedFiles.length > 0 || isAttaching;
 
-  const quickPrompts = context === 'desk'
-    ? DESK_QUICK_PROMPTS
-    : isChatOnly
+  const quickPrompts = isChatOnly
       ? CHAT_QUICK_PROMPTS
       : mode === 'reply'
         ? REPLY_PROMPTS
@@ -674,9 +590,7 @@ export default function AiChatPanel({
             ? getEmailPrompts(emailChipData?.itemType)
             : INBOX_QUICK_PROMPTS;
 
-  const placeholder = context === 'desk'
-    ? 'Ask about your work...'
-    : isChatOnly
+  const placeholder = isChatOnly
       ? 'Ask me anything...'
       : mode === 'reply'
         ? 'Edit draft or ask a question...'
@@ -692,13 +606,13 @@ export default function AiChatPanel({
       {/* ── Zone 1: Header ── */}
       <div className="flex-shrink-0 h-10 flex items-center justify-between px-3 border-b border-neutral-200">
         <div className="flex items-center gap-2">
-          <ChatBubbleLeftRightIcon className="w-4 h-4 text-neutral-500" />
+          <ChatBubbleLeftIcon className="w-4 h-4 text-neutral-500" />
           <span className="text-[13px] font-semibold text-neutral-700">Assistant</span>
         </div>
         <div className="flex items-center gap-1.5">
           {onSwitchToCalendar && (
             <button onClick={onSwitchToCalendar} title="Calendar" className="p-1.5 border border-neutral-200 text-neutral-500 hover:bg-neutral-50 rounded-md transition-colors">
-              <CalendarIcon className="w-3.5 h-3.5" />
+              <CalendarDaysIcon className="w-3.5 h-3.5" />
             </button>
           )}
           {onClose && (
@@ -769,9 +683,6 @@ export default function AiChatPanel({
                         connectionId={emailChipData?.connectionId}
                         onOpenWorkflow={onOpenWorkflow}
                         onOpenProcess={onOpenProcess}
-                        onDeskMove={onDeskMove}
-                        onDeskDismiss={onDeskDismiss}
-                        onDeskConfirm={onDeskConfirm}
                       />
                     </div>
                   </div>
@@ -801,9 +712,6 @@ export default function AiChatPanel({
                         connectionId={emailChipData?.connectionId}
                         onOpenWorkflow={onOpenWorkflow}
                         onOpenProcess={onOpenProcess}
-                        onDeskMove={onDeskMove}
-                        onDeskDismiss={onDeskDismiss}
-                        onDeskConfirm={onDeskConfirm}
                       />
                     ) : (
                       <span className="flex items-center gap-1 pt-1">

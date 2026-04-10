@@ -81,7 +81,6 @@ function parseMessage(raw: string) {
     .replace(OPEN_WORKFLOW_RE, '')
     .replace(OPEN_PROCESS_RE, '')
     .replace(REPLY_DRAFT_RE, '')
-    .replace(/DESK_ACTION:\{[\s\S]+?\}/g, '')
     .replace(/\nMEETING_SUGGESTION:\{.+\}/g, '')
     .replace(MEETING_RE, '')
     .replace(/\nKB_REFS:[^\n]*/g, '')
