@@ -17,7 +17,6 @@ import { ChatEmptyState } from '@/components/work/chat-empty-state';
 import { ChatInputBar, SourceId, AttachmentChip, MentionChip, MENTION_ICONS, MENTION_COLORS } from '@/components/work/chat-input-bar';
 import { ChatMessageBubble, StreamingMessage, ChatMessage, ToolStatus } from '@/components/work/chat-message';
 import { ClarificationData } from '@/components/work/clarification-widget';
-import OnboardingModal from '@/components/onboarding-modal';
 import { DocumentArtifact, ExecutionPlan } from '@/lib/types/inbox';
 import { ChatArtifactPanel } from '@/components/work/chat-artifact-panel';
 
@@ -40,7 +39,6 @@ export interface WorkPageClientProps {
   userId?: string;
   userEmail?: string;
   userFullName?: string;
-  hasCompletedOnboarding: boolean;
   initialThreads: WorkThread[];
   initialActiveThreadId?: string | null;
   initialChatInput?: string | null;
@@ -59,7 +57,6 @@ export function WorkPageClient({
   userId,
   userEmail,
   userFullName,
-  hasCompletedOnboarding,
   initialThreads,
   initialActiveThreadId,
   initialChatInput,
@@ -342,9 +339,6 @@ export function WorkPageClient({
         )}
       </div>
 
-      {!hasCompletedOnboarding && (
-        <OnboardingModal isOpen onClose={() => router.refresh()} />
-      )}
     </div>
   );
 }

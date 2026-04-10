@@ -1,8 +1,6 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { WorkPageClient } from './work-page-client';
-import { getUserIdentity } from '@/lib/context/work-patterns-service';
-
 export const metadata = { title: 'Chat — AUGMTD' };
 
 export default async function WorkPage({
@@ -21,13 +19,6 @@ export default async function WorkPage({
     .select('email, full_name')
     .eq('id', user.id)
     .single();
-
-  const identity = await getUserIdentity(user.id, supabase);
-  const hasCompletedIdentity = !!(
-    profile?.full_name &&
-    identity?.department &&
-    identity?.jobRole
-  );
 
   const [{ data: threads }, { data: savedWorkflowsData }] = await Promise.all([
     supabase
@@ -50,7 +41,7 @@ export default async function WorkPage({
       userId={user.id}
       userEmail={profile?.email || user.email}
       userFullName={profile?.full_name}
-      hasCompletedOnboarding={hasCompletedIdentity}
+      hasCompletedOnboarding={true}
       initialThreads={(threads || []).map((t: any) => ({
         ...t,
         process_title: t.processes?.title ?? null,
