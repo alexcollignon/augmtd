@@ -41,8 +41,7 @@ export default async function WorkPage({
       userId={user.id}
       userEmail={profile?.email || user.email}
       userFullName={profile?.full_name}
-      hasCompletedOnboarding={true}
-      initialThreads={(threads || []).map((t: any) => ({
+initialThreads={(threads || []).map((t: any) => ({
         ...t,
         process_title: t.processes?.title ?? null,
         processes: undefined,
