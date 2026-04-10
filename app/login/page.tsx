@@ -3,9 +3,14 @@
 import { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Image from 'next/image';
+import { createClient } from '@/lib/supabase/client';
 
 function LoginForm() {
   const [message, setMessage] = useState('');
+  const [showAdminLogin, setShowAdminLogin] = useState(false);
+  const [adminEmail, setAdminEmail] = useState('');
+  const [adminPassword, setAdminPassword] = useState('');
+  const [adminLoading, setAdminLoading] = useState(false);
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -37,6 +42,20 @@ function LoginForm() {
 
   const handleMicrosoftLogin = () => {
     window.location.href = '/api/auth/outlook-signup/connect';
+  };
+
+  const handleAdminLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAdminLoading(true);
+    setMessage('');
+    const supabase = createClient();
+    const { error } = await supabase.auth.signInWithPassword({ email: adminEmail, password: adminPassword });
+    if (error) {
+      setMessage(error.message);
+      setAdminLoading(false);
+    } else {
+      router.push('/inbox');
+    }
   };
 
 
@@ -100,6 +119,43 @@ function LoginForm() {
             </svg>
             Continue with Microsoft
           </button>
+        </div>
+
+        {/* Admin password login */}
+        <div className="mt-6 text-center">
+          <button
+            onClick={() => setShowAdminLogin(v => !v)}
+            className="text-xs text-gray-400 hover:text-gray-600 transition-colors"
+          >
+            Admin sign-in
+          </button>
+          {showAdminLogin && (
+            <form onSubmit={handleAdminLogin} className="mt-3 space-y-2 text-left">
+              <input
+                type="email"
+                placeholder="Email"
+                value={adminEmail}
+                onChange={e => setAdminEmail(e.target.value)}
+                required
+                className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+              />
+              <input
+                type="password"
+                placeholder="Password"
+                value={adminPassword}
+                onChange={e => setAdminPassword(e.target.value)}
+                required
+                className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+              />
+              <button
+                type="submit"
+                disabled={adminLoading}
+                className="w-full py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-50 transition-colors"
+              >
+                {adminLoading ? 'Signing in…' : 'Sign in'}
+              </button>
+            </form>
+          )}
         </div>
 
       </div>

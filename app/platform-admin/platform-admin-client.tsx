@@ -169,6 +169,26 @@ export default function PlatformAdminClient({ initialCompanies }: { initialCompa
     }
   }
 
+  async function handleDeleteMember(companyId: string, userId: string, displayName: string) {
+    if (!confirm(`Permanently delete user "${displayName}"? This will remove all their data and cannot be undone.`)) return;
+    setActionLoading(userId);
+    try {
+      const res = await fetch(`/api/platform-admin/members/${userId}/delete`, { method: 'POST' });
+      if (res.ok) {
+        setMembersCache(prev => ({
+          ...prev,
+          [companyId]: (prev[companyId] ?? []).filter(m => m.user_id !== userId),
+        }));
+        setCompanies(prev => prev.map(c => c.id === companyId ? { ...c, member_count: Math.max(0, c.member_count - 1) } : c));
+      } else {
+        const data = await res.json();
+        alert(data.error ?? 'Failed to delete user');
+      }
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
   function formatDate(d: string) {
     return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   }
@@ -360,6 +380,14 @@ export default function PlatformAdminClient({ initialCompanies }: { initialCompa
                                 </span>
                                 <span className={`font-semibold capitalize ${ROLE_COLORS[m.role]}`}>{m.role}</span>
                                 <span className="text-neutral-400">Joined {formatDate(m.joined_at)}</span>
+                                <button
+                                  onClick={() => handleDeleteMember(company.id, m.user_id, m.full_name ?? m.email)}
+                                  disabled={actionLoading === m.user_id}
+                                  title="Delete user"
+                                  className="p-1 text-neutral-300 hover:text-red-500 hover:bg-red-50 transition-colors disabled:opacity-50"
+                                >
+                                  <TrashIcon className="w-3.5 h-3.5" />
+                                </button>
                               </div>
                             ))}
                           </div>
