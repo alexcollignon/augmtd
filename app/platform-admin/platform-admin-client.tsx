@@ -1,8 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   BuildingOfficeIcon,
+  UsersIcon,
   ChevronDownIcon,
   ChevronRightIcon,
   ClipboardDocumentIcon,
@@ -10,6 +11,7 @@ import {
   PencilIcon,
   TrashIcon,
   XMarkIcon,
+  MagnifyingGlassIcon,
 } from '@heroicons/react/24/outline';
 
 interface CompanyRow {
@@ -42,6 +44,18 @@ interface PendingInviteRow {
   expires_at: string;
 }
 
+interface UserRow {
+  id: string;
+  email: string;
+  full_name: string | null;
+  is_super_admin: boolean;
+  created_at: string;
+  company_id: string | null;
+  company_name: string | null;
+  company_plan: string | null;
+  role: string | null;
+}
+
 const PLAN_OPTIONS = ['starter', 'growth', 'enterprise'];
 const PLAN_COLORS: Record<string, string> = {
   starter: 'bg-neutral-100 text-neutral-600',
@@ -59,18 +73,17 @@ const ROLE_COLORS: Record<string, string> = {
 };
 
 export default function PlatformAdminClient({ initialCompanies }: { initialCompanies: CompanyRow[] }) {
+  const [tab, setTab] = useState<'companies' | 'users'>('companies');
+
+  // ── Companies state ────────────────────────────────────────────────────────
   const [companies, setCompanies] = useState<CompanyRow[]>(initialCompanies);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [membersCache, setMembersCache] = useState<Record<string, MemberRow[]>>({});
   const [invitesCache, setInvitesCache] = useState<Record<string, PendingInviteRow[]>>({});
   const [membersLoading, setMembersLoading] = useState<string | null>(null);
   const [copiedInviteId, setCopiedInviteId] = useState<string | null>(null);
-
-  // Inline name editing
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
-
-  // New company form
   const [formName, setFormName] = useState('');
   const [formPlan, setFormPlan] = useState('starter');
   const [formOwnerEmail, setFormOwnerEmail] = useState('');
@@ -78,9 +91,28 @@ export default function PlatformAdminClient({ initialCompanies }: { initialCompa
   const [formError, setFormError] = useState('');
   const [formResult, setFormResult] = useState<{ company: CompanyRow; inviteUrl: string } | null>(null);
   const [copied, setCopied] = useState(false);
-
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
 
+  // ── Users state ────────────────────────────────────────────────────────────
+  const [users, setUsers] = useState<UserRow[]>([]);
+  const [usersLoaded, setUsersLoaded] = useState(false);
+  const [usersLoading, setUsersLoading] = useState(false);
+  const [userFilter, setUserFilter] = useState<'all' | 'no-company'>('all');
+  const [userSearch, setUserSearch] = useState('');
+
+  useEffect(() => {
+    if (tab === 'users' && !usersLoaded) {
+      setUsersLoading(true);
+      fetch('/api/platform-admin/users')
+        .then(r => r.json())
+        .then(data => { setUsers(data.users ?? []); setUsersLoaded(true); })
+        .catch(console.error)
+        .finally(() => setUsersLoading(false));
+    }
+  }, [tab, usersLoaded]);
+
+  // ── Companies handlers ─────────────────────────────────────────────────────
   async function handleCreateCompany(e: React.FormEvent) {
     e.preventDefault();
     if (!formName.trim() || !formOwnerEmail.trim()) return;
@@ -106,7 +138,7 @@ export default function PlatformAdminClient({ initialCompanies }: { initialCompa
     }
   }
 
-  async function handleCopy(url: string) {
+  async function handleCopyInviteUrl(url: string) {
     await navigator.clipboard.writeText(url);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
@@ -135,8 +167,8 @@ export default function PlatformAdminClient({ initialCompanies }: { initialCompa
     }
   }
 
-  async function handleDeleteCompany(id: string, name: string) {
-    if (!confirm(`Permanently delete "${name}" and all its data? This cannot be undone.`)) return;
+  async function handleDeleteCompany(id: string) {
+    setConfirmingId(null);
     setActionLoading(id);
     try {
       const res = await fetch(`/api/platform-admin/companies/${id}`, { method: 'DELETE' });
@@ -147,11 +179,6 @@ export default function PlatformAdminClient({ initialCompanies }: { initialCompa
     } finally {
       setActionLoading(null);
     }
-  }
-
-  function startEditing(company: CompanyRow) {
-    setEditingId(company.id);
-    setEditingName(company.name);
   }
 
   async function toggleMembers(companyId: string) {
@@ -169,8 +196,8 @@ export default function PlatformAdminClient({ initialCompanies }: { initialCompa
     }
   }
 
-  async function handleDeleteMember(companyId: string, userId: string, displayName: string) {
-    if (!confirm(`Permanently delete user "${displayName}"? This will remove all their data and cannot be undone.`)) return;
+  async function handleDeleteMember(companyId: string, userId: string) {
+    setConfirmingId(null);
     setActionLoading(userId);
     try {
       const res = await fetch(`/api/platform-admin/members/${userId}/delete`, { method: 'POST' });
@@ -180,6 +207,8 @@ export default function PlatformAdminClient({ initialCompanies }: { initialCompa
           [companyId]: (prev[companyId] ?? []).filter(m => m.user_id !== userId),
         }));
         setCompanies(prev => prev.map(c => c.id === companyId ? { ...c, member_count: Math.max(0, c.member_count - 1) } : c));
+        // Also remove from users list if loaded
+        setUsers(prev => prev.filter(u => u.id !== userId));
       } else {
         const data = await res.json();
         alert(data.error ?? 'Failed to delete user');
@@ -189,240 +218,558 @@ export default function PlatformAdminClient({ initialCompanies }: { initialCompa
     }
   }
 
+  // ── Users handlers ─────────────────────────────────────────────────────────
+  async function handleDeleteUser(userId: string) {
+    setConfirmingId(null);
+    setActionLoading(userId);
+    try {
+      const res = await fetch(`/api/platform-admin/members/${userId}/delete`, { method: 'POST' });
+      if (res.ok) {
+        setUsers(prev => prev.filter(u => u.id !== userId));
+        // Also update company member counts
+        const deleted = users.find(u => u.id === userId);
+        if (deleted?.company_id) {
+          setCompanies(prev => prev.map(c => c.id === deleted.company_id ? { ...c, member_count: Math.max(0, c.member_count - 1) } : c));
+          setMembersCache(prev => ({
+            ...prev,
+            [deleted.company_id!]: (prev[deleted.company_id!] ?? []).filter(m => m.user_id !== userId),
+          }));
+        }
+      } else {
+        const data = await res.json();
+        alert(data.error ?? 'Failed to delete user');
+      }
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
   function formatDate(d: string) {
     return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   }
 
+  function getInitial(fullName: string | null, email: string) {
+    return (fullName?.[0] ?? email?.[0] ?? '?').toUpperCase();
+  }
+
+  const filteredUsers = users.filter(u => {
+    if (userFilter === 'no-company' && u.company_id) return false;
+    if (userSearch.trim()) {
+      const q = userSearch.toLowerCase();
+      return u.email.toLowerCase().includes(q) || (u.full_name ?? '').toLowerCase().includes(q);
+    }
+    return true;
+  });
+
+  const orphanCount = users.filter(u => !u.company_id).length;
+
+  // ── Nav items ──────────────────────────────────────────────────────────────
+  const NAV = [
+    { id: 'companies' as const, label: 'Companies', Icon: BuildingOfficeIcon },
+    { id: 'users' as const, label: 'All Users', Icon: UsersIcon },
+  ];
+
   return (
-    <div className="max-w-5xl mx-auto px-6 lg:px-8 py-8 lg:py-12">
-      {/* Header */}
-      <div className="flex items-center gap-3 mb-8">
-        <div className="w-9 h-9 bg-indigo-50 flex items-center justify-center">
-          <BuildingOfficeIcon className="w-5 h-5 text-indigo-500" />
-        </div>
-        <div>
-          <h1 className="text-2xl font-bold text-neutral-900">Platform Admin</h1>
-          <p className="text-[12px] text-neutral-500 mt-0.5">Manage AUGMTD company tenants</p>
+    <div className="flex flex-1 overflow-hidden">
+      {/* ── Left nav panel ── */}
+      <div className="w-[200px] flex-shrink-0 flex flex-col bg-neutral-50 p-2 pl-0">
+        <div className="flex-1 flex flex-col rounded-2xl bg-white shadow-sm overflow-hidden">
+          <div className="px-4 py-4 border-b border-neutral-100">
+            <h2 className="text-[13px] font-semibold text-neutral-700">Platform Admin</h2>
+          </div>
+          <nav className="flex-1 p-2 space-y-0.5">
+            {NAV.map(({ id, label, Icon }) => {
+              const active = tab === id;
+              return (
+                <button
+                  key={id}
+                  onClick={() => setTab(id)}
+                  className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] transition-colors text-left ${
+                    active
+                      ? 'bg-indigo-50 text-indigo-700 font-medium'
+                      : 'text-neutral-500 hover:bg-neutral-50 hover:text-neutral-900'
+                  }`}
+                >
+                  <Icon className={`w-4 h-4 flex-shrink-0 ${active ? 'text-indigo-500' : 'text-neutral-400'}`} />
+                  {label}
+                </button>
+              );
+            })}
+          </nav>
         </div>
       </div>
 
-      {/* New company form */}
-      <div className="bg-white border border-neutral-200 shadow-sm p-6 mb-8">
-        <h2 className="text-[14px] font-semibold text-neutral-900 mb-4">Create new company</h2>
-        <form onSubmit={handleCreateCompany} className="flex items-end gap-3 flex-wrap">
-          <div className="flex-1 min-w-[180px]">
-            <label className="block text-[11px] font-medium text-neutral-600 mb-1">Company name</label>
-            <input type="text" value={formName} onChange={e => setFormName(e.target.value)}
-              placeholder="Acme Consulting"
-              className="w-full px-3 py-2 text-[13px] border border-neutral-300 focus:outline-none focus:border-indigo-400 placeholder:text-neutral-400" />
-          </div>
-          <div>
-            <label className="block text-[11px] font-medium text-neutral-600 mb-1">Plan</label>
-            <select value={formPlan} onChange={e => setFormPlan(e.target.value)}
-              className="px-3 py-2 text-[13px] border border-neutral-300 focus:outline-none focus:border-indigo-400 bg-white">
-              {PLAN_OPTIONS.map(p => <option key={p} value={p} className="capitalize">{p}</option>)}
-            </select>
-          </div>
-          <div className="flex-1 min-w-[180px]">
-            <label className="block text-[11px] font-medium text-neutral-600 mb-1">Owner email</label>
-            <input type="email" value={formOwnerEmail} onChange={e => setFormOwnerEmail(e.target.value)}
-              placeholder="owner@client.com"
-              className="w-full px-3 py-2 text-[13px] border border-neutral-300 focus:outline-none focus:border-indigo-400 placeholder:text-neutral-400" />
-          </div>
-          <button type="submit"
-            disabled={formLoading || !formName.trim() || !formOwnerEmail.trim()}
-            className="px-5 py-2 bg-indigo-600 text-white text-[13px] font-semibold hover:bg-indigo-700 disabled:opacity-50 transition-colors">
-            {formLoading ? 'Creating…' : 'Create + Invite'}
-          </button>
-        </form>
-        {formError && <p className="text-[12px] text-red-600 mt-3">{formError}</p>}
-        {formResult && (
-          <div className="mt-4 bg-green-50 border border-green-200 p-3 flex items-center gap-3">
-            <div className="flex-1 min-w-0">
-              <p className="text-[12px] font-semibold text-green-800 mb-0.5">
-                "{formResult.company.name}" created — owner invite ready
-              </p>
-              <p className="text-[11px] text-green-700 truncate">{formResult.inviteUrl}</p>
-            </div>
-            <button onClick={() => handleCopy(formResult.inviteUrl)}
-              className="flex items-center gap-1 px-3 py-1.5 bg-white border border-green-300 text-[12px] text-green-700 hover:bg-green-50 transition-colors flex-shrink-0">
-              {copied ? <CheckIcon className="w-3.5 h-3.5" /> : <ClipboardDocumentIcon className="w-3.5 h-3.5" />}
-              {copied ? 'Copied' : 'Copy link'}
-            </button>
-          </div>
-        )}
-      </div>
+      {/* ── Main content ── */}
+      <div className="flex-1 overflow-hidden flex flex-col bg-neutral-50 p-2">
+        <div className="flex-1 flex flex-col rounded-2xl bg-white shadow-sm overflow-hidden">
+          <div className="flex-1 overflow-y-auto">
 
-      {/* Companies table */}
-      <div className="bg-white border border-neutral-200 shadow-sm">
-        <div className="px-5 py-3.5 border-b border-neutral-100">
-          <h2 className="text-[13px] font-semibold text-neutral-900">
-            All companies
-            <span className="ml-2 text-[11px] font-normal text-neutral-400">{companies.length}</span>
-          </h2>
-        </div>
-
-        {companies.length === 0 ? (
-          <div className="px-5 py-10 text-center text-[13px] text-neutral-400">
-            No companies yet. Create one above.
-          </div>
-        ) : (
-          <div className="divide-y divide-neutral-100">
-            {companies.map(company => (
-              <div key={company.id}>
-                {/* Company row */}
-                <div className="flex items-center gap-2 px-5 py-3">
-                  {/* Expand toggle */}
-                  <button onClick={() => toggleMembers(company.id)}
-                    className="text-neutral-400 hover:text-neutral-600 flex-shrink-0">
-                    {expandedId === company.id
-                      ? <ChevronDownIcon className="w-4 h-4" />
-                      : <ChevronRightIcon className="w-4 h-4" />}
-                  </button>
-
-                  {/* Name — inline edit or display */}
-                  <div className="flex-1 min-w-0">
-                    {editingId === company.id ? (
-                      <div className="flex items-center gap-2">
-                        <input
-                          value={editingName}
-                          onChange={e => setEditingName(e.target.value)}
-                          onKeyDown={e => {
-                            if (e.key === 'Enter') handleUpdateCompany(company.id, { name: editingName });
-                            if (e.key === 'Escape') setEditingId(null);
-                          }}
-                          autoFocus
-                          className="px-2 py-0.5 text-[13px] border border-indigo-300 focus:outline-none focus:border-indigo-500 w-48"
-                        />
-                        <button onClick={() => handleUpdateCompany(company.id, { name: editingName })}
-                          disabled={actionLoading === company.id}
-                          className="text-[11px] text-indigo-600 hover:text-indigo-800 font-medium">
-                          Save
-                        </button>
-                        <button onClick={() => setEditingId(null)}
-                          className="text-neutral-400 hover:text-neutral-600">
-                          <XMarkIcon className="w-3.5 h-3.5" />
-                        </button>
+            {/* ══ Companies tab ══════════════════════════════════════════════ */}
+            {tab === 'companies' && (
+              <>
+                {/* Create company */}
+                <section className="px-6 py-5 border-b border-neutral-100">
+                  <h2 className="text-[14px] font-semibold text-neutral-900 mb-4">Create new company</h2>
+                  <form onSubmit={handleCreateCompany} className="flex items-end gap-3 flex-wrap">
+                    <div className="flex-1 min-w-[180px]">
+                      <label className="block text-[11px] font-semibold text-neutral-400 uppercase tracking-wide mb-1.5">Company name</label>
+                      <input
+                        type="text"
+                        value={formName}
+                        onChange={e => setFormName(e.target.value)}
+                        placeholder="Acme Consulting"
+                        className="w-full px-3 py-2 text-[13px] border border-neutral-200 rounded-lg focus:outline-none focus:border-indigo-400 placeholder:text-neutral-400"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-semibold text-neutral-400 uppercase tracking-wide mb-1.5">Plan</label>
+                      <select
+                        value={formPlan}
+                        onChange={e => setFormPlan(e.target.value)}
+                        className="px-3 py-2 text-[13px] border border-neutral-200 rounded-lg focus:outline-none focus:border-indigo-400 bg-white"
+                      >
+                        {PLAN_OPTIONS.map(p => <option key={p} value={p} className="capitalize">{p}</option>)}
+                      </select>
+                    </div>
+                    <div className="flex-1 min-w-[180px]">
+                      <label className="block text-[11px] font-semibold text-neutral-400 uppercase tracking-wide mb-1.5">Owner email</label>
+                      <input
+                        type="email"
+                        value={formOwnerEmail}
+                        onChange={e => setFormOwnerEmail(e.target.value)}
+                        placeholder="owner@client.com"
+                        className="w-full px-3 py-2 text-[13px] border border-neutral-200 rounded-lg focus:outline-none focus:border-indigo-400 placeholder:text-neutral-400"
+                      />
+                    </div>
+                    <button
+                      type="submit"
+                      disabled={formLoading || !formName.trim() || !formOwnerEmail.trim()}
+                      className="px-4 py-2 bg-indigo-600 text-white text-[13px] font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+                    >
+                      {formLoading ? 'Creating…' : 'Create + Invite'}
+                    </button>
+                  </form>
+                  {formError && <p className="text-[12px] text-red-600 mt-3">{formError}</p>}
+                  {formResult && (
+                    <div className="mt-4 bg-green-50 border border-green-200 rounded-xl p-3 flex items-center gap-3">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[12px] font-semibold text-green-800 mb-0.5">
+                          &ldquo;{formResult.company.name}&rdquo; created — owner invite ready
+                        </p>
+                        <p className="text-[11px] text-green-700 truncate">{formResult.inviteUrl}</p>
                       </div>
-                    ) : (
-                      <div className="flex items-center gap-2">
-                        <span className="text-[13px] font-medium text-neutral-800">{company.name}</span>
-                        <span className="text-[11px] text-neutral-400">{company.slug}</span>
-                      </div>
-                    )}
+                      <button
+                        onClick={() => handleCopyInviteUrl(formResult.inviteUrl)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-green-300 rounded-lg text-[12px] text-green-700 hover:bg-green-50 transition-colors flex-shrink-0"
+                      >
+                        {copied ? <CheckIcon className="w-3.5 h-3.5" /> : <ClipboardDocumentIcon className="w-3.5 h-3.5" />}
+                        {copied ? 'Copied' : 'Copy link'}
+                      </button>
+                    </div>
+                  )}
+                </section>
+
+                {/* Companies list */}
+                <section className="px-6 py-5">
+                  <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-[14px] font-semibold text-neutral-900">
+                      All companies
+                      <span className="ml-2 text-[12px] font-normal text-neutral-400">{companies.length}</span>
+                    </h2>
                   </div>
 
-                  {/* Plan selector */}
-                  <select value={company.plan}
-                    onChange={e => handleUpdateCompany(company.id, { plan: e.target.value })}
-                    disabled={actionLoading === company.id || editingId === company.id}
-                    className={`text-[11px] font-semibold px-2 py-0.5 border-0 capitalize cursor-pointer focus:outline-none focus:ring-1 focus:ring-indigo-300 ${PLAN_COLORS[company.plan]}`}>
-                    {PLAN_OPTIONS.map(p => <option key={p} value={p} className="capitalize">{p}</option>)}
-                  </select>
+                  {companies.length === 0 ? (
+                    <p className="text-[13px] text-neutral-400 py-6 text-center">No companies yet. Create one above.</p>
+                  ) : (
+                    <div className="border border-neutral-200 rounded-2xl overflow-hidden divide-y divide-neutral-100">
+                      {companies.map(company => (
+                        <div key={company.id}>
+                          {/* Company row */}
+                          <div className="flex items-center gap-3 px-5 py-3.5 hover:bg-neutral-50 transition-colors">
+                            {/* Expand toggle */}
+                            <button
+                              onClick={() => toggleMembers(company.id)}
+                              className="text-neutral-400 hover:text-neutral-600 flex-shrink-0 p-0.5 rounded-lg transition-colors"
+                            >
+                              {expandedId === company.id
+                                ? <ChevronDownIcon className="w-4 h-4" />
+                                : <ChevronRightIcon className="w-4 h-4" />}
+                            </button>
 
-                  {/* Status toggle */}
-                  <button
-                    onClick={() => handleUpdateCompany(company.id, {
-                      status: company.status === 'active' ? 'suspended' : 'active',
-                    })}
-                    disabled={actionLoading === company.id}
-                    title={company.status === 'active' ? 'Click to suspend' : 'Click to activate'}
-                    className={`text-[11px] font-semibold px-2 py-0.5 capitalize hover:opacity-75 transition-opacity disabled:opacity-50 ${STATUS_COLORS[company.status]}`}>
-                    {company.status}
-                  </button>
+                            {/* Initial circle */}
+                            <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center text-[12px] font-semibold text-indigo-700 flex-shrink-0">
+                              {(company.name[0] ?? '?').toUpperCase()}
+                            </div>
 
-                  {/* Member count */}
-                  <span className="text-[12px] text-neutral-500 w-20 text-right flex-shrink-0">
-                    {company.member_count} {company.member_count === 1 ? 'member' : 'members'}
-                  </span>
-
-                  {/* Created date */}
-                  <span className="text-[11px] text-neutral-400 hidden lg:block w-24 text-right flex-shrink-0">
-                    {formatDate(company.created_at)}
-                  </span>
-
-                  {/* Actions */}
-                  <div className="flex items-center gap-1 flex-shrink-0">
-                    <button onClick={() => startEditing(company)}
-                      disabled={actionLoading === company.id}
-                      title="Edit name"
-                      className="p-1 text-neutral-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors disabled:opacity-50">
-                      <PencilIcon className="w-3.5 h-3.5" />
-                    </button>
-                    <button onClick={() => handleDeleteCompany(company.id, company.name)}
-                      disabled={actionLoading === company.id}
-                      title="Delete company"
-                      className="p-1 text-neutral-400 hover:text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50">
-                      <TrashIcon className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                </div>
-
-                {/* Expanded members + pending invites */}
-                {expandedId === company.id && (
-                  <div className="bg-neutral-50 border-t border-neutral-100 px-12 py-3 space-y-3">
-                    {membersLoading === company.id ? (
-                      <p className="text-[12px] text-neutral-400 py-2">Loading…</p>
-                    ) : (
-                      <>
-                        {/* Members */}
-                        {(membersCache[company.id] ?? []).length === 0 ? (
-                          <p className="text-[12px] text-neutral-400">No members yet.</p>
-                        ) : (
-                          <div className="space-y-2">
-                            {(membersCache[company.id] ?? []).map(m => (
-                              <div key={m.id} className="flex items-center gap-3 text-[12px]">
-                                <div className="w-5 h-5 bg-indigo-100 flex items-center justify-center text-[10px] font-semibold text-indigo-700 flex-shrink-0">
-                                  {(m.full_name?.[0] ?? m.email?.[0] ?? '?').toUpperCase()}
+                            {/* Name — inline edit or display */}
+                            <div className="flex-1 min-w-0">
+                              {editingId === company.id ? (
+                                <div className="flex items-center gap-2">
+                                  <input
+                                    value={editingName}
+                                    onChange={e => setEditingName(e.target.value)}
+                                    onKeyDown={e => {
+                                      if (e.key === 'Enter') handleUpdateCompany(company.id, { name: editingName });
+                                      if (e.key === 'Escape') setEditingId(null);
+                                    }}
+                                    autoFocus
+                                    className="px-2 py-0.5 text-[13px] border border-indigo-300 rounded-lg focus:outline-none focus:border-indigo-500 w-48"
+                                  />
+                                  <button
+                                    onClick={() => handleUpdateCompany(company.id, { name: editingName })}
+                                    disabled={actionLoading === company.id}
+                                    className="text-[11px] text-indigo-600 hover:text-indigo-800 font-medium"
+                                  >
+                                    Save
+                                  </button>
+                                  <button onClick={() => setEditingId(null)} className="text-neutral-400 hover:text-neutral-600">
+                                    <XMarkIcon className="w-3.5 h-3.5" />
+                                  </button>
                                 </div>
-                                <span className="flex-1 text-neutral-700 truncate">
-                                  {m.full_name ? `${m.full_name} (${m.email})` : m.email}
-                                </span>
-                                <span className={`font-semibold capitalize ${ROLE_COLORS[m.role]}`}>{m.role}</span>
-                                <span className="text-neutral-400">Joined {formatDate(m.joined_at)}</span>
-                                <button
-                                  onClick={() => handleDeleteMember(company.id, m.user_id, m.full_name ?? m.email)}
-                                  disabled={actionLoading === m.user_id}
-                                  title="Delete user"
-                                  className="p-1 text-neutral-300 hover:text-red-500 hover:bg-red-50 transition-colors disabled:opacity-50"
-                                >
-                                  <TrashIcon className="w-3.5 h-3.5" />
-                                </button>
-                              </div>
-                            ))}
-                          </div>
-                        )}
+                              ) : (
+                                <div className="flex items-center gap-2">
+                                  <span className="text-[13px] font-medium text-neutral-800 truncate">{company.name}</span>
+                                  <span className="text-[11px] text-neutral-400 flex-shrink-0">{company.slug}</span>
+                                </div>
+                              )}
+                            </div>
 
-                        {/* Pending invites */}
-                        {(invitesCache[company.id] ?? []).length > 0 && (
-                          <div className="border-t border-neutral-200 pt-3 space-y-2">
-                            <p className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wide">Pending invitations</p>
-                            {(invitesCache[company.id] ?? []).map(inv => (
-                              <div key={inv.id} className="flex items-center gap-3 text-[12px]">
-                                <span className="flex-1 text-neutral-500 truncate">{inv.email}</span>
-                                <span className={`font-semibold capitalize ${ROLE_COLORS[inv.role]}`}>{inv.role}</span>
-                                <span className="text-neutral-400">Expires {formatDate(inv.expires_at)}</span>
+                            {/* Plan badge */}
+                            <select
+                              value={company.plan}
+                              onChange={e => handleUpdateCompany(company.id, { plan: e.target.value })}
+                              disabled={actionLoading === company.id || editingId === company.id}
+                              className={`text-[11px] font-semibold px-2.5 py-0.5 rounded-full border-0 capitalize cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-300 ${PLAN_COLORS[company.plan]}`}
+                            >
+                              {PLAN_OPTIONS.map(p => <option key={p} value={p} className="capitalize">{p}</option>)}
+                            </select>
+
+                            {/* Status toggle */}
+                            <button
+                              onClick={() => handleUpdateCompany(company.id, {
+                                status: company.status === 'active' ? 'suspended' : 'active',
+                              })}
+                              disabled={actionLoading === company.id}
+                              title={company.status === 'active' ? 'Click to suspend' : 'Click to activate'}
+                              className={`text-[11px] font-semibold px-2.5 py-0.5 rounded-full capitalize hover:opacity-75 transition-opacity disabled:opacity-50 ${STATUS_COLORS[company.status] ?? 'bg-neutral-100 text-neutral-600'}`}
+                            >
+                              {company.status}
+                            </button>
+
+                            {/* Member count */}
+                            <span className="text-[12px] text-neutral-400 w-20 text-right flex-shrink-0">
+                              {company.member_count} {company.member_count === 1 ? 'member' : 'members'}
+                            </span>
+
+                            {/* Created date */}
+                            <span className="text-[11px] text-neutral-400 hidden lg:block w-24 text-right flex-shrink-0">
+                              {formatDate(company.created_at)}
+                            </span>
+
+                            {/* Actions */}
+                            <div className="flex items-center gap-1 flex-shrink-0">
+                              {confirmingId === company.id ? (
+                                <div className="flex items-center gap-1.5">
+                                  <span className="text-[11px] text-red-500 font-medium">Delete?</span>
+                                  <button
+                                    onClick={() => handleDeleteCompany(company.id)}
+                                    disabled={actionLoading === company.id}
+                                    className="px-2 py-0.5 rounded-lg text-[11px] font-semibold bg-red-500 text-white hover:bg-red-600 disabled:opacity-50 transition-colors"
+                                  >
+                                    Yes
+                                  </button>
+                                  <button
+                                    onClick={() => setConfirmingId(null)}
+                                    className="px-2 py-0.5 rounded-lg text-[11px] font-medium text-neutral-500 hover:bg-neutral-100 transition-colors"
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
+                              ) : (
+                                <>
+                                  <button
+                                    onClick={() => { setEditingId(company.id); setEditingName(company.name); }}
+                                    disabled={actionLoading === company.id}
+                                    title="Edit name"
+                                    className="p-1.5 rounded-lg text-neutral-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors disabled:opacity-50"
+                                  >
+                                    <PencilIcon className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    onClick={() => setConfirmingId(company.id)}
+                                    disabled={actionLoading === company.id}
+                                    title="Delete company"
+                                    className="p-1.5 rounded-lg text-neutral-400 hover:text-red-500 hover:bg-red-50 transition-colors disabled:opacity-50"
+                                  >
+                                    <TrashIcon className="w-3.5 h-3.5" />
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Expanded members + pending invites */}
+                          {expandedId === company.id && (
+                            <div className="bg-neutral-50 border-t border-neutral-100 px-12 py-4 space-y-3">
+                              {membersLoading === company.id ? (
+                                <p className="text-[12px] text-neutral-400 py-2">Loading…</p>
+                              ) : (
+                                <>
+                                  {/* Members */}
+                                  {(membersCache[company.id] ?? []).length === 0 ? (
+                                    <p className="text-[12px] text-neutral-400">No members yet.</p>
+                                  ) : (
+                                    <div className="space-y-2">
+                                      {(membersCache[company.id] ?? []).map(m => (
+                                        <div key={m.id} className="flex items-center gap-3 text-[12px]">
+                                          <div className="w-6 h-6 rounded-full bg-indigo-100 flex items-center justify-center text-[10px] font-semibold text-indigo-700 flex-shrink-0">
+                                            {getInitial(m.full_name, m.email)}
+                                          </div>
+                                          <span className="flex-1 text-neutral-700 truncate">
+                                            {m.full_name ? `${m.full_name} (${m.email})` : m.email}
+                                          </span>
+                                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold capitalize ${
+                                            m.role === 'owner' ? 'bg-indigo-50 text-indigo-700' :
+                                            m.role === 'admin' ? 'bg-amber-50 text-amber-700' :
+                                            'bg-neutral-100 text-neutral-600'
+                                          }`}>{m.role}</span>
+                                          <span className="text-neutral-400">Joined {formatDate(m.joined_at)}</span>
+                                          {confirmingId === m.user_id ? (
+                                            <div className="flex items-center gap-1.5">
+                                              <span className="text-[11px] text-red-500 font-medium">Delete?</span>
+                                              <button
+                                                onClick={() => handleDeleteMember(company.id, m.user_id)}
+                                                disabled={actionLoading === m.user_id}
+                                                className="px-2 py-0.5 rounded-lg text-[11px] font-semibold bg-red-500 text-white hover:bg-red-600 disabled:opacity-50 transition-colors"
+                                              >
+                                                Yes
+                                              </button>
+                                              <button
+                                                onClick={() => setConfirmingId(null)}
+                                                className="px-2 py-0.5 rounded-lg text-[11px] font-medium text-neutral-500 hover:bg-neutral-100 transition-colors"
+                                              >
+                                                Cancel
+                                              </button>
+                                            </div>
+                                          ) : (
+                                            <button
+                                              onClick={() => setConfirmingId(m.user_id)}
+                                              disabled={actionLoading === m.user_id}
+                                              title="Delete user"
+                                              className="p-1 rounded-lg text-neutral-300 hover:text-red-500 hover:bg-red-50 transition-colors disabled:opacity-50"
+                                            >
+                                              <TrashIcon className="w-3.5 h-3.5" />
+                                            </button>
+                                          )}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+
+                                  {/* Pending invites */}
+                                  {(invitesCache[company.id] ?? []).length > 0 && (
+                                    <div className="border-t border-neutral-200 pt-3 space-y-2">
+                                      <p className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wide">Pending invitations</p>
+                                      {(invitesCache[company.id] ?? []).map(inv => (
+                                        <div key={inv.id} className="flex items-center gap-3 text-[12px]">
+                                          <span className="flex-1 text-neutral-500 truncate">{inv.email}</span>
+                                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold capitalize ${
+                                            inv.role === 'owner' ? 'bg-indigo-50 text-indigo-700' :
+                                            inv.role === 'admin' ? 'bg-amber-50 text-amber-700' :
+                                            'bg-neutral-100 text-neutral-600'
+                                          }`}>{inv.role}</span>
+                                          <span className="text-neutral-400">Expires {formatDate(inv.expires_at)}</span>
+                                          <button
+                                            onClick={() => handleCopyInvite(inv.id, inv.inviteUrl)}
+                                            className="flex items-center gap-1 px-2 py-1 rounded-lg border border-neutral-200 text-neutral-600 hover:bg-white transition-colors text-[11px]"
+                                          >
+                                            {copiedInviteId === inv.id
+                                              ? <><CheckIcon className="w-3 h-3" /> Copied</>
+                                              : <><ClipboardDocumentIcon className="w-3 h-3" /> Copy link</>
+                                            }
+                                          </button>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </section>
+              </>
+            )}
+
+            {/* ══ Users tab ══════════════════════════════════════════════════ */}
+            {tab === 'users' && (
+              <>
+                {/* Stats strip */}
+                <section className="px-6 py-5 border-b border-neutral-100">
+                  <div className="flex items-center gap-8">
+                    <div>
+                      <p className="text-[22px] font-semibold text-neutral-900">{users.length}</p>
+                      <p className="text-[11px] text-neutral-400 mt-0.5">Total users</p>
+                    </div>
+                    <div className="w-px h-8 bg-neutral-100" />
+                    <div>
+                      <p className="text-[22px] font-semibold text-neutral-900">{users.length - orphanCount}</p>
+                      <p className="text-[11px] text-neutral-400 mt-0.5">With company</p>
+                    </div>
+                    <div className="w-px h-8 bg-neutral-100" />
+                    <div>
+                      <p className="text-[22px] font-semibold text-neutral-900">{orphanCount}</p>
+                      <p className="text-[11px] text-neutral-400 mt-0.5">No company</p>
+                    </div>
+                  </div>
+                </section>
+
+                {/* Filter + search */}
+                <section className="px-6 py-3 border-b border-neutral-100 flex items-center gap-3">
+                  <div className="flex gap-1 bg-neutral-100 rounded-xl p-1">
+                    {(['all', 'no-company'] as const).map(f => (
+                      <button
+                        key={f}
+                        onClick={() => setUserFilter(f)}
+                        className={`px-3 py-1 rounded-lg text-[12px] transition-all ${
+                          userFilter === f
+                            ? 'bg-white shadow-sm text-neutral-900 font-medium'
+                            : 'text-neutral-500 hover:text-neutral-700'
+                        }`}
+                      >
+                        {f === 'all' ? 'All' : 'No company'}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="relative flex-1 max-w-xs">
+                    <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-neutral-400 pointer-events-none" />
+                    <input
+                      type="text"
+                      value={userSearch}
+                      onChange={e => setUserSearch(e.target.value)}
+                      placeholder="Search by name or email…"
+                      className="w-full pl-8 pr-3 py-1.5 rounded-lg border border-neutral-200 text-[13px] focus:outline-none focus:border-indigo-400 placeholder:text-neutral-400"
+                    />
+                  </div>
+                </section>
+
+                {/* Users list */}
+                <section className="px-6 py-5">
+                  {usersLoading ? (
+                    <p className="text-[13px] text-neutral-400 py-8 text-center">Loading users…</p>
+                  ) : (
+                    <div className="border border-neutral-200 rounded-2xl overflow-hidden">
+                      {/* Table header */}
+                      <div className="flex items-center gap-3 px-5 py-3 border-b border-neutral-100 bg-neutral-50">
+                        <div className="w-8 flex-shrink-0" />
+                        <span className="flex-1 text-[11px] uppercase tracking-wide font-semibold text-neutral-400">User</span>
+                        <span className="w-36 text-[11px] uppercase tracking-wide font-semibold text-neutral-400">Company</span>
+                        <span className="w-20 text-[11px] uppercase tracking-wide font-semibold text-neutral-400">Role</span>
+                        <span className="w-28 text-[11px] uppercase tracking-wide font-semibold text-neutral-400">Joined</span>
+                        <div className="w-7 flex-shrink-0" />
+                      </div>
+
+                      {filteredUsers.length === 0 ? (
+                        <p className="text-[13px] text-neutral-400 px-5 py-8 text-center">
+                          {userSearch ? 'No users match your search.' : userFilter === 'no-company' ? 'All users belong to a company.' : 'No users found.'}
+                        </p>
+                      ) : (
+                        filteredUsers.map(u => (
+                          <div key={u.id} className="flex items-center gap-3 px-5 py-3.5 border-b border-neutral-100 last:border-b-0 hover:bg-neutral-50 transition-colors">
+                            {/* Avatar */}
+                            <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center text-[12px] font-semibold text-indigo-700 flex-shrink-0">
+                              {getInitial(u.full_name, u.email)}
+                            </div>
+
+                            {/* Name + email */}
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-[13px] font-medium text-neutral-800 truncate">
+                                  {u.full_name ?? u.email}
+                                </span>
+                                {u.is_super_admin && (
+                                  <span className="flex-shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-50 text-indigo-700">
+                                    Super admin
+                                  </span>
+                                )}
+                              </div>
+                              {u.full_name && (
+                                <p className="text-[11px] text-neutral-400 truncate">{u.email}</p>
+                              )}
+                            </div>
+
+                            {/* Company */}
+                            <div className="w-36 flex-shrink-0">
+                              {u.company_name ? (
+                                <span className="text-[12px] text-neutral-700 truncate block">{u.company_name}</span>
+                              ) : (
+                                <span className="inline-block px-2 py-0.5 rounded-full text-[11px] bg-neutral-100 text-neutral-400">
+                                  No company
+                                </span>
+                              )}
+                            </div>
+
+                            {/* Role */}
+                            <div className="w-20 flex-shrink-0">
+                              {u.role ? (
+                                <span className={`inline-block px-2 py-0.5 rounded-full text-[11px] font-semibold capitalize ${
+                                  u.role === 'owner' ? 'bg-indigo-50 text-indigo-700' :
+                                  u.role === 'admin' ? 'bg-amber-50 text-amber-700' :
+                                  'bg-neutral-100 text-neutral-600'
+                                }`}>{u.role}</span>
+                              ) : (
+                                <span className="text-[12px] text-neutral-300">—</span>
+                              )}
+                            </div>
+
+                            {/* Joined */}
+                            <span className="w-28 text-[11px] text-neutral-400 flex-shrink-0">
+                              {formatDate(u.created_at)}
+                            </span>
+
+                            {/* Delete */}
+                            {confirmingId === u.id ? (
+                              <div className="flex items-center gap-1.5 flex-shrink-0">
+                                <span className="text-[11px] text-red-500 font-medium">Delete?</span>
                                 <button
-                                  onClick={() => handleCopyInvite(inv.id, inv.inviteUrl)}
-                                  className="flex items-center gap-1 px-2 py-0.5 border border-neutral-300 text-neutral-600 hover:bg-white transition-colors text-[11px]"
+                                  onClick={() => handleDeleteUser(u.id)}
+                                  disabled={actionLoading === u.id}
+                                  className="px-2 py-0.5 rounded-lg text-[11px] font-semibold bg-red-500 text-white hover:bg-red-600 disabled:opacity-50 transition-colors"
                                 >
-                                  {copiedInviteId === inv.id
-                                    ? <><CheckIcon className="w-3 h-3" /> Copied</>
-                                    : <><ClipboardDocumentIcon className="w-3 h-3" /> Copy link</>
-                                  }
+                                  Yes
+                                </button>
+                                <button
+                                  onClick={() => setConfirmingId(null)}
+                                  className="px-2 py-0.5 rounded-lg text-[11px] font-medium text-neutral-500 hover:bg-neutral-100 transition-colors"
+                                >
+                                  Cancel
                                 </button>
                               </div>
-                            ))}
+                            ) : (
+                              <button
+                                onClick={() => !u.is_super_admin && setConfirmingId(u.id)}
+                                disabled={actionLoading === u.id || u.is_super_admin}
+                                title={u.is_super_admin ? 'Cannot delete super admin' : 'Delete user'}
+                                className="w-7 p-1.5 rounded-lg text-neutral-300 hover:text-red-500 hover:bg-red-50 transition-colors disabled:opacity-30 disabled:cursor-not-allowed flex-shrink-0"
+                              >
+                                <TrashIcon className="w-3.5 h-3.5" />
+                              </button>
+                            )}
                           </div>
-                        )}
-                      </>
-                    )}
-                  </div>
-                )}
-              </div>
-            ))}
+                        ))
+                      )}
+                    </div>
+                  )}
+                </section>
+              </>
+            )}
+
           </div>
-        )}
+        </div>
       </div>
     </div>
   );
