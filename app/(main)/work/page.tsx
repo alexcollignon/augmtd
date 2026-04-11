@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
-import { WorkPageClient } from './work-page-client';
+import { WorkPageClient } from '@/app/work/work-page-client';
 export const metadata = { title: 'Chat — AUGMTD' };
 
 export default async function WorkPage({
@@ -41,7 +41,7 @@ export default async function WorkPage({
       userId={user.id}
       userEmail={profile?.email || user.email}
       userFullName={profile?.full_name}
-initialThreads={(threads || []).map((t: any) => ({
+      initialThreads={(threads || []).map((t: any) => ({
         ...t,
         process_title: t.processes?.title ?? null,
         processes: undefined,

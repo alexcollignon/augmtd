@@ -1,7 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
-import SidebarNav from '@/components/sidebar-nav';
-import PlatformAdminClient from './platform-admin-client';
+import PlatformAdminClient from '@/app/platform-admin/platform-admin-client';
 import { isSuperAdmin } from '@/lib/company/is-super-admin';
 
 export default async function PlatformAdminPage() {
@@ -35,10 +34,5 @@ export default async function PlatformAdminPage() {
     member_count: countMap[c.id] ?? 0,
   }));
 
-  return (
-    <div className="flex h-screen bg-neutral-50 overflow-hidden">
-      <SidebarNav userEmail={user.email} />
-      <PlatformAdminClient initialCompanies={companiesWithCount} />
-    </div>
-  );
+  return <PlatformAdminClient initialCompanies={companiesWithCount} />;
 }

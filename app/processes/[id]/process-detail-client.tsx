@@ -3,7 +3,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import SidebarNav from '@/components/sidebar-nav';
 import { WorkspaceTabBar } from '@/components/work/workspace-tab-bar';
 import type { ProcessDetail, ProcessStepRecord, ProcessComment, ProcessStepStatus, ProcessPlan } from '@/lib/types/process';
 import { StepTypeIcon, AssigneePicker, TeamMember, ChatMessage as PlanChatMessage, getDisplayText, hasReachedJson, extractPlanJson, PLAN_SEPARATOR as PLAN_SEP } from '@/app/processes/_components/plan-components';
@@ -874,8 +873,7 @@ export function ProcessDetailClient({ processId, userId, userEmail, companyRole 
 
   if (loading) {
     return (
-      <div className="flex h-screen overflow-hidden bg-neutral-50">
-        <SidebarNav userEmail={userEmail} />
+      <div className="flex flex-1 min-w-0 overflow-hidden bg-neutral-50">
         <div className="flex-1 flex items-center justify-center">
           <ArrowPathIcon className="w-6 h-6 text-neutral-300 animate-spin" />
         </div>
@@ -893,8 +891,7 @@ export function ProcessDetailClient({ processId, userId, userEmail, companyRole 
     const draftReady = draftAllAssigned && draftTitle.trim().length > 0;
 
     return (
-      <div className="flex h-screen overflow-hidden bg-neutral-50">
-        <SidebarNav userEmail={userEmail} />
+      <div className="flex flex-1 min-w-0 overflow-hidden bg-neutral-50">
         <ProcessSidebar currentId={processId} userId={userId} />
         <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         <WorkspaceTabBar />
@@ -1135,8 +1132,7 @@ export function ProcessDetailClient({ processId, userId, userEmail, companyRole 
   const isMyStep = currentStep?.assignee_id === userId;
 
   return (
-    <div className="flex h-screen overflow-hidden bg-neutral-50">
-      <SidebarNav userEmail={userEmail} />
+    <div className="flex flex-1 min-w-0 overflow-hidden bg-neutral-50">
       <ProcessSidebar currentId={processId} userId={userId} />
 
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">

@@ -1,9 +1,14 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { getMyCompany } from '@/lib/company/get-my-company';
-import { NewProcessClient } from './new-process-client';
+import { ProcessDetailClient } from '@/app/processes/[id]/process-detail-client';
 
-export default async function NewProcessPage() {
+export default async function ProcessDetailPage({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
+  const { id } = await params;
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/login');
@@ -18,9 +23,11 @@ export default async function NewProcessPage() {
     .single();
 
   return (
-    <NewProcessClient
+    <ProcessDetailClient
+      processId={id}
       userId={user.id}
       userEmail={profile?.email ?? user.email ?? ''}
+      companyRole={company.role}
     />
   );
 }

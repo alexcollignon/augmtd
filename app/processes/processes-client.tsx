@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import SidebarNav from '@/components/sidebar-nav';
 import { WorkspaceTabBar } from '@/components/work/workspace-tab-bar';
 import type { ProcessListItem, ProcessStatus } from '@/lib/types/process';
 import {
@@ -113,10 +112,7 @@ export function ProcessesClient({ userId, userEmail, companyName }: Props) {
   const displayed = tabItems[activeTab];
 
   return (
-    <div className="flex h-screen overflow-hidden bg-neutral-50">
-      <SidebarNav userEmail={userEmail} />
-
-      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+    <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         <WorkspaceTabBar />
         {/* Header */}
         <div className="flex-shrink-0 bg-white border-b border-neutral-200 px-6 py-4">
@@ -243,7 +239,6 @@ export function ProcessesClient({ userId, userEmail, companyName }: Props) {
             </div>
           )}
         </div>
-      </div>
     </div>
   );
 }

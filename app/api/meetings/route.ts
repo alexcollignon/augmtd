@@ -51,35 +51,32 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'Failed to fetch meetings' }, { status: 500 });
     }
 
-    // Enrich attendees with VIP status from relationship_graph
-    const enrichedMeetings = await Promise.all(
-      (meetings || []).map(async (meeting) => {
-        const attendeeEmails = meeting.attendees.map((a: any) => a.email);
+    // Enrich attendees with VIP status from relationship_graph — one batch query
+    const allAttendeeEmails = [
+      ...new Set(
+        (meetings || []).flatMap((m) => (m.attendees ?? []).map((a: any) => a.email).filter(Boolean))
+      ),
+    ];
 
-        // Get relationship data for attendees
-        const { data: relationships } = await supabase
-          .from('relationship_graph')
-          .select('contact_email, importance')
-          .eq('user_id', user.id)
-          .in('contact_email', attendeeEmails);
+    const relMap = new Map<string, number>();
+    if (allAttendeeEmails.length > 0) {
+      const { data: relationships } = await supabase
+        .from('relationship_graph')
+        .select('contact_email, importance')
+        .eq('user_id', user.id)
+        .in('contact_email', allAttendeeEmails);
+      (relationships ?? []).forEach((r) => relMap.set(r.contact_email, r.importance));
+    }
 
-        // Enrich attendees with VIP status
-        const enrichedAttendees = meeting.attendees.map((attendee: any) => {
-          const rel = relationships?.find(r => r.contact_email === attendee.email);
-          return {
-            ...attendee,
-            isVIP: rel ? rel.importance > 80 : false,
-            importance: rel?.importance || 0,
-          };
-        });
-
-        return {
-          ...meeting,
-          attendees: enrichedAttendees,
-          has_transcript: false, // filled below
-        };
-      })
-    );
+    const enrichedMeetings = (meetings || []).map((meeting) => ({
+      ...meeting,
+      attendees: (meeting.attendees ?? []).map((attendee: any) => ({
+        ...attendee,
+        isVIP: (relMap.get(attendee.email) ?? 0) > 80,
+        importance: relMap.get(attendee.email) ?? 0,
+      })),
+      has_transcript: false, // filled below
+    }));
 
     // Batch-check which events have transcripts
     const eventIds = enrichedMeetings.map((m) => m.id);

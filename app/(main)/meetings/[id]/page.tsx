@@ -1,7 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
 import { redirect, notFound } from 'next/navigation';
-import SidebarNav from '@/components/sidebar-nav';
-import MeetingDetailClient from './meeting-detail-client';
+import MeetingDetailClient from '@/app/meetings/[id]/meeting-detail-client';
 
 export default async function MeetingDetailPage({
   params,
@@ -14,7 +13,6 @@ export default async function MeetingDetailPage({
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/login');
 
-  // Load calendar event
   const { data: event } = await supabase
     .from('calendar_events')
     .select('*')
@@ -24,7 +22,6 @@ export default async function MeetingDetailPage({
 
   if (!event) notFound();
 
-  // Load transcript if exists
   const { data: transcriptRaw } = await supabase
     .from('meeting_transcripts')
     .select('id, summary, decisions, risks, suggested_next_step, key_moments, transcript_segments, duration_minutes, work_items_generated, source, recording_storage_path, bot_state, processed, notes_structured, template_id')
@@ -34,7 +31,6 @@ export default async function MeetingDetailPage({
     .limit(1)
     .maybeSingle();
 
-  // Generate signed URL for audio playback if recording exists
   let audioUrl: string | null = null;
   if (transcriptRaw?.recording_storage_path) {
     const { createClient: createAdmin } = await import('@supabase/supabase-js');
@@ -67,7 +63,6 @@ export default async function MeetingDetailPage({
       }
     : null;
 
-  // Load action items from inbox
   const actionItems = transcript
     ? await (async () => {
         const { data } = await supabase
@@ -88,20 +83,17 @@ export default async function MeetingDetailPage({
     : [];
 
   return (
-    <div className="flex h-screen bg-gradient-to-br from-neutral-50 to-white">
-      <SidebarNav userEmail={user.email} />
-      <main className="flex-1 min-h-0 overflow-hidden">
-        <MeetingDetailClient
-          event={event}
-          transcript={transcript}
-          actionItems={actionItems}
-          risks={transcript?.risks ?? []}
-          suggestedNextStep={transcript?.suggestedNextStep ?? null}
-          audioUrl={audioUrl}
-          transcriptBotState={transcript?.botState ?? null}
-          transcriptProcessed={transcript?.processed ?? false}
-        />
-      </main>
-    </div>
+    <main className="flex-1 min-h-0 overflow-hidden bg-gradient-to-br from-neutral-50 to-white">
+      <MeetingDetailClient
+        event={event}
+        transcript={transcript}
+        actionItems={actionItems}
+        risks={transcript?.risks ?? []}
+        suggestedNextStep={transcript?.suggestedNextStep ?? null}
+        audioUrl={audioUrl}
+        transcriptBotState={transcript?.botState ?? null}
+        transcriptProcessed={transcript?.processed ?? false}
+      />
+    </main>
   );
 }

@@ -4,7 +4,6 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import SidebarNav from '@/components/sidebar-nav';
 import EmailListSections from '@/components/inbox/email-list-sections';
 import EmailListChronological from '@/components/inbox/email-list-chronological';
 import WorkDetailInline from '@/components/inbox/work-detail-inline';
@@ -631,10 +630,7 @@ export function InboxPageClient({
   }, [chatHistory, chatStreaming, chatSources, attachedFiles, composeMode, composeDraft, replyIsOpen, replyBody, emailChipActive, emailChipData]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <div className="flex h-screen bg-neutral-50 overflow-hidden">
-      <SidebarNav userEmail={user?.email} />
-
-      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+    <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         {/* Syncing banner */}
         {isSyncing && (
           <div className="flex-shrink-0 flex items-center gap-3 px-4 py-2.5 bg-indigo-50 border-b border-indigo-100">
@@ -1001,7 +997,5 @@ export function InboxPageClient({
           </div>
         )}
       </div>
-
-    </div>
   );
 }

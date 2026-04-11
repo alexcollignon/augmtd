@@ -1,7 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
-import SidebarNav from '@/components/sidebar-nav';
-import DriveClient from './drive-client';
+import DriveClient from '@/app/drive/drive-client';
 
 export default async function DrivePage() {
   const supabase = await createClient();
@@ -23,18 +22,15 @@ export default async function DrivePage() {
     .in('provider', ['gmail', 'outlook']);
 
   return (
-    <div className="flex h-screen bg-neutral-50">
-      <SidebarNav userEmail={user.email} />
-      <main className="flex-1 overflow-hidden flex flex-col">
-        <DriveClient
-          initialSources={sources ?? []}
-          connections={(connections ?? []).map((c) => ({
-            id: c.id,
-            provider: c.provider as 'gmail' | 'outlook',
-            email: c.metadata?.email ?? '',
-          }))}
-        />
-      </main>
-    </div>
+    <main className="flex-1 overflow-hidden flex flex-col">
+      <DriveClient
+        initialSources={sources ?? []}
+        connections={(connections ?? []).map((c) => ({
+          id: c.id,
+          provider: c.provider as 'gmail' | 'outlook',
+          email: c.metadata?.email ?? '',
+        }))}
+      />
+    </main>
   );
 }

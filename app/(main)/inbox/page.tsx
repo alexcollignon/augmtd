@@ -1,27 +1,21 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
-import { InboxPageClient } from './inbox-page-client';
+import { InboxPageClient } from '@/app/inbox/inbox-page-client';
 
 export const dynamic = 'force-dynamic';
 
 export default async function PreparedWorkPage() {
   const supabase = await createClient();
 
-  // Server-side auth check
   const { data: { user } } = await supabase.auth.getUser();
+  if (!user) redirect('/login');
 
-  if (!user) {
-    redirect('/login');
-  }
-
-  // Fetch user profile
   const { data: profile } = await supabase
     .from('profiles')
     .select('full_name')
     .eq('id', user.id)
     .single();
 
-  // Fetch connections
   const { data: connections } = await supabase
     .from('connections')
     .select('id')
@@ -31,7 +25,6 @@ export default async function PreparedWorkPage() {
 
   const hasConnection = (connections?.length ?? 0) > 0;
 
-  // Fetch inbox items
   const { data: inboxItems } = await supabase
     .from('inbox_items')
     .select('*')
@@ -40,7 +33,6 @@ export default async function PreparedWorkPage() {
     .order('priority', { ascending: false })
     .order('created_at', { ascending: false });
 
-  // Render client component with initial data
   return (
     <InboxPageClient
       initialUser={user}

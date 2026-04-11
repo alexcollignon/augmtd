@@ -11,7 +11,6 @@ import { createClient } from '@/lib/supabase/client';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { ChevronRightIcon, PlusIcon, RectangleStackIcon, Square2StackIcon } from '@heroicons/react/24/outline';
-import SidebarNav from '@/components/sidebar-nav';
 import { ChatThreadSidebar, ChatThread } from '@/components/work/chat-thread-sidebar';
 import { ChatEmptyState } from '@/components/work/chat-empty-state';
 import { ChatInputBar, SourceId, AttachmentChip, MentionChip, MENTION_ICONS, MENTION_COLORS } from '@/components/work/chat-input-bar';
@@ -247,8 +246,7 @@ export function WorkPageClient({
   // ── Render ───────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex h-full bg-neutral-50 overflow-hidden">
-      <SidebarNav userEmail={userEmail} />
+    <div className="flex flex-1 min-w-0 overflow-hidden bg-neutral-50">
 
       {/* Thread sidebar — floating card */}
       <div className="w-[220px] flex-shrink-0 flex flex-col bg-neutral-50 p-2">

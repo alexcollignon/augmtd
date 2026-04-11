@@ -1,15 +1,14 @@
 import { createClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
-import SidebarNav from '@/components/sidebar-nav';
 import ConnectionCard from '@/components/settings/connection-card';
 import MeetingAssistantCard from '@/components/settings/meeting-assistant-card';
 import DataManagementSection from '@/components/settings/data-management-section';
 import IdentitySection from '@/components/settings/identity-section';
 import SyncAllButton from '@/components/settings/sync-all-button';
 import SettingsLeftPanel from '@/components/settings/settings-left-panel';
-import SettingsPageClient from './settings-page-client';
-import CompanyPageClient from '../company/company-page-client';
-import CompanyPending from '../company/company-pending';
+import SettingsPageClient from '@/app/settings/settings-page-client';
+import CompanyPageClient from '@/app/company/company-page-client';
+import CompanyPending from '@/app/company/company-pending';
 import { getMyCompany } from '@/lib/company/get-my-company';
 
 interface Props {
@@ -22,7 +21,6 @@ export default async function SettingsPage({ searchParams }: Props) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/login');
 
-  // ── Company tab data ───────────────────────────────────────────────────────
   const company = await getMyCompany(user.id, supabase);
 
   let members: any[] = [];
@@ -76,7 +74,6 @@ export default async function SettingsPage({ searchParams }: Props) {
     }));
   }
 
-  // ── Account tab data ───────────────────────────────────────────────────────
   let connections: any[] = [];
   let profile: any = null;
 
@@ -94,7 +91,6 @@ export default async function SettingsPage({ searchParams }: Props) {
       .eq('id', user.id)
       .single();
     profile = prof;
-
   }
 
   const gmailConnections = connections.filter(c => c.provider === 'gmail');
@@ -108,20 +104,14 @@ export default async function SettingsPage({ searchParams }: Props) {
 
   return (
     <SettingsPageClient>
-      <div className="flex h-screen bg-neutral-50 overflow-hidden">
-        <SidebarNav userEmail={user.email} />
-
-        {/* ── Left settings nav ── */}
+      <>
         <SettingsLeftPanel activeTab={tab} />
 
-        {/* ── Main content ── */}
         <div className="flex-1 overflow-hidden flex flex-col bg-neutral-50 p-2">
           <div className="flex-1 flex flex-col rounded-2xl bg-white shadow-sm overflow-hidden">
 
-            {/* ── Account tab ─────────────────────────────────────────────── */}
             {tab === 'account' && (
               <div className="flex-1 overflow-y-auto">
-                {/* Profile */}
                 <section className="px-6 py-5 border-b border-neutral-100">
                   <IdentitySection
                     userEmail={user.email ?? ''}
@@ -130,7 +120,6 @@ export default async function SettingsPage({ searchParams }: Props) {
                   />
                 </section>
 
-                {/* Connections */}
                 <section className="px-6 py-5 border-b border-neutral-100">
                   <div className="flex items-center justify-between mb-1">
                     <h3 className="text-[14px] font-semibold text-neutral-900">Connections</h3>
@@ -173,7 +162,6 @@ export default async function SettingsPage({ searchParams }: Props) {
                   </div>
                 </section>
 
-                {/* Meeting Assistant */}
                 <section className="px-6 py-5 border-b border-neutral-100">
                   <h3 className="text-[14px] font-semibold text-neutral-900 mb-1">Meeting Assistant</h3>
                   <p className="text-[12px] text-neutral-400 mb-3">
@@ -185,14 +173,12 @@ export default async function SettingsPage({ searchParams }: Props) {
                   />
                 </section>
 
-                {/* Data Management */}
                 <section className="px-6 py-5">
                   <DataManagementSection connections={connections} />
                 </section>
               </div>
             )}
 
-            {/* ── Company tab ─────────────────────────────────────────────── */}
             {tab === 'company' && (
               <div className="flex-1 overflow-y-auto">
                 {company ? (
@@ -213,7 +199,7 @@ export default async function SettingsPage({ searchParams }: Props) {
 
           </div>
         </div>
-      </div>
+      </>
     </SettingsPageClient>
   );
 }

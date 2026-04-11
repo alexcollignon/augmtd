@@ -1,7 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
 import { redirect, notFound } from 'next/navigation';
-import SidebarNav from '@/components/sidebar-nav';
-import RecordingDetailClient from './recording-detail-client';
+import RecordingDetailClient from '@/app/meetings/recording/[id]/recording-detail-client';
 
 export default async function RecordingDetailPage({
   params,
@@ -23,7 +22,6 @@ export default async function RecordingDetailPage({
 
   if (!transcriptRaw) notFound();
 
-  // Generate signed URL for audio playback
   let audioUrl: string | null = null;
   if (transcriptRaw.recording_storage_path) {
     const { createClient: createAdminClient } = await import('@supabase/supabase-js');
@@ -72,18 +70,15 @@ export default async function RecordingDetailPage({
   }));
 
   return (
-    <div className="flex h-screen bg-gradient-to-br from-neutral-50 to-white">
-      <SidebarNav userEmail={user.email} />
-      <main className="flex-1 min-h-0 overflow-hidden">
-        <RecordingDetailClient
-          transcript={transcript}
-          actionItems={actionItems}
-          userId={user.id}
-          risks={transcript.risks}
-          suggestedNextStep={transcript.suggestedNextStep}
-          audioUrl={audioUrl}
-        />
-      </main>
-    </div>
+    <main className="flex-1 min-h-0 overflow-hidden bg-gradient-to-br from-neutral-50 to-white">
+      <RecordingDetailClient
+        transcript={transcript}
+        actionItems={actionItems}
+        userId={user.id}
+        risks={transcript.risks}
+        suggestedNextStep={transcript.suggestedNextStep}
+        audioUrl={audioUrl}
+      />
+    </main>
   );
 }

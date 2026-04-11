@@ -20,6 +20,9 @@ import { useRecordingContext } from '@/context/recording-context';
 
 interface SidebarNavProps {
   userEmail?: string;
+  avatarUrl?: string | null;
+  tier?: 'standard' | 'private_shared' | 'bedrock_private' | 'bedrock_optimised' | null;
+  isSuperAdmin?: boolean;
 }
 
 function formatElapsed(secs: number) {
@@ -28,25 +31,24 @@ function formatElapsed(secs: number) {
   return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
 }
 
-export default function SidebarNav({ userEmail }: SidebarNavProps) {
+export default function SidebarNav({
+  userEmail,
+  avatarUrl: avatarUrlProp = null,
+  tier: tierProp = null,
+  isSuperAdmin: isSuperAdminProp = false,
+}: SidebarNavProps) {
   const pathname = usePathname();
   const router = useRouter();
   const recording = useRecordingContext();
   const [showUserMenu, setShowUserMenu] = useState(false);
-  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(avatarUrlProp);
 
-  useEffect(() => {
-    fetch('/api/user/avatar')
-      .then(r => r.json())
-      .then(d => { if (d.pictureUrl) setAvatarUrl(d.pictureUrl); })
-      .catch(() => {});
-  }, []);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  // Tier toggle state
-  const [tier, setTier] = useState<'standard' | 'private_shared' | 'bedrock_private' | 'bedrock_optimised' | null>(null);
+  // Tier toggle state — seeded from server-fetched prop
+  const [tier, setTier] = useState<'standard' | 'private_shared' | 'bedrock_private' | 'bedrock_optimised' | null>(tierProp ?? null);
   const [tierLoading, setTierLoading] = useState(false);
-  const [isSuperAdmin, setIsSuperAdmin] = useState(false);
+  const [isSuperAdmin] = useState(isSuperAdminProp);
   const [processNotifCount, setProcessNotifCount] = useState(0);
 
   const navigation = [
@@ -56,18 +58,6 @@ export default function SidebarNav({ userEmail }: SidebarNavProps) {
     { name: 'Drive', href: '/drive', icon: FolderIcon },
     ...(isSuperAdmin ? [{ name: 'Platform Admin', href: '/platform-admin', icon: ShieldCheckIcon }] : []),
   ];
-
-  // Load current tier + super admin status on mount
-  useEffect(() => {
-    fetch('/api/settings/tier')
-      .then((r) => r.json())
-      .then((d) => setTier(d.tier ?? 'standard'))
-      .catch(() => setTier('standard'));
-    fetch('/api/platform-admin/me')
-      .then((r) => r.json())
-      .then((d) => setIsSuperAdmin(d.isSuperAdmin === true))
-      .catch(() => {});
-  }, []);
 
   // Poll process notifications every 30s
   useEffect(() => {

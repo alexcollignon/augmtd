@@ -69,13 +69,29 @@ function loadSeenIds(): Set<string> {
   catch { return new Set(); }
 }
 
-export default function MeetingsPageClient({ userEmail }: { userEmail: string }) {
+interface MeetingsPageClientProps {
+  userEmail: string;
+  initialUpcoming?: CalendarEvent[];
+  initialTranscripts?: Transcript[];
+  initialFolders?: DriveFolder[];
+}
+
+export default function MeetingsPageClient({
+  userEmail,
+  initialUpcoming,
+  initialTranscripts,
+  initialFolders,
+}: MeetingsPageClientProps) {
   const router = useRouter();
-  const [upcoming, setUpcoming] = useState<CalendarEvent[]>([]);
-  const [transcripts, setTranscripts] = useState<Transcript[]>([]);
-  const [botStateMap, setBotStateMap] = useState<Map<string, string>>(new Map());
+  const [upcoming, setUpcoming] = useState<CalendarEvent[]>(initialUpcoming ?? []);
+  const [transcripts, setTranscripts] = useState<Transcript[]>(initialTranscripts ?? []);
+  const [botStateMap, setBotStateMap] = useState<Map<string, string>>(() => {
+    const m = new Map<string, string>();
+    (initialUpcoming ?? []).forEach((e) => { if (e.attendee_bot_state) m.set(e.id, e.attendee_bot_state); });
+    return m;
+  });
   const [pendingAdhoc, setPendingAdhoc] = useState<{ initiatedAt: string } | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!initialUpcoming);
   const [showCapture, setShowCapture] = useState(false);
   const [captureMode, setCaptureMode] = useState<'record' | 'bot' | null>(null);
   const [showNewMeeting, setShowNewMeeting] = useState(false);
@@ -94,7 +110,7 @@ export default function MeetingsPageClient({ userEmail }: { userEmail: string })
   const [activeBotEvent, setActiveBotEvent] = useState<CalendarEvent | null>(null);
   const botNotesTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const [folders, setFolders] = useState<DriveFolder[]>([]);
+  const [folders, setFolders] = useState<DriveFolder[]>(initialFolders ?? []);
 
   const isActiveRef = useRef(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -172,10 +188,11 @@ export default function MeetingsPageClient({ userEmail }: { userEmail: string })
   }, [fetchAll]);
 
   useEffect(() => {
+    if (initialFolders) return; // already seeded from SSR
     fetch('/api/drive/folders')
       .then((r) => r.json())
       .then((data) => setFolders(Array.isArray(data) ? data : (data.folders ?? [])));
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Debounced save of bot live notes to metadata
   const saveBotLiveNotes = useCallback((notes: string, eventId: string) => {
