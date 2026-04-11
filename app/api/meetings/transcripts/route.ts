@@ -15,14 +15,15 @@ export async function GET() {
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
-    adminClient
-      .from('meeting_transcripts')
-      .update({ bot_state: 'failed', processed: true })
-      .eq('user_id', user.id)
-      .eq('processed', false)
-      .eq('bot_state', 'processing')
-      .lt('updated_at', new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString())
-      .then(() => {}).catch(() => {});
+    void Promise.resolve(
+      adminClient
+        .from('meeting_transcripts')
+        .update({ bot_state: 'failed', processed: true })
+        .eq('user_id', user.id)
+        .eq('processed', false)
+        .eq('bot_state', 'processing')
+        .lt('updated_at', new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString())
+    ).catch(() => {});
 
     const { data: transcripts, error } = await supabase
       .from('meeting_transcripts')
