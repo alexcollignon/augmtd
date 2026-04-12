@@ -10,7 +10,7 @@ export async function GET() {
 
     const { data: emails, error } = await supabase
       .from('emails')
-      .select('id, from_address, from_name, to_addresses, subject, received_at, snippet, html_body, body')
+      .select('id, from_address, from_name, to_addresses, subject, received_at, html_body, body')
       .eq('user_id', user.id)
       .eq('is_from_user', true)
       .order('received_at', { ascending: false })

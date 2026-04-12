@@ -9,7 +9,6 @@ export interface SentEmail {
   to_addresses: string[] | null;
   subject: string | null;
   received_at: string | null;
-  snippet: string | null;
   html_body: string | null;
   body: string | null;
 }
@@ -90,7 +89,7 @@ export default function SentEmailList({ emails, selectedId, onSelect, loading }:
               const subjectDisplay = email.subject ?? '';
               const timeDisplay = email.received_at ? formatTime(email.received_at) : '';
               const isSelected = selectedId === email.id;
-              const snippetDisplay = email.snippet ?? '';
+              const snippetDisplay = email.body ? email.body.slice(0, 120) : '';
 
               return (
                 <div
