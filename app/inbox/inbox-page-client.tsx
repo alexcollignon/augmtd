@@ -6,6 +6,7 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import EmailListSections from '@/components/inbox/email-list-sections';
 import EmailListChronological from '@/components/inbox/email-list-chronological';
+import SentEmailList, { type SentEmail } from '@/components/inbox/sent-email-list';
 import WorkDetailInline from '@/components/inbox/work-detail-inline';
 import AiChatPanel from '@/components/shared/ai-chat-panel';
 import WorkflowPanel from '@/components/inbox/workflow-panel';
@@ -19,6 +20,7 @@ import type { InboxItem } from '@/lib/types/inbox';
 
 type ViewMode = 'chronological' | 'smart';
 type Density = 'normal' | 'compact';
+type InboxTab = 'inbox' | 'sent';
 
 function markdownToHtml(text: string): string {
   // If the AI already emitted HTML tags, skip escaping and just structure it
@@ -47,6 +49,31 @@ function markdownToHtml(text: string): string {
   }).filter(Boolean).join('');
 }
 
+function SentEmailDetail({ email }: { email: SentEmail }) {
+  const toList = (email.to_addresses ?? []).join(', ') || '—';
+  const sentDate = email.received_at
+    ? new Date(email.received_at).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })
+    : '';
+
+  return (
+    <div className="flex flex-col h-full overflow-hidden">
+      <div className="flex-shrink-0 px-6 pt-5 pb-3 border-b border-neutral-100">
+        <h2 className="text-[15px] font-semibold text-neutral-900 mb-2">{email.subject || '(no subject)'}</h2>
+        <div className="space-y-0.5 text-[12px] text-neutral-500">
+          <div><span className="font-medium text-neutral-700">To:</span> {toList}</div>
+          {sentDate && <div><span className="font-medium text-neutral-700">Sent:</span> {sentDate}</div>}
+        </div>
+      </div>
+      <div className="flex-1 overflow-y-auto px-6 py-4 text-[13px] text-neutral-800 leading-relaxed">
+        {email.html_body
+          ? <div dangerouslySetInnerHTML={{ __html: email.html_body }} />
+          : <pre className="whitespace-pre-wrap font-sans">{email.body ?? ''}</pre>
+        }
+      </div>
+    </div>
+  );
+}
+
 interface InboxPageClientProps {
   initialUser: any;
   initialUserFullName?: string;
@@ -71,6 +98,11 @@ export function InboxPageClient({
   const [meetingsLoading, setMeetingsLoading] = useState(true);
   const [viewMode, setViewMode] = useState<ViewMode>('chronological');
   const [density, setDensity] = useState<Density>('normal');
+  const [activeTab, setActiveTab] = useState<InboxTab>('inbox');
+  const [sentEmails, setSentEmails] = useState<SentEmail[]>([]);
+  const [sentLoading, setSentLoading] = useState(false);
+  const [sentLoaded, setSentLoaded] = useState(false);
+  const [selectedSentEmail, setSelectedSentEmail] = useState<SentEmail | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isBulkArchiving, setIsBulkArchiving] = useState(false);
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
@@ -138,6 +170,25 @@ export function InboxPageClient({
     setDensity(d);
     localStorage.setItem('inboxDensity', d);
   };
+
+  const switchToTab = useCallback(async (tab: InboxTab) => {
+    setActiveTab(tab);
+    setSelectedItem(null);
+    setSelectedSentEmail(null);
+    if (tab === 'sent' && !sentLoaded) {
+      setSentLoading(true);
+      try {
+        const res = await fetch('/api/inbox/sent');
+        if (res.ok) {
+          const data = await res.json();
+          setSentEmails(data.emails ?? []);
+          setSentLoaded(true);
+        }
+      } catch { /* non-fatal */ } finally {
+        setSentLoading(false);
+      }
+    }
+  }, [sentLoaded]);
 
 
   // Sync connection state
@@ -794,8 +845,25 @@ export function InboxPageClient({
 
               </div>
 
-              {/* Bulk action bar */}
-              {selectedIds.size > 0 && (
+              {/* Inbox / Sent tab row */}
+              <div className="flex-shrink-0 flex border-b border-neutral-100">
+                {(['inbox', 'sent'] as const).map(tab => (
+                  <button
+                    key={tab}
+                    onClick={() => switchToTab(tab)}
+                    className={`flex-1 py-1.5 text-[11px] font-semibold uppercase tracking-wide transition-colors ${
+                      activeTab === tab
+                        ? 'text-indigo-600 border-b-2 border-indigo-500 -mb-px'
+                        : 'text-neutral-400 hover:text-neutral-600'
+                    }`}
+                  >
+                    {tab === 'inbox' ? 'Inbox' : 'Sent'}
+                  </button>
+                ))}
+              </div>
+
+              {/* Bulk action bar — inbox only */}
+              {activeTab === 'inbox' && selectedIds.size > 0 && (
                 <div className="flex-shrink-0 flex items-center gap-2 px-3 py-2 border-b border-indigo-100 bg-indigo-50 min-h-[36px]">
                   {isBulkArchiving ? (
                     <div className="flex items-center gap-2 flex-1">
@@ -862,7 +930,14 @@ export function InboxPageClient({
 
               {/* Email list */}
               <div className="flex-1 overflow-y-auto">
-                {inboxItems.length === 0 && !isSyncing ? (
+                {activeTab === 'sent' ? (
+                  <SentEmailList
+                    emails={sentEmails}
+                    selectedId={selectedSentEmail?.id ?? null}
+                    onSelect={(email) => { setSelectedSentEmail(email); setSelectedItem(null); setComposeMode(false); }}
+                    loading={sentLoading}
+                  />
+                ) : inboxItems.length === 0 && !isSyncing ? (
                   <div className="flex flex-col items-center justify-center h-full py-16 px-4 text-center">
                     <p className="text-[13px] text-neutral-500 font-medium mb-1">All caught up!</p>
                     <p className="text-[12px] text-neutral-400">
@@ -922,6 +997,8 @@ export function InboxPageClient({
                       onDiscard={closeChat}
                       onSent={closeChat}
                     />
+                  ) : selectedSentEmail ? (
+                    <SentEmailDetail email={selectedSentEmail} />
                   ) : (
                     <WorkDetailInline
                       key={selectedItem?.id ?? 'empty'}

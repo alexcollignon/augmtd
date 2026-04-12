@@ -53,9 +53,13 @@ export default function ComposePanel({ draft, onChange, onDiscard, onSent }: Com
   }, [draft.to]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Sync external draft.cc → ccChips only when it differs from current chips serialization
+  // Also auto-show the CC row when the AI populates it
   useEffect(() => {
     const serial = ccChips.map(c => c.email).join(', ');
-    if (draft.cc !== serial) setCcChips(parseChips(draft.cc));
+    if (draft.cc !== serial) {
+      setCcChips(parseChips(draft.cc));
+      if (draft.cc) setShowCc(true);
+    }
   }, [draft.cc]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleToChips = (chips: AttendeeChip[]) => {

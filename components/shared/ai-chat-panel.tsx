@@ -531,6 +531,11 @@ export default function AiChatPanel({
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [history, streamingContent]);
 
+  // Restore focus to chat input after streaming ends
+  useEffect(() => {
+    if (!isStreaming) chatInputRef.current?.focus();
+  }, [isStreaming]);
+
   // Close source dropdown on outside click
   useEffect(() => {
     const handler = (e: MouseEvent) => {

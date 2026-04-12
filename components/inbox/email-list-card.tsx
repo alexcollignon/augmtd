@@ -38,6 +38,8 @@ export default function EmailListCard({ item, isSelected, onSelect, compact = fa
     || '').normalize('NFC').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
   const timeDisplay = sourceData?.received_at ? formatTime(sourceData.received_at as string) : '';
 
+  if (!fromDisplay && !subjectDisplay) return null;
+
   const isUnread = item.is_read === false;
   const checkboxVisible = isChecked || hasAnySelected;
 

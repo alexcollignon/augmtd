@@ -48,9 +48,9 @@ export async function getCalendarContext(
       .single();
     const userEmail = userProfile?.email?.toLowerCase();
 
-    // 3. Get upcoming meetings (next 7 days)
+    // 3. Get upcoming meetings (next 30 days)
     const now = new Date();
-    const sevenDaysLater = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+    const thirtyDaysLater = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
 
     const { data: upcomingMeetings } = await supabase
       .from('calendar_events')
@@ -58,9 +58,9 @@ export async function getCalendarContext(
       .eq('user_id', userId)
       .eq('status', 'confirmed')
       .gte('start_time', now.toISOString())
-      .lte('start_time', sevenDaysLater.toISOString())
+      .lte('start_time', thirtyDaysLater.toISOString())
       .order('start_time', { ascending: true })
-      .limit(10);
+      .limit(30);
 
     if (upcomingMeetings && upcomingMeetings.length > 0) {
       context.upcomingMeetings = upcomingMeetings.map(meeting => {
@@ -130,8 +130,8 @@ function findNextAvailableSlot(
   const businessStart = 9;
   const businessEnd = 17;
 
-  // Search for next 7 days
-  for (let day = 0; day < 7; day++) {
+  // Search for next 30 days
+  for (let day = 0; day < 30; day++) {
     const currentDay = new Date(searchTime);
     currentDay.setDate(currentDay.getDate() + day);
 

@@ -30,13 +30,24 @@ export default function EmailListSections({ items, selectedId, onSelect, compact
   const [collapsed, setCollapsed] = useState<Set<ItemType>>(new Set());
 
   const bySection = useMemo(() => {
-    return items.reduce((acc, item) => {
+    const acc = items.reduce((acc, item) => {
       const t = item.item_type as ItemType;
       if (!SMART_VIEW_TYPES.includes(t)) return acc;
+      const sd = item.source_data;
+      if (!sd?.from_name && !sd?.from && !sd?.subject) return acc; // skip ghost rows
       if (!acc[t]) acc[t] = [];
       acc[t].push(item);
       return acc;
     }, {} as Record<ItemType, InboxItem[]>);
+    // Sort each bucket newest first
+    for (const key of Object.keys(acc) as ItemType[]) {
+      acc[key].sort((a, b) => {
+        const aTime = a.source_data?.received_at ? new Date(a.source_data.received_at as string).getTime() : new Date(a.created_at).getTime();
+        const bTime = b.source_data?.received_at ? new Date(b.source_data.received_at as string).getTime() : new Date(b.created_at).getTime();
+        return bTime - aTime;
+      });
+    }
+    return acc;
   }, [items]);
 
   const toggle = (s: ItemType) => {
