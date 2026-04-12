@@ -27,8 +27,8 @@ function markdownToHtml(text: string): string {
   const inlined = hasHtmlTags
     ? text  // pass through as-is, tags will render in contenteditable
     : text
-        .replace(/\*\*(.+?)\*\*/gs, '<strong>$1</strong>')
-        .replace(/\*(.+?)\*/gs, '<em>$1</em>')
+        .replace(/\*\*([\s\S]+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*([\s\S]+?)\*/g, '<em>$1</em>')
         .replace(/^#{1,6}\s+(.+)$/gm, '<strong>$1</strong>')
         .replace(/`([^`]+)`/g, '<code>$1</code>');
 
