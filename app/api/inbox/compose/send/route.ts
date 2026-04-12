@@ -12,13 +12,14 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { to, cc, bcc, subject, body: emailBody, attachments: rawAttachments } = body as {
+    const { to, cc, bcc, subject, body: emailBody, attachments: rawAttachments, connectionId } = body as {
       to: string;
       cc?: string;
       bcc?: string;
       subject: string;
       body: string;
       attachments?: Array<{ filename: string; content: string; mimeType: string }>;
+      connectionId?: string;
     };
     const attachments: EmailAttachment[] = (rawAttachments || []).map(a => ({
       filename: a.filename,
@@ -30,21 +31,24 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'to and body are required' }, { status: 400 });
     }
 
-    const { data: connections, error: connErr } = await supabase
+    let connQuery = supabase
       .from('connections')
       .select('*')
       .eq('user_id', user.id)
       .eq('status', 'active')
-      .in('provider', ['gmail', 'outlook'])
-      .order('created_at', { ascending: true })
-      .limit(1)
-      .single();
+      .in('provider', ['gmail', 'outlook']);
 
-    if (connErr || !connections) {
-      return NextResponse.json({ error: 'No active email connection found' }, { status: 400 });
+    if (connectionId) {
+      connQuery = (connQuery as any).eq('id', connectionId);
+    } else {
+      connQuery = (connQuery as any).order('created_at', { ascending: true }).limit(1);
     }
 
-    const connection = connections;
+    const { data: connection, error: connErr } = await (connQuery as any).maybeSingle();
+
+    if (connErr || !connection) {
+      return NextResponse.json({ error: 'No active email connection found' }, { status: 400 });
+    }
 
     if (connection.provider === 'gmail') {
       await sendGmailEmail({

@@ -25,8 +25,11 @@ export default function FormatToolbar({ editorRef, onSync }: FormatToolbarProps)
   const LINK_MARK = 'data-link-sel';
 
   const [active, setActive] = useState({ bold: false, italic: false, underline: false, ul: false, ol: false, link: false });
+  const [currentFontSize, setCurrentFontSize] = useState('');
 
-  // Track active formatting states
+  const FONT_SIZES = ['10', '11', '12', '13', '14', '16', '18', '20', '24'];
+
+  // Track active formatting states + current font size
   useEffect(() => {
     const update = () => {
       const el = editorRef.current;
@@ -36,13 +39,23 @@ export default function FormatToolbar({ editorRef, onSync }: FormatToolbarProps)
       try {
         const sel = window.getSelection();
         let insideLink = false;
+        let detectedSize = '';
         if (sel && sel.rangeCount > 0) {
           let node: Node | null = sel.getRangeAt(0).commonAncestorContainer;
           while (node && node !== el) {
-            if ((node as Element).tagName === 'A') { insideLink = true; break; }
+            if ((node as Element).tagName === 'A') { insideLink = true; }
             node = node.parentNode;
           }
+          // Detect font-size of the anchor node of the selection
+          const anchor = sel.getRangeAt(0).startContainer;
+          const anchorEl = anchor.nodeType === Node.TEXT_NODE ? anchor.parentElement : anchor as HTMLElement;
+          if (anchorEl) {
+            const px = window.getComputedStyle(anchorEl).fontSize; // e.g. "16px"
+            const num = Math.round(parseFloat(px)).toString();
+            if (FONT_SIZES.includes(num)) detectedSize = num;
+          }
         }
+        setCurrentFontSize(detectedSize);
         setActive({
           bold: document.queryCommandState('bold'),
           italic: document.queryCommandState('italic'),
@@ -55,7 +68,21 @@ export default function FormatToolbar({ editorRef, onSync }: FormatToolbarProps)
     };
     document.addEventListener('selectionchange', update);
     return () => document.removeEventListener('selectionchange', update);
-  }, [editorRef]);
+  }, [editorRef]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const applyFontSize = useCallback((size: string) => {
+    editorRef.current?.focus();
+    // Use size "7" as a unique marker, then replace with inline CSS span
+    document.execCommand('fontSize', false, '7');
+    editorRef.current?.querySelectorAll('font[size="7"]').forEach(font => {
+      const span = document.createElement('span');
+      span.style.fontSize = `${size}px`;
+      span.innerHTML = font.innerHTML;
+      font.parentNode?.replaceChild(span, font);
+    });
+    setCurrentFontSize(size);
+    onSync();
+  }, [editorRef, onSync]);
 
   // Click on <a> inside editor → show floating link popover below the link
   useEffect(() => {
@@ -258,6 +285,23 @@ export default function FormatToolbar({ editorRef, onSync }: FormatToolbarProps)
       )}
 
       <div className="flex items-center gap-0.5 relative">
+        {/* Font size */}
+        <select
+          value={currentFontSize}
+          onChange={e => applyFontSize(e.target.value)}
+          onMouseDown={e => e.stopPropagation()}
+          title="Font size"
+          className="h-6 px-1 text-[11px] text-neutral-500 bg-transparent border border-neutral-200 rounded hover:border-neutral-300 outline-none cursor-pointer leading-none"
+          style={{ minWidth: '44px' }}
+        >
+          <option value="" disabled>px</option>
+          {FONT_SIZES.map(s => (
+            <option key={s} value={s}>{s}</option>
+          ))}
+        </select>
+
+        {sep}
+
         {/* Bold */}
         <button
           type="button"

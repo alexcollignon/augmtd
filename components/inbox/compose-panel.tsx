@@ -1,11 +1,18 @@
 'use client';
 
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { XMarkIcon, PaperAirplaneIcon, PaperClipIcon } from '@heroicons/react/24/outline';
+import { XMarkIcon, PaperAirplaneIcon, PaperClipIcon, ChevronDownIcon } from '@heroicons/react/24/outline';
 import { toast } from 'sonner';
 import KbFilePicker from './kb-file-picker';
 import FormatToolbar from './format-toolbar';
 import AttendeeInput, { AttendeeChip } from '@/components/meetings/attendee-input';
+import { createClient } from '@/lib/supabase/client';
+
+interface ConnectionOption {
+  id: string;
+  provider: 'gmail' | 'outlook';
+  metadata?: { email?: string };
+}
 
 interface PendingAttachment {
   filename: string;
@@ -25,18 +32,23 @@ interface ComposePanelProps {
   onChange: (fields: Partial<ComposeDraft>) => void;
   onDiscard: () => void;
   onSent: () => void;
+  connectionId?: string;
 }
 
 const parseChips = (str: string): AttendeeChip[] =>
   str ? str.split(',').map(e => e.trim()).filter(Boolean).map(email => ({ email })) : [];
 
-export default function ComposePanel({ draft, onChange, onDiscard, onSent }: ComposePanelProps) {
+export default function ComposePanel({ draft, onChange, onDiscard, onSent, connectionId }: ComposePanelProps) {
   const [showCc, setShowCc] = useState(false);
   const [showBcc, setShowBcc] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [showAttachMenu, setShowAttachMenu] = useState(false);
   const [kbPickerOpen, setKbPickerOpen] = useState(false);
+  const [showSignature, setShowSignature] = useState(true);
+  const [signatureHtml, setSignatureHtml] = useState<string | null>(null);
+  const [availableConnections, setAvailableConnections] = useState<ConnectionOption[]>([]);
+  const [selectedConnectionId, setSelectedConnectionId] = useState<string | undefined>(connectionId);
   const attachFileInputRef = useRef<HTMLInputElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const lastExternalBody = useRef<string>('');
@@ -76,12 +88,85 @@ export default function ComposePanel({ draft, onChange, onDiscard, onSent }: Com
     setBccChips(chips);
   };
 
-  // Sync externally-set draft.body (AI draft) into the contenteditable
+  // Fetch available connections on mount
+  useEffect(() => {
+    const supabase = createClient();
+    supabase
+      .from('connections')
+      .select('id, provider, metadata')
+      .eq('status', 'active')
+      .in('provider', ['gmail', 'outlook'])
+      .order('created_at', { ascending: true })
+      .then(({ data }) => {
+        if (!data?.length) return;
+        setAvailableConnections(data as ConnectionOption[]);
+        // Default to prop connectionId, or first connection if none specified
+        if (!selectedConnectionId) setSelectedConnectionId(data[0].id);
+      });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // When the parent connectionId prop changes (new item selected), sync it
+  useEffect(() => {
+    if (connectionId) setSelectedConnectionId(connectionId);
+  }, [connectionId]);
+
+  // Fetch signature whenever the selected From account changes
+  useEffect(() => {
+    const url = selectedConnectionId
+      ? `/api/user/signature?connectionId=${selectedConnectionId}`
+      : '/api/user/signature';
+    fetch(url)
+      .then(r => r.json())
+      .then(({ signature }) => setSignatureHtml(signature || null))
+      .catch(() => {});
+
+    // Live-update if user saves a signature in settings while compose is open
+    const handler = (e: Event) => {
+      const { connectionId: savedId, signature } = (e as CustomEvent).detail;
+      if (!selectedConnectionId || savedId === selectedConnectionId) {
+        setSignatureHtml(signature || null);
+      }
+    };
+    window.addEventListener('signature-saved', handler);
+    return () => window.removeEventListener('signature-saved', handler);
+  }, [selectedConnectionId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Inject or remove signature block whenever showSignature / signatureHtml change
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (!el) return;
+
+    // Remove any existing sig block
+    const existing = el.querySelector('[data-sig="1"]') as HTMLElement | null;
+    if (existing) existing.remove();
+
+    if (showSignature && signatureHtml) {
+      const sigDiv = document.createElement('div');
+      sigDiv.setAttribute('data-sig', '1');
+      sigDiv.innerHTML = `<br>-- <br>${signatureHtml}`;
+      el.appendChild(sigDiv);
+    }
+
+    // Sync body state (include or exclude sig)
+    const html = el.innerHTML;
+    lastExternalBody.current = html;
+    onChange({ body: html });
+  }, [showSignature, signatureHtml]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Sync externally-set draft.body (AI draft) into the contenteditable, preserving sig
   useEffect(() => {
     const el = bodyRef.current;
     if (!el || draft.body === lastExternalBody.current) return;
     lastExternalBody.current = draft.body;
+
+    // Keep existing sig block if present
+    const existingSig = el.querySelector('[data-sig="1"]')?.outerHTML ?? '';
     el.innerHTML = draft.body;
+
+    // Re-append sig if it was there and not already included in new body
+    if (existingSig && !el.querySelector('[data-sig="1"]')) {
+      el.innerHTML = el.innerHTML + existingSig;
+    }
   }, [draft.body]);
 
   const handleBodyInput = useCallback(() => {
@@ -137,6 +222,7 @@ export default function ComposePanel({ draft, onChange, onDiscard, onSent }: Com
           subject: draft.subject,
           body: draft.body,
           attachments,
+          connectionId: selectedConnectionId,
         }),
       });
       if (!res.ok) {
@@ -166,6 +252,33 @@ export default function ComposePanel({ draft, onChange, onDiscard, onSent }: Com
           <XMarkIcon className="w-4 h-4" />
         </button>
       </div>
+
+      {/* From */}
+      {availableConnections.length > 0 && (
+        <div className="flex-shrink-0 flex items-center gap-2 px-4 py-2 border-b border-neutral-100">
+          <span className="text-[11px] font-semibold text-neutral-400 w-10 flex-shrink-0">From</span>
+          {availableConnections.length === 1 ? (
+            <span className="text-[13px] text-neutral-600">
+              {availableConnections[0].metadata?.email ?? availableConnections[0].provider}
+            </span>
+          ) : (
+            <div className="relative flex items-center">
+              <select
+                value={selectedConnectionId ?? ''}
+                onChange={e => setSelectedConnectionId(e.target.value)}
+                className="appearance-none text-[13px] text-neutral-700 bg-transparent outline-none cursor-pointer pr-5"
+              >
+                {availableConnections.map(conn => (
+                  <option key={conn.id} value={conn.id}>
+                    {conn.metadata?.email ?? conn.provider}
+                  </option>
+                ))}
+              </select>
+              <ChevronDownIcon className="w-3 h-3 text-neutral-400 absolute right-0 pointer-events-none" />
+            </div>
+          )}
+        </div>
+      )}
 
       {/* To */}
       <div className="flex-shrink-0 flex items-center gap-2 px-4 py-2 border-b border-neutral-100 relative">
@@ -325,6 +438,16 @@ export default function ComposePanel({ draft, onChange, onDiscard, onSent }: Com
 
           <div className="w-px h-4 bg-neutral-200 flex-shrink-0" />
           <FormatToolbar editorRef={bodyRef} onSync={handleBodySync} />
+          <div className="w-px h-4 bg-neutral-200 flex-shrink-0" />
+          <button
+            type="button"
+            onClick={() => setShowSignature(v => !v)}
+            disabled={!signatureHtml}
+            className={`text-[11px] font-medium transition-colors ${showSignature && signatureHtml ? 'text-indigo-600' : 'text-neutral-400 hover:text-neutral-600 disabled:opacity-40 disabled:cursor-not-allowed'}`}
+            title={!signatureHtml ? 'No signature configured' : showSignature ? 'Remove signature' : 'Add signature'}
+          >
+            Sig
+          </button>
         </div>
 
         <button

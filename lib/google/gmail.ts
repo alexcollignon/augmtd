@@ -98,6 +98,21 @@ export async function fetchUnreadEmails(
   }
 }
 
+export async function fetchGmailSignature(
+  encryptedTokens: string,
+  onTokenRefresh?: GmailTokenRefreshCallback,
+): Promise<string | null> {
+  try {
+    const gmail = await getGmailClient(encryptedTokens, onTokenRefresh);
+    const res = await gmail.users.settings.sendAs.list({ userId: 'me' });
+    const primary = (res.data.sendAs ?? []).find((s: any) => s.isDefault || s.isPrimary);
+    return (primary?.signature as string) ?? null;
+  } catch (err) {
+    console.error('[Gmail] Failed to fetch signature:', err);
+    return null;
+  }
+}
+
 export async function fetchSentEmails(
   encryptedTokens: string,
   maxResults: number = 25,

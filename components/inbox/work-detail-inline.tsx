@@ -96,6 +96,8 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
   const [bccChips, setBccChips] = useState<AttendeeChip[]>([]);
   const [showAttachMenu, setShowAttachMenu] = useState(false);
   const [kbPickerOpen, setKbPickerOpen] = useState(false);
+  const [showSignature, setShowSignature] = useState(true);
+  const [signatureHtml, setSignatureHtml] = useState<string | null>(null);
   const replyBoxRef = useRef<HTMLDivElement>(null);
   const replyTextareaRef = useRef<HTMLDivElement>(null);
   const lastExternalReplyBody = useRef<string>('');
@@ -117,6 +119,30 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
   const newFolderInputRef = useRef<HTMLInputElement>(null);
   const [linkedCalEvent, setLinkedCalEvent] = useState<{ id: string; attendees: any[] } | null>(null);
   const [rsvpLoading, setRsvpLoading] = useState<string | null>(null); // which response is loading
+
+  // Fetch signature for this item's connection
+  useEffect(() => {
+    const connectionId = (item as any)?.connection_id;
+    const url = connectionId
+      ? `/api/user/signature?connectionId=${connectionId}`
+      : '/api/user/signature';
+    fetch(url)
+      .then(r => r.json())
+      .then(({ signature }) => {
+        setSignatureHtml(signature ?? null);
+      })
+      .catch(() => {});
+
+    // Live-update if user saves a signature in settings while reply is open
+    const handler = (e: Event) => {
+      const { connectionId: savedId, signature } = (e as CustomEvent).detail;
+      if (!connectionId || savedId === connectionId) {
+        setSignatureHtml(signature || null);
+      }
+    };
+    window.addEventListener('signature-saved', handler);
+    return () => window.removeEventListener('signature-saved', handler);
+  }, [(item as any)?.connection_id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Reset thread state on item change
   useEffect(() => {
@@ -308,6 +334,7 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
     setFolders(null);
     setExpandedEmails({});
     setReplyOpen(false);
+    setShowSignature(true);
     onReplyBodyChange('');
     onReplyOpenChange?.(false);
   }, [item?.id]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -324,12 +351,38 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
     }
   }, [pendingReplyDraft]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Sync externally-set replyBody (AI draft) into the contenteditable
+  // Inject or remove signature block in reply box when showSignature / signatureHtml change
+  useEffect(() => {
+    if (!replyOpen) return;
+    const el = replyTextareaRef.current;
+    if (!el) return;
+
+    const existing = el.querySelector('[data-sig="1"]') as HTMLElement | null;
+    if (existing) existing.remove();
+
+    if (showSignature && signatureHtml) {
+      const sigDiv = document.createElement('div');
+      sigDiv.setAttribute('data-sig', '1');
+      sigDiv.innerHTML = `<br>-- <br>${signatureHtml}`;
+      el.appendChild(sigDiv);
+    }
+
+    const html = el.innerHTML;
+    lastExternalReplyBody.current = html;
+    onReplyBodyChange(html);
+  }, [showSignature, signatureHtml, replyOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Sync externally-set replyBody (AI draft) into the contenteditable, preserving sig
   useEffect(() => {
     const el = replyTextareaRef.current;
     if (!el || replyBody === lastExternalReplyBody.current) return;
     lastExternalReplyBody.current = replyBody;
+
+    const existingSig = el.querySelector('[data-sig="1"]')?.outerHTML ?? '';
     el.innerHTML = replyBody;
+    if (existingSig && !el.querySelector('[data-sig="1"]')) {
+      el.innerHTML = el.innerHTML + existingSig;
+    }
   }, [replyBody]);
 
   // Close move menu on outside click
@@ -956,6 +1009,16 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
 
                 <div className="w-px h-4 bg-neutral-200 flex-shrink-0" />
                 <FormatToolbar editorRef={replyTextareaRef} onSync={handleReplySync} />
+                <div className="w-px h-4 bg-neutral-200 flex-shrink-0" />
+                <button
+                  type="button"
+                  onClick={() => setShowSignature(v => !v)}
+                  disabled={!signatureHtml}
+                  className={`text-[11px] font-medium transition-colors ${showSignature && signatureHtml ? 'text-indigo-600' : 'text-neutral-400 hover:text-neutral-600 disabled:opacity-40 disabled:cursor-not-allowed'}`}
+                  title={!signatureHtml ? 'No signature configured' : showSignature ? 'Remove signature' : 'Add signature'}
+                >
+                  Sig
+                </button>
               </div>
 
               <div className="flex items-center gap-2 flex-shrink-0">

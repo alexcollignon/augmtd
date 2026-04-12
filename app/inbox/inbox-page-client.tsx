@@ -1008,6 +1008,7 @@ export function InboxPageClient({
                       onChange={(fields) => setComposeDraft(prev => ({ ...prev, ...fields }))}
                       onDiscard={closeChat}
                       onSent={closeChat}
+                      connectionId={(selectedItem as any)?.connection_id ?? undefined}
                     />
                   ) : selectedSentEmail ? (
                     <SentEmailDetail email={selectedSentEmail} />
