@@ -72,7 +72,7 @@ export default function MeetingsColumn({ isOpen, onToggle, meetings, loading, us
     )}
 
     <div
-      className={`flex-shrink-0 flex flex-col bg-white transition-all duration-300 overflow-hidden ${
+      className={`h-full flex flex-col bg-white transition-all duration-300 overflow-hidden ${
         isOpen ? 'w-[300px]' : 'w-9'
       }`}
     >
