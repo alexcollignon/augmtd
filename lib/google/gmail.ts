@@ -332,6 +332,7 @@ export async function sendGmailEmail(params: {
   encryptedTokens: string;
   to: string;
   cc?: string;
+  bcc?: string;
   subject: string;
   body: string;
   attachments?: EmailAttachment[];
@@ -339,7 +340,7 @@ export async function sendGmailEmail(params: {
   inReplyTo?: string;
   references?: string;
 }): Promise<string> {
-  const { encryptedTokens, to, cc, subject, body, attachments = [], gmailThreadId, inReplyTo, references } = params;
+  const { encryptedTokens, to, cc, bcc, subject, body, attachments = [], gmailThreadId, inReplyTo, references } = params;
 
   const gmail = await getGmailClient(encryptedTokens);
   const htmlBody = plainTextToHtml(body);
@@ -351,6 +352,7 @@ export async function sendGmailEmail(params: {
     const lines: string[] = [
       `To: ${to}`,
       ...(cc ? [`Cc: ${cc}`] : []),
+      ...(bcc ? [`Bcc: ${bcc}`] : []),
       `Subject: ${subject}`,
       'MIME-Version: 1.0',
       `Content-Type: multipart/mixed; boundary="${boundary}"`,
@@ -379,6 +381,7 @@ export async function sendGmailEmail(params: {
     const lines: string[] = [
       `To: ${to}`,
       ...(cc ? [`Cc: ${cc}`] : []),
+      ...(bcc ? [`Bcc: ${bcc}`] : []),
       `Subject: ${subject}`,
       'Content-Type: text/html; charset=utf-8',
       'MIME-Version: 1.0',
