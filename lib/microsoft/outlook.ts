@@ -266,11 +266,12 @@ export async function sendOutlookEmail(params: {
   encryptedTokens: string;
   to: string;
   cc?: string;
+  bcc?: string;
   subject: string;
   body: string;
   attachments?: EmailAttachment[];
 }): Promise<void> {
-  const { encryptedTokens, to, cc, subject, body, attachments = [] } = params;
+  const { encryptedTokens, to, cc, bcc, subject, body, attachments = [] } = params;
 
   const tokens = JSON.parse(Buffer.from(encryptedTokens, 'base64').toString());
   let accessToken = tokens.accessToken;
@@ -292,6 +293,9 @@ export async function sendOutlookEmail(params: {
   const ccRecipients = cc
     ? cc.split(',').map((addr) => ({ emailAddress: { address: addr.trim() } }))
     : [];
+  const bccRecipients = bcc
+    ? bcc.split(',').map((addr) => ({ emailAddress: { address: addr.trim() } }))
+    : [];
 
   const messageBody = {
     subject,
@@ -301,6 +305,7 @@ export async function sendOutlookEmail(params: {
     },
     toRecipients,
     ...(ccRecipients.length > 0 ? { ccRecipients } : {}),
+    ...(bccRecipients.length > 0 ? { bccRecipients } : {}),
     ...(attachments.length > 0
       ? {
           attachments: attachments.map((att) => ({
