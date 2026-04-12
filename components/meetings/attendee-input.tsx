@@ -18,6 +18,7 @@ interface AttendeeInputProps {
   onChange: (attendees: AttendeeChip[]) => void;
   compact?: boolean;
   placeholder?: string;
+  noBorder?: boolean;
 }
 
 function avatarLetter(chip: AttendeeChip) {
@@ -38,7 +39,7 @@ function avatarColor(email: string) {
   return colors[hash % colors.length];
 }
 
-export default function AttendeeInput({ value, onChange, compact = false, placeholder = 'Add attendees…' }: AttendeeInputProps) {
+export default function AttendeeInput({ value, onChange, compact = false, placeholder = 'Add attendees…', noBorder = false }: AttendeeInputProps) {
   const [input, setInput] = useState('');
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [activeIdx, setActiveIdx] = useState(-1);
@@ -115,7 +116,9 @@ export default function AttendeeInput({ value, onChange, compact = false, placeh
   return (
     <div ref={containerRef} className="relative">
       <div
-        className={`flex flex-wrap gap-1 ${compact ? 'p-1.5' : 'p-2'} border border-neutral-200 rounded-md cursor-text focus-within:border-indigo-400 transition-colors bg-white min-h-[36px]`}
+        className={noBorder
+          ? `flex flex-wrap items-center gap-1 cursor-text min-h-[28px] flex-1`
+          : `flex flex-wrap gap-1 ${compact ? 'p-1.5' : 'p-2'} border border-neutral-200 rounded-md cursor-text focus-within:border-indigo-400 transition-colors bg-white min-h-[36px]`}
         onClick={() => inputRef.current?.focus()}
       >
         {value.map((chip, idx) => (

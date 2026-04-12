@@ -23,7 +23,9 @@ import type { InboxItem } from '@/lib/types/inbox';
 
 import RsvpButtons from './rsvp-buttons';
 import KbFilePicker from './kb-file-picker';
+import FormatToolbar from './format-toolbar';
 import { createClient } from '@/lib/supabase/client';
+import AttendeeInput, { AttendeeChip } from '@/components/meetings/attendee-input';
 
 function IframeEmailBody({ html, plain }: { html: string | null; plain: string | null }) {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -90,10 +92,13 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
   const [replyBcc, setReplyBcc] = useState('');
   const [showReplyCc, setShowReplyCc] = useState(false);
   const [showReplyBcc, setShowReplyBcc] = useState(false);
+  const [ccChips, setCcChips] = useState<AttendeeChip[]>([]);
+  const [bccChips, setBccChips] = useState<AttendeeChip[]>([]);
   const [showAttachMenu, setShowAttachMenu] = useState(false);
   const [kbPickerOpen, setKbPickerOpen] = useState(false);
   const replyBoxRef = useRef<HTMLDivElement>(null);
-  const replyTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const replyTextareaRef = useRef<HTMLDivElement>(null);
+  const lastExternalReplyBody = useRef<string>('');
   const attachFileInputRef = useRef<HTMLInputElement>(null);
 
   const [isArchiving, setIsArchiving] = useState(false);
@@ -311,20 +316,20 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
   useEffect(() => {
     if (pendingReplyDraft != null) {
       onReplyBodyChange(pendingReplyDraft.body);
-      if (pendingReplyDraft.cc) { setReplyCc(pendingReplyDraft.cc); setShowReplyCc(true); }
-      if (pendingReplyDraft.bcc) { setReplyBcc(pendingReplyDraft.bcc); setShowReplyBcc(true); }
+      if (pendingReplyDraft.cc) { setReplyCc(pendingReplyDraft.cc); setCcChips(pendingReplyDraft.cc.split(',').map(e => ({ email: e.trim() })).filter(c => c.email)); setShowReplyCc(true); }
+      if (pendingReplyDraft.bcc) { setReplyBcc(pendingReplyDraft.bcc); setBccChips(pendingReplyDraft.bcc.split(',').map(e => ({ email: e.trim() })).filter(c => c.email)); setShowReplyBcc(true); }
       setReplyOpen(true);
       onReplyOpenChange?.(true);
       setTimeout(() => replyBoxRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 50);
     }
   }, [pendingReplyDraft]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto-resize reply textarea as content grows
+  // Sync externally-set replyBody (AI draft) into the contenteditable
   useEffect(() => {
     const el = replyTextareaRef.current;
-    if (!el) return;
-    el.style.height = 'auto';
-    el.style.height = `${Math.min(el.scrollHeight, 400)}px`;
+    if (!el || replyBody === lastExternalReplyBody.current) return;
+    lastExternalReplyBody.current = replyBody;
+    el.innerHTML = replyBody;
   }, [replyBody]);
 
   // Close move menu on outside click
@@ -397,8 +402,24 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
     setReplyAttachments(prev => [...prev, ...(results.filter(Boolean) as PendingAttachment[])]);
   }, []);
 
+  const handleReplySync = useCallback(() => {
+    const html = replyTextareaRef.current?.innerHTML ?? '';
+    lastExternalReplyBody.current = html;
+    onReplyBodyChange(html);
+  }, [onReplyBodyChange]);
+
+  const handleCcChips = (chips: AttendeeChip[]) => {
+    setCcChips(chips);
+    setReplyCc(chips.map(c => c.email).join(', '));
+  };
+
+  const handleBccChips = (chips: AttendeeChip[]) => {
+    setBccChips(chips);
+    setReplyBcc(chips.map(c => c.email).join(', '));
+  };
+
   const handleSendReply = async () => {
-    if (!item || !replyBody.trim()) return;
+    if (!item || !replyBody.replace(/<[^>]*>/g, '').trim()) return;
     setIsSendingReply(true);
     try {
       const res = await fetch(`/api/inbox/${item.id}/send-reply`, {
@@ -421,6 +442,8 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
       setReplyBcc('');
       setShowReplyCc(false);
       setShowReplyBcc(false);
+      setCcChips([]);
+      setBccChips([]);
       onReplySent?.(item.id);
     } catch {
       toast.error('Could not send reply');
@@ -838,7 +861,7 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
                   </button>
                 )}
                 <button
-                  onClick={() => { setReplyOpen(false); onReplyOpenChange?.(false); onReplyBodyChange(''); setReplyCc(''); setReplyBcc(''); setShowReplyCc(false); setShowReplyBcc(false); }}
+                  onClick={() => { setReplyOpen(false); onReplyOpenChange?.(false); onReplyBodyChange(''); setReplyCc(''); setReplyBcc(''); setShowReplyCc(false); setShowReplyBcc(false); setCcChips([]); setBccChips([]); }}
                   className="text-neutral-400 hover:text-neutral-600 transition-colors"
                 >
                   <XMarkIcon className="w-4 h-4" />
@@ -846,38 +869,32 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
               </div>
             </div>
             {showReplyCc && (
-              <div className="flex items-center gap-2 px-4 py-2 border-b border-neutral-100">
+              <div className="flex items-center gap-2 px-4 py-2 border-b border-neutral-100 relative">
                 <span className="text-[11px] font-semibold text-neutral-400 w-8 flex-shrink-0">CC</span>
-                <input
-                  type="text"
-                  value={replyCc}
-                  onChange={e => setReplyCc(e.target.value)}
-                  placeholder="cc@example.com"
-                  className="flex-1 text-[13px] text-neutral-800 placeholder-neutral-400 bg-transparent outline-none"
-                />
+                <AttendeeInput value={ccChips} onChange={handleCcChips} noBorder compact placeholder="cc@example.com" />
               </div>
             )}
             {showReplyBcc && (
-              <div className="flex items-center gap-2 px-4 py-2 border-b border-neutral-100">
+              <div className="flex items-center gap-2 px-4 py-2 border-b border-neutral-100 relative">
                 <span className="text-[11px] font-semibold text-neutral-400 w-8 flex-shrink-0">BCC</span>
-                <input
-                  type="text"
-                  value={replyBcc}
-                  onChange={e => setReplyBcc(e.target.value)}
-                  placeholder="bcc@example.com"
-                  className="flex-1 text-[13px] text-neutral-800 placeholder-neutral-400 bg-transparent outline-none"
-                />
+                <AttendeeInput value={bccChips} onChange={handleBccChips} noBorder compact placeholder="bcc@example.com" />
               </div>
             )}
             <div className="px-4 pt-3 pb-2">
-              <textarea
+              <div
                 ref={replyTextareaRef}
-                value={replyBody}
-                onChange={e => onReplyBodyChange(e.target.value)}
+                contentEditable
+                suppressContentEditableWarning
+                // eslint-disable-next-line jsx-a11y/no-autofocus
                 autoFocus
+                onInput={() => {
+                  const html = replyTextareaRef.current?.innerHTML ?? '';
+                  lastExternalReplyBody.current = html;
+                  onReplyBodyChange(html);
+                }}
+                data-placeholder="Write your reply…"
+                className="w-full text-[13px] text-neutral-800 border-0 outline-none leading-relaxed overflow-y-auto"
                 style={{ minHeight: '120px', maxHeight: '400px' }}
-                className="w-full text-[13px] text-neutral-800 border-0 outline-none resize-none placeholder:text-neutral-400 leading-relaxed overflow-y-auto"
-                placeholder="Write your reply…"
               />
             </div>
             {/* Attachment chips */}
@@ -908,37 +925,42 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
             />
 
             <div className="flex items-center justify-between gap-2 px-4 pb-3">
-              {/* Attach button */}
-              <div className="relative">
-                <button
-                  type="button"
-                  onClick={() => setShowAttachMenu(v => !v)}
-                  className="p-1.5 rounded text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100 transition-colors"
-                  title="Attach file"
-                >
-                  <PaperClipIcon className="w-4 h-4" />
-                </button>
-                {showAttachMenu && (
-                  <div className="absolute bottom-9 left-0 w-52 bg-white border border-neutral-200 rounded-lg shadow-lg z-10 py-1">
-                    <button
-                      onClick={() => { attachFileInputRef.current?.click(); setShowAttachMenu(false); }}
-                      className="w-full text-left px-3 py-2 text-[12px] text-neutral-700 hover:bg-neutral-50"
-                    >
-                      Upload a file
-                    </button>
-                    <button
-                      onClick={() => { setKbPickerOpen(true); setShowAttachMenu(false); }}
-                      className="w-full text-left px-3 py-2 text-[12px] text-neutral-700 hover:bg-neutral-50"
-                    >
-                      From knowledge base
-                    </button>
-                  </div>
-                )}
+              {/* Attach + format toolbar */}
+              <div className="flex items-center gap-1 flex-1 min-w-0">
+                <div className="relative flex-shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setShowAttachMenu(v => !v)}
+                    className="p-1.5 rounded text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100 transition-colors"
+                    title="Attach file"
+                  >
+                    <PaperClipIcon className="w-4 h-4" />
+                  </button>
+                  {showAttachMenu && (
+                    <div className="absolute bottom-9 left-0 w-52 bg-white border border-neutral-200 rounded-lg shadow-lg z-10 py-1">
+                      <button
+                        onClick={() => { attachFileInputRef.current?.click(); setShowAttachMenu(false); }}
+                        className="w-full text-left px-3 py-2 text-[12px] text-neutral-700 hover:bg-neutral-50"
+                      >
+                        Upload a file
+                      </button>
+                      <button
+                        onClick={() => { setKbPickerOpen(true); setShowAttachMenu(false); }}
+                        className="w-full text-left px-3 py-2 text-[12px] text-neutral-700 hover:bg-neutral-50"
+                      >
+                        From knowledge base
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <div className="w-px h-4 bg-neutral-200 flex-shrink-0" />
+                <FormatToolbar editorRef={replyTextareaRef} onSync={handleReplySync} />
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-shrink-0">
                 <button
-                  onClick={() => { setReplyOpen(false); onReplyOpenChange?.(false); onReplyBodyChange(''); setReplyAttachments([]); setReplyCc(''); setReplyBcc(''); setShowReplyCc(false); setShowReplyBcc(false); }}
+                  onClick={() => { setReplyOpen(false); onReplyOpenChange?.(false); onReplyBodyChange(''); setReplyAttachments([]); setReplyCc(''); setReplyBcc(''); setShowReplyCc(false); setShowReplyBcc(false); setCcChips([]); setBccChips([]); }}
                   disabled={isSendingReply}
                   className="px-3 py-1.5 text-[12px] font-medium text-neutral-500 hover:text-neutral-700 disabled:opacity-50 transition-colors"
                 >
@@ -946,7 +968,7 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
                 </button>
                 <button
                   onClick={handleSendReply}
-                  disabled={isSendingReply || !replyBody.trim()}
+                  disabled={isSendingReply || !replyBody.replace(/<[^>]*>/g, '').trim()}
                   className="inline-flex items-center gap-1.5 px-4 py-1.5 text-[12px] font-semibold bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   {isSendingReply

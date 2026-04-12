@@ -12,9 +12,10 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { to, cc, subject, body: emailBody, attachments: rawAttachments } = body as {
+    const { to, cc, bcc, subject, body: emailBody, attachments: rawAttachments } = body as {
       to: string;
       cc?: string;
+      bcc?: string;
       subject: string;
       body: string;
       attachments?: Array<{ filename: string; content: string; mimeType: string }>;
@@ -25,7 +26,7 @@ export async function POST(request: NextRequest) {
       mimeType: a.mimeType,
     }));
 
-    if (!to?.trim() || !emailBody?.trim()) {
+    if (!to?.trim() || !emailBody?.trim().replace(/<[^>]*>/g, '')) {
       return NextResponse.json({ error: 'to and body are required' }, { status: 400 });
     }
 
@@ -47,18 +48,20 @@ export async function POST(request: NextRequest) {
 
     if (connection.provider === 'gmail') {
       await sendGmailEmail({
-        encryptedTokens: connection.encrypted_tokens,
+        encryptedTokens: connection.metadata.tokens,
         to,
         cc,
+        bcc,
         subject,
         body: emailBody,
         attachments,
       });
     } else if (connection.provider === 'outlook') {
       await sendOutlookEmail({
-        encryptedTokens: connection.encrypted_tokens,
+        encryptedTokens: connection.metadata.tokens,
         to,
         cc,
+        bcc,
         subject,
         body: emailBody,
         attachments,

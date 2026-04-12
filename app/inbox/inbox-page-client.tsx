@@ -20,6 +20,33 @@ import type { InboxItem } from '@/lib/types/inbox';
 type ViewMode = 'chronological' | 'smart';
 type Density = 'normal' | 'compact';
 
+function markdownToHtml(text: string): string {
+  // If the AI already emitted HTML tags, skip escaping and just structure it
+  const hasHtmlTags = /<[a-z][\s\S]*?>/i.test(text);
+
+  const inlined = hasHtmlTags
+    ? text  // pass through as-is, tags will render in contenteditable
+    : text
+        .replace(/\*\*(.+?)\*\*/gs, '<strong>$1</strong>')
+        .replace(/\*(.+?)\*/gs, '<em>$1</em>')
+        .replace(/^#{1,6}\s+(.+)$/gm, '<strong>$1</strong>')
+        .replace(/`([^`]+)`/g, '<code>$1</code>');
+
+  // Split on blank lines → blocks
+  const blocks = inlined.split(/\n{2,}/);
+  return blocks.map(block => {
+    const trimmed = block.trim();
+    if (!trimmed) return '';
+    // List block: lines starting with - or *
+    const lines = trimmed.split('\n');
+    if (!hasHtmlTags && lines.every(l => /^[-*]\s/.test(l.trim()))) {
+      const items = lines.map(l => `<li>${l.trim().replace(/^[-*]\s+/, '')}</li>`).join('');
+      return `<ul>${items}</ul>`;
+    }
+    return `<p>${trimmed.replace(/\n/g, '<br>')}</p>`;
+  }).filter(Boolean).join('');
+}
+
 interface InboxPageClientProps {
   initialUser: any;
   initialUserFullName?: string;
@@ -519,13 +546,13 @@ export function InboxPageClient({
   };
 
   const handleOpenCompose = useCallback((draft: Partial<{ to: string; cc: string; subject: string; body: string }>) => {
-    setComposeDraft(prev => ({ ...prev, ...draft }));
+    setComposeDraft(prev => ({ ...prev, ...draft, ...(draft.body != null ? { body: markdownToHtml(draft.body) } : {}) }));
     setComposeMode(true);
     setRightPanel('chat');
   }, []);
 
   const handleUseAsReply = useCallback((body: string, cc?: string, bcc?: string) => {
-    setPendingReplyDraft({ body, cc, bcc });
+    setPendingReplyDraft({ body: markdownToHtml(body), cc, bcc });
   }, []);
 
   const handleReplyOpenChange = useCallback((open: boolean) => {
@@ -535,7 +562,7 @@ export function InboxPageClient({
   }, []);
 
   const handleUpdateReplyDraft = useCallback((body: string) => {
-    setReplyBody(body);
+    setReplyBody(markdownToHtml(body));
     setReplyIsOpen(true);
   }, []);
 
@@ -615,7 +642,7 @@ export function InboxPageClient({
           const parsed = JSON.parse(m[1]);
           if (parsed?.body) {
             // Always go through pendingReplyDraft so WorkDetailInline can handle cc/bcc too
-            setPendingReplyDraft({ body: parsed.body, cc: parsed.cc, bcc: parsed.bcc });
+            setPendingReplyDraft({ body: markdownToHtml(parsed.body), cc: parsed.cc, bcc: parsed.bcc });
             autoFiredReplyRef.current = true;
           }
         }
@@ -952,7 +979,7 @@ export function InboxPageClient({
                     context="inbox"
                     composeDraft={composeMode ? composeDraft : undefined}
                     onUpdateComposeDraft={composeMode
-                      ? (fields) => setComposeDraft(prev => ({ ...prev, ...fields }))
+                      ? (fields) => setComposeDraft(prev => ({ ...prev, ...fields, ...(fields.body != null ? { body: markdownToHtml(fields.body) } : {}) }))
                       : undefined}
                     onOpenCompose={handleOpenCompose}
                     onUseAsReply={handleUseAsReply}

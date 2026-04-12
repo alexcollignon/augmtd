@@ -83,6 +83,21 @@ body {
   animation: deskSlideDown 300ms ease-in forwards;
 }
 
+/* Contenteditable placeholder (compose / reply body) */
+[data-placeholder]:empty::before {
+  content: attr(data-placeholder);
+  color: #9ca3af;
+  pointer-events: none;
+}
+
+/* Compose / reply contenteditable body */
+[contenteditable] p { margin: 0 0 0.6em; }
+[contenteditable] p:last-child { margin-bottom: 0; }
+[contenteditable] ul { margin: 0 0 0.6em; padding-left: 1.4em; list-style: disc; }
+[contenteditable] ol { margin: 0 0 0.6em; padding-left: 1.4em; list-style: decimal; }
+[contenteditable] li { margin-bottom: 0.15em; display: list-item; }
+[contenteditable] a { color: #4f46e5; text-decoration: underline; cursor: pointer; }
+
 /* Scoped styles for rendered HTML email bodies */
 .email-body-html {
   font-size: 13px;

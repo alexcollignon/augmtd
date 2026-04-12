@@ -282,15 +282,44 @@ interface SendGmailReplyParams {
  * Convert plain text (with \n newlines) to HTML for email sending.
  * Double newlines become paragraph breaks; single newlines become <br>.
  */
+const EMAIL_FONT = `font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Helvetica Neue',Arial,sans-serif;font-size:14px;line-height:1.6;color:#262626`;
+
+function wrapEmailHtml(body: string): string {
+  // Inject inline styles on bare block elements so Outlook renders them correctly
+  const styled = body
+    .replace(/<p(?![^>]*style=)([^>]*)>/gi, '<p style="margin:0 0 0.75em"$1>')
+    .replace(/<ul(?![^>]*style=)([^>]*)>/gi, '<ul style="margin:0 0 0.75em;padding-left:1.5em"$1>')
+    .replace(/<ol(?![^>]*style=)([^>]*)>/gi, '<ol style="margin:0 0 0.75em;padding-left:1.5em"$1>');
+  return `<div style="${EMAIL_FONT}">${styled}</div>`;
+}
+
 function plainTextToHtml(text: string): string {
+  // Already HTML (from contenteditable) — wrap in font container and pass through
+  if (/<[a-z][\s\S]*>/i.test(text.substring(0, 300))) return wrapEmailHtml(text);
   const escaped = text
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
-  const paragraphs = escaped.split(/\n{2,}/);
-  return paragraphs
-    .map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`)
-    .join('');
+  const formatted = escaped
+    .replace(/\*\*(.+?)\*\*/gs, '<strong>$1</strong>')
+    .replace(/\*(.+?)\*/gs, '<em>$1</em>');
+  // List blocks
+  const blocks = formatted.split(/\n{2,}/);
+  const html = blocks.map(block => {
+    const trimmed = block.trim();
+    if (!trimmed) return '';
+    const lines = trimmed.split('\n');
+    if (lines.every(l => /^[-*]\s/.test(l.trim()))) {
+      const items = lines.map(l => `<li>${l.trim().replace(/^[-*]\s+/, '')}</li>`).join('');
+      return `<ul style="margin:0 0 0.75em;padding-left:1.5em">${items}</ul>`;
+    }
+    if (lines.every(l => /^\d+\.\s/.test(l.trim()))) {
+      const items = lines.map(l => `<li>${l.trim().replace(/^\d+\.\s+/, '')}</li>`).join('');
+      return `<ol style="margin:0 0 0.75em;padding-left:1.5em">${items}</ol>`;
+    }
+    return `<p style="margin:0 0 0.75em">${trimmed.replace(/\n/g, '<br>')}</p>`;
+  }).filter(Boolean).join('');
+  return wrapEmailHtml(html);
 }
 
 export interface EmailAttachment {

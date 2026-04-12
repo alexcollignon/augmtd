@@ -7,6 +7,23 @@ import { getCalendarContext } from '@/lib/calendar/calendar-context';
 import { formatCalendarContextForChat } from '@/lib/calendar/format-calendar-context';
 import { buildUserContextBlock } from '@/lib/context/build-user-context';
 
+/** Strip HTML tags from a draft body so the AI sees clean text, not markup. */
+function stripHtmlForAI(html: string): string {
+  return html
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>/gi, '\n')
+    .replace(/<\/div>/gi, '\n')
+    .replace(/<\/li>/gi, '\n')
+    .replace(/<li[^>]*>/gi, '- ')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 const SYSTEM_PROMPT = `You are an intelligent assistant for a professional email tool called AUGMTD.
 You help users search and understand their emails, answer questions using their indexed documents, and help with scheduling.
 
@@ -50,6 +67,7 @@ OPEN_COMPOSE:{"to":"...","subject":"...","body":"..."}
 → User wants to write or send a NEW email to someone.
   ALWAYS emit this token when the user wants to compose a new email — even if the recipient email address is unknown (use their name or leave to:"" and the user will fill it in the compose panel).
   Do not combine with ACTION or MEETING_SUGGESTION.
+  Formatting rules (same as below): use markdown — **bold**, *italic*, - bullet lists, 1. numbered lists. \\n for newlines. Never HTML tags.
 
 REPLY_DRAFT:{"body":"..."}
 → REQUIRED when user asks to draft, write, or suggest a reply to an email.
@@ -58,11 +76,14 @@ REPLY_DRAFT:{"body":"..."}
   Write a short intro sentence first (e.g. "Here's a draft:"), then emit the token on the next line.
   If a FOCUSED EMAIL is shown above, reply to that one. Otherwise use the inbox snapshot.
   Body must be the complete reply text only — no subject line.
-  Format: greeting line, blank line, body paragraphs separated by blank lines, blank line, sign-off on its own line then name on the next line. Use \\n for newlines. No extra commas.
+  Structure: greeting line, blank line (\\n\\n), body paragraphs separated by blank lines, blank line, sign-off, name. Use \\n for newlines inside the JSON string.
+  Formatting: markdown only — **bold**, *italic*, - item (bullet list), 1. item (numbered list). Never HTML tags like <b> or <strong>.
   Do not combine with OPEN_COMPOSE.
 
 UPDATE_DRAFT:{"subject":"...","body":"..."}
-→ User is composing a new email (compose panel is open) and wants to refine it. Only in compose mode.`;
+→ User is composing a new email (compose panel is open) and wants to refine it. Only in compose mode.
+  Structure: same as REPLY_DRAFT — paragraphs separated by \\n\\n, sign-off at end. Use \\n for newlines.
+  Formatting: markdown only — **bold**, *italic*, - item (bullet list), 1. item (numbered list). Never HTML tags.`;
 
 export async function POST(request: NextRequest) {
   try {
@@ -147,18 +168,20 @@ Subject: ${emailContext.subject || '(no subject)'}${emailContext.summary ? `\nSu
 
     // Compose mode addendum
     if (mode === 'compose' && composeDraft) {
+      const bodyForAI = stripHtmlForAI(composeDraft.body || '');
       systemPrompt += `\n\nThe user is composing a new outgoing email. Current draft:
   To: ${composeDraft.to || '(empty)'}
   Subject: ${composeDraft.subject || '(empty)'}
-  Body: ${composeDraft.body || '(empty)'}
+  Body: ${bodyForAI || '(empty)'}
 
 Help improve tone, length, subject, clarity. When providing a full revision emit UPDATE_DRAFT at the very end. Only emit UPDATE_DRAFT for complete rewrites, not commentary.`;
     }
 
     // Reply mode addendum
     if (mode === 'reply') {
+      const replyForAI = stripHtmlForAI(replyDraft || '');
       systemPrompt += `\n\nThe user has the reply box open. Current draft:
-${replyDraft?.trim() || '(empty — not yet drafted)'}
+${replyForAI || '(empty — not yet drafted)'}
 
 REPLY MODE — follow exactly:
 1. Silently decide if the user wants to WRITE/EDIT the draft or ask a QUERY. Do NOT write "INTENT DETECTION" or any label — this classification is internal only.
@@ -169,8 +192,8 @@ REPLY MODE — follow exactly:
 
 4. EMAIL BODY FORMAT — all reply drafts must follow this structure:
    "Hi Alex,\\n\\nThank you for reaching out...\\n\\nBest regards,\\nAlexandre"
-   Rules: greeting on first line, blank line between each paragraph, sign-off on its own line, name on the line after.
-   Use \\n for newlines inside the JSON string. Never add extra commas.
+   Rules: greeting on first line, \\n\\n between paragraphs, sign-off line, name on the line after.
+   Use \\n for newlines inside the JSON string. Use **word** for bold, - item for bullet lists.
 
 5. CRITICAL: Never emit ACTION, OPEN_COMPOSE, or UPDATE_DRAFT in reply mode. MEETING_SUGGESTION is allowed only for QUERY intents about scheduling.`;
     }
