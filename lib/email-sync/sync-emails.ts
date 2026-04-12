@@ -1429,7 +1429,11 @@ export async function syncEmailsForConnection(
         const userEmail = connection.metadata?.email || connection.provider_account_id;
         const sentRows = sentMessages.map(m => {
           // eslint-disable-next-line @typescript-eslint/no-unused-vars
-          const { attachments: _a, hasAttachments: _ha, outlookInternalId: _oid, ...dbFields } = m as any;
+          const { attachments, hasAttachments: _ha, outlookInternalId: _oid, ...dbFields } = m as any;
+          // Store attachment metadata (filenames/sizes) without downloading content
+          const attachmentMeta = Array.isArray(attachments) && attachments.length > 0
+            ? attachments.map((a: any) => ({ filename: a.filename, mimeType: a.mimeType, size: a.size ?? null }))
+            : undefined;
           return stripNulls({
             user_id: connection.user_id,
             connection_id: connection.id,
@@ -1437,6 +1441,7 @@ export async function syncEmailsForConnection(
             html_body: (m as any).html_body?.slice(0, 15000) || null,
             is_from_user: true,
             is_read: true,
+            metadata: attachmentMeta ? { attachments: attachmentMeta } : undefined,
           }) as Record<string, unknown>;
         }).filter(r => r.message_id); // must have a message_id for upsert
 

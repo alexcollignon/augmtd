@@ -11,7 +11,7 @@ import WorkDetailInline from '@/components/inbox/work-detail-inline';
 import AiChatPanel from '@/components/shared/ai-chat-panel';
 import WorkflowPanel from '@/components/inbox/workflow-panel';
 import MeetingsColumn from '@/components/inbox/meetings-column';
-import { ArrowPathIcon, ChatBubbleLeftIcon, SparklesIcon, Bars3Icon, QueueListIcon, ArchiveBoxArrowDownIcon, XMarkIcon, MagnifyingGlassIcon, PencilSquareIcon, CalendarDaysIcon, TrashIcon } from '@heroicons/react/24/outline';
+import { ArrowPathIcon, ChatBubbleLeftIcon, SparklesIcon, Bars3Icon, QueueListIcon, ArchiveBoxArrowDownIcon, XMarkIcon, MagnifyingGlassIcon, PencilSquareIcon, CalendarDaysIcon, TrashIcon, PaperClipIcon } from '@heroicons/react/24/outline';
 import ComposePanel from '@/components/inbox/compose-panel';
 import { toast } from 'sonner';
 import type { CalendarEvent } from '@/lib/types/meetings';
@@ -54,6 +54,7 @@ function SentEmailDetail({ email }: { email: SentEmail }) {
   const sentDate = email.received_at
     ? new Date(email.received_at).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })
     : '';
+  const attachments = email.metadata?.attachments ?? [];
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -63,6 +64,16 @@ function SentEmailDetail({ email }: { email: SentEmail }) {
           <div><span className="font-medium text-neutral-700">To:</span> {toList}</div>
           {sentDate && <div><span className="font-medium text-neutral-700">Sent:</span> {sentDate}</div>}
         </div>
+        {attachments.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mt-3">
+            {attachments.map((att, i) => (
+              <span key={i} className="inline-flex items-center gap-1 px-2 py-0.5 bg-neutral-100 rounded text-[11px] text-neutral-600">
+                <PaperClipIcon className="w-3 h-3 flex-shrink-0" />
+                <span className="max-w-[160px] truncate">{att.filename}</span>
+              </span>
+            ))}
+          </div>
+        )}
       </div>
       <div className="flex-1 overflow-y-auto px-6 py-4 text-[13px] text-neutral-800 leading-relaxed">
         {email.html_body
@@ -936,6 +947,7 @@ export function InboxPageClient({
                     selectedId={selectedSentEmail?.id ?? null}
                     onSelect={(email) => { setSelectedSentEmail(email); setSelectedItem(null); setComposeMode(false); }}
                     loading={sentLoading}
+                    compact={density === 'compact'}
                   />
                 ) : inboxItems.length === 0 && !isSyncing ? (
                   <div className="flex flex-col items-center justify-center h-full py-16 px-4 text-center">

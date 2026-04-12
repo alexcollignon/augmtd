@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo } from 'react';
+import { PaperClipIcon } from '@heroicons/react/24/outline';
 
 export interface SentEmail {
   id: string;
@@ -11,6 +12,7 @@ export interface SentEmail {
   received_at: string | null;
   html_body: string | null;
   body: string | null;
+  metadata?: { attachments?: Array<{ filename: string; mimeType: string; size: number | null }> } | null;
 }
 
 interface SentEmailListProps {
@@ -18,6 +20,7 @@ interface SentEmailListProps {
   selectedId: string | null;
   onSelect: (email: SentEmail) => void;
   loading?: boolean;
+  compact?: boolean;
 }
 
 function formatTime(dateStr: string): string {
@@ -41,7 +44,7 @@ function getDateLabel(dateStr: string): string {
   return date.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
 }
 
-export default function SentEmailList({ emails, selectedId, onSelect, loading }: SentEmailListProps) {
+export default function SentEmailList({ emails, selectedId, onSelect, loading, compact = false }: SentEmailListProps) {
   const groups = useMemo(() => {
     const result: Array<{ label: string; items: SentEmail[] }> = [];
     let currentLabel = '';
@@ -90,6 +93,41 @@ export default function SentEmailList({ emails, selectedId, onSelect, loading }:
               const timeDisplay = email.received_at ? formatTime(email.received_at) : '';
               const isSelected = selectedId === email.id;
               const snippetDisplay = email.body ? email.body.slice(0, 120) : '';
+              const attachments = email.metadata?.attachments ?? [];
+
+              if (compact) {
+                return (
+                  <div
+                    key={email.id}
+                    onClick={() => onSelect(email)}
+                    className={`w-full text-left relative rounded-md transition-colors cursor-pointer group ${
+                      isSelected ? 'bg-indigo-50' : 'bg-white hover:bg-neutral-50'
+                    }`}
+                  >
+                    <div className="px-3 py-1.5">
+                      <div className="flex items-baseline justify-between gap-2 mb-0.5">
+                        <span className={`text-[12px] truncate font-semibold ${isSelected ? 'text-indigo-900' : 'text-neutral-900'}`}>
+                          {toDisplay ? `To: ${toDisplay}` : 'No recipient'}
+                        </span>
+                        {timeDisplay && (
+                          <span className="text-[10px] text-neutral-400 flex-shrink-0">{timeDisplay}</span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <p className={`text-[11px] truncate flex-1 ${isSelected ? 'text-indigo-700 font-medium' : 'text-neutral-500'}`}>
+                          {subjectDisplay || '(no subject)'}
+                        </p>
+                        {attachments.length > 0 && (
+                          <span className="inline-flex items-center gap-0.5 text-neutral-400 flex-shrink-0">
+                            <PaperClipIcon className="w-2.5 h-2.5" />
+                            <span className="text-[10px]">{attachments.length}</span>
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              }
 
               return (
                 <div
@@ -115,6 +153,14 @@ export default function SentEmailList({ emails, selectedId, onSelect, loading }:
                       <p className="text-[11px] text-neutral-400 line-clamp-1 leading-relaxed">
                         {snippetDisplay}
                       </p>
+                    )}
+                    {attachments.length > 0 && (
+                      <div className="flex items-center gap-2 mt-1.5">
+                        <span className="inline-flex items-center gap-0.5 text-neutral-400">
+                          <PaperClipIcon className="w-2.5 h-2.5" />
+                          <span className="text-[10px]">{attachments.length}</span>
+                        </span>
+                      </div>
                     )}
                   </div>
                 </div>
