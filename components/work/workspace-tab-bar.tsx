@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { ChatBubbleLeftIcon, RectangleStackIcon } from '@heroicons/react/24/outline';
+import { ChatBubbleOvalLeftIcon, RectangleStackIcon } from '@heroicons/react/24/outline';
 
 export function WorkspaceTabBar() {
   const pathname = usePathname();
@@ -19,7 +19,7 @@ export function WorkspaceTabBar() {
             : 'text-neutral-500 hover:text-neutral-800 hover:bg-neutral-50'
         }`}
       >
-        <ChatBubbleLeftIcon className="w-3.5 h-3.5" />
+        <ChatBubbleOvalLeftIcon className="w-3.5 h-3.5" />
         Chat
       </Link>
       <Link

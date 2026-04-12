@@ -10,7 +10,7 @@ import { useState, useEffect, useRef } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { ChevronRightIcon, PlusIcon, RectangleStackIcon, Square2StackIcon } from '@heroicons/react/24/outline';
+import { ChevronRightIcon, PlusIcon, RectangleStackIcon, ChatBubbleOvalLeftIcon } from '@heroicons/react/24/outline';
 import { ChatThreadSidebar, ChatThread } from '@/components/work/chat-thread-sidebar';
 import { ChatEmptyState } from '@/components/work/chat-empty-state';
 import { ChatInputBar, SourceId, AttachmentChip, MentionChip, MENTION_ICONS, MENTION_COLORS } from '@/components/work/chat-input-bar';
@@ -257,7 +257,7 @@ export function WorkPageClient({
               href="/work"
               className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[12px] font-medium bg-indigo-50 text-indigo-700"
             >
-              <Square2StackIcon className="w-3 h-3" />
+              <ChatBubbleOvalLeftIcon className="w-3 h-3" />
               Chat
             </Link>
             <Link
@@ -850,6 +850,7 @@ function ActiveChatView({
             placeholder="Ask anything..."
             threadId={thread.id}
           />
+
         </div>
       </div>
     </div>

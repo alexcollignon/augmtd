@@ -33,6 +33,29 @@ export function ChatEmptyState({ onStart, userFirstName, savedWorkflows = [], on
           attachments={attachments}
           autoFocus
         />
+
+        <div className="mt-2">
+          {[
+            'What should I work on today?',
+            'Check my recent emails',
+            'Summarize my upcoming calendar events',
+            'What should I focus on this week?',
+          ].map((prompt, i, arr) => (
+            <div
+              key={prompt}
+              className="animate-prompt-in"
+              style={{ animationDelay: `${i * 60}ms`, animationFillMode: 'both' }}
+            >
+              <button
+                onClick={() => start(prompt)}
+                className="w-full text-left px-1 py-2.5 text-[13px] text-neutral-400 hover:text-neutral-600 transition-colors"
+              >
+                {prompt}
+              </button>
+              {i < arr.length - 1 && <div className="border-t border-neutral-100" />}
+            </div>
+          ))}
+        </div>
       </div>
 
       {/* Saved workflows */}
