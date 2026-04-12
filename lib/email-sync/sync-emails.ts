@@ -1414,14 +1414,16 @@ export async function syncEmailsForConnection(
         const onGmailRefresh = async (newTokens: string) => {
           await adminSupabase.from('connections').update({ metadata: { ...connection.metadata, tokens: newTokens } }).eq('id', connection.id);
         };
-        const raw = await fetchGmailSentEmails(encryptedTokensForSent, 25, sentWindow, onGmailRefresh, connection.last_sync ?? undefined);
+        // Always use the full window (not last_sync) — sent emails are lightweight (max 25)
+        // and this ensures attachment metadata gets backfilled on existing rows
+        const raw = await fetchGmailSentEmails(encryptedTokensForSent, 25, sentWindow, onGmailRefresh);
         sentMessages = raw.map(m => parseGmailMessage(m));
       } else if (connection.provider === 'outlook') {
         const onOutlookRefresh = async (newTokens: { accessToken: string; refreshToken: string; expiresOn: string }) => {
           const enc = Buffer.from(JSON.stringify(newTokens)).toString('base64');
           await adminSupabase.from('connections').update({ metadata: { ...connection.metadata, tokens: enc } }).eq('id', connection.id);
         };
-        const raw = await fetchOutlookSentEmails(encryptedTokensForSent, 25, sentWindow, onOutlookRefresh, connection.last_sync ?? undefined);
+        const raw = await fetchOutlookSentEmails(encryptedTokensForSent, 25, sentWindow, onOutlookRefresh);
         sentMessages = raw.map(m => parseOutlookMessage(m));
       }
 
@@ -1447,7 +1449,7 @@ export async function syncEmailsForConnection(
 
         const { error: sentErr } = await adminSupabase
           .from('emails')
-          .upsert(sentRows, { onConflict: 'message_id', ignoreDuplicates: true });
+          .upsert(sentRows, { onConflict: 'message_id', ignoreDuplicates: false });
         if (sentErr) {
           console.warn(`[SentSync] Upsert error:`, sentErr.message);
         } else {
