@@ -301,8 +301,8 @@ function plainTextToHtml(text: string): string {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
   const formatted = escaped
-    .replace(/\*\*(.+?)\*\*/gs, '<strong>$1</strong>')
-    .replace(/\*(.+?)\*/gs, '<em>$1</em>');
+    .replace(/\*\*([\s\S]+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*([\s\S]+?)\*/g, '<em>$1</em>');
   // List blocks
   const blocks = formatted.split(/\n{2,}/);
   const html = blocks.map(block => {
