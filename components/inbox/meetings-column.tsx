@@ -157,7 +157,7 @@ export default function MeetingsColumn({ isOpen, onToggle, meetings, loading, us
             <div className="h-16 bg-neutral-100 rounded" />
           </div>
         ) : (
-          <div className="flex-1 overflow-y-auto px-3 py-2">
+          <div className="flex-1 min-h-0 overflow-hidden px-3 py-2">
             <CalendarSidebar
               meetings={meetings}
               userEmail={userEmail}

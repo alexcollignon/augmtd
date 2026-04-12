@@ -322,27 +322,29 @@ export default function CalendarSidebar({
           </div>
         </div>
       )}
-      <div className="flex-1 overflow-y-auto">
-      <MonthCalendar
-        meetings={meetings}
-        userEmail={userEmail}
-        selectedDateStr={selectedDateStr}
-        onSelectDate={setSelectedDateStr}
-        onNewMeeting={onNewMeeting}
-        compact
-      />
-      <div className="border-t border-neutral-100 pt-3 mt-3">
-        <RollingWeekView
+      <div className="flex-shrink-0">
+        <MonthCalendar
           meetings={meetings}
           userEmail={userEmail}
-          botStateMap={botStateMap}
-          onScheduled={onScheduled}
-          onCancelled={onCancelled}
-          onRefresh={onRefresh}
-          focusDateStr={selectedDateStr}
+          selectedDateStr={selectedDateStr}
+          onSelectDate={setSelectedDateStr}
+          onNewMeeting={onNewMeeting}
+          compact
         />
-        <CompletedTodaySection meetings={completedToday} />
       </div>
+      <div className="flex-1 overflow-y-auto">
+        <div className="border-t border-neutral-100 pt-3 mt-1">
+          <RollingWeekView
+            meetings={meetings}
+            userEmail={userEmail}
+            botStateMap={botStateMap}
+            onScheduled={onScheduled}
+            onCancelled={onCancelled}
+            onRefresh={onRefresh}
+            focusDateStr={selectedDateStr}
+          />
+          <CompletedTodaySection meetings={completedToday} />
+        </div>
       </div>
     </div>
     </>
