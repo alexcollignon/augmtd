@@ -6,18 +6,19 @@
 // Phase 5 adds: @ mentions + file attachments
 // Phase 6 adds: process integration + polish
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { ChevronRightIcon, PlusIcon, RectangleStackIcon, ChatBubbleOvalLeftIcon } from '@heroicons/react/24/outline';
+import { ChevronRightIcon, PlusIcon, RectangleStackIcon, ChatBubbleOvalLeftIcon, ClockIcon, DocumentArrowDownIcon, ArchiveBoxIcon, Cog6ToothIcon } from '@heroicons/react/24/outline';
+import { ThreadArtifactsPanel, AllArtifactsPanel } from '@/components/work/chat-artifact-panel';
 import { ChatThreadSidebar, ChatThread } from '@/components/work/chat-thread-sidebar';
 import { ChatEmptyState } from '@/components/work/chat-empty-state';
 import { ChatInputBar, SourceId, AttachmentChip, MentionChip, MENTION_ICONS, MENTION_COLORS } from '@/components/work/chat-input-bar';
 import { ChatMessageBubble, StreamingMessage, ChatMessage, ToolStatus } from '@/components/work/chat-message';
+import { computeVersionedArtifacts } from '@/lib/artifacts/version-utils';
 import { ClarificationData } from '@/components/work/clarification-widget';
 import { DocumentArtifact, ExecutionPlan } from '@/lib/types/inbox';
-import { ChatArtifactPanel } from '@/components/work/chat-artifact-panel';
 import { AgentsSidebarSection, SidebarAgent } from '@/components/agents/agents-sidebar-section';
 import { AgentIcon } from '@/components/agents/agent-icons';
 
@@ -47,6 +48,7 @@ interface WorkThread extends ChatThread {
   process_id?: string | null;
   process_step_index?: number | null;
   agent_id?: string | null;
+  is_temporary?: boolean;
 }
 
 export interface WorkPageClientProps {
@@ -94,6 +96,11 @@ export function WorkPageClient({
   const [artifactPanelOpen, setArtifactPanelOpen] = useState(false);
   const [activeArtifactId, setActiveArtifactId] = useState<string | null>(null);
   const [activeAgentId, setActiveAgentId] = useState<string | null>(null);
+  const [isTemporaryMode, setIsTemporaryMode] = useState(false);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const [droppedFiles, setDroppedFiles] = useState<File[]>([]);
+  // Stable ref so the drag useEffect closure always sees the latest activeThreadId
+  const activeThreadIdRef = useRef<string | null>(initialActiveThreadId ?? null);
 
   const activeThread = threads.find((t) => t.id === activeThreadId) ?? null;
 
@@ -108,6 +115,64 @@ export function WorkPageClient({
   useEffect(() => {
     fetch('/api/connections/backfill-contacts', { method: 'POST' }).catch(() => {});
   }, []);
+
+  // Keep activeThreadIdRef current so drag closure is never stale
+  useEffect(() => { activeThreadIdRef.current = activeThreadId; }, [activeThreadId]);
+
+  // ── Window drag listeners — always active regardless of which view is showing ─
+  useEffect(() => {
+    function isFileDrag(e: DragEvent) {
+      return Array.from(e.dataTransfer?.types ?? []).includes('Files');
+    }
+    function onDragEnter(e: DragEvent) {
+      if (!isFileDrag(e)) return;
+      e.preventDefault();
+      setIsDragOver(true);
+    }
+    function onDragLeave(e: DragEvent) {
+      if (e.relatedTarget == null) setIsDragOver(false);
+    }
+    function onDragOver(e: DragEvent) {
+      if (isFileDrag(e)) e.preventDefault();
+    }
+    function onDrop(e: DragEvent) {
+      e.preventDefault();
+      setIsDragOver(false);
+      const files = e.dataTransfer?.files;
+      if (!files || files.length === 0) return;
+      const fileArray = Array.from(files);
+      if (activeThreadIdRef.current) {
+        // Active thread — route to ActiveChatView via prop
+        setDroppedFiles(fileArray);
+      } else {
+        // No thread yet — stage as pending (same as clicking attach on empty state)
+        setPendingFiles(prev => [...prev, ...fileArray.map(f => ({ id: crypto.randomUUID(), file: f }))]);
+      }
+    }
+    function onPaste(e: ClipboardEvent) {
+      // Only intercept when clipboard contains files (images, etc.); let text paste through normally
+      const files = Array.from(e.clipboardData?.files ?? []);
+      if (files.length === 0) return;
+      e.preventDefault();
+      if (activeThreadIdRef.current) {
+        setDroppedFiles(files);
+      } else {
+        setPendingFiles(prev => [...prev, ...files.map(f => ({ id: crypto.randomUUID(), file: f }))]);
+      }
+    }
+    window.addEventListener('dragenter', onDragEnter);
+    window.addEventListener('dragleave', onDragLeave);
+    window.addEventListener('dragover', onDragOver);
+    window.addEventListener('drop', onDrop);
+    window.addEventListener('paste', onPaste);
+    return () => {
+      window.removeEventListener('dragenter', onDragEnter);
+      window.removeEventListener('dragleave', onDragLeave);
+      window.removeEventListener('dragover', onDragOver);
+      window.removeEventListener('drop', onDrop);
+      window.removeEventListener('paste', onPaste);
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Realtime: keep thread list in sync ───────────────────────────────────
   useEffect(() => {
@@ -177,6 +242,7 @@ export function WorkPageClient({
             ? Number(processStepContext.processStep)
             : undefined,
           agentId: activeAgentId ?? undefined,
+          isTemporary: isTemporaryMode,
         }),
       });
       if (!res.ok) throw new Error('Failed to create thread');
@@ -194,6 +260,7 @@ export function WorkPageClient({
         updated_at: new Date().toISOString(),
         process_title: null,
         agent_id: activeAgentId,
+        is_temporary: isTemporaryMode,
       };
 
       // Switch UI immediately — don't wait for upload
@@ -260,10 +327,18 @@ export function WorkPageClient({
   function handleViewArtifact(id: string) {
     setActiveArtifactId(id);
     setArtifactPanelOpen(true);
+    // Don't change activeThreadId — user stays in current thread, panel shows globally
   }
 
-  function handleThreadTitleUpdate(id: string, title: string) {
+  function handleThreadTitleUpdate(id: string, title: string, persist = false) {
     setThreads((prev) => prev.map((t) => (t.id === id ? { ...t, title } : t)));
+    if (persist) {
+      fetch(`/api/work/threads/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title }),
+      }).catch(() => {});
+    }
   }
 
   function handleThreadArtifactsUpdate(id: string, artifacts: DocumentArtifact[]) {
@@ -275,11 +350,21 @@ export function WorkPageClient({
   return (
     <div className="flex flex-1 min-w-0 overflow-hidden bg-neutral-50">
 
+      {/* Drop overlay — fixed full-window, always available regardless of which view is active */}
+      {isDragOver && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-white/80 backdrop-blur-sm pointer-events-none">
+          <div className="flex flex-col items-center gap-3 px-10 py-8 rounded-2xl border-2 border-dashed border-indigo-300 bg-white shadow-lg">
+            <DocumentArrowDownIcon className="w-10 h-10 text-indigo-400" />
+            <p className="text-[15px] font-medium text-indigo-600">Drop to attach</p>
+          </div>
+        </div>
+      )}
+
       {/* Thread sidebar — floating card */}
       <div className="w-[220px] flex-shrink-0 flex flex-col bg-neutral-50 p-2">
         <div className="flex-1 flex flex-col rounded-2xl bg-white shadow-sm overflow-hidden">
           {/* Sidebar header: nav tabs */}
-          <div className="flex items-center gap-1 px-3 py-2.5 border-b border-neutral-100 flex-shrink-0">
+          <div className="flex items-center gap-1 px-3 h-11 border-b border-neutral-100 flex-shrink-0">
             <Link
               href="/work"
               className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[12px] font-medium bg-indigo-50 text-indigo-700"
@@ -335,6 +420,36 @@ export function WorkPageClient({
       {/* Chat column — floating card */}
       <div className="flex-1 min-w-0 flex flex-col bg-neutral-50 pl-2 pt-2 pb-2 overflow-hidden">
         <div className="flex-1 flex flex-col rounded-2xl bg-white shadow-sm overflow-hidden">
+
+          {/* New chat screen bar: clock toggle (left) + global artifacts button (right) */}
+          {!activeThread && (
+            <div className={`flex items-center justify-between px-3 h-11 border-b flex-shrink-0 transition-colors duration-300 ${
+              isTemporaryMode ? 'bg-amber-50 border-amber-100' : 'border-neutral-100'
+            }`}>
+              <button
+                onClick={() => setIsTemporaryMode(v => !v)}
+                title={isTemporaryMode ? 'Temporary mode on — chat deleted on exit' : 'Enable temporary chat (no history)'}
+                className={`flex items-center gap-1.5 px-2 py-1 rounded-lg text-[12px] transition-colors duration-200 focus:outline-none ${
+                  isTemporaryMode
+                    ? 'text-amber-600 hover:bg-amber-100'
+                    : 'text-neutral-400 hover:bg-neutral-100 hover:text-neutral-500'
+                }`}
+              >
+                <ClockIcon className="w-3.5 h-3.5" />
+                <span className={`overflow-hidden transition-all duration-200 whitespace-nowrap ${
+                  isTemporaryMode ? 'max-w-[80px] opacity-100' : 'max-w-0 opacity-0'
+                }`}>Temporary</span>
+              </button>
+              {threads.some(t => (t.artifacts?.length ?? 0) > 0) && (
+                <ArtifactsPanelButton
+                  count={threads.reduce((n, t) => n + (t.artifacts?.length ?? 0), 0)}
+                  open={artifactPanelOpen}
+                  onClick={() => setArtifactPanelOpen(v => !v)}
+                />
+              )}
+            </div>
+          )}
+
           {activeThread ? (
             <ActiveChatView
               thread={activeThread}
@@ -349,6 +464,11 @@ export function WorkPageClient({
               onArtifactsUpdate={handleThreadArtifactsUpdate}
               onViewArtifact={handleViewArtifact}
               onArtifactReady={handleViewArtifact}
+              artifactPanelOpen={artifactPanelOpen}
+              onArtifactPanelToggle={() => setArtifactPanelOpen(v => !v)}
+              onThreadRemove={(id) => setThreads(prev => prev.filter(t => t.id !== id))}
+              externalDroppedFiles={droppedFiles}
+              onDropConsumed={() => setDroppedFiles([])}
             />
           ) : activeAgentId ? (
             <AgentHomeScreen
@@ -371,24 +491,58 @@ export function WorkPageClient({
         </div>
       </div>
 
-      {/* Artifact panel */}
+      {/* Artifact panel — global when no thread active, thread-scoped when in a thread */}
       <div
         className={`flex-shrink-0 overflow-hidden transition-[width] duration-200 ${
-          artifactPanelOpen && activeThread ? 'w-[440px]' : 'w-0'
+          artifactPanelOpen && (!activeThread || (activeThread.artifacts?.length ?? 0) > 0)
+            ? (activeThread ? 'w-[300px]' : 'w-[260px]')
+            : 'w-0'
         }`}
       >
-        {activeThread && activeThread.artifacts && activeThread.artifacts.length > 0 && (
-          <ChatArtifactPanel
-            threadId={activeThread.id}
-            artifacts={activeThread.artifacts}
+        {artifactPanelOpen && !activeThread && (
+          <AllArtifactsPanel
+            threads={threads}
             activeArtifactId={activeArtifactId}
             onClose={() => { setArtifactPanelOpen(false); setActiveArtifactId(null); }}
-            onArtifactsChange={(updated) => handleThreadArtifactsUpdate(activeThread.id, updated)}
+            onSelectThread={(threadId, artifactId) => {
+              setActiveThreadId(threadId);
+              setActiveArtifactId(artifactId);
+            }}
+          />
+        )}
+        {artifactPanelOpen && activeThread && (activeThread.artifacts?.length ?? 0) > 0 && (
+          <ThreadArtifactsPanel
+            thread={activeThread}
+            onClose={() => setArtifactPanelOpen(false)}
+            onArtifactsUpdate={(artifacts) => handleThreadArtifactsUpdate(activeThread.id, artifacts)}
           />
         )}
       </div>
 
     </div>
+  );
+}
+
+// ─── Artifacts panel button ───────────────────────────────────────────────────
+
+function ArtifactsPanelButton({ count, open, onClick }: { count: number; open: boolean; onClick?: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      title="Artifacts"
+      className={`relative flex items-center gap-1.5 px-2 py-1 rounded-lg text-[12px] transition-colors ${
+        open
+          ? 'bg-indigo-50 text-indigo-700'
+          : 'text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600'
+      }`}
+    >
+      <ArchiveBoxIcon className="w-3.5 h-3.5" />
+      {count > 0 && (
+        <span className={`text-[10.5px] font-medium ${open ? 'text-indigo-600' : 'text-neutral-400'}`}>
+          {count}
+        </span>
+      )}
+    </button>
   );
 }
 
@@ -403,10 +557,15 @@ interface ActiveChatViewProps {
   pendingAttachmentMeta?: Array<{ id: string; name: string }>;
   isAttachUploading?: boolean;
   onPendingInputConsumed: () => void;
-  onTitleUpdate: (id: string, title: string) => void;
+  onTitleUpdate: (id: string, title: string, persist?: boolean) => void;
   onArtifactsUpdate: (id: string, artifacts: DocumentArtifact[]) => void;
   onViewArtifact: (id: string) => void;
   onArtifactReady?: (artifactId: string) => void;
+  artifactPanelOpen?: boolean;
+  onArtifactPanelToggle?: () => void;
+  onThreadRemove?: (id: string) => void;
+  externalDroppedFiles?: File[];
+  onDropConsumed?: () => void;
 }
 
 function ActiveChatView({
@@ -422,6 +581,11 @@ function ActiveChatView({
   onArtifactsUpdate,
   onViewArtifact,
   onArtifactReady,
+  artifactPanelOpen = false,
+  onArtifactPanelToggle,
+  onThreadRemove,
+  externalDroppedFiles,
+  onDropConsumed,
 }: ActiveChatViewProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -432,9 +596,21 @@ function ActiveChatView({
   const [chatAttachments, setChatAttachments] = useState<AttachmentChip[]>([]);
   const [stepCompleted, setStepCompleted] = useState(false);
   const [stepCompleting, setStepCompleting] = useState(false);
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState('');
+  const titleInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const hasSentPending = useRef(false);
   const lastUserInputRef = useRef<{ content: string; mentions: MentionChip[] } | null>(null);
+
+  const mountedRef = useRef(true);
+  const streamAbortRef = useRef<AbortController | null>(null);
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+      streamAbortRef.current?.abort();
+    };
+  }, []);
 
   const isProcessThread = !!(thread.process_id && thread.process_step_index != null);
   const hasArtifacts = (thread.artifacts?.length ?? 0) > 0;
@@ -490,6 +666,12 @@ function ActiveChatView({
     await fetch(`/api/work/threads/${thread.id}/chat-attach?chatAttachId=${id}`, { method: 'DELETE' });
   }
 
+  // Consume files dropped by the parent's window-level drag handler
+  useEffect(() => {
+    if (!externalDroppedFiles || externalDroppedFiles.length === 0) return;
+    handleAttach(externalDroppedFiles).finally(() => onDropConsumed?.());
+  }, [externalDroppedFiles]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Auto-send pendingInput once messages are loaded and it hasn't been sent yet
   useEffect(() => {
     if (!pendingInput || isLoading || isStreaming || isAttachUploading || hasSentPending.current) return;
@@ -502,6 +684,23 @@ function ActiveChatView({
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, streamingText, streamingTools]);
+
+  // Auto-delete temporary thread on unmount or thread switch.
+  // keepalive fetch in beforeunload handles browser/tab close; the cleanup
+  // handles in-app navigation away from the thread.
+  useEffect(() => {
+    if (!thread.is_temporary) return;
+    const threadId = thread.id;
+    const handleUnload = () => {
+      fetch(`/api/work/threads/${threadId}`, { method: 'DELETE', keepalive: true }).catch(() => {});
+    };
+    window.addEventListener('beforeunload', handleUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleUnload);
+      onThreadRemove?.(threadId);
+      fetch(`/api/work/threads/${threadId}`, { method: 'DELETE' }).catch(() => {});
+    };
+  }, [thread.id, thread.is_temporary]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function handleRetry() {
     if (!lastUserInputRef.current || isStreaming) return;
@@ -522,38 +721,64 @@ function ActiveChatView({
     handleSubmit(content, ['kb', 'inbox', 'calendar', 'processes'], mentions);
   }
 
-  async function handleSubmit(message: string, sources: SourceId[], mentions: MentionChip[], extraAttachments?: Array<{ id: string; name: string }>) {
+  async function handleSubmit(message: string, sources: SourceId[], mentions: MentionChip[], extraAttachments?: Array<{ id: string; name: string }>, skipOptimisticUser?: boolean) {
     if (isStreaming || !message.trim()) return;
     lastUserInputRef.current = { content: message, mentions };
 
+    // Separate snippet chips from real file chips
+    const snippetChips = chatAttachments.filter(a => a.isSnippet);
+    const fileChips = chatAttachments.filter(a => !a.isSnippet);
+
+    // Inject snippet text into the message content sent to the AI
+    const snippetBlock = snippetChips.length > 0
+      ? '\n\n' + snippetChips.map(s => `[Pasted snippet]\n${s.snippetContent}`).join('\n\n---\n\n')
+      : '';
+    const enrichedMessage = message + snippetBlock;
+
     const currentAttachments = [
-      ...chatAttachments.map(a => ({ id: a.id, name: a.name })),
+      ...fileChips.map(a => ({ id: a.id, name: a.name })),
       ...(extraAttachments ?? []),
     ];
 
-    // Optimistic user message
+    // Optimistic user message — display original message, show snippet chips alongside file chips
     const userMsg: ChatMessage = {
       id: crypto.randomUUID(),
       role: 'user',
       content: message,
       created_at: new Date().toISOString(),
       mentions: mentions.length > 0 ? mentions : undefined,
-      metadata: currentAttachments.length > 0 ? { attachments: currentAttachments } : undefined,
+      metadata: (currentAttachments.length > 0 || snippetChips.length > 0) ? {
+        attachments: [
+          ...currentAttachments,
+          ...snippetChips.map(s => ({ id: s.id, name: s.name })),
+        ],
+      } : undefined,
     };
-    setMessages(prev => [...prev, userMsg]);
+    if (!skipOptimisticUser) setMessages(prev => [...prev, userMsg]);
     setChatAttachments([]);
     setIsStreaming(true);
     setStreamingText('');
     setStreamingTools([]);
 
+    const ac = new AbortController();
+    streamAbortRef.current = ac;
+
     try {
       const res = await fetch(`/api/work/threads/${thread.id}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: message, sources, mentions, attachments: currentAttachments, agentId }),
+        body: JSON.stringify({ content: enrichedMessage, sources, mentions, attachments: currentAttachments, agentId }),
+        signal: ac.signal,
       });
 
-      if (!res.ok || !res.body) throw new Error('Stream failed');
+      // Component unmounted while request was in flight — discard response silently
+      if (!mountedRef.current) return;
+
+      if (!res.ok || !res.body) {
+        const errText = await res.text().catch(() => '');
+        console.error('[handleSubmit] API error', res.status, errText);
+        throw new Error('Stream failed');
+      }
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
@@ -669,6 +894,8 @@ function ActiveChatView({
         }
       }
     } catch (err) {
+      // Silently discard aborts (unmount / navigation away)
+      if (!mountedRef.current || (err instanceof Error && err.name === 'AbortError')) return;
       console.error('[ActiveChatView] stream error:', err);
       setMessages(prev => [...prev, {
         id: crypto.randomUUID(),
@@ -683,6 +910,40 @@ function ActiveChatView({
       setStreamingTools([]);
       setStreamingClarification(null);
     }
+  }
+
+  // ── Artifact version map — derived, no extra state ───────────────────────
+  const artifactVersionMap = useMemo(() => {
+    const versioned = computeVersionedArtifacts(thread.artifacts ?? []);
+    return new Map(versioned.map(a => [a.id ?? '', { title: a.title, versionLabel: a.versionLabel }]));
+  }, [thread.artifacts]);
+
+  // ── Edit message: truncate DB + restream ─────────────────────────────────
+  async function handleEditMessage(messageId: string, newContent: string) {
+    if (isStreaming) return;
+
+    await fetch(`/api/work/threads/${thread.id}/chat`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messageId, newContent }),
+    });
+
+    // If component unmounted while awaiting PATCH (e.g. user navigated away
+    // and the temporary-thread cleanup already deleted this thread), bail out.
+    if (!mountedRef.current) return;
+
+    // Optimistically truncate local messages to just before the edited one,
+    // then update its content
+    setMessages(prev => {
+      const idx = prev.findIndex(m => m.id === messageId);
+      if (idx < 0) return prev;
+      return prev.slice(0, idx + 1).map((m, i) =>
+        i === idx ? { ...m, content: newContent, isEdited: true } : m
+      );
+    });
+
+    // Re-stream from the edited message — skip optimistic user bubble (already updated in place)
+    await handleSubmit(newContent, ['kb', 'inbox', 'calendar', 'processes'], [], undefined, true);
   }
 
   function handleClarificationConfirm(choices: { sources: string[]; options: Record<string, string> }) {
@@ -715,41 +976,88 @@ function ActiveChatView({
 
 
   return (
-    <div className="flex flex-col flex-1 overflow-hidden">
-      {/* Agent header bar */}
-      {agent && !isProcessThread && (
-        <div className="flex items-center gap-2 px-4 py-2 border-b border-neutral-100 flex-shrink-0">
-          <div className={`w-5 h-5 rounded-md ${AGENT_COLOR_MAP[agent.color]?.bg ?? 'bg-indigo-500'} flex items-center justify-center flex-shrink-0`}>
-            <AgentIcon iconKey={agent.icon} className="w-3 h-3 text-white" />
+    <div className="flex flex-col flex-1 overflow-hidden relative">
+      {/* Always-visible header — consistent across all threads */}
+      <div className={`flex items-center gap-2 px-4 h-11 border-b flex-shrink-0 min-w-0 transition-colors duration-300 ${
+        isProcessThread ? 'bg-violet-50 border-violet-100' : thread.is_temporary ? 'bg-amber-50 border-amber-100' : 'border-neutral-100'
+      }`}>
+        {/* Left: agent dot (if agent thread) */}
+        {agent && !isProcessThread && (
+          <div className={`w-4 h-4 rounded flex-shrink-0 ${AGENT_COLOR_MAP[agent.color]?.bg ?? 'bg-indigo-500'} flex items-center justify-center`}>
+            <AgentIcon iconKey={agent.icon} className="w-2.5 h-2.5 text-white" />
           </div>
-          <span className="text-[12.5px] font-medium text-neutral-800">{agent.name}</span>
-          <Link
-            href={`/agents/${agent.id}/edit`}
-            className="ml-auto text-[11px] text-neutral-400 hover:text-neutral-600 transition-colors"
-          >
-            Edit
-          </Link>
-        </div>
-      )}
+        )}
 
-      {/* Process breadcrumb */}
-      {isProcessThread && (
-        <div className="flex items-center gap-2 px-6 py-2 bg-violet-50 border-b border-violet-100 flex-shrink-0">
-          <Link
-            href={`/processes/${thread.process_id}`}
-            className="text-[12px] text-violet-600 hover:text-violet-800 transition-colors"
+        {/* Left: title or process breadcrumb */}
+        {isProcessThread ? (
+          <div className="flex items-center gap-1.5 flex-1 min-w-0">
+            <Link
+              href={`/processes/${thread.process_id}`}
+              className="text-[12px] text-violet-600 hover:text-violet-800 transition-colors flex-shrink-0"
+            >
+              {thread.process_title || 'Process'}
+            </Link>
+            <ChevronRightIcon className="w-3 h-3 text-violet-400 flex-shrink-0" />
+            <span className="text-[12px] text-violet-700 flex-shrink-0">
+              Step {(thread.process_step_index ?? 0) + 1}
+            </span>
+            {stepCompleted && (
+              <span className="text-[12px] text-emerald-600 font-medium flex-shrink-0">✓ Completed</span>
+            )}
+          </div>
+        ) : isEditingTitle ? (
+          <input
+            ref={titleInputRef}
+            value={titleDraft}
+            onChange={e => setTitleDraft(e.target.value)}
+            onBlur={() => {
+              const trimmed = titleDraft.trim();
+              if (trimmed && trimmed !== thread.title) onTitleUpdate(thread.id, trimmed, true);
+              setIsEditingTitle(false);
+            }}
+            onKeyDown={e => {
+              if (e.key === 'Enter') { e.currentTarget.blur(); }
+              if (e.key === 'Escape') { setIsEditingTitle(false); }
+            }}
+            className="flex-1 min-w-0 text-[12.5px] font-medium text-neutral-700 bg-transparent border-b border-neutral-300 focus:border-neutral-500 outline-none truncate"
+          />
+        ) : (
+          <button
+            onClick={() => { setTitleDraft(thread.title); setIsEditingTitle(true); setTimeout(() => titleInputRef.current?.select(), 0); }}
+            className="text-[12.5px] font-medium text-neutral-700 truncate flex-1 min-w-0 text-left hover:text-neutral-900 transition-colors"
           >
-            {thread.process_title || 'Process'}
-          </Link>
-          <ChevronRightIcon className="w-3 h-3 text-violet-400" />
-          <span className="text-[12px] text-violet-700">
-            Step {(thread.process_step_index ?? 0) + 1}
-          </span>
-          {stepCompleted && (
-            <span className="ml-auto text-[12px] text-emerald-600 font-medium">✓ Step completed</span>
+            {thread.title}
+          </button>
+        )}
+
+        {/* Temporary indicator */}
+        {thread.is_temporary && (
+          <div className="flex items-center gap-1 text-amber-500 flex-shrink-0">
+            <ClockIcon className="w-3.5 h-3.5" />
+            <span className="text-[12px]">Temporary</span>
+          </div>
+        )}
+
+        {/* Right: gear icon (agent threads) + artifacts button */}
+        <div className="flex items-center gap-1.5 flex-shrink-0">
+          {agent && !isProcessThread && (
+            <Link
+              href={`/agents/${agent.id}/edit`}
+              className="text-neutral-400 hover:text-neutral-600 transition-colors"
+              title={`Edit ${agent.name}`}
+            >
+              <Cog6ToothIcon className="w-4 h-4" />
+            </Link>
+          )}
+          {hasArtifacts && (
+            <ArtifactsPanelButton
+              count={thread.artifacts?.length ?? 0}
+              open={artifactPanelOpen}
+              onClick={onArtifactPanelToggle}
+            />
           )}
         </div>
-      )}
+      </div>
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto">
@@ -870,6 +1178,8 @@ function ActiveChatView({
                 onViewArtifact={onViewArtifact}
                 onClarificationConfirm={handleClarificationConfirm}
                 onRetry={handleRetry}
+                onEditMessage={msg.role === 'user' && !isStreaming ? handleEditMessage : undefined}
+                artifactVersionMap={artifactVersionMap}
               />
             );
           })}
@@ -973,6 +1283,26 @@ function AgentHomeScreen({ agent, onStart, pendingFiles, onAttach, onRemoveAttac
           attachments={pendingFiles}
           placeholder={`Message ${agent.name}…`}
         />
+        {/* Conversation starters — same layout/animation as default chat prompts */}
+        {(agent.conversation_starters?.filter(Boolean).length ?? 0) > 0 && (
+          <div className="mt-2">
+            {agent.conversation_starters!.filter(Boolean).map((starter, i, arr) => (
+              <div
+                key={i}
+                className="animate-prompt-in"
+                style={{ animationDelay: `${i * 60}ms`, animationFillMode: 'both' }}
+              >
+                <button
+                  onClick={() => onStart(starter, [], [])}
+                  className="w-full text-left px-1 py-2.5 text-[13px] text-neutral-400 hover:text-neutral-600 transition-colors"
+                >
+                  {starter}
+                </button>
+                {i < arr.length - 1 && <div className="border-t border-neutral-100" />}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

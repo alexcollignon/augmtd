@@ -8,6 +8,27 @@ export default {
   ],
   theme: {
     extend: {
+      keyframes: {
+        'clock-tick': {
+          '0%':   { transform: 'rotate(0deg) scale(1)' },
+          '40%':  { transform: 'rotate(200deg) scale(1.15)' },
+          '70%':  { transform: 'rotate(340deg) scale(1.05)' },
+          '100%': { transform: 'rotate(360deg) scale(1)' },
+        },
+        'fade-in-left': {
+          '0%':   { opacity: '0', transform: 'translateX(-6px)' },
+          '100%': { opacity: '1', transform: 'translateX(0)' },
+        },
+        'fade-out-left': {
+          '0%':   { opacity: '1', transform: 'translateX(0)' },
+          '100%': { opacity: '0', transform: 'translateX(-6px)' },
+        },
+      },
+      animation: {
+        'clock-tick':    'clock-tick 0.45s cubic-bezier(0.34, 1.56, 0.64, 1)',
+        'fade-in-left':  'fade-in-left 0.2s ease-out',
+        'fade-out-left': 'fade-out-left 0.15s ease-in forwards',
+      },
       colors: {
         // AUGMTD Brand - Purple from logo
         primary: {

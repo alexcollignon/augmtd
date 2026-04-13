@@ -1,11 +1,11 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import {
+  ChevronLeftIcon,
   ChevronRightIcon,
   ArrowDownTrayIcon,
   PaperAirplaneIcon,
-  TrashIcon,
   DocumentTextIcon,
   PresentationChartBarIcon,
   TableCellsIcon,
@@ -21,6 +21,7 @@ import {
   EmailContent,
   QAReport,
 } from '@/lib/types/inbox';
+import { computeVersionedArtifacts, VersionedArtifact } from '@/lib/artifacts/version-utils';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -315,80 +316,58 @@ function QAPanel({ report }: { report: QAReport }) {
   );
 }
 
-// ── Main panel ────────────────────────────────────────────────────────────────
+// ── Thread-scoped artifact detail view ───────────────────────────────────────
 
-interface Props {
+interface ArtifactDetailViewProps {
+  artifact: VersionedArtifact;
   threadId: string;
-  artifacts: DocumentArtifact[];
-  activeArtifactId: string | null;
+  allArtifacts: DocumentArtifact[];
+  onBack: () => void;
   onClose: () => void;
-  onArtifactsChange: (updated: DocumentArtifact[]) => void;
+  onArtifactsUpdate?: (artifacts: DocumentArtifact[]) => void;
 }
 
-export function ChatArtifactPanel({
-  threadId,
-  artifacts,
-  activeArtifactId,
-  onClose,
-  onArtifactsChange,
-}: Props) {
-  const [activeId, setActiveId] = useState<string | null>(
-    activeArtifactId ?? artifacts[artifacts.length - 1]?.id ?? null
-  );
-  const [deletingId, setDeletingId] = useState<string | null>(null);
-
-  // Sync active tab when activeArtifactId changes from parent
-  // (e.g. when "View document" is clicked in a message)
-  useEffect(() => {
-    if (activeArtifactId && activeArtifactId !== activeId) {
-      setActiveId(activeArtifactId);
-    }
-  }, [activeArtifactId]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const artifact = artifacts.find(a => a.id === activeId) ?? artifacts[artifacts.length - 1] ?? null;
-
-  async function handleDelete(id: string) {
-    if (!confirm('Delete this version?')) return;
-    setDeletingId(id);
-    try {
-      await fetch(`/api/work/threads/${threadId}/artifacts/${id}`, { method: 'DELETE' });
-      const updated = artifacts.filter(a => a.id !== id);
-      onArtifactsChange(updated);
-      if (activeId === id) {
-        setActiveId(updated[updated.length - 1]?.id ?? null);
-      }
-    } finally {
-      setDeletingId(null);
-    }
-  }
-
-  function handleDownload() {
-    if (!artifact?.id) return;
-    window.open(`/api/work/threads/${threadId}/download?artifactId=${artifact.id}`);
-  }
+function ArtifactDetailView({ artifact, threadId, allArtifacts, onBack, onClose, onArtifactsUpdate }: ArtifactDetailViewProps) {
+  const ct = contentType(artifact);
 
   function handleSent(sentAt: string, sentTo: string) {
-    const updated = artifacts.map(a =>
-      a.id === artifact?.id ? { ...a, sent_at: sentAt, sent_to: sentTo } : a
-    );
-    onArtifactsChange(updated);
+    if (onArtifactsUpdate) {
+      onArtifactsUpdate(allArtifacts.map(a =>
+        a.id === artifact.id ? { ...a, sent_at: sentAt, sent_to: sentTo } : a
+      ));
+    }
   }
-
-  const ct = artifact ? contentType(artifact) : 'none';
-  const isEmail = ct === 'email' || artifact?.type === 'email';
-  const hasStorage = !!(artifact?.storage_path);
 
   return (
     <div className="flex flex-col h-full bg-neutral-50 p-2">
       <div className="flex flex-col flex-1 rounded-2xl bg-white shadow-sm overflow-hidden">
+
         {/* Header */}
-        <div className="flex items-center gap-2 px-4 py-3 border-b border-neutral-100 flex-shrink-0">
-          {artifact && (
-            <ArtifactIcon artifact={artifact} className="w-4 h-4 text-neutral-500 flex-shrink-0" />
+        <div className="flex items-center gap-2 px-3 py-3 border-b border-neutral-100 flex-shrink-0">
+          <button
+            onClick={onBack}
+            className="p-1.5 rounded-lg hover:bg-neutral-100 text-neutral-400 hover:text-neutral-600 transition-colors flex-shrink-0"
+          >
+            <ChevronLeftIcon className="w-4 h-4" />
+          </button>
+          <ArtifactIcon artifact={artifact} className="w-4 h-4 text-neutral-500 flex-shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-[12.5px] font-medium text-neutral-700 truncate">
+              {artifact.title}
+              {artifact.versionLabel && (
+                <span className="ml-1.5 font-mono text-[10px] text-neutral-400 font-normal">{artifact.versionLabel}</span>
+              )}
+            </p>
+          </div>
+          {artifact.storage_path && (
+            <button
+              onClick={() => window.open(`/api/work/threads/${threadId}/download?artifactId=${artifact.id}`)}
+              className="p-1.5 rounded-lg hover:bg-neutral-100 text-neutral-400 hover:text-neutral-600 transition-colors flex-shrink-0"
+              title="Download"
+            >
+              <ArrowDownTrayIcon className="w-3.5 h-3.5" />
+            </button>
           )}
-          <span className="text-[13px] font-medium text-neutral-700 truncate flex-1">
-            {artifact?.title || 'Document'}
-          </span>
           <button
             onClick={onClose}
             className="p-1.5 rounded-lg hover:bg-neutral-100 text-neutral-400 hover:text-neutral-600 transition-colors flex-shrink-0"
@@ -397,69 +376,12 @@ export function ChatArtifactPanel({
           </button>
         </div>
 
-        {/* Artifact tabs */}
-        {artifacts.length > 1 && (
-          <div className="flex gap-0.5 px-3 pt-2 pb-1 flex-shrink-0 flex-wrap">
-            {artifacts.map((a, i) => (
-              <button
-                key={a.id ?? i}
-                onClick={() => setActiveId(a.id ?? null)}
-                className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[11.5px] transition-colors ${
-                  (a.id ?? null) === activeId
-                    ? 'bg-indigo-50 text-indigo-700 font-medium'
-                    : 'text-neutral-500 hover:bg-neutral-100'
-                }`}
-              >
-                <ArtifactIcon artifact={a} className="w-3 h-3" />
-                {shortType(a)}
-              </button>
-            ))}
-          </div>
-        )}
-
-        {/* Toolbar */}
-        {artifact && (
-          <div className="flex items-center gap-1 px-3 pb-2 pt-1 flex-shrink-0">
-            {hasStorage && (
-              <button
-                onClick={handleDownload}
-                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[12px] text-neutral-600 hover:bg-neutral-100 transition-colors"
-              >
-                <ArrowDownTrayIcon className="w-3.5 h-3.5" />
-                Download
-              </button>
-            )}
-            {artifact.id && (
-              <button
-                onClick={() => handleDelete(artifact.id!)}
-                disabled={deletingId === artifact.id}
-                className="ml-auto flex items-center gap-1 px-2 py-1.5 rounded-lg text-[12px] text-neutral-400 hover:text-red-500 hover:bg-red-50 transition-colors"
-              >
-                <TrashIcon className="w-3.5 h-3.5" />
-              </button>
-            )}
-          </div>
-        )}
-
-        {/* Divider */}
-        <div className="border-t border-neutral-100 flex-shrink-0" />
-
-        {/* Content */}
+        {/* Preview content */}
         <div className="flex-1 overflow-y-auto px-4 py-4">
-          {!artifact && (
-            <p className="text-[13px] text-neutral-400 text-center pt-8">No document selected</p>
-          )}
-
-          {artifact && ct === 'doc' && (
-            <DocPreview content={artifact.content as DocContent} />
-          )}
-          {artifact && ct === 'pptx' && (
-            <PptxPreview content={artifact.content as PptxContent} />
-          )}
-          {artifact && ct === 'xlsx' && (
-            <XlsxPreview content={artifact.content as XlsxContent} />
-          )}
-          {artifact && isEmail && artifact.content && (
+          {ct === 'doc' && artifact.content && <DocPreview content={artifact.content as DocContent} />}
+          {ct === 'pptx' && artifact.content && <PptxPreview content={artifact.content as PptxContent} />}
+          {ct === 'xlsx' && artifact.content && <XlsxPreview content={artifact.content as XlsxContent} />}
+          {ct === 'email' && artifact.content && (
             <EmailPreview
               content={artifact.content as EmailContent}
               artifact={artifact}
@@ -467,23 +389,237 @@ export function ChatArtifactPanel({
               onSent={handleSent}
             />
           )}
-          {artifact && ct === 'none' && hasStorage && (
-            <div className="flex flex-col items-center justify-center pt-16 gap-4">
-              <ArtifactIcon artifact={artifact} className="w-10 h-10 text-neutral-300" />
-              <p className="text-[13px] text-neutral-500">Preview not available</p>
-              <button
-                onClick={handleDownload}
-                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 text-white text-[13px] hover:bg-indigo-700 transition-colors"
-              >
-                <ArrowDownTrayIcon className="w-4 h-4" />
-                Download to view
-              </button>
-            </div>
+          {ct === 'none' && (
+            <p className="text-[13px] text-neutral-400 text-center pt-8">No preview available</p>
           )}
-
-          {/* QA report */}
-          {artifact?.qa_report && <QAPanel report={artifact.qa_report} />}
+          {artifact.qa_report && <QAPanel report={artifact.qa_report} />}
         </div>
+
+      </div>
+    </div>
+  );
+}
+
+// ── Thread-scoped artifacts panel ─────────────────────────────────────────────
+
+interface ThreadArtifactsPanelProps {
+  thread: { id: string; title: string; artifacts?: DocumentArtifact[] };
+  onClose: () => void;
+  onArtifactsUpdate?: (artifacts: DocumentArtifact[]) => void;
+  initialDetailId?: string | null;
+}
+
+export function ThreadArtifactsPanel({ thread, onClose, onArtifactsUpdate, initialDetailId }: ThreadArtifactsPanelProps) {
+  const [detailId, setDetailId] = useState<string | null>(initialDetailId ?? null);
+
+  const versioned = useMemo(
+    () => computeVersionedArtifacts(thread.artifacts ?? [])
+      .sort((a, b) => new Date(b.generated_at).getTime() - new Date(a.generated_at).getTime()),
+    [thread.artifacts]
+  );
+
+  const detailArtifact = versioned.find(a => a.id === detailId) ?? null;
+
+  // If showing detail but artifact no longer exists, go back to list
+  useEffect(() => {
+    if (detailId && !detailArtifact) setDetailId(null);
+  }, [detailId, detailArtifact]);
+
+  if (detailArtifact) {
+    return (
+      <ArtifactDetailView
+        artifact={detailArtifact}
+        threadId={thread.id}
+        allArtifacts={thread.artifacts ?? []}
+        onBack={() => setDetailId(null)}
+        onClose={onClose}
+        onArtifactsUpdate={onArtifactsUpdate}
+      />
+    );
+  }
+
+  return (
+    <div className="flex flex-col h-full bg-neutral-50 p-2">
+      <div className="flex flex-col flex-1 rounded-2xl bg-white shadow-sm overflow-hidden">
+
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-100 flex-shrink-0">
+          <p className="text-[12.5px] font-medium text-neutral-600">Artifacts</p>
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded-lg hover:bg-neutral-100 text-neutral-400 hover:text-neutral-600 transition-colors"
+          >
+            <ChevronRightIcon className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* List */}
+        <div className="flex-1 overflow-y-auto">
+          {versioned.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-full gap-3 py-16">
+              <DocumentTextIcon className="w-8 h-8 text-neutral-200" />
+              <p className="text-[13px] text-neutral-400 text-center">No artifacts yet</p>
+            </div>
+          ) : (
+            versioned.map(a => (
+              <div
+                key={a.id ?? a.generated_at}
+                onClick={() => setDetailId(a.id ?? null)}
+                role="button"
+                tabIndex={0}
+                onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') setDetailId(a.id ?? null); }}
+                className="w-full flex items-center gap-3 px-4 py-3 text-left border-b border-neutral-50 hover:bg-neutral-50 transition-colors group cursor-pointer"
+              >
+                <ArtifactIcon artifact={a} className="w-4 h-4 flex-shrink-0 text-neutral-400" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-[12.5px] truncate leading-snug text-neutral-700">
+                    {a.title}
+                    {a.versionLabel && (
+                      <span className="ml-1.5 font-mono text-[10px] text-neutral-400 font-normal">{a.versionLabel}</span>
+                    )}
+                  </p>
+                  <p className="text-[11px] text-neutral-400 mt-0.5 leading-snug">{shortType(a)}</p>
+                </div>
+                {a.storage_path && (
+                  <button
+                    onClick={e => {
+                      e.stopPropagation();
+                      window.open(`/api/work/threads/${thread.id}/download?artifactId=${a.id}`);
+                    }}
+                    className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100 transition-all flex-shrink-0"
+                    title="Download"
+                  >
+                    <ArrowDownTrayIcon className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+            ))
+          )}
+        </div>
+
+      </div>
+    </div>
+  );
+}
+
+// ── Global all-artifacts panel ────────────────────────────────────────────────
+
+interface FlatArtifact extends DocumentArtifact {
+  threadId: string;
+  threadTitle: string;
+  versionLabel: string;
+}
+
+interface AllArtifactsPanelProps {
+  threads: Array<{ id: string; title: string; artifacts?: DocumentArtifact[] }>;
+  activeArtifactId: string | null;
+  onClose: () => void;
+  onSelectThread: (threadId: string, artifactId: string) => void;
+}
+
+export function AllArtifactsPanel({
+  threads,
+  activeArtifactId,
+  onClose,
+  onSelectThread,
+}: AllArtifactsPanelProps) {
+  // Flatten all artifacts across all threads, sorted newest first
+  const allFlat: FlatArtifact[] = threads
+    .flatMap(t =>
+      computeVersionedArtifacts(t.artifacts ?? []).map(a => ({
+        ...a,
+        threadId: t.id,
+        threadTitle: t.title,
+      }))
+    )
+    .sort((a, b) => new Date(b.generated_at).getTime() - new Date(a.generated_at).getTime());
+
+  const [activeId, setActiveId] = useState<string | null>(
+    activeArtifactId ?? allFlat[0]?.id ?? null
+  );
+
+  // Sync when parent opens the panel via "View document"
+  useEffect(() => {
+    if (activeArtifactId && activeArtifactId !== activeId) {
+      setActiveId(activeArtifactId);
+    }
+  }, [activeArtifactId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const artifact = allFlat.find(a => a.id === activeId) ?? allFlat[0] ?? null;
+
+  function handleDownload(a: FlatArtifact) {
+    if (!a.id) return;
+    window.open(`/api/work/threads/${a.threadId}/download?artifactId=${a.id}`);
+  }
+
+  return (
+    <div className="flex flex-col h-full bg-neutral-50 p-2">
+      <div className="flex flex-col flex-1 rounded-2xl bg-white shadow-sm overflow-hidden">
+
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-100 flex-shrink-0">
+          <p className="text-[12.5px] font-medium text-neutral-600">Artifacts</p>
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded-lg hover:bg-neutral-100 text-neutral-400 hover:text-neutral-600 transition-colors"
+          >
+            <ChevronRightIcon className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* List */}
+        <div className="flex-1 overflow-y-auto">
+          {allFlat.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-full gap-3 py-16">
+              <DocumentTextIcon className="w-8 h-8 text-neutral-200" />
+              <p className="text-[13px] text-neutral-400 text-center">No artifacts yet</p>
+              <p className="text-[12px] text-neutral-300 text-center max-w-[180px]">
+                Documents generated in your chats will appear here
+              </p>
+            </div>
+          ) : (
+            allFlat.map(a => (
+              <div
+                key={a.id ?? a.generated_at}
+                onClick={() => {
+                  setActiveId(a.id ?? null);
+                  if (a.id) onSelectThread(a.threadId, a.id);
+                }}
+                role="button"
+                tabIndex={0}
+                onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { setActiveId(a.id ?? null); if (a.id) onSelectThread(a.threadId, a.id); } }}
+                className={`w-full flex items-center gap-3 px-4 py-3 text-left border-b border-neutral-50 transition-colors group cursor-pointer ${
+                  (a.id ?? null) === activeId ? 'bg-indigo-50' : 'hover:bg-neutral-50'
+                }`}
+              >
+                <ArtifactIcon artifact={a} className={`w-4 h-4 flex-shrink-0 ${
+                  (a.id ?? null) === activeId ? 'text-indigo-500' : 'text-neutral-400'
+                }`} />
+                <div className="flex-1 min-w-0">
+                  <p className={`text-[12.5px] truncate leading-snug ${
+                    (a.id ?? null) === activeId ? 'text-indigo-700 font-medium' : 'text-neutral-700'
+                  }`}>
+                    {a.title}
+                    {a.versionLabel && (
+                      <span className="ml-1.5 font-mono text-[10px] text-neutral-400 font-normal">{a.versionLabel}</span>
+                    )}
+                  </p>
+                  <p className="text-[11px] text-neutral-400 truncate leading-snug mt-0.5">{a.threadTitle}</p>
+                </div>
+                {a.storage_path && (
+                  <button
+                    onClick={e => { e.stopPropagation(); handleDownload(a); }}
+                    className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100 transition-all flex-shrink-0"
+                    title="Download"
+                  >
+                    <ArrowDownTrayIcon className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+            ))
+          )}
+        </div>
+
       </div>
     </div>
   );

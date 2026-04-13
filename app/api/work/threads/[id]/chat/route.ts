@@ -148,7 +148,7 @@ export async function POST(
 
     const { data: thread, error: threadError } = await supabase
       .from('work_threads')
-      .select('id, title, user_attachments, process_id, process_step_index, artifacts')
+      .select('id, title, user_attachments, process_id, process_step_index, artifacts, is_temporary')
       .eq('id', threadId)
       .eq('user_id', user.id)
       .single();
@@ -484,6 +484,7 @@ export async function POST(
       kbContext: mentionKbContext,
       agentFileIds: agentFileIds.length > 0 ? agentFileIds : undefined,
       agentId: agentId || undefined,
+      isTemporary: !!(thread as any).is_temporary,
     };
 
     // ── Stream ────────────────────────────────────────────────────────────────
@@ -1066,6 +1067,7 @@ interface RunContext {
   agentFileIds?: string[];
   /** Agent ID — used to trigger memory extraction after conversation */
   agentId?: string;
+  isTemporary?: boolean;
 }
 
 // ── Clarification validator ───────────────────────────────────────────────────
@@ -1372,8 +1374,8 @@ async function executeChatTool(
         .update({ artifacts: updated, artifact: artifact, updated_at: new Date().toISOString() })
         .eq('id', ctx.threadId);
 
-      // Fire-and-forget: index generated artifacts into KB
-      newArtifacts.forEach((a: DocumentArtifact) => {
+      // Fire-and-forget: index generated artifacts into KB (skip for temporary threads)
+      if (!ctx.isTemporary) newArtifacts.forEach((a: DocumentArtifact) => {
         if (!a.id) return;
         indexArtifact({
           artifactId: a.id,
@@ -1746,4 +1748,52 @@ function stripXmlToolCalls(text: string): string {
   // Strip unclosed <think> block (model still reasoning when stream ended)
   r = r.replace(/<think>[\s\S]*$/gi, '');
   return r.trim();
+}
+
+// ── PATCH: edit a user message and truncate subsequent messages ──────────────
+
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id: threadId } = await params;
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const body = await request.json();
+  const { messageId, newContent } = body as { messageId: string; newContent: string };
+
+  if (!messageId || !newContent?.trim()) {
+    return NextResponse.json({ error: 'messageId and newContent required' }, { status: 400 });
+  }
+
+  const admin = getAdminClient();
+
+  // Verify message belongs to this thread and is a user message
+  const { data: msg } = await admin
+    .from('work_messages')
+    .select('id, role, created_at')
+    .eq('id', messageId)
+    .eq('thread_id', threadId)
+    .single();
+
+  if (!msg || msg.role !== 'user') {
+    return NextResponse.json({ error: 'Message not found' }, { status: 404 });
+  }
+
+  // Delete all messages that came strictly after the edited message
+  await admin
+    .from('work_messages')
+    .delete()
+    .eq('thread_id', threadId)
+    .gt('created_at', msg.created_at);
+
+  // Update the user message content
+  await admin
+    .from('work_messages')
+    .update({ content: newContent.trim() })
+    .eq('id', messageId);
+
+  return NextResponse.json({ ok: true });
 }

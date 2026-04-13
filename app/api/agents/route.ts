@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { generateStartersForAgent } from '@/lib/agents/generate-starters';
 
 // GET /api/agents — list user's custom agents
 export async function GET() {
@@ -10,7 +11,7 @@ export async function GET() {
 
     const { data: agents, error } = await supabase
       .from('custom_agents')
-      .select('id, name, description, instructions, memory_text, color, icon, is_active, created_at, updated_at')
+      .select('id, name, description, instructions, memory_text, color, icon, is_active, created_at, updated_at, conversation_starters')
       .eq('user_id', user.id)
       .eq('is_active', true)
       .order('created_at', { ascending: true });
@@ -31,15 +32,19 @@ export async function POST(request: NextRequest) {
     if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const body = await request.json();
-    const { name, description, instructions, color = 'indigo', icon = 'cpu-chip' } = body as {
+    const { name, description, instructions, color = 'indigo', icon = 'cpu-chip', conversation_starters } = body as {
       name: string;
       description?: string;
       instructions?: string;
       color?: string;
       icon?: string;
+      conversation_starters?: string[] | null;
     };
 
     if (!name?.trim()) return NextResponse.json({ error: 'Name is required' }, { status: 400 });
+
+    // Resolve starters: use provided ones, or auto-generate
+    const startersToSave = await resolveStarters(conversation_starters, { name, description, instructions, userId: user.id, supabase });
 
     const { data: agent, error } = await supabase
       .from('custom_agents')
@@ -50,6 +55,7 @@ export async function POST(request: NextRequest) {
         instructions: instructions?.trim() ?? null,
         color,
         icon,
+        conversation_starters: startersToSave,
       })
       .select()
       .single();
@@ -60,4 +66,16 @@ export async function POST(request: NextRequest) {
     console.error('[Agents] POST error:', err);
     return NextResponse.json({ error: 'Failed to create agent' }, { status: 500 });
   }
+}
+
+// ── Shared helper ─────────────────────────────────────────────────────────────
+
+async function resolveStarters(
+  provided: string[] | null | undefined,
+  ctx: { name: string; description?: string; instructions?: string; userId: string; supabase: unknown }
+): Promise<string[] | null> {
+  const cleaned = (provided ?? []).filter(s => s.trim());
+  if (cleaned.length > 0) return cleaned.slice(0, 4);
+  // Auto-generate when none provided
+  return generateStartersForAgent({ ...ctx, supabase: ctx.supabase });
 }

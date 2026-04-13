@@ -35,6 +35,7 @@ export async function GET(request: NextRequest) {
       .select('id, title, plan, status, created_at, updated_at, process_id, process_step_index, processes(title)')
       .eq('user_id', user.id)
       .eq('status', 'active')
+      .or('is_temporary.eq.false,is_temporary.is.null')
       .order('updated_at', { ascending: false })
       .limit(50);
 
@@ -64,7 +65,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { title, processId, processStepIndex, agentId } = body;
+    const { title, processId, processStepIndex, agentId, isTemporary } = body;
 
     if (!title || typeof title !== 'string') {
       return NextResponse.json({ error: 'Title is required' }, { status: 400 });
@@ -77,6 +78,7 @@ export async function POST(request: NextRequest) {
         title: title.trim().substring(0, 200),
         plan: null,
         status: 'active',
+        is_temporary: isTemporary === true,
         ...(processId ? { process_id: processId, process_step_index: processStepIndex ?? null } : {}),
         ...(agentId ? { agent_id: agentId } : {}),
       })

@@ -10,6 +10,7 @@ export interface SidebarAgent {
   description?: string | null;
   color: string;
   icon: string;
+  conversation_starters?: string[] | null;
 }
 
 const COLOR_MAP: Record<string, string> = {

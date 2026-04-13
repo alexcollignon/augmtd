@@ -13,6 +13,7 @@ import {
   DocumentTextIcon,
   Cog6ToothIcon,
   UserIcon,
+  CodeBracketIcon,
 } from '@heroicons/react/24/outline';
 
 export const CHAT_SOURCES = [
@@ -28,6 +29,8 @@ export interface AttachmentChip {
   id: string;
   name: string;
   size: number;
+  isSnippet?: boolean;
+  snippetContent?: string;
 }
 
 export interface MentionChip {
@@ -500,9 +503,13 @@ export function ChatInputBar({
                 key={att.id}
                 className="flex items-center gap-1.5 px-2.5 py-1 bg-neutral-100 rounded-lg text-[12px] text-neutral-700"
               >
-                <PaperClipIcon className="w-3 h-3 text-neutral-400 flex-shrink-0" />
+                {att.isSnippet ? (
+                  <CodeBracketIcon className="w-3 h-3 text-neutral-400 flex-shrink-0" />
+                ) : (
+                  <PaperClipIcon className="w-3 h-3 text-neutral-400 flex-shrink-0" />
+                )}
                 <span className="max-w-[120px] truncate">{att.name}</span>
-                <span className="text-neutral-400">{formatBytes(att.size)}</span>
+                {!att.isSnippet && <span className="text-neutral-400">{formatBytes(att.size)}</span>}
                 {onRemoveAttachment && (
                   <button
                     onClick={() => onRemoveAttachment(att.id)}

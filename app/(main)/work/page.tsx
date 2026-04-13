@@ -14,6 +14,13 @@ export default async function WorkPage({
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/login');
 
+  // Cleanup stale temporary threads (fire-and-forget, non-blocking)
+  void supabase
+    .from('work_threads')
+    .delete()
+    .eq('user_id', user.id)
+    .eq('is_temporary', true);
+
   const { data: profile } = await supabase
     .from('profiles')
     .select('email, full_name')
@@ -26,6 +33,7 @@ export default async function WorkPage({
       .select('id, title, plan, artifact, artifacts, status, auto_generated, saved_workflow_id, is_generating, created_at, updated_at, process_id, process_step_index, agent_id, processes(title)')
       .eq('user_id', user.id)
       .eq('status', 'active')
+      .or('is_temporary.eq.false,is_temporary.is.null')
       .order('updated_at', { ascending: false })
       .limit(50),
     supabase
@@ -36,7 +44,7 @@ export default async function WorkPage({
       .limit(10),
     supabase
       .from('custom_agents')
-      .select('id, name, description, color, icon')
+      .select('id, name, description, color, icon, conversation_starters')
       .eq('user_id', user.id)
       .eq('is_active', true)
       .order('created_at', { ascending: true }),

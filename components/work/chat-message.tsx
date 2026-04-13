@@ -1,6 +1,7 @@
 'use client';
 
-import { SparklesIcon, CheckCircleIcon, DocumentTextIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
+import { useState } from 'react';
+import { SparklesIcon, CheckCircleIcon, DocumentTextIcon, ExclamationTriangleIcon, PencilSquareIcon, DocumentDuplicateIcon } from '@heroicons/react/24/outline';
 import { ArrowPathIcon } from '@heroicons/react/20/solid';
 import { ClarificationWidget, ClarificationData } from './clarification-widget';
 import { MENTION_ICONS, MENTION_COLORS, MentionChip } from './chat-input-bar';
@@ -173,6 +174,7 @@ export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   created_at: string;
+  isEdited?: boolean;
   mentions?: Array<{ id: string; type: string; label: string }>;
   metadata?: {
     tool_calls?: Array<{ name: string; summary?: string }>;
@@ -204,9 +206,58 @@ interface Props {
   onViewArtifact?: (artifactId: string) => void;
   onClarificationConfirm?: (choices: { sources: string[]; options: Record<string, string> }) => void;
   onRetry?: () => void;
+  onEditMessage?: (messageId: string, newContent: string) => Promise<void>;
+  artifactVersionMap?: Map<string, { title: string; versionLabel: string }>;
 }
 
-export function ChatMessageBubble({ message, isLastAssistantMessage, onViewArtifact, onClarificationConfirm, onRetry }: Props) {
+function UserBubble({ content, isEdited, onEdit }: { content: string; isEdited?: boolean; onEdit?: () => void }) {
+  const [copied, setCopied] = useState(false);
+
+  function handleCopy() {
+    navigator.clipboard.writeText(content).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  }
+
+  return (
+    <div className="group flex flex-col items-end gap-1">
+      <div className="max-w-[75%] bg-neutral-100 rounded-2xl rounded-br-sm px-4 py-2.5">
+        <p className="text-[13.5px] text-neutral-800 leading-relaxed whitespace-pre-wrap">{content}</p>
+      </div>
+      <div className="flex items-center gap-2">
+        {isEdited && (
+          <span className="text-[10.5px] text-neutral-400 italic select-none">edited</span>
+        )}
+        <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+          <button
+            onClick={handleCopy}
+            title="Copy"
+            className="p-1 rounded-lg hover:bg-neutral-100 text-neutral-400 hover:text-neutral-600 transition-colors"
+          >
+            {copied
+              ? <CheckCircleIcon className="w-3.5 h-3.5 text-emerald-500" />
+              : <DocumentDuplicateIcon className="w-3.5 h-3.5" />}
+          </button>
+          {onEdit && (
+            <button
+              onClick={onEdit}
+              title="Edit message"
+              className="p-1 rounded-lg hover:bg-neutral-100 text-neutral-400 hover:text-neutral-600 transition-colors"
+            >
+              <PencilSquareIcon className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function ChatMessageBubble({ message, isLastAssistantMessage, onViewArtifact, onClarificationConfirm, onRetry, onEditMessage, artifactVersionMap }: Props) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [editValue, setEditValue] = useState(message.content);
+
   if (message.role === 'user') {
     const mentions = message.mentions ?? [];
     const attachments = message.metadata?.attachments ?? [];
@@ -242,13 +293,49 @@ export function ChatMessageBubble({ message, isLastAssistantMessage, onViewArtif
             </div>
           </div>
         )}
-        <div className="flex justify-end">
-          <div className="max-w-[75%] bg-neutral-100 rounded-2xl rounded-br-sm px-4 py-2.5">
-            <p className="text-[13.5px] text-neutral-800 leading-relaxed whitespace-pre-wrap">
-              {message.content}
-            </p>
+
+        {isEditing ? (
+          <div className="flex justify-end">
+            <div className="w-full max-w-[75%] space-y-2">
+              <textarea
+                value={editValue}
+                onChange={e => setEditValue(e.target.value)}
+                autoFocus
+                rows={3}
+                className="w-full text-[13.5px] text-neutral-800 bg-neutral-100 rounded-2xl rounded-br-sm px-4 py-2.5 resize-none outline-none focus:ring-2 focus:ring-indigo-300 leading-relaxed"
+                onKeyDown={e => {
+                  if (e.key === 'Escape') { setIsEditing(false); setEditValue(message.content); }
+                }}
+              />
+              <div className="flex justify-end gap-2">
+                <button
+                  onClick={() => { setIsEditing(false); setEditValue(message.content); }}
+                  className="px-3 py-1.5 rounded-lg text-[12px] text-neutral-500 hover:bg-neutral-100 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  disabled={!editValue.trim() || editValue.trim() === message.content}
+                  onClick={() => {
+                    if (!message.id || !onEditMessage) return;
+                    const next = editValue.trim();
+                    setIsEditing(false); // close immediately — stream runs in background
+                    onEditMessage(message.id, next);
+                  }}
+                  className="px-3 py-1.5 rounded-lg text-[12px] bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  Confirm
+                </button>
+              </div>
+            </div>
           </div>
-        </div>
+        ) : (
+          <UserBubble
+            content={message.content}
+            isEdited={message.isEdited}
+            onEdit={onEditMessage ? () => { setIsEditing(true); setEditValue(message.content); } : undefined}
+          />
+        )}
       </div>
     );
   }
@@ -286,7 +373,35 @@ export function ChatMessageBubble({ message, isLastAssistantMessage, onViewArtif
   const clarification = message.metadata?.clarification;
 
   return (
-    <div className="flex gap-3">
+    <AssistantMessage content={message.content} toolCalls={toolCalls} artifactIds={artifactIds} citations={citations} clarification={clarification} isLastAssistantMessage={isLastAssistantMessage} onViewArtifact={onViewArtifact} onClarificationConfirm={onClarificationConfirm} onRetry={onRetry} artifactVersionMap={artifactVersionMap} />
+  );
+}
+
+// ── Assistant message wrapper (with copy) ─────────────────────────────────────
+
+function AssistantMessage({ content, toolCalls, artifactIds, citations, clarification, isLastAssistantMessage, onViewArtifact, onClarificationConfirm, onRetry, artifactVersionMap }: {
+  content: string;
+  toolCalls: Array<{ name: string; summary?: string }>;
+  artifactIds: string[];
+  citations: string[];
+  clarification: ClarificationData | undefined;
+  isLastAssistantMessage: boolean | undefined;
+  onViewArtifact?: (id: string) => void;
+  onClarificationConfirm?: (choices: { sources: string[]; options: Record<string, string> }) => void;
+  onRetry?: () => void;
+  artifactVersionMap?: Map<string, { title: string; versionLabel: string }>;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  function handleCopy() {
+    navigator.clipboard.writeText(content).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  }
+
+  return (
+    <div className="flex gap-3 group/assistant">
       <div className="flex-1 min-w-0 space-y-2">
         {/* Tool call chips (from saved metadata) — hide internal meta tools */}
         {toolCalls.filter(t => t.name !== 'request_clarification').length > 0 && (
@@ -301,21 +416,33 @@ export function ChatMessageBubble({ message, isLastAssistantMessage, onViewArtif
         )}
 
         {/* Message text */}
-        {message.content && <MarkdownText content={message.content} />}
+        {content && <MarkdownText content={content} />}
 
         {/* Artifact cards */}
         {artifactIds.length > 0 && (
           <div className="flex flex-wrap gap-2 pt-1">
-            {artifactIds.map(id => (
-              <button
-                key={id}
-                onClick={() => onViewArtifact?.(id)}
-                className="flex items-center gap-2 px-3 py-2 rounded-xl bg-white border border-neutral-200 shadow-sm text-[12.5px] text-neutral-700 hover:border-indigo-300 hover:text-indigo-700 transition-colors"
-              >
-                <SparklesIcon className="w-3.5 h-3.5 text-indigo-400" />
-                View document
-              </button>
-            ))}
+            {artifactIds.map(id => {
+              const meta = artifactVersionMap?.get(id);
+              return (
+                <button
+                  key={id}
+                  onClick={() => onViewArtifact?.(id)}
+                  className="flex items-center gap-2 px-3 py-2 rounded-xl bg-white border border-neutral-200 shadow-sm text-[12.5px] text-neutral-700 hover:border-indigo-300 hover:text-indigo-700 transition-colors"
+                >
+                  <SparklesIcon className="w-3.5 h-3.5 text-indigo-400" />
+                  {meta ? (
+                    <>
+                      <span className="truncate max-w-[140px]">{meta.title}</span>
+                      {meta.versionLabel && (
+                        <span className="font-mono text-[10.5px] text-neutral-400">{meta.versionLabel}</span>
+                      )}
+                    </>
+                  ) : (
+                    'View document'
+                  )}
+                </button>
+              );
+            })}
           </div>
         )}
 
@@ -346,6 +473,21 @@ export function ChatMessageBubble({ message, isLastAssistantMessage, onViewArtif
             isResolved={!isLastAssistantMessage}
             onConfirm={onClarificationConfirm ?? (() => {})}
           />
+        )}
+
+        {/* Copy button — shown on hover, only when there's text content */}
+        {content && (
+          <div className="opacity-0 group-hover/assistant:opacity-100 transition-opacity pt-0.5">
+            <button
+              onClick={handleCopy}
+              title="Copy"
+              className="p-1 rounded-lg hover:bg-neutral-100 text-neutral-300 hover:text-neutral-500 transition-colors"
+            >
+              {copied
+                ? <CheckCircleIcon className="w-3.5 h-3.5 text-emerald-500" />
+                : <DocumentDuplicateIcon className="w-3.5 h-3.5" />}
+            </button>
+          </div>
         )}
       </div>
     </div>

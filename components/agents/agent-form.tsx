@@ -31,10 +31,11 @@ export interface AgentFormData {
   instructions: string;
   color: string;
   icon: string;
+  conversation_starters?: string[] | null;
 }
 
 interface Props {
-  initial?: AgentFormData & { id?: string; memory_text?: string; sources?: AgentKnowledgeFile[] };
+  initial?: AgentFormData & { id?: string; memory_text?: string; sources?: AgentKnowledgeFile[]; conversation_starters?: string[] | null };
   mode: 'create' | 'edit';
 }
 
@@ -53,6 +54,12 @@ export function AgentForm({ initial, mode }: Props) {
   const [isEnhancing, setIsEnhancing] = useState(false);
   // true while we're waiting for the first token to arrive
   const [enhancePending, setEnhancePending] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [starters, setStarters] = useState<string[]>(
+    initial?.conversation_starters?.filter(Boolean) ?? []
+  );
+  const [isGeneratingStarters, setIsGeneratingStarters] = useState(false);
 
   const enhanceAbortRef = useRef<AbortController | null>(null);
   const fileInputRef    = useRef<HTMLInputElement>(null);
@@ -110,6 +117,27 @@ export function AgentForm({ initial, mode }: Props) {
     } finally {
       setIsEnhancing(false);
       setEnhancePending(false);
+    }
+  }
+
+  // ── Generate starters ─────────────────────────────────────────────────────
+
+  async function handleGenerateStarters() {
+    if (isGeneratingStarters || !name.trim()) return;
+    setIsGeneratingStarters(true);
+    try {
+      const res = await fetch('/api/agents/generate-starters', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, description, instructions }),
+      });
+      if (!res.ok) throw new Error('Generate failed');
+      const { starters: generated } = await res.json();
+      if (Array.isArray(generated)) setStarters(generated.slice(0, 4));
+    } catch {
+      // silently ignore — user keeps current starters
+    } finally {
+      setIsGeneratingStarters(false);
     }
   }
 
@@ -198,11 +226,14 @@ export function AgentForm({ initial, mode }: Props) {
     setSaving(true);
     try {
       let agentId = initial?.id;
+      const startersPayload = starters.filter(s => s.trim()).slice(0, 4);
+      const startersToSend = startersPayload.length > 0 ? startersPayload : null;
+
       if (mode === 'create') {
         const res = await fetch('/api/agents', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, description, instructions, color, icon }),
+          body: JSON.stringify({ name, description, instructions, color, icon, conversation_starters: startersToSend }),
         });
         if (!res.ok) throw new Error('Failed to create agent');
         const { agent } = await res.json();
@@ -218,7 +249,7 @@ export function AgentForm({ initial, mode }: Props) {
         await fetch(`/api/agents/${agentId}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, description, instructions, color, icon }),
+          body: JSON.stringify({ name, description, instructions, color, icon, conversation_starters: startersToSend }),
         });
       }
       router.push('/work');
@@ -231,9 +262,13 @@ export function AgentForm({ initial, mode }: Props) {
 
   async function handleDelete() {
     if (!initial?.id) return;
-    if (!confirm(`Delete "${name}"? This cannot be undone.`)) return;
-    await fetch(`/api/agents/${initial.id}`, { method: 'DELETE' });
-    router.push('/work');
+    setDeleting(true);
+    try {
+      await fetch(`/api/agents/${initial.id}`, { method: 'DELETE' });
+      router.push('/work');
+    } finally {
+      setDeleting(false);
+    }
   }
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -248,22 +283,44 @@ export function AgentForm({ initial, mode }: Props) {
         </h1>
         <div className="flex items-center gap-2">
           {error && <span className="text-[11.5px] text-red-500 mr-1">{error}</span>}
-          {mode === 'edit' && (
+          {mode === 'edit' && !confirmingDelete && (
             <button
               type="button"
-              onClick={handleDelete}
+              onClick={() => setConfirmingDelete(true)}
               className="px-3 py-1.5 rounded-lg text-[12px] text-red-500 hover:bg-red-50 transition-colors"
             >
               Delete
             </button>
           )}
-          <button
-            type="button"
-            onClick={() => router.push('/work')}
-            className="px-3 py-1.5 rounded-lg text-[12px] text-neutral-600 hover:bg-neutral-100 transition-colors"
-          >
-            Cancel
-          </button>
+          {confirmingDelete && (
+            <div className="flex items-center gap-2 pl-1">
+              <span className="text-[12px] text-neutral-500">Delete agent and all its chats?</span>
+              <button
+                type="button"
+                onClick={handleDelete}
+                disabled={deleting}
+                className="px-3 py-1.5 rounded-lg text-[12px] font-medium text-white bg-red-500 hover:bg-red-600 disabled:opacity-50 transition-colors"
+              >
+                {deleting ? 'Deleting…' : 'Confirm'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirmingDelete(false)}
+                className="px-3 py-1.5 rounded-lg text-[12px] text-neutral-600 hover:bg-neutral-100 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
+          {!confirmingDelete && (
+            <button
+              type="button"
+              onClick={() => router.push('/work')}
+              className="px-3 py-1.5 rounded-lg text-[12px] text-neutral-600 hover:bg-neutral-100 transition-colors"
+            >
+              Cancel
+            </button>
+          )}
           <button
             type="button"
             onClick={handleSave}
@@ -476,6 +533,71 @@ export function AgentForm({ initial, mode }: Props) {
                 From Drive
               </button>
             </div>
+          </div>
+
+          {/* Conversation starters */}
+          <div className="rounded-2xl bg-white border border-neutral-100 shadow-sm px-4 py-3 flex-shrink-0 flex flex-col gap-2.5">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-[10.5px] font-semibold text-neutral-400 uppercase tracking-wide">
+                  Conversation Starters <span className="normal-case font-normal text-neutral-300">(optional)</span>
+                </p>
+                <p className="text-[11px] text-neutral-400 mt-0.5">Shown as quick-start prompts on the agent home screen.</p>
+              </div>
+              <button
+                type="button"
+                onClick={handleGenerateStarters}
+                disabled={isGeneratingStarters || !name.trim()}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11.5px] font-medium text-indigo-600 hover:bg-indigo-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex-shrink-0"
+              >
+                <SparklesIcon className={`w-3.5 h-3.5 ${isGeneratingStarters ? 'animate-spin' : ''}`} />
+                {isGeneratingStarters ? 'Generating…' : 'Generate'}
+              </button>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              {starters.map((starter, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <input
+                    value={starter}
+                    onChange={e => setStarters(prev => prev.map((s, j) => j === i ? e.target.value : s))}
+                    placeholder="e.g. Draft a proposal for a new client"
+                    className="flex-1 px-2.5 py-1.5 rounded-lg border border-neutral-200 text-[12.5px] text-neutral-900 placeholder-neutral-300 focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-300"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setStarters(prev => prev.filter((_, j) => j !== i))}
+                    className="text-neutral-300 hover:text-neutral-500 transition-colors flex-shrink-0"
+                  >
+                    <XMarkIcon className="w-4 h-4" />
+                  </button>
+                </div>
+              ))}
+              {starters.length === 0 && !isGeneratingStarters && (
+                <p className="text-[11.5px] text-neutral-300 px-0.5">No starters — auto-generated on save, or click Generate to preview.</p>
+              )}
+              {isGeneratingStarters && (
+                <div className="flex flex-col gap-1.5">
+                  {[72, 88, 65, 80].map((w, i) => (
+                    <div
+                      key={i}
+                      className="h-8 rounded-lg bg-indigo-100/60"
+                      style={{ width: `${w}%`, animation: 'pulse 1.4s ease-in-out infinite', animationDelay: `${i * 0.1}s` }}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {starters.length < 4 && !isGeneratingStarters && (
+              <button
+                type="button"
+                onClick={() => setStarters(prev => [...prev, ''])}
+                className="self-start text-[11.5px] text-indigo-500 hover:text-indigo-700 transition-colors"
+              >
+                + Add starter
+              </button>
+            )}
           </div>
 
           {/* Drive picker modal */}
