@@ -13,7 +13,19 @@ export interface ChatThread {
   title: string;
   updated_at: string;
   process_title?: string | null;
+  agent_name?: string | null;
+  agent_color?: string | null;
 }
+
+const AGENT_DOT: Record<string, string> = {
+  indigo:  'bg-indigo-500',
+  violet:  'bg-violet-500',
+  blue:    'bg-blue-500',
+  emerald: 'bg-emerald-500',
+  amber:   'bg-amber-500',
+  rose:    'bg-rose-500',
+  neutral: 'bg-neutral-400',
+};
 
 interface Props {
   threads: ChatThread[];
@@ -119,6 +131,12 @@ export function ChatThreadSidebar({
                 {thread.process_title && (
                   <span className="text-[10.5px] text-violet-500 truncate max-w-[80px]">
                     ↑ {thread.process_title}
+                  </span>
+                )}
+                {thread.agent_name && (
+                  <span className="inline-flex items-center gap-1 flex-shrink-0">
+                    <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${AGENT_DOT[thread.agent_color ?? 'indigo'] ?? AGENT_DOT.indigo}`} />
+                    <span className="text-[10.5px] text-neutral-400 truncate max-w-[80px]">{thread.agent_name}</span>
                   </span>
                 )}
                 <span className="text-[11px] text-neutral-400">

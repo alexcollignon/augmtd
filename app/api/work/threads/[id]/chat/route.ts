@@ -158,11 +158,12 @@ export async function POST(
     }
 
     const body = await request.json();
-    const { content, sources = ['kb', 'inbox', 'calendar', 'processes'], mentions = [], attachments = [] } = body as {
+    const { content, sources = ['kb', 'inbox', 'calendar', 'processes'], mentions = [], attachments = [], agentId } = body as {
       content: string;
       sources?: string[];
       mentions?: Array<{ id: string; type: string; label: string; subtitle?: string }>;
       attachments?: Array<{ id: string; name: string }>;
+      agentId?: string;
     };
 
     if (!content?.trim()) {
@@ -199,7 +200,7 @@ export async function POST(
       .limit(40);
 
     // Build static context + smart pre-fetch in parallel (no AI calls)
-    const [userContextBlock, processListResult, contactsResult, prefetchedContext] = await Promise.all([
+    const [userContextBlock, processListResult, contactsResult, prefetchedContext, agentResult] = await Promise.all([
       buildUserContextBlock(user.id, supabase),
       adminClient
         .from('processes')
@@ -215,14 +216,54 @@ export async function POST(
         .order('importance', { ascending: false })
         .limit(10),
       prefetchContext(content, user.id, supabase),
+      agentId
+        ? adminClient
+            .from('custom_agents')
+            .select('id, name, instructions, memory_text, agent_knowledge_sources(knowledge_file_id)')
+            .eq('id', agentId)
+            .eq('user_id', user.id)
+            .single()
+        : Promise.resolve({ data: null }),
     ]);
+
+    const agent = (agentResult as { data: { id: string; name: string; instructions: string | null; memory_text: string | null; agent_knowledge_sources: Array<{ knowledge_file_id: string | null }> } | null }).data ?? null;
+    const agentFileIds: string[] = agent
+      ? agent.agent_knowledge_sources
+          .map((s: { knowledge_file_id: string | null }) => s.knowledge_file_id)
+          .filter((id: string | null): id is string => Boolean(id))
+      : [];
 
     // ── Heuristic router — replaces the AI intent classifier ─────────────────
     // Zero AI calls, <1ms. Decides tool availability based on simple patterns.
     const routeMode = heuristicRoute(content, mentions, (thread as any).artifacts);
 
     // Format context blocks
-    const contextParts: string[] = [buildChatSystemPrompt(modelFamily)];
+    // When an agent is active, its identity takes top priority — injected BEFORE the base prompt.
+    // This ensures the model adopts the agent's role rather than treating instructions as an addendum.
+    const contextParts: string[] = [];
+
+    if (agent) {
+      // Agent-first system prompt: role + instructions + memory, then base capabilities below
+      const agentHeader = [
+        `You are "${agent.name}", a custom AI assistant with a specific role.`,
+        agent.instructions?.trim()
+          ? `Your instructions:\n${agent.instructions.trim()}`
+          : '',
+        `Stay in this role for the entire conversation. Do not describe yourself as a general-purpose assistant.`,
+      ].filter(Boolean).join('\n\n');
+      contextParts.push(agentHeader);
+
+      if (agent.memory_text?.trim()) {
+        contextParts.push(
+          `[MEMORY — things you've learned about this user from past conversations]\n${agent.memory_text.trim()}`
+        );
+      }
+
+      // Append base capabilities so the agent still has tools/format knowledge
+      contextParts.push(buildChatSystemPrompt(modelFamily));
+    } else {
+      contextParts.push(buildChatSystemPrompt(modelFamily));
+    }
 
     if (userContextBlock) {
       contextParts.push(
@@ -441,6 +482,8 @@ export async function POST(
       // Pre-populate with @mention KB content so generate_document is grounded
       // even when the AI didn't call search_knowledge_base
       kbContext: mentionKbContext,
+      agentFileIds: agentFileIds.length > 0 ? agentFileIds : undefined,
+      agentId: agentId || undefined,
     };
 
     // ── Stream ────────────────────────────────────────────────────────────────
@@ -785,6 +828,15 @@ export async function POST(
               .catch(() => {});
           }
 
+          // Memory extraction — fire and forget after agent conversations
+          if (runContext.agentId) {
+            fetch(`${process.env.NEXT_PUBLIC_APP_URL ?? ''}/api/agents/${runContext.agentId}/extract-memory`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Cookie: request.headers.get('cookie') ?? '' },
+              body: JSON.stringify({ threadId }),
+            }).catch(() => {});
+          }
+
           send({ type: 'done' });
         } catch (err) {
           console.error('[Chat] Stream error:', err);
@@ -1010,6 +1062,10 @@ interface RunContext {
   kbSources: Array<{ id: string; title: string; type: 'kb' }>;
   /** Accumulates actual KB text chunks from search_knowledge_base calls — passed to generate_document to ground output */
   kbContext: string;
+  /** Agent-scoped KB file IDs — search is scoped to these files first, then falls through to global KB */
+  agentFileIds?: string[];
+  /** Agent ID — used to trigger memory extraction after conversation */
+  agentId?: string;
 }
 
 // ── Clarification validator ───────────────────────────────────────────────────
@@ -1085,6 +1141,7 @@ async function executeChatTool(
         maxChunksPerFile: 3,
         threshold: 0.2,
         maxTotalChars: 8000,
+        scopeFileIds: ctx.agentFileIds,
       });
       const result = kbCtx.context || 'No relevant documents found in your knowledge base.';
       const filenames = kbCtx.filenames ?? [];

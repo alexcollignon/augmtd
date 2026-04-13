@@ -64,7 +64,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { title, processId, processStepIndex } = body;
+    const { title, processId, processStepIndex, agentId } = body;
 
     if (!title || typeof title !== 'string') {
       return NextResponse.json({ error: 'Title is required' }, { status: 400 });
@@ -78,6 +78,7 @@ export async function POST(request: NextRequest) {
         plan: null,
         status: 'active',
         ...(processId ? { process_id: processId, process_step_index: processStepIndex ?? null } : {}),
+        ...(agentId ? { agent_id: agentId } : {}),
       })
       .select()
       .single();

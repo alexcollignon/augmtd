@@ -20,10 +20,10 @@ export default async function WorkPage({
     .eq('id', user.id)
     .single();
 
-  const [{ data: threads }, { data: savedWorkflowsData }] = await Promise.all([
+  const [{ data: threads }, { data: savedWorkflowsData }, { data: agentsData }] = await Promise.all([
     supabase
       .from('work_threads')
-      .select('id, title, plan, artifact, artifacts, status, auto_generated, saved_workflow_id, is_generating, created_at, updated_at, process_id, process_step_index, processes(title)')
+      .select('id, title, plan, artifact, artifacts, status, auto_generated, saved_workflow_id, is_generating, created_at, updated_at, process_id, process_step_index, agent_id, processes(title)')
       .eq('user_id', user.id)
       .eq('status', 'active')
       .order('updated_at', { ascending: false })
@@ -34,6 +34,12 @@ export default async function WorkPage({
       .eq('user_id', user.id)
       .order('last_used_at', { ascending: false, nullsFirst: false })
       .limit(10),
+    supabase
+      .from('custom_agents')
+      .select('id, name, description, color, icon')
+      .eq('user_id', user.id)
+      .eq('is_active', true)
+      .order('created_at', { ascending: true }),
   ]);
 
   return (
@@ -49,6 +55,7 @@ export default async function WorkPage({
       initialActiveThreadId={initialThreadId || null}
       initialChatInput={initialChatInput || null}
       initialSavedWorkflows={savedWorkflowsData || []}
+      initialAgents={agentsData || []}
       processStepContext={processStep ? { processStep, processId, stepTitle, stepDesc } : undefined}
     />
   );

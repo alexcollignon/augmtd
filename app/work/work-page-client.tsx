@@ -18,6 +18,20 @@ import { ChatMessageBubble, StreamingMessage, ChatMessage, ToolStatus } from '@/
 import { ClarificationData } from '@/components/work/clarification-widget';
 import { DocumentArtifact, ExecutionPlan } from '@/lib/types/inbox';
 import { ChatArtifactPanel } from '@/components/work/chat-artifact-panel';
+import { AgentsSidebarSection, SidebarAgent } from '@/components/agents/agents-sidebar-section';
+import { AgentIcon } from '@/components/agents/agent-icons';
+
+// ─── Shared constants ─────────────────────────────────────────────────────────
+
+const AGENT_COLOR_MAP: Record<string, { bg: string; icon: string }> = {
+  indigo:  { bg: 'bg-indigo-500',  icon: 'text-white' },
+  violet:  { bg: 'bg-violet-500',  icon: 'text-white' },
+  blue:    { bg: 'bg-blue-500',    icon: 'text-white' },
+  emerald: { bg: 'bg-emerald-500', icon: 'text-white' },
+  amber:   { bg: 'bg-amber-500',   icon: 'text-white' },
+  rose:    { bg: 'bg-rose-500',    icon: 'text-white' },
+  neutral: { bg: 'bg-neutral-500', icon: 'text-white' },
+};
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -32,6 +46,7 @@ interface WorkThread extends ChatThread {
   is_generating?: boolean;
   process_id?: string | null;
   process_step_index?: number | null;
+  agent_id?: string | null;
 }
 
 export interface WorkPageClientProps {
@@ -42,6 +57,7 @@ export interface WorkPageClientProps {
   initialActiveThreadId?: string | null;
   initialChatInput?: string | null;
   initialSavedWorkflows?: Array<{ id: string; name: string; prompt: string }>;
+  initialAgents?: SidebarAgent[];
   processStepContext?: {
     processStep?: string;
     processId?: string;
@@ -60,6 +76,7 @@ export function WorkPageClient({
   initialActiveThreadId,
   initialChatInput,
   initialSavedWorkflows,
+  initialAgents = [],
   processStepContext,
 }: WorkPageClientProps) {
   const router = useRouter();
@@ -76,8 +93,16 @@ export function WorkPageClient({
   const [isCreating, setIsCreating] = useState(false);
   const [artifactPanelOpen, setArtifactPanelOpen] = useState(false);
   const [activeArtifactId, setActiveArtifactId] = useState<string | null>(null);
+  const [activeAgentId, setActiveAgentId] = useState<string | null>(null);
 
   const activeThread = threads.find((t) => t.id === activeThreadId) ?? null;
+
+  // Enrich threads with agent name/color for the sidebar tag — always show all threads
+  const visibleThreads = threads.map((t) => {
+    if (!t.agent_id) return t;
+    const ag = initialAgents.find(a => a.id === t.agent_id);
+    return ag ? { ...t, agent_name: ag.name, agent_color: ag.color } : t;
+  });
 
   // ── One-time contact backfill — seeds relationship_graph if empty ────────
   useEffect(() => {
@@ -151,6 +176,7 @@ export function WorkPageClient({
           processStepIndex: processStepContext?.processStep
             ? Number(processStepContext.processStep)
             : undefined,
+          agentId: activeAgentId ?? undefined,
         }),
       });
       if (!res.ok) throw new Error('Failed to create thread');
@@ -167,6 +193,7 @@ export function WorkPageClient({
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
         process_title: null,
+        agent_id: activeAgentId,
       };
 
       // Switch UI immediately — don't wait for upload
@@ -269,8 +296,22 @@ export function WorkPageClient({
             </Link>
           </div>
 
+          {/* Agents section */}
+          <AgentsSidebarSection
+            agents={initialAgents}
+            activeAgentId={activeAgentId}
+            onSelect={(id) => {
+              setActiveAgentId(id);
+              setActiveThreadId(null);
+              setPendingInput(null);
+              setPendingMentions([]);
+              setPendingFiles([]);
+              setPendingAttachmentMeta([]);
+            }}
+          />
+
           {/* New chat — pinned above thread list */}
-          <div className="px-2 pt-2 flex-shrink-0">
+          <div className="px-2 flex-shrink-0">
             <button
               onClick={() => { setActiveThreadId(null); setPendingInput(null); setPendingMentions([]); setPendingFiles([]); setPendingAttachmentMeta([]); setIsAttachUploading(false); }}
               className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[12.5px] text-neutral-600 hover:bg-neutral-50 transition-colors"
@@ -280,9 +321,9 @@ export function WorkPageClient({
             </button>
           </div>
 
-          {/* Thread list */}
+          {/* Thread list — filtered by active agent */}
           <ChatThreadSidebar
-            threads={threads}
+            threads={visibleThreads}
             activeThreadId={activeThreadId}
             onSelect={handleSelectThread}
             onRename={handleRename}
@@ -297,6 +338,8 @@ export function WorkPageClient({
           {activeThread ? (
             <ActiveChatView
               thread={activeThread}
+              agentId={activeThread.agent_id ?? activeAgentId ?? undefined}
+              agent={initialAgents.find(a => a.id === (activeThread.agent_id ?? activeAgentId))}
               pendingInput={pendingInput}
               pendingMentions={pendingMentions}
               pendingAttachmentMeta={pendingAttachmentMeta}
@@ -306,6 +349,14 @@ export function WorkPageClient({
               onArtifactsUpdate={handleThreadArtifactsUpdate}
               onViewArtifact={handleViewArtifact}
               onArtifactReady={handleViewArtifact}
+            />
+          ) : activeAgentId ? (
+            <AgentHomeScreen
+              agent={initialAgents.find(a => a.id === activeAgentId)!}
+              onStart={handleCreateThread}
+              pendingFiles={pendingFiles.map(({ id, file }) => ({ id, name: file.name, size: file.size }))}
+              onAttach={handlePreAttach}
+              onRemoveAttachment={handlePreRemoveAttachment}
             />
           ) : (
             <ChatEmptyState
@@ -345,6 +396,8 @@ export function WorkPageClient({
 
 interface ActiveChatViewProps {
   thread: WorkThread;
+  agentId?: string;
+  agent?: SidebarAgent;
   pendingInput: string | null;
   pendingMentions?: MentionChip[];
   pendingAttachmentMeta?: Array<{ id: string; name: string }>;
@@ -358,6 +411,8 @@ interface ActiveChatViewProps {
 
 function ActiveChatView({
   thread,
+  agentId,
+  agent,
   pendingInput,
   pendingMentions = [],
   pendingAttachmentMeta = [],
@@ -495,7 +550,7 @@ function ActiveChatView({
       const res = await fetch(`/api/work/threads/${thread.id}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: message, sources, mentions, attachments: currentAttachments }),
+        body: JSON.stringify({ content: message, sources, mentions, attachments: currentAttachments, agentId }),
       });
 
       if (!res.ok || !res.body) throw new Error('Stream failed');
@@ -658,8 +713,25 @@ function ActiveChatView({
     }
   }
 
+
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
+      {/* Agent header bar */}
+      {agent && !isProcessThread && (
+        <div className="flex items-center gap-2 px-4 py-2 border-b border-neutral-100 flex-shrink-0">
+          <div className={`w-5 h-5 rounded-md ${AGENT_COLOR_MAP[agent.color]?.bg ?? 'bg-indigo-500'} flex items-center justify-center flex-shrink-0`}>
+            <AgentIcon iconKey={agent.icon} className="w-3 h-3 text-white" />
+          </div>
+          <span className="text-[12.5px] font-medium text-neutral-800">{agent.name}</span>
+          <Link
+            href={`/agents/${agent.id}/edit`}
+            className="ml-auto text-[11px] text-neutral-400 hover:text-neutral-600 transition-colors"
+          >
+            Edit
+          </Link>
+        </div>
+      )}
+
       {/* Process breadcrumb */}
       {isProcessThread && (
         <div className="flex items-center gap-2 px-6 py-2 bg-violet-50 border-b border-violet-100 flex-shrink-0">
@@ -852,6 +924,55 @@ function ActiveChatView({
           />
 
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Agent home screen ────────────────────────────────────────────────────────
+
+interface AgentHomeScreenProps {
+  agent: SidebarAgent;
+  onStart: (message: string, sources: SourceId[], mentions: MentionChip[]) => void;
+  pendingFiles: AttachmentChip[];
+  onAttach?: (files: File[]) => void;
+  onRemoveAttachment?: (id: string) => void;
+}
+
+function AgentHomeScreen({ agent, onStart, pendingFiles, onAttach, onRemoveAttachment }: AgentHomeScreenProps) {
+  if (!agent) return null;
+  const colors = AGENT_COLOR_MAP[agent.color] ?? AGENT_COLOR_MAP.indigo;
+
+  return (
+    <div className="flex-1 flex flex-col items-center justify-center px-6 pb-16">
+      {/* Agent identity */}
+      <div className="flex flex-col items-center mb-8">
+        <div className={`w-14 h-14 rounded-2xl ${colors.bg} flex items-center justify-center mb-4 shadow-sm`}>
+          <AgentIcon iconKey={agent.icon} className={`w-7 h-7 ${colors.icon}`} />
+        </div>
+        <h1 className="text-[20px] font-semibold text-neutral-800 tracking-tight">{agent.name}</h1>
+        {agent.description && (
+          <p className="mt-1.5 text-[13px] text-neutral-500 text-center max-w-[380px] leading-snug">
+            {agent.description}
+          </p>
+        )}
+        <Link
+          href={`/agents/${agent.id}/edit`}
+          className="mt-3 text-[11.5px] text-neutral-400 hover:text-neutral-600 transition-colors"
+        >
+          Edit agent
+        </Link>
+      </div>
+
+      {/* Input */}
+      <div className="w-full max-w-[580px]">
+        <ChatInputBar
+          onSubmit={onStart}
+          onAttach={onAttach}
+          onRemoveAttachment={onRemoveAttachment}
+          attachments={pendingFiles}
+          placeholder={`Message ${agent.name}…`}
+        />
       </div>
     </div>
   );
