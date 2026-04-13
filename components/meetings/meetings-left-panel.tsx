@@ -149,7 +149,7 @@ export default function MeetingsLeftPanel({
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search notes"
+              placeholder="Search meetings"
               className="flex-1 text-[12px] outline-none placeholder:text-neutral-400 bg-transparent"
             />
           </div>
@@ -186,27 +186,16 @@ export default function MeetingsLeftPanel({
             </div>
           ) : (
             <>
-              {/* New Note button */}
+              {/* Home — primary nav, always first */}
               <div className="px-2 pt-2 pb-1">
-                <button
-                  onClick={onNewNote}
-                  className="w-full flex items-center justify-center gap-1.5 px-3 py-2 text-[12px] font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors"
-                >
-                  <PlusIcon className="w-3.5 h-3.5" />
-                  New Note
-                </button>
-              </div>
-
-              {/* Home */}
-              <div className="px-2 pt-1 pb-1">
                 <button
                   onClick={onNavigateHome}
                   className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg transition-colors text-left ${
-                    isHome ? 'bg-indigo-50 text-indigo-700' : 'text-neutral-700 hover:bg-neutral-50'
+                    isHome ? 'bg-indigo-50 text-indigo-700' : 'text-neutral-600 hover:bg-neutral-50'
                   }`}
                 >
                   <HomeIcon className={`w-3.5 h-3.5 flex-shrink-0 ${isHome ? 'text-indigo-600' : 'text-neutral-400'}`} />
-                  <span className="text-[12px] font-medium">Home</span>
+                  <span className="text-[12px]">Home</span>
                 </button>
               </div>
 
@@ -350,6 +339,20 @@ export default function MeetingsLeftPanel({
                   )}
                 </div>
               )}
+
+              {/* Divider */}
+              <div className="border-t border-neutral-100 mx-2 my-1" />
+
+              {/* New Meeting — at bottom, like Drive's "Upload a file" */}
+              <div className="px-2 pb-2">
+                <button
+                  onClick={onNewNote}
+                  className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-[12px] text-neutral-600 hover:bg-neutral-50 transition-colors"
+                >
+                  <PlusIcon className="w-3.5 h-3.5 text-neutral-400 flex-shrink-0" />
+                  New Meeting
+                </button>
+              </div>
             </>
           )}
         </div>

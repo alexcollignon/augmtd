@@ -15,7 +15,7 @@ export async function GET() {
   );
 
   const [profilesRes, membersRes, authRes] = await Promise.all([
-    adminClient.from('profiles').select('id, full_name, is_super_admin, created_at').order('created_at', { ascending: false }),
+    adminClient.from('profiles').select('id, full_name, is_super_admin, attendee_enabled, created_at').order('created_at', { ascending: false }),
     adminClient.from('company_members').select('user_id, role, company_id, companies(id, name, plan)').eq('status', 'active'),
     adminClient.auth.admin.listUsers(),
   ]);
@@ -38,6 +38,7 @@ export async function GET() {
     email: emailMap[p.id] ?? '',
     full_name: p.full_name ?? null,
     is_super_admin: p.is_super_admin ?? false,
+    attendee_enabled: p.attendee_enabled ?? true,
     created_at: p.created_at,
     ...(memberMap[p.id] ?? { company_id: null, company_name: null, company_plan: null, role: null }),
   }));

@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  MicrophoneIcon,
   ChatBubbleLeftIcon,
   ChevronRightIcon,
   CalendarDaysIcon,
@@ -122,6 +121,28 @@ export default function MeetingsPageClient({
 
   // Global recording hook — survives page navigation
   const recording = useRecordingContext();
+
+  // When in-person recording is active but nothing is selected (e.g. user navigated away),
+  // restore the note view so the recording bar is visible in the right context.
+  const recordingSourceIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    const { state, recordingEventId, recordingNoteId } = recording;
+    // Track the source note/event as soon as recording starts
+    if (state === 'recording') {
+      const sourceId = recordingNoteId ?? recordingEventId ?? null;
+      if (sourceId && !recordingSourceIdRef.current) {
+        recordingSourceIdRef.current = sourceId;
+      }
+      // Auto-restore if user navigated away (nothing selected, no folder)
+      if (!selectedMeetingIdRef.current && !showAdHocNoteRef.current && !selectedFolderId) {
+        const restoreId = recordingSourceIdRef.current ?? recordingNoteId ?? recordingEventId;
+        if (restoreId) setSelectedMeetingId(restoreId);
+      }
+    } else if (state === 'idle' || state === 'done' || state === 'error') {
+      recordingSourceIdRef.current = null;
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recording.state, recording.recordingNoteId, recording.recordingEventId]);
 
   const fetchAll = useCallback(async () => {
     try {
@@ -345,11 +366,12 @@ export default function MeetingsPageClient({
   // (inline note handles recording display itself)
   const showInlineNoteActive = !!(selectedMeetingId || showAdHocNote);
   // LiveNotepad is only for in-person recording. Scheduled bot meetings use InlineNoteView directly.
+  // showLiveNotepad only wins when there is no note/folder already open.
   const showLiveNotepad = recording.state === 'recording' && !showInlineNoteActive;
   const selectedFolder = selectedFolderId ? folders.find((f) => f.id === selectedFolderId) : null;
 
-  // Determine center panel content
-  const showInlineNote = !showLiveNotepad && !selectedFolder && showInlineNoteActive;
+  // Determine center panel content — folder and inline note take priority over live notepad
+  const showInlineNote = !selectedFolder && showInlineNoteActive;
   const isHome = !showInlineNote && !selectedFolder && !showLiveNotepad;
 
   return (
@@ -410,31 +432,13 @@ export default function MeetingsPageClient({
                   : 'Meetings'}
               </h2>
             </div>
-            <div className="flex items-center gap-1.5">
-              {!showInlineNote && (
-                <button
-                  onClick={() => setShowCapture(true)}
-                  className="flex items-center gap-1.5 px-3 py-1 text-[11px] font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-md transition-colors"
-                >
-                  <MicrophoneIcon className="w-3 h-3" />
-                  Capture
-                </button>
-              )}
-            </div>
+            <div className="flex items-center gap-1.5" />
           </div>
 
           {/* Main body */}
           <div className="flex-1 overflow-y-auto">
-            {showLiveNotepad ? (
-              <LiveNotepad
-                title={recording.recordingTitle || 'Meeting'}
-                elapsed={recording.elapsed}
-                notes={recording.liveNotes}
-                onNotesChange={recording.setLiveNotes}
-                source="recording"
-              />
-            ) : selectedFolder ? (
-              /* Folder detail view */
+            {selectedFolder ? (
+              /* Folder detail view — highest priority */
               <FolderDetailView
                 folder={selectedFolder}
                 transcripts={transcripts}
@@ -467,6 +471,15 @@ export default function MeetingsPageClient({
                   setShowCapture(true);
                 }}
                 onStartRecording={(title, calendarEventId, noteId) => recording.startRecording(title, calendarEventId, noteId)}
+              />
+            ) : showLiveNotepad ? (
+              /* Live notepad — in-person recording with no note open */
+              <LiveNotepad
+                title={recording.recordingTitle || 'Meeting'}
+                elapsed={recording.elapsed}
+                notes={recording.liveNotes}
+                onNotesChange={recording.setLiveNotes}
+                source="recording"
               />
             ) : (
               /* Default: Home screen */

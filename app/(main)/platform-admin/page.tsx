@@ -16,7 +16,7 @@ export default async function PlatformAdminPage() {
 
   const { data: companies } = await adminClient
     .from('companies')
-    .select('id, name, slug, plan, status, created_at')
+    .select('id, name, slug, plan, status, settings, created_at')
     .order('created_at', { ascending: false });
 
   const { data: memberCounts } = await adminClient
@@ -32,6 +32,7 @@ export default async function PlatformAdminPage() {
   const companiesWithCount = (companies ?? []).map((c: any) => ({
     ...c,
     member_count: countMap[c.id] ?? 0,
+    meeting_assistant: c.settings?.meeting_assistant ?? true,
   }));
 
   return <PlatformAdminClient initialCompanies={companiesWithCount} />;

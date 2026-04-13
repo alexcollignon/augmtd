@@ -813,6 +813,19 @@ const handleRetry = async () => {
   const isDraftNote = !!transcript && transcript.source === 'text' &&
     transcript.processed && !transcript.notesStructured?.document && !transcript.summary;
 
+  // True when the active in-person recording belongs to THIS note/event specifically.
+  // Gates recording/upload/processing bars so they don't bleed into unrelated open notes.
+  const isThisNoteRecording = (() => {
+    const { state, recordingEventId, recordingNoteId } = recording;
+    if (state !== 'recording' && state !== 'uploading' && state !== 'processing') return false;
+    // Calendar-event-linked recording
+    if (recordingEventId) return recordingEventId === eventId;
+    // Note-linked recording (ad-hoc, or note was created during recording)
+    if (recordingNoteId) return recordingNoteId === eventId || recordingNoteId === transcript?.id;
+    // No IDs yet — ad-hoc recording just started, matches only a truly empty note view
+    return !eventId && !transcript;
+  })();
+
   return (
     <div className="px-6 py-8 max-w-2xl mx-auto">
 
@@ -1074,7 +1087,7 @@ const handleRetry = async () => {
       )}
 
       {/* ── ZONE C — Recording bar or capture pills ── */}
-      {!transcript && recording.state === 'recording' && (
+      {!transcript && isThisNoteRecording && recording.state === 'recording' && (
         <div className="flex items-center gap-3 mb-4 px-3 py-2.5 bg-red-50 rounded-xl">
           <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse flex-shrink-0" />
           <span className="text-[12px] font-semibold text-red-600 tabular-nums">{fmtDuration(recording.elapsed)}</span>
@@ -1088,21 +1101,21 @@ const handleRetry = async () => {
         </div>
       )}
 
-      {!transcript && recording.state === 'uploading' && (
+      {!transcript && isThisNoteRecording && recording.state === 'uploading' && (
         <div className="flex items-center gap-3 mb-4 px-3 py-2.5 bg-neutral-50 rounded-xl">
           <span className="w-2 h-2 bg-amber-400 rounded-full animate-pulse flex-shrink-0" />
           <span className="text-[12px] text-neutral-500 flex-1">Uploading… {recording.uploadProgress}%</span>
         </div>
       )}
 
-      {recording.state === 'uploading' && (
+      {isThisNoteRecording && recording.state === 'uploading' && (
         <div className="flex items-center gap-2 mb-4 text-[12px] text-neutral-500">
           <span className="w-3 h-3 rounded-full border-2 border-neutral-300 border-t-indigo-500 animate-spin flex-shrink-0" />
           Uploading recording…
         </div>
       )}
 
-      {recording.state === 'processing' && (
+      {isThisNoteRecording && recording.state === 'processing' && (
         <div className="flex items-center gap-2 mb-4 text-[12px] text-neutral-500">
           <span className="w-3 h-3 rounded-full border-2 border-neutral-300 border-t-indigo-500 animate-spin flex-shrink-0" />
           Transcribing and analysing…

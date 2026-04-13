@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { isSuperAdmin } from '@/lib/company/is-super-admin';
 import { createBotsForCalendarEvents } from '@/lib/integrations/meeting-bot/bot-manager';
 
 /**
  * POST /api/integrations/meeting-bot/toggle
  *
  * Enable or disable the Meeting Assistant for the user.
+ * Restricted to super admins — users no longer control this directly.
  */
 export async function POST(request: NextRequest) {
   try {
@@ -14,6 +16,10 @@ export async function POST(request: NextRequest) {
     const { data: { user }, error: authError } = await supabase.auth.getUser();
     if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    if (!await isSuperAdmin(user.id, supabase)) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
     const { enabled } = await request.json();

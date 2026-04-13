@@ -42,12 +42,16 @@ export async function POST(
     return NextResponse.json({ error: 'Assistant is already recording this meeting' }, { status: 400 });
   }
 
-  // Get user's name for bot display
+  // Get user's profile (name + meeting assistant status)
   const { data: profile } = await adminClient
     .from('profiles')
-    .select('full_name')
+    .select('full_name, attendee_enabled')
     .eq('id', user.id)
     .single();
+
+  if (!profile?.attendee_enabled) {
+    return NextResponse.json({ error: 'Meeting Assistant is not enabled for your account' }, { status: 403 });
+  }
 
   const firstName = profile?.full_name?.split(' ')[0] ?? 'Your';
   const botName = `${firstName}'s Assistant`;

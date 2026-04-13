@@ -29,10 +29,14 @@ export async function GET(
 
   // Get full names from profiles
   const { data: profiles } = userIds.length > 0
-    ? await adminClient.from('profiles').select('id, full_name').in('id', userIds)
+    ? await adminClient.from('profiles').select('id, full_name, attendee_enabled').in('id', userIds)
     : { data: [] };
   const fullNameMap: Record<string, string | null> = {};
-  (profiles ?? []).forEach((p: any) => { fullNameMap[p.id] = p.full_name ?? null; });
+  const attendeeMap: Record<string, boolean> = {};
+  (profiles ?? []).forEach((p: any) => {
+    fullNameMap[p.id] = p.full_name ?? null;
+    attendeeMap[p.id] = p.attendee_enabled ?? true;
+  });
 
   // Get emails from auth
   const { data: authUsers } = await adminClient.auth.admin.listUsers();
@@ -48,6 +52,7 @@ export async function GET(
     last_active_at: m.last_active_at,
     full_name: fullNameMap[m.user_id] ?? null,
     email: emailMap[m.user_id] ?? '',
+    attendee_enabled: attendeeMap[m.user_id] ?? true,
   }));
 
   // Pending invitations

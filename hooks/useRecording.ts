@@ -20,6 +20,8 @@ export interface UseRecordingReturn {
   recordingTitle: string;
   /** Calendar event linked to this recording (if any) */
   recordingEventId: string | undefined;
+  /** Transcript/note ID created for this recording (reactive — updated via setRecordingNoteId) */
+  recordingNoteId: string | undefined;
 }
 
 export function useRecording(
@@ -32,6 +34,7 @@ export function useRecording(
   const [liveNotes, setLiveNotes] = useState('');
   const [recordingTitle, setRecordingTitle] = useState('');
   const [recordingEventId, setRecordingEventId] = useState<string | undefined>();
+  const [recordingNoteId, setRecordingNoteIdState] = useState<string | undefined>();
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -96,6 +99,7 @@ export function useRecording(
       noteIdRef.current = existingNoteId;
       setRecordingTitle(title);
       setRecordingEventId(calendarEventId);
+      setRecordingNoteIdState(existingNoteId);
       setLiveNotes('');
       liveNotesRef.current = '';
 
@@ -205,6 +209,7 @@ export function useRecording(
   const setRecordingNoteId = useCallback((noteId: string) => {
     console.log('[Recording] setRecordingNoteId:', noteId, 'state:', state);
     noteIdRef.current = noteId;
+    setRecordingNoteIdState(noteId);
   }, [state]);
 
   const reset = useCallback(() => {
@@ -226,6 +231,7 @@ export function useRecording(
     setErrorMessage('');
     setLiveNotes('');
     liveNotesRef.current = '';
+    setRecordingNoteIdState(undefined);
   }, []);
 
   return {
@@ -240,6 +246,7 @@ export function useRecording(
     reset,
     recordingTitle,
     recordingEventId,
+    recordingNoteId,
     setRecordingNoteId,
   };
 }

@@ -22,6 +22,7 @@ interface CompanyRow {
   status: string;
   created_at: string;
   member_count: number;
+  meeting_assistant: boolean;
 }
 
 interface MemberRow {
@@ -32,6 +33,7 @@ interface MemberRow {
   role: string;
   status: string;
   joined_at: string;
+  attendee_enabled: boolean;
 }
 
 interface PendingInviteRow {
@@ -49,6 +51,7 @@ interface UserRow {
   email: string;
   full_name: string | null;
   is_super_admin: boolean;
+  attendee_enabled: boolean;
   created_at: string;
   company_id: string | null;
   company_name: string | null;
@@ -93,6 +96,7 @@ export default function PlatformAdminClient({ initialCompanies }: { initialCompa
   const [copied, setCopied] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  const [meetingAssistantLoading, setMeetingAssistantLoading] = useState<string | null>(null);
 
   // ── Users state ────────────────────────────────────────────────────────────
   const [users, setUsers] = useState<UserRow[]>([]);
@@ -241,6 +245,53 @@ export default function PlatformAdminClient({ initialCompanies }: { initialCompa
       }
     } finally {
       setActionLoading(null);
+    }
+  }
+
+  // ── Meeting assistant handlers ─────────────────────────────────────────────
+  async function handleToggleCompanyMeetingAssistant(companyId: string, enabled: boolean) {
+    setMeetingAssistantLoading(companyId);
+    try {
+      const res = await fetch(`/api/platform-admin/companies/${companyId}/meeting-assistant`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled }),
+      });
+      if (res.ok) {
+        setCompanies(prev => prev.map(c => c.id === companyId ? { ...c, meeting_assistant: enabled } : c));
+        // Update cached members for this company if loaded
+        setMembersCache(prev => {
+          const members = prev[companyId];
+          if (!members) return prev;
+          return { ...prev, [companyId]: members.map(m => ({ ...m, attendee_enabled: enabled })) };
+        });
+      }
+    } finally {
+      setMeetingAssistantLoading(null);
+    }
+  }
+
+  async function handleToggleUserMeetingAssistant(userId: string, enabled: boolean) {
+    setMeetingAssistantLoading(userId);
+    try {
+      const res = await fetch(`/api/platform-admin/members/${userId}/meeting-assistant`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled }),
+      });
+      if (res.ok) {
+        setUsers(prev => prev.map(u => u.id === userId ? { ...u, attendee_enabled: enabled } : u));
+        // Also update cached member rows across all companies
+        setMembersCache(prev => {
+          const updated: typeof prev = {};
+          for (const [cid, members] of Object.entries(prev)) {
+            updated[cid] = members.map(m => m.user_id === userId ? { ...m, attendee_enabled: enabled } : m);
+          }
+          return updated;
+        });
+      }
+    } finally {
+      setMeetingAssistantLoading(null);
     }
   }
 
@@ -457,6 +508,18 @@ export default function PlatformAdminClient({ initialCompanies }: { initialCompa
                               {company.status}
                             </button>
 
+                            {/* Meeting assistant toggle */}
+                            <button
+                              onClick={() => handleToggleCompanyMeetingAssistant(company.id, !company.meeting_assistant)}
+                              disabled={meetingAssistantLoading === company.id}
+                              title={company.meeting_assistant ? 'Click to disable meeting assistant for all members' : 'Click to enable meeting assistant for all members'}
+                              className={`text-[11px] font-semibold px-2.5 py-0.5 rounded-full hover:opacity-75 transition-opacity disabled:opacity-50 ${
+                                company.meeting_assistant ? 'bg-violet-50 text-violet-700' : 'bg-neutral-100 text-neutral-400'
+                              }`}
+                            >
+                              {meetingAssistantLoading === company.id ? '…' : company.meeting_assistant ? 'Mtg on' : 'Mtg off'}
+                            </button>
+
                             {/* Member count */}
                             <span className="text-[12px] text-neutral-400 w-20 text-right flex-shrink-0">
                               {company.member_count} {company.member_count === 1 ? 'member' : 'members'}
@@ -534,6 +597,16 @@ export default function PlatformAdminClient({ initialCompanies }: { initialCompa
                                             m.role === 'admin' ? 'bg-amber-50 text-amber-700' :
                                             'bg-neutral-100 text-neutral-600'
                                           }`}>{m.role}</span>
+                                          <button
+                                            onClick={() => handleToggleUserMeetingAssistant(m.user_id, !m.attendee_enabled)}
+                                            disabled={meetingAssistantLoading === m.user_id}
+                                            title={m.attendee_enabled ? 'Disable meeting assistant' : 'Enable meeting assistant'}
+                                            className={`px-2 py-0.5 rounded-full text-[10px] font-semibold hover:opacity-75 transition-opacity disabled:opacity-50 ${
+                                              m.attendee_enabled ? 'bg-violet-50 text-violet-700' : 'bg-neutral-100 text-neutral-400'
+                                            }`}
+                                          >
+                                            {meetingAssistantLoading === m.user_id ? '…' : m.attendee_enabled ? 'Mtg on' : 'Mtg off'}
+                                          </button>
                                           <span className="text-neutral-400">Joined {formatDate(m.joined_at)}</span>
                                           {confirmingId === m.user_id ? (
                                             <div className="flex items-center gap-1.5">
@@ -669,6 +742,7 @@ export default function PlatformAdminClient({ initialCompanies }: { initialCompa
                         <span className="flex-1 text-[11px] uppercase tracking-wide font-semibold text-neutral-400">User</span>
                         <span className="w-36 text-[11px] uppercase tracking-wide font-semibold text-neutral-400">Company</span>
                         <span className="w-20 text-[11px] uppercase tracking-wide font-semibold text-neutral-400">Role</span>
+                        <span className="w-24 text-[11px] uppercase tracking-wide font-semibold text-neutral-400">Mtg Asst</span>
                         <span className="w-28 text-[11px] uppercase tracking-wide font-semibold text-neutral-400">Joined</span>
                         <div className="w-7 flex-shrink-0" />
                       </div>
@@ -724,6 +798,20 @@ export default function PlatformAdminClient({ initialCompanies }: { initialCompa
                               ) : (
                                 <span className="text-[12px] text-neutral-300">—</span>
                               )}
+                            </div>
+
+                            {/* Meeting assistant toggle */}
+                            <div className="w-24 flex-shrink-0">
+                              <button
+                                onClick={() => handleToggleUserMeetingAssistant(u.id, !u.attendee_enabled)}
+                                disabled={meetingAssistantLoading === u.id || u.is_super_admin}
+                                title={u.attendee_enabled ? 'Disable meeting assistant' : 'Enable meeting assistant'}
+                                className={`text-[11px] font-semibold px-2.5 py-0.5 rounded-full hover:opacity-75 transition-opacity disabled:opacity-50 ${
+                                  u.attendee_enabled ? 'bg-violet-50 text-violet-700' : 'bg-neutral-100 text-neutral-400'
+                                }`}
+                              >
+                                {meetingAssistantLoading === u.id ? '…' : u.attendee_enabled ? 'Active' : 'Off'}
+                              </button>
                             </div>
 
                             {/* Joined */}
