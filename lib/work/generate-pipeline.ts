@@ -462,7 +462,7 @@ Return the JSON presentation structure.`,
 
   if (type === 'spreadsheet') {
     return {
-      systemPrompt: `You generate structured spreadsheet content in JSON. Your entire response must be a single valid JSON object. Start your response with { and end with }. Do not write anything before { or after }. Keep total JSON under 3500 characters.
+      systemPrompt: `You generate structured spreadsheet content in JSON. Your entire response must be a single valid JSON object. Start your response with { and end with }. Do not write anything before { or after }.
 
 JSON format:
 {
@@ -490,7 +490,7 @@ ${attachmentContext ? `\nSOURCE MATERIAL:\n${attachmentContext}` : ''}
 CONVERSATION CONTEXT: ${conversationContext || '(none)'}
 
 Return the JSON spreadsheet structure.`,
-      maxTokens: 2500,
+      maxTokens: 6000,
     };
   }
 

@@ -99,6 +99,7 @@ export function WorkPageClient({
   const [isTemporaryMode, setIsTemporaryMode] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
   const [droppedFiles, setDroppedFiles] = useState<File[]>([]);
+  const [droppedSnippet, setDroppedSnippet] = useState<{ id: string; name: string; snippetContent: string } | null>(null);
   // Stable ref so the drag useEffect closure always sees the latest activeThreadId
   const activeThreadIdRef = useRef<string | null>(initialActiveThreadId ?? null);
 
@@ -154,8 +155,13 @@ export function WorkPageClient({
       const files = Array.from(e.clipboardData?.files ?? []);
       if (files.length === 0) return;
       e.preventDefault();
+      // Also capture text companion (e.g. PPT slide copied as image + text/plain)
+      const text = (e.clipboardData?.getData('text/plain') ?? '').trim();
       if (activeThreadIdRef.current) {
         setDroppedFiles(files);
+        if (text) {
+          setDroppedSnippet({ id: crypto.randomUUID(), name: 'Pasted text', snippetContent: text });
+        }
       } else {
         setPendingFiles(prev => [...prev, ...files.map(f => ({ id: crypto.randomUUID(), file: f }))]);
       }
@@ -469,6 +475,8 @@ export function WorkPageClient({
               onThreadRemove={(id) => setThreads(prev => prev.filter(t => t.id !== id))}
               externalDroppedFiles={droppedFiles}
               onDropConsumed={() => setDroppedFiles([])}
+              externalSnippet={droppedSnippet}
+              onSnippetConsumed={() => setDroppedSnippet(null)}
             />
           ) : activeAgentId ? (
             <AgentHomeScreen
@@ -495,7 +503,7 @@ export function WorkPageClient({
       <div
         className={`flex-shrink-0 overflow-hidden transition-[width] duration-200 ${
           artifactPanelOpen && (!activeThread || (activeThread.artifacts?.length ?? 0) > 0)
-            ? (activeThread ? 'w-[300px]' : 'w-[260px]')
+            ? 'w-[400px]'
             : 'w-0'
         }`}
       >
@@ -566,6 +574,8 @@ interface ActiveChatViewProps {
   onThreadRemove?: (id: string) => void;
   externalDroppedFiles?: File[];
   onDropConsumed?: () => void;
+  externalSnippet?: { id: string; name: string; snippetContent: string } | null;
+  onSnippetConsumed?: () => void;
 }
 
 function ActiveChatView({
@@ -586,6 +596,8 @@ function ActiveChatView({
   onThreadRemove,
   externalDroppedFiles,
   onDropConsumed,
+  externalSnippet,
+  onSnippetConsumed,
 }: ActiveChatViewProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -671,6 +683,19 @@ function ActiveChatView({
     if (!externalDroppedFiles || externalDroppedFiles.length === 0) return;
     handleAttach(externalDroppedFiles).finally(() => onDropConsumed?.());
   }, [externalDroppedFiles]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Consume text snippet companion from paste (e.g. PPT slide = image + text/plain)
+  useEffect(() => {
+    if (!externalSnippet) return;
+    setChatAttachments(prev => [...prev, {
+      id: externalSnippet.id,
+      name: externalSnippet.name,
+      size: 0,
+      isSnippet: true,
+      snippetContent: externalSnippet.snippetContent,
+    }]);
+    onSnippetConsumed?.();
+  }, [externalSnippet]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-send pendingInput once messages are loaded and it hasn't been sent yet
   useEffect(() => {
@@ -922,6 +947,9 @@ function ActiveChatView({
   async function handleEditMessage(messageId: string, newContent: string) {
     if (isStreaming) return;
 
+    // Abort any in-flight stream before editing to avoid stale isStreaming state
+    streamAbortRef.current?.abort();
+
     await fetch(`/api/work/threads/${thread.id}/chat`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -931,6 +959,14 @@ function ActiveChatView({
     // If component unmounted while awaiting PATCH (e.g. user navigated away
     // and the temporary-thread cleanup already deleted this thread), bail out.
     if (!mountedRef.current) return;
+
+    // Explicitly reset streaming state — guards against a race where a prior
+    // stream finished server-side but React hasn't flushed setIsStreaming(false)
+    // yet, which would cause handleSubmit to bail out at the isStreaming guard.
+    setIsStreaming(false);
+    setStreamingText('');
+    setStreamingTools([]);
+    setStreamingClarification(null);
 
     // Optimistically truncate local messages to just before the edited one,
     // then update its content
