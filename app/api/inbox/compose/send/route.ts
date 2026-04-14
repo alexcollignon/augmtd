@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { sendGmailEmail, EmailAttachment } from '@/lib/google/gmail';
 import { sendOutlookEmail } from '@/lib/microsoft/outlook';
+import { requireFeature, handleWorkspaceError } from '@/lib/workspace/require-feature';
 
 export async function POST(request: NextRequest) {
   try {
@@ -9,6 +10,12 @@ export async function POST(request: NextRequest) {
     const { data: { user }, error } = await supabase.auth.getUser();
     if (error || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    try {
+      await requireFeature('email', supabase, user.id);
+    } catch (err) {
+      return handleWorkspaceError(err);
     }
 
     const body = await request.json();

@@ -12,14 +12,22 @@ import {
   TrashIcon,
   XMarkIcon,
   MagnifyingGlassIcon,
+  PauseIcon,
+  PlayIcon,
+  ClipboardDocumentListIcon,
 } from '@heroicons/react/24/outline';
+import type { WorkspaceFeatures, WorkspaceType, FeatureKey } from '@/lib/workspace/types';
+import { FEATURE_KEYS } from '@/lib/workspace/types';
 
 interface CompanyRow {
   id: string;
   name: string;
   slug: string;
   plan: string;
+  type: WorkspaceType;
   status: string;
+  features: WorkspaceFeatures;
+  join_code: string;
   created_at: string;
   member_count: number;
   meeting_assistant: boolean;
@@ -60,14 +68,28 @@ interface UserRow {
 }
 
 const PLAN_OPTIONS = ['starter', 'growth', 'enterprise'];
+const TYPE_OPTIONS: WorkspaceType[] = ['company', 'beta', 'pilot', 'internal'];
 const PLAN_COLORS: Record<string, string> = {
   starter: 'bg-neutral-100 text-neutral-600',
   growth: 'bg-blue-50 text-blue-700',
   enterprise: 'bg-indigo-50 text-indigo-700',
 };
+const TYPE_COLORS: Record<WorkspaceType, string> = {
+  company:  'bg-neutral-100 text-neutral-700',
+  beta:     'bg-amber-50 text-amber-700',
+  pilot:    'bg-sky-50 text-sky-700',
+  internal: 'bg-violet-50 text-violet-700',
+};
 const STATUS_COLORS: Record<string, string> = {
-  active: 'bg-green-50 text-green-700',
+  active:    'bg-green-50 text-green-700',
   suspended: 'bg-red-50 text-red-600',
+  deleting:  'bg-neutral-200 text-neutral-600',
+};
+const FEATURE_LABEL: Record<FeatureKey, string> = {
+  email:    'Email',
+  meetings: 'Meetings',
+  drive:    'Drive',
+  agents:   'Agents',
 };
 const ROLE_COLORS: Record<string, string> = {
   owner: 'text-indigo-700',
@@ -75,8 +97,24 @@ const ROLE_COLORS: Record<string, string> = {
   member: 'text-neutral-600',
 };
 
+interface AuditEntry {
+  id: string;
+  actor_user_id: string | null;
+  actor_email: string | null;
+  action: string;
+  target_type: string | null;
+  target_id: string | null;
+  workspace_id: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+
 export default function PlatformAdminClient({ initialCompanies }: { initialCompanies: CompanyRow[] }) {
-  const [tab, setTab] = useState<'companies' | 'users'>('companies');
+  const [tab, setTab] = useState<'companies' | 'users' | 'audit'>('companies');
+
+  // ── Companies filters ──────────────────────────────────────────────────────
+  const [companyTypeFilter, setCompanyTypeFilter] = useState<'all' | WorkspaceType>('all');
+  const [companyStatusFilter, setCompanyStatusFilter] = useState<'all' | 'active' | 'suspended'>('all');
 
   // ── Companies state ────────────────────────────────────────────────────────
   const [companies, setCompanies] = useState<CompanyRow[]>(initialCompanies);
@@ -89,14 +127,24 @@ export default function PlatformAdminClient({ initialCompanies }: { initialCompa
   const [editingName, setEditingName] = useState('');
   const [formName, setFormName] = useState('');
   const [formPlan, setFormPlan] = useState('starter');
-  const [formOwnerEmail, setFormOwnerEmail] = useState('');
+  const [formType, setFormType] = useState<WorkspaceType>('company');
+
   const [formLoading, setFormLoading] = useState(false);
   const [formError, setFormError] = useState('');
-  const [formResult, setFormResult] = useState<{ company: CompanyRow; inviteUrl: string } | null>(null);
+  const [formResult, setFormResult] = useState<{ company: CompanyRow; joinUrl: string } | null>(null);
   const [copied, setCopied] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [meetingAssistantLoading, setMeetingAssistantLoading] = useState<string | null>(null);
+  const [featureLoading, setFeatureLoading] = useState<string | null>(null);
+  const [codeCopiedId, setCodeCopiedId] = useState<string | null>(null);
+  const [regenLoading, setRegenLoading] = useState<string | null>(null);
+  const [cascadeModal, setCascadeModal] = useState<CompanyRow | null>(null);
+  const [cascadeConfirmText, setCascadeConfirmText] = useState('');
+  const [cascadeLoading, setCascadeLoading] = useState(false);
+  const [cascadeResult, setCascadeResult] = useState<{ deletedUsers: number; skippedSuperadmins: number; errors: unknown[] } | null>(null);
+  const [cascadeError, setCascadeError] = useState('');
+  const [roleLoading, setRoleLoading] = useState<string | null>(null);
 
   // ── Users state ────────────────────────────────────────────────────────────
   const [users, setUsers] = useState<UserRow[]>([]);
@@ -104,6 +152,12 @@ export default function PlatformAdminClient({ initialCompanies }: { initialCompa
   const [usersLoading, setUsersLoading] = useState(false);
   const [userFilter, setUserFilter] = useState<'all' | 'no-company'>('all');
   const [userSearch, setUserSearch] = useState('');
+
+  // ── Audit log state ────────────────────────────────────────────────────────
+  const [auditEntries, setAuditEntries] = useState<AuditEntry[]>([]);
+  const [auditLoaded, setAuditLoaded] = useState(false);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditActionFilter, setAuditActionFilter] = useState<string>('');
 
   useEffect(() => {
     if (tab === 'users' && !usersLoaded) {
@@ -116,10 +170,23 @@ export default function PlatformAdminClient({ initialCompanies }: { initialCompa
     }
   }, [tab, usersLoaded]);
 
+  useEffect(() => {
+    if (tab === 'audit') {
+      setAuditLoading(true);
+      const params = new URLSearchParams({ limit: '200' });
+      if (auditActionFilter) params.set('action', auditActionFilter);
+      fetch(`/api/platform-admin/audit-logs?${params}`)
+        .then(r => r.json())
+        .then(data => { setAuditEntries(data.entries ?? []); setAuditLoaded(true); })
+        .catch(console.error)
+        .finally(() => setAuditLoading(false));
+    }
+  }, [tab, auditActionFilter]);
+
   // ── Companies handlers ─────────────────────────────────────────────────────
   async function handleCreateCompany(e: React.FormEvent) {
     e.preventDefault();
-    if (!formName.trim() || !formOwnerEmail.trim()) return;
+    if (!formName.trim()) return;
     setFormLoading(true);
     setFormError('');
     setFormResult(null);
@@ -127,19 +194,69 @@ export default function PlatformAdminClient({ initialCompanies }: { initialCompa
       const res = await fetch('/api/platform-admin/companies', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: formName.trim(), plan: formPlan, ownerEmail: formOwnerEmail.trim() }),
+        body: JSON.stringify({
+          name: formName.trim(),
+          plan: formPlan,
+          type: formType,
+        }),
       });
       const data = await res.json();
       if (!res.ok) { setFormError(data.error ?? 'Failed'); return; }
       const newRow: CompanyRow = { ...data.company, member_count: 0 };
       setCompanies(prev => [newRow, ...prev]);
-      setFormResult({ company: newRow, inviteUrl: data.inviteUrl });
+      setFormResult({ company: newRow, joinUrl: data.joinUrl });
       setFormName('');
-      setFormOwnerEmail('');
       setFormPlan('starter');
+      setFormType('company');
     } finally {
       setFormLoading(false);
     }
+  }
+
+  async function handleToggleFeature(companyId: string, key: FeatureKey, next: boolean) {
+    setFeatureLoading(`${companyId}:${key}`);
+    // Optimistic update
+    setCompanies(prev => prev.map(c =>
+      c.id === companyId ? { ...c, features: { ...c.features, [key]: next } } : c
+    ));
+    try {
+      const res = await fetch(`/api/platform-admin/companies/${companyId}/features`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ [key]: next }),
+      });
+      if (!res.ok) {
+        // Revert
+        setCompanies(prev => prev.map(c =>
+          c.id === companyId ? { ...c, features: { ...c.features, [key]: !next } } : c
+        ));
+      }
+    } finally {
+      setFeatureLoading(null);
+    }
+  }
+
+  async function handleToggleSuspend(company: CompanyRow) {
+    const endpoint = company.status === 'active' ? 'suspend' : 'unsuspend';
+    setActionLoading(company.id);
+    try {
+      const res = await fetch(`/api/platform-admin/companies/${company.id}/${endpoint}`, {
+        method: 'POST',
+      });
+      if (res.ok) {
+        setCompanies(prev => prev.map(c =>
+          c.id === company.id ? { ...c, status: company.status === 'active' ? 'suspended' : 'active' } : c
+        ));
+      }
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
+  async function handleCopyJoinCode(companyId: string, code: string) {
+    await navigator.clipboard.writeText(code);
+    setCodeCopiedId(companyId);
+    setTimeout(() => setCodeCopiedId(null), 1500);
   }
 
   async function handleCopyInviteUrl(url: string) {
@@ -154,7 +271,7 @@ export default function PlatformAdminClient({ initialCompanies }: { initialCompa
     setTimeout(() => setCopiedInviteId(null), 2000);
   }
 
-  async function handleUpdateCompany(id: string, updates: { name?: string; plan?: string; status?: string }) {
+  async function handleUpdateCompany(id: string, updates: { name?: string; plan?: string; type?: string; status?: string }) {
     setActionLoading(id);
     try {
       const res = await fetch(`/api/platform-admin/companies/${id}`, {
@@ -163,7 +280,7 @@ export default function PlatformAdminClient({ initialCompanies }: { initialCompa
         body: JSON.stringify(updates),
       });
       if (res.ok) {
-        setCompanies(prev => prev.map(c => c.id === id ? { ...c, ...updates } : c));
+        setCompanies(prev => prev.map(c => c.id === id ? { ...c, ...updates } as CompanyRow : c));
       }
     } finally {
       setActionLoading(null);
@@ -171,17 +288,92 @@ export default function PlatformAdminClient({ initialCompanies }: { initialCompa
     }
   }
 
-  async function handleDeleteCompany(id: string) {
+  function openCascadeModal(company: CompanyRow) {
     setConfirmingId(null);
-    setActionLoading(id);
+    setCascadeConfirmText('');
+    setCascadeResult(null);
+    setCascadeError('');
+    setCascadeModal(company);
+  }
+
+  async function handleCascadeDelete() {
+    if (!cascadeModal) return;
+    if (cascadeConfirmText.trim() !== cascadeModal.name.trim()) {
+      setCascadeError('Type the workspace name exactly to confirm.');
+      return;
+    }
+    setCascadeLoading(true);
+    setCascadeError('');
     try {
-      const res = await fetch(`/api/platform-admin/companies/${id}`, { method: 'DELETE' });
-      if (res.ok) {
-        setCompanies(prev => prev.filter(c => c.id !== id));
-        if (expandedId === id) setExpandedId(null);
+      const res = await fetch(`/api/platform-admin/companies/${cascadeModal.id}/cascade-delete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirmName: cascadeConfirmText.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setCascadeError(data.error ?? 'Delete failed');
+        setCascadeLoading(false);
+        return;
+      }
+      setCascadeResult({
+        deletedUsers: data.deletedUsers ?? 0,
+        skippedSuperadmins: data.skippedSuperadmins ?? 0,
+        errors: data.errors ?? [],
+      });
+      // Remove the workspace row from UI
+      setCompanies(prev => prev.filter(c => c.id !== cascadeModal.id));
+      if (expandedId === cascadeModal.id) setExpandedId(null);
+    } catch (err) {
+      setCascadeError(err instanceof Error ? err.message : 'Unexpected error');
+    } finally {
+      setCascadeLoading(false);
+    }
+  }
+
+  function closeCascadeModal() {
+    setCascadeModal(null);
+    setCascadeConfirmText('');
+    setCascadeResult(null);
+    setCascadeError('');
+    setCascadeLoading(false);
+  }
+
+  async function handleRegenerateCode(companyId: string) {
+    setRegenLoading(companyId);
+    try {
+      const res = await fetch(`/api/platform-admin/companies/${companyId}/regenerate-join-code`, {
+        method: 'POST',
+      });
+      const data = await res.json();
+      if (res.ok && data.join_code) {
+        setCompanies(prev => prev.map(c =>
+          c.id === companyId ? { ...c, join_code: data.join_code } : c
+        ));
       }
     } finally {
-      setActionLoading(null);
+      setRegenLoading(null);
+    }
+  }
+
+  async function handleChangeRole(companyId: string, userId: string, role: string) {
+    setRoleLoading(userId);
+    try {
+      const res = await fetch(`/api/platform-admin/companies/${companyId}/members/${userId}/role`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role }),
+      });
+      if (res.ok) {
+        setMembersCache(prev => ({
+          ...prev,
+          [companyId]: (prev[companyId] ?? []).map(m =>
+            m.user_id === userId ? { ...m, role } : m
+          ),
+        }));
+      }
+    } finally {
+      setRoleLoading(null);
     }
   }
 
@@ -304,6 +496,12 @@ export default function PlatformAdminClient({ initialCompanies }: { initialCompa
     return (fullName?.[0] ?? email?.[0] ?? '?').toUpperCase();
   }
 
+  const filteredCompanies = companies.filter(c => {
+    if (companyTypeFilter !== 'all' && c.type !== companyTypeFilter) return false;
+    if (companyStatusFilter !== 'all' && c.status !== companyStatusFilter) return false;
+    return true;
+  });
+
   const filteredUsers = users.filter(u => {
     if (userFilter === 'no-company' && u.company_id) return false;
     if (userSearch.trim()) {
@@ -317,8 +515,9 @@ export default function PlatformAdminClient({ initialCompanies }: { initialCompa
 
   // ── Nav items ──────────────────────────────────────────────────────────────
   const NAV = [
-    { id: 'companies' as const, label: 'Companies', Icon: BuildingOfficeIcon },
-    { id: 'users' as const, label: 'All Users', Icon: UsersIcon },
+    { id: 'companies' as const, label: 'Workspaces', Icon: BuildingOfficeIcon },
+    { id: 'users'     as const, label: 'All Users',  Icon: UsersIcon },
+    { id: 'audit'     as const, label: 'Audit Log',  Icon: ClipboardDocumentListIcon },
   ];
 
   return (
@@ -359,12 +558,12 @@ export default function PlatformAdminClient({ initialCompanies }: { initialCompa
             {/* ══ Companies tab ══════════════════════════════════════════════ */}
             {tab === 'companies' && (
               <>
-                {/* Create company */}
+                {/* Create workspace */}
                 <section className="px-6 py-5 border-b border-neutral-100">
-                  <h2 className="text-[14px] font-semibold text-neutral-900 mb-4">Create new company</h2>
+                  <h2 className="text-[14px] font-semibold text-neutral-900 mb-4">Create new workspace</h2>
                   <form onSubmit={handleCreateCompany} className="flex items-end gap-3 flex-wrap">
                     <div className="flex-1 min-w-[180px]">
-                      <label className="block text-[11px] font-semibold text-neutral-400 uppercase tracking-wide mb-1.5">Company name</label>
+                      <label className="block text-[11px] font-semibold text-neutral-400 uppercase tracking-wide mb-1.5">Workspace name</label>
                       <input
                         type="text"
                         value={formName}
@@ -372,6 +571,16 @@ export default function PlatformAdminClient({ initialCompanies }: { initialCompa
                         placeholder="Acme Consulting"
                         className="w-full px-3 py-2 text-[13px] border border-neutral-200 rounded-lg focus:outline-none focus:border-indigo-400 placeholder:text-neutral-400"
                       />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-semibold text-neutral-400 uppercase tracking-wide mb-1.5">Type</label>
+                      <select
+                        value={formType}
+                        onChange={e => setFormType(e.target.value as WorkspaceType)}
+                        className="px-3 py-2 text-[13px] border border-neutral-200 rounded-lg focus:outline-none focus:border-indigo-400 bg-white capitalize"
+                      >
+                        {TYPE_OPTIONS.map(t => <option key={t} value={t} className="capitalize">{t}</option>)}
+                      </select>
                     </div>
                     <div>
                       <label className="block text-[11px] font-semibold text-neutral-400 uppercase tracking-wide mb-1.5">Plan</label>
@@ -383,60 +592,75 @@ export default function PlatformAdminClient({ initialCompanies }: { initialCompa
                         {PLAN_OPTIONS.map(p => <option key={p} value={p} className="capitalize">{p}</option>)}
                       </select>
                     </div>
-                    <div className="flex-1 min-w-[180px]">
-                      <label className="block text-[11px] font-semibold text-neutral-400 uppercase tracking-wide mb-1.5">Owner email</label>
-                      <input
-                        type="email"
-                        value={formOwnerEmail}
-                        onChange={e => setFormOwnerEmail(e.target.value)}
-                        placeholder="owner@client.com"
-                        className="w-full px-3 py-2 text-[13px] border border-neutral-200 rounded-lg focus:outline-none focus:border-indigo-400 placeholder:text-neutral-400"
-                      />
-                    </div>
                     <button
                       type="submit"
-                      disabled={formLoading || !formName.trim() || !formOwnerEmail.trim()}
-                      className="px-4 py-2 bg-indigo-600 text-white text-[13px] font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+                      disabled={formLoading || !formName.trim()}
+                      className="px-4 py-2 bg-neutral-900 text-white text-[13px] font-medium rounded-lg hover:bg-neutral-800 disabled:opacity-50 transition-colors"
                     >
-                      {formLoading ? 'Creating…' : 'Create + Invite'}
+                      {formLoading ? 'Creating…' : 'Create workspace'}
                     </button>
                   </form>
                   {formError && <p className="text-[12px] text-red-600 mt-3">{formError}</p>}
                   {formResult && (
-                    <div className="mt-4 bg-green-50 border border-green-200 rounded-xl p-3 flex items-center gap-3">
-                      <div className="flex-1 min-w-0">
-                        <p className="text-[12px] font-semibold text-green-800 mb-0.5">
-                          &ldquo;{formResult.company.name}&rdquo; created — owner invite ready
-                        </p>
-                        <p className="text-[11px] text-green-700 truncate">{formResult.inviteUrl}</p>
+                    <div className="mt-4 bg-green-50 border border-green-200 rounded-xl p-3 space-y-2">
+                      <p className="text-[12px] font-semibold text-green-800">
+                        &ldquo;{formResult.company.name}&rdquo; created — share the join link with users
+                      </p>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[11px] font-semibold text-green-700 w-24 flex-shrink-0">Join link:</span>
+                        <p className="text-[11px] text-green-700 truncate flex-1">{formResult.joinUrl}</p>
+                        <button
+                          onClick={() => handleCopyInviteUrl(formResult.joinUrl)}
+                          className="flex items-center gap-1.5 px-2.5 py-1 bg-white border border-green-300 rounded-lg text-[11px] text-green-700 hover:bg-green-50 transition-colors flex-shrink-0"
+                        >
+                          {copied ? <CheckIcon className="w-3 h-3" /> : <ClipboardDocumentIcon className="w-3 h-3" />}
+                          {copied ? 'Copied' : 'Copy'}
+                        </button>
                       </div>
-                      <button
-                        onClick={() => handleCopyInviteUrl(formResult.inviteUrl)}
-                        className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-green-300 rounded-lg text-[12px] text-green-700 hover:bg-green-50 transition-colors flex-shrink-0"
-                      >
-                        {copied ? <CheckIcon className="w-3.5 h-3.5" /> : <ClipboardDocumentIcon className="w-3.5 h-3.5" />}
-                        {copied ? 'Copied' : 'Copy link'}
-                      </button>
                     </div>
                   )}
                 </section>
 
-                {/* Companies list */}
+                {/* Workspaces list */}
                 <section className="px-6 py-5">
-                  <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
                     <h2 className="text-[14px] font-semibold text-neutral-900">
-                      All companies
-                      <span className="ml-2 text-[12px] font-normal text-neutral-400">{companies.length}</span>
+                      All workspaces
+                      <span className="ml-2 text-[12px] font-normal text-neutral-400">
+                        {filteredCompanies.length}
+                        {filteredCompanies.length !== companies.length && <> of {companies.length}</>}
+                      </span>
                     </h2>
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={companyTypeFilter}
+                        onChange={e => setCompanyTypeFilter(e.target.value as typeof companyTypeFilter)}
+                        className="px-2.5 py-1 text-[12px] border border-neutral-200 rounded-lg focus:outline-none focus:border-neutral-400 bg-white capitalize"
+                      >
+                        <option value="all">All types</option>
+                        {TYPE_OPTIONS.map(t => <option key={t} value={t} className="capitalize">{t}</option>)}
+                      </select>
+                      <select
+                        value={companyStatusFilter}
+                        onChange={e => setCompanyStatusFilter(e.target.value as typeof companyStatusFilter)}
+                        className="px-2.5 py-1 text-[12px] border border-neutral-200 rounded-lg focus:outline-none focus:border-neutral-400 bg-white capitalize"
+                      >
+                        <option value="all">All status</option>
+                        <option value="active">Active</option>
+                        <option value="suspended">Suspended</option>
+                      </select>
+                    </div>
                   </div>
 
-                  {companies.length === 0 ? (
-                    <p className="text-[13px] text-neutral-400 py-6 text-center">No companies yet. Create one above.</p>
+                  {filteredCompanies.length === 0 ? (
+                    <p className="text-[13px] text-neutral-400 py-6 text-center">
+                      {companies.length === 0 ? 'No workspaces yet. Create one above.' : 'No workspaces match the current filters.'}
+                    </p>
                   ) : (
                     <div className="border border-neutral-200 rounded-2xl overflow-hidden divide-y divide-neutral-100">
-                      {companies.map(company => (
+                      {filteredCompanies.map(company => (
                         <div key={company.id}>
-                          {/* Company row */}
+                          {/* Workspace row */}
                           <div className="flex items-center gap-3 px-5 py-3.5 hover:bg-neutral-50 transition-colors">
                             {/* Expand toggle */}
                             <button
@@ -486,7 +710,18 @@ export default function PlatformAdminClient({ initialCompanies }: { initialCompa
                               )}
                             </div>
 
-                            {/* Plan badge */}
+                            {/* Type badge */}
+                            <select
+                              value={company.type}
+                              onChange={e => handleUpdateCompany(company.id, { type: e.target.value })}
+                              disabled={actionLoading === company.id || editingId === company.id}
+                              title="Workspace type"
+                              className={`text-[11px] font-semibold px-2.5 py-0.5 rounded-full border-0 capitalize cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-300 ${TYPE_COLORS[company.type]}`}
+                            >
+                              {TYPE_OPTIONS.map(t => <option key={t} value={t} className="capitalize">{t}</option>)}
+                            </select>
+
+                            {/* Plan */}
                             <select
                               value={company.plan}
                               onChange={e => handleUpdateCompany(company.id, { plan: e.target.value })}
@@ -496,79 +731,91 @@ export default function PlatformAdminClient({ initialCompanies }: { initialCompa
                               {PLAN_OPTIONS.map(p => <option key={p} value={p} className="capitalize">{p}</option>)}
                             </select>
 
-                            {/* Status toggle */}
-                            <button
-                              onClick={() => handleUpdateCompany(company.id, {
-                                status: company.status === 'active' ? 'suspended' : 'active',
-                              })}
-                              disabled={actionLoading === company.id}
-                              title={company.status === 'active' ? 'Click to suspend' : 'Click to activate'}
-                              className={`text-[11px] font-semibold px-2.5 py-0.5 rounded-full capitalize hover:opacity-75 transition-opacity disabled:opacity-50 ${STATUS_COLORS[company.status] ?? 'bg-neutral-100 text-neutral-600'}`}
+                            {/* Status badge */}
+                            <span
+                              className={`text-[11px] font-semibold px-2.5 py-0.5 rounded-full capitalize ${STATUS_COLORS[company.status] ?? 'bg-neutral-100 text-neutral-600'}`}
                             >
                               {company.status}
-                            </button>
-
-                            {/* Meeting assistant toggle */}
-                            <button
-                              onClick={() => handleToggleCompanyMeetingAssistant(company.id, !company.meeting_assistant)}
-                              disabled={meetingAssistantLoading === company.id}
-                              title={company.meeting_assistant ? 'Click to disable meeting assistant for all members' : 'Click to enable meeting assistant for all members'}
-                              className={`text-[11px] font-semibold px-2.5 py-0.5 rounded-full hover:opacity-75 transition-opacity disabled:opacity-50 ${
-                                company.meeting_assistant ? 'bg-violet-50 text-violet-700' : 'bg-neutral-100 text-neutral-400'
-                              }`}
-                            >
-                              {meetingAssistantLoading === company.id ? '…' : company.meeting_assistant ? 'Mtg on' : 'Mtg off'}
-                            </button>
-
-                            {/* Member count */}
-                            <span className="text-[12px] text-neutral-400 w-20 text-right flex-shrink-0">
-                              {company.member_count} {company.member_count === 1 ? 'member' : 'members'}
                             </span>
 
-                            {/* Created date */}
-                            <span className="text-[11px] text-neutral-400 hidden lg:block w-24 text-right flex-shrink-0">
-                              {formatDate(company.created_at)}
+                            {/* Feature toggles — compact pills */}
+                            <div className="flex items-center gap-1">
+                              {FEATURE_KEYS.map(key => {
+                                const on = company.features[key];
+                                const loading = featureLoading === `${company.id}:${key}`;
+                                return (
+                                  <button
+                                    key={key}
+                                    onClick={() => handleToggleFeature(company.id, key, !on)}
+                                    disabled={loading}
+                                    title={`${FEATURE_LABEL[key]} — click to ${on ? 'disable' : 'enable'}`}
+                                    className={`text-[10px] font-medium px-2 py-0.5 rounded-md transition-opacity disabled:opacity-50 ${
+                                      on ? 'bg-primary-50 text-primary-700' : 'bg-neutral-100 text-neutral-400'
+                                    } ${loading ? 'opacity-60' : 'hover:opacity-75'}`}
+                                  >
+                                    {FEATURE_LABEL[key]}
+                                  </button>
+                                );
+                              })}
+                            </div>
+
+                            {/* Join code — click to copy, shift+click to regenerate */}
+                            <div className="flex items-center gap-0.5">
+                              <button
+                                onClick={() => handleCopyJoinCode(company.id, company.join_code)}
+                                title={`Join code: ${company.join_code} — click to copy`}
+                                className="text-[10.5px] font-mono font-semibold px-2 py-0.5 rounded-md bg-neutral-100 text-neutral-600 hover:bg-neutral-200 transition-colors flex items-center gap-1"
+                              >
+                                {codeCopiedId === company.id ? <CheckIcon className="w-3 h-3" /> : <ClipboardDocumentIcon className="w-3 h-3" />}
+                                {company.join_code}
+                              </button>
+                              <button
+                                onClick={() => handleRegenerateCode(company.id)}
+                                disabled={regenLoading === company.id}
+                                title="Regenerate code (invalidates old one)"
+                                className="p-1 rounded-md text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100 transition-colors disabled:opacity-50"
+                              >
+                                <svg width="11" height="11" viewBox="0 0 20 20" fill="currentColor">
+                                  <path fillRule="evenodd" d="M15.312 11.424a5.5 5.5 0 01-9.201 2.466l-.312-.311h2.433a.75.75 0 000-1.5H3.989a.75.75 0 00-.75.75v4.242a.75.75 0 001.5 0v-2.43l.31.31a7 7 0 0011.712-3.138.75.75 0 00-1.449-.39zm1.23-3.723a.75.75 0 00.219-.53V2.929a.75.75 0 00-1.5 0V5.36l-.31-.31A7 7 0 003.239 8.188a.75.75 0 101.448.389A5.5 5.5 0 0113.89 6.11l.311.31h-2.432a.75.75 0 000 1.5h4.243a.75.75 0 00.53-.219z" clipRule="evenodd" />
+                                </svg>
+                              </button>
+                            </div>
+
+                            {/* Member count */}
+                            <span className="text-[11px] text-neutral-400 w-14 text-right flex-shrink-0">
+                              {company.member_count} {company.member_count === 1 ? 'member' : 'members'}
                             </span>
 
                             {/* Actions */}
                             <div className="flex items-center gap-1 flex-shrink-0">
-                              {confirmingId === company.id ? (
-                                <div className="flex items-center gap-1.5">
-                                  <span className="text-[11px] text-red-500 font-medium">Delete?</span>
-                                  <button
-                                    onClick={() => handleDeleteCompany(company.id)}
-                                    disabled={actionLoading === company.id}
-                                    className="px-2 py-0.5 rounded-lg text-[11px] font-semibold bg-red-500 text-white hover:bg-red-600 disabled:opacity-50 transition-colors"
-                                  >
-                                    Yes
-                                  </button>
-                                  <button
-                                    onClick={() => setConfirmingId(null)}
-                                    className="px-2 py-0.5 rounded-lg text-[11px] font-medium text-neutral-500 hover:bg-neutral-100 transition-colors"
-                                  >
-                                    Cancel
-                                  </button>
-                                </div>
-                              ) : (
-                                <>
-                                  <button
-                                    onClick={() => { setEditingId(company.id); setEditingName(company.name); }}
-                                    disabled={actionLoading === company.id}
-                                    title="Edit name"
-                                    className="p-1.5 rounded-lg text-neutral-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors disabled:opacity-50"
-                                  >
-                                    <PencilIcon className="w-3.5 h-3.5" />
-                                  </button>
-                                  <button
-                                    onClick={() => setConfirmingId(company.id)}
-                                    disabled={actionLoading === company.id}
-                                    title="Delete company"
-                                    className="p-1.5 rounded-lg text-neutral-400 hover:text-red-500 hover:bg-red-50 transition-colors disabled:opacity-50"
-                                  >
-                                    <TrashIcon className="w-3.5 h-3.5" />
-                                  </button>
-                                </>
-                              )}
+                              <button
+                                onClick={() => { setEditingId(company.id); setEditingName(company.name); }}
+                                disabled={actionLoading === company.id}
+                                title="Edit name"
+                                className="p-1.5 rounded-lg text-neutral-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors disabled:opacity-50"
+                              >
+                                <PencilIcon className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => handleToggleSuspend(company)}
+                                disabled={actionLoading === company.id || company.status === 'deleting'}
+                                title={company.status === 'active' ? 'Suspend workspace' : 'Unsuspend workspace'}
+                                className={`p-1.5 rounded-lg transition-colors disabled:opacity-50 ${
+                                  company.status === 'active'
+                                    ? 'text-neutral-400 hover:text-amber-600 hover:bg-amber-50'
+                                    : 'text-neutral-400 hover:text-green-600 hover:bg-green-50'
+                                }`}
+                              >
+                                {company.status === 'active' ? <PauseIcon className="w-3.5 h-3.5" /> : <PlayIcon className="w-3.5 h-3.5" />}
+                              </button>
+                              <button
+                                onClick={() => openCascadeModal(company)}
+                                disabled={actionLoading === company.id || company.status === 'deleting'}
+                                title="Delete workspace (destructive — wipes all member accounts and data)"
+                                className="p-1.5 rounded-lg text-neutral-400 hover:text-red-500 hover:bg-red-50 transition-colors disabled:opacity-50"
+                              >
+                                <TrashIcon className="w-3.5 h-3.5" />
+                              </button>
                             </div>
                           </div>
 
@@ -592,11 +839,21 @@ export default function PlatformAdminClient({ initialCompanies }: { initialCompa
                                           <span className="flex-1 text-neutral-700 truncate">
                                             {m.full_name ? `${m.full_name} (${m.email})` : m.email}
                                           </span>
-                                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold capitalize ${
-                                            m.role === 'owner' ? 'bg-indigo-50 text-indigo-700' :
-                                            m.role === 'admin' ? 'bg-amber-50 text-amber-700' :
-                                            'bg-neutral-100 text-neutral-600'
-                                          }`}>{m.role}</span>
+                                          <select
+                                            value={m.role}
+                                            onChange={e => handleChangeRole(company.id, m.user_id, e.target.value)}
+                                            disabled={roleLoading === m.user_id}
+                                            title="Change role"
+                                            className={`px-2 py-0.5 rounded-full text-[10px] font-semibold capitalize border-0 cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-300 disabled:opacity-50 ${
+                                              m.role === 'owner' ? 'bg-indigo-50 text-indigo-700' :
+                                              m.role === 'admin' ? 'bg-amber-50 text-amber-700' :
+                                              'bg-neutral-100 text-neutral-600'
+                                            }`}
+                                          >
+                                            <option value="owner">Owner</option>
+                                            <option value="admin">Admin</option>
+                                            <option value="member">Member</option>
+                                          </select>
                                           <button
                                             onClick={() => handleToggleUserMeetingAssistant(m.user_id, !m.attendee_enabled)}
                                             disabled={meetingAssistantLoading === m.user_id}
@@ -856,9 +1113,184 @@ export default function PlatformAdminClient({ initialCompanies }: { initialCompa
               </>
             )}
 
+            {/* ══ Audit Log tab ══════════════════════════════════════════════ */}
+            {tab === 'audit' && (
+              <section className="px-6 py-5">
+                <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
+                  <h2 className="text-[14px] font-semibold text-neutral-900">
+                    Audit Log
+                    <span className="ml-2 text-[12px] font-normal text-neutral-400">
+                      {auditEntries.length}{auditEntries.length === 200 && '+'}
+                    </span>
+                  </h2>
+                  <select
+                    value={auditActionFilter}
+                    onChange={e => { setAuditActionFilter(e.target.value); setAuditLoaded(false); }}
+                    className="px-2.5 py-1 text-[12px] border border-neutral-200 rounded-lg focus:outline-none focus:border-neutral-400 bg-white"
+                  >
+                    <option value="">All actions</option>
+                    <option value="workspace.create">Workspace created</option>
+                    <option value="workspace.update">Workspace updated</option>
+                    <option value="workspace.suspend">Workspace suspended</option>
+                    <option value="workspace.unsuspend">Workspace unsuspended</option>
+                    <option value="workspace.delete">Workspace deleted</option>
+                    <option value="workspace.regenerate_join_code">Code regenerated</option>
+                    <option value="feature.toggle">Feature toggled</option>
+                    <option value="member.join_via_code">Member joined via code</option>
+                    <option value="member.role_change">Role changed</option>
+                  </select>
+                </div>
+
+                {auditLoading && !auditLoaded ? (
+                  <p className="text-[13px] text-neutral-400 py-6 text-center">Loading…</p>
+                ) : auditEntries.length === 0 ? (
+                  <p className="text-[13px] text-neutral-400 py-6 text-center">No audit entries yet.</p>
+                ) : (
+                  <div className="border border-neutral-200 rounded-2xl overflow-hidden">
+                    <div className="divide-y divide-neutral-100">
+                      {auditEntries.map(entry => {
+                        const workspaceName = typeof entry.metadata?.workspaceName === 'string'
+                          ? entry.metadata.workspaceName
+                          : typeof entry.metadata?.name === 'string'
+                            ? entry.metadata.name
+                            : null;
+                        return (
+                          <details key={entry.id} className="group">
+                            <summary className="flex items-center gap-3 px-5 py-3 hover:bg-neutral-50 cursor-pointer text-[12.5px]">
+                              <span className="text-neutral-400 tabular-nums text-[11px] w-32 flex-shrink-0">
+                                {new Date(entry.created_at).toLocaleString('en-US', {
+                                  month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+                                })}
+                              </span>
+                              <span className="font-mono text-[11px] px-2 py-0.5 bg-neutral-100 text-neutral-700 rounded-md flex-shrink-0">
+                                {entry.action}
+                              </span>
+                              {workspaceName && (
+                                <span className="text-neutral-700 font-medium truncate">{workspaceName}</span>
+                              )}
+                              <span className="flex-1" />
+                              <span className="text-neutral-400 text-[11px] truncate max-w-[200px]">
+                                {entry.actor_email ?? 'system'}
+                              </span>
+                            </summary>
+                            <div className="px-5 pb-3 pt-1">
+                              <pre className="text-[10.5px] text-neutral-600 bg-neutral-50 p-3 rounded-lg overflow-auto">
+                                {JSON.stringify(entry.metadata, null, 2)}
+                              </pre>
+                            </div>
+                          </details>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </section>
+            )}
+
           </div>
         </div>
       </div>
+
+      {/* Cascade-delete confirmation modal */}
+      {cascadeModal && (
+        <div
+          className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4"
+          onClick={(e) => { if (e.target === e.currentTarget && !cascadeLoading) closeCascadeModal(); }}
+        >
+          <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl overflow-hidden">
+            <div className="px-6 py-5 border-b border-neutral-100">
+              <h3 className="text-[15px] font-semibold text-neutral-900">
+                {cascadeResult ? 'Workspace deleted' : 'Delete workspace'}
+              </h3>
+            </div>
+
+            <div className="px-6 py-5 space-y-4">
+              {cascadeResult ? (
+                <>
+                  <div className="px-4 py-3 rounded-lg bg-green-50 border border-green-100">
+                    <p className="text-[13px] text-green-800 font-medium mb-1">
+                      &ldquo;{cascadeModal.name}&rdquo; has been deleted.
+                    </p>
+                    <p className="text-[12px] text-green-700">
+                      {cascadeResult.deletedUsers} member {cascadeResult.deletedUsers === 1 ? 'account' : 'accounts'} wiped
+                      {cascadeResult.skippedSuperadmins > 0 && ` · ${cascadeResult.skippedSuperadmins} superadmin${cascadeResult.skippedSuperadmins === 1 ? '' : 's'} skipped`}
+                      {cascadeResult.errors.length > 0 && ` · ${cascadeResult.errors.length} error${cascadeResult.errors.length === 1 ? '' : 's'}`}
+                    </p>
+                  </div>
+                  {cascadeResult.errors.length > 0 && (
+                    <details className="text-[11px]">
+                      <summary className="cursor-pointer text-neutral-500 hover:text-neutral-700">Show error details</summary>
+                      <pre className="mt-2 p-3 bg-neutral-50 rounded-lg overflow-auto max-h-40 text-neutral-700">
+                        {JSON.stringify(cascadeResult.errors, null, 2)}
+                      </pre>
+                    </details>
+                  )}
+                </>
+              ) : (
+                <>
+                  <div className="px-4 py-3 rounded-lg bg-red-50 border border-red-100">
+                    <p className="text-[13px] text-red-800 font-medium mb-1.5">
+                      This is destructive and cannot be undone.
+                    </p>
+                    <p className="text-[12px] text-red-700 leading-relaxed">
+                      All <strong>{cascadeModal.member_count}</strong> member {cascadeModal.member_count === 1 ? 'account' : 'accounts'} will
+                      be permanently deleted — including emails, meetings, files, and chat history.
+                      Superadmin members are skipped but their membership is removed.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-neutral-600 mb-1.5">
+                      Type <span className="font-mono bg-neutral-100 px-1.5 py-0.5 rounded">{cascadeModal.name}</span> to confirm
+                    </label>
+                    <input
+                      type="text"
+                      value={cascadeConfirmText}
+                      onChange={e => { setCascadeConfirmText(e.target.value); setCascadeError(''); }}
+                      disabled={cascadeLoading}
+                      autoFocus
+                      placeholder={cascadeModal.name}
+                      className="w-full px-3 py-2 text-[13px] border border-neutral-200 rounded-lg focus:outline-none focus:border-red-400 placeholder:text-neutral-300 disabled:opacity-50"
+                    />
+                  </div>
+
+                  {cascadeError && (
+                    <p className="text-[12px] text-red-600">{cascadeError}</p>
+                  )}
+                </>
+              )}
+            </div>
+
+            <div className="px-6 py-4 border-t border-neutral-100 flex justify-end gap-2">
+              {cascadeResult ? (
+                <button
+                  onClick={closeCascadeModal}
+                  className="px-4 py-2 bg-neutral-900 text-white text-[13px] font-medium rounded-lg hover:bg-neutral-800 transition-colors"
+                >
+                  Done
+                </button>
+              ) : (
+                <>
+                  <button
+                    onClick={closeCascadeModal}
+                    disabled={cascadeLoading}
+                    className="px-4 py-2 text-[13px] text-neutral-600 hover:bg-neutral-100 rounded-lg disabled:opacity-50 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleCascadeDelete}
+                    disabled={cascadeLoading || cascadeConfirmText.trim() !== cascadeModal.name.trim()}
+                    className="px-4 py-2 bg-red-500 text-white text-[13px] font-medium rounded-lg hover:bg-red-600 disabled:opacity-50 transition-colors"
+                  >
+                    {cascadeLoading ? 'Deleting…' : 'Delete workspace'}
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

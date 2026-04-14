@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { getMyWorkspace } from '@/lib/workspace/features';
+import { DEFAULT_FEATURES } from '@/lib/workspace/types';
 
 interface MentionResult {
   type: 'email' | 'meeting' | 'kb' | 'process' | 'contact';
@@ -32,9 +34,21 @@ export async function GET(request: NextRequest) {
     const q = searchParams.get('q') ?? '';
     const typesParam = searchParams.get('types');
     const allTypes = ['email', 'meeting', 'kb', 'process', 'contact'] as const;
-    const requestedTypes = typesParam
+    const initialRequestedTypes = typesParam
       ? (typesParam.split(',').filter((t) => allTypes.includes(t as (typeof allTypes)[number])) as (typeof allTypes)[number][])
       : [...allTypes];
+
+    // Filter types based on workspace features — gracefully degrade.
+    // email + contact gated on `email`; meeting gated on `meetings`; kb gated
+    // on `drive`; process is core (always on).
+    const workspace = await getMyWorkspace(user.id, supabase);
+    const features = workspace?.features ?? DEFAULT_FEATURES;
+    const requestedTypes = initialRequestedTypes.filter((t) => {
+      if (t === 'email' || t === 'contact') return features.email;
+      if (t === 'meeting') return features.meetings;
+      if (t === 'kb') return features.drive;
+      return true;
+    });
 
     const hasQuery = q.trim().length > 0;
     const like = `%${q}%`;

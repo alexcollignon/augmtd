@@ -16,6 +16,8 @@ import { DocumentArtifact } from '@/lib/types/inbox';
 import { indexArtifact } from '@/lib/knowledge/indexer';
 import { getMimeType, getFileExt } from '@/lib/artifacts/builders';
 import { createClient as createAdminClient } from '@supabase/supabase-js';
+import { getMyWorkspace } from '@/lib/workspace/features';
+import { DEFAULT_FEATURES, type WorkspaceFeatures } from '@/lib/workspace/types';
 
 export const maxDuration = 60;
 
@@ -470,6 +472,10 @@ export async function POST(
       }
     }
 
+    // Resolve workspace features for graceful context degradation
+    const workspace = await getMyWorkspace(user.id, supabase);
+    const features: WorkspaceFeatures = workspace?.features ?? DEFAULT_FEATURES;
+
     // Build run context for document generation
     const runContext = {
       userId: user.id,
@@ -485,6 +491,7 @@ export async function POST(
       agentFileIds: agentFileIds.length > 0 ? agentFileIds : undefined,
       agentId: agentId || undefined,
       isTemporary: !!(thread as any).is_temporary,
+      features,
     };
 
     // ── Stream ────────────────────────────────────────────────────────────────
@@ -1068,6 +1075,8 @@ interface RunContext {
   /** Agent ID — used to trigger memory extraction after conversation */
   agentId?: string;
   isTemporary?: boolean;
+  /** Workspace feature flags — drives graceful degradation of context tools */
+  features: WorkspaceFeatures;
 }
 
 // ── Clarification validator ───────────────────────────────────────────────────
@@ -1137,6 +1146,12 @@ async function executeChatTool(
     }
 
     case 'search_knowledge_base': {
+      if (!ctx.features.drive) {
+        return {
+          result: 'Knowledge base access is not enabled for this workspace.',
+          summary: 'Drive module disabled',
+        };
+      }
       const query = input.query as string;
       const kbCtx = await buildKBContext(ctx.userId, query, ctx.adminClient, {
         fileLimit: 5,
@@ -1164,6 +1179,12 @@ async function executeChatTool(
     }
 
     case 'read_document': {
+      if (!ctx.features.drive) {
+        return {
+          result: 'Knowledge base access is not enabled for this workspace.',
+          summary: 'Drive module disabled',
+        };
+      }
       const fileId = input.file_id as string;
       const filename = (input.filename as string) || 'document';
       const MAX_CHARS = 12000;
@@ -1197,6 +1218,12 @@ async function executeChatTool(
     }
 
     case 'get_recent_emails': {
+      if (!ctx.features.email) {
+        return {
+          result: 'Email access is not enabled for this workspace.',
+          summary: 'Email module disabled',
+        };
+      }
       const filter = (input.filter as string) || '';
       const fromFilter = (input.from as string | undefined);
       const emailDateRange = (input.date_range as string | undefined);
@@ -1234,6 +1261,12 @@ async function executeChatTool(
     }
 
     case 'get_calendar_context': {
+      if (!ctx.features.meetings) {
+        return {
+          result: 'Calendar and meetings access is not enabled for this workspace.',
+          summary: 'Meetings module disabled',
+        };
+      }
       const calCtx = await getCalendarContext(ctx.userId, ctx.supabase);
       let meetings = calCtx?.upcomingMeetings ?? [];
 

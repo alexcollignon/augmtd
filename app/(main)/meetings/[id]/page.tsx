@@ -1,12 +1,15 @@
 import { createClient } from '@/lib/supabase/server';
 import { redirect, notFound } from 'next/navigation';
 import MeetingDetailClient from '@/app/meetings/[id]/meeting-detail-client';
+import { guardFeaturePage } from '@/lib/workspace/guards';
 
 export default async function MeetingDetailPage({
   params,
 }: {
   params: Promise<{ id: string }>;
 }) {
+  await guardFeaturePage('meetings');
+
   const { id } = await params;
   const supabase = await createClient();
 

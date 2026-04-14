@@ -1,12 +1,15 @@
 import { createClient } from '@/lib/supabase/server';
 import { redirect, notFound } from 'next/navigation';
 import RecordingDetailClient from '@/app/meetings/recording/[id]/recording-detail-client';
+import { guardFeaturePage } from '@/lib/workspace/guards';
 
 export default async function RecordingDetailPage({
   params,
 }: {
   params: Promise<{ id: string }>;
 }) {
+  await guardFeaturePage('meetings');
+
   const { id } = await params;
   const supabase = await createClient();
 

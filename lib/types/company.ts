@@ -2,15 +2,19 @@ export type CompanyRole = 'owner' | 'admin' | 'member';
 export type CompanyPlan = 'starter' | 'growth' | 'enterprise';
 export type InvitationStatus = 'pending' | 'accepted' | 'revoked';
 export type MemberStatus = 'active' | 'suspended';
+export type CompanyType = 'company' | 'beta' | 'pilot' | 'internal';
+export type CompanyStatus = 'active' | 'suspended' | 'deleting';
 
 export interface Company {
   id: string;
   name: string;
   slug: string;
   plan: CompanyPlan;
-  status: 'active' | 'suspended';
+  type: CompanyType;
+  status: CompanyStatus;
   settings: Record<string, unknown>;
-  join_code: string | null;
+  features: Record<string, boolean>;
+  join_code: string;
   created_at: string;
   updated_at: string;
 }

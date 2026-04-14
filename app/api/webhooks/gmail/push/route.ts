@@ -5,6 +5,7 @@ import { getGmailClient } from '@/lib/google/gmail';
 import { syncEmailsForConnection } from '@/lib/email-sync/sync-emails';
 import { syncCalendarForConnection } from '@/lib/calendar/sync-calendar';
 import { createBotsForCalendarEvents } from '@/lib/integrations/meeting-bot/bot-manager';
+import { featureEnabledForUser } from '@/lib/workspace/check-by-userid';
 
 export const maxDuration = 300;
 
@@ -67,6 +68,13 @@ async function processGmailPush(emailAddress: string, historyId: string) {
 
   if (!connection) {
     console.warn(`[GmailPush] No active connection found for ${emailAddress}`);
+    return;
+  }
+
+  // Workspace feature gate — if email is disabled for this user's workspace,
+  // acknowledge and skip (prevents Google retries while honoring feature flags).
+  if (!await featureEnabledForUser(adminSupabase, connection.user_id, 'email')) {
+    console.log(`[GmailPush] email feature disabled for user ${connection.user_id} — skipping`);
     return;
   }
 

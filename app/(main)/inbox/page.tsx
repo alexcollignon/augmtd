@@ -1,10 +1,13 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { InboxPageClient } from '@/app/inbox/inbox-page-client';
+import { guardFeaturePage } from '@/lib/workspace/guards';
 
 export const dynamic = 'force-dynamic';
 
 export default async function PreparedWorkPage() {
+  await guardFeaturePage('email');
+
   const supabase = await createClient();
 
   const { data: { user } } = await supabase.auth.getUser();

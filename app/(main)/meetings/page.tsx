@@ -1,8 +1,11 @@
 import { createClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
 import MeetingsPageClient from '@/app/meetings/meetings-page-client';
+import { guardFeaturePage } from '@/lib/workspace/guards';
 
 export default async function MeetingsPage() {
+  await guardFeaturePage('meetings');
+
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/login');

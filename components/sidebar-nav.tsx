@@ -17,12 +17,15 @@ import {
   ShieldCheckIcon,
 } from '@heroicons/react/24/outline';
 import { useRecordingContext } from '@/context/recording-context';
+import type { WorkspaceFeatures } from '@/lib/workspace/types';
+import { DEFAULT_FEATURES } from '@/lib/workspace/types';
 
 interface SidebarNavProps {
   userEmail?: string;
   avatarUrl?: string | null;
   tier?: 'standard' | 'private_shared' | 'bedrock_private' | 'bedrock_optimised' | null;
   isSuperAdmin?: boolean;
+  features?: WorkspaceFeatures;
 }
 
 function formatElapsed(secs: number) {
@@ -36,6 +39,7 @@ export default function SidebarNav({
   avatarUrl: avatarUrlProp = null,
   tier: tierProp = null,
   isSuperAdmin: isSuperAdminProp = false,
+  features = DEFAULT_FEATURES,
 }: SidebarNavProps) {
   const pathname = usePathname();
   const router = useRouter();
@@ -52,10 +56,10 @@ export default function SidebarNav({
   const [processNotifCount, setProcessNotifCount] = useState(0);
 
   const navigation = [
-    { name: 'Inbox', href: '/inbox', icon: EnvelopeIcon },
-    { name: 'Work', href: '/work', icon: Squares2X2Icon },
-    { name: 'Meetings', href: '/meetings', icon: VideoCameraIcon },
-    { name: 'Drive', href: '/drive', icon: FolderIcon },
+    ...(features.email    ? [{ name: 'Inbox',    href: '/inbox',    icon: EnvelopeIcon }]    : []),
+    { name: 'Work', href: '/work', icon: Squares2X2Icon }, // core — always shown
+    ...(features.meetings ? [{ name: 'Meetings', href: '/meetings', icon: VideoCameraIcon }] : []),
+    ...(features.drive    ? [{ name: 'Drive',    href: '/drive',    icon: FolderIcon }]      : []),
     ...(isSuperAdmin ? [{ name: 'Platform Admin', href: '/platform-admin', icon: ShieldCheckIcon }] : []),
   ];
 

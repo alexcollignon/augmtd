@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createMeetingBot } from '@/lib/integrations/meeting-bot/client';
 import { getOAuth2Client } from '@/lib/google/oauth';
+import { requireFeature, handleWorkspaceError } from '@/lib/workspace/require-feature';
 
 // POST /api/meetings/bot/adhoc
 // Schedule a bot for an ad-hoc meeting URL (no calendar event required).
@@ -9,6 +10,12 @@ export async function POST(request: NextRequest) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  try {
+    await requireFeature('meetings', supabase, user.id);
+  } catch (err) {
+    return handleWorkspaceError(err);
+  }
 
   if (!process.env.MEETING_BOT_SERVICE_URL) {
     return NextResponse.json({ error: 'Bot service not configured' }, { status: 500 });

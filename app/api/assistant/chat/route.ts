@@ -6,6 +6,8 @@ import { buildKBContext } from '@/lib/knowledge/build-kb-context';
 import { getCalendarContext } from '@/lib/calendar/calendar-context';
 import { formatCalendarContextForChat } from '@/lib/calendar/format-calendar-context';
 import { buildUserContextBlock } from '@/lib/context/build-user-context';
+import { getMyWorkspace } from '@/lib/workspace/features';
+import { DEFAULT_FEATURES } from '@/lib/workspace/types';
 export const maxDuration = 60;
 
 // ── System prompt ────────────────────────────────────────────────────────────
@@ -148,10 +150,14 @@ export async function POST(request: NextRequest) {
 
     const { client: aiClient, model: chatModel } = await getAIClient(user.id, 'conversation', supabase);
 
+    // Workspace features drive graceful degradation of context sources.
+    const workspace = await getMyWorkspace(user.id, supabase);
+    const features = workspace?.features ?? DEFAULT_FEATURES;
+
     const activeSources = sources?.length ? sources : ['inbox', 'kb', 'calendar'];
-    const fetchInbox = activeSources.includes('inbox') && mode !== 'reply' && context !== 'meeting';
-    const fetchKB = activeSources.includes('kb');
-    const fetchCal = activeSources.includes('calendar');
+    const fetchInbox = features.email    && activeSources.includes('inbox')    && mode !== 'reply' && context !== 'meeting';
+    const fetchKB    = features.drive    && activeSources.includes('kb');
+    const fetchCal   = features.meetings && activeSources.includes('calendar');
 
     // Admin client only needed for KB search
     const adminClient = fetchKB
@@ -198,8 +204,9 @@ export async function POST(request: NextRequest) {
         .eq('user_id', user.id)
         .order('updated_at', { ascending: false })
         .limit(5),
-      // Key contacts — only for meeting context
-      context === 'meeting'
+      // Key contacts — only for meeting context; gated on email (contacts are
+      // built from inbox data, so they degrade together).
+      context === 'meeting' && features.email
         ? supabase
             .from('relationship_graph')
             .select('contact_name, contact_email, relationship_type, importance, last_interaction, typical_topics')

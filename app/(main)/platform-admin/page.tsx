@@ -16,7 +16,7 @@ export default async function PlatformAdminPage() {
 
   const { data: companies } = await adminClient
     .from('companies')
-    .select('id, name, slug, plan, status, settings, created_at')
+    .select('id, name, slug, plan, type, status, features, join_code, settings, created_at')
     .order('created_at', { ascending: false });
 
   const { data: memberCounts } = await adminClient
@@ -29,8 +29,11 @@ export default async function PlatformAdminPage() {
     countMap[m.company_id] = (countMap[m.company_id] ?? 0) + 1;
   });
 
+  const { normalizeFeatures } = await import('@/lib/workspace/types');
+
   const companiesWithCount = (companies ?? []).map((c: any) => ({
     ...c,
+    features: normalizeFeatures(c.features),
     member_count: countMap[c.id] ?? 0,
     meeting_assistant: c.settings?.meeting_assistant ?? true,
   }));

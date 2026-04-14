@@ -5,6 +5,7 @@ import { getGraphClient } from '@/lib/microsoft/outlook';
 import { syncEmailsForConnection } from '@/lib/email-sync/sync-emails';
 import { syncCalendarForConnection } from '@/lib/calendar/sync-calendar';
 import { createBotsForCalendarEvents } from '@/lib/integrations/meeting-bot/bot-manager';
+import { featureEnabledForUser } from '@/lib/workspace/check-by-userid';
 
 export const maxDuration = 300;
 
@@ -90,6 +91,12 @@ async function processOutlookNotifications(notifications: any[]) {
 
       if (!connection) {
         console.warn(`[OutlookPush] No connection found for subscriptionId ${subscriptionId}`);
+        continue;
+      }
+
+      // Workspace feature gate — skip if email disabled for the user's workspace.
+      if (!await featureEnabledForUser(adminSupabase, connection.user_id, 'email')) {
+        console.log(`[OutlookPush] email feature disabled for user ${connection.user_id} — skipping`);
         continue;
       }
 

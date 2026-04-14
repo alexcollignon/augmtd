@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { requireFeature, handleWorkspaceError } from '@/lib/workspace/require-feature';
 
 const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25 MB
 
@@ -27,6 +28,12 @@ export async function POST(request: NextRequest) {
     const { data: { user }, error: userError } = await supabase.auth.getUser();
     if (userError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    try {
+      await requireFeature('drive', supabase, user.id);
+    } catch (err) {
+      return handleWorkspaceError(err);
     }
 
     const body = await request.json();
