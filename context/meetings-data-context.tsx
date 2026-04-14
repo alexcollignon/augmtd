@@ -1,0 +1,95 @@
+'use client';
+
+import { createContext, useContext } from 'react';
+import type { CalendarEvent } from '@/lib/types/meetings';
+import type { DriveFolder } from '@/lib/types/drive';
+import type { MeetingChatContext } from '@/components/meetings/meeting-chat-sidebar';
+
+export interface Transcript {
+  id: string;
+  calendarEventId: string | null;
+  title: string;
+  startTime: string;
+  durationMinutes: number;
+  workItemsGenerated: number;
+  processed: boolean;
+  botState: string | null;
+  source: 'bot' | 'recording' | 'upload' | 'text';
+  summary?: string | null;
+  processedAt?: string | null;
+  folderId?: string | null;
+  hasRecording: boolean;
+  hasDocument?: boolean;
+  attendees?: Array<{ email: string; name?: string }>;
+}
+
+export interface LiveBot {
+  title: string;
+  state: 'joining' | 'recording';
+  calendarEventId: string | null;
+  startedAt?: string;
+}
+
+export interface MeetingsDataContextType {
+  // Data
+  transcripts: Transcript[];
+  upcoming: CalendarEvent[];
+  folders: DriveFolder[];
+  botStateMap: Map<string, string>;
+  pendingAdhoc: { initiatedAt: string } | null;
+  loading: boolean;
+  userEmail: string;
+
+  // Derived
+  liveBots: LiveBot[];
+  isNew: (t: Transcript) => boolean;
+
+  // Data actions
+  fetchAll: () => Promise<void>;
+  handleScheduled: (eventId: string) => void;
+  handleCancelled: (eventId: string) => void;
+  handleDeleteTranscript: (id: string) => Promise<void>;
+  handleRetryFailed: (id: string) => Promise<void>;
+  handleCreateFolder: (name: string) => Promise<void>;
+  handleRenameFolder: (id: string, name: string) => Promise<void>;
+  handleDeleteFolder: (id: string) => Promise<void>;
+
+  // UI state shared between shell and subpages
+  activeMeetingContext: MeetingChatContext | null;
+  setActiveMeetingContext: (ctx: MeetingChatContext | null) => void;
+  filterPersonEmail: string | null;
+  setFilterPersonEmail: (email: string | null) => void;
+
+  // Shell actions called by subpages
+  openChatPanel: (autoMessage?: string) => void;
+  openCaptureModal: () => void;
+  openNewMeetingModal: () => void;
+}
+
+export const MeetingsDataContext = createContext<MeetingsDataContextType | null>(null);
+
+export function useMeetingsData(): MeetingsDataContextType {
+  const ctx = useContext(MeetingsDataContext);
+  if (!ctx) throw new Error('useMeetingsData must be used inside MeetingsShell');
+  return ctx;
+}
+
+export function mapTranscripts(raw: any[]): Transcript[] {
+  return raw.map((t) => ({
+    id: t.id,
+    calendarEventId: t.calendar_event_id,
+    title: t.title,
+    startTime: t.start_time,
+    durationMinutes: t.duration_minutes,
+    workItemsGenerated: t.work_items_generated,
+    processed: t.processed,
+    botState: t.bot_state ?? null,
+    source: t.source,
+    summary: t.summary,
+    processedAt: t.updated_at ?? null,
+    folderId: t.folder_id ?? null,
+    hasRecording: !!t.recording_storage_path,
+    hasDocument: !!t.has_document,
+    attendees: (t.attendees as any[]) ?? [],
+  }));
+}

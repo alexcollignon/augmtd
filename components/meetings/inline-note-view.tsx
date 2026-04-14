@@ -821,7 +821,7 @@ const handleRetry = async () => {
     // Calendar-event-linked recording
     if (recordingEventId) return recordingEventId === eventId;
     // Note-linked recording (ad-hoc, or note was created during recording)
-    if (recordingNoteId) return recordingNoteId === eventId || recordingNoteId === transcript?.id;
+    if (recordingNoteId) return recordingNoteId === eventId || recordingNoteId === transcript?.id || recordingNoteId === noteId;
     // No IDs yet — ad-hoc recording just started, matches only a truly empty note view
     return !eventId && !transcript;
   })();
@@ -1087,7 +1087,7 @@ const handleRetry = async () => {
       )}
 
       {/* ── ZONE C — Recording bar or capture pills ── */}
-      {!transcript && isThisNoteRecording && recording.state === 'recording' && (
+      {isThisNoteRecording && recording.state === 'recording' && (
         <div className="flex items-center gap-3 mb-4 px-3 py-2.5 bg-red-50 rounded-xl">
           <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse flex-shrink-0" />
           <span className="text-[12px] font-semibold text-red-600 tabular-nums">{fmtDuration(recording.elapsed)}</span>

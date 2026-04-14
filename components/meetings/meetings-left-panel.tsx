@@ -46,6 +46,12 @@ interface MeetingsLeftPanelProps {
   // Home navigation
   onNavigateHome: () => void;
   isHome: boolean;
+  // Active in-person recording (if any)
+  recordingState?: 'recording' | 'uploading' | 'processing' | null;
+  recordingElapsed?: number;
+  recordingNoteId?: string;
+  recordingTitle?: string;
+  onNavigateToRecording?: () => void;
 }
 
 function firstName(attendee: { email: string; name?: string }): string {
@@ -76,6 +82,12 @@ function getInitials(name?: string | null, email?: string | null): string {
   return (email?.[0] ?? '?').toUpperCase();
 }
 
+function fmtElapsed(secs: number) {
+  const m = Math.floor(secs / 60);
+  const s = secs % 60;
+  return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+}
+
 export default function MeetingsLeftPanel({
   transcripts,
   folders,
@@ -89,6 +101,10 @@ export default function MeetingsLeftPanel({
   onNewNote,
   onNavigateHome,
   isHome,
+  recordingState,
+  recordingElapsed,
+  recordingTitle,
+  onNavigateToRecording,
 }: MeetingsLeftPanelProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [newFolderOpen, setNewFolderOpen] = useState(false);
@@ -154,6 +170,28 @@ export default function MeetingsLeftPanel({
             />
           </div>
         </div>
+
+        {/* Recording in progress banner */}
+        {recordingState && onNavigateToRecording && (
+          <button
+            onClick={onNavigateToRecording}
+            className="flex-shrink-0 flex items-center gap-2 mx-2 mt-2 px-2.5 py-2 bg-red-50 hover:bg-red-100 rounded-xl transition-colors text-left w-[calc(100%-16px)]"
+          >
+            <span className={`w-2 h-2 rounded-full flex-shrink-0 ${recordingState === 'recording' ? 'bg-red-500 animate-pulse' : 'bg-amber-400 animate-pulse'}`} />
+            <div className="flex-1 min-w-0">
+              <p className="text-[11px] font-semibold text-red-600 truncate">
+                {recordingState === 'recording'
+                  ? `${fmtElapsed(recordingElapsed ?? 0)} · Recording`
+                  : recordingState === 'uploading'
+                  ? 'Uploading…'
+                  : 'Transcribing…'}
+              </p>
+              {recordingTitle && (
+                <p className="text-[10px] text-red-400 truncate">{recordingTitle}</p>
+              )}
+            </div>
+          </button>
+        )}
 
         <div className="flex-1 overflow-y-auto">
 
