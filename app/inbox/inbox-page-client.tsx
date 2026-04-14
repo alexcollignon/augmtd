@@ -11,7 +11,7 @@ import WorkDetailInline from '@/components/inbox/work-detail-inline';
 import AiChatPanel from '@/components/shared/ai-chat-panel';
 import WorkflowPanel from '@/components/inbox/workflow-panel';
 import MeetingsColumn from '@/components/inbox/meetings-column';
-import { ArrowPathIcon, ChatBubbleLeftIcon, SparklesIcon, Bars3Icon, QueueListIcon, ArchiveBoxArrowDownIcon, XMarkIcon, MagnifyingGlassIcon, PencilSquareIcon, CalendarDaysIcon, TrashIcon, PaperClipIcon } from '@heroicons/react/24/outline';
+import { ArrowPathIcon, ChatBubbleLeftIcon, SparklesIcon, Bars3Icon, QueueListIcon, ArchiveBoxArrowDownIcon, XMarkIcon, MagnifyingGlassIcon, PencilSquareIcon, CalendarDaysIcon, TrashIcon, PaperClipIcon, EnvelopeIcon } from '@heroicons/react/24/outline';
 import ComposePanel from '@/components/inbox/compose-panel';
 import { toast } from 'sonner';
 import type { CalendarEvent } from '@/lib/types/meetings';
@@ -740,17 +740,17 @@ export function InboxPageClient({
         {/* No connection */}
         {!hasConnection && (
           <div className="flex-1 flex items-center justify-center">
-            <div className="text-center max-w-sm">
-              <div className="w-14 h-14 mx-auto mb-4 bg-indigo-50 flex items-center justify-center">
-                <SparklesIcon className="w-7 h-7 text-indigo-600" />
+            <div className="text-center max-w-xs">
+              <div className="w-12 h-12 mx-auto mb-5 bg-primary-50 rounded-2xl flex items-center justify-center">
+                <EnvelopeIcon className="w-6 h-6 text-primary-500" />
               </div>
-              <h3 className="text-[17px] font-semibold text-neutral-900 mb-2">Connect Your Email</h3>
-              <p className="text-[14px] text-neutral-600 mb-6">
-                Connect Gmail or Outlook to start receiving AI-prepared work
+              <h3 className="text-[16px] font-semibold text-neutral-900 mb-1.5">Connect your email</h3>
+              <p className="text-[13px] text-neutral-400 mb-6 leading-relaxed">
+                Connect Gmail or Outlook and give your AI the busywork
               </p>
               <Link
                 href="/settings"
-                className="inline-flex items-center px-6 py-2.5 bg-indigo-600 text-white text-[14px] font-semibold hover:bg-indigo-700 transition-all"
+                className="inline-flex items-center px-5 py-2 bg-primary-500 text-white text-[13px] font-medium rounded-xl hover:bg-primary-600 transition-colors"
               >
                 Go to Settings
               </Link>
