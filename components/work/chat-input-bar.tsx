@@ -14,13 +14,14 @@ import {
   Cog6ToothIcon,
   UserIcon,
   CodeBracketIcon,
+  GlobeAltIcon,
 } from '@heroicons/react/24/outline';
 
 export const CHAT_SOURCES = [
   { id: 'kb', label: 'Knowledge base' },
   { id: 'inbox', label: 'Inbox & emails' },
   { id: 'calendar', label: 'Calendar' },
-  { id: 'processes', label: 'Active processes' },
+  { id: 'web', label: 'Web search' },
 ] as const;
 
 export type SourceId = (typeof CHAT_SOURCES)[number]['id'];
@@ -99,6 +100,9 @@ interface Props {
   defaultValue?: string;
   placeholder?: string;
   threadId?: string;
+  /** Controlled web toggle — when provided, parent owns the state */
+  webEnabled?: boolean;
+  onWebToggle?: (enabled: boolean) => void;
 }
 
 export function ChatInputBar({
@@ -114,8 +118,21 @@ export function ChatInputBar({
   defaultValue = '',
   placeholder = 'Ask anything...',
   threadId,
+  webEnabled: controlledWebEnabled,
+  onWebToggle,
 }: Props) {
   const [value, setValue] = useState(defaultValue);
+  const [localWebEnabled, setLocalWebEnabled] = useState(false);
+  // Controlled mode when parent passes webEnabled; otherwise self-managed
+  const isControlled = controlledWebEnabled !== undefined;
+  const webEnabled = isControlled ? controlledWebEnabled : localWebEnabled;
+  const toggleWeb = () => {
+    if (isControlled) {
+      onWebToggle?.(!controlledWebEnabled);
+    } else {
+      setLocalWebEnabled(v => !v);
+    }
+  };
 
   // Mention dropdown state
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
@@ -134,6 +151,11 @@ export function ChatInputBar({
   useEffect(() => {
     if (autoFocus) textareaRef.current?.focus();
   }, [autoFocus]);
+
+  // Reset local (uncontrolled) web toggle when switching threads
+  useEffect(() => {
+    if (!isControlled) setLocalWebEnabled(false);
+  }, [threadId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (defaultValue) {
@@ -334,7 +356,9 @@ export function ChatInputBar({
     setPendingMentions([]);
     setMentionQuery(null);
     setSelectedCategory(null);
-    onSubmit?.(msg, ['kb', 'inbox', 'calendar', 'processes'], submitMentions);
+    const sources: SourceId[] = ['kb', 'inbox', 'calendar'];
+    if (webEnabled) sources.push('web');
+    onSubmit?.(msg, sources, submitMentions);
   }
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -576,6 +600,19 @@ export function ChatInputBar({
           >
             <PaperClipIcon className="w-3.5 h-3.5" />
             Attach
+          </button>
+
+          {/* Web search toggle */}
+          <button
+            onClick={toggleWeb}
+            className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[12px] transition-colors ${
+              webEnabled
+                ? 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100'
+                : 'text-neutral-500 hover:bg-neutral-100 hover:text-neutral-700'
+            }`}
+          >
+            <GlobeAltIcon className="w-3.5 h-3.5" />
+            Web
           </button>
 
           {/* Send */}

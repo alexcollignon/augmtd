@@ -11,6 +11,7 @@ import { buildInboxSnapshot } from '@/lib/inbox/chat-context';
 import { getCalendarContext } from '@/lib/calendar/calendar-context';
 import { formatCalendarContextForChat } from '@/lib/calendar/format-calendar-context';
 import { buildKBContext } from '@/lib/knowledge/build-kb-context';
+import { executeWebSearch, executeFetchUrl, executeRssFeed } from '@/lib/tools';
 import type { WorkflowStep, StepOutput, ToolStep, AIStep, AgentStep } from './types';
 
 export interface StepContext {
@@ -18,6 +19,7 @@ export interface StepContext {
   supabase: SupabaseClient;   // service-role client — runs as system, no auth.uid()
   previousOutputs: StepOutput[];
   workflowName: string;
+  lastRunAt?: string | null;  // workflow.last_run_at — used by rss_feed since:'last_run'
 }
 
 // ── Public entrypoint ─────────────────────────────────────────────────────────
@@ -75,7 +77,9 @@ async function executeToolStep(step: ToolStep, ctx: StepContext): Promise<string
     case 'get_urgent_emails': return await toolGetUrgentEmails(step.config, ctx);
     case 'get_calendar':      return await toolGetCalendar(ctx);
     case 'read_kb_file':      return await toolReadKbFile(step.config, ctx);
-    case 'web_search':        return await toolWebSearch(step.config, ctx);
+    case 'web_search':        return await executeWebSearch(step.config);
+    case 'fetch_url':         return await executeFetchUrl(step.config);
+    case 'rss_feed':          return await executeRssFeed(step.config, ctx.lastRunAt);
     default:
       throw new Error(`Unknown tool: ${step.tool}`);
   }
@@ -123,39 +127,6 @@ async function toolReadKbFile(
     .slice(0, 12000);
 }
 
-// web_search is a stub until a provider is wired (Tavily/Perplexity/SerpAPI).
-// Returns an honest placeholder so workflows referencing it don't silently fail.
-async function toolWebSearch(
-  config: Record<string, unknown>,
-  _ctx: StepContext,
-): Promise<string> {
-  const query = typeof config.query === 'string' ? config.query : '(no query)';
-  const key = process.env.TAVILY_API_KEY;
-  if (!key) {
-    return `[web_search stub] Query: "${query}"\n\nWeb search is not configured. Add TAVILY_API_KEY to enable live results.`;
-  }
-  // Minimal Tavily integration — opt-in via env var.
-  try {
-    const res = await fetch('https://api.tavily.com/search', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        api_key: key,
-        query,
-        max_results: typeof config.max_results === 'number' ? config.max_results : 6,
-        search_depth: config.search_depth === 'advanced' ? 'advanced' : 'basic',
-      }),
-    });
-    if (!res.ok) return `[web_search error] ${res.status} ${res.statusText}`;
-    const data = await res.json() as { results?: Array<{ title: string; url: string; content: string }> };
-    if (!data.results || data.results.length === 0) return `[web_search] No results for "${query}".`;
-    return data.results.map((r, i) =>
-      `${i + 1}. ${r.title}\n   ${r.url}\n   ${r.content?.slice(0, 400) ?? ''}`
-    ).join('\n\n');
-  } catch (e) {
-    return `[web_search error] ${e instanceof Error ? e.message : String(e)}`;
-  }
-}
 
 // ── AI step ───────────────────────────────────────────────────────────────────
 

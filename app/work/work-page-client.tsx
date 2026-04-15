@@ -96,6 +96,8 @@ export function WorkPageClient({
   );
   const [pendingInput, setPendingInput] = useState<string | null>(initialChatInput || null);
   const [pendingMentions, setPendingMentions] = useState<MentionChip[]>([]);
+  const [pendingSources, setPendingSources] = useState<SourceId[]>(['kb', 'inbox', 'calendar']);
+  const [webEnabled, setWebEnabled] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<Array<{ id: string; file: File }>>([]);
   const [pendingAttachmentMeta, setPendingAttachmentMeta] = useState<Array<{ id: string; name: string }>>([]);
   const [isAttachUploading, setIsAttachUploading] = useState(false);
@@ -216,12 +218,15 @@ export function WorkPageClient({
     setActiveThreadId(threadId);
   }
 
-  // Enrich threads with agent name/color for the sidebar tag — always show all threads
-  const visibleThreads = threads.map((t) => {
-    if (!t.agent_id) return t;
-    const ag = initialAgents.find(a => a.id === t.agent_id);
-    return ag ? { ...t, agent_name: ag.name, agent_color: ag.color } : t;
-  });
+  // Enrich threads with agent name/color for the sidebar tag.
+  // Exclude workflow run threads — they live in Studio, not chat history.
+  const visibleThreads = threads
+    .filter(t => !t.workflow_id)
+    .map((t) => {
+      if (!t.agent_id) return t;
+      const ag = initialAgents.find(a => a.id === t.agent_id);
+      return ag ? { ...t, agent_name: ag.name, agent_color: ag.color } : t;
+    });
 
   // ── One-time contact backfill — seeds relationship_graph if empty ────────
   useEffect(() => {
@@ -237,6 +242,7 @@ export function WorkPageClient({
 
   // Keep activeThreadIdRef current so drag closure is never stale
   useEffect(() => { activeThreadIdRef.current = activeThreadId; }, [activeThreadId]);
+
 
   // ── Window drag listeners — always active regardless of which view is showing ─
   useEffect(() => {
@@ -360,7 +366,7 @@ export function WorkPageClient({
     setPendingFiles(prev => prev.filter(p => p.id !== chipId));
   }
 
-  async function handleCreateThread(message?: string, _sources?: SourceId[], mentions?: MentionChip[]) {
+  async function handleCreateThread(message?: string, sources?: SourceId[], mentions?: MentionChip[]) {
     if (isCreating) return;
     setIsCreating(true);
     try {
@@ -401,6 +407,10 @@ export function WorkPageClient({
       setActiveThreadId(id);
       if (message) setPendingInput(message);
       if (mentions?.length) setPendingMentions(mentions);
+      if (sources?.length) {
+        setPendingSources(sources);
+        setWebEnabled(sources.includes('web'));
+      }
 
       if (filesToUpload.length > 0 && id) {
         // Upload in background; block auto-send until metadata is ready
@@ -446,6 +456,7 @@ export function WorkPageClient({
 
   function handleSelectThread(id: string) {
     setActiveThreadId(id);
+    setWebEnabled(false);
     setPendingInput(null);
     setPendingMentions([]);
     setPendingFiles([]);
@@ -535,7 +546,7 @@ export function WorkPageClient({
               <div className="px-3.5 pt-2 pb-1 flex items-center justify-between flex-shrink-0">
                 <span className="text-[10.5px] font-semibold text-neutral-400 uppercase tracking-wider">Chat history</span>
                 <button
-                  onClick={() => { setActiveThreadId(null); setPendingInput(null); setPendingMentions([]); setPendingFiles([]); setPendingAttachmentMeta([]); setIsAttachUploading(false); }}
+                  onClick={() => { setActiveThreadId(null); setWebEnabled(false); setPendingInput(null); setPendingMentions([]); setPendingFiles([]); setPendingAttachmentMeta([]); setIsAttachUploading(false); }}
                   className="p-0.5 rounded hover:bg-neutral-100 text-neutral-400 hover:text-neutral-600 transition-colors"
                   title="New chat"
                 >
@@ -630,9 +641,10 @@ export function WorkPageClient({
               agent={initialAgents.find(a => a.id === (activeThread.agent_id ?? activeAgentId))}
               pendingInput={pendingInput}
               pendingMentions={pendingMentions}
+              pendingSources={pendingSources}
               pendingAttachmentMeta={pendingAttachmentMeta}
               isAttachUploading={isAttachUploading}
-              onPendingInputConsumed={() => { setPendingInput(null); setPendingMentions([]); setPendingAttachmentMeta([]); }}
+              onPendingInputConsumed={() => { setPendingInput(null); setPendingMentions([]); setPendingSources(['kb', 'inbox', 'calendar']); setPendingAttachmentMeta([]); }}
               onTitleUpdate={handleThreadTitleUpdate}
               onArtifactsUpdate={handleThreadArtifactsUpdate}
               onViewArtifact={handleViewArtifact}
@@ -650,6 +662,8 @@ export function WorkPageClient({
                   fetchStudioWorkflows(workflowId).finally(() => setStudioLoading(false));
                 }
               }}
+              webEnabled={webEnabled}
+              onWebToggle={setWebEnabled}
               externalDroppedFiles={droppedFiles}
               onDropConsumed={() => setDroppedFiles([])}
               externalSnippet={droppedSnippet}
@@ -740,6 +754,7 @@ interface ActiveChatViewProps {
   agent?: SidebarAgent;
   pendingInput: string | null;
   pendingMentions?: MentionChip[];
+  pendingSources?: SourceId[];
   pendingAttachmentMeta?: Array<{ id: string; name: string }>;
   isAttachUploading?: boolean;
   onPendingInputConsumed: () => void;
@@ -751,6 +766,8 @@ interface ActiveChatViewProps {
   onArtifactPanelToggle?: () => void;
   onThreadRemove?: (id: string) => void;
   onBackToWorkflow?: (workflowId: string) => void;
+  webEnabled?: boolean;
+  onWebToggle?: (enabled: boolean) => void;
   externalDroppedFiles?: File[];
   onDropConsumed?: () => void;
   externalSnippet?: { id: string; name: string; snippetContent: string } | null;
@@ -763,6 +780,7 @@ function ActiveChatView({
   agent,
   pendingInput,
   pendingMentions = [],
+  pendingSources = ['kb', 'inbox', 'calendar'],
   pendingAttachmentMeta = [],
   isAttachUploading = false,
   onPendingInputConsumed,
@@ -774,6 +792,8 @@ function ActiveChatView({
   onArtifactPanelToggle,
   onThreadRemove,
   onBackToWorkflow,
+  webEnabled,
+  onWebToggle,
   externalDroppedFiles,
   onDropConsumed,
   externalSnippet,
@@ -878,7 +898,7 @@ function ActiveChatView({
     if (!pendingInput || isLoading || isStreaming || isAttachUploading || hasSentPending.current) return;
     hasSentPending.current = true;
     onPendingInputConsumed();
-    handleSubmit(pendingInput, ['kb', 'inbox', 'calendar'], pendingMentions, pendingAttachmentMeta);
+    handleSubmit(pendingInput, pendingSources, pendingMentions, pendingAttachmentMeta);
   }, [pendingInput, isLoading, isAttachUploading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-scroll
@@ -1402,6 +1422,8 @@ function ActiveChatView({
             loading={isStreaming}
             placeholder="Ask anything..."
             threadId={thread.id}
+            webEnabled={webEnabled}
+            onWebToggle={onWebToggle}
           />
 
         </div>

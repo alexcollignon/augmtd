@@ -18,6 +18,7 @@ import { getMimeType, getFileExt } from '@/lib/artifacts/builders';
 import { createClient as createAdminClient } from '@supabase/supabase-js';
 import { getMyWorkspace } from '@/lib/workspace/features';
 import { DEFAULT_FEATURES, type WorkspaceFeatures } from '@/lib/workspace/types';
+import { webSearchDefinition, fetchUrlDefinition, executeWebSearch, executeFetchUrl } from '@/lib/tools';
 
 export const maxDuration = 60;
 
@@ -337,10 +338,9 @@ export async function POST(
     }
 
     // Build tools based on heuristic route — model gets full tool set unless trivially conversational
-    const allSources = ['kb', 'inbox', 'calendar'];
     const tools = routeMode === 'no_tools'
       ? []
-      : buildChatTools(allSources, chatEndpoint.provider, modelFamily);
+      : buildChatTools(sources, chatEndpoint.provider, modelFamily);
 
     // Build message history — system goes first, then conversation.
     // The last user message is augmented with mention context so "what is this about?"
@@ -937,6 +937,14 @@ function buildChatTools(sources: string[], _provider: string, _modelFamily: stri
     });
   }
 
+  // ── Web tools — available when user enables web search ─────────────────────
+  if (sources.includes('web')) {
+    neutral.push(
+      webSearchDefinition,
+      fetchUrlDefinition,
+    );
+  }
+
   // ── Action tools ────────────────────────────────────────────────────────────
   neutral.push(
     {
@@ -1012,6 +1020,8 @@ function toolLabel(name: string): string {
     read_document: 'Reading document',
     get_recent_emails: 'Checking recent emails',
     get_calendar_context: 'Checking calendar',
+    web_search: 'Searching the web',
+    fetch_url: 'Reading page',
     request_clarification: 'Preparing options',
     generate_document: 'Generating document',
   };
@@ -1386,6 +1396,18 @@ async function executeChatTool(
       };
       const summary = `${typeLabels[type] || 'Document'} created`;
       return { result: `Document created successfully: ${artifact.title}`, summary, artifact };
+    }
+
+    case 'web_search': {
+      const result = await executeWebSearch(input);
+      const query = typeof input.query === 'string' ? input.query : '';
+      return { result, summary: `Web search: ${query.slice(0, 50)}` };
+    }
+
+    case 'fetch_url': {
+      const result = await executeFetchUrl(input);
+      const urls = Array.isArray(input.urls) ? input.urls : [];
+      return { result, summary: `Read ${urls.length} page${urls.length !== 1 ? 's' : ''}` };
     }
 
     default:

@@ -38,7 +38,9 @@ const AVAILABLE_TOOLS = [
   { id: 'get_urgent_emails', label: 'Fetch urgent unread emails', description: 'Pulls unread items from your inbox with sender, subject, preview.' },
   { id: 'get_calendar',      label: 'Fetch upcoming calendar',   description: 'Returns your next meetings with attendees and times.' },
   { id: 'read_kb_file',      label: 'Read a knowledge base file', description: 'Returns the full content of one KB file by id.' },
-  { id: 'web_search',        label: 'Search the web',            description: 'Runs a web search (requires TAVILY_API_KEY to be set).' },
+  { id: 'web_search',        label: 'Search the web',            description: 'Give it a topic and it finds relevant pages — like asking Google. Use this when you don\'t know which site has the info.' },
+  { id: 'fetch_url',         label: 'Read a specific web page',  description: 'Reads the full current content of a URL every run. Good for pages without a feed — a pricing page, job board, or competitor site. Returns the whole page each time.' },
+  { id: 'rss_feed',          label: 'Follow a news feed or blog', description: 'For sites that publish a feed (most news sites and blogs). Returns only new articles since your last run — no duplicates, clean titles and dates. Look for the RSS icon on the site, or try adding /feed to the URL.' },
 ];
 
 export function StudioBuilder({ workflow: initialWorkflow, agents, onClose, onBack }: Props) {
@@ -241,10 +243,13 @@ function Panel({ title, children }: { title: string; children: React.ReactNode }
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
     <div>
-      <label className="block text-[11.5px] font-medium text-neutral-500 mb-1">{label}</label>
+      <div className="flex items-baseline gap-2 mb-1">
+        <label className="text-[11.5px] font-medium text-neutral-500">{label}</label>
+        {hint && <span className="text-[10.5px] text-neutral-400">{hint}</span>}
+      </div>
       {children}
     </div>
   );
@@ -407,6 +412,37 @@ function ToolStepFields({ step, onUpdate }: { step: ToolStep; onUpdate: (p: Part
             placeholder="e.g. Germany Portugal business news today"
             className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-[13px]" />
         </Field>
+      )}
+      {step.tool === 'fetch_url' && (
+        <Field label="URLs to fetch" hint="One URL per line, max 5">
+          <textarea
+            value={Array.isArray(step.config.urls) ? (step.config.urls as string[]).join('\n') : (step.config.urls as string) ?? ''}
+            onChange={e => onUpdate({ config: { ...step.config, urls: e.target.value.split('\n').map(s => s.trim()).filter(Boolean) } })}
+            placeholder={'https://example.com/pricing\nhttps://competitor.com/blog'}
+            rows={3}
+            className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-[13px] resize-y font-mono focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400" />
+        </Field>
+      )}
+      {step.tool === 'rss_feed' && (
+        <>
+          <Field label="Feed URLs" hint="One URL per line">
+            <textarea
+              value={Array.isArray(step.config.feeds) ? (step.config.feeds as string[]).join('\n') : (step.config.feeds as string) ?? ''}
+              onChange={e => onUpdate({ config: { ...step.config, feeds: e.target.value.split('\n').map(s => s.trim()).filter(Boolean) } })}
+              placeholder={'https://hnrss.org/frontpage\nhttps://feeds.feedburner.com/example'}
+              rows={3}
+              className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-[13px] resize-y font-mono focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400" />
+          </Field>
+          <Field label="Time window">
+            <select value={(step.config.since as string) ?? 'last_run'}
+              onChange={e => onUpdate({ config: { ...step.config, since: e.target.value } })}
+              className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-[13px] bg-white">
+              <option value="last_run">Since last run</option>
+              <option value="24h">Past 24 hours</option>
+              <option value="7d">Past 7 days</option>
+            </select>
+          </Field>
+        </>
       )}
       {step.tool === 'read_kb_file' && (
         <Field label="Knowledge file id">

@@ -275,6 +275,7 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
       supabase: admin,
       previousOutputs: stepOutputs,
       workflowName: workflow.name,
+      lastRunAt: workflow.last_run_at,
     });
     stepOutputs.push(out);
     if (out.error) {
