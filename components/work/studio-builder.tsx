@@ -305,6 +305,9 @@ function TriggerEditor({ trigger, onChange }: { trigger: WorkflowTrigger; onChan
       </div>
       {trigger.type === 'schedule' && (
         <div className="pt-3 space-y-3">
+          <p className="text-[11.5px] text-amber-600 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+            Workflows run once daily. Time is approximate — the dispatch fires at 9am UTC.
+          </p>
           <Field label="Preset">
             <select
               value={trigger.cron ?? ''}
