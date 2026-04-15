@@ -44,12 +44,7 @@ export async function GET(
     const ilikeFilter = tokens.map((t: string) => `title.ilike.%${t}%`).join(',');
 
     // Parallel queries
-    const [processesRes, threadsRes, filesRes, priorRes] = await Promise.all([
-      supabase
-        .from('processes')
-        .select('id, title, status')
-        .or(ilikeFilter)
-        .limit(3),
+    const [threadsRes, filesRes, priorRes] = await Promise.all([
       supabase
         .from('work_threads')
         .select('id, title')
@@ -72,9 +67,6 @@ export async function GET(
         .limit(3),
     ]);
 
-    const processes = (processesRes.data ?? []).map((p) => ({
-      id: p.id, title: p.title, status: p.status, score: matchScore(p.title),
-    }));
     const threads = (threadsRes.data ?? []).map((t) => ({
       id: t.id, title: t.title, score: matchScore(t.title),
     }));
@@ -86,7 +78,7 @@ export async function GET(
       calendarEventId: m.calendar_event_id, score: matchScore(m.title),
     }));
 
-    return NextResponse.json({ processes, threads, files, priorMeetings });
+    return NextResponse.json({ threads, files, priorMeetings });
   } catch (error) {
     console.error('[Meetings/LinkedWork] Error:', error);
     return NextResponse.json({ error: String(error) }, { status: 500 });

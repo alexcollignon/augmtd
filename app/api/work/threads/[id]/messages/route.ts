@@ -86,18 +86,12 @@ export async function POST(
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
 
-    const [toolRegistry, kbContext, userContextBlock, calendarCtx, inboxSnapshot, processListResult] = await Promise.all([
+    const [toolRegistry, kbContext, userContextBlock, calendarCtx, inboxSnapshot] = await Promise.all([
       buildToolRegistry(user.id, supabase),
       buildKBContext(user.id, content, adminClient, { fileLimit: 6, maxChunksPerFile: 3, threshold: 0.2, maxTotalChars: 12000 }),
       buildUserContextBlock(user.id, supabase),
       getCalendarContext(user.id, supabase),
       buildInboxSnapshot(user.id, content, supabase),
-      supabase
-        .from('processes')
-        .select('id, title, status, current_step_index')
-        .in('status', ['active', 'in_progress'])
-        .order('updated_at', { ascending: false })
-        .limit(8),
     ]);
     const systemPrompt = buildSystemPrompt(toolRegistry);
 
@@ -116,11 +110,7 @@ export async function POST(
       ? `\n\nINBOX SNAPSHOT (recent relevant emails — use when the user asks about emails, people, or ongoing conversations):\n${snapshotText}`
       : '';
 
-    const processes = (processListResult.data ?? []) as Array<{ id: string; title: string; status: string; current_step_index?: number }>;
-    const processNote = processes.length
-      ? `\n\nACTIVE PROCESSES (team workflows currently running — reference when the user asks about ongoing work):\n` +
-        processes.map(p => `- "${p.title}" [id: ${p.id}] — ${p.status}${p.current_step_index != null ? `, step ${p.current_step_index + 1}` : ''}`).join('\n')
-      : '';
+    const processNote = '';
 
     // On the very first message (no existing plan), inject a strong reminder that a plan is required now.
     const isFirstMessage = !thread.plan;

@@ -90,10 +90,10 @@ export async function DELETE(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Load artifact(s) + process link before deleting so we can clean up storage and reset the step
+    // Load artifact(s) before deleting so we can clean up storage
     const { data: thread } = await supabase
       .from('work_threads')
-      .select('artifact, artifacts, user_attachments, process_id, process_step_index')
+      .select('artifact, artifacts, user_attachments')
       .eq('id', threadId)
       .eq('user_id', user.id)
       .single();
@@ -164,22 +164,6 @@ export async function DELETE(
         await adminClient.from('knowledge_chunks').delete().in('file_id', kbFileIds);
         await adminClient.from('knowledge_files').delete().in('id', kbFileIds);
       }
-    }
-
-    // If this thread was linked to a process step, reset the step artifact so the user
-    // knows they need to regenerate (the artifact file no longer exists in storage)
-    const processId = (thread as any)?.process_id as string | null;
-    const processStepIndex = (thread as any)?.process_step_index as number | null;
-    if (processId !== null && processId !== undefined && processStepIndex !== null && processStepIndex !== undefined) {
-      const adminClient = (await import('@supabase/supabase-js')).createClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.SUPABASE_SERVICE_ROLE_KEY!
-      );
-      await adminClient
-        .from('process_steps')
-        .update({ artifact: null, status: 'pending' })
-        .eq('process_id', processId)
-        .eq('step_index', processStepIndex);
     }
 
     // Remove thread from work_patterns.recentWorkflows and recompute aggregates

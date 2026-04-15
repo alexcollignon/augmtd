@@ -9,11 +9,12 @@ export interface WorkspaceFeatures {
   meetings: boolean;
   drive: boolean;
   agents: boolean;
+  studio: boolean;
 }
 
 export type FeatureKey = keyof WorkspaceFeatures;
 
-export const FEATURE_KEYS: FeatureKey[] = ['email', 'meetings', 'drive', 'agents'];
+export const FEATURE_KEYS: FeatureKey[] = ['email', 'meetings', 'drive', 'agents', 'studio'];
 
 // All workspace types default to ALL features enabled. Admin opts OUT via the
 // platform admin UI. Rationale: users confirmed default-on semantics.
@@ -22,6 +23,7 @@ export const DEFAULT_FEATURES: WorkspaceFeatures = {
   meetings: true,
   drive: true,
   agents: true,
+  studio: true,
 };
 
 export const DEFAULT_FEATURES_FOR_TYPE: Record<WorkspaceType, WorkspaceFeatures> = {
@@ -57,5 +59,6 @@ export function normalizeFeatures(raw: unknown): WorkspaceFeatures {
     meetings: typeof input.meetings === 'boolean' ? input.meetings : DEFAULT_FEATURES.meetings,
     drive:    typeof input.drive    === 'boolean' ? input.drive    : DEFAULT_FEATURES.drive,
     agents:   typeof input.agents   === 'boolean' ? input.agents   : DEFAULT_FEATURES.agents,
+    studio:   typeof input.studio   === 'boolean' ? input.studio   : DEFAULT_FEATURES.studio,
   };
 }

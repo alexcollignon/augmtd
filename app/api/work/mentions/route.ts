@@ -4,7 +4,7 @@ import { getMyWorkspace } from '@/lib/workspace/features';
 import { DEFAULT_FEATURES } from '@/lib/workspace/types';
 
 interface MentionResult {
-  type: 'email' | 'meeting' | 'kb' | 'process' | 'contact';
+  type: 'email' | 'meeting' | 'kb' | 'contact';
   id: string;
   label: string;
   subtitle?: string;
@@ -33,14 +33,13 @@ export async function GET(request: NextRequest) {
     const { searchParams } = request.nextUrl;
     const q = searchParams.get('q') ?? '';
     const typesParam = searchParams.get('types');
-    const allTypes = ['email', 'meeting', 'kb', 'process', 'contact'] as const;
+    const allTypes = ['email', 'meeting', 'kb', 'contact'] as const;
     const initialRequestedTypes = typesParam
       ? (typesParam.split(',').filter((t) => allTypes.includes(t as (typeof allTypes)[number])) as (typeof allTypes)[number][])
       : [...allTypes];
 
     // Filter types based on workspace features — gracefully degrade.
-    // email + contact gated on `email`; meeting gated on `meetings`; kb gated
-    // on `drive`; process is core (always on).
+    // email + contact gated on `email`; meeting gated on `meetings`; kb gated on `drive`.
     const workspace = await getMyWorkspace(user.id, supabase);
     const features = workspace?.features ?? DEFAULT_FEATURES;
     const requestedTypes = initialRequestedTypes.filter((t) => {
@@ -96,36 +95,6 @@ export async function GET(request: NextRequest) {
       queries.kb = kbQuery as unknown as Promise<{ data: any[] | null; error: unknown }>;
     }
 
-    if (requestedTypes.includes('process')) {
-      // Fetch processes where user is owner OR assignee on any step
-      const [ownedRes, assignedRes] = await Promise.all([
-        supabase
-          .from('processes')
-          .select('id, title, status')
-          .eq('owner_id', user.id)
-          .order('updated_at', { ascending: false })
-          .limit(limit) as unknown as Promise<{ data: any[] | null; error: unknown }>,
-        supabase
-          .from('process_steps')
-          .select('process_id, processes(id, title, status)')
-          .eq('assignee_id', user.id)
-          .limit(limit) as unknown as Promise<{ data: any[] | null; error: unknown }>,
-      ]);
-      const seen = new Set<string>();
-      const processRows: Record<string, unknown>[] = [];
-      for (const row of (ownedRes.data ?? [])) {
-        if (!seen.has(row.id)) { seen.add(row.id); processRows.push(row); }
-      }
-      for (const row of (assignedRes.data ?? [])) {
-        const p = (row as Record<string, unknown>).processes as Record<string, unknown> | null;
-        if (p && !seen.has(p.id as string)) { seen.add(p.id as string); processRows.push(p); }
-      }
-      const filtered = hasQuery
-        ? processRows.filter(r => String(r.title ?? '').toLowerCase().includes(q.toLowerCase()))
-        : processRows;
-      queries.process = Promise.resolve({ data: filtered.slice(0, limit), error: null });
-    }
-
     if (requestedTypes.includes('contact')) {
       let contactQuery = supabase
         .from('relationship_graph')
@@ -172,14 +141,6 @@ export async function GET(request: NextRequest) {
               id: row.id as string,
               label: row.filename as string,
               subtitle: 'Drive & Knowledge base',
-            });
-            break;
-          case 'process':
-            mentions.push({
-              type: 'process',
-              id: row.id as string,
-              label: row.title as string,
-              subtitle: row.status as string,
             });
             break;
           case 'contact':

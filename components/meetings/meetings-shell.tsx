@@ -316,9 +316,6 @@ export default function MeetingsShell({
     router.push(`/work/new${params.toString() ? `?${params.toString()}` : ''}`);
   };
 
-  const handleOpenProcess = (processId: string) => {
-    router.push(`/processes/${processId}`);
-  };
 
   return (
     <MeetingsDataContext.Provider value={contextValue}>
@@ -460,7 +457,6 @@ export default function MeetingsShell({
                     onClose={() => { setRightPanel(null); setChatAutoMessage(undefined); }}
                     meetingContext={activeMeetingContext}
                     onOpenWorkflow={handleOpenWorkflow}
-                    onOpenProcess={handleOpenProcess}
                     autoMessage={chatAutoMessage}
                     onSwitchPanel={() => setRightPanel('calendar')}
                   />

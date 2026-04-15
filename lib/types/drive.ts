@@ -1,7 +1,7 @@
-export type DriveFileSource = 'workflow' | 'process' | 'meeting';
+export type DriveFileSource = 'workflow' | 'meeting';
 
 export interface DriveAugmtdFile {
-  id: string;            // artifactId within work_threads.artifacts or process_steps.artifact
+  id: string;            // artifactId within work_threads.artifacts
   title: string;
   type: string;          // DeliverableType
   source: DriveFileSource;
@@ -9,8 +9,6 @@ export interface DriveAugmtdFile {
   size_bytes?: number;
   generated_at: string;
   work_thread_id?: string;
-  process_id?: string;
-  process_step_index?: number;
   storage_path?: string;
   is_indexed?: boolean;
   transcript_id?: string; // for meeting transcripts

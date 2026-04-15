@@ -150,7 +150,7 @@ export async function POST(
 
     const { data: thread, error: threadError } = await supabase
       .from('work_threads')
-      .select('id, title, user_attachments, process_id, process_step_index, artifacts, is_temporary')
+      .select('id, title, user_attachments, artifacts, is_temporary')
       .eq('id', threadId)
       .eq('user_id', user.id)
       .single();
@@ -160,7 +160,7 @@ export async function POST(
     }
 
     const body = await request.json();
-    const { content, sources = ['kb', 'inbox', 'calendar', 'processes'], mentions = [], attachments = [], agentId } = body as {
+    const { content, sources = ['kb', 'inbox', 'calendar'], mentions = [], attachments = [], agentId } = body as {
       content: string;
       sources?: string[];
       mentions?: Array<{ id: string; type: string; label: string; subtitle?: string }>;
@@ -202,14 +202,8 @@ export async function POST(
       .limit(40);
 
     // Build static context + smart pre-fetch in parallel (no AI calls)
-    const [userContextBlock, processListResult, contactsResult, prefetchedContext, agentResult] = await Promise.all([
+    const [userContextBlock, contactsResult, prefetchedContext, agentResult] = await Promise.all([
       buildUserContextBlock(user.id, supabase),
-      adminClient
-        .from('processes')
-        .select('id, title, status, current_step')
-        .in('status', ['active', 'in_progress'])
-        .order('updated_at', { ascending: false })
-        .limit(8),
       adminClient
         .from('relationship_graph')
         .select('contact_name, contact_email, relationship_type, importance, last_interaction, typical_topics')
@@ -274,18 +268,6 @@ export async function POST(
       );
     }
 
-    const processes = (processListResult.data ?? []) as Array<{
-      id: string; title: string; status: string; current_step?: number;
-    }>;
-    if (processes.length > 0) {
-      contextParts.push(
-        'ACTIVE PROCESSES:\n' +
-        processes.map(p =>
-          `- "${p.title}" [${p.id}] — ${p.status}${p.current_step != null ? `, step ${p.current_step + 1}` : ''}`
-        ).join('\n')
-      );
-    }
-
     const contacts = (contactsResult.data ?? []) as Array<{
       contact_name: string; contact_email: string; relationship_type: string; importance: number;
       last_interaction: string | null; typical_topics: string[] | null;
@@ -307,28 +289,6 @@ export async function POST(
     // Pre-fetched context — injected so the model appears to "just know" relevant info
     if (prefetchedContext) {
       contextParts.push(prefetchedContext);
-    }
-
-    // Process step context — injected when thread is linked to a process step
-    const processId = (thread as any).process_id as string | null;
-    const processStepIndex = (thread as any).process_step_index as number | null;
-    if (processId != null && processStepIndex != null) {
-      try {
-        const [{ data: proc }, { data: step }] = await Promise.all([
-          adminClient.from('processes').select('title').eq('id', processId).single(),
-          adminClient.from('process_steps').select('title, description, step_type').eq('process_id', processId).eq('step_index', processStepIndex).single(),
-        ]);
-        if (proc && step) {
-          contextParts.push(
-            `PROCESS STEP CONTEXT:\n` +
-            `You are helping the user complete Step ${processStepIndex + 1} of the "${proc.title}" process.\n` +
-            `Step: "${step.title}"` +
-            (step.description ? `\nDeliverable: ${step.description}` : '') +
-            `\nWhen you generate a document for this step, it will be used as the final deliverable. ` +
-            `Make it complete and high quality.`
-          );
-        }
-      } catch { /* non-fatal */ }
     }
 
     // Existing artifacts — inject so AI knows what has already been produced
@@ -998,7 +958,7 @@ function buildChatTools(sources: string[], _provider: string, _modelFamily: stri
               properties: {
                 id: { type: 'string' },
                 title: { type: 'string', minLength: 3, description: 'EXACT full filename from search results — never abbreviated' },
-                type: { type: 'string', enum: ['kb', 'email', 'calendar', 'process'] },
+                type: { type: 'string', enum: ['kb', 'email', 'calendar'] },
               },
               required: ['id', 'title', 'type'],
             },
@@ -1545,22 +1505,6 @@ async function buildMentionContext(
             if (fullText) {
               kbLines.push(`[${data.filename}]\n${data.summary ? `Summary: ${data.summary}\n` : ''}${fullText.slice(0, 6000)}`);
             }
-          }
-          break;
-        }
-        case 'process': {
-          const { data } = await adminClient
-            .from('processes')
-            .select('title, status, current_step, description')
-            .eq('id', m.id)
-            .eq('owner_id', userId)
-            .single();
-          if (data) {
-            lines.push(
-              `[PROCESS] "${data.title}" — ${data.status}` +
-              (data.current_step != null ? `, step ${data.current_step + 1}` : '') +
-              (data.description ? `\n${String(data.description).slice(0, 200)}` : '')
-            );
           }
           break;
         }

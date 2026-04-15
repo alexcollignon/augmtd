@@ -36,7 +36,7 @@ interface MeetingChatSidebarProps {
   onClose: () => void;
   meetingContext: MeetingChatContext;
   onOpenWorkflow: (title: string, skill?: string) => void;
-  onOpenProcess: (processId: string) => void;
+  onOpenProcess?: (processId: string) => void;
   /** When true, renders without the outer w-[380px] wrapper — parent controls width */
   inline?: boolean;
   /** Auto-send a message when the component mounts with this value */
@@ -158,14 +158,13 @@ function WorkflowChip({ workflow, onOpenWorkflow }: {
 
 function ProcessChip({ process, onOpenProcess }: {
   process: ParsedOpenProcess;
-  onOpenProcess: (processId: string) => void;
+  onOpenProcess?: (processId: string) => void;
 }) {
-  const [clicked, setClicked] = useState(false);
+  if (!onOpenProcess) return null;
   return (
     <button
-      onClick={() => { if (clicked) return; setClicked(true); onOpenProcess(process.processId); }}
-      disabled={clicked}
-      className="inline-flex items-center gap-1.5 mt-2 px-3 py-1.5 bg-neutral-50 rounded-lg text-[12px] text-neutral-700 hover:bg-neutral-100 transition-colors disabled:opacity-50"
+      onClick={() => onOpenProcess(process.processId)}
+      className="inline-flex items-center gap-1.5 mt-2 px-3 py-1.5 bg-neutral-50 rounded-lg text-[12px] text-neutral-700 hover:bg-neutral-100 transition-colors"
     >
       <ArrowTopRightOnSquareIcon className="w-3 h-3 flex-shrink-0" />
       Open: {process.label} →
@@ -191,7 +190,7 @@ function ReplyDraftButton({ body }: { body: string }) {
 function MessageContent({ content, onOpenWorkflow, onOpenProcess }: {
   content: string;
   onOpenWorkflow: (title: string, skill?: string) => void;
-  onOpenProcess: (processId: string) => void;
+  onOpenProcess?: (processId: string) => void;
 }) {
   const { text, openWorkflow, openProcess, replyDraft } = parseMessage(content);
 

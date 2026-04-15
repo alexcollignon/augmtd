@@ -249,10 +249,6 @@ export default function MeetingDetailClient({
     router.push(`/work/new${params.toString() ? `?${params.toString()}` : ''}`);
   };
 
-  const handleOpenProcess = (processId: string) => {
-    router.push(`/processes/${processId}`);
-  };
-
   const buildMeetingContext = (): MeetingChatContext => ({
     title: event.title,
     date: event.start_time,
@@ -726,7 +722,6 @@ export default function MeetingDetailClient({
           onClose={() => setChatOpen(false)}
           meetingContext={buildMeetingContext()}
           onOpenWorkflow={handleOpenWorkflow}
-          onOpenProcess={handleOpenProcess}
         />
       </div>
     </div>

@@ -163,11 +163,6 @@ export async function POST(request: NextRequest) {
         .eq('id', connectionId);
     }
 
-    // 10. Delete owned processes + their step artifacts + KB entries (full wipe only)
-    if (isAll) {
-      await deleteProcessData(adminSupabase, userId);
-    }
-
     // 11. Delete knowledge base data (user-scoped, not connection-scoped — only on full wipe)
     if (isAll) {
       await adminSupabase.from('knowledge_chunks').delete().eq('user_id', userId);
@@ -282,57 +277,6 @@ async function deleteWorkThreads(
       .eq('user_id', userId)
       .in('id', threadIds);
   }
-}
-
-async function deleteProcessData(
-  adminSupabase: ReturnType<typeof createServerClient<any, any, any>>,
-  userId: string
-) {
-  // Only delete processes owned by this user
-  const { data: userProcesses } = await adminSupabase
-    .from('processes')
-    .select('id')
-    .eq('owner_id', userId);
-
-  const processIds = (userProcesses ?? []).map((p: { id: string }) => p.id);
-  if (processIds.length === 0) return;
-
-  // Collect artifact storage paths from process_steps before deletion
-  const { data: steps } = await adminSupabase
-    .from('process_steps')
-    .select('artifact')
-    .in('process_id', processIds)
-    .not('artifact', 'is', null);
-
-  const allPaths = new Set<string>();
-  const allArtifactIds = new Set<string>();
-  for (const s of steps ?? []) {
-    const a = s.artifact as { id?: string; storage_path?: string } | null;
-    if (a?.storage_path) allPaths.add(a.storage_path);
-    if (a?.id) allArtifactIds.add(a.id);
-  }
-
-  if (allPaths.size > 0) {
-    await adminSupabase.storage.from('work-artifacts').remove([...allPaths]);
-  }
-
-  const kbFileIdSet = new Set<string>();
-  if (allArtifactIds.size > 0) {
-    const { data } = await adminSupabase.from('knowledge_files').select('id').in('provider_file_id', [...allArtifactIds]);
-    data?.forEach((f: { id: string }) => kbFileIdSet.add(f.id));
-  }
-  if (allPaths.size > 0) {
-    const { data } = await adminSupabase.from('knowledge_files').select('id').in('storage_path', [...allPaths]);
-    data?.forEach((f: { id: string }) => kbFileIdSet.add(f.id));
-  }
-  if (kbFileIdSet.size > 0) {
-    const kbFileIds = [...kbFileIdSet];
-    await adminSupabase.from('knowledge_chunks').delete().in('file_id', kbFileIds);
-    await adminSupabase.from('knowledge_files').delete().in('id', kbFileIds);
-  }
-
-  // process_steps + process_comments cascade via ON DELETE CASCADE
-  await adminSupabase.from('processes').delete().in('id', processIds);
 }
 
 async function deleteAttachmentFiles(

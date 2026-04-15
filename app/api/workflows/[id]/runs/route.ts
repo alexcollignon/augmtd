@@ -1,0 +1,29 @@
+// ─── GET /api/workflows/[id]/runs — list runs for a workflow ──────────────────
+
+import { NextRequest, NextResponse } from 'next/server';
+import { createClient } from '@/lib/supabase/server';
+import { requireFeature, handleWorkspaceError } from '@/lib/workspace/require-feature';
+
+export async function GET(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const { id: workflowId } = await params;
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  try { await requireFeature('studio', supabase, user.id); } catch (err) { return handleWorkspaceError(err); }
+
+  const limit = parseInt(request.nextUrl.searchParams.get('limit') ?? '30', 10);
+
+  const { data, error } = await supabase
+    .from('workflow_runs')
+    .select('id, status, triggered_by, thread_id, step_outputs, error, started_at, completed_at, created_at')
+    .eq('workflow_id', workflowId)
+    .eq('user_id', user.id)
+    .order('created_at', { ascending: false })
+    .limit(Math.min(limit, 100));
+
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  return NextResponse.json({ runs: data ?? [] });
+}

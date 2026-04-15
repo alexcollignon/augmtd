@@ -22,54 +22,20 @@ export async function GET() {
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
 
-    // 1. Fetch active processes
-    const { data: processes } = await adminClient
-      .from('processes')
-      .select('id, title, current_step_index')
+    const { data: upcomingMeetings } = await adminClient
+      .from('calendar_events')
+      .select('title, start_time')
       .eq('user_id', user.id)
-      .in('status', ['active', 'in_progress'])
-      .limit(3);
+      .gt('start_time', new Date().toISOString())
+      .order('start_time', { ascending: true })
+      .limit(2);
 
-    const activeProcessIds = (processes ?? []).map((p: { id: string }) => p.id);
-
-    // 2 & 3 — fetch in parallel (steps depend on process ids, meetings are independent)
-    const [stepsResult, meetingsResult] = await Promise.all([
-      activeProcessIds.length > 0
-        ? adminClient
-            .from('process_steps')
-            .select('title, description, step_type')
-            .in('process_id', activeProcessIds)
-            .eq('status', 'in_progress')
-            .limit(3)
-        : Promise.resolve({ data: [] }),
-      adminClient
-        .from('calendar_events')
-        .select('title, start_time')
-        .eq('user_id', user.id)
-        .gt('start_time', new Date().toISOString())
-        .order('start_time', { ascending: true })
-        .limit(2),
-    ]);
-
-    const inProgressSteps: { title: string }[] = stepsResult.data ?? [];
-    const upcomingMeetings: { title: string; start_time: string }[] = meetingsResult.data ?? [];
-
-    // Build prompts — specific ones first, fallbacks fill the rest
     const specific: string[] = [];
 
-    if (inProgressSteps.length > 0) {
-      specific.push(`Help me complete "${inProgressSteps[0].title}"`);
-    }
-
-    if (processes && processes.length > 0) {
-      specific.push(`What's the next step in "${processes[0].title}"?`);
-    }
-
-    if (upcomingMeetings.length > 0) {
+    if (upcomingMeetings && upcomingMeetings.length > 0) {
       specific.push(`Prep me for my ${upcomingMeetings[0].title} meeting`);
     }
 
-    // Deduplicate and pad with fallbacks to reach exactly 4
     const seen = new Set(specific);
     const prompts = [...specific];
 

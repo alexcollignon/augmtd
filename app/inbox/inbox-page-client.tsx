@@ -589,10 +589,6 @@ export function InboxPageClient({
     router.push(`/work/new?${params.toString()}`);
   }, [router]);
 
-  const handleOpenProcess = useCallback((processId: string) => {
-    router.push(`/processes/${processId}`);
-  }, [router]);
-
   const openChat = () => {
     setRightPanel('chat');
     setTimeout(() => chatInputRef.current?.focus(), 50);
@@ -1098,7 +1094,6 @@ export function InboxPageClient({
                     replyDraft={replyIsOpen ? replyBody : undefined}
                     onUpdateReplyDraft={handleUpdateReplyDraft}
                     onOpenWorkflow={handleOpenWorkflow}
-                    onOpenProcess={handleOpenProcess}
                   />
                   </div>
                 </div>

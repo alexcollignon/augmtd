@@ -84,13 +84,6 @@ export function AgentsSidebarSection({ agents, activeAgentId, onSelect }: Props)
             );
           })}
 
-          <Link
-            href="/agents/new"
-            className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[12px] text-neutral-400 hover:text-neutral-600 hover:bg-neutral-50 transition-colors"
-          >
-            <PlusIcon className="w-3.5 h-3.5" />
-            New agent
-          </Link>
         </div>
       )}
 

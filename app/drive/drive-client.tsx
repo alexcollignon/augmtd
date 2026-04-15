@@ -747,9 +747,6 @@ function DriveFileList({ rows, onRowClick, sources, folders, onMove, onNewFolder
                 {row.kind === 'augmtd' && row.file.source === 'workflow' && row.file.work_thread_id && (
                   <a href={`/work?thread=${row.file.work_thread_id}`} className="block px-3 py-1.5 text-[12.5px] text-neutral-700 hover:bg-neutral-50" onClick={() => setMenuOpenId(null)}>Open in Workflows</a>
                 )}
-                {row.kind === 'augmtd' && row.file.source === 'process' && row.file.process_id && (
-                  <a href={`/processes/${row.file.process_id}`} className="block px-3 py-1.5 text-[12.5px] text-neutral-700 hover:bg-neutral-50" onClick={() => setMenuOpenId(null)}>Open in Processes</a>
-                )}
                 {row.kind === 'augmtd' && row.file.source === 'meeting' && row.file.transcript_id && (
                   <a href={`/meetings/${row.file.transcript_id}`} className="block px-3 py-1.5 text-[12.5px] text-neutral-700 hover:bg-neutral-50" onClick={() => setMenuOpenId(null)}>Open in Meetings</a>
                 )}
@@ -877,9 +874,6 @@ function DriveFileDetail({ selectedFile, sectionLabel, onBack, folders, sources,
           {/* Open in source */}
           {isAugmtd && (file as DriveAugmtdFile).source === 'workflow' && (file as DriveAugmtdFile).work_thread_id && (
             <a href={`/work?thread=${(file as DriveAugmtdFile).work_thread_id}`} className="px-3 py-1.5 border border-neutral-200 text-[13px] text-neutral-700 rounded-md hover:bg-neutral-50 transition-colors">Open in Workflows</a>
-          )}
-          {isAugmtd && (file as DriveAugmtdFile).source === 'process' && (file as DriveAugmtdFile).process_id && (
-            <a href={`/processes/${(file as DriveAugmtdFile).process_id}`} className="px-3 py-1.5 border border-neutral-200 text-[13px] text-neutral-700 rounded-md hover:bg-neutral-50 transition-colors">Open in Processes</a>
           )}
           {isAugmtd && (file as DriveAugmtdFile).source === 'meeting' && (file as DriveAugmtdFile).transcript_id && (
             <a href={`/meetings/${(file as DriveAugmtdFile).transcript_id}`} className="px-3 py-1.5 border border-neutral-200 text-[13px] text-neutral-700 rounded-md hover:bg-neutral-50 transition-colors">Open in Meetings</a>

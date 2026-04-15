@@ -16,7 +16,7 @@ export default async function PlatformAdminPage() {
 
   const { data: companies } = await adminClient
     .from('companies')
-    .select('id, name, slug, plan, type, status, features, join_code, settings, created_at')
+    .select('id, name, slug, plan, type, status, features, join_code, settings, ai_tier, created_at')
     .order('created_at', { ascending: false });
 
   const { data: memberCounts } = await adminClient

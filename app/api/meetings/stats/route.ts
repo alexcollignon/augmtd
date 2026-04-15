@@ -42,42 +42,10 @@ export async function GET() {
       .gte('created_at', weekStart.toISOString());
 
     // Linked to processes: transcripts whose title shares tokens with any active process
-    const { data: transcripts } = await supabase
-      .from('meeting_transcripts')
-      .select('title')
-      .eq('user_id', user.id)
-      .limit(100);
-
-    const { data: processes } = await supabase
-      .from('processes')
-      .select('title')
-      .eq('created_by', user.id)
-      .limit(50);
-
-    let linkedToProcesses = 0;
-    if (transcripts && processes) {
-      const processTokenSets = processes.map((p) =>
-        new Set(
-          p.title.split(/\s+/)
-            .map((w: string) => w.replace(/[^a-zA-Z0-9]/g, '').toLowerCase())
-            .filter((w: string) => w.length > 3)
-        )
-      );
-      for (const t of transcripts) {
-        const meetingTokens = t.title.split(/\s+/)
-          .map((w: string) => w.replace(/[^a-zA-Z0-9]/g, '').toLowerCase())
-          .filter((w: string) => w.length > 3);
-        const linked = processTokenSets.some((set) =>
-          meetingTokens.some((tok: string) => set.has(tok))
-        );
-        if (linked) linkedToProcesses++;
-      }
-    }
-
     return NextResponse.json({
       meetingsThisWeek: meetingsThisWeek ?? 0,
       needsReview: needsReview ?? 0,
-      linkedToProcesses,
+      linkedToProcesses: 0,
       actionsExtracted: actionsExtracted ?? 0,
     });
   } catch (error) {

@@ -78,52 +78,7 @@ export async function GET() {
       }
     }
 
-    // 2. Process steps — generator type with artifact
-
-    // Get user's company memberships
-    const { data: memberships } = await adminClient
-      .from('company_members')
-      .select('company_id')
-      .eq('user_id', user.id)
-      .eq('status', 'active');
-
-    if (memberships && memberships.length > 0) {
-      const companyIds = memberships.map((m) => m.company_id);
-
-      const { data: steps } = await adminClient
-        .from('process_steps')
-        .select('id, process_id, step_index, artifact, tool')
-        .in('process_id', (
-          await adminClient
-            .from('processes')
-            .select('id')
-            .in('company_id', companyIds)
-        ).data?.map((p) => p.id) ?? [])
-        .eq('step_type', 'generator')
-        .not('artifact', 'is', null);
-
-      if (steps) {
-        for (const step of steps) {
-          const art = step.artifact as DocumentArtifact | null;
-          if (!art?.storage_path) continue;
-
-          const artId = art.id ?? art.storage_path;
-          files.push({
-            id: artId,
-            title: art.title,
-            type: art.type,
-            source: 'process',
-            folder_id: art.folder_id,
-            generated_at: art.generated_at,
-            process_id: step.process_id,
-            process_step_index: step.step_index,
-            storage_path: art.storage_path,
-          });
-        }
-      }
-    }
-
-    // 3. Meeting transcripts — indexed to KB via augmtd source
+    // 2. Meeting transcripts — indexed to KB via augmtd source
     if (augmtdSourceId) {
       const { data: transcriptFiles } = await adminClient
         .from('knowledge_files')

@@ -296,10 +296,6 @@ export default function MeetingsPageClient({
     router.push(`/work/new${params.toString() ? `?${params.toString()}` : ''}`);
   };
 
-  const handleOpenProcess = (processId: string) => {
-    router.push(`/processes/${processId}`);
-  };
-
   const handleDeleteTranscript = async (transcriptId: string) => {
     setTranscripts((prev) => prev.filter((t) => t.id !== transcriptId));
     try {
@@ -527,7 +523,6 @@ export default function MeetingsPageClient({
                   onClose={() => { setRightPanel(null); setChatAutoMessage(undefined); }}
                   meetingContext={activeMeetingContext}
                   onOpenWorkflow={handleOpenWorkflow}
-                  onOpenProcess={handleOpenProcess}
                   autoMessage={chatAutoMessage}
                   onSwitchPanel={() => setRightPanel('calendar')}
                 />

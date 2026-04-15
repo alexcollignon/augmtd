@@ -10,7 +10,13 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { ChevronRightIcon, PlusIcon, RectangleStackIcon, ChatBubbleOvalLeftIcon, ClockIcon, DocumentArrowDownIcon, ArchiveBoxIcon, Cog6ToothIcon } from '@heroicons/react/24/outline';
+import { ChevronRightIcon, PlusIcon, RectangleStackIcon, ClockIcon, DocumentArrowDownIcon, ArchiveBoxIcon, Cog6ToothIcon } from '@heroicons/react/24/outline';
+import { WorkTabBar } from '@/components/work/work-tab-bar';
+import { StudioSidebar } from '@/components/work/studio-sidebar';
+import { StudioEmptyState, WORKFLOW_TEMPLATES, type WorkflowTemplate } from '@/components/work/studio-empty-state';
+import { StudioDetailPanel } from '@/components/work/studio-detail-panel';
+import { StudioBuilder } from '@/components/work/studio-builder';
+import type { Workflow } from '@/lib/workflows/types';
 import { ThreadArtifactsPanel, AllArtifactsPanel } from '@/components/work/chat-artifact-panel';
 import { ChatThreadSidebar, ChatThread } from '@/components/work/chat-thread-sidebar';
 import { ChatEmptyState } from '@/components/work/chat-empty-state';
@@ -21,6 +27,7 @@ import { ClarificationData } from '@/components/work/clarification-widget';
 import { DocumentArtifact, ExecutionPlan } from '@/lib/types/inbox';
 import { AgentsSidebarSection, SidebarAgent } from '@/components/agents/agents-sidebar-section';
 import { AgentIcon } from '@/components/agents/agent-icons';
+import { useWorkspace } from '@/context/workspace-context';
 
 // ─── Shared constants ─────────────────────────────────────────────────────────
 
@@ -45,11 +52,10 @@ interface WorkThread extends ChatThread {
   auto_generated?: boolean;
   saved_workflow_id?: string;
   is_generating?: boolean;
-  process_id?: string | null;
-  process_step_index?: number | null;
   agent_id?: string | null;
   is_temporary?: boolean;
 }
+
 
 export interface WorkPageClientProps {
   userId?: string;
@@ -60,12 +66,8 @@ export interface WorkPageClientProps {
   initialChatInput?: string | null;
   initialSavedWorkflows?: Array<{ id: string; name: string; prompt: string }>;
   initialAgents?: SidebarAgent[];
-  processStepContext?: {
-    processStep?: string;
-    processId?: string;
-    stepTitle?: string;
-    stepDesc?: string;
-  };
+  initialSection?: 'chat' | 'studio';
+  initialWorkflowId?: string | null;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -79,9 +81,13 @@ export function WorkPageClient({
   initialChatInput,
   initialSavedWorkflows,
   initialAgents = [],
-  processStepContext,
+  initialSection = 'chat',
+  initialWorkflowId = null,
 }: WorkPageClientProps) {
   const router = useRouter();
+  const { workspace } = useWorkspace();
+  const studioEnabled = workspace?.features.studio ?? true;
+  const agentsEnabled = workspace?.features.agents ?? true;
 
   const [threads, setThreads] = useState<WorkThread[]>(initialThreads);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(
@@ -105,6 +111,92 @@ export function WorkPageClient({
 
   const activeThread = threads.find((t) => t.id === activeThreadId) ?? null;
 
+  // ── Studio section state ─────────────────────────────────────────────────
+  const [activeSection, setActiveSection] = useState<'chat' | 'studio'>(
+    initialSection === 'studio' && studioEnabled ? 'studio' : 'chat'
+  );
+  const [studioWorkflows, setStudioWorkflows] = useState<Workflow[] | null>(null);
+  const [studioLoading, setStudioLoading] = useState(false);
+  const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(initialWorkflowId);
+  const [editingWorkflowId, setEditingWorkflowId] = useState<string | null>(null);
+
+  const selectedWorkflow = studioWorkflows?.find(w => w.id === selectedWorkflowId) ?? null;
+
+  async function fetchStudioWorkflows(selectId?: string) {
+    const res = await fetch('/api/workflows');
+    if (res.ok) {
+      const data = await res.json();
+      setStudioWorkflows(data.workflows ?? []);
+      if (selectId) setSelectedWorkflowId(selectId);
+    }
+  }
+
+  async function switchToStudio() {
+    setActiveSection('studio');
+    if (studioWorkflows === null && !studioLoading) {
+      setStudioLoading(true);
+      try {
+        await fetchStudioWorkflows(initialWorkflowId ?? undefined);
+      } finally {
+        setStudioLoading(false);
+      }
+    }
+  }
+
+  async function handleCreateWorkflow() {
+    const res = await fetch('/api/workflows', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Untitled workflow' }),
+    });
+    if (res.ok) {
+      const { workflow } = await res.json();
+      setStudioWorkflows(prev => prev ? [workflow, ...prev] : [workflow]);
+      setSelectedWorkflowId(workflow.id);
+      setEditingWorkflowId(workflow.id);
+    }
+  }
+
+  async function handleUseTemplate(template: WorkflowTemplate) {
+    const res = await fetch('/api/workflows', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: template.workflow.name,
+        description: template.workflow.description,
+        trigger: template.workflow.trigger,
+        steps: template.workflow.steps,
+        output_config: template.workflow.output_config,
+        status: template.workflow.status,
+      }),
+    });
+    if (res.ok) {
+      const { workflow } = await res.json();
+      setStudioWorkflows(prev => prev ? [workflow, ...prev] : [workflow]);
+      setSelectedWorkflowId(workflow.id);
+      setEditingWorkflowId(workflow.id);
+    }
+  }
+
+  async function handleRenameWorkflow(id: string, name: string) {
+    setStudioWorkflows(prev => prev?.map(w => w.id === id ? { ...w, name } : w) ?? null);
+    await fetch(`/api/workflows/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+  }
+
+  async function handleDeleteWorkflow(id: string) {
+    setStudioWorkflows(prev => prev?.filter(w => w.id !== id) ?? null);
+    if (selectedWorkflowId === id) setSelectedWorkflowId(null);
+    await fetch(`/api/workflows/${id}`, { method: 'DELETE' });
+  }
+
+  function handleWorkflowUpdated(updated: Workflow) {
+    setStudioWorkflows(prev => prev?.map(w => w.id === updated.id ? updated : w) ?? null);
+  }
+
   // Enrich threads with agent name/color for the sidebar tag — always show all threads
   const visibleThreads = threads.map((t) => {
     if (!t.agent_id) return t;
@@ -116,6 +208,13 @@ export function WorkPageClient({
   useEffect(() => {
     fetch('/api/connections/backfill-contacts', { method: 'POST' }).catch(() => {});
   }, []);
+
+  // If landing on Studio section (e.g. from back-link of workflow detail), fetch workflows
+  useEffect(() => {
+    if (initialSection === 'studio') {
+      switchToStudio();
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Keep activeThreadIdRef current so drag closure is never stale
   useEffect(() => { activeThreadIdRef.current = activeThreadId; }, [activeThreadId]);
@@ -151,16 +250,29 @@ export function WorkPageClient({
       }
     }
     function onPaste(e: ClipboardEvent) {
-      // Only intercept when clipboard contains files (images, etc.); let text paste through normally
+      const rawText = (e.clipboardData?.getData('text/plain') ?? '').trim();
+      // Detect filesystem paths: single-line, contains path separators, ends with extension.
+      // macOS screencaptureui puts both the temp-file path as text/plain AND the PNG image
+      // in the clipboard. Block the entire paste when a path is detected — don't attach
+      // the accompanying image either, as it's a screenshot artifact, not an intentional upload.
+      const isFilePath = !rawText.includes('\n') &&
+        (rawText.includes('/') || rawText.includes('\\')) &&
+        /\.\w{2,6}$/.test(rawText);
+
+      if (isFilePath) {
+        e.preventDefault();
+        return;
+      }
+
       const files = Array.from(e.clipboardData?.files ?? []);
       if (files.length === 0) return;
+
       e.preventDefault();
-      // Also capture text companion (e.g. PPT slide copied as image + text/plain)
-      const text = (e.clipboardData?.getData('text/plain') ?? '').trim();
+      // Capture text companion (e.g. PPT slide copied as image + text/plain).
       if (activeThreadIdRef.current) {
         setDroppedFiles(files);
-        if (text) {
-          setDroppedSnippet({ id: crypto.randomUUID(), name: 'Pasted text', snippetContent: text });
+        if (rawText) {
+          setDroppedSnippet({ id: crypto.randomUUID(), name: 'Pasted text', snippetContent: rawText });
         }
       } else {
         setPendingFiles(prev => [...prev, ...files.map(f => ({ id: crypto.randomUUID(), file: f }))]);
@@ -199,8 +311,7 @@ export function WorkPageClient({
             artifact: t.artifact ?? null, artifacts: t.artifacts ?? [],
             status: t.status, created_at: t.created_at, updated_at: t.updated_at,
             auto_generated: t.auto_generated, saved_workflow_id: t.saved_workflow_id,
-            is_generating: t.is_generating, process_id: t.process_id ?? null,
-            process_step_index: t.process_step_index ?? null, process_title: null,
+            is_generating: t.is_generating,
           };
           setThreads(prev => prev.some(x => x.id === t.id) ? prev : [newThread, ...prev]);
         } else if (payload.eventType === 'UPDATE') {
@@ -243,10 +354,6 @@ export function WorkPageClient({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           title,
-          processId: processStepContext?.processId ?? undefined,
-          processStepIndex: processStepContext?.processStep
-            ? Number(processStepContext.processStep)
-            : undefined,
           agentId: activeAgentId ?? undefined,
           isTemporary: isTemporaryMode,
         }),
@@ -264,7 +371,6 @@ export function WorkPageClient({
         status: 'active',
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
-        process_title: null,
         agent_id: activeAgentId,
         is_temporary: isTemporaryMode,
       };
@@ -369,63 +475,99 @@ export function WorkPageClient({
       {/* Thread sidebar — floating card */}
       <div className="w-[220px] flex-shrink-0 flex flex-col bg-neutral-50 p-2">
         <div className="flex-1 flex flex-col rounded-2xl bg-white shadow-sm overflow-hidden">
-          {/* Sidebar header: nav tabs */}
-          <div className="flex items-center gap-1 px-3 h-11 border-b border-neutral-100 flex-shrink-0">
-            <Link
-              href="/work"
-              className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[12px] font-medium bg-indigo-50 text-indigo-700"
-            >
-              <ChatBubbleOvalLeftIcon className="w-3 h-3" />
-              Chat
-            </Link>
-            <Link
-              href="/processes"
-              className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[12px] text-neutral-500 hover:text-neutral-700 hover:bg-neutral-100 transition-colors"
-            >
-              <RectangleStackIcon className="w-3 h-3" />
-              Processes
-            </Link>
-          </div>
+          {/* Sidebar header: Chat / Studio tab toggle — hidden when studio is disabled for workspace */}
+          {studioEnabled && (
+            <WorkTabBar
+              activeSection={activeSection}
+              onSwitch={(s) => s === 'studio' ? switchToStudio() : setActiveSection('chat')}
+            />
+          )}
 
-          {/* Agents section */}
-          <AgentsSidebarSection
-            agents={initialAgents}
-            activeAgentId={activeAgentId}
-            onSelect={(id) => {
-              setActiveAgentId(id);
-              setActiveThreadId(null);
-              setPendingInput(null);
-              setPendingMentions([]);
-              setPendingFiles([]);
-              setPendingAttachmentMeta([]);
-            }}
-          />
+          {activeSection === 'studio' && (
+            <StudioSidebar
+              workflows={studioWorkflows ?? []}
+              selectedId={selectedWorkflowId}
+              onSelect={(id) => { setSelectedWorkflowId(id); setEditingWorkflowId(null); }}
+              onCreate={handleCreateWorkflow}
+              onRename={handleRenameWorkflow}
+              onDelete={handleDeleteWorkflow}
+            />
+          )}
 
-          {/* New chat — pinned above thread list */}
-          <div className="px-2 flex-shrink-0">
-            <button
-              onClick={() => { setActiveThreadId(null); setPendingInput(null); setPendingMentions([]); setPendingFiles([]); setPendingAttachmentMeta([]); setIsAttachUploading(false); }}
-              className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[12.5px] text-neutral-600 hover:bg-neutral-50 transition-colors"
-            >
-              <PlusIcon className="w-3.5 h-3.5 flex-shrink-0" />
-              New chat
-            </button>
-          </div>
+          {activeSection === 'chat' && (
+            <>
+              {/* Agents section — hidden when agents feature is disabled for workspace */}
+              {agentsEnabled && (
+                <AgentsSidebarSection
+                  agents={initialAgents}
+                  activeAgentId={activeAgentId}
+                  onSelect={(id) => {
+                    setActiveAgentId(id);
+                    setActiveThreadId(null);
+                    setPendingInput(null);
+                    setPendingMentions([]);
+                    setPendingFiles([]);
+                    setPendingAttachmentMeta([]);
+                  }}
+                />
+              )}
 
-          {/* Thread list — filtered by active agent */}
-          <ChatThreadSidebar
-            threads={visibleThreads}
-            activeThreadId={activeThreadId}
-            onSelect={handleSelectThread}
-            onRename={handleRename}
-            onDelete={handleDelete}
-          />
+              {/* Chat history label */}
+              <div className="px-3.5 pt-2 pb-1 flex items-center justify-between flex-shrink-0">
+                <span className="text-[10.5px] font-semibold text-neutral-400 uppercase tracking-wider">Chat history</span>
+                <button
+                  onClick={() => { setActiveThreadId(null); setPendingInput(null); setPendingMentions([]); setPendingFiles([]); setPendingAttachmentMeta([]); setIsAttachUploading(false); }}
+                  className="p-0.5 rounded hover:bg-neutral-100 text-neutral-400 hover:text-neutral-600 transition-colors"
+                  title="New chat"
+                >
+                  <PlusIcon className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              {/* Thread list — filtered by active agent */}
+              <ChatThreadSidebar
+                threads={visibleThreads}
+                activeThreadId={activeThreadId}
+                onSelect={handleSelectThread}
+                onRename={handleRename}
+                onDelete={handleDelete}
+              />
+            </>
+          )}
         </div>
       </div>
 
-      {/* Chat column — floating card */}
+      {/* Main column — floating card */}
       <div className="flex-1 min-w-0 flex flex-col bg-neutral-50 pl-2 pt-2 pb-2 overflow-hidden">
         <div className="flex-1 flex flex-col rounded-2xl bg-white shadow-sm overflow-hidden">
+
+          {/* Studio section */}
+          {activeSection === 'studio' && (
+            editingWorkflowId && selectedWorkflow && editingWorkflowId === selectedWorkflow.id ? (
+              <StudioBuilder
+                key={editingWorkflowId}
+                workflow={selectedWorkflow}
+                agents={initialAgents}
+                onClose={(updated) => { handleWorkflowUpdated(updated); setEditingWorkflowId(null); }}
+                onBack={() => setEditingWorkflowId(null)}
+              />
+            ) : selectedWorkflow ? (
+              <StudioDetailPanel
+                key={selectedWorkflow.id}
+                workflow={selectedWorkflow}
+                onEdit={() => setEditingWorkflowId(selectedWorkflow.id)}
+                onWorkflowUpdated={handleWorkflowUpdated}
+                onWorkflowDeleted={handleDeleteWorkflow}
+              />
+            ) : (
+              <StudioEmptyState
+                onCreate={handleCreateWorkflow}
+                onUseTemplate={handleUseTemplate}
+              />
+            )
+          )}
+
+          {activeSection === 'chat' && (<>
 
           {/* New chat screen bar: clock toggle (left) + global artifacts button (right) */}
           {!activeThread && (
@@ -456,7 +598,7 @@ export function WorkPageClient({
             </div>
           )}
 
-          {activeThread ? (
+          {(activeThread ? (
             <ActiveChatView
               thread={activeThread}
               agentId={activeThread.agent_id ?? activeAgentId ?? undefined}
@@ -495,7 +637,8 @@ export function WorkPageClient({
               onRemoveAttachment={handlePreRemoveAttachment}
               attachments={pendingFiles.map(({ id, file }) => ({ id, name: file.name, size: file.size }))}
             />
-          )}
+          ))}
+          </>)}
         </div>
       </div>
 
@@ -606,8 +749,6 @@ function ActiveChatView({
   const [streamingTools, setStreamingTools] = useState<ToolStatus[]>([]);
   const [streamingClarification, setStreamingClarification] = useState<ClarificationData | null>(null);
   const [chatAttachments, setChatAttachments] = useState<AttachmentChip[]>([]);
-  const [stepCompleted, setStepCompleted] = useState(false);
-  const [stepCompleting, setStepCompleting] = useState(false);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState('');
   const titleInputRef = useRef<HTMLInputElement>(null);
@@ -624,9 +765,7 @@ function ActiveChatView({
     };
   }, []);
 
-  const isProcessThread = !!(thread.process_id && thread.process_step_index != null);
   const hasArtifacts = (thread.artifacts?.length ?? 0) > 0;
-  const showCompleteStep = isProcessThread && hasArtifacts && !stepCompleted;
 
   // Load messages when thread changes
   useEffect(() => {
@@ -702,7 +841,7 @@ function ActiveChatView({
     if (!pendingInput || isLoading || isStreaming || isAttachUploading || hasSentPending.current) return;
     hasSentPending.current = true;
     onPendingInputConsumed();
-    handleSubmit(pendingInput, ['kb', 'inbox', 'calendar', 'processes'], pendingMentions, pendingAttachmentMeta);
+    handleSubmit(pendingInput, ['kb', 'inbox', 'calendar'], pendingMentions, pendingAttachmentMeta);
   }, [pendingInput, isLoading, isAttachUploading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-scroll
@@ -743,7 +882,7 @@ function ActiveChatView({
       }
       return prev;
     });
-    handleSubmit(content, ['kb', 'inbox', 'calendar', 'processes'], mentions);
+    handleSubmit(content, ['kb', 'inbox', 'calendar'], mentions);
   }
 
   async function handleSubmit(message: string, sources: SourceId[], mentions: MentionChip[], extraAttachments?: Array<{ id: string; name: string }>, skipOptimisticUser?: boolean) {
@@ -979,7 +1118,7 @@ function ActiveChatView({
     });
 
     // Re-stream from the edited message — skip optimistic user bubble (already updated in place)
-    await handleSubmit(newContent, ['kb', 'inbox', 'calendar', 'processes'], [], undefined, true);
+    await handleSubmit(newContent, ['kb', 'inbox', 'calendar'], [], undefined, true);
   }
 
   function handleClarificationConfirm(choices: { sources: string[]; options: Record<string, string> }) {
@@ -991,57 +1130,26 @@ function ActiveChatView({
       : null;
     const details = [sourceList, optionList].filter(Boolean).join('\n');
     const confirmMessage = `[CLARIFICATION CONFIRMED]\n${details}\nPlease proceed and generate the document now.`;
-    handleSubmit(confirmMessage, ['kb', 'inbox', 'calendar', 'processes'], []);
+    handleSubmit(confirmMessage, ['kb', 'inbox', 'calendar'], []);
   }
 
-  async function handleCompleteStep() {
-    if (!thread.process_id || thread.process_step_index == null || stepCompleting) return;
-    const artifact = thread.artifacts?.[0];
-    setStepCompleting(true);
-    try {
-      await fetch(`/api/processes/${thread.process_id}/steps/${thread.process_step_index}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ artifact: artifact?.content ?? null }),
-      });
-      setStepCompleted(true);
-    } catch { /* non-fatal */ } finally {
-      setStepCompleting(false);
-    }
-  }
 
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden relative">
       {/* Always-visible header — consistent across all threads */}
       <div className={`flex items-center gap-2 px-4 h-11 border-b flex-shrink-0 min-w-0 transition-colors duration-300 ${
-        isProcessThread ? 'bg-violet-50 border-violet-100' : thread.is_temporary ? 'bg-amber-50 border-amber-100' : 'border-neutral-100'
+        thread.is_temporary ? 'bg-amber-50 border-amber-100' : 'border-neutral-100'
       }`}>
         {/* Left: agent dot (if agent thread) */}
-        {agent && !isProcessThread && (
+        {agent && (
           <div className={`w-4 h-4 rounded flex-shrink-0 ${AGENT_COLOR_MAP[agent.color]?.bg ?? 'bg-indigo-500'} flex items-center justify-center`}>
             <AgentIcon iconKey={agent.icon} className="w-2.5 h-2.5 text-white" />
           </div>
         )}
 
-        {/* Left: title or process breadcrumb */}
-        {isProcessThread ? (
-          <div className="flex items-center gap-1.5 flex-1 min-w-0">
-            <Link
-              href={`/processes/${thread.process_id}`}
-              className="text-[12px] text-violet-600 hover:text-violet-800 transition-colors flex-shrink-0"
-            >
-              {thread.process_title || 'Process'}
-            </Link>
-            <ChevronRightIcon className="w-3 h-3 text-violet-400 flex-shrink-0" />
-            <span className="text-[12px] text-violet-700 flex-shrink-0">
-              Step {(thread.process_step_index ?? 0) + 1}
-            </span>
-            {stepCompleted && (
-              <span className="text-[12px] text-emerald-600 font-medium flex-shrink-0">✓ Completed</span>
-            )}
-          </div>
-        ) : isEditingTitle ? (
+        {/* Left: title */}
+        {isEditingTitle ? (
           <input
             ref={titleInputRef}
             value={titleDraft}
@@ -1076,7 +1184,7 @@ function ActiveChatView({
 
         {/* Right: gear icon (agent threads) + artifacts button */}
         <div className="flex items-center gap-1.5 flex-shrink-0">
-          {agent && !isProcessThread && (
+          {agent && (
             <Link
               href={`/agents/${agent.id}/edit`}
               className="text-neutral-400 hover:text-neutral-600 transition-colors"
@@ -1234,27 +1342,6 @@ function ActiveChatView({
           <div ref={messagesEndRef} />
         </div>
       </div>
-
-      {/* Complete step CTA */}
-      {showCompleteStep && (
-        <div className="flex-shrink-0 px-6 pt-3">
-          <div className="max-w-[680px] mx-auto">
-            <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-violet-50 border border-violet-200">
-              <div className="flex-1 min-w-0">
-                <p className="text-[13px] text-violet-800 font-medium">Document ready</p>
-                <p className="text-[12px] text-violet-600">Mark this step as complete in your process</p>
-              </div>
-              <button
-                onClick={handleCompleteStep}
-                disabled={stepCompleting}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-violet-600 text-white text-[12.5px] font-medium hover:bg-violet-700 disabled:opacity-50 transition-colors flex-shrink-0"
-              >
-                {stepCompleting ? 'Completing…' : 'Complete step →'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Input bar */}
       <div className="flex-shrink-0 px-6 pb-6 pt-2">

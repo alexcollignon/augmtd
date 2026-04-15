@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { extractTextFromAttachment } from '@/lib/attachments/text-extractor';
-import { indexUploadedFile } from '@/lib/knowledge/indexer';
+import { indexUploadedFile, extractTextFromFile } from '@/lib/knowledge/indexer';
+
+export const maxDuration = 60;
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 
@@ -124,8 +126,7 @@ export async function POST(
     );
 
     const newAttachments = await Promise.all(contentFiles.map(async (cf) => {
-      const extracted = await extractTextFromAttachment(cf.buffer, cf.mimeType, cf.name);
-      const extractedText = extracted ? extracted.slice(0, 4000) : null;
+      // Upload to storage first (needed for storagePath before indexing)
       const id = crypto.randomUUID();
       const safeName = cf.name.replace(/[^a-zA-Z0-9._-]/g, '_');
       const storagePath = `${user.id}/${threadId}/chat-${id}-${safeName}`;
@@ -133,7 +134,19 @@ export async function POST(
         .from('email-attachments')
         .upload(storagePath, cf.buffer, { contentType: cf.mimeType, upsert: true });
 
-      // Fire-and-forget: index into KB so this file is searchable across threads
+      // Extract text for inline AI context.
+      // For scanned PDFs, pdf-parse returns only boilerplate page markers (e.g. "-- 1 of 5 --"),
+      // not real content. Mirror the indexer's isLikelyScanned heuristic: if extracted text
+      // is very short relative to file size, fall back to the full OCR pipeline.
+      let extracted = await extractTextFromAttachment(cf.buffer, cf.mimeType, cf.name);
+      if (cf.mimeType === 'application/pdf' && (!extracted || extracted.trim().length < 200)) {
+        extracted = await extractTextFromFile(cf.buffer, cf.mimeType, cf.name, user.id, adminClient);
+      }
+      const extractedText = extracted ? extracted.slice(0, 4000) : null;
+
+      // Fire-and-forget: index into KB so this file is searchable across threads.
+      // OCR was already run above for scanned PDFs, but indexUploadedFile also handles
+      // embeddings, chunking, and summarization — still needed for KB search.
       indexUploadedFile({
         buffer: cf.buffer,
         filename: cf.name,

@@ -284,52 +284,28 @@ async function extractPdfWithFallback(buffer: Buffer, filename: string, userId: 
 
   const { client: ocrClient, model: ocrModel, endpoint } = await getAIClient(userId, 'ocr', supabase);
 
-  if (endpoint.provider === 'anthropic') {
-    // Anthropic: native PDF document block (best quality, handles all pages in one call)
-    const sizeMB = buffer.length / (1024 * 1024);
-    if (sizeMB > 4.5) {
-      console.warn(`[Indexer] ${filename} is ${sizeMB.toFixed(1)}MB — too large for Claude fallback`);
-      return pdfText || null;
-    }
-    try {
-      console.log(`[Indexer] Low text yield for ${filename} — trying Claude native PDF OCR`);
-      const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-      const base64 = buffer.toString('base64');
-      const res = await anthropic.messages.create({
-        model: ocrModel,
-        max_tokens: 4000,
-        messages: [{
-          role: 'user',
-          content: [
-            { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } } as any,
-            { type: 'text', text: 'Extract all text from this document. Output only the raw text content — no commentary.' },
-          ],
-        }],
-      });
-      const extracted = (res.content[0] as any)?.text ?? '';
-      return extracted || pdfText || null;
-    } catch (err) {
-      console.error(`[Indexer] Claude PDF fallback failed for ${filename}:`, err);
-      return pdfText || null;
-    }
+  // Extract embedded JPEG images directly from the PDF binary — no canvas rendering needed.
+  // Scanned PDFs (iPhone scanner, document scanners) are just JPEG(s) wrapped in a PDF
+  // container. Extracting them avoids the pdfjs+canvas segfault issues entirely.
+  const pageImages = extractJpegsFromPdf(buffer);
+  if (pageImages.length === 0) {
+    console.log(`[Indexer] No embedded images found in ${filename}, returning raw text`);
+    return pdfText || null;
   }
 
-  // Non-Anthropic: render pages to PNG → vision OCR via factory ocr model
+  console.log(`[Indexer] Extracted ${pageImages.length} image(s) from ${filename} — sending to vision OCR`);
   try {
-    console.log(`[Indexer] Low text yield for ${filename} — rendering pages for vision OCR (${endpoint.provider})`);
-    const pageImages = await renderPdfToImages(buffer, { maxPages: 3 });
-    if (pageImages.length === 0) return pdfText || null;
-
     const parts: string[] = [];
-    for (const { base64, mimeType, pageNum } of pageImages) {
+    for (let i = 0; i < Math.min(pageImages.length, 3); i++) {
+      const base64 = pageImages[i].toString('base64');
       const res = await ocrClient.chat.completions.create({
         model: ocrModel,
         max_tokens: 2000,
         messages: [{
           role: 'user',
           content: [
-            { type: 'text', text: `Extract all text visible on page ${pageNum} of this document. Output only the raw text — no commentary.` },
-            { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64}` } },
+            { type: 'text', text: `Extract all text visible on page ${i + 1} of this document. Output only the raw text — no commentary.` },
+            { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${base64}` } },
           ],
         }],
       });
@@ -338,44 +314,46 @@ async function extractPdfWithFallback(buffer: Buffer, filename: string, userId: 
       if (text && !isError) parts.push(text);
     }
     const extracted = parts.join('\n\n');
+    console.log(`[Indexer] Vision OCR extracted ${extracted.length} chars from ${filename}`);
     return extracted || pdfText || null;
   } catch (err) {
-    console.error(`[Indexer] Vision PDF fallback failed for ${filename}:`, err);
+    console.error(`[Indexer] Vision OCR failed for ${filename}:`, err);
     return pdfText || null;
   }
 }
 
 /**
- * Render the first N pages of a PDF buffer to PNG images using pdfjs-dist + canvas.
- * Returns base64-encoded PNG buffers suitable for vision model input.
+ * Extract embedded JPEG images from a PDF buffer by scanning for JPEG markers.
+ * Scanned PDFs (iPhone/document scanner) typically contain raw JPEG data per page.
+ * This avoids canvas rendering entirely — no pdfjs, no native module issues.
  */
-async function renderPdfToImages(
-  buffer: Buffer,
-  { maxPages = 3, scale = 2.0 }: { maxPages?: number; scale?: number } = {}
-): Promise<Array<{ base64: string; mimeType: string; pageNum: number }>> {
-  const { createCanvas } = await import('canvas')
-  const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs') as any
+function extractJpegsFromPdf(buffer: Buffer): Buffer[] {
+  const results: Buffer[] = [];
+  const starts: number[] = [];
 
-  // Disable worker (Node.js — no worker thread needed)
-  pdfjsLib.GlobalWorkerOptions.workerSrc = ''
-
-  const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(buffer) })
-  const pdf = await loadingTask.promise
-  const numPages = Math.min(pdf.numPages, maxPages)
-  const results: Array<{ base64: string; mimeType: string; pageNum: number }> = []
-
-  for (let i = 1; i <= numPages; i++) {
-    const page = await pdf.getPage(i)
-    const viewport = page.getViewport({ scale })
-    const canvas = createCanvas(viewport.width, viewport.height)
-    const context = canvas.getContext('2d') as any
-
-    await page.render({ canvasContext: context, viewport }).promise
-    const base64 = canvas.toBuffer('image/png').toString('base64')
-    results.push({ base64, mimeType: 'image/png', pageNum: i })
+  for (let i = 0; i < buffer.length - 2; i++) {
+    if (buffer[i] === 0xFF && buffer[i + 1] === 0xD8 && buffer[i + 2] === 0xFF) {
+      starts.push(i);
+    }
   }
 
-  return results
+  for (let si = 0; si < starts.length; si++) {
+    const start = starts[si];
+    // Search for FF D9 (JPEG EOI) backwards from just before the next JPEG start
+    const searchEnd = si + 1 < starts.length ? starts[si + 1] : buffer.length;
+    let end = -1;
+    for (let i = searchEnd - 2; i > start; i--) {
+      if (buffer[i] === 0xFF && buffer[i + 1] === 0xD9) {
+        end = i + 2;
+        break;
+      }
+    }
+    if (end > start + 100) { // skip tiny/corrupt segments
+      results.push(buffer.slice(start, end));
+    }
+  }
+
+  return results;
 }
 
 // ─── File utilities ──────────────────────────────────────────────────────────
@@ -384,7 +362,7 @@ function getModifiedAt(file: DriveItem | OneDriveItem): string | null {
   return 'modifiedTime' in file ? file.modifiedTime : (file as OneDriveItem).lastModifiedDateTime;
 }
 
-async function extractTextFromFile(
+export async function extractTextFromFile(
   content: Buffer | string | null,
   mimeType: string,
   filename: string,

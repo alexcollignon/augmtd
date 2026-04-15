@@ -108,9 +108,6 @@ export default function RecordingDetailClient({ transcript, actionItems, risks, 
     router.push(`/work/new${params.toString() ? `?${params.toString()}` : ''}`);
   };
 
-  const handleOpenProcess = (processId: string) => {
-    router.push(`/processes/${processId}`);
-  };
 
   const buildMeetingContext = (): MeetingChatContext => ({
     title: transcript.title,
@@ -404,7 +401,6 @@ export default function RecordingDetailClient({ transcript, actionItems, risks, 
         onClose={() => setChatOpen(false)}
         meetingContext={buildMeetingContext()}
         onOpenWorkflow={handleOpenWorkflow}
-        onOpenProcess={handleOpenProcess}
       />
     </div>
   );

@@ -173,7 +173,6 @@ export async function POST(request: NextRequest) {
       calendarCtx,
       userContextBlock,
       indexedFilesResult,
-      processListResult,
       workThreadsResult,
       contactsResult,
     ] = await Promise.all([
@@ -190,13 +189,6 @@ export async function POST(request: NextRequest) {
       fetchKB
         ? supabase.from('knowledge_files').select('filename').eq('user_id', user.id)
         : Promise.resolve({ data: [] }),
-      // Light process list — always, both surfaces
-      supabase
-        .from('processes')
-        .select('id, title, status, current_step_index')
-        .in('status', ['active', 'in_progress'])
-        .order('updated_at', { ascending: false })
-        .limit(10),
       // Recent workflow threads — always, both surfaces
       supabase
         .from('work_threads')
@@ -237,12 +229,7 @@ export async function POST(request: NextRequest) {
         }).join(', ')}`
       : '';
 
-    // Process list
-    const processes = (processListResult.data ?? []) as Array<{ id: string; title: string; status: string; current_step_index?: number }>;
-    const processList = processes.length
-      ? 'ACTIVE PROCESSES (reference these when the user asks about ongoing work):\n' +
-        processes.map(p => `- "${p.title}" [id: ${p.id}] — ${p.status}${p.current_step_index != null ? `, step ${p.current_step_index + 1}` : ''}`).join('\n')
-      : '';
+    const processList = '';
 
     // Contacts block — meeting surface only
     const contacts = (contactsResult.data ?? []) as Array<{

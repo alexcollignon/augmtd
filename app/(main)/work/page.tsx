@@ -1,18 +1,23 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { WorkPageClient } from '@/app/work/work-page-client';
+import { getMyWorkspace } from '@/lib/workspace/features';
 export const metadata = { title: 'Chat — AUGMTD' };
 
 export default async function WorkPage({
   searchParams,
 }: {
-  searchParams: Promise<{ thread?: string; prompt?: string; processStep?: string; processId?: string; stepTitle?: string; stepDesc?: string }>;
+  searchParams: Promise<{ thread?: string; prompt?: string; section?: string; workflow?: string }>;
 }) {
-  const { thread: initialThreadId, prompt: initialChatInput, processStep, processId, stepTitle, stepDesc } = await searchParams;
+  const { thread: initialThreadId, prompt: initialChatInput, section, workflow: initialWorkflowId } = await searchParams;
   const supabase = await createClient();
 
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/login');
+
+  const workspace = await getMyWorkspace(user.id, supabase);
+  const studioEnabled = workspace?.features.studio ?? true;
+  const initialSection = (section === 'studio' && studioEnabled) ? 'studio' : 'chat';
 
   // Cleanup stale temporary threads (fire-and-forget, non-blocking)
   void supabase
@@ -30,10 +35,11 @@ export default async function WorkPage({
   const [{ data: threads }, { data: savedWorkflowsData }, { data: agentsData }] = await Promise.all([
     supabase
       .from('work_threads')
-      .select('id, title, plan, artifact, artifacts, status, auto_generated, saved_workflow_id, is_generating, created_at, updated_at, process_id, process_step_index, agent_id, processes(title)')
+      .select('id, title, plan, artifact, artifacts, status, auto_generated, saved_workflow_id, is_generating, created_at, updated_at, agent_id')
       .eq('user_id', user.id)
       .eq('status', 'active')
       .or('is_temporary.eq.false,is_temporary.is.null')
+      .is('workflow_id', null)
       .order('updated_at', { ascending: false })
       .limit(50),
     supabase
@@ -55,16 +61,13 @@ export default async function WorkPage({
       userId={user.id}
       userEmail={profile?.email || user.email}
       userFullName={profile?.full_name}
-      initialThreads={(threads || []).map((t: any) => ({
-        ...t,
-        process_title: t.processes?.title ?? null,
-        processes: undefined,
-      }))}
+      initialThreads={threads ?? []}
       initialActiveThreadId={initialThreadId || null}
       initialChatInput={initialChatInput || null}
       initialSavedWorkflows={savedWorkflowsData || []}
       initialAgents={agentsData || []}
-      processStepContext={processStep ? { processStep, processId, stepTitle, stepDesc } : undefined}
+      initialSection={initialSection}
+      initialWorkflowId={initialWorkflowId || null}
     />
   );
 }

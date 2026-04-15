@@ -3,14 +3,12 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import {
-  ArrowPathIcon,
   ChatBubbleLeftRightIcon,
   DocumentTextIcon,
   CalendarDaysIcon,
 } from '@heroicons/react/24/outline';
 
 interface LinkedWork {
-  processes: Array<{ id: string; title: string; status: string; score: number }>;
   threads: Array<{ id: string; title: string; score: number }>;
   files: Array<{ id: string; filename: string; score: number }>;
   priorMeetings: Array<{ id: string; title: string; start_time: string; calendarEventId: string | null; score: number }>;
@@ -28,13 +26,13 @@ export default function LinkedWorkPanel({ calendarEventId }: LinkedWorkPanelProp
     fetch(`/api/meetings/${calendarEventId}/linked-work`)
       .then((r) => r.json())
       .then(setData)
-      .catch(() => setData({ processes: [], threads: [], files: [], priorMeetings: [] }))
+      .catch(() => setData({ threads: [], files: [], priorMeetings: [] }))
       .finally(() => setLoading(false));
   }, [calendarEventId]);
 
   const hasAny =
     data &&
-    (data.processes.length > 0 || data.threads.length > 0 || data.files.length > 0 || data.priorMeetings.length > 0);
+    (data.threads.length > 0 || data.files.length > 0 || data.priorMeetings.length > 0);
 
   return (
     <div className="space-y-5">
@@ -54,20 +52,6 @@ export default function LinkedWorkPanel({ calendarEventId }: LinkedWorkPanelProp
 
       {!loading && data && (
         <div className="space-y-4">
-          {data.processes.length > 0 && (
-            <Section title="Processes" icon={<ArrowPathIcon className="w-3.5 h-3.5" />}>
-              {data.processes.map((p) => (
-                <LinkedItem
-                  key={p.id}
-                  href={`/processes/${p.id}`}
-                  title={p.title}
-                  meta={p.status}
-                  score={p.score}
-                />
-              ))}
-            </Section>
-          )}
-
           {data.threads.length > 0 && (
             <Section title="Inbox threads" icon={<ChatBubbleLeftRightIcon className="w-3.5 h-3.5" />}>
               {data.threads.map((t) => (

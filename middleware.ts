@@ -44,7 +44,7 @@ export async function middleware(request: NextRequest) {
   // Protected routes - require authentication. /work, /join and /suspended
   // need auth but have their own server-side logic for orphan / workspace-state
   // handling, so they don't appear in authRoutes (won't be redirected away).
-  const protectedRoutes = ['/inbox', '/settings', '/activity', '/company', '/processes', '/admin', '/platform-admin', '/drive', '/meetings', '/work', '/join', '/suspended'];
+  const protectedRoutes = ['/inbox', '/settings', '/activity', '/company', '/admin', '/platform-admin', '/drive', '/meetings', '/work', '/join', '/suspended'];
   const isProtectedRoute = protectedRoutes.some(route =>
     pathname.startsWith(route)
   );
