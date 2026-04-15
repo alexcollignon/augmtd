@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useCallback, useEffect } from 'react';
-import Link from 'next/link';
 import {
   PlayIcon, PauseIcon, PencilSquareIcon,
   ClockIcon, CheckCircleIcon, XCircleIcon, ArrowPathIcon,
@@ -14,6 +13,7 @@ interface Props {
   onEdit: () => void;
   onWorkflowUpdated: (w: Workflow) => void;
   onWorkflowDeleted: (id: string) => void;
+  onOpenThread?: (threadId: string) => void;
 }
 
 type Tab = 'runs' | 'settings';
@@ -30,7 +30,7 @@ function fmtTime(iso: string | null): string {
   return new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
-export function StudioDetailPanel({ workflow: initialWorkflow, initialTab = 'runs', onEdit, onWorkflowUpdated, onWorkflowDeleted }: Props) {
+export function StudioDetailPanel({ workflow: initialWorkflow, initialTab = 'runs', onEdit, onWorkflowUpdated, onWorkflowDeleted, onOpenThread }: Props) {
   const [workflow, setWorkflow] = useState<Workflow>(initialWorkflow);
   const [runs, setRuns] = useState<WorkflowRun[]>([]);
   const [runsLoading, setRunsLoading] = useState(true);
@@ -201,7 +201,7 @@ export function StudioDetailPanel({ workflow: initialWorkflow, initialTab = 'run
             </div>
           ) : (
             <div className="space-y-2">
-              {runs.map(run => <RunCard key={run.id} run={run} />)}
+              {runs.map(run => <RunCard key={run.id} run={run} onOpenThread={onOpenThread} />)}
             </div>
           )
         )}
@@ -248,7 +248,7 @@ export function StudioDetailPanel({ workflow: initialWorkflow, initialTab = 'run
   );
 }
 
-function RunCard({ run }: { run: WorkflowRun }) {
+function RunCard({ run, onOpenThread }: { run: WorkflowRun; onOpenThread?: (threadId: string) => void }) {
   const [expanded, setExpanded] = useState(false);
   const duration = run.started_at && run.completed_at
     ? Math.round((new Date(run.completed_at).getTime() - new Date(run.started_at).getTime()) / 1000)
@@ -256,9 +256,12 @@ function RunCard({ run }: { run: WorkflowRun }) {
 
   return (
     <div className="border border-neutral-150 rounded-lg overflow-hidden">
-      <button
+      <div
+        role="button"
+        tabIndex={0}
         onClick={() => setExpanded(v => !v)}
-        className="w-full flex items-center gap-3 px-4 py-3 hover:bg-neutral-50 transition-colors text-left"
+        onKeyDown={e => e.key === 'Enter' && setExpanded(v => !v)}
+        className="w-full flex items-center gap-3 px-4 py-3 hover:bg-neutral-50 transition-colors cursor-pointer select-none"
       >
         <RunStatusIcon status={run.status} />
         <div className="flex-1 min-w-0">
@@ -270,16 +273,15 @@ function RunCard({ run }: { run: WorkflowRun }) {
             {duration !== null ? ` · ${duration}s` : ''}
           </div>
         </div>
-        {run.thread_id && (
-          <Link
-            href={`/work?thread=${run.thread_id}`}
-            onClick={e => e.stopPropagation()}
-            className="text-[11.5px] text-indigo-600 hover:text-indigo-700 flex-shrink-0"
+        {run.thread_id && onOpenThread && (
+          <button
+            onClick={e => { e.stopPropagation(); onOpenThread(run.thread_id!); }}
+            className="text-[11.5px] text-indigo-600 hover:text-indigo-700 flex-shrink-0 transition-colors"
           >
             Open thread →
-          </Link>
+          </button>
         )}
-      </button>
+      </div>
 
       {expanded && (
         <div className="border-t border-neutral-100 px-4 py-3 bg-neutral-50/50 space-y-2">

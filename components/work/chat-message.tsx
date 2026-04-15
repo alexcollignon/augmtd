@@ -26,7 +26,9 @@ function renderInline(text: string): React.ReactNode {
 }
 
 export function MarkdownText({ content, cursor }: { content: string; cursor?: boolean }) {
-  const blocks = content.split(/\n{2,}/);
+  // Ensure heading lines are always their own block so content after them renders correctly
+  const normalized = content.replace(/(^#{1,4} .+$)\n(?!\n)/gm, '$1\n\n');
+  const blocks = normalized.split(/\n{2,}/);
 
   return (
     <div className="space-y-2.5">
@@ -100,28 +102,18 @@ export function MarkdownText({ content, cursor }: { content: string; cursor?: bo
           );
         }
 
-        // Heading detection
+        // Heading detection (H1–H4+)
         const firstLine = lines[0];
-        if (firstLine.startsWith('# ')) {
-          return (
-            <p key={bi} className="text-[15px] font-semibold text-neutral-900">
-              {renderInline(firstLine.slice(2))}
-            </p>
-          );
-        }
-        if (firstLine.startsWith('### ')) {
-          return (
-            <p key={bi} className="text-[13px] font-semibold text-neutral-700 uppercase tracking-wide">
-              {renderInline(firstLine.slice(4))}
-            </p>
-          );
-        }
-        if (firstLine.startsWith('## ')) {
-          return (
-            <p key={bi} className="text-[14px] font-semibold text-neutral-900">
-              {renderInline(firstLine.slice(3))}
-            </p>
-          );
+        const headingMatch = firstLine.match(/^(#{1,4})\s+(.+)$/);
+        if (headingMatch) {
+          const level = headingMatch[1].length;
+          const text = headingMatch[2];
+          const cls =
+            level === 1 ? 'text-[15px] font-semibold text-neutral-900' :
+            level === 2 ? 'text-[14px] font-semibold text-neutral-900' :
+            level === 3 ? 'text-[13px] font-semibold text-neutral-700 uppercase tracking-wide' :
+                          'text-[12.5px] font-semibold text-neutral-600 uppercase tracking-wide';
+          return <p key={bi} className={cls}>{renderInline(text)}</p>;
         }
 
         return (

@@ -32,10 +32,12 @@ export default async function WorkPage({
     .eq('id', user.id)
     .single();
 
-  const [{ data: threads }, { data: savedWorkflowsData }, { data: agentsData }] = await Promise.all([
+  const THREAD_COLS = 'id, title, plan, artifact, artifacts, status, auto_generated, saved_workflow_id, is_generating, created_at, updated_at, agent_id, workflow_id';
+
+  const [{ data: threads }, { data: savedWorkflowsData }, { data: agentsData }, initialThreadResult] = await Promise.all([
     supabase
       .from('work_threads')
-      .select('id, title, plan, artifact, artifacts, status, auto_generated, saved_workflow_id, is_generating, created_at, updated_at, agent_id')
+      .select(THREAD_COLS)
       .eq('user_id', user.id)
       .eq('status', 'active')
       .or('is_temporary.eq.false,is_temporary.is.null')
@@ -54,14 +56,32 @@ export default async function WorkPage({
       .eq('user_id', user.id)
       .eq('is_active', true)
       .order('created_at', { ascending: true }),
+    // If opening a specific thread (e.g. workflow run thread), fetch it directly
+    // — it won't appear in the main query which excludes workflow_id threads.
+    initialThreadId
+      ? supabase
+          .from('work_threads')
+          .select(THREAD_COLS)
+          .eq('id', initialThreadId)
+          .eq('user_id', user.id)
+          .single()
+      : Promise.resolve({ data: null }),
   ]);
+
+  // Merge the directly-fetched thread (e.g. a workflow run thread) into the list
+  // if it isn't already there (workflow run threads are excluded from the main query).
+  const baseThreads = threads ?? [];
+  const extraThread = initialThreadResult?.data ?? null;
+  const mergedThreads = extraThread && !baseThreads.find(t => t.id === extraThread.id)
+    ? [extraThread, ...baseThreads]
+    : baseThreads;
 
   return (
     <WorkPageClient
       userId={user.id}
       userEmail={profile?.email || user.email}
       userFullName={profile?.full_name}
-      initialThreads={threads ?? []}
+      initialThreads={mergedThreads}
       initialActiveThreadId={initialThreadId || null}
       initialChatInput={initialChatInput || null}
       initialSavedWorkflows={savedWorkflowsData || []}

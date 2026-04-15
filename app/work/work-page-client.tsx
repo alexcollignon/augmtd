@@ -10,7 +10,7 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { ChevronRightIcon, PlusIcon, RectangleStackIcon, ClockIcon, DocumentArrowDownIcon, ArchiveBoxIcon, Cog6ToothIcon } from '@heroicons/react/24/outline';
+import { ChevronRightIcon, ChevronLeftIcon, PlusIcon, RectangleStackIcon, ClockIcon, DocumentArrowDownIcon, ArchiveBoxIcon, Cog6ToothIcon } from '@heroicons/react/24/outline';
 import { WorkTabBar } from '@/components/work/work-tab-bar';
 import { StudioSidebar } from '@/components/work/studio-sidebar';
 import { StudioEmptyState, WORKFLOW_TEMPLATES, type WorkflowTemplate } from '@/components/work/studio-empty-state';
@@ -54,6 +54,7 @@ interface WorkThread extends ChatThread {
   is_generating?: boolean;
   agent_id?: string | null;
   is_temporary?: boolean;
+  workflow_id?: string | null;
 }
 
 
@@ -195,6 +196,24 @@ export function WorkPageClient({
 
   function handleWorkflowUpdated(updated: Workflow) {
     setStudioWorkflows(prev => prev?.map(w => w.id === updated.id ? updated : w) ?? null);
+  }
+
+  async function handleOpenWorkflowThread(threadId: string) {
+    // If already in state (e.g. loaded on page init), just switch to it
+    const existing = threads.find(t => t.id === threadId);
+    if (existing) {
+      setActiveSection('chat');
+      setActiveThreadId(threadId);
+      return;
+    }
+    // Workflow run threads are excluded from the main query — fetch individually
+    const res = await fetch(`/api/work/threads/${threadId}`);
+    if (res.ok) {
+      const { thread } = await res.json();
+      if (thread) setThreads(prev => [thread as WorkThread, ...prev.filter(t => t.id !== threadId)]);
+    }
+    setActiveSection('chat');
+    setActiveThreadId(threadId);
   }
 
   // Enrich threads with agent name/color for the sidebar tag — always show all threads
@@ -558,7 +577,13 @@ export function WorkPageClient({
                 onEdit={() => setEditingWorkflowId(selectedWorkflow.id)}
                 onWorkflowUpdated={handleWorkflowUpdated}
                 onWorkflowDeleted={handleDeleteWorkflow}
+                onOpenThread={handleOpenWorkflowThread}
               />
+            ) : selectedWorkflowId && (studioLoading || studioWorkflows === null) ? (
+              // Workflow selected but list not loaded yet (e.g. back-nav before fetch completes)
+              <div className="flex items-center justify-center flex-1">
+                <div className="w-5 h-5 border-2 border-neutral-200 border-t-indigo-500 rounded-full animate-spin" />
+              </div>
             ) : (
               <StudioEmptyState
                 onCreate={handleCreateWorkflow}
@@ -615,6 +640,16 @@ export function WorkPageClient({
               artifactPanelOpen={artifactPanelOpen}
               onArtifactPanelToggle={() => setArtifactPanelOpen(v => !v)}
               onThreadRemove={(id) => setThreads(prev => prev.filter(t => t.id !== id))}
+              onBackToWorkflow={(workflowId) => {
+                setActiveThreadId(null);
+                setSelectedWorkflowId(workflowId);
+                setEditingWorkflowId(null);
+                setActiveSection('studio');
+                if (!studioWorkflows && !studioLoading) {
+                  setStudioLoading(true);
+                  fetchStudioWorkflows(workflowId).finally(() => setStudioLoading(false));
+                }
+              }}
               externalDroppedFiles={droppedFiles}
               onDropConsumed={() => setDroppedFiles([])}
               externalSnippet={droppedSnippet}
@@ -715,6 +750,7 @@ interface ActiveChatViewProps {
   artifactPanelOpen?: boolean;
   onArtifactPanelToggle?: () => void;
   onThreadRemove?: (id: string) => void;
+  onBackToWorkflow?: (workflowId: string) => void;
   externalDroppedFiles?: File[];
   onDropConsumed?: () => void;
   externalSnippet?: { id: string; name: string; snippetContent: string } | null;
@@ -737,6 +773,7 @@ function ActiveChatView({
   artifactPanelOpen = false,
   onArtifactPanelToggle,
   onThreadRemove,
+  onBackToWorkflow,
   externalDroppedFiles,
   onDropConsumed,
   externalSnippet,
@@ -1141,6 +1178,17 @@ function ActiveChatView({
       <div className={`flex items-center gap-2 px-4 h-11 border-b flex-shrink-0 min-w-0 transition-colors duration-300 ${
         thread.is_temporary ? 'bg-amber-50 border-amber-100' : 'border-neutral-100'
       }`}>
+        {/* Left: back button (workflow run threads) */}
+        {thread.workflow_id && onBackToWorkflow && (
+          <button
+            onClick={() => onBackToWorkflow(thread.workflow_id!)}
+            className="flex-shrink-0 text-neutral-400 hover:text-neutral-600 transition-colors"
+            title="Back to workflow"
+          >
+            <ChevronLeftIcon className="w-4 h-4" />
+          </button>
+        )}
+
         {/* Left: agent dot (if agent thread) */}
         {agent && (
           <div className={`w-4 h-4 rounded flex-shrink-0 ${AGENT_COLOR_MAP[agent.color]?.bg ?? 'bg-indigo-500'} flex items-center justify-center`}>

@@ -17,7 +17,7 @@ export async function GET(
 
     const { data: thread, error } = await supabase
       .from('work_threads')
-      .select('id, is_generating, artifact, artifacts, updated_at')
+      .select('id, title, plan, artifact, artifacts, status, auto_generated, saved_workflow_id, is_generating, created_at, updated_at, agent_id, workflow_id')
       .eq('id', threadId)
       .eq('user_id', user.id)
       .single();
