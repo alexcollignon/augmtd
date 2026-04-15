@@ -3,9 +3,11 @@ import { createClient } from '@/lib/supabase/server';
 import { isSuperAdmin } from '@/lib/company/is-super-admin';
 import { logAudit, AUDIT_ACTIONS } from '@/lib/audit/log';
 import type { WorkspaceType } from '@/lib/workspace/types';
+import type { TierType } from '@/lib/ai/types';
 
 const VALID_TYPES: WorkspaceType[] = ['company', 'beta', 'pilot', 'internal'];
 const VALID_PLANS = ['starter', 'growth', 'enterprise'];
+const VALID_TIERS: (TierType | null)[] = ['standard', 'professional', 'private_shared', 'bedrock_private', 'bedrock_optimised', 'private_client', 'on_prem', null];
 
 async function getAdminClient() {
   const { createClient: createSupabase } = await import('@supabase/supabase-js');
@@ -30,7 +32,7 @@ export async function PATCH(
   if (!await isSuperAdmin(user.id, supabase)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
   const body = await request.json();
-  const updates: Record<string, string> = {};
+  const updates: Record<string, string | null> = {};
 
   if (body.name?.trim()) updates.name = body.name.trim();
   if (body.plan) {
@@ -40,6 +42,10 @@ export async function PATCH(
   if (body.type) {
     if (!VALID_TYPES.includes(body.type)) return NextResponse.json({ error: 'Invalid type' }, { status: 400 });
     updates.type = body.type;
+  }
+  if ('ai_tier' in body) {
+    if (!VALID_TIERS.includes(body.ai_tier)) return NextResponse.json({ error: 'Invalid ai_tier' }, { status: 400 });
+    updates.ai_tier = body.ai_tier ?? null;
   }
 
   if (Object.keys(updates).length === 0) {

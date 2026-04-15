@@ -1,4 +1,5 @@
 import type { CompanyRole, CompanyPlan } from '@/lib/types/company';
+import type { TierType } from '@/lib/ai/types';
 
 export type WorkspaceType = 'company' | 'beta' | 'pilot' | 'internal';
 export type WorkspaceStatus = 'active' | 'suspended' | 'deleting';
@@ -40,6 +41,7 @@ export interface Workspace {
   features: WorkspaceFeatures;
   settings: Record<string, unknown>;
   join_code: string;
+  ai_tier: TierType | null;
   created_at: string;
   updated_at: string;
 }

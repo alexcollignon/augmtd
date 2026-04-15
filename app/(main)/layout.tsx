@@ -11,8 +11,7 @@ export default async function MainLayout({ children }: { children: React.ReactNo
   if (!user) redirect('/login');
 
   // Fetch sidebar + workspace data in parallel — no serial waterfalls
-  const [{ data: tierData }, { data: profileData }, { data: connectionsData }, workspace] = await Promise.all([
-    supabase.from('tenant_configs').select('tier').eq('user_id', user.id).maybeSingle(),
+  const [{ data: profileData }, { data: connectionsData }, workspace] = await Promise.all([
     supabase.from('profiles').select('is_super_admin').eq('id', user.id).single(),
     supabase.from('connections').select('metadata').eq('user_id', user.id).eq('status', 'active').order('created_at', { ascending: true }),
     getMyWorkspace(user.id, supabase),
@@ -30,7 +29,6 @@ export default async function MainLayout({ children }: { children: React.ReactNo
     redirect('/suspended');
   }
 
-  const tier = (tierData?.tier ?? 'standard') as 'standard' | 'private_shared' | 'bedrock_private' | 'bedrock_optimised';
   const avatarUrl =
     (connectionsData ?? [])
       .map((c: any) => c.metadata?.picture)
@@ -44,7 +42,6 @@ export default async function MainLayout({ children }: { children: React.ReactNo
         <SidebarNav
           userEmail={user.email}
           avatarUrl={avatarUrl}
-          tier={tier}
           isSuperAdmin={isSuperAdmin}
           features={features}
         />

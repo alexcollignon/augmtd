@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
@@ -12,8 +12,6 @@ import {
   ClockIcon,
   Cog6ToothIcon,
   ArrowRightOnRectangleIcon,
-  LockClosedIcon,
-  GlobeAltIcon,
   ShieldCheckIcon,
 } from '@heroicons/react/24/outline';
 import { useRecordingContext } from '@/context/recording-context';
@@ -23,7 +21,6 @@ import { DEFAULT_FEATURES } from '@/lib/workspace/types';
 interface SidebarNavProps {
   userEmail?: string;
   avatarUrl?: string | null;
-  tier?: 'standard' | 'private_shared' | 'bedrock_private' | 'bedrock_optimised' | null;
   isSuperAdmin?: boolean;
   features?: WorkspaceFeatures;
 }
@@ -37,7 +34,6 @@ function formatElapsed(secs: number) {
 export default function SidebarNav({
   userEmail,
   avatarUrl: avatarUrlProp = null,
-  tier: tierProp = null,
   isSuperAdmin: isSuperAdminProp = false,
   features = DEFAULT_FEATURES,
 }: SidebarNavProps) {
@@ -49,52 +45,29 @@ export default function SidebarNav({
 
   const menuRef = useRef<HTMLDivElement>(null);
 
-  // Tier toggle state — seeded from server-fetched prop
-  const [tier, setTier] = useState<'standard' | 'private_shared' | 'bedrock_private' | 'bedrock_optimised' | null>(tierProp ?? null);
-  const [tierLoading, setTierLoading] = useState(false);
   const [isSuperAdmin] = useState(isSuperAdminProp);
-  const [processNotifCount, setProcessNotifCount] = useState(0);
+  const [workflowNotifCount, setWorkflowNotifCount] = useState(0);
 
   const navigation = [
     ...(features.email    ? [{ name: 'Inbox',    href: '/inbox',    icon: EnvelopeIcon }]    : []),
-    { name: 'Work', href: '/work', icon: Squares2X2Icon }, // core — always shown
+    { name: 'Work', href: '/work', icon: Squares2X2Icon, badgeCount: workflowNotifCount }, // core — always shown
     ...(features.meetings ? [{ name: 'Meetings', href: '/meetings', icon: VideoCameraIcon }] : []),
     ...(features.drive    ? [{ name: 'Drive',    href: '/drive',    icon: FolderIcon }]      : []),
     ...(isSuperAdmin ? [{ name: 'Platform Admin', href: '/platform-admin', icon: ShieldCheckIcon }] : []),
   ];
 
-  // Poll process notifications every 30s
+  // Poll workflow notifications every 30s
   useEffect(() => {
     const fetchCount = () => {
-      fetch('/api/notifications/processes')
+      fetch('/api/notifications/workflows')
         .then((r) => r.json())
-        .then((d) => setProcessNotifCount(d.count ?? 0))
+        .then((d) => setWorkflowNotifCount(d.count ?? 0))
         .catch(() => {});
     };
     fetchCount();
     const interval = setInterval(fetchCount, 30000);
     return () => clearInterval(interval);
   }, []);
-
-  const toggleTier = useCallback(async () => {
-    if (tierLoading || tier === null) return;
-    const next =
-      tier === 'standard'           ? 'private_shared' :
-      tier === 'private_shared'     ? 'bedrock_private' :
-      tier === 'bedrock_private'    ? 'bedrock_optimised' :
-      'standard';
-    setTierLoading(true);
-    try {
-      const res = await fetch('/api/settings/tier', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tier: next }),
-      });
-      if (res.ok) setTier(next);
-    } finally {
-      setTierLoading(false);
-    }
-  }, [tier, tierLoading]);
 
   // Close popover on outside click
   useEffect(() => {
@@ -110,21 +83,6 @@ export default function SidebarNav({
   }, [showUserMenu]);
 
   const userInitial = userEmail?.[0]?.toUpperCase() ?? '?';
-  const tierLabel =
-    tier === 'bedrock_optimised' ? 'Bedrock Optimised — click to switch to Public' :
-    tier === 'bedrock_private'   ? 'Bedrock AI — click to switch to Bedrock Optimised' :
-    tier === 'private_shared'    ? 'Private AI — click to switch to Bedrock' :
-                                   'Public AI — click to switch to Private';
-  const tierIcon =
-    tier === 'bedrock_optimised' ? <ShieldCheckIcon className="w-4 h-4" /> :
-    tier === 'bedrock_private'   ? <ShieldCheckIcon className="w-4 h-4" /> :
-    tier === 'private_shared'    ? <LockClosedIcon className="w-4 h-4" /> :
-                                   <GlobeAltIcon className="w-4 h-4" />;
-  const tierClass =
-    tier === 'bedrock_optimised' ? 'bg-amber-50 text-amber-600 hover:bg-amber-100' :
-    tier === 'bedrock_private'   ? 'bg-violet-50 text-violet-600 hover:bg-violet-100' :
-    tier === 'private_shared'    ? 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100' :
-                                   'text-neutral-400 hover:bg-neutral-200 hover:text-neutral-600';
 
   return (
     <div className="flex h-screen w-14 flex-col bg-neutral-50 flex-shrink-0">
@@ -142,31 +100,18 @@ export default function SidebarNav({
         </Link>
       </div>
 
-      {/* Tier toggle */}
-      <div className="flex justify-center py-1.5">
-        <button
-          onClick={toggleTier}
-          disabled={tierLoading || tier === null}
-          title={tierLabel}
-          className={`p-2 rounded-lg transition-colors ${tierClass} ${tierLoading ? 'opacity-50 cursor-wait' : 'cursor-pointer'}`}
-        >
-          {tierIcon}
-        </button>
-      </div>
-
       {/* Navigation */}
       <nav className="flex-1 py-2 px-1.5">
         {navigation.map((item) => {
-          const isActive = item.href === '/work'
-            ? pathname.startsWith('/work') || pathname.startsWith('/processes')
-            : pathname.startsWith(item.href);
+          const isActive = pathname.startsWith(item.href);
+          const badgeCount = 'badgeCount' in item ? item.badgeCount : 0;
           return (
             <div key={item.name}>
               <Link
                 href={item.href}
                 title={item.name}
                 className={`
-                  flex items-center justify-center w-full py-2.5 mb-px transition-colors rounded-lg
+                  relative flex items-center justify-center w-full py-2.5 mb-px transition-colors rounded-lg
                   ${isActive
                     ? 'bg-indigo-50 text-indigo-500'
                     : 'text-neutral-400 hover:text-neutral-700 hover:bg-neutral-200/60'
@@ -174,6 +119,9 @@ export default function SidebarNav({
                 `}
               >
                 <item.icon className="w-[18px] h-[18px] flex-shrink-0" />
+                {badgeCount && badgeCount > 0 ? (
+                  <span className="absolute top-1.5 right-2.5 w-1.5 h-1.5 rounded-full bg-indigo-500" />
+                ) : null}
               </Link>
             </div>
           );

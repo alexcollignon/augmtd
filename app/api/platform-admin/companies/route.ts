@@ -2,10 +2,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { isSuperAdmin } from '@/lib/company/is-super-admin';
 import { DEFAULT_FEATURES_FOR_TYPE, normalizeFeatures, type WorkspaceType } from '@/lib/workspace/types';
+import type { TierType } from '@/lib/ai/types';
 import { logAudit, AUDIT_ACTIONS } from '@/lib/audit/log';
 
 const VALID_TYPES: WorkspaceType[] = ['company', 'beta', 'pilot', 'internal'];
 const VALID_PLANS = ['starter', 'growth', 'enterprise'];
+const VALID_TIERS: (TierType | null)[] = ['standard', 'professional', 'private_shared', 'bedrock_private', 'bedrock_optimised', 'private_client', 'on_prem', null];
 
 function toSlug(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 63);
@@ -30,7 +32,7 @@ export async function GET() {
 
   const { data: companies } = await adminClient
     .from('companies')
-    .select('id, name, slug, plan, type, status, features, join_code, settings, created_at')
+    .select('id, name, slug, plan, type, status, features, join_code, settings, ai_tier, created_at')
     .order('created_at', { ascending: false });
 
   const { data: memberCounts } = await adminClient
@@ -61,10 +63,11 @@ export async function POST(request: NextRequest) {
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   if (!await isSuperAdmin(user.id, supabase)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
-  const { name, plan = 'starter', type = 'company' } = await request.json();
+  const { name, plan = 'starter', type = 'company', ai_tier = null } = await request.json();
   if (!name?.trim()) return NextResponse.json({ error: 'Workspace name required' }, { status: 400 });
   if (!VALID_PLANS.includes(plan)) return NextResponse.json({ error: 'Invalid plan' }, { status: 400 });
   if (!VALID_TYPES.includes(type)) return NextResponse.json({ error: 'Invalid type' }, { status: 400 });
+  if (!VALID_TIERS.includes(ai_tier)) return NextResponse.json({ error: 'Invalid ai_tier' }, { status: 400 });
 
   const adminClient = await getAdminClient();
 
@@ -107,6 +110,7 @@ export async function POST(request: NextRequest) {
       status: 'active',
       features,
       join_code: joinCode,
+      ai_tier: ai_tier ?? null,
     })
     .select()
     .single();
@@ -126,7 +130,7 @@ export async function POST(request: NextRequest) {
     targetType: 'workspace',
     targetId: company.id,
     workspaceId: company.id,
-    metadata: { name: company.name, type, plan },
+    metadata: { name: company.name, type, plan, ai_tier: ai_tier ?? null },
   });
 
   console.log(`[PlatformAdmin] Created workspace "${company.name}" (${type}) — join code: ${joinCode}`);

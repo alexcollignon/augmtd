@@ -18,6 +18,7 @@ import {
 } from '@heroicons/react/24/outline';
 import type { WorkspaceFeatures, WorkspaceType, FeatureKey } from '@/lib/workspace/types';
 import { FEATURE_KEYS } from '@/lib/workspace/types';
+import type { TierType } from '@/lib/ai/types';
 
 interface CompanyRow {
   id: string;
@@ -28,6 +29,7 @@ interface CompanyRow {
   status: string;
   features: WorkspaceFeatures;
   join_code: string;
+  ai_tier: TierType | null;
   created_at: string;
   member_count: number;
   meeting_assistant: boolean;
@@ -97,6 +99,26 @@ const ROLE_COLORS: Record<string, string> = {
   member: 'text-neutral-600',
 };
 
+const AI_TIER_OPTIONS: { value: TierType | null; label: string }[] = [
+  { value: null,                label: 'Standard (default)' },
+  { value: 'private_shared',   label: 'Private Shared' },
+  { value: 'bedrock_private',  label: 'Bedrock Private' },
+  { value: 'bedrock_optimised', label: 'Bedrock Optimised' },
+  { value: 'professional',     label: 'Professional' },
+  { value: 'private_client',   label: 'Private Client' },
+  { value: 'on_prem',          label: 'On-Prem' },
+];
+
+const AI_TIER_COLORS: Record<string, string> = {
+  standard:          'bg-neutral-100 text-neutral-600',
+  private_shared:    'bg-emerald-50 text-emerald-700',
+  bedrock_private:   'bg-violet-50 text-violet-700',
+  bedrock_optimised: 'bg-amber-50 text-amber-700',
+  professional:      'bg-blue-50 text-blue-700',
+  private_client:    'bg-sky-50 text-sky-700',
+  on_prem:           'bg-neutral-200 text-neutral-700',
+};
+
 interface AuditEntry {
   id: string;
   actor_user_id: string | null;
@@ -128,6 +150,7 @@ export default function PlatformAdminClient({ initialCompanies }: { initialCompa
   const [formName, setFormName] = useState('');
   const [formPlan, setFormPlan] = useState('starter');
   const [formType, setFormType] = useState<WorkspaceType>('company');
+  const [formAiTier, setFormAiTier] = useState<TierType | null>(null);
 
   const [formLoading, setFormLoading] = useState(false);
   const [formError, setFormError] = useState('');
@@ -198,6 +221,7 @@ export default function PlatformAdminClient({ initialCompanies }: { initialCompa
           name: formName.trim(),
           plan: formPlan,
           type: formType,
+          ai_tier: formAiTier,
         }),
       });
       const data = await res.json();
@@ -208,6 +232,7 @@ export default function PlatformAdminClient({ initialCompanies }: { initialCompa
       setFormName('');
       setFormPlan('starter');
       setFormType('company');
+      setFormAiTier(null);
     } finally {
       setFormLoading(false);
     }
@@ -271,7 +296,7 @@ export default function PlatformAdminClient({ initialCompanies }: { initialCompa
     setTimeout(() => setCopiedInviteId(null), 2000);
   }
 
-  async function handleUpdateCompany(id: string, updates: { name?: string; plan?: string; type?: string; status?: string }) {
+  async function handleUpdateCompany(id: string, updates: { name?: string; plan?: string; type?: string; status?: string; ai_tier?: TierType | null }) {
     setActionLoading(id);
     try {
       const res = await fetch(`/api/platform-admin/companies/${id}`, {
@@ -592,6 +617,16 @@ export default function PlatformAdminClient({ initialCompanies }: { initialCompa
                         {PLAN_OPTIONS.map(p => <option key={p} value={p} className="capitalize">{p}</option>)}
                       </select>
                     </div>
+                    <div>
+                      <label className="block text-[11px] font-semibold text-neutral-400 uppercase tracking-wide mb-1.5">AI Mode</label>
+                      <select
+                        value={formAiTier ?? ''}
+                        onChange={e => setFormAiTier((e.target.value || null) as TierType | null)}
+                        className="px-3 py-2 text-[13px] border border-neutral-200 rounded-lg focus:outline-none focus:border-indigo-400 bg-white"
+                      >
+                        {AI_TIER_OPTIONS.map(o => <option key={o.value ?? 'null'} value={o.value ?? ''}>{o.label}</option>)}
+                      </select>
+                    </div>
                     <button
                       type="submit"
                       disabled={formLoading || !formName.trim()}
@@ -729,6 +764,17 @@ export default function PlatformAdminClient({ initialCompanies }: { initialCompa
                               className={`text-[11px] font-semibold px-2.5 py-0.5 rounded-full border-0 capitalize cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-300 ${PLAN_COLORS[company.plan]}`}
                             >
                               {PLAN_OPTIONS.map(p => <option key={p} value={p} className="capitalize">{p}</option>)}
+                            </select>
+
+                            {/* AI Mode */}
+                            <select
+                              value={company.ai_tier ?? ''}
+                              onChange={e => handleUpdateCompany(company.id, { ai_tier: (e.target.value || null) as TierType | null })}
+                              disabled={actionLoading === company.id || editingId === company.id}
+                              title="AI mode for this workspace"
+                              className={`text-[11px] font-semibold px-2.5 py-0.5 rounded-full border-0 cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-300 ${AI_TIER_COLORS[company.ai_tier ?? 'standard']}`}
+                            >
+                              {AI_TIER_OPTIONS.map(o => <option key={o.value ?? 'null'} value={o.value ?? ''}>{o.label}</option>)}
                             </select>
 
                             {/* Status badge */}

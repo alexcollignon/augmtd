@@ -16,20 +16,32 @@ async function getTenantConfig(userId: string, supabase: SupabaseClient): Promis
   const cached = configCache.get(userId)
   if (cached && cached.expiresAt > Date.now()) return cached.config
 
-  const { data } = await supabase
-    .from('tenant_configs')
-    .select('tier, model_overrides, endpoints, encrypted_api_keys, audit_logging, model_version_pinning')
-    .eq('user_id', userId)
-    .maybeSingle()
+  // Fetch tenant config and workspace tier in parallel.
+  // Workspace tier (set by superadmin) takes precedence over any personal tier setting.
+  const [{ data: tcData }, { data: memberData }] = await Promise.all([
+    supabase
+      .from('tenant_configs')
+      .select('tier, model_overrides, endpoints, encrypted_api_keys, audit_logging, model_version_pinning')
+      .eq('user_id', userId)
+      .maybeSingle(),
+    supabase
+      .from('company_members')
+      .select('companies(ai_tier)')
+      .eq('user_id', userId)
+      .eq('status', 'active')
+      .maybeSingle(),
+  ])
+
+  const companyAiTier = (memberData?.companies as any)?.ai_tier as TierType | null | undefined
 
   const config: TenantConfig = {
     userId,
-    tier: (data?.tier as TierType) ?? 'standard',
-    modelOverrides: data?.model_overrides ?? {},
-    endpoints: data?.endpoints ?? {},
-    encryptedApiKeys: data?.encrypted_api_keys ?? {},
-    auditLogging: data?.audit_logging ?? false,
-    modelVersionPinning: data?.model_version_pinning ?? false,
+    tier: companyAiTier ?? (tcData?.tier as TierType) ?? 'standard',
+    modelOverrides: tcData?.model_overrides ?? {},
+    endpoints: tcData?.endpoints ?? {},
+    encryptedApiKeys: tcData?.encrypted_api_keys ?? {},
+    auditLogging: tcData?.audit_logging ?? false,
+    modelVersionPinning: tcData?.model_version_pinning ?? false,
   }
 
   configCache.set(userId, { config, expiresAt: Date.now() + CONFIG_TTL_MS })
