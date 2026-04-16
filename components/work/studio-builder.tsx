@@ -407,10 +407,12 @@ function ToolStepFields({ step, onUpdate }: { step: ToolStep; onUpdate: (p: Part
       </Field>
       {step.tool === 'web_search' && (
         <Field label="Search query">
-          <input type="text" value={(step.config.query as string) ?? ''}
+          <textarea
+            value={(step.config.query as string) ?? ''}
             onChange={e => onUpdate({ config: { ...step.config, query: e.target.value } })}
             placeholder="e.g. Germany Portugal business news today"
-            className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-[13px]" />
+            rows={3}
+            className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-[13px] resize-y focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400" />
         </Field>
       )}
       {step.tool === 'fetch_url' && (
