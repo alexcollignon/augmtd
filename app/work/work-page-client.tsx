@@ -456,7 +456,9 @@ export function WorkPageClient({
 
   function handleSelectThread(id: string) {
     setActiveThreadId(id);
-    setWebEnabled(false);
+    const thread = threads.find(t => t.id === id);
+    const threadAgent = thread?.agent_id ? initialAgents.find(a => a.id === thread.agent_id) : null;
+    setWebEnabled(threadAgent?.web_enabled ?? false);
     setPendingInput(null);
     setPendingMentions([]);
     setPendingFiles([]);
@@ -538,6 +540,9 @@ export function WorkPageClient({
                     setPendingMentions([]);
                     setPendingFiles([]);
                     setPendingAttachmentMeta([]);
+                    // Seed web toggle from agent's default
+                    const agent = initialAgents.find(a => a.id === id);
+                    setWebEnabled(agent?.web_enabled ?? false);
                   }}
                 />
               )}
@@ -676,6 +681,8 @@ export function WorkPageClient({
               pendingFiles={pendingFiles.map(({ id, file }) => ({ id, name: file.name, size: file.size }))}
               onAttach={handlePreAttach}
               onRemoveAttachment={handlePreRemoveAttachment}
+              webEnabled={webEnabled}
+              onWebToggle={setWebEnabled}
             />
           ) : (
             <ChatEmptyState
@@ -1440,9 +1447,11 @@ interface AgentHomeScreenProps {
   pendingFiles: AttachmentChip[];
   onAttach?: (files: File[]) => void;
   onRemoveAttachment?: (id: string) => void;
+  webEnabled?: boolean;
+  onWebToggle?: (enabled: boolean) => void;
 }
 
-function AgentHomeScreen({ agent, onStart, pendingFiles, onAttach, onRemoveAttachment }: AgentHomeScreenProps) {
+function AgentHomeScreen({ agent, onStart, pendingFiles, onAttach, onRemoveAttachment, webEnabled = false, onWebToggle }: AgentHomeScreenProps) {
   if (!agent) return null;
   const colors = AGENT_COLOR_MAP[agent.color] ?? AGENT_COLOR_MAP.indigo;
 
@@ -1475,6 +1484,8 @@ function AgentHomeScreen({ agent, onStart, pendingFiles, onAttach, onRemoveAttac
           onRemoveAttachment={onRemoveAttachment}
           attachments={pendingFiles}
           placeholder={`Message ${agent.name}…`}
+          webEnabled={webEnabled}
+          onWebToggle={onWebToggle}
         />
         {/* Conversation starters — same layout/animation as default chat prompts */}
         {(agent.conversation_starters?.filter(Boolean).length ?? 0) > 0 && (
@@ -1486,7 +1497,11 @@ function AgentHomeScreen({ agent, onStart, pendingFiles, onAttach, onRemoveAttac
                 style={{ animationDelay: `${i * 60}ms`, animationFillMode: 'both' }}
               >
                 <button
-                  onClick={() => onStart(starter, [], [])}
+                  onClick={() => {
+                    const sources: SourceId[] = ['kb', 'inbox', 'calendar'];
+                    if (webEnabled) sources.push('web');
+                    onStart(starter, sources, []);
+                  }}
                   className="w-full text-left px-1 py-2.5 text-[13px] text-neutral-400 hover:text-neutral-600 transition-colors"
                 >
                   {starter}

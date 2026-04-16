@@ -52,7 +52,7 @@ export default async function WorkPage({
       .limit(10),
     supabase
       .from('custom_agents')
-      .select('id, name, description, color, icon, conversation_starters')
+      .select('id, name, description, color, icon, conversation_starters, web_enabled')
       .eq('user_id', user.id)
       .eq('is_active', true)
       .order('created_at', { ascending: true }),

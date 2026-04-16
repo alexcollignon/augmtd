@@ -11,7 +11,7 @@ export async function GET() {
 
     const { data: agents, error } = await supabase
       .from('custom_agents')
-      .select('id, name, description, instructions, memory_text, color, icon, is_active, created_at, updated_at, conversation_starters')
+      .select('id, name, description, instructions, memory_text, color, icon, is_active, created_at, updated_at, conversation_starters, web_enabled')
       .eq('user_id', user.id)
       .eq('is_active', true)
       .order('created_at', { ascending: true });
@@ -32,13 +32,14 @@ export async function POST(request: NextRequest) {
     if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const body = await request.json();
-    const { name, description, instructions, color = 'indigo', icon = 'cpu-chip', conversation_starters } = body as {
+    const { name, description, instructions, color = 'indigo', icon = 'cpu-chip', conversation_starters, web_enabled = false } = body as {
       name: string;
       description?: string;
       instructions?: string;
       color?: string;
       icon?: string;
       conversation_starters?: string[] | null;
+      web_enabled?: boolean;
     };
 
     if (!name?.trim()) return NextResponse.json({ error: 'Name is required' }, { status: 400 });
@@ -56,6 +57,7 @@ export async function POST(request: NextRequest) {
         color,
         icon,
         conversation_starters: startersToSave,
+        web_enabled: Boolean(web_enabled),
       })
       .select()
       .single();

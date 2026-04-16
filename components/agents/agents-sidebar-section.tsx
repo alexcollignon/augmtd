@@ -11,6 +11,7 @@ export interface SidebarAgent {
   color: string;
   icon: string;
   conversation_starters?: string[] | null;
+  web_enabled?: boolean;
 }
 
 const COLOR_MAP: Record<string, string> = {

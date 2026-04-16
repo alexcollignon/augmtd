@@ -2,7 +2,7 @@
 
 import { useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { SparklesIcon, ArrowUpTrayIcon, XMarkIcon, DocumentTextIcon, FolderOpenIcon } from '@heroicons/react/24/outline';
+import { SparklesIcon, ArrowUpTrayIcon, XMarkIcon, DocumentTextIcon, FolderOpenIcon, GlobeAltIcon } from '@heroicons/react/24/outline';
 import { AgentKnowledgeFile } from './agent-knowledge-section';
 import { AGENT_ICONS, AgentIcon, DEFAULT_ICON } from './agent-icons';
 import { DriveFilePicker } from './drive-file-picker';
@@ -32,10 +32,11 @@ export interface AgentFormData {
   color: string;
   icon: string;
   conversation_starters?: string[] | null;
+  web_enabled?: boolean;
 }
 
 interface Props {
-  initial?: AgentFormData & { id?: string; memory_text?: string; sources?: AgentKnowledgeFile[]; conversation_starters?: string[] | null };
+  initial?: AgentFormData & { id?: string; memory_text?: string; sources?: AgentKnowledgeFile[]; conversation_starters?: string[] | null; web_enabled?: boolean };
   mode: 'create' | 'edit';
 }
 
@@ -60,6 +61,7 @@ export function AgentForm({ initial, mode }: Props) {
     initial?.conversation_starters?.filter(Boolean) ?? []
   );
   const [isGeneratingStarters, setIsGeneratingStarters] = useState(false);
+  const [webEnabled, setWebEnabled] = useState(initial?.web_enabled ?? false);
 
   const enhanceAbortRef = useRef<AbortController | null>(null);
   const fileInputRef    = useRef<HTMLInputElement>(null);
@@ -233,7 +235,7 @@ export function AgentForm({ initial, mode }: Props) {
         const res = await fetch('/api/agents', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, description, instructions, color, icon, conversation_starters: startersToSend }),
+          body: JSON.stringify({ name, description, instructions, color, icon, conversation_starters: startersToSend, web_enabled: webEnabled }),
         });
         if (!res.ok) throw new Error('Failed to create agent');
         const { agent } = await res.json();
@@ -249,7 +251,7 @@ export function AgentForm({ initial, mode }: Props) {
         await fetch(`/api/agents/${agentId}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, description, instructions, color, icon, conversation_starters: startersToSend }),
+          body: JSON.stringify({ name, description, instructions, color, icon, conversation_starters: startersToSend, web_enabled: webEnabled }),
         });
       }
       router.push('/work');
@@ -533,6 +535,26 @@ export function AgentForm({ initial, mode }: Props) {
                 From Drive
               </button>
             </div>
+          </div>
+
+          {/* Web search */}
+          <div className="rounded-2xl bg-white border border-neutral-100 shadow-sm px-4 py-3 flex-shrink-0 flex items-center justify-between">
+            <div>
+              <p className="text-[10.5px] font-semibold text-neutral-400 uppercase tracking-wide">Web Search</p>
+              <p className="text-[11px] text-neutral-400 mt-0.5">Enable web search and URL fetching by default for this agent.</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setWebEnabled(v => !v)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium transition-colors ${
+                webEnabled
+                  ? 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100'
+                  : 'bg-neutral-100 text-neutral-500 hover:bg-neutral-200'
+              }`}
+            >
+              <GlobeAltIcon className="w-3.5 h-3.5" />
+              {webEnabled ? 'On' : 'Off'}
+            </button>
           </div>
 
           {/* Conversation starters */}

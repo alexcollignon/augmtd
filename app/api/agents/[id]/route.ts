@@ -16,7 +16,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
       .from('custom_agents')
       .select(`
         id, name, description, instructions, memory_text, color, icon, is_active, created_at, updated_at,
-        conversation_starters,
+        conversation_starters, web_enabled,
         agent_knowledge_sources (id, name, knowledge_file_id, created_at)
       `)
       .eq('id', id)
@@ -40,7 +40,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const body = await request.json();
-    const allowed = ['name', 'description', 'instructions', 'color', 'icon', 'memory_text', 'conversation_starters'] as const;
+    const allowed = ['name', 'description', 'instructions', 'color', 'icon', 'memory_text', 'conversation_starters', 'web_enabled'] as const;
     const updates: Record<string, unknown> = {};
     for (const key of allowed) {
       if (key in body) updates[key] = body[key];

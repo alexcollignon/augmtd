@@ -216,14 +216,14 @@ export async function POST(
       agentId
         ? adminClient
             .from('custom_agents')
-            .select('id, name, instructions, memory_text, agent_knowledge_sources(knowledge_file_id)')
+            .select('id, name, instructions, memory_text, web_enabled, agent_knowledge_sources(knowledge_file_id)')
             .eq('id', agentId)
             .eq('user_id', user.id)
             .single()
         : Promise.resolve({ data: null }),
     ]);
 
-    const agent = (agentResult as { data: { id: string; name: string; instructions: string | null; memory_text: string | null; agent_knowledge_sources: Array<{ knowledge_file_id: string | null }> } | null }).data ?? null;
+    const agent = (agentResult as { data: { id: string; name: string; instructions: string | null; memory_text: string | null; web_enabled: boolean | null; agent_knowledge_sources: Array<{ knowledge_file_id: string | null }> } | null }).data ?? null;
     const agentFileIds: string[] = agent
       ? agent.agent_knowledge_sources
           .map((s: { knowledge_file_id: string | null }) => s.knowledge_file_id)
@@ -247,6 +247,9 @@ export async function POST(
           ? `Your instructions:\n${agent.instructions.trim()}`
           : '',
         `Stay in this role for the entire conversation. Do not describe yourself as a general-purpose assistant.`,
+        agent.web_enabled
+          ? `You have access to web_search and fetch_url tools. Use them proactively — do not answer from memory when fresh information is available online.`
+          : '',
       ].filter(Boolean).join('\n\n');
       contextParts.push(agentHeader);
 
