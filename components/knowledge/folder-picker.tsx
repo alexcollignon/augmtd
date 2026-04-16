@@ -110,8 +110,8 @@ export default function FolderPicker({ provider, connectionId, onSelect, disable
 
   const connectLabel =
     selectedIds.size > 0
-      ? `Connect ${selectedIds.size} file${selectedIds.size === 1 ? '' : 's'}`
-      : 'Connect this folder';
+      ? `Add ${selectedIds.size} file${selectedIds.size === 1 ? '' : 's'}`
+      : 'Add this folder';
 
   const connectDisabled = selectedIds.size === 0 && atRoot;
 

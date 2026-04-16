@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { toast } from 'sonner';
-import SourceCard from '@/components/knowledge/source-card';
 import FolderPicker from '@/components/knowledge/folder-picker';
 import {
   FolderIcon,
@@ -15,7 +14,6 @@ import {
   ArrowPathIcon,
   FolderOpenIcon,
   MagnifyingGlassIcon,
-  LinkIcon,
   ChevronLeftIcon,
 } from '@heroicons/react/24/outline';
 import type { DriveAugmtdFile, DriveFolder } from '@/lib/types/drive';
@@ -60,18 +58,17 @@ interface DriveClientProps {
 
 type SidebarView =
   | { kind: 'all' }
-  | { kind: 'folder'; folderId: string }
-  | { kind: 'sources_connected' };
-
-type FileFilter = 'all' | 'generated' | 'uploaded' | 'connected';
+  | { kind: 'folder'; folderId: string };
 
 type SelectedFile =
   | { kind: 'augmtd'; file: DriveAugmtdFile }
   | { kind: 'kb'; file: KnowledgeFile };
 
-type ListRow =
+type FileRow =
   | { kind: 'augmtd'; file: DriveAugmtdFile; date: string }
   | { kind: 'kb'; file: KnowledgeFile; date: string };
+
+type ListRow = FileRow | { kind: 'separator'; label: string; folderId: string | null };
 
 // ─── Upload Modal ────────────────────────────────────────────────────────────
 
@@ -88,15 +85,33 @@ interface UploadModalProps {
   folders: DriveFolder[];
   onClose: () => void;
   onUploaded: (file: KnowledgeFile) => void;
+  onFolderCreated: (folder: DriveFolder) => void;
 }
 
-function UploadModal({ folders, onClose, onUploaded }: UploadModalProps) {
+function UploadModal({ folders, onClose, onUploaded, onFolderCreated }: UploadModalProps) {
   const [entries, setEntries] = useState<FileEntry[]>([]);
   const [folderId, setFolderId] = useState<string>('');
   const [running, setRunning] = useState(false);
+  const [showNewFolder, setShowNewFolder] = useState(false);
+  const [newFolderName, setNewFolderName] = useState('');
+  const [creatingFolder, setCreatingFolder] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const userFolders = folders.filter((f) => !f.is_system);
+
+  async function handleCreateFolder() {
+    if (!newFolderName.trim()) return;
+    setCreatingFolder(true);
+    try {
+      const res = await fetch('/api/drive/folders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: newFolderName.trim() }) });
+      if (!res.ok) { toast.error('Failed to create folder'); return; }
+      const folder: DriveFolder = await res.json();
+      onFolderCreated(folder);
+      setFolderId(folder.id);
+      setShowNewFolder(false);
+      setNewFolderName('');
+    } catch { toast.error('Failed to create folder'); } finally { setCreatingFolder(false); }
+  }
 
   function addFiles(fileList: FileList | null) {
     if (!fileList) return;
@@ -156,7 +171,8 @@ function UploadModal({ folders, onClose, onUploaded }: UploadModalProps) {
           .then(async (res) => {
             if (!res.ok) { toast.error(`Failed to index ${entry.file.name}: ${(await res.json()).error ?? 'unknown error'}`, { id: toastId }); return; }
             const indexed: KnowledgeFile = await res.json();
-            toast.success(`${entry.file.name} ready`, { id: toastId });
+            const folderName = folderId ? folders.find((f) => f.id === folderId)?.name : null;
+            toast.success(folderName ? `${entry.file.name} saved to ${folderName}` : `${entry.file.name} ready`, { id: toastId });
             onUploaded(indexed);
           })
           .catch(() => toast.error(`Indexing failed: ${entry.file.name}`, { id: toastId }));
@@ -202,15 +218,39 @@ function UploadModal({ folders, onClose, onUploaded }: UploadModalProps) {
               ))}
             </div>
           )}
-          {userFolders.length > 0 && (
-            <div>
-              <label className="block text-[12px] font-medium text-neutral-700 mb-1">Save to folder (optional)</label>
-              <select value={folderId} onChange={(e) => setFolderId(e.target.value)} disabled={running} className="w-full border border-neutral-200 rounded-md px-2 py-1.5 text-[13px] text-neutral-700 bg-white focus:outline-none focus:border-indigo-400 disabled:opacity-50">
-                <option value="">Root (no folder)</option>
-                {userFolders.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
-              </select>
-            </div>
-          )}
+          <div>
+            <label className="block text-[12px] font-medium text-neutral-700 mb-1">Save to folder (optional)</label>
+            {userFolders.length > 0 && !showNewFolder ? (
+              <div className="flex gap-1.5">
+                <select value={folderId} onChange={(e) => setFolderId(e.target.value)} disabled={running} className="flex-1 border border-neutral-200 rounded-md px-2 py-1.5 text-[13px] text-neutral-700 bg-white focus:outline-none focus:border-indigo-400 disabled:opacity-50">
+                  <option value="">Root (no folder)</option>
+                  {userFolders.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+                </select>
+                <button type="button" onClick={() => setShowNewFolder(true)} disabled={running} className="px-2.5 py-1.5 text-[12px] text-neutral-500 border border-neutral-200 rounded-md hover:bg-neutral-50 disabled:opacity-40 flex-shrink-0">+ New</button>
+              </div>
+            ) : !showNewFolder ? (
+              <button type="button" onClick={() => setShowNewFolder(true)} disabled={running} className="flex items-center gap-1.5 text-[12.5px] text-indigo-600 hover:text-indigo-800 disabled:opacity-40">
+                <PlusIcon className="w-3.5 h-3.5" />Create a folder to organize this file
+              </button>
+            ) : null}
+            {showNewFolder && (
+              <div className="flex gap-1.5">
+                <input
+                  autoFocus
+                  value={newFolderName}
+                  onChange={(e) => setNewFolderName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleCreateFolder(); if (e.key === 'Escape') { setShowNewFolder(false); setNewFolderName(''); } }}
+                  placeholder="Folder name…"
+                  disabled={creatingFolder}
+                  className="flex-1 border border-neutral-200 rounded-md px-2 py-1.5 text-[13px] focus:outline-none focus:border-indigo-400 disabled:opacity-50"
+                />
+                <button type="button" onClick={handleCreateFolder} disabled={!newFolderName.trim() || creatingFolder} className="px-3 py-1.5 bg-indigo-600 text-white text-[12px] rounded-md disabled:opacity-40">
+                  {creatingFolder ? '…' : 'Create'}
+                </button>
+                <button type="button" onClick={() => { setShowNewFolder(false); setNewFolderName(''); }} disabled={creatingFolder} className="px-2 py-1.5 text-[12px] text-neutral-400 hover:text-neutral-600 disabled:opacity-40">✕</button>
+              </div>
+            )}
+          </div>
         </div>
         <div className="flex justify-end gap-2 px-5 py-4 border-t border-neutral-100">
           <button onClick={onClose} disabled={running} className="px-3 py-1.5 text-[13px] text-neutral-600 border border-neutral-200 rounded-md hover:bg-neutral-50 disabled:opacity-40">Cancel</button>
@@ -330,52 +370,28 @@ function EmptyState({ message, sub }: { message: string; sub: string }) {
   );
 }
 
-// ─── Sources Tab (Connected Sources view) ────────────────────────────────────
+// ─── Add From Drive Modal ─────────────────────────────────────────────────────
 
-interface SourcesTabProps {
-  sources: KnowledgeSource[];
-  onSourcesChange: (sources: KnowledgeSource[]) => void;
+interface AddFromDriveModalProps {
   connections: Connection[];
-  folders: DriveFolder[];
-  onOpenUpload: () => void;
+  onClose: () => void;
+  onSuccess: (source: KnowledgeSource) => void;
+  onSwitchToUpload: () => void;
 }
 
-function SourcesTab({ sources, onSourcesChange, connections, folders, onOpenUpload }: SourcesTabProps) {
-  const [showAddForm, setShowAddForm] = useState(false);
-  const [addProvider, setAddProvider] = useState<'google_drive' | 'onedrive'>('google_drive');
-  const [selectedConnectionId, setSelectedConnectionId] = useState<string>('');
-  const [pickerReady, setPickerReady] = useState(false);
-  const [adding, setAdding] = useState(false);
-  const [kbFiles, setKbFiles] = useState<KnowledgeFile[]>([]);
-  const [loadingFiles, setLoadingFiles] = useState(false);
-  const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
-  const [moveDropdownFor, setMoveDropdownFor] = useState<string | null>(null);
-
+function AddFromDriveModal({ connections, onClose, onSuccess, onSwitchToUpload }: AddFromDriveModalProps) {
   const gmailConnections = connections.filter((c) => c.provider === 'gmail');
   const outlookConnections = connections.filter((c) => c.provider === 'outlook');
   const canAddGoogleDrive = gmailConnections.length > 0;
   const canAddOneDrive = outlookConnections.length > 0;
-  const userFolders = folders.filter((f) => !f.is_system);
 
-  useEffect(() => {
-    setLoadingFiles(true);
-    fetch('/api/drive/kb-files').then((r) => r.ok ? r.json() : []).then((data: KnowledgeFile[]) => setKbFiles(Array.isArray(data) ? data : [])).finally(() => setLoadingFiles(false));
-  }, [sources]);
+  const defaultProvider: 'google_drive' | 'onedrive' = canAddGoogleDrive ? 'google_drive' : 'onedrive';
+  const defaultConnection = (defaultProvider === 'google_drive' ? gmailConnections : outlookConnections)[0]?.id ?? '';
 
-  useEffect(() => {
-    const active = sources.some((s) => s.status === 'pending' || s.status === 'indexing');
-    if (!active) return;
-    const sourcesInterval = setInterval(async () => {
-      const res = await fetch('/api/knowledge/sources');
-      if (res.ok) onSourcesChange(await res.json());
-    }, 3000);
-    // Also poll kb-files independently so the Indexed Files list fills in as files land
-    const filesInterval = setInterval(async () => {
-      const res = await fetch('/api/drive/kb-files');
-      if (res.ok) setKbFiles(await res.json());
-    }, 3000);
-    return () => { clearInterval(sourcesInterval); clearInterval(filesInterval); };
-  }, [sources, onSourcesChange]);
+  const [addProvider, setAddProvider] = useState<'google_drive' | 'onedrive'>(defaultProvider);
+  const [selectedConnectionId, setSelectedConnectionId] = useState<string>(defaultConnection);
+  const [pickerReady, setPickerReady] = useState(!!defaultConnection);
+  const [adding, setAdding] = useState(false);
 
   function accountsForProvider(provider: 'google_drive' | 'onedrive') {
     return provider === 'google_drive' ? gmailConnections : outlookConnections;
@@ -389,27 +405,7 @@ function SourcesTab({ sources, onSourcesChange, connections, folders, onOpenUplo
     if (firstId) setPickerReady(true);
   }
 
-  function handleOpenAddForm() {
-    const opening = !showAddForm;
-    setShowAddForm(opening);
-    if (opening) {
-      const defaultProvider = canAddGoogleDrive ? 'google_drive' : 'onedrive';
-      setAddProvider(defaultProvider);
-      const firstId = accountsForProvider(defaultProvider)[0]?.id ?? '';
-      setSelectedConnectionId(firstId);
-      setPickerReady(!!firstId);
-    }
-  }
-
   async function handleFolderSelected(folderId: string, folderName: string, fileIds?: string[]) {
-    // Prevent duplicates — check if this folder is already connected
-    const alreadyConnected = sources.some((s) => s.folder_id === folderId && s.provider === addProvider);
-    if (alreadyConnected) {
-      toast.error(`"${folderName}" is already connected`);
-      setShowAddForm(false);
-      setPickerReady(false);
-      return;
-    }
     setAdding(true);
     try {
       const res = await fetch('/api/knowledge/sources', {
@@ -418,78 +414,38 @@ function SourcesTab({ sources, onSourcesChange, connections, folders, onOpenUplo
         body: JSON.stringify({ provider: addProvider, folder_id: folderId, folder_name: folderName, connection_id: selectedConnectionId, ...(fileIds?.length ? { file_ids: fileIds } : {}) }),
       });
       const data = await res.json();
-      if (!res.ok) { toast.error(data.error ?? 'Failed to connect folder'); return; }
-      onSourcesChange([data, ...sources]);
-      setShowAddForm(false);
-      setPickerReady(false);
-      toast.success(`"${folderName}" connected — indexing started`);
-    } catch { toast.error('Failed to connect folder'); } finally { setAdding(false); }
+      if (!res.ok) { toast.error(data.error ?? 'Failed to add files'); return; }
+      const msg = fileIds?.length
+        ? `${fileIds.length} file${fileIds.length === 1 ? '' : 's'} added — indexing started`
+        : `"${folderName}" added — indexing started`;
+      toast.success(msg);
+      onSuccess(data);
+      onClose();
+    } catch { toast.error('Failed to add files'); } finally { setAdding(false); }
   }
 
-  async function handleSync(sourceId: string) {
-    onSourcesChange(sources.map((s) => (s.id === sourceId ? { ...s, status: 'indexing' } : s)));
-    try {
-      const res = await fetch(`/api/knowledge/sources/${sourceId}/sync`, { method: 'POST' });
-      const data = await res.json();
-      if (!res.ok) { toast.error(data.error ?? 'Sync failed'); onSourcesChange(sources.map((s) => (s.id === sourceId ? { ...s, status: 'error' } : s))); return; }
-      const refreshRes = await fetch('/api/knowledge/sources');
-      onSourcesChange(await refreshRes.json());
-      toast.success('Sync complete');
-    } catch { toast.error('Sync failed'); onSourcesChange(sources.map((s) => (s.id === sourceId ? { ...s, status: 'error' } : s))); }
-  }
-
-  async function handleRemove(sourceId: string) {
-    try {
-      const res = await fetch(`/api/knowledge/sources/${sourceId}`, { method: 'DELETE' });
-      if (!res.ok) { toast.error((await res.json()).error ?? 'Failed to remove'); return; }
-      onSourcesChange(sources.filter((s) => s.id !== sourceId));
-      toast.success('Source removed');
-    } catch { toast.error('Failed to remove source'); }
-  }
-
-  async function handleMoveKbFile(fileId: string, newFolderId: string | null) {
-    try {
-      const res = await fetch('/api/drive/move', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'kb_file', id: fileId, folderId: newFolderId }) });
-      if (!res.ok) { toast.error('Failed to move file'); return; }
-      setKbFiles((prev) => prev.map((f) => (f.id === fileId ? { ...f, folder_id: newFolderId } : f)));
-      toast.success('Moved');
-    } catch { toast.error('Failed to move file'); }
-  }
-
-  const connectedSources = sources.filter((s) => s.provider !== 'upload');
-  const uploadedFiles = kbFiles.filter((f) => f.storage_path);
-  const indexedFiles = kbFiles.filter((f) => !f.storage_path);
   const currentAccounts = accountsForProvider(addProvider);
 
   return (
-    <div className="space-y-4">
-      {/* Connected Sources section */}
-      <div className="bg-white border border-neutral-200 rounded-lg p-5">
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h3 className="text-[14px] font-semibold text-neutral-900">Connected Sources</h3>
-            <p className="text-[12px] text-neutral-500 mt-0.5">Files in these folders are indexed for KB search</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <button onClick={onOpenUpload} className="flex items-center gap-1.5 px-3 py-1.5 text-[12.5px] font-medium text-neutral-700 border border-neutral-200 rounded-md hover:bg-neutral-50 transition-colors">
-              <ArrowUpTrayIcon className="w-3.5 h-3.5" />Upload file
-            </button>
-            <button onClick={handleOpenAddForm} className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-[12.5px] font-semibold rounded-md transition-colors">
-              <PlusIcon className="w-3.5 h-3.5" />Add source
-            </button>
-          </div>
+    <div className="fixed inset-0 z-50 bg-black/30 flex items-center justify-center p-4">
+      <div className="bg-white w-full max-w-lg border border-neutral-200 shadow-xl rounded-2xl overflow-hidden flex flex-col max-h-[85vh]">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-neutral-100 flex-shrink-0">
+          <h2 className="text-[14px] font-semibold text-neutral-900">Add from Drive</h2>
+          <button onClick={onClose} className="text-neutral-400 hover:text-neutral-600"><XMarkIcon className="w-4 h-4" /></button>
         </div>
-
-        {showAddForm && (
-          <div className="mb-4 p-4 bg-neutral-50 border border-neutral-200 rounded-lg">
-            <div className="space-y-3">
+        <div className="flex-1 overflow-y-auto p-5 space-y-4">
+          {!canAddGoogleDrive && !canAddOneDrive ? (
+            <p className="text-[13px] text-neutral-500 py-4 text-center">Connect Gmail or Outlook first to access Google Drive or OneDrive.</p>
+          ) : (
+            <>
               <div>
                 <label className="block text-[12px] font-medium text-neutral-700 mb-1.5">Provider</label>
                 <div className="flex gap-2">
                   {(['google_drive', 'onedrive'] as const).map((p) => {
                     const enabled = p === 'google_drive' ? canAddGoogleDrive : canAddOneDrive;
                     return (
-                      <button key={p} onClick={() => handleProviderChange(p)} disabled={!enabled} className={`px-3 py-1.5 text-[12.5px] font-medium border rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${addProvider === p ? 'bg-indigo-50 border-indigo-400 text-indigo-700' : 'bg-white border-neutral-200 text-neutral-600 hover:bg-neutral-50'}`}>
+                      <button key={p} onClick={() => handleProviderChange(p)} disabled={!enabled}
+                        className={`px-3 py-1.5 text-[12.5px] font-medium border rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${addProvider === p ? 'bg-indigo-50 border-indigo-400 text-indigo-700' : 'bg-white border-neutral-200 text-neutral-600 hover:bg-neutral-50'}`}>
                         {p === 'google_drive' ? 'Google Drive' : 'OneDrive'}
                         {!enabled && <span className="ml-1 text-[10px] text-neutral-400">(connect email first)</span>}
                       </button>
@@ -502,94 +458,34 @@ function SourcesTab({ sources, onSourcesChange, connections, folders, onOpenUplo
                   <label className="block text-[12px] font-medium text-neutral-700 mb-1.5">Account</label>
                   <div className="flex gap-2 flex-wrap">
                     {currentAccounts.map((c) => (
-                      <button key={c.id} onClick={() => { setSelectedConnectionId(c.id); setPickerReady(false); setTimeout(() => setPickerReady(true), 0); }} className={`px-3 py-1.5 text-[12px] border rounded-md transition-colors ${selectedConnectionId === c.id ? 'bg-indigo-50 border-indigo-400 text-indigo-700 font-medium' : 'bg-white border-neutral-200 text-neutral-600 hover:bg-neutral-50'}`}>{c.email}</button>
+                      <button key={c.id}
+                        onClick={() => { setSelectedConnectionId(c.id); setPickerReady(false); setTimeout(() => setPickerReady(true), 0); }}
+                        className={`px-3 py-1.5 text-[12px] border rounded-md transition-colors ${selectedConnectionId === c.id ? 'bg-indigo-50 border-indigo-400 text-indigo-700 font-medium' : 'bg-white border-neutral-200 text-neutral-600 hover:bg-neutral-50'}`}>
+                        {c.email}
+                      </button>
                     ))}
                   </div>
                 </div>
               )}
               {pickerReady && selectedConnectionId && (
-                <div>
-                  <label className="block text-[12px] font-medium text-neutral-700 mb-1.5">Folder</label>
-                  <FolderPicker key={`${addProvider}-${selectedConnectionId}`} provider={addProvider} connectionId={selectedConnectionId} onSelect={handleFolderSelected} disabled={adding} />
-                  {adding && <p className="mt-2 text-[12px] text-neutral-500">Connecting…</p>}
-                </div>
+                <FolderPicker
+                  key={`${addProvider}-${selectedConnectionId}`}
+                  provider={addProvider}
+                  connectionId={selectedConnectionId}
+                  onSelect={handleFolderSelected}
+                  disabled={adding}
+                />
               )}
-              <div className="pt-1">
-                <button onClick={() => { setShowAddForm(false); setPickerReady(false); }} className="px-4 py-2 border border-neutral-200 rounded-md text-neutral-600 text-[13px] font-medium hover:bg-neutral-50 transition-colors">Cancel</button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {connectedSources.length === 0 && !showAddForm ? (
-          <div className="py-8 text-center text-[13px] text-neutral-500">
-            <p className="mb-1 font-medium">No sources connected</p>
-            <p className="text-[12px] text-neutral-400">Connect a Google Drive or OneDrive folder to index files.</p>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {connectedSources.map((source) => <SourceCard key={source.id} source={source as any} onSync={handleSync} onRemove={handleRemove} />)}
-          </div>
-        )}
-      </div>
-
-      {/* Indexed files table */}
-      {(indexedFiles.length > 0 || uploadedFiles.length > 0) && (
-        <div className="bg-white border border-neutral-200 rounded-lg overflow-hidden">
-          <div className="px-5 pt-4 pb-3 border-b border-neutral-100">
-            <h3 className="text-[14px] font-semibold text-neutral-900">Indexed Files</h3>
-          </div>
-          {loadingFiles ? (
-            <div className="flex items-center justify-center h-16"><ArrowPathIcon className="w-4 h-4 text-neutral-400 animate-spin" /></div>
-          ) : (
-            <table className="w-full text-[12.5px]">
-              <thead>
-                <tr className="border-b border-neutral-100">
-                  <th className="text-left py-2.5 px-4 text-[11px] font-medium text-neutral-400 uppercase tracking-wide">Name</th>
-                  <th className="text-left py-2.5 px-3 text-[11px] font-medium text-neutral-400 uppercase tracking-wide hidden sm:table-cell">Type</th>
-                  <th className="text-left py-2.5 px-3 text-[11px] font-medium text-neutral-400 uppercase tracking-wide hidden lg:table-cell">Date</th>
-                  <th className="w-10" />
-                </tr>
-              </thead>
-              <tbody>
-                {[...indexedFiles, ...uploadedFiles].map((file) => {
-                  const fileSource = connectedSources.find((s) => s.id === file.source_id);
-                  return (
-                    <tr key={file.id} className="border-b border-neutral-50 hover:bg-neutral-50 group">
-                      <td className="py-2.5 px-4">
-                        <div className="flex items-center gap-2">
-                          <DocumentIcon className="w-3.5 h-3.5 text-neutral-300 flex-shrink-0" />
-                          <span className="text-neutral-700 truncate max-w-[260px]">{file.filename}</span>
-                          {file.folder_id && <span className="text-[10px] text-neutral-400 bg-neutral-100 px-1.5 py-0.5 rounded">{userFolders.find((f) => f.id === file.folder_id)?.name ?? 'folder'}</span>}
-                        </div>
-                      </td>
-                      <td className="py-2.5 px-3 hidden sm:table-cell"><TypeBadge type={file.mime_type} /></td>
-                      <td className="py-2.5 px-3 text-neutral-400 hidden lg:table-cell">{formatDate(file.indexed_at)}</td>
-                      <td className="py-2.5 px-2 relative">
-                        {menuOpenId === file.id && <div className="fixed inset-0 z-20" onClick={() => setMenuOpenId(null)} />}
-                        <button onClick={() => setMenuOpenId(menuOpenId === file.id ? null : file.id)} className="opacity-0 group-hover:opacity-100 p-1 hover:bg-neutral-100 rounded transition-opacity">
-                          <EllipsisHorizontalIcon className="w-4 h-4 text-neutral-400" />
-                        </button>
-                        {menuOpenId === file.id && (
-                          <div className="absolute right-0 top-full mt-1 w-44 bg-white border border-neutral-200 shadow-lg z-30 py-1 rounded-lg overflow-hidden">
-                            <div className="relative">
-                              <button onClick={() => setMoveDropdownFor(moveDropdownFor === file.id ? null : file.id)} className="w-full text-left px-3 py-1.5 text-[12.5px] text-neutral-700 hover:bg-neutral-50">Move to folder</button>
-                              {moveDropdownFor === file.id && (
-                                <FolderPickerDropdown folders={userFolders} currentFolderId={file.folder_id} onSelect={(fid) => { handleMoveKbFile(file.id, fid); setMenuOpenId(null); setMoveDropdownFor(null); }} onNewFolder={async (name) => { const res = await fetch('/api/drive/folders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) }); return res.json(); }} onClose={() => setMoveDropdownFor(null)} />
-                              )}
-                            </div>
-                            <button onClick={async () => { const res = await fetch(`/api/drive/uploads/${file.id}`, { method: 'DELETE' }); if (res.ok) { setKbFiles((prev) => prev.filter((f) => f.id !== file.id)); toast.success('Removed from index'); } else { toast.error('Failed to remove'); } setMenuOpenId(null); }} className="w-full text-left px-3 py-1.5 text-[12.5px] text-red-600 hover:bg-red-50">Remove from index</button>
-                          </div>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+            </>
           )}
         </div>
-      )}
+        <div className="flex-shrink-0 px-5 py-3 border-t border-neutral-100">
+          <button onClick={() => { onSwitchToUpload(); onClose(); }}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-[12.5px] text-neutral-600 border border-neutral-200 rounded-md hover:bg-neutral-50 transition-colors">
+            <ArrowUpTrayIcon className="w-3.5 h-3.5" />Upload a file instead
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -630,50 +526,68 @@ function sidebarViewTitle(view: SidebarView, folders: DriveFolder[]): string {
   switch (view.kind) {
     case 'all': return 'All Files';
     case 'folder': return folders.find((f) => f.id === view.folderId)?.name ?? 'Folder';
-    case 'sources_connected': return 'Connected Sources';
   }
 }
 
 function computeRows(
   view: SidebarView,
-  filter: FileFilter,
   augmtdFiles: DriveAugmtdFile[],
   kbFiles: KnowledgeFile[],
+  folders: DriveFolder[],
 ): ListRow[] {
-  if (view.kind === 'sources_connected') return [];
-
-  // Get base rows for this view
-  let augmtd = view.kind === 'folder'
+  const augmtd = view.kind === 'folder'
     ? augmtdFiles.filter((f) => f.folder_id === view.folderId)
     : augmtdFiles;
-  let kb = view.kind === 'folder'
+  const kb = view.kind === 'folder'
     ? kbFiles.filter((f) => f.folder_id === view.folderId)
     : kbFiles;
 
-  // Apply filter
-  let rows: ListRow[] = [];
-  if (filter === 'all') {
-    rows = [
-      ...augmtd.map((f) => ({ kind: 'augmtd' as const, file: f, date: f.generated_at })),
-      ...kb.map((f) => ({ kind: 'kb' as const, file: f, date: f.indexed_at })),
-    ];
-  } else if (filter === 'generated') {
-    rows = augmtd.map((f) => ({ kind: 'augmtd' as const, file: f, date: f.generated_at }));
-  } else if (filter === 'uploaded') {
-    rows = kb.filter((f) => !!f.storage_path).map((f) => ({ kind: 'kb' as const, file: f, date: f.indexed_at }));
-  } else if (filter === 'connected') {
-    rows = kb.filter((f) => !f.storage_path).map((f) => ({ kind: 'kb' as const, file: f, date: f.indexed_at }));
+  const flat: FileRow[] = [
+    ...augmtd.map((f) => ({ kind: 'augmtd' as const, file: f, date: f.generated_at })),
+    ...kb.map((f) => ({ kind: 'kb' as const, file: f, date: f.indexed_at })),
+  ];
+
+  const sortByDate = (a: FileRow, b: FileRow) => new Date(b.date).getTime() - new Date(a.date).getTime();
+
+  if (view.kind !== 'all') {
+    return flat.sort(sortByDate);
   }
 
-  return rows.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  // All-files view: group by folder with section headers
+  const userFolders = folders.filter((f) => !f.is_system);
+  const folderMap = new Map(userFolders.map((f) => [f.id, f.name]));
+  const rowsByFolder = new Map<string | null, FileRow[]>();
+  for (const row of flat) {
+    const fid = row.file.folder_id ?? null;
+    if (!rowsByFolder.has(fid)) rowsByFolder.set(fid, []);
+    rowsByFolder.get(fid)!.push(row);
+  }
+
+  const namedGroupIds = userFolders.filter((f) => rowsByFolder.has(f.id)).map((f) => f.id);
+  const hasNamedGroups = namedGroupIds.length > 0;
+
+  const result: ListRow[] = [];
+  for (const folderId of namedGroupIds) {
+    const groupRows = (rowsByFolder.get(folderId) ?? []).sort(sortByDate);
+    result.push({ kind: 'separator', label: folderMap.get(folderId) ?? 'Folder', folderId });
+    result.push(...groupRows);
+  }
+  const unfiledRows = (rowsByFolder.get(null) ?? []).sort(sortByDate);
+  if (unfiledRows.length > 0) {
+    if (hasNamedGroups) result.push({ kind: 'separator', label: 'Other files', folderId: null });
+    result.push(...unfiledRows);
+  }
+
+  return result;
 }
 
-function computeSearchRows(query: string, augmtdFiles: DriveAugmtdFile[], kbFiles: KnowledgeFile[]): ListRow[] {
+function computeSearchRows(query: string, augmtdFiles: DriveAugmtdFile[], kbFiles: KnowledgeFile[]): FileRow[] {
   const q = query.toLowerCase().trim();
-  return [
+  const rows: FileRow[] = [
     ...augmtdFiles.filter((f) => f.title.toLowerCase().includes(q)).map((f) => ({ kind: 'augmtd' as const, file: f, date: f.generated_at })),
     ...kbFiles.filter((f) => f.filename.toLowerCase().includes(q)).map((f) => ({ kind: 'kb' as const, file: f, date: f.indexed_at })),
-  ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  ];
+  return rows.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 }
 
 // ─── Drive File List ──────────────────────────────────────────────────────────
@@ -685,33 +599,207 @@ interface DriveFileListProps {
   folders: DriveFolder[];
   onMove: (kind: 'augmtd' | 'kb', id: string, folderId: string | null) => Promise<void>;
   onNewFolderAndMove: (kind: 'augmtd' | 'kb', id: string, name: string) => Promise<DriveFolder>;
-  onDeleteKbFile: (id: string) => void;
+  onDeleteKbFile: (ids: string[]) => void;
+  onDeindexAugmtdFiles: (providerFileIds: string[]) => void;
 }
 
-function DriveFileList({ rows, onRowClick, sources, folders, onMove, onNewFolderAndMove, onDeleteKbFile }: DriveFileListProps) {
+function DriveFileList({ rows, onRowClick, sources, folders, onMove, onNewFolderAndMove, onDeleteKbFile, onDeindexAugmtdFiles }: DriveFileListProps) {
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
   const [moveDropdownFor, setMoveDropdownFor] = useState<string | null>(null);
+  // Track KB (UUID) and augmtd (providerFileId) selections separately
+  const [selectedKbIds, setSelectedKbIds] = useState<Set<string>>(new Set());
+  const [selectedAugmtdIds, setSelectedAugmtdIds] = useState<Set<string>>(new Set());
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
+  const [showBulkMoveDropdown, setShowBulkMoveDropdown] = useState(false);
+  const [bulkMoving, setBulkMoving] = useState(false);
   const userFolders = folders.filter((f) => !f.is_system);
+
+  const totalSelected = selectedKbIds.size + selectedAugmtdIds.size;
+  const hasSelection = totalSelected > 0;
+
+  function toggleSelectKb(id: string) {
+    setSelectedKbIds((prev) => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
+  }
+
+  function toggleSelectAugmtd(id: string) {
+    setSelectedAugmtdIds((prev) => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
+  }
+
+  function clearSelection() {
+    setSelectedKbIds(new Set());
+    setSelectedAugmtdIds(new Set());
+  }
+
+  function toggleFolder(folderId: string) {
+    setCollapsedFolders((prev) => {
+      const next = new Set(prev);
+      next.has(folderId) ? next.delete(folderId) : next.add(folderId);
+      return next;
+    });
+  }
+
+  async function handleBulkMove(targetFolderId: string | null) {
+    setBulkMoving(true);
+    setShowBulkMoveDropdown(false);
+    try {
+      const moves: Promise<void>[] = [];
+      selectedKbIds.forEach((id) => moves.push(onMove('kb', id, targetFolderId)));
+      selectedAugmtdIds.forEach((id) => moves.push(onMove('augmtd', id, targetFolderId)));
+      const results = await Promise.allSettled(moves);
+      const failed = results.filter((r) => r.status === 'rejected').length;
+      if (failed > 0) toast.error(`${failed} file${failed > 1 ? 's' : ''} could not be moved`);
+      else toast.success(`${totalSelected} ${totalSelected === 1 ? 'file' : 'files'} moved`);
+      clearSelection();
+    } catch { toast.error('Failed to move files'); } finally { setBulkMoving(false); }
+  }
+
+  async function handleBatchDelete() {
+    setDeleting(true);
+    try {
+      const kbIds = Array.from(selectedKbIds);
+      const augmtdIds = Array.from(selectedAugmtdIds);
+      const results = await Promise.allSettled([
+        kbIds.length > 0 ? fetch('/api/drive/uploads/batch', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: kbIds }) }) : Promise.resolve(null),
+        augmtdIds.length > 0 ? fetch('/api/drive/augmtd-files/batch', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ providerFileIds: augmtdIds }) }) : Promise.resolve(null),
+      ]);
+      const anyFailed = results.some((r) => r.status === 'rejected');
+      if (anyFailed) { toast.error('Some files could not be removed'); }
+      if (kbIds.length > 0) onDeleteKbFile(kbIds);
+      if (augmtdIds.length > 0) onDeindexAugmtdFiles(augmtdIds);
+      clearSelection();
+      setConfirmingDelete(false);
+      toast.success(`${totalSelected} ${totalSelected === 1 ? 'file' : 'files'} removed from index`);
+    } catch { toast.error('Failed to remove files'); } finally { setDeleting(false); }
+  }
 
   if (rows.length === 0) return null;
 
   return (
     <div>
-      {rows.map((row) => {
+      {/* Selection action bar */}
+      {hasSelection && (
+        <div className="flex items-center gap-3 px-4 py-2 bg-indigo-50 border-b border-indigo-100 sticky top-0 z-10">
+          <span className="text-[12.5px] font-medium text-indigo-700">{totalSelected} selected</span>
+          <button onClick={clearSelection} className="text-[12px] text-indigo-500 hover:text-indigo-700">Deselect all</button>
+          <div className="flex-1" />
+          {/* Move to */}
+          <div className="relative">
+            <button
+              onClick={() => setShowBulkMoveDropdown((v) => !v)}
+              disabled={bulkMoving}
+              className="px-3 py-1 bg-white border border-neutral-200 hover:bg-neutral-50 text-neutral-700 text-[12.5px] font-medium rounded-md transition-colors disabled:opacity-40 flex items-center gap-1.5"
+            >
+              {bulkMoving ? 'Moving…' : 'Move to…'}
+            </button>
+            {showBulkMoveDropdown && (
+              <>
+                <div className="fixed inset-0 z-20" onClick={() => setShowBulkMoveDropdown(false)} />
+                <div className="absolute right-0 top-full mt-1 w-48 bg-white border border-neutral-200 shadow-lg z-30 py-1 rounded-lg">
+                  <button
+                    onClick={() => handleBulkMove(null)}
+                    className="w-full text-left px-3 py-1.5 text-[12.5px] text-neutral-600 hover:bg-neutral-50 italic"
+                  >
+                    No folder
+                  </button>
+                  {userFolders.map((f) => (
+                    <button
+                      key={f.id}
+                      onClick={() => handleBulkMove(f.id)}
+                      className="w-full text-left px-3 py-1.5 text-[12.5px] text-neutral-700 hover:bg-neutral-50 flex items-center gap-2"
+                    >
+                      <FolderIcon className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" />
+                      <span className="truncate">{f.name}</span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+          <button
+            onClick={() => setConfirmingDelete(true)}
+            className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white text-[12.5px] font-medium rounded-md transition-colors"
+          >
+            Remove {totalSelected} {totalSelected === 1 ? 'file' : 'files'} from index
+          </button>
+        </div>
+      )}
+
+      {/* Confirmation modal */}
+      {confirmingDelete && (
+        <div className="fixed inset-0 z-50 bg-black/30 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl border border-neutral-200 w-full max-w-sm p-6 space-y-4">
+            <p className="text-[14px] font-semibold text-neutral-900">Remove {totalSelected} {totalSelected === 1 ? 'file' : 'files'} from index?</p>
+            <p className="text-[13px] text-neutral-500">These files will no longer be available to AI. This cannot be undone.</p>
+            <div className="flex justify-end gap-2 pt-1">
+              <button onClick={() => setConfirmingDelete(false)} disabled={deleting} className="px-3 py-1.5 text-[13px] text-neutral-600 border border-neutral-200 rounded-md hover:bg-neutral-50 disabled:opacity-40">Cancel</button>
+              <button onClick={handleBatchDelete} disabled={deleting} className="px-4 py-1.5 text-[13px] font-semibold bg-red-600 hover:bg-red-700 text-white rounded-md disabled:opacity-40 transition-colors">
+                {deleting ? 'Deleting…' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {(() => {
+        let currentSeparatorFolderId: string | null | undefined = undefined; // undefined = no separator seen yet
+        return rows.map((row) => {
+        if (row.kind === 'separator') {
+          currentSeparatorFolderId = row.folderId;
+          const key = row.folderId ?? '__root__';
+          const isCollapsed = collapsedFolders.has(key);
+          return (
+            <button
+              key={`sep-${key}`}
+              onClick={() => toggleFolder(key)}
+              className="w-full flex items-center gap-2 px-4 pt-5 pb-2 text-left hover:bg-neutral-50 group"
+            >
+              <ChevronRightIcon className={`w-3 h-3 text-neutral-400 flex-shrink-0 transition-transform ${isCollapsed ? '' : 'rotate-90'}`} />
+              <FolderIcon className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" />
+              <span className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wider">{row.label}</span>
+            </button>
+          );
+        }
+        // Hide file rows belonging to a collapsed folder
+        if (currentSeparatorFolderId !== undefined) {
+          const key = currentSeparatorFolderId ?? '__root__';
+          if (collapsedFolders.has(key)) return null;
+        }
         const id = row.file.id;
         const name = row.kind === 'augmtd' ? row.file.title : row.file.filename;
         const typeProp = row.kind === 'augmtd' ? row.file.type : row.file.mime_type;
         const connectedSource = row.kind === 'kb' ? sources.find((s) => s.id === row.file.source_id) : null;
         const sourceKey = row.kind === 'augmtd' ? row.file.source : (row.file.storage_path ? 'upload' : (connectedSource?.provider ?? 'upload'));
+        const isAugmtdIndexed = row.kind === 'augmtd' && row.file.is_indexed;
+        const isSelectable = row.kind === 'kb' || isAugmtdIndexed;
+        const isSelected = row.kind === 'kb' ? selectedKbIds.has(id) : selectedAugmtdIds.has(id);
 
         return (
           <div key={id} className="relative">
             {menuOpenId === id && <div className="fixed inset-0 z-20" onClick={() => setMenuOpenId(null)} />}
             <div
-              onClick={() => onRowClick(row.kind === 'augmtd' ? { kind: 'augmtd', file: row.file } : { kind: 'kb', file: row.file })}
-              className="flex items-center gap-3 px-4 py-2.5 hover:bg-neutral-50 cursor-pointer group border-b border-neutral-50"
+              onClick={() => {
+                if (isSelectable && hasSelection) {
+                  row.kind === 'kb' ? toggleSelectKb(id) : toggleSelectAugmtd(id);
+                  return;
+                }
+                onRowClick(row.kind === 'augmtd' ? { kind: 'augmtd', file: row.file } : { kind: 'kb', file: row.file });
+              }}
+              className={`flex items-center gap-3 px-4 py-2.5 hover:bg-neutral-50 cursor-pointer group border-b border-neutral-50 ${isSelected ? 'bg-indigo-50/60' : ''}`}
             >
-              <DocumentIcon className="w-4 h-4 text-neutral-300 flex-shrink-0" />
+              {/* Checkbox for selectable files */}
+              {isSelectable ? (
+                <input
+                  type="checkbox"
+                  checked={isSelected}
+                  onChange={() => row.kind === 'kb' ? toggleSelectKb(id) : toggleSelectAugmtd(id)}
+                  onClick={(e) => e.stopPropagation()}
+                  className={`w-3.5 h-3.5 rounded border-neutral-300 text-indigo-600 flex-shrink-0 cursor-pointer transition-opacity ${hasSelection ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+                />
+              ) : (
+                <DocumentIcon className="w-4 h-4 text-neutral-300 flex-shrink-0" />
+              )}
               <span className="flex-1 text-[13px] text-neutral-800 truncate">{name}</span>
               <TypeBadge type={typeProp} />
               <span className="hidden md:block"><SourceBadge source={sourceKey} /></span>
@@ -725,7 +813,7 @@ function DriveFileList({ rows, onRowClick, sources, folders, onMove, onNewFolder
             </div>
 
             {menuOpenId === id && (
-              <div className="absolute right-4 top-full mt-0.5 w-44 bg-white border border-neutral-200 shadow-lg z-30 py-1 rounded-lg overflow-hidden">
+              <div className="absolute right-4 top-full mt-0.5 w-44 bg-white border border-neutral-200 shadow-lg z-30 py-1 rounded-lg">
                 {/* Move to */}
                 <div className="relative">
                   <button onClick={() => setMoveDropdownFor(moveDropdownFor === id ? null : id)} className="w-full text-left px-3 py-1.5 text-[12.5px] text-neutral-700 hover:bg-neutral-50">Move to…</button>
@@ -752,13 +840,21 @@ function DriveFileList({ rows, onRowClick, sources, folders, onMove, onNewFolder
                 )}
                 {/* Remove from index */}
                 {row.kind === 'kb' && (
-                  <button onClick={() => { onDeleteKbFile(id); setMenuOpenId(null); }} className="w-full text-left px-3 py-1.5 text-[12.5px] text-red-600 hover:bg-red-50">Remove from index</button>
+                  <button onClick={() => { onDeleteKbFile([id]); setMenuOpenId(null); }} className="w-full text-left px-3 py-1.5 text-[12.5px] text-red-600 hover:bg-red-50">Remove from index</button>
+                )}
+                {isAugmtdIndexed && (
+                  <button onClick={async () => {
+                    const res = await fetch('/api/drive/augmtd-files/batch', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ providerFileIds: [id] }) });
+                    if (res.ok) { onDeindexAugmtdFiles([id]); toast.success('Removed from index'); } else { toast.error('Failed to remove'); }
+                    setMenuOpenId(null);
+                  }} className="w-full text-left px-3 py-1.5 text-[12.5px] text-red-600 hover:bg-red-50">Remove from index</button>
                 )}
               </div>
             )}
           </div>
         );
-      })}
+      });
+      })()}
     </div>
   );
 }
@@ -773,10 +869,11 @@ interface DriveFileDetailProps {
   sources: KnowledgeSource[];
   onMove: (kind: 'augmtd' | 'kb', id: string, folderId: string | null) => Promise<void>;
   onNewFolderAndMove: (kind: 'augmtd' | 'kb', id: string, name: string) => Promise<DriveFolder>;
-  onDeleteKbFile: (id: string) => void;
+  onDeleteKbFile: (ids: string[]) => void;
+  onDeindexAugmtdFiles: (providerFileIds: string[]) => void;
 }
 
-function DriveFileDetail({ selectedFile, sectionLabel, onBack, folders, sources, onMove, onNewFolderAndMove, onDeleteKbFile }: DriveFileDetailProps) {
+function DriveFileDetail({ selectedFile, sectionLabel, onBack, folders, sources, onMove, onNewFolderAndMove, onDeleteKbFile, onDeindexAugmtdFiles }: DriveFileDetailProps) {
   const [showMoveDropdown, setShowMoveDropdown] = useState(false);
   const userFolders = folders.filter((f) => !f.is_system);
 
@@ -790,7 +887,7 @@ function DriveFileDetail({ selectedFile, sectionLabel, onBack, folders, sources,
 
   async function handleDeleteKbFile() {
     const res = await fetch(`/api/drive/uploads/${file.id}`, { method: 'DELETE' });
-    if (res.ok) { onDeleteKbFile(file.id); onBack(); toast.success('Removed from index'); }
+    if (res.ok) { onDeleteKbFile([file.id]); onBack(); toast.success('Removed from index'); }
     else toast.error('Failed to remove');
   }
 
@@ -879,17 +976,28 @@ function DriveFileDetail({ selectedFile, sectionLabel, onBack, folders, sources,
             <a href={`/meetings/${(file as DriveAugmtdFile).transcript_id}`} className="px-3 py-1.5 border border-neutral-200 text-[13px] text-neutral-700 rounded-md hover:bg-neutral-50 transition-colors">Open in Meetings</a>
           )}
           {/* Move to folder */}
-          {isAugmtd && (
-            <div className="relative">
-              <button onClick={() => setShowMoveDropdown((v) => !v)} className="px-3 py-1.5 border border-neutral-200 text-[13px] text-neutral-700 rounded-md hover:bg-neutral-50 transition-colors">Move to folder</button>
-              {showMoveDropdown && (
-                <FolderPickerDropdown folders={userFolders} currentFolderId={currentFolderId} onSelect={(fid) => { onMove('augmtd', file.id, fid); setShowMoveDropdown(false); }} onNewFolder={(name) => onNewFolderAndMove('augmtd', file.id, name)} onClose={() => setShowMoveDropdown(false)} />
-              )}
-            </div>
-          )}
-          {/* Remove from index */}
+          <div className="relative">
+            <button onClick={() => setShowMoveDropdown((v) => !v)} className="px-3 py-1.5 border border-neutral-200 text-[13px] text-neutral-700 rounded-md hover:bg-neutral-50 transition-colors">Move to folder</button>
+            {showMoveDropdown && (
+              <FolderPickerDropdown
+                folders={userFolders}
+                currentFolderId={currentFolderId}
+                onSelect={(fid) => { onMove(isAugmtd ? 'augmtd' : 'kb', file.id, fid); setShowMoveDropdown(false); }}
+                onNewFolder={(name) => onNewFolderAndMove(isAugmtd ? 'augmtd' : 'kb', file.id, name)}
+                onClose={() => setShowMoveDropdown(false)}
+              />
+            )}
+          </div>
+          {/* Remove from index — KB uploads */}
           {!isAugmtd && (
             <button onClick={handleDeleteKbFile} className="px-3 py-1.5 border border-red-200 text-[13px] text-red-600 rounded-md hover:bg-red-50 transition-colors">Remove from index</button>
+          )}
+          {/* Remove from index — augmtd indexed files (meeting transcripts, workflow artifacts) */}
+          {isAugmtd && (file as DriveAugmtdFile).is_indexed && (
+            <button onClick={async () => {
+              const res = await fetch('/api/drive/augmtd-files/batch', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ providerFileIds: [file.id] }) });
+              if (res.ok) { onDeindexAugmtdFiles([file.id]); onBack(); toast.success('Removed from index'); } else { toast.error('Failed to remove'); }
+            }} className="px-3 py-1.5 border border-red-200 text-[13px] text-red-600 rounded-md hover:bg-red-50 transition-colors">Remove from index</button>
           )}
         </div>
       </div>
@@ -911,6 +1019,7 @@ interface DriveSidebarProps {
   kbFiles: KnowledgeFile[];
   sources: KnowledgeSource[];
   onOpenUpload: () => void;
+  onOpenAddFromDrive: () => void;
   newFolderOpen: boolean;
   setNewFolderOpen: (v: boolean) => void;
   newFolderName: string;
@@ -924,13 +1033,14 @@ function DriveSidebar({
   sidebarView, setSidebarView, setSelectedFile,
   searchQuery, setSearchQuery,
   folders, augmtdFiles, kbFiles, sources,
-  onOpenUpload,
+  onOpenUpload, onOpenAddFromDrive,
   newFolderOpen, setNewFolderOpen, newFolderName, setNewFolderName, onCreateFolder,
   onRenameFolder, onDeleteFolder,
 }: DriveSidebarProps) {
   const [menuFolderId, setMenuFolderId] = useState<string | null>(null);
   const [renamingFolderId, setRenamingFolderId] = useState<string | null>(null);
   const [renameFolderName, setRenameFolderName] = useState('');
+  const [confirmingDeleteFolderId, setConfirmingDeleteFolderId] = useState<string | null>(null);
 
   const userFolders = folders.filter((f) => !f.is_system);
   const connectedSourceCount = sources.filter((s) => s.provider !== 'upload').length;
@@ -998,9 +1108,21 @@ function DriveSidebar({
                 </button>
               </div>
               {menuFolderId === folder.id && (
-                <div className="absolute left-full top-0 ml-1 w-36 bg-white border border-neutral-200 shadow-lg z-30 py-1 rounded-lg overflow-hidden">
-                  <button onClick={() => { setRenamingFolderId(folder.id); setRenameFolderName(folder.name); setMenuFolderId(null); }} className="w-full text-left px-3 py-1.5 text-[12.5px] text-neutral-700 hover:bg-neutral-50">Rename</button>
-                  <button onClick={() => { onDeleteFolder(folder.id); setMenuFolderId(null); }} className="w-full text-left px-3 py-1.5 text-[12.5px] text-red-600 hover:bg-red-50">Delete</button>
+                <div className="absolute right-0 top-full mt-0.5 w-44 bg-white border border-neutral-200 shadow-lg z-30 py-1 rounded-lg">
+                  {confirmingDeleteFolderId === folder.id ? (
+                    <div className="px-3 py-2 space-y-2">
+                      <p className="text-[11.5px] text-neutral-500">Files move to root.</p>
+                      <div className="flex gap-1.5">
+                        <button onClick={() => { setConfirmingDeleteFolderId(null); setMenuFolderId(null); }} className="flex-1 px-2 py-1 text-[12px] border border-neutral-200 rounded-md text-neutral-600 hover:bg-neutral-50">Cancel</button>
+                        <button onClick={() => { onDeleteFolder(folder.id); setConfirmingDeleteFolderId(null); setMenuFolderId(null); }} className="flex-1 px-2 py-1 text-[12px] bg-red-600 hover:bg-red-700 text-white rounded-md font-medium">Delete</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <button onClick={() => { setRenamingFolderId(folder.id); setRenameFolderName(folder.name); setMenuFolderId(null); }} className="w-full text-left px-3 py-1.5 text-[12.5px] text-neutral-700 hover:bg-neutral-50">Rename</button>
+                      <button onClick={() => setConfirmingDeleteFolderId(folder.id)} className="w-full text-left px-3 py-1.5 text-[12.5px] text-red-600 hover:bg-red-50">Delete</button>
+                    </>
+                  )}
                 </div>
               )}
             </div>
@@ -1042,12 +1164,13 @@ function DriveSidebar({
         </button>
 
         <button
-          onClick={() => nav({ kind: 'sources_connected' })}
-          className={`w-full px-2 py-1.5 rounded-lg flex items-center gap-2 text-[12.5px] transition-colors ${isActiveView(sidebarView, { kind: 'sources_connected' }) ? 'bg-indigo-50 text-indigo-700' : 'text-neutral-600 hover:bg-neutral-50'}`}
+          onClick={onOpenAddFromDrive}
+          className="w-full px-2 py-1.5 rounded-lg flex items-center gap-2 text-[12.5px] text-neutral-600 hover:bg-neutral-50 transition-colors"
         >
-          <LinkIcon className="w-3.5 h-3.5 flex-shrink-0" />
-          <span className="text-left">Connect Drive / OneDrive</span>
+          <FolderOpenIcon className="w-3.5 h-3.5 flex-shrink-0 text-neutral-400" />
+          <span className="text-left">Add from Drive</span>
         </button>
+
       </div>
     </>
   );
@@ -1057,7 +1180,6 @@ function DriveSidebar({
 
 interface DriveCenterProps {
   sidebarView: SidebarView;
-  setSidebarView: (v: SidebarView) => void;
   selectedFile: SelectedFile | null;
   setSelectedFile: (f: SelectedFile | null) => void;
   searchQuery: string;
@@ -1065,30 +1187,28 @@ interface DriveCenterProps {
   kbFiles: KnowledgeFile[];
   sources: KnowledgeSource[];
   folders: DriveFolder[];
-  connections: Connection[];
-  onSourcesChange: (s: KnowledgeSource[]) => void;
-  onFoldersChange: (f: DriveFolder[]) => void;
   onOpenUpload: () => void;
+  onOpenAddFromDrive: () => void;
   onMove: (kind: 'augmtd' | 'kb', id: string, folderId: string | null) => Promise<void>;
   onNewFolderAndMove: (kind: 'augmtd' | 'kb', id: string, name: string) => Promise<DriveFolder>;
-  onDeleteKbFile: (id: string) => void;
-  setNewFolderOpen: (v: boolean) => void;
+  onDeleteKbFile: (ids: string[]) => void;
+  onDeindexAugmtdFiles: (providerFileIds: string[]) => void;
 }
 
 function DriveCenter({
   sidebarView, selectedFile, setSelectedFile,
-  searchQuery, augmtdFiles, kbFiles, sources, folders, connections,
-  onSourcesChange, onFoldersChange, onOpenUpload,
-  onMove, onNewFolderAndMove, onDeleteKbFile,
-  setNewFolderOpen,
+  searchQuery, augmtdFiles, kbFiles, sources, folders,
+  onOpenUpload, onOpenAddFromDrive,
+  onMove, onNewFolderAndMove, onDeleteKbFile, onDeindexAugmtdFiles,
 }: DriveCenterProps) {
-  const [filter, setFilter] = useState<FileFilter>('all');
   const title = searchQuery.trim() ? `Search results` : sidebarViewTitle(sidebarView, folders);
 
   // Clear selected file when search changes
   useEffect(() => { if (searchQuery) setSelectedFile(null); }, [searchQuery]);
 
-  const showFilterChips = !searchQuery && !selectedFile && sidebarView.kind !== 'sources_connected';
+  const rows = searchQuery.trim()
+    ? computeSearchRows(searchQuery, augmtdFiles, kbFiles)
+    : computeRows(sidebarView, augmtdFiles, kbFiles, folders);
 
   return (
     <>
@@ -1100,21 +1220,6 @@ function DriveCenter({
           ) : title}
         </span>
       </div>
-
-      {/* Filter chips */}
-      {showFilterChips && (
-        <div className="flex-shrink-0 flex items-center gap-1.5 px-4 py-2 border-b border-neutral-50">
-          {(['all', 'generated', 'uploaded', 'connected'] as FileFilter[]).map((f) => (
-            <button
-              key={f}
-              onClick={() => setFilter(f)}
-              className={`px-2.5 py-0.5 rounded-full text-[11.5px] font-medium transition-colors ${filter === f ? 'bg-indigo-600 text-white' : 'bg-neutral-100 text-neutral-600 hover:bg-neutral-200'}`}
-            >
-              {f === 'all' ? 'All' : f === 'generated' ? 'Generated' : f === 'uploaded' ? 'Uploaded' : 'Connected'}
-            </button>
-          ))}
-        </div>
-      )}
 
       {/* Body */}
       <div className="flex-1 overflow-y-auto min-h-0">
@@ -1129,28 +1234,38 @@ function DriveCenter({
             onMove={onMove}
             onNewFolderAndMove={onNewFolderAndMove}
             onDeleteKbFile={onDeleteKbFile}
+            onDeindexAugmtdFiles={onDeindexAugmtdFiles}
           />
         )}
 
-        {/* Connected sources management */}
-        {!searchQuery && !selectedFile && sidebarView.kind === 'sources_connected' && (
-          <div className="p-4">
-            <SourcesTab sources={sources} onSourcesChange={onSourcesChange} connections={connections} folders={folders} onOpenUpload={onOpenUpload} />
-          </div>
-        )}
-
         {/* File list */}
-        {!selectedFile && sidebarView.kind !== 'sources_connected' && (() => {
-          const rows = searchQuery.trim()
-            ? computeSearchRows(searchQuery, augmtdFiles, kbFiles)
-            : computeRows(sidebarView, filter, augmtdFiles, kbFiles);
-
+        {!selectedFile && (() => {
           if (rows.length === 0) {
+            if (searchQuery.trim()) {
+              return <EmptyState message={`No files match "${searchQuery}"`} sub="Try a different name or keyword." />;
+            }
             return (
-              <EmptyState
-                message={searchQuery.trim() ? `No files match "${searchQuery}"` : 'Nothing here yet.'}
-                sub={searchQuery.trim() ? 'Try a different name or keyword.' : 'Upload files, connect a Drive folder, or generate documents from Workflows and Processes.'}
-              />
+              <div className="py-16 text-center px-6">
+                <FolderOpenIcon className="w-10 h-10 text-neutral-200 mx-auto mb-3" />
+                <p className="text-[13px] font-medium text-neutral-500">
+                  {sidebarView.kind === 'folder' ? 'This folder is empty' : 'Your drive is empty'}
+                </p>
+                <p className="text-[12px] text-neutral-400 mt-1 max-w-xs mx-auto">
+                  {sidebarView.kind === 'folder'
+                    ? 'Move files here or upload directly.'
+                    : 'Upload files, connect Google Drive or OneDrive, or generate documents from Workflows.'}
+                </p>
+                {sidebarView.kind === 'all' && (
+                  <div className="flex items-center justify-center gap-2 mt-4">
+                    <button onClick={onOpenUpload} className="flex items-center gap-1.5 px-3.5 py-1.5 bg-neutral-900 hover:bg-neutral-800 text-white text-[12.5px] font-medium rounded-md transition-colors">
+                      <ArrowUpTrayIcon className="w-3.5 h-3.5" />Upload a file
+                    </button>
+                    <button onClick={onOpenAddFromDrive} className="flex items-center gap-1.5 px-3.5 py-1.5 border border-neutral-200 text-[12.5px] text-neutral-600 rounded-md hover:bg-neutral-50 transition-colors">
+                      <FolderOpenIcon className="w-3.5 h-3.5" />Add from Drive
+                    </button>
+                  </div>
+                )}
+              </div>
             );
           }
 
@@ -1163,6 +1278,7 @@ function DriveCenter({
               onMove={onMove}
               onNewFolderAndMove={onNewFolderAndMove}
               onDeleteKbFile={onDeleteKbFile}
+              onDeindexAugmtdFiles={onDeindexAugmtdFiles}
             />
           );
         })()}
@@ -1181,6 +1297,7 @@ export default function DriveClient({ initialSources, connections }: DriveClient
   const [augmtdFiles, setAugmtdFiles] = useState<DriveAugmtdFile[]>([]);
   const [kbFiles, setKbFiles] = useState<KnowledgeFile[]>([]);
   const [showUpload, setShowUpload] = useState(false);
+  const [showAddFromDrive, setShowAddFromDrive] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
@@ -1236,7 +1353,6 @@ export default function DriveClient({ initialSources, connections }: DriveClient
   }
 
   async function handleDeleteFolder(id: string) {
-    if (!confirm('Delete this folder? Files will be moved to root.')) return;
     try {
       const res = await fetch(`/api/drive/folders/${id}`, { method: 'DELETE' });
       if (!res.ok) { toast.error('Failed to delete folder'); return; }
@@ -1269,10 +1385,13 @@ export default function DriveClient({ initialSources, connections }: DriveClient
     return folder;
   }
 
-  async function handleDeleteKbFile(id: string) {
-    const res = await fetch(`/api/drive/uploads/${id}`, { method: 'DELETE' });
-    if (res.ok) { setKbFiles((prev) => prev.filter((f) => f.id !== id)); toast.success('File removed'); }
-    else toast.error('Failed to remove file');
+  function handleDeleteKbFile(ids: string[]) {
+    setKbFiles((prev) => prev.filter((f) => !ids.includes(f.id)));
+  }
+
+  function handleDeindexAugmtdFiles(providerFileIds: string[]) {
+    // Mark as no longer indexed (keep in list so user can see it's de-indexed)
+    setAugmtdFiles((prev) => prev.map((f) => providerFileIds.includes(f.id) ? { ...f, is_indexed: false } : f));
   }
 
   return (
@@ -1294,6 +1413,7 @@ export default function DriveClient({ initialSources, connections }: DriveClient
               kbFiles={kbFiles}
               sources={sources}
               onOpenUpload={() => setShowUpload(true)}
+              onOpenAddFromDrive={() => setShowAddFromDrive(true)}
               newFolderOpen={newFolderOpen}
               setNewFolderOpen={setNewFolderOpen}
               newFolderName={newFolderName}
@@ -1310,7 +1430,6 @@ export default function DriveClient({ initialSources, connections }: DriveClient
           <div className="rounded-2xl bg-white shadow-sm overflow-hidden h-full flex flex-col">
             <DriveCenter
               sidebarView={sidebarView}
-              setSidebarView={setSidebarView}
               selectedFile={selectedFile}
               setSelectedFile={setSelectedFile}
               searchQuery={searchQuery}
@@ -1318,14 +1437,12 @@ export default function DriveClient({ initialSources, connections }: DriveClient
               kbFiles={kbFiles}
               sources={sources}
               folders={folders}
-              connections={connections}
-              onSourcesChange={setSources}
-              onFoldersChange={setFolders}
               onOpenUpload={() => setShowUpload(true)}
+              onOpenAddFromDrive={() => setShowAddFromDrive(true)}
               onMove={handleMove}
               onNewFolderAndMove={handleNewFolderAndMove}
               onDeleteKbFile={handleDeleteKbFile}
-              setNewFolderOpen={setNewFolderOpen}
+              onDeindexAugmtdFiles={handleDeindexAugmtdFiles}
             />
           </div>
         </div>
@@ -1337,11 +1454,20 @@ export default function DriveClient({ initialSources, connections }: DriveClient
         <UploadModal
           folders={folders}
           onClose={() => setShowUpload(false)}
+          onFolderCreated={(folder) => setFolders((prev) => [...prev, folder])}
           onUploaded={(file) => {
             setKbFiles((prev) => [...prev, file]);
-            toast.success(`"${file.filename}" indexed`);
             fetch('/api/knowledge/sources').then((r) => r.ok && r.json()).then((data) => { if (data) setSources(data); });
           }}
+        />
+      )}
+
+      {showAddFromDrive && (
+        <AddFromDriveModal
+          connections={connections}
+          onClose={() => setShowAddFromDrive(false)}
+          onSuccess={(source) => setSources((prev) => [source, ...prev])}
+          onSwitchToUpload={() => { setShowAddFromDrive(false); setShowUpload(true); }}
         />
       )}
     </>
