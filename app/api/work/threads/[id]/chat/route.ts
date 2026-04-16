@@ -909,7 +909,7 @@ function buildChatTools(sources: string[], _provider: string, _modelFamily: stri
   if (sources.includes('inbox')) {
     neutral.push({
       name: 'get_recent_emails',
-      description: "Search recent emails and inbox items by topic, person, or keyword.",
+      description: "Search recent emails and inbox items by topic, person, or keyword. Returns a list with IDs, senders, subjects, and short previews. Use get_email_body to read the full content of a specific email.",
       input_schema: {
         type: 'object',
         properties: {
@@ -918,6 +918,17 @@ function buildChatTools(sources: string[], _provider: string, _modelFamily: stri
           date_range: { type: 'string', enum: ['today', 'this_week', 'this_month', 'all'], description: 'Time range. Default: all.' },
         },
         required: [],
+      },
+    });
+    neutral.push({
+      name: 'get_email_body',
+      description: "Read the full body of a specific email by ID. Call after get_recent_emails identifies the email you need.",
+      input_schema: {
+        type: 'object',
+        properties: {
+          email_id: { type: 'string', description: 'The email ID from get_recent_emails results' },
+        },
+        required: ['email_id'],
       },
     });
   }
@@ -991,11 +1002,11 @@ function buildChatTools(sources: string[], _provider: string, _modelFamily: stri
     },
     {
       name: 'generate_document',
-      description: "Generate a Word document, spreadsheet, presentation, or email draft. Call after user confirms via request_clarification, or directly for simple/iteration requests.",
+      description: "Generate a downloadable file artifact: a Word document, Excel spreadsheet, PowerPoint presentation, or email draft to open in a mail client. Use ONLY when the output is something the user would want to open, download, save, or send — not for content they will simply read or copy from chat. Never call this for LinkedIn posts, social media copy, taglines, bios, short pitches, or any short-form writing. Respond inline for those.",
       input_schema: {
         type: 'object',
         properties: {
-          type: { type: 'string', enum: ['word', 'excel', 'pptx', 'email'], description: 'Document type' },
+          type: { type: 'string', enum: ['word', 'excel', 'pptx', 'email'], description: 'File type. "word" = reports, proposals, contracts, memos. "excel" = budgets, trackers, structured data. "pptx" = slide decks. "email" = formal multi-paragraph email to be opened and sent from a mail client — NOT for LinkedIn posts, social copy, or short text.' },
           instructions: { type: 'string', description: 'Detailed instructions: purpose, audience, key sections, tone, specific data to include.' },
         },
         required: ['type', 'instructions'],
@@ -1019,6 +1030,7 @@ function toolLabel(name: string): string {
     search_knowledge_base: 'Searching knowledge base',
     read_document: 'Reading document',
     get_recent_emails: 'Checking recent emails',
+    get_email_body: 'Reading email',
     get_calendar_context: 'Checking calendar',
     web_search: 'Searching the web',
     fetch_url: 'Reading page',
@@ -1228,6 +1240,32 @@ async function executeChatTool(
       const count = filtered?.length ?? 0;
       const summary = count > 0 ? `Found ${count} email${count > 1 ? 's' : ''}` : 'No matching emails found';
       return { result, summary };
+    }
+
+    case 'get_email_body': {
+      if (!ctx.features.email) {
+        return { result: 'Email access is not enabled for this workspace.', summary: 'Email module disabled' };
+      }
+      const emailId = input.email_id as string;
+      const { data: item } = await ctx.supabase
+        .from('inbox_items')
+        .select('source_data, created_at')
+        .eq('id', emailId)
+        .eq('user_id', ctx.userId)
+        .single();
+      if (!item) {
+        return { result: `Email not found: ${emailId}`, summary: 'Email not found' };
+      }
+      const sd = item.source_data as Record<string, unknown>;
+      const from = sd?.from_name ? `${sd.from_name} <${sd.from_address || ''}>` : (sd?.from as string || 'Unknown');
+      const subject = (sd?.subject as string) || '(no subject)';
+      const date = new Date(item.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      const rawBody = (sd?.body as string) ||
+        (sd?.html_body ? (sd.html_body as string).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() : '') ||
+        (sd?.snippet as string) || '';
+      const body = rawBody.slice(0, 8000);
+      const result = `From: ${from}\nSubject: ${subject}\nDate: ${date}\n\n${body}${rawBody.length > 8000 ? '\n…[truncated]' : ''}`;
+      return { result, summary: `Read email: "${subject}"` };
     }
 
     case 'get_calendar_context': {
@@ -1680,7 +1718,7 @@ function hasSpecificSubject(message: string): boolean {
 // tool_calls deltas when using OpenAI-compatible wrappers. These helpers detect
 // and parse them so we can execute the tools correctly.
 
-const XML_TOOL_NAMES = ['search_knowledge_base', 'get_recent_emails', 'get_calendar_context', 'request_clarification', 'generate_document'];
+const XML_TOOL_NAMES = ['search_knowledge_base', 'get_recent_emails', 'get_email_body', 'get_calendar_context', 'request_clarification', 'generate_document'];
 
 function parseXmlToolCalls(text: string): Array<{ name: string; args: Record<string, unknown> }> | null {
   if (!text.includes('<')) return null;

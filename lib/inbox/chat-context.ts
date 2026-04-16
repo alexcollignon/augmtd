@@ -68,7 +68,7 @@ export function formatSnapshotForPrompt(items: InboxSnapshot[]): string {
         i.attachmentCount > 0 ? `has-attachments(${i.attachmentCount})` : null,
       ].filter(Boolean).join(' ')
       const fromField = i.fromEmail ? `${i.fromName} <${i.fromEmail}>` : i.fromName
-      return `[${i.id}] From: ${fromField} | Subject: ${i.subject} | ${section}${flags ? ` ${flags}` : ''} | ${date}${i.snippet ? ` | "${i.snippet.slice(0, 100)}"` : ''}`
+      return `[${i.id}] From: ${fromField} | Subject: ${i.subject} | ${section}${flags ? ` ${flags}` : ''} | ${date}${i.snippet ? ` | "${i.snippet}"` : ''}`
     })
     .join('\n')
 }
