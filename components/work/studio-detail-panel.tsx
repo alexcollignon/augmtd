@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import {
   PlayIcon, PauseIcon, PencilSquareIcon,
-  ClockIcon, CheckCircleIcon, XCircleIcon, ArrowPathIcon, XMarkIcon,
+  ClockIcon, CheckCircleIcon, XCircleIcon, ArrowPathIcon, XMarkIcon, TrashIcon,
 } from '@heroicons/react/24/outline';
 import type { Workflow, WorkflowRun } from '@/lib/workflows/types';
 import { MarkdownText } from '@/components/work/chat-message';
@@ -264,15 +264,16 @@ function RunCard({ run, workflowId, onOpenThread, onDeleted }: {
   onDeleted?: (runId: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const canDelete = run.status === 'queued' || run.status === 'failed' || run.status === 'cancelled';
+  const canDelete = run.status !== 'running';
 
   const handleDelete = async (e: React.MouseEvent) => {
     e.stopPropagation();
     setDeleting(true);
     const res = await fetch(`/api/workflows/${workflowId}/runs/${run.id}`, { method: 'DELETE' });
     if (res.ok) onDeleted?.(run.id);
-    else setDeleting(false);
+    else { setDeleting(false); setConfirmingDelete(false); }
   };
 
   const duration = run.started_at && run.completed_at
@@ -307,14 +308,31 @@ function RunCard({ run, workflowId, onOpenThread, onDeleted }: {
           </button>
         )}
         {canDelete && onDeleted && (
-          <button
-            onClick={handleDelete}
-            disabled={deleting}
-            className="p-1 text-neutral-400 hover:text-neutral-600 flex-shrink-0 transition-colors disabled:opacity-40"
-            title="Remove run"
-          >
-            <XMarkIcon className="w-3.5 h-3.5" />
-          </button>
+          confirmingDelete ? (
+            <div className="flex items-center gap-1 flex-shrink-0" onClick={e => e.stopPropagation()}>
+              <button
+                onClick={handleDelete}
+                disabled={deleting}
+                className="px-2 py-0.5 bg-red-600 hover:bg-red-700 text-white text-[11px] font-medium rounded transition-colors disabled:opacity-50"
+              >
+                Delete
+              </button>
+              <button
+                onClick={e => { e.stopPropagation(); setConfirmingDelete(false); }}
+                className="px-2 py-0.5 border border-neutral-200 text-neutral-600 text-[11px] font-medium rounded hover:bg-neutral-50 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={e => { e.stopPropagation(); setConfirmingDelete(true); }}
+              className="p-1 text-neutral-400 hover:text-red-500 flex-shrink-0 transition-colors"
+              title="Delete run"
+            >
+              <TrashIcon className="w-3.5 h-3.5" />
+            </button>
+          )
         )}
       </div>
 
