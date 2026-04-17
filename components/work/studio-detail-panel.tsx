@@ -6,6 +6,7 @@ import {
   ClockIcon, CheckCircleIcon, XCircleIcon, ArrowPathIcon, XMarkIcon,
 } from '@heroicons/react/24/outline';
 import type { Workflow, WorkflowRun } from '@/lib/workflows/types';
+import { MarkdownText } from '@/components/work/chat-message';
 
 interface Props {
   workflow: Workflow;
@@ -332,9 +333,13 @@ function RunCard({ run, workflowId, onOpenThread, onDeleted }: {
               <div className="text-[12px] font-medium text-neutral-800 mb-1">{s.label}</div>
               {s.error ? (
                 <div className="text-[11.5px] text-red-700">{s.error}</div>
+              ) : typeof s.output === 'string' ? (
+                <div className="text-[11.5px] text-neutral-600 max-h-48 overflow-y-auto prose prose-sm prose-neutral max-w-none">
+                  <MarkdownText content={s.output} />
+                </div>
               ) : (
                 <pre className="text-[11px] text-neutral-600 whitespace-pre-wrap font-sans max-h-48 overflow-y-auto">
-                  {typeof s.output === 'string' ? s.output : JSON.stringify(s.output, null, 2)}
+                  {JSON.stringify(s.output, null, 2)}
                 </pre>
               )}
             </div>
