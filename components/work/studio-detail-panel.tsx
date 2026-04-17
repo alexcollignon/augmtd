@@ -308,8 +308,17 @@ function RunCard({ run, workflowId, onOpenThread, onDeleted }: {
           </button>
         )}
         {canDelete && onDeleted && (
-          confirmingDelete ? (
-            <div className="flex items-center gap-1 flex-shrink-0" onClick={e => e.stopPropagation()}>
+          <div className="relative flex-shrink-0 flex items-center" onClick={e => e.stopPropagation()}>
+            {/* Trash icon — fades out when confirming */}
+            <button
+              onClick={e => { e.stopPropagation(); setConfirmingDelete(true); }}
+              className={`p-1 text-neutral-400 hover:text-red-500 transition-all duration-150 ${confirmingDelete ? 'opacity-0 pointer-events-none absolute' : 'opacity-100'}`}
+              title="Delete run"
+            >
+              <TrashIcon className="w-3.5 h-3.5" />
+            </button>
+            {/* Confirm buttons — fade in when confirming */}
+            <div className={`flex items-center gap-1 transition-all duration-150 ${confirmingDelete ? 'opacity-100' : 'opacity-0 pointer-events-none absolute'}`}>
               <button
                 onClick={handleDelete}
                 disabled={deleting}
@@ -324,46 +333,41 @@ function RunCard({ run, workflowId, onOpenThread, onDeleted }: {
                 Cancel
               </button>
             </div>
-          ) : (
-            <button
-              onClick={e => { e.stopPropagation(); setConfirmingDelete(true); }}
-              className="p-1 text-neutral-400 hover:text-red-500 flex-shrink-0 transition-colors"
-              title="Delete run"
-            >
-              <TrashIcon className="w-3.5 h-3.5" />
-            </button>
-          )
+          </div>
         )}
       </div>
 
-      {expanded && (
-        <div className="border-t border-neutral-100 px-4 py-3 bg-neutral-50/50 space-y-2">
-          {run.error && (
-            <div className="text-[12px] text-red-700 bg-red-50 border border-red-200 rounded px-3 py-2">
-              {run.error}
-            </div>
-          )}
-          {(run.step_outputs ?? []).map((s, i) => (
-            <div key={i} className="border border-neutral-150 rounded bg-white p-3">
-              <div className="text-[10.5px] uppercase tracking-wide text-neutral-400 font-semibold mb-1">
-                Step {i + 1} — {s.step_type}
+      {/* Smooth expand/collapse via CSS grid-rows trick */}
+      <div className={`grid transition-[grid-template-rows] duration-200 ease-in-out ${expanded ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'}`}>
+        <div className="overflow-hidden">
+          <div className="border-t border-neutral-100 px-4 py-3 bg-neutral-50/50 space-y-2">
+            {run.error && (
+              <div className="text-[12px] text-red-700 bg-red-50 border border-red-200 rounded px-3 py-2">
+                {run.error}
               </div>
-              <div className="text-[12px] font-medium text-neutral-800 mb-1">{s.label}</div>
-              {s.error ? (
-                <div className="text-[11.5px] text-red-700">{s.error}</div>
-              ) : typeof s.output === 'string' ? (
-                <div className="text-[11.5px] text-neutral-600 max-h-48 overflow-y-auto prose prose-sm prose-neutral max-w-none">
-                  <MarkdownText content={s.output} />
+            )}
+            {(run.step_outputs ?? []).map((s, i) => (
+              <div key={i} className="border border-neutral-150 rounded bg-white p-3">
+                <div className="text-[10.5px] uppercase tracking-wide text-neutral-400 font-semibold mb-1">
+                  Step {i + 1} — {s.step_type}
                 </div>
-              ) : (
-                <pre className="text-[11px] text-neutral-600 whitespace-pre-wrap font-sans max-h-48 overflow-y-auto">
-                  {JSON.stringify(s.output, null, 2)}
-                </pre>
-              )}
-            </div>
-          ))}
+                <div className="text-[12px] font-medium text-neutral-800 mb-1">{s.label}</div>
+                {s.error ? (
+                  <div className="text-[11.5px] text-red-700">{s.error}</div>
+                ) : typeof s.output === 'string' ? (
+                  <div className="text-[11.5px] text-neutral-600 max-h-48 overflow-y-auto prose prose-sm prose-neutral max-w-none">
+                    <MarkdownText content={s.output} />
+                  </div>
+                ) : (
+                  <pre className="text-[11px] text-neutral-600 whitespace-pre-wrap font-sans max-h-48 overflow-y-auto">
+                    {JSON.stringify(s.output, null, 2)}
+                  </pre>
+                )}
+              </div>
+            ))}
+          </div>
         </div>
-      )}
+      </div>
     </div>
   );
 }
