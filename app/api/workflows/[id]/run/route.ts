@@ -1,10 +1,13 @@
 // ─── POST /api/workflows/[id]/run — trigger a manual run ──────────────────────
 // Creates a queued run, fires the executor. Returns the run id immediately.
 
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, after } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createAdminClient } from '@supabase/supabase-js';
 import { requireFeature, handleWorkspaceError } from '@/lib/workspace/require-feature';
+import { runWorkflow } from '@/lib/workflows/run-workflow';
+
+export const maxDuration = 300;
 
 export async function POST(
   _request: NextRequest,
@@ -67,19 +70,11 @@ export async function POST(
 
   const runId = (run as { id: string }).id;
 
-  // Fire the executor asynchronously
-  const baseUrl = process.env.VERCEL_URL
-    ? `https://${process.env.VERCEL_URL}`
-    : (process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000');
-
-  fetch(`${baseUrl}/api/workflows/execute`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${process.env.CRON_SECRET}`,
-    },
-    body: JSON.stringify({ run_id: runId, workflow_id: workflowId, trigger_source: 'manual' }),
-  }).catch(err => console.error('[workflows/run] executor fire failed:', err));
+  // Fire the executor after the response is sent — after() keeps the Vercel function
+  // alive past the return, unlike a bare fire-and-forget fetch which is killed immediately.
+  after(async () => {
+    await runWorkflow({ workflowId, runId, triggerSource: 'manual' });
+  });
 
   return NextResponse.json({ run_id: runId, status: 'queued' });
 }

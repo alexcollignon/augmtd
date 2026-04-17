@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import {
   PlayIcon, PauseIcon, PencilSquareIcon,
-  ClockIcon, CheckCircleIcon, XCircleIcon, ArrowPathIcon,
+  ClockIcon, CheckCircleIcon, XCircleIcon, ArrowPathIcon, XMarkIcon,
 } from '@heroicons/react/24/outline';
 import type { Workflow, WorkflowRun } from '@/lib/workflows/types';
 
@@ -201,7 +201,15 @@ export function StudioDetailPanel({ workflow: initialWorkflow, initialTab = 'run
             </div>
           ) : (
             <div className="space-y-2">
-              {runs.map(run => <RunCard key={run.id} run={run} onOpenThread={onOpenThread} />)}
+              {runs.map(run => (
+                <RunCard
+                  key={run.id}
+                  run={run}
+                  workflowId={workflow.id}
+                  onOpenThread={onOpenThread}
+                  onDeleted={runId => setRuns(prev => prev.filter(r => r.id !== runId))}
+                />
+              ))}
             </div>
           )
         )}
@@ -248,8 +256,24 @@ export function StudioDetailPanel({ workflow: initialWorkflow, initialTab = 'run
   );
 }
 
-function RunCard({ run, onOpenThread }: { run: WorkflowRun; onOpenThread?: (threadId: string) => void }) {
+function RunCard({ run, workflowId, onOpenThread, onDeleted }: {
+  run: WorkflowRun;
+  workflowId: string;
+  onOpenThread?: (threadId: string) => void;
+  onDeleted?: (runId: string) => void;
+}) {
   const [expanded, setExpanded] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const canDelete = run.status === 'queued' || run.status === 'failed' || run.status === 'cancelled';
+
+  const handleDelete = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setDeleting(true);
+    const res = await fetch(`/api/workflows/${workflowId}/runs/${run.id}`, { method: 'DELETE' });
+    if (res.ok) onDeleted?.(run.id);
+    else setDeleting(false);
+  };
+
   const duration = run.started_at && run.completed_at
     ? Math.round((new Date(run.completed_at).getTime() - new Date(run.started_at).getTime()) / 1000)
     : null;
@@ -279,6 +303,16 @@ function RunCard({ run, onOpenThread }: { run: WorkflowRun; onOpenThread?: (thre
             className="text-[11.5px] text-indigo-600 hover:text-indigo-700 flex-shrink-0 transition-colors"
           >
             Open thread →
+          </button>
+        )}
+        {canDelete && onDeleted && (
+          <button
+            onClick={handleDelete}
+            disabled={deleting}
+            className="p-1 text-neutral-400 hover:text-neutral-600 flex-shrink-0 transition-colors disabled:opacity-40"
+            title="Remove run"
+          >
+            <XMarkIcon className="w-3.5 h-3.5" />
           </button>
         )}
       </div>
