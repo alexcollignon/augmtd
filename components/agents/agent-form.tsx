@@ -55,6 +55,9 @@ export function AgentForm({ initial, mode }: Props) {
   const [isEnhancing, setIsEnhancing] = useState(false);
   // true while we're waiting for the first token to arrive
   const [enhancePending, setEnhancePending] = useState(false);
+  const [memoryText, setMemoryText] = useState(initial?.memory_text ?? '');
+  const [confirmingResetMemory, setConfirmingResetMemory] = useState(false);
+  const [resettingMemory, setResettingMemory] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [starters, setStarters] = useState<string[]>(
@@ -262,6 +265,19 @@ export function AgentForm({ initial, mode }: Props) {
     }
   }
 
+  async function handleResetMemory() {
+    if (!initial?.id) return;
+    setResettingMemory(true);
+    await fetch(`/api/agents/${initial.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memory_text: null }),
+    });
+    setMemoryText('');
+    setConfirmingResetMemory(false);
+    setResettingMemory(false);
+  }
+
   async function handleDelete() {
     if (!initial?.id) return;
     setDeleting(true);
@@ -351,10 +367,36 @@ export function AgentForm({ initial, mode }: Props) {
             </div>
           </div>
 
-          {initial?.memory_text && (
+          {memoryText && (
             <div className="rounded-xl border border-neutral-100 bg-neutral-50 p-3 flex-1 overflow-y-auto">
-              <p className="text-[10.5px] font-semibold text-neutral-400 uppercase tracking-wide mb-1.5">Memory</p>
-              <p className="text-[11.5px] text-neutral-600 leading-relaxed whitespace-pre-wrap">{initial.memory_text}</p>
+              <div className="flex items-center justify-between mb-1.5">
+                <p className="text-[10.5px] font-semibold text-neutral-400 uppercase tracking-wide">Memory</p>
+                {confirmingResetMemory ? (
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={handleResetMemory}
+                      disabled={resettingMemory}
+                      className="px-1.5 py-0.5 bg-red-600 hover:bg-red-700 text-white text-[10px] font-medium rounded transition-colors disabled:opacity-50"
+                    >
+                      Reset
+                    </button>
+                    <button
+                      onClick={() => setConfirmingResetMemory(false)}
+                      className="px-1.5 py-0.5 text-neutral-500 hover:text-neutral-700 text-[10px] font-medium transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setConfirmingResetMemory(true)}
+                    className="text-[10px] text-neutral-400 hover:text-red-500 transition-colors"
+                  >
+                    Reset
+                  </button>
+                )}
+              </div>
+              <p className="text-[11.5px] text-neutral-600 leading-relaxed whitespace-pre-wrap">{memoryText}</p>
             </div>
           )}
         </div>
