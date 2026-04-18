@@ -289,16 +289,16 @@ export function WorkPageClient({
         return;
       }
 
+      // If there's real text, let the browser paste it naturally into the focused input.
+      // PPT/Keynote put both a PNG render and text/plain in the clipboard — we want the text.
+      if (rawText) return;
+
       const files = Array.from(e.clipboardData?.files ?? []);
       if (files.length === 0) return;
 
       e.preventDefault();
-      // Capture text companion (e.g. PPT slide copied as image + text/plain).
       if (activeThreadIdRef.current) {
         setDroppedFiles(files);
-        if (rawText) {
-          setDroppedSnippet({ id: crypto.randomUUID(), name: 'Pasted text', snippetContent: rawText });
-        }
       } else {
         setPendingFiles(prev => [...prev, ...files.map(f => ({ id: crypto.randomUUID(), file: f }))]);
       }
