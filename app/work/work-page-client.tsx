@@ -181,6 +181,17 @@ export function WorkPageClient({
     }
   }
 
+  async function handleGenerateWorkflow(description: string) {
+    const res = await fetch('/api/workflows/generate-from-description', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ description }),
+    });
+    if (!res.ok) throw new Error('Generation failed');
+    const { workflow: generated } = await res.json();
+    await handleUseTemplate({ workflow: generated } as WorkflowTemplate);
+  }
+
   async function handleRenameWorkflow(id: string, name: string) {
     setStudioWorkflows(prev => prev?.map(w => w.id === id ? { ...w, name } : w) ?? null);
     await fetch(`/api/workflows/${id}`, {
@@ -520,7 +531,7 @@ export function WorkPageClient({
               workflows={studioWorkflows ?? []}
               selectedId={selectedWorkflowId}
               onSelect={(id) => { setSelectedWorkflowId(id); setEditingWorkflowId(null); }}
-              onCreate={handleCreateWorkflow}
+              onCreate={() => { setSelectedWorkflowId(null); setEditingWorkflowId(null); }}
               onRename={handleRenameWorkflow}
               onDelete={handleDeleteWorkflow}
             />
@@ -604,6 +615,7 @@ export function WorkPageClient({
               <StudioEmptyState
                 onCreate={handleCreateWorkflow}
                 onUseTemplate={handleUseTemplate}
+                onGenerateFromDescription={handleGenerateWorkflow}
               />
             )
           )}
