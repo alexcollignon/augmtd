@@ -11,6 +11,8 @@ import {
   ArrowUpIcon,
   ArrowDownIcon,
   CheckIcon,
+  InformationCircleIcon,
+  XMarkIcon,
 } from '@heroicons/react/24/outline';
 import type {
   Workflow, WorkflowStep, WorkflowTrigger, OutputConfig,
@@ -47,6 +49,9 @@ export function StudioBuilder({ workflow: initialWorkflow, agents, onClose, onBa
   const [workflow, setWorkflow] = useState<Workflow>(initialWorkflow);
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<Date | null>(null);
+  const [enhancingStepId, setEnhancingStepId] = useState<string | null>(null);
+  const [enhancePendingStepId, setEnhancePendingStepId] = useState<string | null>(null);
+  const [showStepsHelp, setShowStepsHelp] = useState(false);
 
   const patch = useCallback(<K extends keyof Workflow>(key: K, value: Workflow[K]) => {
     setWorkflow(w => ({ ...w, [key]: value }));
@@ -121,6 +126,57 @@ export function StudioBuilder({ workflow: initialWorkflow, agents, onClose, onBa
     });
   }, []);
 
+  const handleEnhanceStep = useCallback(async (
+    stepId: string,
+    prompt: string,
+    stepLabel: string,
+    context: { step_type: 'ai' | 'tool' | 'agent'; tool_type?: string; output_format?: string; model_tier?: string; field: 'prompt' | 'query' },
+  ) => {
+    if (!prompt.trim()) return;
+    setEnhancingStepId(stepId);
+    setEnhancePendingStepId(stepId);
+    try {
+      const res = await fetch('/api/workflows/enhance-step-prompt', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt, step_label: stepLabel, workflow_name: workflow.name, ...context }),
+      });
+      if (!res.ok || !res.body) return;
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let accumulated = '';
+      let firstChunk = true;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const lines = decoder.decode(value).split('\n');
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const payload = line.slice(6);
+          if (payload === '[DONE]') break;
+          try {
+            const { delta } = JSON.parse(payload) as { delta: string };
+            if (!delta) continue;
+            if (firstChunk) { setEnhancePendingStepId(null); firstChunk = false; }
+            accumulated += delta;
+            const acc = accumulated;
+            setWorkflow(w => ({
+              ...w,
+              steps: w.steps.map(s => {
+                if (s.id !== stepId) return s;
+                if (context.field === 'query') return { ...s, config: { ...(s as ToolStep).config, query: acc } } as WorkflowStep;
+                return { ...s, prompt: acc } as WorkflowStep;
+              }),
+            }));
+          } catch { /* ignore parse errors */ }
+        }
+      }
+    } finally {
+      setEnhancingStepId(null);
+      setEnhancePendingStepId(null);
+    }
+  }, [workflow.name]);
+
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Header */}
@@ -187,7 +243,39 @@ export function StudioBuilder({ workflow: initialWorkflow, agents, onClose, onBa
           </Panel>
 
           {/* Steps */}
-          <Panel title="Steps">
+          <Panel title="Steps" headerRight={
+            <button
+              onClick={() => setShowStepsHelp(h => !h)}
+              className="p-1 rounded hover:bg-neutral-100 text-neutral-400 hover:text-neutral-600 transition-colors"
+            >
+              <InformationCircleIcon className="w-4 h-4" />
+            </button>
+          }>
+            {showStepsHelp && (
+              <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-4 text-[12px] text-neutral-700 mb-1">
+                <div className="flex items-start justify-between mb-2">
+                  <span className="font-semibold text-neutral-800">How to build a workflow</span>
+                  <button onClick={() => setShowStepsHelp(false)} className="text-neutral-400 hover:text-neutral-600 ml-2 flex-shrink-0">
+                    <XMarkIcon className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                <ol className="space-y-1.5">
+                  <li><span className="font-medium">1.</span> Add a <span className="font-medium">Tool</span> step to collect data — fetch emails, search the web, or read a document.</li>
+                  <li><span className="font-medium">2.</span> Add an <span className="font-medium">AI</span> step to process it — summarise, extract, rewrite, or analyse.</li>
+                  <li><span className="font-medium">3.</span> Set the <span className="font-medium">output</span> — send as a chat message or save as a document artifact.</li>
+                </ol>
+                <div className="mt-3 pt-3 border-t border-indigo-100">
+                  <span className="text-neutral-500 font-medium">Example — Morning briefing:</span>
+                  <div className="mt-1.5 flex items-center gap-1.5 flex-wrap text-[11.5px]">
+                    <span className="bg-white border border-indigo-100 rounded px-2 py-0.5">Tool: Get urgent emails</span>
+                    <span className="text-neutral-400">→</span>
+                    <span className="bg-white border border-indigo-100 rounded px-2 py-0.5">AI: Summarise into 5 bullets</span>
+                    <span className="text-neutral-400">→</span>
+                    <span className="bg-white border border-indigo-100 rounded px-2 py-0.5">Output: Thread message</span>
+                  </div>
+                </div>
+              </div>
+            )}
             {workflow.steps.length === 0 && (
               <div className="text-[12.5px] text-neutral-500 py-3 text-center bg-neutral-50 rounded-lg border border-dashed border-neutral-200 mb-3">
                 Add steps below. Each step feeds its output into the next.
@@ -204,10 +292,13 @@ export function StudioBuilder({ workflow: initialWorkflow, agents, onClose, onBa
                   onUpdate={p => updateStep(idx, p)}
                   onRemove={() => removeStep(idx)}
                   onMove={delta => moveStep(idx, delta)}
+                  isEnhancing={enhancingStepId === step.id}
+                  isPending={enhancePendingStepId === step.id}
+                  onEnhance={(prompt, label, ctx) => handleEnhanceStep(step.id, prompt, label, ctx)}
                 />
               ))}
             </div>
-            <div className="flex items-center gap-2 mt-3 pt-3 border-t border-neutral-100">
+            <div className="flex items-center gap-2 mt-4 pt-4 border-t-2 border-neutral-200">
               <span className="text-[12px] text-neutral-500 mr-1">Add step:</span>
               <AddStepButton icon={WrenchScrewdriverIcon} label="Tool"  onClick={() => addStep('tool')} />
               <AddStepButton icon={SparklesIcon}          label="AI"    onClick={() => addStep('ai')} />
@@ -234,10 +325,13 @@ export function StudioBuilder({ workflow: initialWorkflow, agents, onClose, onBa
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
-function Panel({ title, children }: { title: string; children: React.ReactNode }) {
+function Panel({ title, children, headerRight }: { title: string; children: React.ReactNode; headerRight?: React.ReactNode }) {
   return (
     <div className="bg-white border border-neutral-100 rounded-2xl p-5">
-      <h2 className="text-[13px] font-semibold text-neutral-900 mb-3">{title}</h2>
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="text-[13px] font-semibold text-neutral-900">{title}</h2>
+        {headerRight}
+      </div>
       <div className="space-y-3">{children}</div>
     </div>
   );
@@ -351,9 +445,11 @@ function TriggerEditor({ trigger, onChange }: { trigger: WorkflowTrigger; onChan
   );
 }
 
-function StepCard({ step, index, total, agents, onUpdate, onRemove, onMove }: {
+function StepCard({ step, index, total, agents, onUpdate, onRemove, onMove, isEnhancing, isPending, onEnhance }: {
   step: WorkflowStep; index: number; total: number; agents: AgentOption[];
   onUpdate: (p: Partial<WorkflowStep>) => void; onRemove: () => void; onMove: (delta: -1 | 1) => void;
+  isEnhancing?: boolean; isPending?: boolean;
+  onEnhance?: (prompt: string, label: string, context: { step_type: 'ai' | 'tool' | 'agent'; tool_type?: string; output_format?: string; model_tier?: string; field: 'prompt' | 'query' }) => void;
 }) {
   const Icon = step.type === 'tool' ? WrenchScrewdriverIcon : step.type === 'ai' ? SparklesIcon : UserCircleIcon;
   const typeColor =
@@ -386,16 +482,22 @@ function StepCard({ step, index, total, agents, onUpdate, onRemove, onMove }: {
         </div>
       </div>
       <div className="p-3 space-y-3 bg-white">
-        {step.type === 'tool'  && <ToolStepFields  step={step as ToolStep}  onUpdate={onUpdate} />}
-        {step.type === 'ai'    && <AIStepFields    step={step as AIStep}    onUpdate={onUpdate} />}
-        {step.type === 'agent' && <AgentStepFields step={step as AgentStep} agents={agents} onUpdate={onUpdate} />}
+        {step.type === 'tool'  && <ToolStepFields  step={step as ToolStep}  onUpdate={onUpdate} isEnhancing={isEnhancing} isPending={isPending} onEnhance={onEnhance} />}
+        {step.type === 'ai'    && <AIStepFields    step={step as AIStep}    onUpdate={onUpdate} isEnhancing={isEnhancing} isPending={isPending} onEnhance={onEnhance} />}
+        {step.type === 'agent' && <AgentStepFields step={step as AgentStep} agents={agents} onUpdate={onUpdate} isEnhancing={isEnhancing} isPending={isPending} onEnhance={onEnhance} />}
       </div>
     </div>
   );
 }
 
-function ToolStepFields({ step, onUpdate }: { step: ToolStep; onUpdate: (p: Partial<ToolStep>) => void }) {
+type EnhanceFn = (prompt: string, label: string, context: { step_type: 'ai' | 'tool' | 'agent'; tool_type?: string; output_format?: string; model_tier?: string; field: 'prompt' | 'query' }) => void;
+
+function ToolStepFields({ step, onUpdate, isEnhancing, isPending, onEnhance }: {
+  step: ToolStep; onUpdate: (p: Partial<ToolStep>) => void;
+  isEnhancing?: boolean; isPending?: boolean; onEnhance?: EnhanceFn;
+}) {
   const tool = AVAILABLE_TOOLS.find(t => t.id === step.tool);
+  const query = (step.config.query as string) ?? '';
   return (
     <>
       <Field label="Tool">
@@ -406,14 +508,36 @@ function ToolStepFields({ step, onUpdate }: { step: ToolStep; onUpdate: (p: Part
         {tool && <p className="text-[11.5px] text-neutral-500 mt-1">{tool.description}</p>}
       </Field>
       {step.tool === 'web_search' && (
-        <Field label="Search query">
-          <textarea
-            value={(step.config.query as string) ?? ''}
-            onChange={e => onUpdate({ config: { ...step.config, query: e.target.value } })}
-            placeholder="e.g. Germany Portugal business news today"
-            rows={3}
-            className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-[13px] resize-y focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400" />
-        </Field>
+        <div>
+          <div className="flex items-center justify-between mb-1">
+            <label className="text-[11.5px] font-medium text-neutral-500">Search query</label>
+            {onEnhance && (
+              <button
+                type="button"
+                onClick={() => onEnhance(query, step.label, { step_type: 'tool', tool_type: 'web_search', field: 'query' })}
+                disabled={isEnhancing || !query.trim()}
+                className="flex items-center gap-1 text-[11px] text-indigo-500 hover:text-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                <SparklesIcon className="w-3 h-3" />
+                Enhance
+              </button>
+            )}
+          </div>
+          {isPending ? (
+            <div className="w-full px-3 py-2 border border-neutral-200 rounded-lg bg-neutral-50 space-y-2 min-h-[72px]">
+              <div className="h-2.5 bg-neutral-200 rounded animate-pulse w-3/4" />
+              <div className="h-2.5 bg-neutral-200 rounded animate-pulse w-full" />
+            </div>
+          ) : (
+            <textarea
+              value={query}
+              onChange={e => onUpdate({ config: { ...step.config, query: e.target.value } })}
+              placeholder="e.g. Germany Portugal business news today"
+              rows={3}
+              disabled={isEnhancing}
+              className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-[13px] resize-y focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400 disabled:opacity-60" />
+          )}
+        </div>
       )}
       {step.tool === 'fetch_url' && (
         <Field label="URLs to fetch" hint="One URL per line, max 5">
@@ -458,28 +582,61 @@ function ToolStepFields({ step, onUpdate }: { step: ToolStep; onUpdate: (p: Part
   );
 }
 
-function AIStepFields({ step, onUpdate }: { step: AIStep; onUpdate: (p: Partial<AIStep>) => void }) {
+function AIStepFields({ step, onUpdate, isEnhancing, isPending, onEnhance }: {
+  step: AIStep;
+  onUpdate: (p: Partial<AIStep>) => void;
+  isEnhancing?: boolean;
+  isPending?: boolean;
+  onEnhance?: EnhanceFn;
+}) {
   return (
     <>
-      <Field label="Instruction">
-        <textarea value={step.prompt} onChange={e => onUpdate({ prompt: e.target.value })}
-          placeholder="What should the AI do with the previous step outputs?"
-          rows={4} className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-[13px] resize-y focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400" />
-      </Field>
+      <div>
+        <div className="flex items-center justify-between mb-1">
+          <label className="text-[11.5px] font-medium text-neutral-500">Instruction</label>
+          {onEnhance && (
+            <button
+              type="button"
+              onClick={() => onEnhance(step.prompt, step.label, { step_type: 'ai', output_format: step.output_format, model_tier: step.model_tier, field: 'prompt' })}
+              disabled={isEnhancing || !step.prompt.trim()}
+              className="flex items-center gap-1 text-[11px] text-indigo-500 hover:text-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              <SparklesIcon className="w-3 h-3" />
+              Enhance
+            </button>
+          )}
+        </div>
+        {isPending ? (
+          <div className="w-full px-3 py-2 border border-neutral-200 rounded-lg bg-neutral-50 space-y-2 min-h-[96px]">
+            <div className="h-2.5 bg-neutral-200 rounded animate-pulse w-3/4" />
+            <div className="h-2.5 bg-neutral-200 rounded animate-pulse w-full" />
+            <div className="h-2.5 bg-neutral-200 rounded animate-pulse w-2/3" />
+          </div>
+        ) : (
+          <textarea
+            value={step.prompt}
+            onChange={e => onUpdate({ prompt: e.target.value })}
+            placeholder="What should the AI do with the previous step outputs?"
+            rows={4}
+            disabled={isEnhancing}
+            className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-[13px] resize-y focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400 disabled:opacity-60"
+          />
+        )}
+      </div>
       <div className="grid grid-cols-2 gap-3">
         <Field label="Output format">
           <select value={step.output_format ?? 'markdown'} onChange={e => onUpdate({ output_format: e.target.value as AIStep['output_format'] })}
             className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-[13px] bg-white">
-            <option value="markdown">Markdown</option>
-            <option value="text">Plain text</option>
-            <option value="json">JSON</option>
+            <option value="markdown">Formatted</option>
+            <option value="text">Text only</option>
+            <option value="json">Structured (JSON)</option>
           </select>
         </Field>
         <Field label="Model">
           <select value={step.model_tier ?? 'fast'} onChange={e => onUpdate({ model_tier: e.target.value as AIStep['model_tier'] })}
             className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-[13px] bg-white">
-            <option value="fast">Fast (cheaper)</option>
-            <option value="reasoning">Reasoning (better)</option>
+            <option value="fast">Fast</option>
+            <option value="reasoning">Thorough</option>
           </select>
         </Field>
       </div>
@@ -487,7 +644,10 @@ function AIStepFields({ step, onUpdate }: { step: AIStep; onUpdate: (p: Partial<
   );
 }
 
-function AgentStepFields({ step, agents, onUpdate }: { step: AgentStep; agents: AgentOption[]; onUpdate: (p: Partial<AgentStep>) => void }) {
+function AgentStepFields({ step, agents, onUpdate, isEnhancing, isPending, onEnhance }: {
+  step: AgentStep; agents: AgentOption[]; onUpdate: (p: Partial<AgentStep>) => void;
+  isEnhancing?: boolean; isPending?: boolean; onEnhance?: EnhanceFn;
+}) {
   return (
     <>
       <Field label="Agent">
@@ -497,11 +657,35 @@ function AgentStepFields({ step, agents, onUpdate }: { step: AgentStep; agents: 
           {agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
         </select>
       </Field>
-      <Field label="Task for this agent">
-        <textarea value={step.prompt} onChange={e => onUpdate({ prompt: e.target.value })}
-          placeholder="What should this agent do, using the previous step outputs as input?"
-          rows={4} className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-[13px] resize-y focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400" />
-      </Field>
+      <div>
+        <div className="flex items-center justify-between mb-1">
+          <label className="text-[11.5px] font-medium text-neutral-500">Task for this agent</label>
+          {onEnhance && (
+            <button
+              type="button"
+              onClick={() => onEnhance(step.prompt, step.label, { step_type: 'agent', field: 'prompt' })}
+              disabled={isEnhancing || !step.prompt.trim()}
+              className="flex items-center gap-1 text-[11px] text-indigo-500 hover:text-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              <SparklesIcon className="w-3 h-3" />
+              Enhance
+            </button>
+          )}
+        </div>
+        {isPending ? (
+          <div className="w-full px-3 py-2 border border-neutral-200 rounded-lg bg-neutral-50 space-y-2 min-h-[96px]">
+            <div className="h-2.5 bg-neutral-200 rounded animate-pulse w-3/4" />
+            <div className="h-2.5 bg-neutral-200 rounded animate-pulse w-full" />
+            <div className="h-2.5 bg-neutral-200 rounded animate-pulse w-2/3" />
+          </div>
+        ) : (
+          <textarea value={step.prompt} onChange={e => onUpdate({ prompt: e.target.value })}
+            placeholder="What should this agent do, using the previous step outputs as input?"
+            rows={4}
+            disabled={isEnhancing}
+            className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-[13px] resize-y focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400 disabled:opacity-60" />
+        )}
+      </div>
     </>
   );
 }
