@@ -43,10 +43,10 @@ export interface KnowledgeFile {
 
 // ─── Embedding ──────────────────────────────────────────────────────────────
 
-// multilingual-e5-large-instruct (Together AI) has a 512-token context limit.
-// Summaries embedded via summarizeChunks() are ~50-100 words, well under 512 tokens.
-// This constant is a safety-net guard only — applied after summarization.
-const EMBED_MAX_CHARS = 1300
+// multilingual-e5-large-instruct uses XLM-RoBERTa tokenization (~2-2.5 chars/token),
+// not GPT-style (~4 chars/token). 800 chars ≈ 320-400 tokens — safe under the 512-token limit
+// for any content type including non-Latin scripts.
+const EMBED_MAX_CHARS = 800
 
 export async function embedText(text: string, userId: string, supabase: SupabaseClient): Promise<number[]> {
   const { client, model, endpoint } = await getAIClient(userId, 'embeddings', supabase);
@@ -194,7 +194,7 @@ async function summarizeChunks(
   userId: string,
   supabase: SupabaseClient
 ): Promise<string[]> {
-  const FALLBACK_CHARS = 1200;
+  const FALLBACK_CHARS = 800;
   const results: string[] = new Array(chunks.length);
 
   for (let batchStart = 0; batchStart < chunks.length; batchStart += SUMMARIZE_BATCH_SIZE) {
