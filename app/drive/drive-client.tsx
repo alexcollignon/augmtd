@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { toast } from 'sonner';
 import FolderPicker from '@/components/knowledge/folder-picker';
+import GoogleDrivePicker from '@/components/knowledge/google-drive-picker';
 import {
   FolderIcon,
   DocumentIcon,
@@ -405,7 +406,7 @@ function AddFromDriveModal({ connections, onClose, onSuccess, onSwitchToUpload }
     if (firstId) setPickerReady(true);
   }
 
-  async function handleFolderSelected(folderId: string, folderName: string, fileIds?: string[]) {
+  async function handleSourceAdd(folderId: string | null, folderName: string, fileIds?: string[]) {
     setAdding(true);
     try {
       const res = await fetch('/api/knowledge/sources', {
@@ -422,6 +423,15 @@ function AddFromDriveModal({ connections, onClose, onSuccess, onSwitchToUpload }
       onSuccess(data);
       onClose();
     } catch { toast.error('Failed to add files'); } finally { setAdding(false); }
+  }
+
+  function handleFolderSelected(folderId: string, folderName: string, fileIds?: string[]) {
+    handleSourceAdd(folderId, folderName, fileIds);
+  }
+
+  function handleGoogleFilesSelected(fileIds: string[], fileNames: string[]) {
+    const label = fileIds.length === 1 ? fileNames[0] : `${fileIds.length} files`;
+    handleSourceAdd(null, label, fileIds);
   }
 
   const currentAccounts = accountsForProvider(addProvider);
@@ -468,13 +478,22 @@ function AddFromDriveModal({ connections, onClose, onSuccess, onSwitchToUpload }
                 </div>
               )}
               {pickerReady && selectedConnectionId && (
-                <FolderPicker
-                  key={`${addProvider}-${selectedConnectionId}`}
-                  provider={addProvider}
-                  connectionId={selectedConnectionId}
-                  onSelect={handleFolderSelected}
-                  disabled={adding}
-                />
+                addProvider === 'google_drive' ? (
+                  <GoogleDrivePicker
+                    key={selectedConnectionId}
+                    connectionId={selectedConnectionId}
+                    onSelect={handleGoogleFilesSelected}
+                    disabled={adding}
+                  />
+                ) : (
+                  <FolderPicker
+                    key={`${addProvider}-${selectedConnectionId}`}
+                    provider={addProvider}
+                    connectionId={selectedConnectionId}
+                    onSelect={handleFolderSelected}
+                    disabled={adding}
+                  />
+                )
               )}
             </>
           )}

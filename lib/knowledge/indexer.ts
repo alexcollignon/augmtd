@@ -733,6 +733,7 @@ export async function indexSource(
       allFiles = await collectAllFiles(source.provider, encryptedTokens, source.folder_id);
     }
 
+    console.log(`[Indexer] ${sourceId}: found ${allFiles.length} file(s) from provider`);
     const indexable = allFiles.filter((f) => !SKIP_MIME_TYPES.has(f.mimeType));
 
     if (indexable.length > MAX_FILES_PER_SYNC) {

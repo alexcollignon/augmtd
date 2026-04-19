@@ -25,7 +25,7 @@ export async function POST(request: NextRequest) {
   const body = await request.json();
   const { provider, folder_id, folder_name, connection_id, file_ids } = body;
 
-  if (!provider || !folder_id || !folder_name) {
+  if (!provider || !folder_name) {
     return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
   }
 

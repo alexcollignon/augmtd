@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import SourceCard from '@/components/knowledge/source-card';
 import FileBrowser from '@/components/knowledge/file-browser';
 import FolderPicker from '@/components/knowledge/folder-picker';
+import GoogleDrivePicker from '@/components/knowledge/google-drive-picker';
 import { PlusIcon } from '@heroicons/react/24/outline';
 
 interface KnowledgeSource {
@@ -97,7 +98,7 @@ export default function KnowledgePageClient({ initialSources, connections }: Kno
     }
   }
 
-  async function handleFolderSelected(folderId: string, folderName: string, fileIds?: string[]) {
+  async function handleSourceAdd(folderId: string | null, folderName: string, fileIds?: string[]) {
     setAdding(true);
     try {
       const res = await fetch('/api/knowledge/sources', {
@@ -113,7 +114,7 @@ export default function KnowledgePageClient({ initialSources, connections }: Kno
       });
       const data = await res.json();
       if (!res.ok) {
-        toast.error(data.error ?? 'Failed to connect folder');
+        toast.error(data.error ?? 'Failed to connect source');
         return;
       }
       setSources((prev) => [data, ...prev]);
@@ -122,10 +123,19 @@ export default function KnowledgePageClient({ initialSources, connections }: Kno
       setBrowserRefreshKey((k) => k + 1);
       toast.success(`"${folderName}" connected — indexing started`);
     } catch {
-      toast.error('Failed to connect folder');
+      toast.error('Failed to connect source');
     } finally {
       setAdding(false);
     }
+  }
+
+  function handleFolderSelected(folderId: string, folderName: string, fileIds?: string[]) {
+    handleSourceAdd(folderId, folderName, fileIds);
+  }
+
+  function handleGoogleFilesSelected(fileIds: string[], fileNames: string[]) {
+    const label = fileIds.length === 1 ? fileNames[0] : `${fileIds.length} files`;
+    handleSourceAdd(null, label, fileIds);
   }
 
   async function handleSync(sourceId: string) {
@@ -249,16 +259,27 @@ export default function KnowledgePageClient({ initialSources, connections }: Kno
                 </div>
               )}
 
-              {/* Folder picker */}
+              {/* File / folder picker */}
               {pickerReady && selectedConnectionId && (
                 <div>
-                  <label className="block text-[12px] font-medium text-neutral-700 mb-1.5">Folder</label>
-                  <FolderPicker
-                    key={`${addProvider}-${selectedConnectionId}`}
-                    provider={addProvider}
-                    connectionId={selectedConnectionId}
-                    onSelect={handleFolderSelected}
-                  />
+                  <label className="block text-[12px] font-medium text-neutral-700 mb-1.5">
+                    {addProvider === 'google_drive' ? 'Files' : 'Folder'}
+                  </label>
+                  {addProvider === 'google_drive' ? (
+                    <GoogleDrivePicker
+                      key={selectedConnectionId}
+                      connectionId={selectedConnectionId}
+                      onSelect={handleGoogleFilesSelected}
+                      disabled={adding}
+                    />
+                  ) : (
+                    <FolderPicker
+                      key={`${addProvider}-${selectedConnectionId}`}
+                      provider={addProvider}
+                      connectionId={selectedConnectionId}
+                      onSelect={handleFolderSelected}
+                    />
+                  )}
                   {adding && (
                     <p className="mt-2 text-[12px] text-neutral-500">Connecting…</p>
                   )}

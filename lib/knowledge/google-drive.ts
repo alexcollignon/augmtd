@@ -99,6 +99,7 @@ export async function getDriveFilesForIds(encryptedTokens: string, fileIds: stri
         const res = await drive.files.get({
           fileId,
           fields: 'id,name,mimeType,modifiedTime,size',
+          supportsAllDrives: true,
         });
         const f = res.data;
         return {
@@ -109,7 +110,8 @@ export async function getDriveFilesForIds(encryptedTokens: string, fileIds: stri
           size: f.size ? parseInt(f.size, 10) : null,
           modifiedTime: f.modifiedTime ?? null,
         };
-      } catch {
+      } catch (err) {
+        console.error(`[GoogleDrive] getDriveFilesForIds failed for fileId=${fileId}:`, err);
         return null;
       }
     })
@@ -161,7 +163,7 @@ export async function readDriveFile(
 
   // Binary files (PDF, DOCX, images, etc.) — download directly
   const res = await drive.files.get(
-    { fileId, alt: 'media' },
+    { fileId, alt: 'media', supportsAllDrives: true },
     { responseType: 'arraybuffer' }
   );
   return Buffer.from(res.data as ArrayBuffer);
