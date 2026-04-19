@@ -179,23 +179,21 @@ export function StudioEmptyState({ onCreate, onUseTemplate, onGenerateFromDescri
 
         {/* Templates */}
         <div className="mb-6 animate-prompt-in" style={{ animationDelay: '120ms', animationFillMode: 'both' }}>
-          <div className="grid grid-cols-2 gap-2">
+          <p className="text-[11px] font-medium text-neutral-400 uppercase tracking-widest mb-2">Quick start</p>
+          <div className="grid grid-cols-4 gap-2">
             {WORKFLOW_TEMPLATES.map((t) => (
               <button
                 key={t.id}
                 onClick={() => onUseTemplate(t)}
-                className="group text-left p-4 rounded-2xl bg-neutral-50 hover:bg-neutral-100 transition-colors"
+                className="group flex flex-col items-center justify-center aspect-square rounded-2xl bg-neutral-50 hover:bg-neutral-100 transition-colors p-3 text-center"
               >
-                <div className={`inline-flex items-center justify-center w-9 h-9 rounded-xl ${t.iconBg} ${t.iconColor} mb-3`}>
+                <div className={`inline-flex items-center justify-center w-7 h-7 rounded-xl ${t.iconBg} ${t.iconColor} mb-2`}>
                   {t.icon}
                 </div>
-                <div className="text-[13px] font-semibold text-neutral-800 leading-snug mb-1">
+                <div className="text-[11.5px] font-semibold text-neutral-800 leading-snug mb-0.5">
                   {t.name}
                 </div>
-                <div className="text-[12px] text-neutral-500 leading-snug mb-3">
-                  {t.description}
-                </div>
-                <div className="text-[11px] font-medium text-neutral-400">
+                <div className="text-[10.5px] text-neutral-400 leading-snug">
                   {t.cadence}
                 </div>
               </button>
