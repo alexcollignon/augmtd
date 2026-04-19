@@ -64,7 +64,7 @@ export function AgentsSidebarSection({ agents, activeAgentId, onSelect }: Props)
                 className={`group flex items-center gap-2 px-2.5 py-1.5 rounded-lg cursor-pointer transition-colors ${
                   isActive ? 'bg-neutral-100' : 'hover:bg-neutral-50'
                 }`}
-                onClick={() => onSelect(isActive ? null : agent.id)}
+                onClick={() => onSelect(agent.id)}
               >
                 {/* Color dot with icon */}
                 <div className={`w-5 h-5 rounded-md ${colorClass} flex items-center justify-center flex-shrink-0`}>

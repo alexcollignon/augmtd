@@ -216,6 +216,7 @@ export function WorkPageClient({
     const existing = threads.find(t => t.id === threadId);
     if (existing) {
       setActiveSection('chat');
+      setActiveAgentId(null);
       setActiveThreadId(threadId);
       return;
     }
@@ -226,6 +227,7 @@ export function WorkPageClient({
       if (thread) setThreads(prev => [thread as WorkThread, ...prev.filter(t => t.id !== threadId)]);
     }
     setActiveSection('chat');
+    setActiveAgentId(null);
     setActiveThreadId(threadId);
   }
 
@@ -467,6 +469,7 @@ export function WorkPageClient({
 
   function handleSelectThread(id: string) {
     setActiveThreadId(id);
+    setActiveAgentId(null);
     const thread = threads.find(t => t.id === id);
     const threadAgent = thread?.agent_id ? initialAgents.find(a => a.id === thread.agent_id) : null;
     setWebEnabled(threadAgent?.web_enabled ?? false);
@@ -562,7 +565,7 @@ export function WorkPageClient({
               <div className="px-3.5 pt-2 pb-1 flex items-center justify-between flex-shrink-0">
                 <span className="text-[10.5px] font-semibold text-neutral-400 uppercase tracking-wider">Chat history</span>
                 <button
-                  onClick={() => { setActiveThreadId(null); setWebEnabled(false); setPendingInput(null); setPendingMentions([]); setPendingFiles([]); setPendingAttachmentMeta([]); setIsAttachUploading(false); }}
+                  onClick={() => { setActiveThreadId(null); setActiveAgentId(null); setWebEnabled(false); setPendingInput(null); setPendingMentions([]); setPendingFiles([]); setPendingAttachmentMeta([]); setIsAttachUploading(false); }}
                   className="p-0.5 rounded hover:bg-neutral-100 text-neutral-400 hover:text-neutral-600 transition-colors"
                   title="New chat"
                 >
