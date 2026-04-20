@@ -250,6 +250,8 @@ export function AgentForm({ initial, mode }: Props) {
             body: JSON.stringify({ knowledge_file_id: src.knowledge_file_id, name: src.name }),
           });
         }
+        router.push(`/work?agent=${agentId}`);
+        return;
       } else {
         await fetch(`/api/agents/${agentId}`, {
           method: 'PATCH',
@@ -370,7 +372,7 @@ export function AgentForm({ initial, mode }: Props) {
           {memoryText && (
             <div className="rounded-xl border border-neutral-100 bg-neutral-50 p-3 flex-1 overflow-y-auto">
               <div className="flex items-center justify-between mb-1.5">
-                <p className="text-[10.5px] font-semibold text-neutral-400 uppercase tracking-wide">Memory</p>
+                <p className="text-[10.5px] font-semibold text-neutral-600 uppercase tracking-wide">Memory</p>
                 {confirmingResetMemory ? (
                   <div className="flex items-center gap-1">
                     <button
@@ -409,7 +411,7 @@ export function AgentForm({ initial, mode }: Props) {
             <div className="flex gap-4">
               {/* Icons */}
               <div className="flex-shrink-0">
-                <p className="text-[10.5px] font-semibold text-neutral-400 uppercase tracking-wide mb-2">Icon</p>
+                <p className="text-[10.5px] font-semibold text-neutral-600 uppercase tracking-wide mb-2">Icon</p>
                 <div className="flex gap-1 flex-wrap" style={{ maxWidth: 196 }}>
                   {AGENT_ICONS.map(({ key, Icon }) => (
                     <button
@@ -434,7 +436,7 @@ export function AgentForm({ initial, mode }: Props) {
               {/* Color + Name + Description */}
               <div className="flex-1 min-w-0 flex flex-col gap-2.5">
                 <div>
-                  <p className="text-[10.5px] font-semibold text-neutral-400 uppercase tracking-wide mb-1.5">Color</p>
+                  <p className="text-[10.5px] font-semibold text-neutral-600 uppercase tracking-wide mb-1.5">Color</p>
                   <div className="flex gap-1.5">
                     {COLORS.map((c) => (
                       <button
@@ -450,7 +452,7 @@ export function AgentForm({ initial, mode }: Props) {
                 </div>
                 <div className="flex gap-2">
                   <div className="flex-1">
-                    <label className="block text-[10.5px] font-semibold text-neutral-400 uppercase tracking-wide mb-1">Name</label>
+                    <label className="block text-[10.5px] font-semibold text-neutral-600 uppercase tracking-wide mb-1">Name</label>
                     <input
                       value={name}
                       onChange={(e) => setName(e.target.value)}
@@ -459,7 +461,7 @@ export function AgentForm({ initial, mode }: Props) {
                     />
                   </div>
                   <div className="flex-1">
-                    <label className="block text-[10.5px] font-semibold text-neutral-400 uppercase tracking-wide mb-1">
+                    <label className="block text-[10.5px] font-semibold text-neutral-600 uppercase tracking-wide mb-1">
                       Description <span className="normal-case font-normal text-neutral-300">(optional)</span>
                     </label>
                     <input
@@ -478,7 +480,7 @@ export function AgentForm({ initial, mode }: Props) {
           <div className="flex-1 min-h-0 rounded-2xl bg-white border border-neutral-100 shadow-sm p-4 flex flex-col gap-2">
             <div className="flex items-center justify-between flex-shrink-0">
               <div>
-                <p className="text-[10.5px] font-semibold text-neutral-400 uppercase tracking-wide">Instructions</p>
+                <p className="text-[10.5px] font-semibold text-neutral-600 uppercase tracking-wide">Instructions</p>
                 <p className="text-[11px] text-neutral-400 mt-0.5">How this agent should behave, what to focus on, constraints.</p>
               </div>
               <button
@@ -525,7 +527,7 @@ export function AgentForm({ initial, mode }: Props) {
 
           {/* Knowledge — compact inline row */}
           <div className="rounded-2xl bg-white border border-neutral-100 shadow-sm px-4 py-3 flex-shrink-0 flex items-center gap-3">
-            <p className="text-[10.5px] font-semibold text-neutral-400 uppercase tracking-wide flex-shrink-0">Knowledge</p>
+            <p className="text-[10.5px] font-semibold text-neutral-600 uppercase tracking-wide flex-shrink-0">Knowledge</p>
 
             {/* Attached file chips */}
             <div className="flex-1 flex items-center gap-2 flex-wrap min-w-0">
@@ -582,7 +584,7 @@ export function AgentForm({ initial, mode }: Props) {
           {/* Web search */}
           <div className="rounded-2xl bg-white border border-neutral-100 shadow-sm px-4 py-3 flex-shrink-0 flex items-center justify-between">
             <div>
-              <p className="text-[10.5px] font-semibold text-neutral-400 uppercase tracking-wide">Web Search</p>
+              <p className="text-[10.5px] font-semibold text-neutral-600 uppercase tracking-wide">Web Search</p>
               <p className="text-[11px] text-neutral-400 mt-0.5">Enable web search and URL fetching by default for this agent.</p>
             </div>
             <button
@@ -603,7 +605,7 @@ export function AgentForm({ initial, mode }: Props) {
           <div className="rounded-2xl bg-white border border-neutral-100 shadow-sm px-4 py-3 flex-shrink-0 flex flex-col gap-2.5">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-[10.5px] font-semibold text-neutral-400 uppercase tracking-wide">
+                <p className="text-[10.5px] font-semibold text-neutral-600 uppercase tracking-wide">
                   Conversation Starters <span className="normal-case font-normal text-neutral-300">(optional)</span>
                 </p>
                 <p className="text-[11px] text-neutral-400 mt-0.5">Shown as quick-start prompts on the agent home screen.</p>

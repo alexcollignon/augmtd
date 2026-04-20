@@ -7,9 +7,9 @@ export const metadata = { title: 'Chat — AUGMTD' };
 export default async function WorkPage({
   searchParams,
 }: {
-  searchParams: Promise<{ thread?: string; prompt?: string; section?: string; workflow?: string }>;
+  searchParams: Promise<{ thread?: string; prompt?: string; section?: string; workflow?: string; agent?: string }>;
 }) {
-  const { thread: initialThreadId, prompt: initialChatInput, section, workflow: initialWorkflowId } = await searchParams;
+  const { thread: initialThreadId, prompt: initialChatInput, section, workflow: initialWorkflowId, agent: initialAgentId } = await searchParams;
   const supabase = await createClient();
 
   const { data: { user } } = await supabase.auth.getUser();
@@ -88,6 +88,7 @@ export default async function WorkPage({
       initialAgents={agentsData || []}
       initialSection={initialSection}
       initialWorkflowId={initialWorkflowId || null}
+      initialAgentId={initialAgentId || null}
     />
   );
 }

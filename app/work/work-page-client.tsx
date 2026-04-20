@@ -69,6 +69,7 @@ export interface WorkPageClientProps {
   initialAgents?: SidebarAgent[];
   initialSection?: 'chat' | 'studio';
   initialWorkflowId?: string | null;
+  initialAgentId?: string | null;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -84,6 +85,7 @@ export function WorkPageClient({
   initialAgents = [],
   initialSection = 'chat',
   initialWorkflowId = null,
+  initialAgentId = null,
 }: WorkPageClientProps) {
   const router = useRouter();
   const { workspace } = useWorkspace();
@@ -104,7 +106,7 @@ export function WorkPageClient({
   const [isCreating, setIsCreating] = useState(false);
   const [artifactPanelOpen, setArtifactPanelOpen] = useState(false);
   const [activeArtifactId, setActiveArtifactId] = useState<string | null>(null);
-  const [activeAgentId, setActiveAgentId] = useState<string | null>(null);
+  const [activeAgentId, setActiveAgentId] = useState<string | null>(initialAgentId);
   const [isTemporaryMode, setIsTemporaryMode] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
   const [droppedFiles, setDroppedFiles] = useState<File[]>([]);
@@ -1517,7 +1519,7 @@ function AgentHomeScreen({ agent, onStart, pendingFiles, onAttach, onRemoveAttac
                     if (webEnabled) sources.push('web');
                     onStart(starter, sources, []);
                   }}
-                  className="w-full text-left px-1 py-2.5 text-[13px] text-neutral-400 hover:text-neutral-600 transition-colors"
+                  className="w-full text-left px-1 py-2.5 text-[13px] text-neutral-600 hover:text-neutral-900 transition-colors"
                 >
                   {starter}
                 </button>

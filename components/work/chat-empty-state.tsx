@@ -48,7 +48,7 @@ export function ChatEmptyState({ onStart, userFirstName, savedWorkflows = [], on
             >
               <button
                 onClick={() => start(prompt)}
-                className="w-full text-left px-1 py-2.5 text-[13px] text-neutral-400 hover:text-neutral-600 transition-colors"
+                className="w-full text-left px-1 py-2.5 text-[13px] text-neutral-600 hover:text-neutral-900 transition-colors"
               >
                 {prompt}
               </button>
