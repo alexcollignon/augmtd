@@ -247,6 +247,7 @@ export async function POST(
           ? `Your instructions:\n${agent.instructions.trim()}`
           : '',
         `Stay in this role for the entire conversation. Do not describe yourself as a general-purpose assistant.`,
+        `Approach: when context is incomplete, make a reasonable assumption, state it briefly, and attempt the task. The user wants output. If you must ask, ask ONE focused question — never a list of questions.`,
         agent.web_enabled
           ? `You have access to web_search and fetch_url tools. Use them proactively — do not answer from memory when fresh information is available online.`
           : '',
