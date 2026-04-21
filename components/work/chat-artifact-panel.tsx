@@ -407,9 +407,10 @@ interface ThreadArtifactsPanelProps {
   onClose: () => void;
   onArtifactsUpdate?: (artifacts: DocumentArtifact[]) => void;
   initialDetailId?: string | null;
+  activeArtifactId?: string | null;
 }
 
-export function ThreadArtifactsPanel({ thread, onClose, onArtifactsUpdate, initialDetailId }: ThreadArtifactsPanelProps) {
+export function ThreadArtifactsPanel({ thread, onClose, onArtifactsUpdate, initialDetailId, activeArtifactId }: ThreadArtifactsPanelProps) {
   const [detailId, setDetailId] = useState<string | null>(initialDetailId ?? null);
 
   const versioned = useMemo(
@@ -419,6 +420,11 @@ export function ThreadArtifactsPanel({ thread, onClose, onArtifactsUpdate, initi
   );
 
   const detailArtifact = versioned.find(a => a.id === detailId) ?? null;
+
+  // Sync when parent selects an artifact (e.g. on generation or clicking inline chip)
+  useEffect(() => {
+    if (activeArtifactId && activeArtifactId !== detailId) setDetailId(activeArtifactId);
+  }, [activeArtifactId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // If showing detail but artifact no longer exists, go back to list
   useEffect(() => {

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { SparklesIcon, CheckCircleIcon, DocumentTextIcon, ExclamationTriangleIcon, PencilSquareIcon, DocumentDuplicateIcon } from '@heroicons/react/24/outline';
+import { SparklesIcon, CheckCircleIcon, DocumentTextIcon, ExclamationTriangleIcon, PencilSquareIcon, DocumentDuplicateIcon, TableCellsIcon, PresentationChartBarIcon, EnvelopeIcon, ArrowTopRightOnSquareIcon } from '@heroicons/react/24/outline';
 import { ArrowPathIcon } from '@heroicons/react/20/solid';
 import { ClarificationWidget, ClarificationData } from './clarification-widget';
 import { MENTION_ICONS, MENTION_COLORS, MentionChip } from './chat-input-bar';
@@ -199,7 +199,7 @@ interface Props {
   onClarificationConfirm?: (choices: { sources: string[]; options: Record<string, string> }) => void;
   onRetry?: () => void;
   onEditMessage?: (messageId: string, newContent: string) => Promise<void>;
-  artifactVersionMap?: Map<string, { title: string; versionLabel: string }>;
+  artifactVersionMap?: Map<string, { title: string; versionLabel: string; type?: string }>;
 }
 
 function UserBubble({ content, isEdited, onEdit }: { content: string; isEdited?: boolean; onEdit?: () => void }) {
@@ -381,7 +381,7 @@ function AssistantMessage({ content, toolCalls, artifactIds, citations, clarific
   onViewArtifact?: (id: string) => void;
   onClarificationConfirm?: (choices: { sources: string[]; options: Record<string, string> }) => void;
   onRetry?: () => void;
-  artifactVersionMap?: Map<string, { title: string; versionLabel: string }>;
+  artifactVersionMap?: Map<string, { title: string; versionLabel: string; type?: string }>;
 }) {
   const [copied, setCopied] = useState(false);
 
@@ -415,23 +415,34 @@ function AssistantMessage({ content, toolCalls, artifactIds, citations, clarific
           <div className="flex flex-wrap gap-2 pt-1">
             {artifactIds.map(id => {
               const meta = artifactVersionMap?.get(id);
+              const ArtIcon =
+                meta?.type === 'spreadsheet' ? TableCellsIcon
+                : meta?.type === 'presentation' ? PresentationChartBarIcon
+                : meta?.type === 'email' ? EnvelopeIcon
+                : DocumentTextIcon;
+              const typeLabel =
+                meta?.type === 'spreadsheet' ? 'Spreadsheet'
+                : meta?.type === 'presentation' ? 'Presentation'
+                : meta?.type === 'email' ? 'Email draft'
+                : 'Document';
               return (
                 <button
                   key={id}
                   onClick={() => onViewArtifact?.(id)}
-                  className="flex items-center gap-2 px-3 py-2 rounded-xl bg-white border border-neutral-200 shadow-sm text-[12.5px] text-neutral-700 hover:border-indigo-300 hover:text-indigo-700 transition-colors"
+                  className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-white border border-neutral-200 shadow-sm hover:border-indigo-300 hover:shadow-md transition-all group/artifact"
                 >
-                  <SparklesIcon className="w-3.5 h-3.5 text-indigo-400" />
-                  {meta ? (
-                    <>
-                      <span className="truncate max-w-[140px]">{meta.title}</span>
-                      {meta.versionLabel && (
-                        <span className="font-mono text-[10.5px] text-neutral-400">{meta.versionLabel}</span>
-                      )}
-                    </>
-                  ) : (
-                    'View document'
-                  )}
+                  <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center flex-shrink-0">
+                    <ArtIcon className="w-4 h-4 text-indigo-500" />
+                  </div>
+                  <div className="text-left min-w-0">
+                    <p className="text-[12.5px] font-medium text-neutral-800 truncate max-w-[160px] leading-snug">
+                      {meta?.title ?? 'Document'}
+                    </p>
+                    <p className="text-[11px] text-neutral-400 leading-tight">
+                      {typeLabel}{meta?.versionLabel ? ` · ${meta.versionLabel}` : ''}
+                    </p>
+                  </div>
+                  <ArrowTopRightOnSquareIcon className="w-3.5 h-3.5 text-neutral-300 group-hover/artifact:text-indigo-400 flex-shrink-0 transition-colors" />
                 </button>
               );
             })}

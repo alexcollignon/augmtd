@@ -748,6 +748,7 @@ export function WorkPageClient({
             thread={activeThread}
             onClose={() => setArtifactPanelOpen(false)}
             onArtifactsUpdate={(artifacts) => handleThreadArtifactsUpdate(activeThread.id, artifacts)}
+            activeArtifactId={activeArtifactId}
           />
         )}
       </div>
@@ -1186,7 +1187,7 @@ function ActiveChatView({
   // ── Artifact version map — derived, no extra state ───────────────────────
   const artifactVersionMap = useMemo(() => {
     const versioned = computeVersionedArtifacts(thread.artifacts ?? []);
-    return new Map(versioned.map(a => [a.id ?? '', { title: a.title, versionLabel: a.versionLabel }]));
+    return new Map(versioned.map(a => [a.id ?? '', { title: a.title, versionLabel: a.versionLabel, type: a.type }]));
   }, [thread.artifacts]);
 
   // ── Edit message: truncate DB + restream ─────────────────────────────────
