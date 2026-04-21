@@ -128,6 +128,7 @@ export function WorkPageClient({
   const [editingWorkflowId, setEditingWorkflowId] = useState<string | null>(null);
 
   const selectedWorkflow = studioWorkflows?.find(w => w.id === selectedWorkflowId) ?? null;
+  const isBuilding = activeSection === 'studio' && !!editingWorkflowId && editingWorkflowId === selectedWorkflow?.id;
 
   async function fetchStudioWorkflows(selectId?: string) {
     const res = await fetch('/api/workflows');
@@ -522,8 +523,8 @@ export function WorkPageClient({
         </div>
       )}
 
-      {/* Thread sidebar — floating card */}
-      <div className="w-[220px] flex-shrink-0 flex flex-col bg-neutral-50 p-2">
+      {/* Thread sidebar — hidden when studio builder is open */}
+      <div className={`w-[220px] flex-shrink-0 flex flex-col bg-neutral-50 p-2 ${isBuilding ? 'hidden' : ''}`}>
         <div className="flex-1 flex flex-col rounded-2xl bg-white shadow-sm overflow-hidden">
           {/* Sidebar header: Chat / Studio tab toggle — hidden when studio is disabled for workspace */}
           {studioEnabled && (
@@ -602,7 +603,13 @@ export function WorkPageClient({
                 workflow={selectedWorkflow}
                 agents={initialAgents}
                 onClose={(updated) => { handleWorkflowUpdated(updated); setEditingWorkflowId(null); }}
-                onBack={() => setEditingWorkflowId(null)}
+                onBack={() => {
+                  const w = selectedWorkflow;
+                  if (w && w.name === 'Untitled workflow' && (!w.steps || w.steps.length === 0) && !w.description) {
+                    handleDeleteWorkflow(w.id);
+                  }
+                  setEditingWorkflowId(null);
+                }}
               />
             ) : selectedWorkflow ? (
               <StudioDetailPanel
