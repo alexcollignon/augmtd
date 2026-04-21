@@ -99,7 +99,9 @@ export function WorkPageClient({
   const [pendingInput, setPendingInput] = useState<string | null>(initialChatInput || null);
   const [pendingMentions, setPendingMentions] = useState<MentionChip[]>([]);
   const [pendingSources, setPendingSources] = useState<SourceId[]>(['kb', 'inbox', 'calendar']);
-  const [webEnabled, setWebEnabled] = useState(false);
+  const [webEnabled, setWebEnabled] = useState(() =>
+    initialAgentId ? (initialAgents.find(a => a.id === initialAgentId)?.web_enabled ?? false) : false
+  );
   const [pendingFiles, setPendingFiles] = useState<Array<{ id: string; file: File }>>([]);
   const [pendingAttachmentMeta, setPendingAttachmentMeta] = useState<Array<{ id: string; name: string }>>([]);
   const [isAttachUploading, setIsAttachUploading] = useState(false);
