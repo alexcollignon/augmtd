@@ -697,7 +697,7 @@ export function WorkPageClient({
             <AgentHomeScreen
               agent={initialAgents.find(a => a.id === activeAgentId)!}
               onStart={handleCreateThread}
-              pendingFiles={pendingFiles.map(({ id, file }) => ({ id, name: file.name, size: file.size }))}
+              pendingFiles={pendingFiles.map(({ id, file }) => ({ id, name: file.name, size: file.size, isUploading: isAttachUploading }))}
               onAttach={handlePreAttach}
               onRemoveAttachment={handlePreRemoveAttachment}
               webEnabled={webEnabled}
@@ -710,7 +710,7 @@ export function WorkPageClient({
               savedWorkflows={initialSavedWorkflows}
               onAttach={handlePreAttach}
               onRemoveAttachment={handlePreRemoveAttachment}
-              attachments={pendingFiles.map(({ id, file }) => ({ id, name: file.name, size: file.size }))}
+              attachments={pendingFiles.map(({ id, file }) => ({ id, name: file.name, size: file.size, isUploading: isAttachUploading }))}
             />
           ))}
           </>)}
@@ -875,6 +875,15 @@ function ActiveChatView({
 
   // Attachment handlers
   async function handleAttach(files: File[]) {
+    // Add chips immediately with a loading spinner — don't wait for upload
+    const tempChips = files.map(f => ({
+      id: `uploading-${crypto.randomUUID()}`,
+      name: f.name,
+      size: f.size,
+      isUploading: true,
+    }));
+    setChatAttachments(prev => [...prev, ...tempChips]);
+
     const formData = new FormData();
     for (const f of files) formData.append('file', f);
     try {
@@ -882,17 +891,25 @@ function ActiveChatView({
         method: 'POST',
         body: formData,
       });
-      if (!res.ok) return;
+      if (!res.ok) {
+        setChatAttachments(prev => prev.filter(a => !tempChips.find(t => t.id === a.id)));
+        return;
+      }
       const { attachments } = await res.json();
-      setChatAttachments(prev => [
-        ...prev,
-        ...attachments.map((a: { chatAttachId: string; filename: string; size: number }) => ({
-          id: a.chatAttachId,
-          name: a.filename,
-          size: a.size,
-        })),
-      ]);
-    } catch { /* ignore */ }
+      // Replace temp chips with real server-returned data
+      const realChips = attachments.map((a: { chatAttachId: string; filename: string; size: number }) => ({
+        id: a.chatAttachId,
+        name: a.filename,
+        size: a.size,
+        isUploading: false,
+      }));
+      setChatAttachments(prev => {
+        const without = prev.filter(a => !tempChips.find(t => t.id === a.id));
+        return [...without, ...realChips];
+      });
+    } catch {
+      setChatAttachments(prev => prev.filter(a => !tempChips.find(t => t.id === a.id)));
+    }
   }
 
   async function handleRemoveAttachment(id: string) {

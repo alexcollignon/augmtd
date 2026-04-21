@@ -32,6 +32,7 @@ export interface AttachmentChip {
   size: number;
   isSnippet?: boolean;
   snippetContent?: string;
+  isUploading?: boolean;
 }
 
 export interface MentionChip {
@@ -527,13 +528,18 @@ export function ChatInputBar({
                 key={att.id}
                 className="flex items-center gap-1.5 px-2.5 py-1 bg-neutral-100 rounded-lg text-[12px] text-neutral-700"
               >
-                {att.isSnippet ? (
+                {att.isUploading ? (
+                  <svg className="w-3 h-3 text-neutral-400 flex-shrink-0 animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+                  </svg>
+                ) : att.isSnippet ? (
                   <CodeBracketIcon className="w-3 h-3 text-neutral-400 flex-shrink-0" />
                 ) : (
                   <PaperClipIcon className="w-3 h-3 text-neutral-400 flex-shrink-0" />
                 )}
                 <span className="max-w-[120px] truncate">{att.name}</span>
-                {!att.isSnippet && <span className="text-neutral-400">{formatBytes(att.size)}</span>}
+                {!att.isSnippet && !att.isUploading && <span className="text-neutral-400">{formatBytes(att.size)}</span>}
                 {onRemoveAttachment && (
                   <button
                     onClick={() => onRemoveAttachment(att.id)}
