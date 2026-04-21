@@ -16,6 +16,23 @@ import {
   CheckIcon,
   InformationCircleIcon,
   XMarkIcon,
+  ClockIcon,
+  EnvelopeIcon,
+  CalendarDaysIcon,
+  DocumentTextIcon,
+  MagnifyingGlassIcon,
+  ChartBarIcon,
+  ArrowPathIcon,
+  NewspaperIcon,
+  GlobeAltIcon,
+  TableCellsIcon,
+  InboxIcon,
+  MegaphoneIcon,
+  FunnelIcon,
+  PresentationChartLineIcon,
+  BriefcaseIcon,
+  CpuChipIcon,
+  BookOpenIcon,
 } from '@heroicons/react/24/outline';
 import type {
   Workflow, WorkflowStep, WorkflowTrigger, OutputConfig,
@@ -37,6 +54,37 @@ interface Props {
   initialWorkflow: Workflow;
   agents: AgentOption[];
 }
+
+const WORKFLOW_ICONS = [
+  { key: 'bolt',                     Icon: BoltIcon },
+  { key: 'clock',                    Icon: ClockIcon },
+  { key: 'envelope',                 Icon: EnvelopeIcon },
+  { key: 'calendar-days',            Icon: CalendarDaysIcon },
+  { key: 'document-text',            Icon: DocumentTextIcon },
+  { key: 'magnifying-glass',         Icon: MagnifyingGlassIcon },
+  { key: 'chart-bar',                Icon: ChartBarIcon },
+  { key: 'arrow-path',               Icon: ArrowPathIcon },
+  { key: 'newspaper',                Icon: NewspaperIcon },
+  { key: 'globe-alt',                Icon: GlobeAltIcon },
+  { key: 'table-cells',              Icon: TableCellsIcon },
+  { key: 'inbox',                    Icon: InboxIcon },
+  { key: 'megaphone',                Icon: MegaphoneIcon },
+  { key: 'funnel',                   Icon: FunnelIcon },
+  { key: 'presentation-chart-line',  Icon: PresentationChartLineIcon },
+  { key: 'briefcase',                Icon: BriefcaseIcon },
+  { key: 'cpu-chip',                 Icon: CpuChipIcon },
+  { key: 'book-open',                Icon: BookOpenIcon },
+];
+
+const WORKFLOW_COLORS = [
+  { key: 'indigo',  bg: 'bg-indigo-500',  ring: 'ring-indigo-500'  },
+  { key: 'violet',  bg: 'bg-violet-500',  ring: 'ring-violet-500'  },
+  { key: 'blue',    bg: 'bg-blue-500',    ring: 'ring-blue-500'    },
+  { key: 'emerald', bg: 'bg-emerald-500', ring: 'ring-emerald-500' },
+  { key: 'amber',   bg: 'bg-amber-500',   ring: 'ring-amber-500'   },
+  { key: 'rose',    bg: 'bg-rose-500',    ring: 'ring-rose-500'    },
+  { key: 'neutral', bg: 'bg-neutral-500', ring: 'ring-neutral-500' },
+];
 
 const AVAILABLE_TOOLS = [
   { id: 'get_urgent_emails', label: 'Fetch urgent unread emails', description: 'Pulls unread items from your inbox with sender, subject, preview.' },
@@ -67,6 +115,8 @@ export function StudioBuilderClient({ initialWorkflow, agents }: Props) {
         body: JSON.stringify({
           name: workflow.name,
           description: workflow.description,
+          icon: workflow.icon,
+          color: workflow.color,
           trigger: workflow.trigger,
           steps: workflow.steps,
           output_config: workflow.output_config,
@@ -220,6 +270,44 @@ export function StudioBuilderClient({ initialWorkflow, agents }: Props) {
           <div className="max-w-3xl mx-auto space-y-6">
             {/* Identity */}
             <Panel title="Identity">
+              {/* Icon + Color row */}
+              <div className="flex gap-4 mb-1">
+                <div className="flex-shrink-0">
+                  <p className="text-[10.5px] font-semibold text-neutral-600 uppercase tracking-wide mb-1.5">Icon</p>
+                  <div className="flex gap-1 flex-wrap" style={{ maxWidth: 196 }}>
+                    {WORKFLOW_ICONS.map(({ key, Icon }) => (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => patch('icon', key)}
+                        className={`w-7 h-7 rounded-md flex items-center justify-center transition-all ${
+                          workflow.icon === key
+                            ? 'bg-neutral-200 ring-2 ring-neutral-400'
+                            : 'text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600'
+                        }`}
+                      >
+                        <Icon className="w-3.5 h-3.5" />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="w-px bg-neutral-100 flex-shrink-0" />
+                <div>
+                  <p className="text-[10.5px] font-semibold text-neutral-600 uppercase tracking-wide mb-1.5">Color</p>
+                  <div className="flex gap-1.5 flex-wrap">
+                    {WORKFLOW_COLORS.map((c) => (
+                      <button
+                        key={c.key}
+                        type="button"
+                        onClick={() => patch('color', c.key)}
+                        className={`w-5 h-5 rounded-full ${c.bg} transition-all flex-shrink-0 ${
+                          workflow.color === c.key ? `ring-2 ring-offset-1 ${c.ring}` : 'opacity-60 hover:opacity-100'
+                        }`}
+                      />
+                    ))}
+                  </div>
+                </div>
+              </div>
               <Field label="Name">
                 <input
                   type="text"

@@ -1,8 +1,30 @@
 'use client';
 
 import { useState } from 'react';
-import { PlusIcon, PencilIcon, TrashIcon, CheckIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import {
+  PlusIcon, PencilIcon, TrashIcon, CheckIcon, XMarkIcon,
+  BoltIcon, ClockIcon, EnvelopeIcon, CalendarDaysIcon, DocumentTextIcon,
+  MagnifyingGlassIcon, ChartBarIcon, ArrowPathIcon, NewspaperIcon, GlobeAltIcon,
+  TableCellsIcon, InboxIcon, MegaphoneIcon, FunnelIcon, PresentationChartLineIcon,
+  BriefcaseIcon, CpuChipIcon, BookOpenIcon,
+} from '@heroicons/react/24/outline';
 import type { Workflow } from '@/lib/workflows/types';
+
+const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
+  'bolt': BoltIcon, 'clock': ClockIcon, 'envelope': EnvelopeIcon,
+  'calendar-days': CalendarDaysIcon, 'document-text': DocumentTextIcon,
+  'magnifying-glass': MagnifyingGlassIcon, 'chart-bar': ChartBarIcon,
+  'arrow-path': ArrowPathIcon, 'newspaper': NewspaperIcon, 'globe-alt': GlobeAltIcon,
+  'table-cells': TableCellsIcon, 'inbox': InboxIcon, 'megaphone': MegaphoneIcon,
+  'funnel': FunnelIcon, 'presentation-chart-line': PresentationChartLineIcon,
+  'briefcase': BriefcaseIcon, 'cpu-chip': CpuChipIcon, 'book-open': BookOpenIcon,
+};
+
+const COLOR_MAP: Record<string, string> = {
+  'indigo': 'bg-indigo-500', 'violet': 'bg-violet-500', 'blue': 'bg-blue-500',
+  'emerald': 'bg-emerald-500', 'amber': 'bg-amber-500', 'rose': 'bg-rose-500',
+  'neutral': 'bg-neutral-500',
+};
 
 interface Props {
   workflows: Workflow[];
@@ -13,12 +35,14 @@ interface Props {
   onDelete: (id: string) => void;
 }
 
-function StatusDot({ status }: { status: Workflow['status'] }) {
-  const cls =
-    status === 'active' ? 'bg-emerald-500' :
-    status === 'paused' ? 'bg-amber-400' :
-                          'bg-neutral-300';
-  return <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${cls}`} />;
+function WorkflowIcon({ icon, color }: { icon: string; color: string }) {
+  const Icon = ICON_MAP[icon] ?? BoltIcon;
+  const bg = COLOR_MAP[color] ?? 'bg-indigo-500';
+  return (
+    <span className={`w-5 h-5 rounded-md flex-shrink-0 flex items-center justify-center ${bg}`}>
+      <Icon className="w-3 h-3 text-white" />
+    </span>
+  );
 }
 
 function relativeTime(dateStr: string): string {
@@ -122,10 +146,10 @@ export function StudioSidebar({ workflows, selectedId, onSelect, onCreate, onRen
                 }`}
               >
                 <div className="flex items-center gap-2 pr-10">
-                  <StatusDot status={w.status} />
+                  <WorkflowIcon icon={w.icon} color={w.color} />
                   <span className="text-[12.5px] font-medium truncate leading-snug">{w.name}</span>
                 </div>
-                <div className="text-[11px] text-neutral-400 mt-0.5 pl-3.5">
+                <div className="text-[11px] text-neutral-400 mt-0.5 pl-7">
                   {relativeTime(w.updated_at)}
                 </div>
 
