@@ -476,8 +476,8 @@ export function AgentForm({ initial, mode }: Props) {
             </div>
           </div>
 
-          {/* Instructions — flex-1 fills remaining space */}
-          <div className="flex-1 min-h-0 rounded-2xl bg-white border border-neutral-100 shadow-sm p-4 flex flex-col gap-2">
+          {/* Instructions — flex-1 fills remaining space, min-h ensures usable size on small screens */}
+          <div className="flex-1 min-h-[180px] rounded-2xl bg-white border border-neutral-100 shadow-sm p-4 flex flex-col gap-2">
             <div className="flex items-center justify-between flex-shrink-0">
               <div>
                 <p className="text-[10.5px] font-semibold text-neutral-600 uppercase tracking-wide">Instructions</p>
