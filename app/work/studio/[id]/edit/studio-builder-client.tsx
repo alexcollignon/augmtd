@@ -270,41 +270,58 @@ export function StudioBuilderClient({ initialWorkflow, agents }: Props) {
           <div className="max-w-3xl mx-auto space-y-6">
             {/* Identity */}
             <Panel title="Identity">
-              {/* Icon + Color row */}
-              <div className="flex gap-4 mb-1">
-                <div className="flex-shrink-0">
-                  <p className="text-[10.5px] font-semibold text-neutral-600 uppercase tracking-wide mb-1.5">Icon</p>
-                  <div className="flex gap-1 flex-wrap" style={{ maxWidth: 196 }}>
-                    {WORKFLOW_ICONS.map(({ key, Icon }) => (
-                      <button
-                        key={key}
-                        type="button"
-                        onClick={() => patch('icon', key)}
-                        className={`w-7 h-7 rounded-md flex items-center justify-center transition-all ${
-                          workflow.icon === key
-                            ? 'bg-neutral-200 ring-2 ring-neutral-400'
-                            : 'text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600'
-                        }`}
-                      >
-                        <Icon className="w-3.5 h-3.5" />
-                      </button>
-                    ))}
+              {/* Preview + pickers row */}
+              <div className="flex gap-5 mb-2">
+                {/* Live preview */}
+                {(() => {
+                  const colorBg = WORKFLOW_COLORS.find(c => c.key === workflow.color)?.bg ?? 'bg-indigo-500';
+                  const PreviewIcon = WORKFLOW_ICONS.find(i => i.key === workflow.icon)?.Icon ?? BoltIcon;
+                  return (
+                    <div className="flex-shrink-0 flex flex-col items-center gap-2 justify-center">
+                      <div className={`w-14 h-14 rounded-2xl ${colorBg} flex items-center justify-center shadow-sm`}>
+                        <PreviewIcon className="w-7 h-7 text-white" />
+                      </div>
+                      <span className="text-[11px] text-neutral-400 w-16 text-center truncate leading-tight">{workflow.name || 'Untitled'}</span>
+                    </div>
+                  );
+                })()}
+                <div className="w-px bg-neutral-100 self-stretch flex-shrink-0" />
+                {/* Icon + Color pickers */}
+                <div className="flex gap-4 flex-1">
+                  <div className="flex-shrink-0">
+                    <p className="text-[10.5px] font-semibold text-neutral-600 uppercase tracking-wide mb-1.5">Icon</p>
+                    <div className="flex gap-1 flex-wrap" style={{ maxWidth: 224 }}>
+                      {WORKFLOW_ICONS.map(({ key, Icon }) => (
+                        <button
+                          key={key}
+                          type="button"
+                          onClick={() => patch('icon', key)}
+                          className={`w-7 h-7 rounded-md flex items-center justify-center transition-all ${
+                            workflow.icon === key
+                              ? 'bg-neutral-200 ring-2 ring-neutral-400'
+                              : 'text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600'
+                          }`}
+                        >
+                          <Icon className="w-3.5 h-3.5" />
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                </div>
-                <div className="w-px bg-neutral-100 flex-shrink-0" />
-                <div>
-                  <p className="text-[10.5px] font-semibold text-neutral-600 uppercase tracking-wide mb-1.5">Color</p>
-                  <div className="flex gap-1.5 flex-wrap">
-                    {WORKFLOW_COLORS.map((c) => (
-                      <button
-                        key={c.key}
-                        type="button"
-                        onClick={() => patch('color', c.key)}
-                        className={`w-5 h-5 rounded-full ${c.bg} transition-all flex-shrink-0 ${
-                          workflow.color === c.key ? `ring-2 ring-offset-1 ${c.ring}` : 'opacity-60 hover:opacity-100'
-                        }`}
-                      />
-                    ))}
+                  <div className="w-px bg-neutral-100 flex-shrink-0" />
+                  <div>
+                    <p className="text-[10.5px] font-semibold text-neutral-600 uppercase tracking-wide mb-1.5">Color</p>
+                    <div className="flex gap-1.5 flex-wrap">
+                      {WORKFLOW_COLORS.map((c) => (
+                        <button
+                          key={c.key}
+                          type="button"
+                          onClick={() => patch('color', c.key)}
+                          className={`w-5 h-5 rounded-full ${c.bg} transition-all flex-shrink-0 ${
+                            workflow.color === c.key ? `ring-2 ring-offset-1 ${c.ring}` : 'opacity-60 hover:opacity-100'
+                          }`}
+                        />
+                      ))}
+                    </div>
                   </div>
                 </div>
               </div>
