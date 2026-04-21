@@ -964,7 +964,7 @@ function buildChatTools(sources: string[], _provider: string, _modelFamily: stri
   neutral.push(
     {
       name: 'request_clarification',
-      description: "Present a confirmation card before generating a document. Call ONLY after searching and finding relevant content. Do NOT call when searches returned nothing — respond conversationally instead.",
+      description: "Present a confirmation card before generating a file. Call ONLY when: (1) the user's message explicitly requested a file artifact using words like 'document', 'Word doc', 'spreadsheet', 'presentation', 'deck', 'PDF', 'file', 'to download', 'to send as' AND (2) you have searched and found relevant content. Content type alone is never enough — 'write a press release / report / proposal / summary' does NOT qualify. Do NOT call when searches returned nothing — respond conversationally instead.",
       input_schema: {
         type: 'object',
         properties: {
@@ -1006,11 +1006,11 @@ function buildChatTools(sources: string[], _provider: string, _modelFamily: stri
     },
     {
       name: 'generate_document',
-      description: "Generate a downloadable file artifact: a Word document, Excel spreadsheet, PowerPoint presentation, or email draft to open in a mail client. Use ONLY when the output is something the user would want to open, download, save, or send — not for content they will simply read or copy from chat. Never call this for LinkedIn posts, social media copy, taglines, bios, short pitches, or any short-form writing. Respond inline for those.",
+      description: "Generate a downloadable file artifact. Call ONLY when the user explicitly asked for a file using words like 'document', 'Word doc', 'spreadsheet', 'presentation', 'deck', 'PDF', 'file', 'to download', 'to send as'. Content type alone is never a trigger — 'write a press release / report / proposal / summary / draft an email' always produces inline text, not a file. Only 'create a press release document' / 'I need a Word report' / 'make me a presentation' triggers this tool.",
       input_schema: {
         type: 'object',
         properties: {
-          type: { type: 'string', enum: ['word', 'excel', 'pptx', 'email'], description: 'File type. "word" = reports, proposals, contracts, memos. "excel" = budgets, trackers, structured data. "pptx" = slide decks. "email" = formal multi-paragraph email to be opened and sent from a mail client — NOT for LinkedIn posts, social copy, or short text.' },
+          type: { type: 'string', enum: ['word', 'excel', 'pptx', 'email'], description: 'File format. "word" = user asked for a Word doc / document / report to download. "excel" = user asked for a spreadsheet / tracker / budget. "pptx" = user asked for a presentation / deck / slides. "email" = user explicitly asked to send an email or open a draft in their mail client — NOT for "write an email about X" (that goes inline).' },
           instructions: { type: 'string', description: 'Detailed instructions: purpose, audience, key sections, tone, specific data to include.' },
         },
         required: ['type', 'instructions'],
