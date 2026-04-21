@@ -70,7 +70,15 @@ export async function extractTextFromAttachment(
     console.log(`[Attachments] Skipped unsupported MIME type: ${mimeType} (${filename})`);
     return null;
   } catch (err) {
-    console.error(`[Attachments] Failed to extract text from ${filename}:`, err);
+    // DOMMatrix/Path2D/ImageData are browser canvas APIs unavailable on Vercel Lambda.
+    // This is expected for PDFs processed on serverless — OCR fallback handles them.
+    const isCanvasApiMissing = err instanceof ReferenceError &&
+      /DOMMatrix|Path2D|ImageData/.test((err as Error).message ?? '');
+    if (isCanvasApiMissing) {
+      console.warn(`[Attachments] pdf-parse needs canvas APIs unavailable in this environment (${filename}) — OCR fallback will handle`);
+    } else {
+      console.error(`[Attachments] Failed to extract text from ${filename}:`, err);
+    }
     return null;
   }
 }

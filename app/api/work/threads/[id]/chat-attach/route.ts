@@ -135,13 +135,12 @@ export async function POST(
         .upload(storagePath, cf.buffer, { contentType: cf.mimeType, upsert: true });
 
       // Extract text for inline AI context.
-      // For scanned PDFs, pdf-parse returns only boilerplate page markers (e.g. "-- 1 of 5 --"),
-      // not real content. Mirror the indexer's isLikelyScanned heuristic: if extracted text
-      // is very short relative to file size, fall back to the full OCR pipeline.
-      let extracted = await extractTextFromAttachment(cf.buffer, cf.mimeType, cf.name);
-      if (cf.mimeType === 'application/pdf' && (!extracted || extracted.trim().length < 200)) {
-        extracted = await extractTextFromFile(cf.buffer, cf.mimeType, cf.name, user.id, adminClient);
-      }
+      // PDFs go straight to extractTextFromFile which owns the full pipeline:
+      // pdf-parse fast path → isLikelyScanned heuristic → binary JPEG extraction → vision OCR.
+      // All other types use the lighter extractTextFromAttachment.
+      const extracted = cf.mimeType === 'application/pdf'
+        ? await extractTextFromFile(cf.buffer, cf.mimeType, cf.name, user.id, adminClient)
+        : await extractTextFromAttachment(cf.buffer, cf.mimeType, cf.name);
       const extractedText = extracted ? extracted.slice(0, 4000) : null;
 
       // Fire-and-forget: index into KB so this file is searchable across threads.
