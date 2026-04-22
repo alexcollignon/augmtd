@@ -25,5 +25,20 @@ export async function GET(
     .limit(Math.min(limit, 100));
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json({ runs: data ?? [] });
+
+  const runs = data ?? [];
+  const threadIds = runs.map((r: any) => r.thread_id).filter(Boolean);
+
+  if (threadIds.length > 0) {
+    const { data: threads } = await supabase
+      .from('work_threads')
+      .select('id, artifacts')
+      .in('id', threadIds);
+    const threadMap = new Map((threads ?? []).map((t: any) => [t.id, t.artifacts ?? []]));
+    return NextResponse.json({
+      runs: runs.map((r: any) => ({ ...r, artifacts: r.thread_id ? (threadMap.get(r.thread_id) ?? []) : [] })),
+    });
+  }
+
+  return NextResponse.json({ runs });
 }

@@ -236,6 +236,22 @@ export function WorkPageClient({
     setActiveThreadId(threadId);
   }
 
+  async function handleOpenWorkflowArtifact(threadId: string, artifactId: string) {
+    const existing = threads.find(t => t.id === threadId);
+    if (!existing) {
+      const res = await fetch(`/api/work/threads/${threadId}`);
+      if (res.ok) {
+        const { thread } = await res.json();
+        if (thread) setThreads(prev => [thread as WorkThread, ...prev.filter(t => t.id !== threadId)]);
+      }
+    }
+    setActiveSection('chat');
+    setActiveAgentId(null);
+    setActiveThreadId(threadId);
+    setActiveArtifactId(artifactId);
+    setArtifactPanelOpen(true);
+  }
+
   // Enrich threads with agent name/color for the sidebar tag.
   // Exclude workflow run threads — they live in Studio, not chat history.
   const visibleThreads = threads
@@ -619,6 +635,7 @@ export function WorkPageClient({
                 onWorkflowUpdated={handleWorkflowUpdated}
                 onWorkflowDeleted={handleDeleteWorkflow}
                 onOpenThread={handleOpenWorkflowThread}
+                onOpenArtifact={handleOpenWorkflowArtifact}
               />
             ) : selectedWorkflowId && (studioLoading || studioWorkflows === null) ? (
               // Workflow selected but list not loaded yet (e.g. back-nav before fetch completes)

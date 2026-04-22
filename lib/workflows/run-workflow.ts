@@ -317,6 +317,7 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
     thread_id: threadId,
     role: 'assistant',
     content: materialised.messageContent,
+    metadata: materialised.artifact ? { artifact_ids: [materialised.artifact.id] } : null,
   });
 
   // Append artifact to thread if produced

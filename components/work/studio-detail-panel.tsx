@@ -3,10 +3,12 @@
 import { useState, useCallback, useEffect } from 'react';
 import {
   PlayIcon, PauseIcon, PencilSquareIcon,
-  ClockIcon, CheckCircleIcon, XCircleIcon, ArrowPathIcon, XMarkIcon, TrashIcon,
-  ClipboardDocumentIcon, CheckIcon,
+  ClockIcon, CheckCircleIcon, XCircleIcon, ArrowPathIcon, TrashIcon,
+  ClipboardDocumentIcon, CheckIcon, DocumentArrowDownIcon,
+  ChatBubbleLeftRightIcon, DocumentTextIcon, TableCellsIcon,
+  PresentationChartBarIcon, EnvelopeIcon, ArchiveBoxIcon,
 } from '@heroicons/react/24/outline';
-import type { Workflow, WorkflowRun } from '@/lib/workflows/types';
+import type { Workflow, WorkflowRun, DocumentArtifact } from '@/lib/workflows/types';
 import { MarkdownText } from '@/components/work/chat-message';
 
 interface Props {
@@ -16,9 +18,17 @@ interface Props {
   onWorkflowUpdated: (w: Workflow) => void;
   onWorkflowDeleted: (id: string) => void;
   onOpenThread?: (threadId: string) => void;
+  onOpenArtifact?: (threadId: string, artifactId: string) => void;
 }
 
-type Tab = 'runs' | 'settings';
+type Tab = 'runs' | 'artifacts' | 'settings';
+
+function artifactTypeIcon(type: string | undefined) {
+  if (type === 'spreadsheet') return TableCellsIcon;
+  if (type === 'presentation') return PresentationChartBarIcon;
+  if (type === 'email') return EnvelopeIcon;
+  return DocumentTextIcon;
+}
 
 function RunStatusIcon({ status }: { status: WorkflowRun['status'] }) {
   if (status === 'succeeded') return <CheckCircleIcon className="w-4 h-4 text-emerald-500" />;
@@ -32,7 +42,7 @@ function fmtTime(iso: string | null): string {
   return new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
-export function StudioDetailPanel({ workflow: initialWorkflow, initialTab = 'runs', onEdit, onWorkflowUpdated, onWorkflowDeleted, onOpenThread }: Props) {
+export function StudioDetailPanel({ workflow: initialWorkflow, initialTab = 'runs', onEdit, onWorkflowUpdated, onWorkflowDeleted, onOpenThread, onOpenArtifact }: Props) {
   const [workflow, setWorkflow] = useState<Workflow>(initialWorkflow);
   const [runs, setRuns] = useState<WorkflowRun[]>([]);
   const [runsLoading, setRunsLoading] = useState(true);
@@ -170,7 +180,7 @@ export function StudioDetailPanel({ workflow: initialWorkflow, initialTab = 'run
 
         {/* Tabs */}
         <div className="flex items-center gap-1">
-          {(['runs', 'settings'] as Tab[]).map(tab => (
+          {(['runs', 'artifacts', 'settings'] as Tab[]).map(tab => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -209,12 +219,52 @@ export function StudioDetailPanel({ workflow: initialWorkflow, initialTab = 'run
                   run={run}
                   workflowId={workflow.id}
                   onOpenThread={onOpenThread}
+                  onOpenArtifact={onOpenArtifact}
                   onDeleted={runId => setRuns(prev => prev.filter(r => r.id !== runId))}
                 />
               ))}
             </div>
           )
         )}
+
+        {activeTab === 'artifacts' && (() => {
+          const allArtifacts: Array<{ artifact: DocumentArtifact; threadId: string }> = runs
+            .filter(r => r.thread_id && (r.artifacts?.length ?? 0) > 0)
+            .flatMap(r => (r.artifacts ?? []).filter(a => a.id).map(a => ({ artifact: a, threadId: r.thread_id! })));
+          return allArtifacts.length === 0 ? (
+            <div className="text-center py-12">
+              <ArchiveBoxIcon className="w-8 h-8 text-neutral-300 mx-auto mb-2" />
+              <p className="text-[13px] font-medium text-neutral-600">No artifacts yet</p>
+              <p className="text-[12px] text-neutral-400 mt-0.5">
+                Workflows with &ldquo;artifact&rdquo; output will show generated files here.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {allArtifacts.map(({ artifact, threadId }) => {
+                const Icon = artifactTypeIcon(artifact.type);
+                return (
+                  <button
+                    key={artifact.id}
+                    onClick={() => onOpenArtifact?.(threadId, artifact.id!)}
+                    className="w-full flex items-center gap-3 px-4 py-3 border border-neutral-150 rounded-lg hover:bg-neutral-50 transition-colors text-left group"
+                  >
+                    <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center flex-shrink-0">
+                      <Icon className="w-4 h-4 text-indigo-600" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-[12.5px] font-medium text-neutral-900 truncate">{artifact.title}</div>
+                      <div className="text-[11px] text-neutral-400 mt-0.5 capitalize">
+                        {artifact.type ?? 'document'} · {fmtTime(artifact.generated_at)}
+                      </div>
+                    </div>
+                    <DocumentArrowDownIcon className="w-4 h-4 text-neutral-300 group-hover:text-indigo-500 transition-colors flex-shrink-0" />
+                  </button>
+                );
+              })}
+            </div>
+          );
+        })()}
 
         {activeTab === 'settings' && (
           <div className="max-w-lg space-y-5">
@@ -258,10 +308,11 @@ export function StudioDetailPanel({ workflow: initialWorkflow, initialTab = 'run
   );
 }
 
-function RunCard({ run, workflowId, onOpenThread, onDeleted }: {
+function RunCard({ run, workflowId, onOpenThread, onOpenArtifact, onDeleted }: {
   run: WorkflowRun;
   workflowId: string;
   onOpenThread?: (threadId: string) => void;
+  onOpenArtifact?: (threadId: string, artifactId: string) => void;
   onDeleted?: (runId: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -300,13 +351,27 @@ function RunCard({ run, workflowId, onOpenThread, onDeleted }: {
             {duration !== null ? ` · ${duration}s` : ''}
           </div>
         </div>
-        {run.thread_id && onOpenThread && (
-          <button
-            onClick={e => { e.stopPropagation(); onOpenThread(run.thread_id!); }}
-            className="text-[11.5px] text-indigo-600 hover:text-indigo-700 flex-shrink-0 transition-colors"
-          >
-            Open thread →
-          </button>
+        {run.thread_id && (
+          <div className="flex items-center gap-0.5 flex-shrink-0" onClick={e => e.stopPropagation()}>
+            {(run.artifacts?.length ?? 0) > 0 && onOpenArtifact && (
+              <button
+                onClick={() => onOpenArtifact(run.thread_id!, run.artifacts![0].id!)}
+                title="Open artifact"
+                className="p-1.5 text-neutral-400 hover:text-indigo-600 transition-colors"
+              >
+                <DocumentArrowDownIcon className="w-3.5 h-3.5" />
+              </button>
+            )}
+            {onOpenThread && (
+              <button
+                onClick={() => onOpenThread(run.thread_id!)}
+                title="Open thread"
+                className="p-1.5 text-neutral-400 hover:text-indigo-600 transition-colors"
+              >
+                <ChatBubbleLeftRightIcon className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
         )}
         {canDelete && onDeleted && (
           <div className="flex-shrink-0 flex items-center gap-1" onClick={e => e.stopPropagation()}>

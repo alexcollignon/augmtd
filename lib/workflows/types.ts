@@ -2,6 +2,9 @@
 // Studio workflows: trigger + ordered steps + output destination.
 // A run creates one work_thread that accumulates the workflow's output timeline.
 
+import type { DocumentArtifact } from '@/lib/types/inbox';
+export type { DocumentArtifact };
+
 // ── Triggers ───────────────────────────────────────────────────────────────────
 
 export type TriggerType = 'manual' | 'schedule';
@@ -120,6 +123,7 @@ export interface WorkflowRun {
   started_at: string | null;
   completed_at: string | null;
   created_at: string;
+  artifacts?: DocumentArtifact[]; // populated by GET /runs — sourced from linked work_thread
 }
 
 // ── Notification ───────────────────────────────────────────────────────────────
