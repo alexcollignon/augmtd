@@ -741,10 +741,10 @@ export function WorkPageClient({
         </div>
       </div>
 
-      {/* Artifact panel — global when no thread active, thread-scoped when in a thread */}
+      {/* Artifact panel — only in chat section, never in studio */}
       <div
         className={`flex-shrink-0 overflow-hidden transition-[width] duration-200 ${
-          artifactPanelOpen && (!activeThread || (activeThread.artifacts?.length ?? 0) > 0)
+          activeSection === 'chat' && artifactPanelOpen && (!activeThread || (activeThread.artifacts?.length ?? 0) > 0)
             ? 'w-[400px]'
             : 'w-0'
         }`}
