@@ -8,7 +8,7 @@ interface WorkTabBarProps {
 }
 
 export function WorkTabBar({ activeSection, onSwitch }: WorkTabBarProps) {
-  const notifCount = useWorkflowNotifCount();
+  const { count: notifCount, markAllRead } = useWorkflowNotifCount();
   const isStudio = activeSection === 'studio';
 
   return (
@@ -31,7 +31,7 @@ export function WorkTabBar({ activeSection, onSwitch }: WorkTabBarProps) {
           Chat
         </button>
         <button
-          onClick={() => onSwitch('studio')}
+          onClick={() => { onSwitch('studio'); markAllRead(); }}
           className={`relative z-10 flex items-center justify-center gap-1 px-2.5 py-0.5 text-[11px] font-medium rounded-full text-center transition-colors duration-150 ${
             isStudio ? 'text-neutral-800' : 'text-neutral-500 hover:text-neutral-700'
           }`}

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 
 export function useWorkflowNotifCount() {
   const [count, setCount] = useState(0);
@@ -15,5 +15,15 @@ export function useWorkflowNotifCount() {
     return () => clearInterval(interval);
   }, []);
 
-  return count;
+  const markAllRead = useCallback(() => {
+    if (count === 0) return;
+    setCount(0);
+    fetch('/api/notifications/workflows/read', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    }).catch(() => {});
+  }, [count]);
+
+  return { count, markAllRead };
 }
