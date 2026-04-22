@@ -890,7 +890,18 @@ function ActiveChatView({
     fetch(`/api/work/threads/${thread.id}/chat`, { signal: controller.signal })
       .then(r => r.json())
       .then(data => {
-        setMessages(data.messages || []);
+        let msgs: ChatMessage[] = data.messages || [];
+        // For workflow threads with artifacts, patch any assistant messages that lack
+        // artifact_ids so the inline chip shows (covers runs created before Phase 141).
+        if (thread.workflow_id && (thread.artifacts?.length ?? 0) > 0) {
+          const artifactIds = (thread.artifacts ?? []).map(a => a.id).filter(Boolean) as string[];
+          msgs = msgs.map(msg =>
+            msg.role === 'assistant' && !(msg.metadata?.artifact_ids?.length)
+              ? { ...msg, metadata: { ...msg.metadata, artifact_ids: artifactIds } }
+              : msg
+          );
+        }
+        setMessages(msgs);
         setIsLoading(false);
       })
       .catch((err) => { if (err.name !== 'AbortError') setIsLoading(false); });
