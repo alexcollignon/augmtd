@@ -23,11 +23,31 @@ export default {
           '0%':   { opacity: '1', transform: 'translateX(0)' },
           '100%': { opacity: '0', transform: 'translateX(-6px)' },
         },
+        'ob-welcome-out': {
+          '0%':   { opacity: '1', transform: 'scale(1)' },
+          '100%': { opacity: '0', transform: 'scale(0.97)' },
+        },
+        'ob-split-in': {
+          '0%':   { opacity: '0', transform: 'scale(1.02)' },
+          '100%': { opacity: '1', transform: 'scale(1)' },
+        },
+        'ob-step-in': {
+          '0%':   { opacity: '0', transform: 'translateX(18px)' },
+          '100%': { opacity: '1', transform: 'translateX(0)' },
+        },
+        'ob-step-out': {
+          '0%':   { opacity: '1', transform: 'translateX(0)' },
+          '100%': { opacity: '0', transform: 'translateX(-18px)' },
+        },
       },
       animation: {
-        'clock-tick':    'clock-tick 0.45s cubic-bezier(0.34, 1.56, 0.64, 1)',
-        'fade-in-left':  'fade-in-left 0.2s ease-out',
-        'fade-out-left': 'fade-out-left 0.15s ease-in forwards',
+        'clock-tick':      'clock-tick 0.45s cubic-bezier(0.34, 1.56, 0.64, 1)',
+        'fade-in-left':    'fade-in-left 0.2s ease-out',
+        'fade-out-left':   'fade-out-left 0.15s ease-in forwards',
+        'ob-welcome-out':  'ob-welcome-out 0.3s ease-in forwards',
+        'ob-split-in':     'ob-split-in 0.35s ease-out forwards',
+        'ob-step-in':      'ob-step-in 0.25s ease-out forwards',
+        'ob-step-out':     'ob-step-out 0.2s ease-in forwards',
       },
       colors: {
         // AUGMTD Brand - Purple from logo

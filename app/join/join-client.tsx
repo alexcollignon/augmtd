@@ -3,13 +3,16 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
+import { ArrowLeftIcon } from '@heroicons/react/24/outline';
 
 export default function JoinClient({
   userEmail,
   initialCode,
+  showBack = false,
 }: {
   userEmail: string;
   initialCode: string | null;
+  showBack?: boolean;
 }) {
   const router = useRouter();
   const [code, setCode] = useState(initialCode ?? '');
@@ -39,7 +42,7 @@ export default function JoinClient({
         setLoading(false);
         return;
       }
-      router.push('/work');
+      router.push('/work?setup=1');
     } catch {
       setError('Unable to join — please try again');
       setLoading(false);
@@ -59,6 +62,15 @@ export default function JoinClient({
 
   return (
     <div className="flex items-center justify-center min-h-screen bg-[#EEEAE6] px-4">
+      {showBack && (
+        <button
+          onClick={() => router.push('/work')}
+          className="absolute top-5 left-5 flex items-center gap-1.5 text-[13px] text-neutral-500 hover:text-neutral-900 transition-colors"
+        >
+          <ArrowLeftIcon className="w-4 h-4" />
+          Back
+        </button>
+      )}
       <div className="w-full max-w-sm">
         <div className="bg-white rounded-2xl shadow-xl overflow-hidden">
 

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient as createServerClient } from '@supabase/supabase-js';
 import { getOAuth2Client } from '@/lib/google/oauth';
 import { google } from 'googleapis';
+import { getActiveWorkspaceIdFromRequest } from '@/lib/workspace/active-workspace';
 import { registerGmailWatch } from '@/lib/google/gmail-watch';
 
 export async function GET(request: NextRequest) {
@@ -11,6 +12,7 @@ export async function GET(request: NextRequest) {
     const code = searchParams.get('code');
     const state = searchParams.get('state');
     const error = searchParams.get('error');
+    const activeWorkspaceId = getActiveWorkspaceIdFromRequest(request);
 
     // Handle user denial
     if (error) {
@@ -110,6 +112,7 @@ export async function GET(request: NextRequest) {
         },
         last_sync: null,
         sync_status: 'pending',
+        ...(activeWorkspaceId ? { workspace_id: activeWorkspaceId } : {}),
       }, { onConflict: 'user_id,provider,provider_account_id' });
 
       await adminSupabase.from('profiles').upsert({

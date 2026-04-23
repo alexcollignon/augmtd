@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { getMyCompany } from '@/lib/company/get-my-company';
+import { deleteUserFully, removeUserFromWorkspace } from '@/lib/workspace/cascade-delete';
 
 export async function POST(
   _request: NextRequest,
@@ -37,44 +38,29 @@ export async function POST(
   if (!target) return NextResponse.json({ error: 'Member not found' }, { status: 404 });
   if (target.role === 'owner') return NextResponse.json({ error: 'Cannot delete another owner' }, { status: 400 });
 
-  // Delete storage files via the Storage API (direct SQL deletion is blocked by Supabase)
+  // Check if user belongs to other workspaces before deciding to fully wipe.
+  const { data: otherMemberships } = await adminClient
+    .from('company_members')
+    .select('id')
+    .eq('user_id', targetUserId)
+    .eq('status', 'active')
+    .neq('company_id', company.id);
+
+  const hasOtherWorkspaces = (otherMemberships?.length ?? 0) > 0;
+
+  if (hasOtherWorkspaces) {
+    // User still belongs to other workspaces — only remove this membership.
+    await removeUserFromWorkspace(adminClient, targetUserId, company.id);
+    console.log(`[DeleteAccount] Owner ${user.id} removed member ${targetUserId} from company ${company.id} (kept account — has other workspaces)`);
+    return NextResponse.json({ ok: true, removedOnly: true });
+  }
+
+  // No other workspaces — safe to fully wipe the account.
   try {
-    const { data: storageObjects } = await adminClient.rpc('get_user_storage_objects', {
-      target_user_id: targetUserId,
-    }) as { data: { bucket_id: string; name: string }[] | null };
-
-    if (storageObjects && storageObjects.length > 0) {
-      const byBucket = storageObjects.reduce<Record<string, string[]>>((acc, obj) => {
-        if (!acc[obj.bucket_id]) acc[obj.bucket_id] = [];
-        acc[obj.bucket_id].push(obj.name);
-        return acc;
-      }, {});
-
-      await Promise.all(
-        Object.entries(byBucket).map(([bucket, paths]) =>
-          adminClient.storage.from(bucket).remove(paths)
-        )
-      );
-    }
-  } catch (storageErr) {
-    console.error('[DeleteAccount] Storage cleanup failed (non-fatal):', storageErr);
-  }
-
-  // Wipe all user data via the SQL function
-  const { error: rpcError } = await adminClient.rpc('delete_user_account', {
-    target_user_id: targetUserId,
-  });
-
-  if (rpcError) {
-    console.error('[DeleteAccount] RPC error:', rpcError);
-    return NextResponse.json({ error: 'Failed to delete user data' }, { status: 500 });
-  }
-
-  // Remove from auth.users
-  const { error: authError } = await adminClient.auth.admin.deleteUser(targetUserId);
-  if (authError) {
-    console.error('[DeleteAccount] Auth delete error:', authError);
-    return NextResponse.json({ error: 'Failed to delete auth account' }, { status: 500 });
+    await deleteUserFully(adminClient, targetUserId);
+  } catch (err) {
+    console.error('[DeleteAccount] Full delete failed:', err);
+    return NextResponse.json({ error: 'Failed to delete user' }, { status: 500 });
   }
 
   console.log(`[DeleteAccount] Owner ${user.id} deleted member ${targetUserId} from company ${company.id}`);

@@ -861,6 +861,7 @@ export async function syncEmailsForConnection(
           const { error: noiseErr } = await adminSupabase.from('inbox_items').insert(stripNulls({
             user_id: connection.user_id,
             connection_id: connection.id,
+            workspace_id: connection.workspace_id ?? null,
             source: 'email',
             source_id: storedEmail.id,
             work_state: 'noise',
@@ -895,6 +896,7 @@ export async function syncEmailsForConnection(
           const { error: fyiErr } = await adminSupabase.from('inbox_items').insert(stripNulls({
             user_id: connection.user_id,
             connection_id: connection.id,
+            workspace_id: connection.workspace_id ?? null,
             source: 'email',
             source_id: storedEmail.id,
             work_state: 'noted',

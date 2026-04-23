@@ -28,6 +28,7 @@ import { DocumentArtifact, ExecutionPlan } from '@/lib/types/inbox';
 import { AgentsSidebarSection, SidebarAgent } from '@/components/agents/agents-sidebar-section';
 import { AgentIcon } from '@/components/agents/agent-icons';
 import { useWorkspace } from '@/context/workspace-context';
+import { WorkspaceSetupBanner } from '@/components/workspace-setup-banner';
 
 // ─── Shared constants ─────────────────────────────────────────────────────────
 
@@ -70,6 +71,7 @@ export interface WorkPageClientProps {
   initialSection?: 'chat' | 'studio';
   initialWorkflowId?: string | null;
   initialAgentId?: string | null;
+  showSetup?: boolean;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -86,6 +88,7 @@ export function WorkPageClient({
   initialSection = 'chat',
   initialWorkflowId = null,
   initialAgentId = null,
+  showSetup = false,
 }: WorkPageClientProps) {
   const router = useRouter();
   const { workspace } = useWorkspace();
@@ -610,6 +613,8 @@ export function WorkPageClient({
       {/* Main column — floating card */}
       <div className="flex-1 min-w-0 flex flex-col bg-neutral-50 pl-2 pt-2 pb-2 overflow-hidden">
         <div className="flex-1 flex flex-col rounded-2xl bg-white shadow-sm overflow-hidden">
+
+          <WorkspaceSetupBanner showSetup={showSetup} />
 
           {/* Studio section */}
           {activeSection === 'studio' && (

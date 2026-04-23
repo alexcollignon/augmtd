@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { generateStartersForAgent } from '@/lib/agents/generate-starters';
+import { getActiveWorkspaceId } from '@/lib/workspace/active-workspace';
 
 // GET /api/agents — list user's custom agents
 export async function GET() {
@@ -9,12 +10,16 @@ export async function GET() {
     const { data: { user }, error: userError } = await supabase.auth.getUser();
     if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { data: agents, error } = await supabase
+    const activeWorkspaceId = await getActiveWorkspaceId();
+
+    let query = supabase
       .from('custom_agents')
       .select('id, name, description, instructions, memory_text, color, icon, is_active, created_at, updated_at, conversation_starters, web_enabled')
       .eq('user_id', user.id)
-      .eq('is_active', true)
-      .order('created_at', { ascending: true });
+      .eq('is_active', true);
+    if (activeWorkspaceId) query = query.or(`workspace_id.eq.${activeWorkspaceId},workspace_id.is.null`);
+
+    const { data: agents, error } = await query.order('created_at', { ascending: true });
 
     if (error) throw error;
     return NextResponse.json({ agents: agents ?? [] });
@@ -44,6 +49,8 @@ export async function POST(request: NextRequest) {
 
     if (!name?.trim()) return NextResponse.json({ error: 'Name is required' }, { status: 400 });
 
+    const activeWorkspaceId = await getActiveWorkspaceId();
+
     // Resolve starters: use provided ones, or auto-generate
     const startersToSave = await resolveStarters(conversation_starters, { name, description, instructions, userId: user.id, supabase });
 
@@ -58,6 +65,7 @@ export async function POST(request: NextRequest) {
         icon,
         conversation_starters: startersToSave,
         web_enabled: Boolean(web_enabled),
+        ...(activeWorkspaceId ? { workspace_id: activeWorkspaceId } : {}),
       })
       .select()
       .single();

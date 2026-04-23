@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { logAudit, AUDIT_ACTIONS } from '@/lib/audit/log';
+import { setActiveWorkspaceCookie } from '@/lib/workspace/active-workspace';
 
 export async function POST(request: NextRequest) {
   const supabase = await createClient();
@@ -27,34 +28,17 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'This workspace is not accepting new members' }, { status: 403 });
   }
 
-  // Source of truth: active company_members row. `profiles.company_id` is
-  // just a cache and may be stale.
+  // Check if user is already a member of this specific workspace
   const { data: existingMembership } = await adminClient
     .from('company_members')
     .select('id, company_id, companies(type)')
     .eq('user_id', user.id)
+    .eq('company_id', company.id)
     .eq('status', 'active')
     .maybeSingle() as { data: { id: string; company_id: string; companies: { type: string } | { type: string }[] | null } | null };
 
   if (existingMembership) {
-    if (existingMembership.company_id === company.id) {
-      return NextResponse.json({ error: 'You are already a member of this workspace' }, { status: 409 });
-    }
-    const existingType = Array.isArray(existingMembership.companies)
-      ? existingMembership.companies[0]?.type
-      : existingMembership.companies?.type;
-    // Special case: a user grandfathered into AUGMTD internal can be moved
-    // into another workspace by redeeming a code. Any other active membership
-    // must be handled by an admin.
-    if (existingType !== 'internal') {
-      return NextResponse.json({ error: 'You are already a member of a workspace. Ask an admin to move you.' }, { status: 409 });
-    }
-    // Remove the internal membership so the unique (company_id, user_id)
-    // constraint doesn't block the new one.
-    await adminClient
-      .from('company_members')
-      .delete()
-      .eq('id', existingMembership.id);
+    return NextResponse.json({ error: 'You are already a member of this workspace' }, { status: 409 });
   }
 
   // Add member
@@ -72,9 +56,17 @@ export async function POST(request: NextRequest) {
   await adminClient
     .from('profiles')
     .upsert(
-      { id: user.id, email: user.email, company_id: company.id, needs_join: false },
+      { id: user.id, email: user.email, needs_join: false },
       { onConflict: 'id' }
     );
+
+  // Adopt any un-scoped connections (workspace_id = null) into this workspace.
+  // This covers connections created during signup before the user had a workspace.
+  await adminClient
+    .from('connections')
+    .update({ workspace_id: company.id })
+    .eq('user_id', user.id)
+    .is('workspace_id', null);
 
   await logAudit({
     adminClient,
@@ -87,5 +79,7 @@ export async function POST(request: NextRequest) {
     metadata: { workspaceName: company.name, workspaceType: company.type },
   });
 
-  return NextResponse.json({ company });
+  const res = NextResponse.json({ company });
+  setActiveWorkspaceCookie(res, company.id);
+  return res;
 }

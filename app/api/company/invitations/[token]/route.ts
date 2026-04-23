@@ -68,17 +68,6 @@ export async function POST(
 
   if (existing) return NextResponse.json({ error: 'Already a member' }, { status: 409 });
 
-  // Check user doesn't already have a different company
-  const { data: profile } = await adminClient
-    .from('profiles')
-    .select('company_id')
-    .eq('id', user.id)
-    .single();
-
-  if (profile?.company_id && profile.company_id !== invite.company_id) {
-    return NextResponse.json({ error: 'You are already in a different company' }, { status: 409 });
-  }
-
   // Add to company_members
   const { error: memberErr } = await adminClient.from('company_members').insert({
     company_id: invite.company_id,
@@ -90,17 +79,6 @@ export async function POST(
   if (memberErr) {
     console.error('[InviteAccept] company_members insert failed:', memberErr);
     return NextResponse.json({ error: 'Failed to join company' }, { status: 500 });
-  }
-
-  // Set company_id on profile
-  const { error: profileErr } = await adminClient
-    .from('profiles')
-    .update({ company_id: invite.company_id })
-    .eq('id', user.id);
-
-  if (profileErr) {
-    console.error('[InviteAccept] profiles.company_id update failed:', profileErr);
-    // Non-fatal — getMyCompany queries company_members directly
   }
 
   // Mark invitation accepted

@@ -139,10 +139,5 @@ export async function DELETE(request: NextRequest) {
     .eq('company_id', company.id)
     .eq('user_id', userId);
 
-  // Clear company_id on profile if removing self
-  if (isSelf) {
-    await adminClient.from('profiles').update({ company_id: null }).eq('id', userId);
-  }
-
   return NextResponse.json({ ok: true });
 }

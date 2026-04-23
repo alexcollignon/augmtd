@@ -90,6 +90,7 @@ interface InboxPageClientProps {
   initialUserFullName?: string;
   initialHasConnection: boolean;
   initialInboxItems: any[];
+  activeWorkspaceId?: string | null;
 }
 
 export function InboxPageClient({
@@ -97,6 +98,7 @@ export function InboxPageClient({
   initialUserFullName,
   initialHasConnection,
   initialInboxItems,
+  activeWorkspaceId,
 }: InboxPageClientProps) {
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -324,12 +326,14 @@ export function InboxPageClient({
     const supabase = createClient();
 
     async function fetchData() {
-      const { data: connections, error: connectionsError } = await supabase
+      let connPollQuery = supabase
         .from('connections')
         .select('sync_status, sync_started_at, provider')
         .eq('user_id', user.id)
         .in('provider', ['gmail', 'outlook'])
         .eq('status', 'active');
+      if (activeWorkspaceId) connPollQuery = connPollQuery.or(`workspace_id.eq.${activeWorkspaceId},workspace_id.is.null`);
+      const { data: connections, error: connectionsError } = await connPollQuery;
 
       if (connectionsError) {
         if (connectionsError.message?.includes('JWT') || connectionsError.code === 'PGRST301') {

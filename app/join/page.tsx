@@ -5,7 +5,8 @@ import JoinClient from './join-client';
 
 export const dynamic = 'force-dynamic';
 
-export default async function JoinPage() {
+export default async function JoinPage(props: { searchParams: Promise<{ from?: string }> }) {
+  const { from } = await props.searchParams;
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/login');
@@ -19,12 +20,12 @@ export default async function JoinPage() {
   if (profile?.is_super_admin) redirect('/platform-admin');
 
   const workspace = await getMyWorkspace(user.id, supabase);
-  if (workspace && workspace.status === 'active') {
-    redirect('/work');
-  }
-  if (workspace && workspace.status === 'suspended') {
-    redirect('/suspended');
+
+  // When coming from the workspace switcher, allow joining additional workspaces.
+  if (from !== 'switcher') {
+    if (workspace && workspace.status === 'active') redirect('/work');
+    if (workspace && workspace.status === 'suspended') redirect('/suspended');
   }
 
-  return <JoinClient userEmail={user.email ?? ''} initialCode={null} />;
+  return <JoinClient userEmail={user.email ?? ''} initialCode={null} showBack={from === 'switcher'} />;
 }

@@ -11,6 +11,7 @@ import SettingsPageClient from '@/app/settings/settings-page-client';
 import CompanyPageClient from '@/app/company/company-page-client';
 import CompanyPending from '@/app/company/company-pending';
 import { getMyCompany } from '@/lib/company/get-my-company';
+import { getActiveWorkspaceId } from '@/lib/workspace/active-workspace';
 
 interface Props {
   searchParams: Promise<{ tab?: string }>;
@@ -79,11 +80,14 @@ export default async function SettingsPage({ searchParams }: Props) {
   let profile: any = null;
 
   if (tab === 'account') {
-    const { data: conns } = await supabase
+    const activeWorkspaceId = await getActiveWorkspaceId();
+    let connQuery = supabase
       .from('connections')
       .select('*')
       .eq('user_id', user.id)
       .in('provider', ['gmail', 'outlook']);
+    if (activeWorkspaceId) connQuery = connQuery.or(`workspace_id.eq.${activeWorkspaceId},workspace_id.is.null`);
+    const { data: conns } = await connQuery;
     connections = conns ?? [];
 
     const { data: prof } = await supabase
@@ -126,7 +130,7 @@ export default async function SettingsPage({ searchParams }: Props) {
                     <h3 className="text-[14px] font-semibold text-neutral-900">Connections</h3>
                     <SyncAllButton providers={activeProviders} />
                   </div>
-                  <p className="text-[12px] text-neutral-400 mb-3">Connect your email accounts to sync messages and calendar.</p>
+                  <p className="text-[12px] text-neutral-400 mb-3">Connect the email you want to use for your active workspace. Switch workspaces to manage connections for other contexts.</p>
                   <div className="divide-y divide-neutral-100">
                     {gmailConnections.length === 0 ? (
                       <ConnectionCard provider="gmail" connection={null}

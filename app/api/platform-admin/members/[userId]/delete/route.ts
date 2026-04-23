@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createAdminClient } from '@supabase/supabase-js';
+import { deleteUserFully, removeUserFromWorkspace } from '@/lib/workspace/cascade-delete';
 
 export async function POST(
   _request: NextRequest,
@@ -27,50 +28,43 @@ export async function POST(
     return NextResponse.json({ error: 'Cannot delete your own account' }, { status: 400 });
   }
 
+  // Optional: workspaceId signals "remove from this workspace only" intent.
+  // Without it (e.g. from All Users tab), intent is full account deletion.
+  const body = await _request.json().catch(() => ({}));
+  const workspaceId: string | null = body?.workspaceId ?? null;
+
   const adminClient = createAdminClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
     { auth: { autoRefreshToken: false, persistSession: false } }
   );
 
-  // Delete storage files
+  // Fetch memberships to determine if user belongs to other workspaces.
+  const { data: allMemberships } = await adminClient
+    .from('company_members')
+    .select('id, company_id')
+    .eq('user_id', targetUserId)
+    .eq('status', 'active');
+
+  const otherWorkspaceMemberships = workspaceId
+    ? (allMemberships ?? []).filter(m => m.company_id !== workspaceId)
+    : [];
+
+  const hasOtherWorkspaces = otherWorkspaceMemberships.length > 0;
+
+  if (workspaceId && hasOtherWorkspaces) {
+    // User still belongs to other workspaces — only remove this membership.
+    await removeUserFromWorkspace(adminClient, targetUserId, workspaceId);
+    console.log(`[SuperAdminDelete] Removed user ${targetUserId} from workspace ${workspaceId} (kept account — has other workspaces)`);
+    return NextResponse.json({ ok: true, removedOnly: true });
+  }
+
+  // No other workspaces — safe to fully wipe the account.
   try {
-    const { data: storageObjects } = await adminClient.rpc('get_user_storage_objects', {
-      target_user_id: targetUserId,
-    }) as { data: { bucket_id: string; name: string }[] | null };
-
-    if (storageObjects && storageObjects.length > 0) {
-      const byBucket = storageObjects.reduce<Record<string, string[]>>((acc, obj) => {
-        if (!acc[obj.bucket_id]) acc[obj.bucket_id] = [];
-        acc[obj.bucket_id].push(obj.name);
-        return acc;
-      }, {});
-
-      await Promise.all(
-        Object.entries(byBucket).map(([bucket, paths]) =>
-          adminClient.storage.from(bucket).remove(paths)
-        )
-      );
-    }
+    await deleteUserFully(adminClient, targetUserId);
   } catch (err) {
-    console.error('[SuperAdminDelete] Storage cleanup failed (non-fatal):', err);
-  }
-
-  // Wipe all user data
-  const { error: rpcError } = await adminClient.rpc('delete_user_account', {
-    target_user_id: targetUserId,
-  });
-
-  if (rpcError) {
-    console.error('[SuperAdminDelete] RPC error:', rpcError);
-    return NextResponse.json({ error: 'Failed to delete user data' }, { status: 500 });
-  }
-
-  // Remove from auth.users
-  const { error: authError } = await adminClient.auth.admin.deleteUser(targetUserId);
-  if (authError) {
-    console.error('[SuperAdminDelete] Auth delete error:', authError);
-    return NextResponse.json({ error: 'Failed to delete auth account' }, { status: 500 });
+    console.error('[SuperAdminDelete] Full delete failed:', err);
+    return NextResponse.json({ error: 'Failed to delete user' }, { status: 500 });
   }
 
   console.log(`[SuperAdminDelete] Super admin ${user.id} deleted user ${targetUserId}`);

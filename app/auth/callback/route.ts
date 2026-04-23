@@ -18,5 +18,5 @@ export async function GET(request: Request) {
     }
   }
 
-  return NextResponse.redirect(`${origin}/inbox`);
+  return NextResponse.redirect(`${origin}/onboarding`);
 }

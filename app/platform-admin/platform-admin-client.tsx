@@ -422,7 +422,11 @@ export default function PlatformAdminClient({ initialCompanies }: { initialCompa
     setConfirmingId(null);
     setActionLoading(userId);
     try {
-      const res = await fetch(`/api/platform-admin/members/${userId}/delete`, { method: 'POST' });
+      const res = await fetch(`/api/platform-admin/members/${userId}/delete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspaceId: companyId }),
+      });
       if (res.ok) {
         setMembersCache(prev => ({
           ...prev,

@@ -5,62 +5,32 @@ import { normalizeFeatures } from './types';
 import type { TierType } from '@/lib/ai/types';
 import type { CompanyRole } from '@/lib/types/company';
 
-type RawRow = {
-  role: CompanyRole;
-  companies: {
-    id: string;
-    name: string;
-    slug: string;
-    plan: string;
-    type: string;
-    status: string;
-    settings: Record<string, unknown> | null;
-    features: unknown;
-    join_code: string;
-    ai_tier: string | null;
-    created_at: string;
-    updated_at: string;
-  } | {
-    id: string;
-    name: string;
-    slug: string;
-    plan: string;
-    type: string;
-    status: string;
-    settings: Record<string, unknown> | null;
-    features: unknown;
-    join_code: string;
-    ai_tier: string | null;
-    created_at: string;
-    updated_at: string;
-  }[] | null;
+const COMPANY_SELECT = 'role, companies(id, name, slug, plan, type, status, settings, features, join_code, ai_tier, created_at, updated_at)';
+
+type CompanyShape = {
+  id: string;
+  name: string;
+  slug: string;
+  plan: string;
+  type: string;
+  status: string;
+  settings: Record<string, unknown> | null;
+  features: unknown;
+  join_code: string;
+  ai_tier: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
-async function fetchWorkspace(
-  userId: string,
-  supabase: SupabaseClient
-): Promise<MyWorkspace | null> {
-  const { data } = await supabase
-    .from('company_members')
-    .select(
-      'role, companies(id, name, slug, plan, type, status, settings, features, join_code, ai_tier, created_at, updated_at)'
-    )
-    .eq('user_id', userId)
-    .eq('status', 'active')
-    .maybeSingle() as { data: RawRow | null };
+type RawRow = {
+  role: CompanyRole;
+  companies: CompanyShape | CompanyShape[] | null;
+};
 
+function rowToWorkspace(data: RawRow): MyWorkspace | null {
   if (!data?.companies) return null;
-
   const company = Array.isArray(data.companies) ? data.companies[0] : data.companies;
   if (!company) return null;
-
-  // Best-effort profile sync (not awaited)
-  supabase
-    .from('profiles')
-    .update({ company_id: company.id })
-    .eq('id', userId)
-    .then(() => {});
-
   return {
     id: company.id,
     name: company.name,
@@ -76,6 +46,49 @@ async function fetchWorkspace(
     updated_at: company.updated_at,
     role: data.role,
   };
+}
+
+async function fetchWorkspace(
+  userId: string,
+  supabase: SupabaseClient,
+  activeWorkspaceId?: string | null,
+): Promise<MyWorkspace | null> {
+  let query = supabase
+    .from('company_members')
+    .select(COMPANY_SELECT)
+    .eq('user_id', userId)
+    .eq('status', 'active');
+
+  if (activeWorkspaceId) {
+    query = query.eq('company_id', activeWorkspaceId);
+  }
+
+  const { data } = await query.maybeSingle() as { data: RawRow | null };
+
+  if (!data) return null;
+  const workspace = rowToWorkspace(data);
+  return workspace;
+}
+
+export async function getAllWorkspaces(userId: string): Promise<MyWorkspace[]> {
+  // Must use service role to bypass the self-referential RLS policy on
+  // company_members which otherwise returns incomplete results for multi-workspace users.
+  const { createClient: createAdminClient } = await import('@supabase/supabase-js');
+  const admin = createAdminClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { auth: { autoRefreshToken: false, persistSession: false } }
+  );
+
+  const { data } = await admin
+    .from('company_members')
+    .select(COMPANY_SELECT)
+    .eq('user_id', userId)
+    .eq('status', 'active')
+    .order('joined_at', { ascending: true }) as { data: RawRow[] | null };
+
+  if (!data) return [];
+  return data.map(rowToWorkspace).filter((w): w is MyWorkspace => w !== null);
 }
 
 // React-cached — within a single request/RSC tree, only one DB round-trip.

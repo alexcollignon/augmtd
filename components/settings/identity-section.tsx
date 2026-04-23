@@ -126,6 +126,7 @@ export default function IdentitySection({ initialName, userEmail, avatarUrl }: I
             <p className="text-[14px] font-medium text-neutral-900">
               {name || <span className="text-neutral-400 italic text-[13px]">Name not set</span>}
             </p>
+            <p className="text-[10px] font-semibold text-neutral-300 uppercase tracking-wide mt-1.5">Login email</p>
             <p className="text-[12px] text-neutral-400 mt-0.5">{userEmail}</p>
           </div>
         </div>
@@ -143,7 +144,8 @@ export default function IdentitySection({ initialName, userEmail, avatarUrl }: I
               className="mt-1.5 w-full text-[13px] text-neutral-900 bg-white border border-neutral-200 rounded-lg focus:border-indigo-400 focus:outline-none px-3 py-2"
             />
           </div>
-          <p className="text-[11px] text-neutral-400">{userEmail}</p>
+          <p className="text-[10px] font-semibold text-neutral-300 uppercase tracking-wide">Login email</p>
+          <p className="text-[11px] text-neutral-400 mt-0.5">{userEmail}</p>
         </div>
       )}
     </>
