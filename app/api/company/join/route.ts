@@ -19,7 +19,7 @@ export async function POST(request: NextRequest) {
   // Case-insensitive lookup via ilike
   const { data: company } = await adminClient
     .from('companies')
-    .select('id, name, slug, plan, type, status')
+    .select('id, name, slug, plan, type, status, features')
     .ilike('join_code', code.trim())
     .maybeSingle();
 
@@ -59,6 +59,18 @@ export async function POST(request: NextRequest) {
       { id: user.id, email: user.email, needs_join: false },
       { onConflict: 'id' }
     );
+
+  // Enable meeting assistant by default if the workspace has meetings turned on.
+  // Uses neq(true) so it activates for both null and false defaults without
+  // overriding a user who has already explicitly enabled it elsewhere.
+  const meetingsEnabled = (company.features as any)?.meetings !== false;
+  if (meetingsEnabled) {
+    await adminClient
+      .from('profiles')
+      .update({ attendee_enabled: true })
+      .eq('id', user.id)
+      .neq('attendee_enabled', true);
+  }
 
   // Adopt any un-scoped connections (workspace_id = null) into this workspace.
   // This covers connections created during signup before the user had a workspace.

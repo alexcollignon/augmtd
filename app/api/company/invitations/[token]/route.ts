@@ -50,7 +50,7 @@ export async function POST(
 
   const { data: invite } = await adminClient
     .from('company_invitations')
-    .select('id, company_id, email, role, status, expires_at')
+    .select('id, company_id, email, role, status, expires_at, companies(features)')
     .eq('token', token)
     .single();
 
@@ -83,6 +83,17 @@ export async function POST(
 
   // Mark invitation accepted
   await adminClient.from('company_invitations').update({ status: 'accepted' }).eq('id', invite.id);
+
+  // Enable meeting assistant by default if the workspace has meetings turned on.
+  const companyFeatures = Array.isArray(invite.companies) ? invite.companies[0]?.features : (invite.companies as any)?.features;
+  const meetingsEnabled = companyFeatures?.meetings !== false;
+  if (meetingsEnabled) {
+    await adminClient
+      .from('profiles')
+      .update({ attendee_enabled: true })
+      .eq('id', user.id)
+      .neq('attendee_enabled', true);
+  }
 
   return NextResponse.json({ ok: true, companyId: invite.company_id });
 }

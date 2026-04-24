@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { getMyWorkspace } from './features';
+import { getActiveWorkspaceId } from './active-workspace';
 import type { FeatureKey, MyWorkspace } from './types';
 
 /**
@@ -24,10 +25,11 @@ export async function guardFeaturePage(feature: FeatureKey | null): Promise<MyWo
     .eq('id', user.id)
     .maybeSingle();
 
-  const workspace = await getMyWorkspace(user.id, supabase);
+  const activeWorkspaceId = await getActiveWorkspaceId();
+  const workspace = await getMyWorkspace(user.id, supabase, activeWorkspaceId);
 
   if (!workspace) {
-    redirect('/join');
+    redirect('/onboarding');
   }
 
   const isSuperAdmin = profile?.is_super_admin === true;
