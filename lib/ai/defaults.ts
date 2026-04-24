@@ -46,9 +46,9 @@ export const TIER_DEFAULTS: Record<TierType, Record<TaskType, ModelEndpoint>> = 
   // Qwen3-VL-30B for OCR — real vision model (replaced Together AI's text-only Qwen3.5-9B stopgap).
   // Embeddings stay on Together AI — switching would require re-indexing all KB content.
   private_shared: {
-    planning:      { provider: 'fireworks', model: 'accounts/fireworks/models/kimi-k2-instruct-0905',
+    planning:      { provider: 'fireworks', model: 'accounts/fireworks/models/kimi-k2p6',
                      baseURL: 'https://api.fireworks.ai/inference/v1' },
-    generation:    { provider: 'fireworks', model: 'accounts/fireworks/models/kimi-k2-instruct-0905',
+    generation:    { provider: 'fireworks', model: 'accounts/fireworks/models/kimi-k2p6',
                      baseURL: 'https://api.fireworks.ai/inference/v1' },
     summarization: { provider: 'fireworks', model: 'accounts/fireworks/models/llama-v3p3-70b-instruct',
                      baseURL: 'https://api.fireworks.ai/inference/v1' },
@@ -60,7 +60,7 @@ export const TIER_DEFAULTS: Record<TierType, Record<TaskType, ModelEndpoint>> = 
                      baseURL: 'https://api.fireworks.ai/inference/v1' },
     assignment:    { provider: 'fireworks', model: 'accounts/fireworks/models/llama-v3p3-70b-instruct',
                      baseURL: 'https://api.fireworks.ai/inference/v1' },
-    conversation:  { provider: 'fireworks', model: 'accounts/fireworks/models/kimi-k2-instruct-0905',
+    conversation:  { provider: 'fireworks', model: 'accounts/fireworks/models/kimi-k2p6',
                      baseURL: 'https://api.fireworks.ai/inference/v1' },
   },
 
@@ -90,7 +90,7 @@ export const TIER_DEFAULTS: Record<TierType, Record<TaskType, ModelEndpoint>> = 
     conversation:  { provider: 'bedrock',           model: 'eu.anthropic.claude-haiku-4-5-20251001-v1:0', maxTokensDefault: 4096 },
     generation:    { provider: 'bedrock',           model: 'eu.anthropic.claude-haiku-4-5-20251001-v1:0', maxTokensDefault: 4096 },
     ocr:           { provider: 'bedrock',           model: 'eu.anthropic.claude-haiku-4-5-20251001-v1:0', maxTokensDefault: 4096 },
-    planning:      { provider: 'fireworks',         model: 'accounts/fireworks/models/kimi-k2-instruct-0905',
+    planning:      { provider: 'fireworks',         model: 'accounts/fireworks/models/kimi-k2p6',
                      baseURL: 'https://api.fireworks.ai/inference/v1' },
     classification:{ provider: 'fireworks',         model: 'accounts/fireworks/models/llama-v3p3-70b-instruct',
                      baseURL: 'https://api.fireworks.ai/inference/v1' },

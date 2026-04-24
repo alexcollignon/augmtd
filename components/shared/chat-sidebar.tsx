@@ -176,20 +176,19 @@ export default function ChatSidebar({ isOpen, onClose, context, inline = false, 
     return (
       <div className="flex flex-col h-full min-h-0">
         <div className="h-10 flex items-center justify-between px-3 border-b border-neutral-100 flex-shrink-0">
-          <div className="flex items-center gap-2">
-            <ChatBubbleLeftRightIcon className="w-3.5 h-3.5 text-neutral-400" />
-            <span className="text-[12px] font-semibold text-neutral-700">Assistant</span>
-          </div>
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1.5">
             {onSwitchPanel && (
-              <button onClick={onSwitchPanel} title="Calendar" className="p-1 text-neutral-400 hover:text-neutral-600 transition-colors">
+              <button onClick={onSwitchPanel} title="Calendar" className="p-1.5 border border-neutral-200 text-neutral-500 hover:bg-neutral-50 rounded-md transition-colors">
                 <CalendarIcon className="w-3.5 h-3.5" />
               </button>
             )}
-            <button onClick={onClose} className="p-1 text-neutral-400 hover:text-neutral-600 transition-colors">
-              <ChevronRightIcon className="w-3.5 h-3.5" />
-            </button>
+            <div className="p-1.5 border rounded-md bg-indigo-600 border-indigo-600 text-white">
+              <ChatBubbleLeftRightIcon className="w-3.5 h-3.5" />
+            </div>
           </div>
+          <button onClick={onClose} className="p-1 text-neutral-400 hover:text-neutral-600 transition-colors">
+            <ChevronRightIcon className="w-3.5 h-3.5" />
+          </button>
         </div>
         {inner}
       </div>

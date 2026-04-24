@@ -610,22 +610,21 @@ export default function AiChatPanel({
 
       {/* ── Zone 1: Header ── */}
       <div className="flex-shrink-0 h-10 flex items-center justify-between px-3 border-b border-neutral-200">
-        <div className="flex items-center gap-2">
-          <ChatBubbleLeftIcon className="w-4 h-4 text-neutral-500" />
-          <span className="text-[13px] font-semibold text-neutral-700">Assistant</span>
-        </div>
         <div className="flex items-center gap-1.5">
           {onSwitchToCalendar && (
             <button onClick={onSwitchToCalendar} title="Calendar" className="p-1.5 border border-neutral-200 text-neutral-500 hover:bg-neutral-50 rounded-md transition-colors">
               <CalendarDaysIcon className="w-3.5 h-3.5" />
             </button>
           )}
-          {onClose && (
-            <button onClick={onClose} title="Close" className="p-1 text-neutral-400 hover:text-neutral-600 transition-colors">
-              <ChevronRightIcon className="w-3.5 h-3.5" />
-            </button>
-          )}
+          <div className="p-1.5 border rounded-md bg-indigo-600 border-indigo-600 text-white">
+            <ChatBubbleLeftIcon className="w-3.5 h-3.5" />
+          </div>
         </div>
+        {onClose && (
+          <button onClick={onClose} title="Close" className="p-1 text-neutral-400 hover:text-neutral-600 transition-colors">
+            <ChevronRightIcon className="w-3.5 h-3.5" />
+          </button>
+        )}
       </div>
 
       {/* ── Email context chip (inbox only) ── */}
