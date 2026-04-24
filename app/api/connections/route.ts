@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { getActiveWorkspaceId } from '@/lib/workspace/active-workspace';
 
 // GET /api/connections
 // Returns active Gmail + Outlook connections for the current user (id, provider, email only)
@@ -12,17 +11,13 @@ export async function GET() {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const activeWorkspaceId = await getActiveWorkspaceId();
-
-    let query = supabase
+    const { data: connections, error } = await supabase
       .from('connections')
       .select('id, provider, metadata')
       .eq('user_id', user.id)
       .eq('status', 'active')
-      .in('provider', ['gmail', 'outlook']);
-    if (activeWorkspaceId) query = query.or(`workspace_id.eq.${activeWorkspaceId},workspace_id.is.null`);
-
-    const { data: connections, error } = await query.order('created_at', { ascending: true });
+      .in('provider', ['gmail', 'outlook'])
+      .order('created_at', { ascending: true });
 
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 });

@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { logAudit, AUDIT_ACTIONS } from '@/lib/audit/log';
-import { setActiveWorkspaceCookie } from '@/lib/workspace/active-workspace';
 
 export async function POST(request: NextRequest) {
   const supabase = await createClient();
@@ -91,7 +90,5 @@ export async function POST(request: NextRequest) {
     metadata: { workspaceName: company.name, workspaceType: company.type },
   });
 
-  const res = NextResponse.json({ company });
-  setActiveWorkspaceCookie(res, company.id);
-  return res;
+  return NextResponse.json({ company });
 }

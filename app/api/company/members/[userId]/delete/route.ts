@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { getMyCompany } from '@/lib/company/get-my-company';
-import { deleteUserFully, removeUserFromWorkspace } from '@/lib/workspace/cascade-delete';
+import { deleteUserFully } from '@/lib/workspace/cascade-delete';
 
 export async function POST(
   _request: NextRequest,
@@ -38,24 +38,6 @@ export async function POST(
   if (!target) return NextResponse.json({ error: 'Member not found' }, { status: 404 });
   if (target.role === 'owner') return NextResponse.json({ error: 'Cannot delete another owner' }, { status: 400 });
 
-  // Check if user belongs to other workspaces before deciding to fully wipe.
-  const { data: otherMemberships } = await adminClient
-    .from('company_members')
-    .select('id')
-    .eq('user_id', targetUserId)
-    .eq('status', 'active')
-    .neq('company_id', company.id);
-
-  const hasOtherWorkspaces = (otherMemberships?.length ?? 0) > 0;
-
-  if (hasOtherWorkspaces) {
-    // User still belongs to other workspaces — only remove this membership.
-    await removeUserFromWorkspace(adminClient, targetUserId, company.id);
-    console.log(`[DeleteAccount] Owner ${user.id} removed member ${targetUserId} from company ${company.id} (kept account — has other workspaces)`);
-    return NextResponse.json({ ok: true, removedOnly: true });
-  }
-
-  // No other workspaces — safe to fully wipe the account.
   try {
     await deleteUserFully(adminClient, targetUserId);
   } catch (err) {

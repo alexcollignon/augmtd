@@ -52,26 +52,9 @@ export async function deleteUserFully(
   }
 }
 
-/**
- * Remove a user from a single workspace without destroying their account.
- * Used when the user still has other active memberships.
- */
-export async function removeUserFromWorkspace(
-  adminClient: SupabaseClient,
-  userId: string,
-  workspaceId: string
-): Promise<void> {
-  await adminClient
-    .from('company_members')
-    .delete()
-    .eq('user_id', userId)
-    .eq('company_id', workspaceId);
-}
-
 export interface CascadeDeleteResult {
   deletedUsers: number;
   skippedSuperadmins: number;
-  skippedMultiWorkspace: number;
   errors: Array<{ userId: string; error: string }>;
 }
 
@@ -132,28 +115,14 @@ export async function cascadeDeleteWorkspace(
     (profileRows ?? []).filter(p => p.is_super_admin).map(p => p.id)
   );
 
-  // Find users who have active memberships in OTHER workspaces — they must not be fully deleted.
-  const { data: otherMemberRows } = userIds.length > 0
-    ? await adminClient
-        .from('company_members')
-        .select('user_id')
-        .in('user_id', userIds)
-        .eq('status', 'active')
-        .neq('company_id', workspaceId)
-    : { data: [] as Array<{ user_id: string }> };
-
-  const multiWorkspaceSet = new Set((otherMemberRows ?? []).map(r => r.user_id));
-
   const members = userIds.map(userId => ({
     userId,
     isSuperAdmin: superAdminSet.has(userId),
-    hasOtherWorkspaces: multiWorkspaceSet.has(userId),
   }));
 
   const result: CascadeDeleteResult = {
     deletedUsers: 0,
     skippedSuperadmins: 0,
-    skippedMultiWorkspace: 0,
     errors: [],
   };
 
@@ -164,14 +133,6 @@ export async function cascadeDeleteWorkspace(
     done++;
     if (m.isSuperAdmin) {
       result.skippedSuperadmins++;
-      onProgress?.(done, total);
-      continue;
-    }
-    if (m.hasOtherWorkspaces) {
-      // User belongs to other workspaces — only remove this membership.
-      // The company DELETE below will cascade-delete this company_members row anyway,
-      // but we still skip the full account wipe.
-      result.skippedMultiWorkspace++;
       onProgress?.(done, total);
       continue;
     }
@@ -210,7 +171,6 @@ export async function cascadeDeleteWorkspace(
       memberCount: total,
       deletedUsers: result.deletedUsers,
       skippedSuperadmins: result.skippedSuperadmins,
-      skippedMultiWorkspace: result.skippedMultiWorkspace,
       errorCount: result.errors.length,
     },
   });

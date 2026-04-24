@@ -3,7 +3,6 @@ import { createClient as createServerClient } from '@supabase/supabase-js';
 import { getTokenFromCode } from '@/lib/microsoft/oauth';
 import { Client } from '@microsoft/microsoft-graph-client';
 import { registerOutlookSubscription } from '@/lib/microsoft/outlook-subscriptions';
-import { getActiveWorkspaceIdFromRequest } from '@/lib/workspace/active-workspace';
 
 export async function GET(request: NextRequest) {
   try {
@@ -12,8 +11,6 @@ export async function GET(request: NextRequest) {
     const code = searchParams.get('code');
     const state = searchParams.get('state');
     const error = searchParams.get('error');
-    const activeWorkspaceId = getActiveWorkspaceIdFromRequest(request);
-
     // Handle user denial
     if (error) {
       const stateData = state ? JSON.parse(Buffer.from(state, 'base64').toString()) : {};
@@ -121,7 +118,6 @@ export async function GET(request: NextRequest) {
         },
         last_sync: null,
         sync_status: 'pending',
-        ...(activeWorkspaceId ? { workspace_id: activeWorkspaceId } : {}),
       }, { onConflict: 'user_id,provider,provider_account_id' });
 
       await adminSupabase.from('profiles').upsert({

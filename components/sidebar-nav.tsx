@@ -15,17 +15,14 @@ import {
   ShieldCheckIcon,
 } from '@heroicons/react/24/outline';
 import { useRecordingContext } from '@/context/recording-context';
-import type { MyWorkspace, WorkspaceFeatures } from '@/lib/workspace/types';
+import type { WorkspaceFeatures } from '@/lib/workspace/types';
 import { DEFAULT_FEATURES } from '@/lib/workspace/types';
-import WorkspaceSwitcher from '@/components/workspace-switcher';
 
 interface SidebarNavProps {
   userEmail?: string;
   avatarUrl?: string | null;
   isSuperAdmin?: boolean;
   features?: WorkspaceFeatures;
-  allWorkspaces?: MyWorkspace[];
-  activeWorkspace?: MyWorkspace | null;
 }
 
 function formatElapsed(secs: number) {
@@ -39,8 +36,6 @@ export default function SidebarNav({
   avatarUrl: avatarUrlProp = null,
   isSuperAdmin: isSuperAdminProp = false,
   features = DEFAULT_FEATURES,
-  allWorkspaces = [],
-  activeWorkspace = null,
 }: SidebarNavProps) {
   const pathname = usePathname();
   const router = useRouter();
@@ -92,19 +87,15 @@ export default function SidebarNav({
   return (
     <div className="flex h-screen w-14 flex-col bg-neutral-50 flex-shrink-0">
 
-      {/* Logo / workspace switcher */}
+      {/* Logo */}
       <div className="flex h-12 items-center justify-center">
-        {allWorkspaces.length > 0 ? (
-          <WorkspaceSwitcher activeWorkspace={activeWorkspace} allWorkspaces={allWorkspaces} />
-        ) : (
-          <Image
-            src="/augmtd-logo.png"
-            alt="AUGMTD"
-            width={20}
-            height={20}
-            className="w-5 h-5"
-          />
-        )}
+        <Image
+          src="/augmtd-logo.png"
+          alt="AUGMTD"
+          width={20}
+          height={20}
+          className="w-5 h-5"
+        />
       </div>
 
       {/* Navigation */}

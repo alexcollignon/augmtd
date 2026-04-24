@@ -1,7 +1,6 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { getMyWorkspace } from './features';
-import { getActiveWorkspaceId } from './active-workspace';
 import type { FeatureKey, MyWorkspace } from './types';
 
 /**
@@ -25,8 +24,7 @@ export async function guardFeaturePage(feature: FeatureKey | null): Promise<MyWo
     .eq('id', user.id)
     .maybeSingle();
 
-  const activeWorkspaceId = await getActiveWorkspaceId();
-  const workspace = await getMyWorkspace(user.id, supabase, activeWorkspaceId);
+  const workspace = await getMyWorkspace(user.id, supabase);
 
   if (!workspace) {
     redirect('/onboarding');

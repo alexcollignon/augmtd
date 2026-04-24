@@ -51,44 +51,16 @@ function rowToWorkspace(data: RawRow): MyWorkspace | null {
 async function fetchWorkspace(
   userId: string,
   supabase: SupabaseClient,
-  activeWorkspaceId?: string | null,
 ): Promise<MyWorkspace | null> {
-  let query = supabase
-    .from('company_members')
-    .select(COMPANY_SELECT)
-    .eq('user_id', userId)
-    .eq('status', 'active');
-
-  if (activeWorkspaceId) {
-    query = query.eq('company_id', activeWorkspaceId);
-  }
-
-  const { data } = await query.maybeSingle() as { data: RawRow | null };
-
-  if (!data) return null;
-  const workspace = rowToWorkspace(data);
-  return workspace;
-}
-
-export async function getAllWorkspaces(userId: string): Promise<MyWorkspace[]> {
-  // Must use service role to bypass the self-referential RLS policy on
-  // company_members which otherwise returns incomplete results for multi-workspace users.
-  const { createClient: createAdminClient } = await import('@supabase/supabase-js');
-  const admin = createAdminClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { auth: { autoRefreshToken: false, persistSession: false } }
-  );
-
-  const { data } = await admin
+  const { data } = await supabase
     .from('company_members')
     .select(COMPANY_SELECT)
     .eq('user_id', userId)
     .eq('status', 'active')
-    .order('joined_at', { ascending: true }) as { data: RawRow[] | null };
+    .maybeSingle() as { data: RawRow | null };
 
-  if (!data) return [];
-  return data.map(rowToWorkspace).filter((w): w is MyWorkspace => w !== null);
+  if (!data) return null;
+  return rowToWorkspace(data);
 }
 
 // React-cached — within a single request/RSC tree, only one DB round-trip.

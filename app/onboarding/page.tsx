@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
-import { getAllWorkspaces } from '@/lib/workspace/features';
+import { getMyWorkspace } from '@/lib/workspace/features';
 import OnboardingClient from './onboarding-client';
 
 export default async function OnboardingPage() {
@@ -8,8 +8,8 @@ export default async function OnboardingPage() {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/login');
 
-  const allWorkspaces = await getAllWorkspaces(user.id);
-  if (allWorkspaces.length > 0) redirect('/work');
+  const workspace = await getMyWorkspace(user.id, supabase);
+  if (workspace) redirect('/work');
 
   return <OnboardingClient userEmail={user.email ?? ''} />;
 }

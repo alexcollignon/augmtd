@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createAdminClient } from '@supabase/supabase-js';
-import { deleteUserFully, removeUserFromWorkspace } from '@/lib/workspace/cascade-delete';
+import { deleteUserFully } from '@/lib/workspace/cascade-delete';
 
 export async function POST(
   _request: NextRequest,
@@ -28,38 +28,12 @@ export async function POST(
     return NextResponse.json({ error: 'Cannot delete your own account' }, { status: 400 });
   }
 
-  // Optional: workspaceId signals "remove from this workspace only" intent.
-  // Without it (e.g. from All Users tab), intent is full account deletion.
-  const body = await _request.json().catch(() => ({}));
-  const workspaceId: string | null = body?.workspaceId ?? null;
-
   const adminClient = createAdminClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
     { auth: { autoRefreshToken: false, persistSession: false } }
   );
 
-  // Fetch memberships to determine if user belongs to other workspaces.
-  const { data: allMemberships } = await adminClient
-    .from('company_members')
-    .select('id, company_id')
-    .eq('user_id', targetUserId)
-    .eq('status', 'active');
-
-  const otherWorkspaceMemberships = workspaceId
-    ? (allMemberships ?? []).filter(m => m.company_id !== workspaceId)
-    : [];
-
-  const hasOtherWorkspaces = otherWorkspaceMemberships.length > 0;
-
-  if (workspaceId && hasOtherWorkspaces) {
-    // User still belongs to other workspaces — only remove this membership.
-    await removeUserFromWorkspace(adminClient, targetUserId, workspaceId);
-    console.log(`[SuperAdminDelete] Removed user ${targetUserId} from workspace ${workspaceId} (kept account — has other workspaces)`);
-    return NextResponse.json({ ok: true, removedOnly: true });
-  }
-
-  // No other workspaces — safe to fully wipe the account.
   try {
     await deleteUserFully(adminClient, targetUserId);
   } catch (err) {

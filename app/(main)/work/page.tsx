@@ -2,22 +2,20 @@ import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { WorkPageClient } from '@/app/work/work-page-client';
 import { getMyWorkspace } from '@/lib/workspace/features';
-import { getActiveWorkspaceId } from '@/lib/workspace/active-workspace';
 export const metadata = { title: 'Chat — AUGMTD' };
 
 export default async function WorkPage({
   searchParams,
 }: {
-  searchParams: Promise<{ thread?: string; prompt?: string; section?: string; workflow?: string; agent?: string; setup?: string }>;
+  searchParams: Promise<{ thread?: string; prompt?: string; section?: string; workflow?: string; agent?: string }>;
 }) {
-  const { thread: initialThreadId, prompt: initialChatInput, section, workflow: initialWorkflowId, agent: initialAgentId, setup } = await searchParams;
+  const { thread: initialThreadId, prompt: initialChatInput, section, workflow: initialWorkflowId, agent: initialAgentId } = await searchParams;
   const supabase = await createClient();
 
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/login');
 
-  const activeWorkspaceId = await getActiveWorkspaceId();
-  const workspace = await getMyWorkspace(user.id, supabase, activeWorkspaceId);
+  const workspace = await getMyWorkspace(user.id, supabase);
   const studioEnabled = workspace?.features.studio ?? true;
   const initialSection = (section === 'studio' && studioEnabled) ? 'studio' : 'chat';
 
@@ -37,32 +35,27 @@ export default async function WorkPage({
   const THREAD_COLS = 'id, title, plan, artifact, artifacts, status, auto_generated, saved_workflow_id, is_generating, created_at, updated_at, agent_id, workflow_id';
 
   const [{ data: threads }, { data: savedWorkflowsData }, { data: agentsData }, initialThreadResult] = await Promise.all([
-    (() => {
-      let q = supabase
-        .from('work_threads')
-        .select(THREAD_COLS)
-        .eq('user_id', user.id)
-        .eq('status', 'active')
-        .or('is_temporary.eq.false,is_temporary.is.null')
-        .is('workflow_id', null);
-      if (activeWorkspaceId) q = q.or(`workspace_id.eq.${activeWorkspaceId},workspace_id.is.null`);
-      return q.order('updated_at', { ascending: false }).limit(50);
-    })(),
+    supabase
+      .from('work_threads')
+      .select(THREAD_COLS)
+      .eq('user_id', user.id)
+      .eq('status', 'active')
+      .or('is_temporary.eq.false,is_temporary.is.null')
+      .is('workflow_id', null)
+      .order('updated_at', { ascending: false })
+      .limit(50),
     supabase
       .from('saved_workflows')
       .select('id, name, prompt')
       .eq('user_id', user.id)
       .order('last_used_at', { ascending: false, nullsFirst: false })
       .limit(10),
-    (() => {
-      let q = supabase
-        .from('custom_agents')
-        .select('id, name, description, color, icon, conversation_starters, web_enabled')
-        .eq('user_id', user.id)
-        .eq('is_active', true);
-      if (activeWorkspaceId) q = q.or(`workspace_id.eq.${activeWorkspaceId},workspace_id.is.null`);
-      return q.order('created_at', { ascending: true });
-    })(),
+    supabase
+      .from('custom_agents')
+      .select('id, name, description, color, icon, conversation_starters, web_enabled')
+      .eq('user_id', user.id)
+      .eq('is_active', true)
+      .order('created_at', { ascending: true }),
     // If opening a specific thread (e.g. workflow run thread), fetch it directly
     // — it won't appear in the main query which excludes workflow_id threads.
     initialThreadId
@@ -96,7 +89,6 @@ export default async function WorkPage({
       initialSection={initialSection}
       initialWorkflowId={initialWorkflowId || null}
       initialAgentId={initialAgentId || null}
-      showSetup={setup === '1'}
     />
   );
 }

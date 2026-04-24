@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { getActiveWorkspaceId } from '@/lib/workspace/active-workspace';
 
 // GET /api/work/threads — list user's work threads
 export async function GET() {
@@ -11,18 +10,15 @@ export async function GET() {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const activeWorkspaceId = await getActiveWorkspaceId();
-
-    let query = supabase
+    const { data: threads, error } = await supabase
       .from('work_threads')
       .select('id, title, plan, status, created_at, updated_at')
       .eq('user_id', user.id)
       .eq('status', 'active')
       .or('is_temporary.eq.false,is_temporary.is.null')
-      .is('workflow_id', null);
-    if (activeWorkspaceId) query = query.or(`workspace_id.eq.${activeWorkspaceId},workspace_id.is.null`);
-
-    const { data: threads, error } = await query.order('updated_at', { ascending: false }).limit(50);
+      .is('workflow_id', null)
+      .order('updated_at', { ascending: false })
+      .limit(50);
 
     if (error) throw error;
     return NextResponse.json({ threads: threads ?? [] });
@@ -41,7 +37,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const activeWorkspaceId = await getActiveWorkspaceId();
     const body = await request.json();
     const { title, agentId, isTemporary } = body;
 
@@ -58,7 +53,6 @@ export async function POST(request: NextRequest) {
         status: 'active',
         is_temporary: isTemporary === true,
         ...(agentId ? { agent_id: agentId } : {}),
-        ...(activeWorkspaceId ? { workspace_id: activeWorkspaceId } : {}),
       })
       .select()
       .single();
