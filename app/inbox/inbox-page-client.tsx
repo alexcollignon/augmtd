@@ -717,22 +717,6 @@ export function InboxPageClient({
 
   return (
     <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-        {/* Syncing banner */}
-        {isSyncing && (
-          <div className="flex-shrink-0 flex items-center gap-3 px-4 py-2.5 bg-indigo-50 border-b border-indigo-100">
-            <ArrowPathIcon className="w-4 h-4 text-indigo-600 animate-spin flex-shrink-0" />
-            <p className="text-[13px] text-indigo-800 font-medium">
-              {(() => {
-                const delta = preSyncCountRef.current !== null
-                  ? inboxItems.length - preSyncCountRef.current
-                  : 0;
-                return delta > 0
-                  ? `Syncing… ${delta} new item${delta !== 1 ? 's' : ''} so far`
-                  : 'Syncing your inbox…';
-              })()}
-            </p>
-          </div>
-        )}
 
         {/* No connection */}
         {!hasConnection && (
@@ -852,6 +836,23 @@ export function InboxPageClient({
                 </div>
 
               </div>
+
+              {/* Sync bar */}
+              {isSyncing && (
+                <div className="flex-shrink-0 flex items-center justify-center gap-1.5 py-1.5 bg-neutral-50 border-b border-neutral-100">
+                  <ArrowPathIcon className="w-3 h-3 text-neutral-400 animate-spin flex-shrink-0" />
+                  <span className="text-[11.5px] text-neutral-400">
+                    {(() => {
+                      const delta = preSyncCountRef.current !== null
+                        ? inboxItems.length - preSyncCountRef.current
+                        : 0;
+                      return delta > 0
+                        ? `${delta} new item${delta !== 1 ? 's' : ''}`
+                        : 'Syncing…';
+                    })()}
+                  </span>
+                </div>
+              )}
 
               {/* Inbox / Sent tab row */}
               <div className="flex-shrink-0 flex border-b border-neutral-100">

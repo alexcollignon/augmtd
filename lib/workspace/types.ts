@@ -16,11 +16,11 @@ export type FeatureKey = keyof WorkspaceFeatures;
 
 export const FEATURE_KEYS: FeatureKey[] = ['email', 'meetings', 'drive', 'agents', 'studio'];
 
-// All workspace types default to ALL features enabled. Admin opts OUT via the
-// platform admin UI. Rationale: users confirmed default-on semantics.
+// meetings is off by default — bot infrastructure is being replaced (Vexa migration pending).
+// Admin opts IN via platform admin UI.
 export const DEFAULT_FEATURES: WorkspaceFeatures = {
   email: true,
-  meetings: true,
+  meetings: false,
   drive: true,
   agents: true,
   studio: true,

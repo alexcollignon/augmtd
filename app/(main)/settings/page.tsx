@@ -4,7 +4,6 @@ import ConnectionCard from '@/components/settings/connection-card';
 import MeetingAssistantCard from '@/components/settings/meeting-assistant-card';
 import DataManagementSection from '@/components/settings/data-management-section';
 import IdentitySection from '@/components/settings/identity-section';
-import SignatureSection from '@/components/settings/signature-section';
 import SyncAllButton from '@/components/settings/sync-all-button';
 import SettingsLeftPanel from '@/components/settings/settings-left-panel';
 import SettingsPageClient from '@/app/settings/settings-page-client';
@@ -164,14 +163,6 @@ export default async function SettingsPage({ searchParams }: Props) {
                 </section>
 
                 <section className="px-6 py-5 border-b border-neutral-100">
-                  <h3 className="text-[14px] font-semibold text-neutral-900 mb-1">Signatures</h3>
-                  <p className="text-[12px] text-neutral-400 mb-3">
-                    Set your email signature per account. Appended automatically when composing or replying.
-                  </p>
-                  <SignatureSection connections={connections} />
-                </section>
-
-                <section className="px-6 py-5 border-b border-neutral-100">
                   <h3 className="text-[14px] font-semibold text-neutral-900 mb-1">Meeting Assistant</h3>
                   <p className="text-[12px] text-neutral-400 mb-3">
                     Automatically join meetings, capture transcripts, and generate action items.
@@ -183,7 +174,7 @@ export default async function SettingsPage({ searchParams }: Props) {
                 </section>
 
                 <section className="px-6 py-5">
-                  <DataManagementSection connections={connections} />
+                  <DataManagementSection connections={connections} userEmail={user.email ?? ''} />
                 </section>
               </div>
             )}

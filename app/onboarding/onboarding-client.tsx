@@ -5,74 +5,273 @@ import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { ArrowRightIcon } from '@heroicons/react/24/outline';
 
+function useTypewriter(text: string, speed = 28) {
+  const [displayed, setDisplayed] = useState('');
+  const [done, setDone] = useState(false);
+
+  useEffect(() => {
+    setDisplayed('');
+    setDone(false);
+    let i = 0;
+    const tick = () => {
+      i++;
+      setDisplayed(text.slice(0, i));
+      if (i < text.length) setTimeout(tick, speed);
+      else setDone(true);
+    };
+    const t = setTimeout(tick, 300);
+    return () => clearTimeout(t);
+  }, [text, speed]);
+
+  return { displayed, done };
+}
+
 type Stage = 'welcome' | 'steps';
 type Step = 'code' | 'name';
 
 // ── Right panel preview ───────────────────────────────────────────────────────
 
-function AgentPreview() {
+const STEP_HEADLINES: Record<Step, string> = {
+  code: 'Your AI worked while you were away',
+  name: 'Walk into every meeting already prepared',
+};
+
+// animStep: 0=hidden, 1=c0 loading, 2=c0 done, 3=c1 visible, 4=c2 visible, 5=fade out
+function useAnimLoop(step: Step) {
+  const [animStep, setAnimStep] = useState(0);
+
+  useEffect(() => {
+    setAnimStep(0);
+    const timeouts: ReturnType<typeof setTimeout>[] = [];
+
+    function run() {
+      const schedule: [number, number][] = [
+        [200,  1],
+        [900,  2],
+        [1100, 3],
+        [1900, 4],
+        [4200, 5],
+        [4900, 0],
+      ];
+      schedule.forEach(([delay, s]) => {
+        timeouts.push(setTimeout(() => {
+          setAnimStep(s);
+          if (s === 0) run();
+        }, delay));
+      });
+    }
+
+    run();
+    return () => timeouts.forEach(clearTimeout);
+  }, [step]);
+
+  return animStep;
+}
+
+function ProcessingBadge() {
   return (
-    <div className="w-full max-w-[340px] mx-auto space-y-3">
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-neutral-100">
+      {[0, 1, 2].map(i => (
+        <span
+          key={i}
+          className="w-1 h-1 rounded-full bg-neutral-400 animate-bounce"
+          style={{ animationDelay: `${i * 120}ms`, animationDuration: '600ms' }}
+        />
+      ))}
+    </span>
+  );
+}
 
-      {/* Workflow run card */}
-      <div className="bg-white rounded-2xl px-4 py-3.5 shadow-sm border border-neutral-100">
-        <div className="flex items-start justify-between mb-2">
-          <div className="flex items-center gap-2">
-            <div className="w-6 h-6 rounded-lg bg-primary-600 flex items-center justify-center flex-shrink-0">
-              <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" />
-              </svg>
-            </div>
-            <span className="text-[12px] font-semibold text-neutral-800">Morning Briefing</span>
-          </div>
-          <span className="text-[10px] text-neutral-400">just now</span>
-        </div>
-        <p className="text-[11px] text-neutral-500 leading-relaxed mb-2.5">
-          3 priority emails · 2 action items · Market snapshot ready
+function AnimCard({ visible, done, fading, children }: {
+  visible: boolean;
+  done: boolean;
+  fading: boolean;
+  children: (done: boolean) => React.ReactNode;
+}) {
+  return (
+    <div className={`transition-all duration-500 ease-out ${
+      fading ? 'opacity-0 translate-y-2' :
+      visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 pointer-events-none'
+    }`}>
+      {children(done)}
+    </div>
+  );
+}
+
+function RightPanel({ step }: { step: Step }) {
+  const { displayed, done: typeDone } = useTypewriter(STEP_HEADLINES[step]);
+  const animStep = useAnimLoop(step);
+  const fading = animStep === 5;
+
+  return (
+    <div className="relative w-full max-w-[340px] mx-auto">
+      <div className="mb-5 px-1">
+        <p className="text-[11px] font-semibold text-neutral-400 uppercase tracking-widest mb-1">
+          Today · Ready for you
         </p>
-        <div className="flex gap-1.5">
-          <span className="text-[10px] bg-primary-50 text-primary-700 px-2 py-0.5 rounded-full font-medium">Briefing ready</span>
-          <span className="text-[10px] bg-neutral-100 text-neutral-500 px-2 py-0.5 rounded-full">Auto-ran 7:00 AM</span>
-        </div>
-      </div>
-
-      {/* Prepared reply card */}
-      <div className="bg-white rounded-2xl px-4 py-3.5 shadow-sm border border-neutral-100">
-        <div className="flex items-start justify-between mb-2">
-          <div className="flex items-center gap-2">
-            <div className="w-6 h-6 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
-              <span className="text-[10px] font-bold text-blue-600">S</span>
-            </div>
-            <div>
-              <span className="text-[11px] font-semibold text-neutral-800">Sarah Chen</span>
-              <span className="text-[10px] text-neutral-400 ml-1.5">· Re: Q2 Partnership</span>
-            </div>
-          </div>
-          <span className="text-[10px] bg-primary-100 text-primary-700 px-1.5 py-0.5 rounded-md font-semibold">Draft ready</span>
-        </div>
-        <p className="text-[11px] text-neutral-500 leading-relaxed">
-          "Thanks Sarah, happy to align on timelines. I've reviewed the proposal and have a few points…"
-        </p>
-      </div>
-
-      {/* Meeting brief card */}
-      <div className="bg-white rounded-2xl px-4 py-3.5 shadow-sm border border-neutral-100">
-        <div className="flex items-start justify-between mb-2">
-          <div className="flex items-center gap-2">
-            <div className="w-6 h-6 rounded-lg bg-emerald-100 flex items-center justify-center flex-shrink-0">
-              <svg className="w-3 h-3 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0v-7.5" />
-              </svg>
-            </div>
-            <span className="text-[12px] font-semibold text-neutral-800">Strategy Call · 2:00 PM</span>
-          </div>
-          <span className="text-[10px] text-neutral-400">in 3h</span>
-        </div>
-        <p className="text-[11px] text-neutral-500 leading-relaxed">
-          Brief prepared · 4 talking points · Last quarter context pulled
+        <p className="text-[18px] font-semibold text-neutral-700 min-h-[56px]">
+          {displayed}
+          {!typeDone && <span className="inline-block w-0.5 h-[18px] bg-neutral-400 ml-0.5 animate-pulse align-middle" />}
         </p>
       </div>
 
+      <div className="space-y-3">
+        {step === 'code' ? (
+          <>
+            {/* Card 0 — Morning Briefing (animated workflow) */}
+            <AnimCard visible={animStep >= 1} done={animStep >= 2} fading={fading}>
+              {(done) => (
+                <div className="bg-white rounded-2xl px-4 py-3.5 shadow-sm border border-neutral-100">
+                  <div className="flex items-start justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-6 rounded-lg bg-primary-600 flex items-center justify-center flex-shrink-0">
+                        <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" />
+                        </svg>
+                      </div>
+                      <span className="text-[12px] font-semibold text-neutral-800">Morning Briefing</span>
+                    </div>
+                    <span className="text-[10px] text-neutral-400">just now</span>
+                  </div>
+                  <p className="text-[11px] text-neutral-500 leading-relaxed mb-2.5">
+                    3 priority emails · 2 action items · Market snapshot ready
+                  </p>
+                  <div className="flex gap-1.5 items-center min-h-[20px]">
+                    {done ? (
+                      <>
+                        <span className="text-[10px] bg-primary-50 text-primary-700 px-2 py-0.5 rounded-full font-medium">Briefing ready</span>
+                        <span className="text-[10px] bg-neutral-100 text-neutral-500 px-2 py-0.5 rounded-full">Auto-ran 7:00 AM</span>
+                      </>
+                    ) : <ProcessingBadge />}
+                  </div>
+                </div>
+              )}
+            </AnimCard>
+
+            {/* Card 1 — Sarah Chen */}
+            <AnimCard visible={animStep >= 3} done fading={fading}>
+              {() => (
+                <div className="bg-white rounded-2xl px-4 py-3.5 shadow-sm border border-neutral-100">
+                  <div className="flex items-start justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-6 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
+                        <span className="text-[10px] font-bold text-blue-600">S</span>
+                      </div>
+                      <div>
+                        <span className="text-[11px] font-semibold text-neutral-800">Sarah Chen</span>
+                        <span className="text-[10px] text-neutral-400 ml-1.5">· Re: Q2 Partnership</span>
+                      </div>
+                    </div>
+                    <span className="text-[10px] bg-primary-100 text-primary-700 px-1.5 py-0.5 rounded-md font-semibold">Draft ready</span>
+                  </div>
+                  <p className="text-[11px] text-neutral-500 leading-relaxed">
+                    &ldquo;Thanks Sarah, happy to align on timelines. I&apos;ve reviewed the proposal and have a few points…&rdquo;
+                  </p>
+                </div>
+              )}
+            </AnimCard>
+
+            {/* Card 2 — Strategy Call */}
+            <AnimCard visible={animStep >= 4} done fading={fading}>
+              {() => (
+                <div className="bg-white rounded-2xl px-4 py-3.5 shadow-sm border border-neutral-100">
+                  <div className="flex items-start justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-6 rounded-lg bg-emerald-100 flex items-center justify-center flex-shrink-0">
+                        <svg className="w-3 h-3 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0v-7.5" />
+                        </svg>
+                      </div>
+                      <span className="text-[12px] font-semibold text-neutral-800">Strategy Call · 2:00 PM</span>
+                    </div>
+                    <span className="text-[10px] text-neutral-400">in 3h</span>
+                  </div>
+                  <p className="text-[11px] text-neutral-500 leading-relaxed">
+                    Brief prepared · 4 talking points · Last quarter context pulled
+                  </p>
+                </div>
+              )}
+            </AnimCard>
+          </>
+        ) : (
+          <>
+            {/* Card 0 — Meeting Prep workflow (animated) */}
+            <AnimCard visible={animStep >= 1} done={animStep >= 2} fading={fading}>
+              {(done) => (
+                <div className="bg-white rounded-2xl px-4 py-3.5 shadow-sm border border-neutral-100">
+                  <div className="flex items-start justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-6 rounded-lg bg-violet-500 flex items-center justify-center flex-shrink-0">
+                        <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" />
+                        </svg>
+                      </div>
+                      <span className="text-[12px] font-semibold text-neutral-800">Meeting Prep</span>
+                    </div>
+                    <span className="text-[10px] text-neutral-400">just now</span>
+                  </div>
+                  <p className="text-[11px] text-neutral-500 leading-relaxed mb-2.5">
+                    3 meetings today · 8 talking points · Key context pulled
+                  </p>
+                  <div className="flex gap-1.5 items-center min-h-[20px]">
+                    {done ? (
+                      <>
+                        <span className="text-[10px] bg-violet-50 text-violet-700 px-2 py-0.5 rounded-full font-medium">Briefs ready</span>
+                        <span className="text-[10px] bg-neutral-100 text-neutral-500 px-2 py-0.5 rounded-full">Auto-ran 7:00 AM</span>
+                      </>
+                    ) : <ProcessingBadge />}
+                  </div>
+                </div>
+              )}
+            </AnimCard>
+
+            {/* Card 1 — Board Meeting */}
+            <AnimCard visible={animStep >= 3} done fading={fading}>
+              {() => (
+                <div className="bg-white rounded-2xl px-4 py-3.5 shadow-sm border border-neutral-100">
+                  <div className="flex items-start justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-6 rounded-lg bg-emerald-100 flex items-center justify-center flex-shrink-0">
+                        <svg className="w-3 h-3 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0v-7.5" />
+                        </svg>
+                      </div>
+                      <span className="text-[12px] font-semibold text-neutral-800">Board Review · 10:00 AM</span>
+                    </div>
+                    <span className="text-[10px] text-neutral-400">in 2h</span>
+                  </div>
+                  <p className="text-[11px] text-neutral-500 leading-relaxed">
+                    5 talking points · Q1 results · 2 open decisions flagged
+                  </p>
+                </div>
+              )}
+            </AnimCard>
+
+            {/* Card 2 — Client Call */}
+            <AnimCard visible={animStep >= 4} done fading={fading}>
+              {() => (
+                <div className="bg-white rounded-2xl px-4 py-3.5 shadow-sm border border-neutral-100">
+                  <div className="flex items-start justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-6 rounded-full bg-amber-100 flex items-center justify-center flex-shrink-0">
+                        <span className="text-[10px] font-bold text-amber-600">M</span>
+                      </div>
+                      <div>
+                        <span className="text-[11px] font-semibold text-neutral-800">Marc Dubois</span>
+                        <span className="text-[10px] text-neutral-400 ml-1.5">· Client Check-in</span>
+                      </div>
+                    </div>
+                    <span className="text-[10px] text-neutral-400">3:00 PM</span>
+                  </div>
+                  <p className="text-[11px] text-neutral-500 leading-relaxed">
+                    Last 3 emails reviewed · Proposal status · Risk flagged
+                  </p>
+                </div>
+              )}
+            </AnimCard>
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -378,22 +577,10 @@ export default function OnboardingClient({ userEmail }: { userEmail: string }) {
 
       {/* Right panel — AI work preview */}
       <div className="hidden lg:flex flex-1 bg-neutral-50 items-center justify-center p-12 relative overflow-hidden">
-        <div
-          className="absolute inset-0"
-          style={{
-            background: 'radial-gradient(ellipse at 50% 35%, rgba(139,92,246,0.07) 0%, transparent 65%)',
-          }}
-        />
-
-        <div className="relative w-full" style={{ filter: 'blur(0.4px)', opacity: 0.72 }}>
-          {/* Section label */}
-          <div className="mb-5 px-1">
-            <p className="text-[11px] font-semibold text-neutral-400 uppercase tracking-widest mb-1">Today · Ready for you</p>
-            <p className="text-[18px] font-semibold text-neutral-700">Your AI worked while you were away</p>
-          </div>
-          <AgentPreview />
+        <div className="absolute inset-0" style={{ background: 'radial-gradient(ellipse at 50% 35%, rgba(139,92,246,0.07) 0%, transparent 65%)' }} />
+        <div className="relative w-full max-w-[380px]">
+          <RightPanel step={step} />
         </div>
-
       </div>
 
     </div>

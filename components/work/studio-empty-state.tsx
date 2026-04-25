@@ -152,7 +152,7 @@ export function StudioEmptyState({ onCreate, onUseTemplate, onGenerateFromDescri
               onChange={e => { setDescription(e.target.value); setError(null); }}
               onKeyDown={handleKeyDown}
               disabled={generating}
-              placeholder="e.g. Every Monday, search for AI news in Germany and Portugal and send me a 5-bullet digest"
+              placeholder="e.g. Every Monday morning, summarise the top industry news and send me a digest"
               rows={3}
               className="w-full px-4 pt-4 pb-2 text-[13.5px] resize-none focus:outline-none placeholder:text-neutral-300 disabled:opacity-50 leading-relaxed bg-transparent"
             />
