@@ -441,10 +441,6 @@ export default function MeetingsPageClient({
                   setSelectedMeetingId(id);
                   fetchAll();
                 }}
-                onNewBot={() => {
-                  setCaptureMode('bot');
-                  setShowCapture(true);
-                }}
                 onStartRecording={(title, calendarEventId, noteId) => recording.startRecording(title, calendarEventId, noteId)}
               />
             ) : (
