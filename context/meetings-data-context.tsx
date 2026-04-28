@@ -23,31 +23,19 @@ export interface Transcript {
   attendees?: Array<{ email: string; name?: string }>;
 }
 
-export interface LiveBot {
-  title: string;
-  state: 'joining' | 'recording';
-  calendarEventId: string | null;
-  startedAt?: string;
-}
-
 export interface MeetingsDataContextType {
   // Data
   transcripts: Transcript[];
   upcoming: CalendarEvent[];
   folders: DriveFolder[];
-  botStateMap: Map<string, string>;
-  pendingAdhoc: { initiatedAt: string } | null;
   loading: boolean;
   userEmail: string;
 
   // Derived
-  liveBots: LiveBot[];
   isNew: (t: Transcript) => boolean;
 
   // Data actions
   fetchAll: () => Promise<void>;
-  handleScheduled: (eventId: string) => void;
-  handleCancelled: (eventId: string) => void;
   handleDeleteTranscript: (id: string) => Promise<void>;
   handleRetryFailed: (id: string) => Promise<void>;
   handleCreateFolder: (name: string) => Promise<void>;

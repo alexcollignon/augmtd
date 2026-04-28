@@ -45,7 +45,6 @@ export default function InlineNoteViewPage({ id }: InlineNoteViewPageProps) {
       onNoteRowCreated={fetchAll}
       onMeetingContextReady={setActiveMeetingContext}
       onRequestChat={(autoMessage) => openChatPanel(autoMessage)}
-      onNewBot={openCaptureModal}
       onStartRecording={(title, calendarEventId, noteId) =>
         recording.startRecording(title, calendarEventId, noteId)
       }

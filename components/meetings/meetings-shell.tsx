@@ -13,7 +13,6 @@ import {
   MeetingsDataContext,
   mapTranscripts,
   type Transcript,
-  type LiveBot,
 } from '@/context/meetings-data-context';
 import type { MeetingChatContext } from '@/components/meetings/meeting-chat-sidebar';
 import CaptureModal from '@/components/meetings/capture-modal';
@@ -54,15 +53,9 @@ export default function MeetingsShell({
   // ── Data state ──────────────────────────────────────────────────────────
   const [upcoming, setUpcoming] = useState<CalendarEvent[]>(initialUpcoming ?? []);
   const [transcripts, setTranscripts] = useState<Transcript[]>(initialTranscripts ?? []);
-  const [botStateMap, setBotStateMap] = useState<Map<string, string>>(() => {
-    const m = new Map<string, string>();
-    (initialUpcoming ?? []).forEach((e) => { if (e.attendee_bot_state) m.set(e.id, e.attendee_bot_state); });
-    return m;
-  });
-  const [pendingAdhoc, setPendingAdhoc] = useState<{ initiatedAt: string } | null>(null);
   const [loading, setLoading] = useState(!initialUpcoming);
   const [folders, setFolders] = useState<DriveFolder[]>(initialFolders ?? []);
-  const [seenIds, setSeenIds] = useState<Set<string>>(loadSeenIds);
+  const [seenIds, setSeenIds] = useState<Set<string>>(() => new Set());
 
   // ── UI state ─────────────────────────────────────────────────────────────
   const [rightPanel, setRightPanel] = useState<'chat' | 'calendar' | null>('calendar');
@@ -98,39 +91,16 @@ export default function MeetingsShell({
       const events: CalendarEvent[] = meetingsData.meetings ?? [];
       setUpcoming(events);
 
-      const newMap = new Map<string, string>();
-      for (const e of events) {
-        if (e.attendee_bot_state) newMap.set(e.id, e.attendee_bot_state);
-      }
-      setBotStateMap(newMap);
-
       const mapped = mapTranscripts(transcriptsData.transcripts ?? []);
       setTranscripts(mapped);
-
-      // Auto-open ad-hoc bot that started while user was away
-      const activeAdHocBot = mapped.find(
-        (t) => t.source === 'bot' && t.calendarEventId === null && !t.processed &&
-          (t.botState === 'recording' || t.botState === 'joining')
-      );
-      if (activeAdHocBot && !selectedMeetingIdRef.current) {
-        router.push(`/meetings/${activeAdHocBot.id}`);
-      }
-
-      setPendingAdhoc((prev) => {
-        if (!prev) return null;
-        const found = mapped.find(
-          (t) =>
-            t.source === 'bot' &&
-            t.calendarEventId === null &&
-            !t.processed &&
-            new Date(t.startTime).getTime() >= new Date(prev.initiatedAt).getTime() - 60_000
-        );
-        return found ? null : prev;
-      });
     } catch {
       // Swallow — polling will retry
     }
   }, [router]);
+
+  useEffect(() => {
+    setSeenIds(loadSeenIds());
+  }, []);
 
   useEffect(() => {
     setLoading(true);
@@ -152,14 +122,8 @@ export default function MeetingsShell({
 
   // Adaptive polling
   useEffect(() => {
-    const liveStates = new Set(['joining', 'recording', 'scheduled']);
-    const upcomingNonCompleted = upcoming.filter((m) => m.meeting_status !== 'completed');
-    const hasLiveBot = upcomingNonCompleted.some((e) => {
-      const state = botStateMap.get(e.id) ?? e.attendee_bot_state ?? '';
-      return liveStates.has(state);
-    });
     const hasProcessing = transcripts.some((t) => !t.processed);
-    const isActive = hasLiveBot || hasProcessing || pendingAdhoc !== null || recording.state === 'recording';
+    const isActive = hasProcessing || recording.state === 'recording';
     isActiveRef.current = isActive;
 
     if (intervalRef.current) clearInterval(intervalRef.current);
@@ -167,7 +131,7 @@ export default function MeetingsShell({
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
-  }, [upcoming, transcripts, botStateMap, pendingAdhoc, fetchAll, recording.state]);
+  }, [transcripts, fetchAll, recording.state]);
 
   // Mark seen after 3s
   useEffect(() => {
@@ -183,9 +147,6 @@ export default function MeetingsShell({
 
 
   // ── Handlers ─────────────────────────────────────────────────────────────
-  const handleScheduled = (eventId: string) => setBotStateMap((prev) => new Map(prev).set(eventId, 'scheduled'));
-  const handleCancelled = (eventId: string) => setBotStateMap((prev) => new Map(prev).set(eventId, 'cancelled'));
-
   const handleCreateFolder = async (name: string) => {
     const res = await fetch('/api/drive/folders', {
       method: 'POST',
@@ -242,25 +203,6 @@ export default function MeetingsShell({
 
 
   // ── Derived ──────────────────────────────────────────────────────────────
-  const upcomingNonCompleted = upcoming.filter((m) => m.meeting_status !== 'completed');
-  const liveBots: LiveBot[] = [];
-  for (const e of upcomingNonCompleted) {
-    const state = botStateMap.get(e.id) ?? (e.attendee_bot_state ?? '');
-    if (state === 'joining' || state === 'recording') {
-      liveBots.push({ title: e.title, state: state as 'joining' | 'recording', calendarEventId: e.id, startedAt: e.start_time });
-    }
-  }
-  if (pendingAdhoc) {
-    liveBots.push({ title: 'Ad-hoc meeting', state: 'joining', calendarEventId: null, startedAt: pendingAdhoc.initiatedAt });
-  }
-  const adhocLive = transcripts.filter(
-    (t) => t.source === 'bot' && t.calendarEventId === null && !t.processed &&
-      (t.botState === 'joining' || t.botState === 'recording')
-  );
-  for (const t of adhocLive) {
-    liveBots.push({ title: t.title || 'Ad-hoc meeting', state: t.botState === 'recording' ? 'recording' : 'joining', calendarEventId: null, startedAt: t.startTime });
-  }
-
   const cutoff = Date.now() - TWENTY_FOUR_HOURS;
   const isNew = (t: Transcript) =>
     !seenIds.has(t.id) && t.processed && t.botState !== 'failed' && t.processedAt != null &&
@@ -283,15 +225,10 @@ export default function MeetingsShell({
     transcripts,
     upcoming,
     folders,
-    botStateMap,
-    pendingAdhoc,
     loading,
     userEmail,
-    liveBots,
     isNew,
     fetchAll,
-    handleScheduled,
-    handleCancelled,
     handleDeleteTranscript,
     handleRetryFailed,
     handleCreateFolder,
@@ -435,9 +372,6 @@ export default function MeetingsShell({
                 <CalendarSidebar
                   meetings={upcoming}
                   userEmail={userEmail}
-                  botStateMap={botStateMap}
-                  onScheduled={handleScheduled}
-                  onCancelled={handleCancelled}
                   onRefresh={fetchAll}
                   onNewMeeting={() => setShowNewMeeting(true)}
                   onClose={() => setRightPanel(null)}
@@ -478,7 +412,6 @@ export default function MeetingsShell({
         <CaptureModal
           isOpen={showCapture}
           onClose={() => setShowCapture(false)}
-          onBotSent={() => setPendingAdhoc({ initiatedAt: new Date().toISOString() })}
           recording={recording}
         />
         <NewMeetingModal

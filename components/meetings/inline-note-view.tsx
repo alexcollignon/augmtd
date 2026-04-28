@@ -10,7 +10,6 @@ import {
   ArrowPathIcon,
   TrashIcon,
   EnvelopeIcon,
-  ComputerDesktopIcon,
   SparklesIcon,
   ChevronRightIcon,
   XMarkIcon,
@@ -23,7 +22,6 @@ import { formatMeetingTime, calculateDuration } from '@/lib/types/meetings';
 import LinkedWorkPanel from '@/components/meetings/linked-work-panel';
 import ProcessingPipeline from '@/components/meetings/processing-pipeline';
 import MeetingDocument from '@/components/meetings/meeting-document';
-import { getBotSession, setBotSession, clearBotSession, type BotSessionStatus } from '@/lib/meetings/bot-session';
 
 interface TranscriptSegment {
   speaker: string;
@@ -88,7 +86,6 @@ interface InlineNoteViewProps {
   onRequestChat?: (autoMessage?: string) => void;
   onCreated?: (id: string) => void;
   onNoteRowCreated?: () => void;
-  onNewBot?: () => void;
   onStartRecording?: (title: string, calendarEventId?: string, noteId?: string) => void;
 }
 
@@ -220,7 +217,6 @@ export default function InlineNoteView({
   onRequestChat,
   onCreated,
   onNoteRowCreated,
-  onNewBot,
   onStartRecording,
 }: InlineNoteViewProps) {
   const isAdHoc = !eventId;
@@ -235,9 +231,6 @@ export default function InlineNoteView({
 
   // Ad-hoc fields
   const [adHocTitle, setAdHocTitle] = useState('');
-  const [adHocLink, setAdHocLink] = useState('');
-  const [linkFlash, setLinkFlash] = useState(false);
-  const linkInputRef = useRef<HTMLInputElement>(null);
 
   // Inline title edit (scheduled / processed view)
   const [editingTitle, setEditingTitle] = useState(false);
@@ -252,25 +245,8 @@ export default function InlineNoteView({
   const noteIdRef = useRef<string | null>(null);      // mirrors noteId, updated synchronously
   const creatingNoteRef = useRef(false);              // guard: only one POST ever in-flight
   const createOnOpenFiredRef = useRef(false);         // guard: survives StrictMode fake-unmount
-  // Live notes typed while bot is recording — saved to transcript.notes_structured.live_notes
-  const [botLiveNotes, setBotLiveNotes] = useState('');
-  const botLiveNotesTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
   // Capture state
-  const [botScheduled, setBotScheduled] = useState(false);
-  const [scheduling, setScheduling] = useState(false);
-  const [cancelling, setCancelling] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
-  // Ad-hoc bot send state (inline — no modal)
-  // adHocBotStatus mirrors localStorage so UI stays in sync even after remount.
-  const [adHocBotSending, setAdHocBotSending] = useState(false);
-  const [adHocBotSent, setAdHocBotSent] = useState(false);
-  const [adHocBotStatus, setAdHocBotStatus] = useState<BotSessionStatus | null>(null);
-  const adHocBotPollCountRef = useRef(0);
-
-  // Derived helpers
-  const adHocBotFailed = adHocBotStatus === 'failed';
-  const adHocBotActive = adHocBotSent && adHocBotStatus !== 'failed' && adHocBotStatus !== 'done';
 
   // Prep brief
   const [prepBrief, setPrepBrief] = useState<{
@@ -297,12 +273,26 @@ export default function InlineNoteView({
   const recording = useRecordingContext();
 
 
+  // Incremented each time a new fetch starts; stale calls check against this to avoid clobbering state.
+  const fetchIdRef = useRef(0);
+
   const fetchData = useCallback(async () => {
     if (!eventId) { setLoading(false); return; }
+    const id = ++fetchIdRef.current;
+    const stale = () => fetchIdRef.current !== id;
     try {
-      const res = await fetch(`/api/meetings/${eventId}/full`);
-      if (!res.ok) { setError('Failed to load meeting'); return; }
+      // Retry up to 5× on 404 — row may still be written when navigating immediately after upload
+      let res: Response | undefined;
+      for (let attempt = 0; attempt < 5; attempt++) {
+        if (stale()) return;
+        res = await fetch(`/api/meetings/${eventId}/full`);
+        if (res.status !== 404) break;
+        await new Promise<void>((resolve) => setTimeout(resolve, 1200));
+      }
+      if (stale()) return;
+      if (!res || !res.ok) { setError('Failed to load meeting'); return; }
       const data = await res.json();
+      if (stale()) return;
       setEvent(data.event);
       setTranscript(data.transcript);
       setActionItems(data.actionItems ?? []);
@@ -327,10 +317,7 @@ export default function InlineNoteView({
       if (data.event && data.transcript && data.event.id === data.transcript.id) {
         setAdHocTitle(data.event.title || '');
       }
-      // Restore any live notes typed while the bot was recording
-      if (data.transcript?.notesStructured?.live_notes) {
-        setBotLiveNotes(data.transcript.notesStructured.live_notes);
-      }
+
       if (data.transcript?.processed && onMeetingContextReady) {
         onMeetingContextReady({
           title: data.event.title,
@@ -349,9 +336,9 @@ export default function InlineNoteView({
         });
       }
     } catch {
-      setError('Failed to load meeting');
+      if (!stale()) setError('Failed to load meeting');
     } finally {
-      setLoading(false);
+      if (!stale()) setLoading(false);
     }
   }, [eventId, onMeetingContextReady]);
 
@@ -381,27 +368,6 @@ export default function InlineNoteView({
       .finally(() => setPrepLoading(false));
   }, [eventId, transcript, loading]);
 
-  // Restore bot session state from localStorage when returning to a draft note.
-  // This ensures adHocBotSent + polling resume after the user navigates away and back.
-  // Runs whenever noteId is resolved (create-on-open for new notes, fetchData for returning drafts).
-  useEffect(() => {
-    const id = noteIdRef.current;
-    if (!id) return;
-    const session = getBotSession(id);
-    if (!session || session.status === 'done' || session.status === 'failed') return;
-    // Restore — polling effect triggers because adHocBotSent becomes true
-    setAdHocBotSent(true);
-    setAdHocBotStatus(session.status);
-    adHocBotPollCountRef.current = 0;
-  }, [noteId]); // noteId state (not ref) so effect fires when it's set
-
-  // Sync botScheduled from actual event data (persists across remounts)
-  // 'scheduled'/'joining'/'recording' all count as "bot is active" — suppresses Send assistant button.
-  useEffect(() => {
-    if (['scheduled', 'joining', 'recording'].includes(event?.attendee_bot_state ?? '')) setBotScheduled(true);
-    else if (event?.attendee_bot_state === 'cancelled' || event?.attendee_bot_state === null) setBotScheduled(false);
-  }, [event?.attendee_bot_state]);
-
   // Poll while processing
   useEffect(() => {
     if (!transcript || transcript.processed || transcript.botState === 'failed') return;
@@ -413,7 +379,6 @@ export default function InlineNoteView({
   useEffect(() => {
     return () => {
       if (noteTimerRef.current) clearTimeout(noteTimerRef.current);
-      if (botLiveNotesTimerRef.current) clearTimeout(botLiveNotesTimerRef.current);
     };
   }, []);
 
@@ -440,59 +405,6 @@ export default function InlineNoteView({
       .catch(() => {});
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Poll for the bot transcript after "Send assistant" is clicked.
-  // Status machine: sent → in_meeting (after 30s) → processing → done / failed
-  // All transitions are mirrored to localStorage so state survives navigation.
-  useEffect(() => {
-    if (!adHocBotSent || !noteIdRef.current) return;
-    const noteId = noteIdRef.current;
-    adHocBotPollCountRef.current = 0;
-
-    const advance = (status: BotSessionStatus, botTranscriptId?: string) => {
-      const existing = getBotSession(noteId);
-      if (!existing) return;
-      setBotSession(noteId, { ...existing, status, ...(botTranscriptId ? { botTranscriptId } : {}) });
-      setAdHocBotStatus(status);
-    };
-
-    const interval = setInterval(async () => {
-      adHocBotPollCountRef.current += 1;
-
-      // 2-minute timeout: 24 × 5s = 120s
-      if (adHocBotPollCountRef.current > 24) {
-        clearInterval(interval);
-        advance('failed');
-        return;
-      }
-
-      // After 30s (6 polls) with no transcript row yet, bot has likely joined
-      if (adHocBotPollCountRef.current === 6) {
-        const cur = getBotSession(noteId);
-        if (cur?.status === 'sent') advance('in_meeting');
-      }
-
-      try {
-        const res = await fetch(`/api/meetings/bot/linked/${noteId}`);
-        if (!res.ok) return;
-        const data = await res.json();
-        if (data.notFound) return;
-
-        // Transcript row found — Hetzner has finished recording
-        if (!data.processed) {
-          advance('processing', data.id);
-        } else {
-          // Fully processed — navigate and clean up
-          advance('done', data.id);
-          clearInterval(interval);
-          clearBotSession(noteId);
-          onCreated?.(data.id);
-        }
-      } catch {}
-    }, 5000);
-
-    return () => clearInterval(interval);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [adHocBotSent]);
 
   // handleBack: for ad-hoc notes, delete the row if user navigated away without writing anything.
   const handleBack = useCallback(async () => {
@@ -500,12 +412,11 @@ export default function InlineNoteView({
     // Applies to: fresh ad-hoc notes (isAdHoc) and ad-hoc drafts returned via Live section
     // (detected by synthetic event: event.id === transcript.id).
     const isSyntheticEvent = event && transcript && event.id === transcript.id;
-    // Skip deletion if bot is active — text note holds live notes that generate-insights needs
-    if (!adHocBotActive && noteIdRef.current && !noteBody.trim() && !adHocTitle.trim() && (isAdHoc || isSyntheticEvent)) {
+    if (noteIdRef.current && !noteBody.trim() && !adHocTitle.trim() && (isAdHoc || isSyntheticEvent)) {
       await fetch(`/api/meetings/notes/${noteIdRef.current}`, { method: 'DELETE' }).catch(() => {});
     }
     onBack();
-  }, [isAdHoc, adHocBotActive, noteBody, adHocTitle, event, transcript, onBack]);
+  }, [isAdHoc, noteBody, adHocTitle, event, transcript, onBack]);
 
   // For ad-hoc mode: when recording completes, go back so user finds the new note in Recent
   useEffect(() => {
@@ -640,50 +551,6 @@ export default function InlineNoteView({
     }
   };
 
-  const handleScheduleAssistant = async () => {
-    if (!event || scheduling) return;
-    setScheduling(true);
-    try {
-      const res = await fetch(`/api/meetings/${event.id}/schedule-bot`, { method: 'POST' });
-      if (res.ok) setBotScheduled(true);
-    } catch {} finally { setScheduling(false); }
-  };
-
-  const handleCancelAssistant = async () => {
-    if (!event || cancelling) return;
-    setCancelling(true);
-    try {
-      const res = await fetch(`/api/meetings/${event.id}/cancel-bot`, { method: 'DELETE' });
-      if (res.ok) setBotScheduled(false);
-    } catch {} finally { setCancelling(false); }
-  };
-
-  const handleSendAdHocBot = async () => {
-    if (!adHocLink.trim() || adHocBotSending) return;
-    setAdHocBotSending(true);
-    try {
-      const res = await fetch('/api/meetings/bot/adhoc', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          meetingUrl: adHocLink.trim(),
-          calendarEventId: noteIdRef.current ?? undefined,
-          title: adHocTitle || 'Ad-hoc meeting',
-        }),
-      });
-      if (res.ok) {
-        const nid = noteIdRef.current;
-        if (nid) setBotSession(nid, { sentAt: new Date().toISOString(), status: 'sent' });
-        setAdHocBotSent(true);
-        setAdHocBotStatus('sent');
-        adHocBotPollCountRef.current = 0;
-        onNoteRowCreated?.();
-      }
-    } catch {} finally {
-      setAdHocBotSending(false);
-    }
-  };
-
   const handleCopyLink = async () => {
     if (!event?.meeting_link) return;
     await navigator.clipboard.writeText(event.meeting_link);
@@ -744,17 +611,6 @@ const handleRetry = async () => {
     } catch {} finally { setReanalyzing(false); }
   };
 
-  const saveBotLiveNotes = useCallback((notes: string, transcriptId: string) => {
-    if (botLiveNotesTimerRef.current) clearTimeout(botLiveNotesTimerRef.current);
-    botLiveNotesTimerRef.current = setTimeout(() => {
-      fetch(`/api/meetings/recording/${transcriptId}/live-notes`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ liveNotes: notes }),
-      }).catch(() => {});
-    }, 1500);
-  }, []);
-
   const handleDelete = async () => {
     if (!event) return;
     setDeleting(true);
@@ -795,8 +651,6 @@ const handleRetry = async () => {
   // Derived
   const isAfterStart = event ? new Date(event.start_time).getTime() <= Date.now() : true;
   const hasGoogleMeetLink = !!event?.meeting_link?.includes('meet.google.com');
-  const adHocHasLink = adHocLink.includes('meet.google.com');
-
   const { primary } = !isAdHoc && event ? formatMeetingTime(event.start_time, event.end_time) : { primary: '' };
   const duration = !isAdHoc && event ? calculateDuration(event.start_time, event.end_time) : 0;
 
@@ -859,39 +713,6 @@ const handleRetry = async () => {
               placeholder="Meeting title"
               className="w-full text-xl font-semibold text-neutral-900 outline-none placeholder:text-neutral-300 bg-transparent"
             />
-            {!noteProcessing && <div className="flex items-center gap-2">
-              <input
-                ref={linkInputRef}
-                type="text"
-                value={adHocLink}
-                onChange={(e) => { if (!adHocBotSent) setAdHocLink(e.target.value); }}
-                readOnly={adHocBotSent}
-                placeholder="Meeting link (optional — for sending assistant)"
-                className={`flex-1 text-[12px] text-blue-600 outline-none bg-transparent placeholder:text-neutral-300 rounded transition-all duration-300 ${linkFlash ? 'ring-2 ring-indigo-400 bg-indigo-50 px-1' : ''}`}
-              />
-              {adHocBotSent && adHocBotStatus === 'sent' ? (
-                <span className="flex items-center gap-1.5 text-[12px] text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-full font-medium flex-shrink-0">
-                  <ComputerDesktopIcon className="w-3 h-3" />
-                  Assistant joining…
-                </span>
-              ) : !adHocBotSent ? (
-                <button
-                  onClick={() => {
-                    if (adHocLink.trim()) handleSendAdHocBot();
-                    else { setLinkFlash(true); linkInputRef.current?.focus(); setTimeout(() => setLinkFlash(false), 1200); }
-                  }}
-                  disabled={adHocBotSending}
-                  className={`flex items-center gap-1.5 px-2.5 py-1 text-[12px] font-medium rounded-full transition-colors flex-shrink-0 ${
-                    adHocLink.trim()
-                      ? 'text-white bg-indigo-600 hover:bg-indigo-700'
-                      : 'text-neutral-400 bg-neutral-100 opacity-60 cursor-not-allowed'
-                  }`}
-                >
-                  <ComputerDesktopIcon className="w-3 h-3" />
-                  {adHocBotSending ? 'Sending…' : 'Send assistant'}
-                </button>
-              ) : null}
-            </div>}
           </div>
         ) : (
           /* Scheduled: pre-filled header */
@@ -981,7 +802,7 @@ const handleRetry = async () => {
               )}
               {transcript && (
                 <span className="text-[11px] text-neutral-400 bg-neutral-100 px-2 py-0.5 rounded">
-                  {transcript.source === 'bot' ? 'Online' : transcript.source === 'recording' ? 'In-person' : transcript.source === 'text' ? 'Note' : 'Upload'}
+                  {transcript.source === 'recording' ? 'In-person' : transcript.source === 'text' ? 'Note' : 'Upload'}
                 </span>
               )}
             </div>
@@ -1016,44 +837,20 @@ const handleRetry = async () => {
       {transcript && !transcript.processed && transcript.botState !== 'failed' && (
         <div className="mb-6">
           <ProcessingPipeline
-            source={(transcript.source ?? 'bot') as 'bot' | 'recording' | 'upload' | 'text'}
+            source={(transcript.source ?? 'recording') as 'recording' | 'upload' | 'text'}
             attendeeBotState={null}
             botState={transcript.botState}
             processed={transcript.processed}
           />
-          {/* Retry for stuck text/recording notes */}
-          {(transcript.source === 'text' || transcript.source === 'recording' || transcript.source === 'upload') && (
-            <div className="mt-2 flex justify-end">
-              <button
-                onClick={handleRetry}
-                disabled={retrying}
-                className="text-[11px] text-neutral-400 hover:text-indigo-600 transition-colors disabled:opacity-50"
-              >
-                {retrying ? 'Retrying…' : 'Stuck? Retry analysis →'}
-              </button>
-            </div>
-          )}
-          {/* Live note-taking while bot is recording; read-only once transcribing */}
-          {(transcript.botState === 'recording' || transcript.botState === 'joining') ? (
-            <div className="mt-3 px-4 py-3 bg-neutral-50 border border-neutral-100 rounded-lg">
-              <p className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wide mb-2">Your notes</p>
-              <textarea
-                value={botLiveNotes}
-                onChange={(e) => {
-                  setBotLiveNotes(e.target.value);
-                  saveBotLiveNotes(e.target.value, transcript.id);
-                }}
-                placeholder="Jot down key points while the assistant records…"
-                rows={4}
-                className="w-full text-[13px] text-neutral-700 leading-relaxed outline-none placeholder:text-neutral-400 bg-transparent resize-none"
-              />
-            </div>
-          ) : botLiveNotes ? (
-            <div className="mt-3 px-4 py-3 bg-neutral-50 border border-neutral-100 rounded-b-lg">
-              <p className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wide mb-2">Your notes</p>
-              <p className="text-[13px] text-neutral-600 leading-relaxed whitespace-pre-wrap">{botLiveNotes}</p>
-            </div>
-          ) : null}
+          <div className="mt-2 flex justify-end">
+            <button
+              onClick={handleRetry}
+              disabled={retrying}
+              className="text-[11px] text-neutral-400 hover:text-indigo-600 transition-colors disabled:opacity-50"
+            >
+              {retrying ? 'Retrying…' : 'Stuck? Retry analysis →'}
+            </button>
+          </div>
         </div>
       )}
 
@@ -1138,110 +935,31 @@ const handleRetry = async () => {
             <span className="text-[12px] text-neutral-400 mr-0.5">{timeUntil(event!.start_time)}</span>
           )}
 
-          {/* Schedule assistant — before start, has Google Meet link */}
-          {!isAdHoc && hasGoogleMeetLink && !isAfterStart && (
-            botScheduled ? (
-              <span className="flex items-center gap-1.5">
-                <span className="text-[12px] text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-full font-medium flex items-center gap-1.5">
-                  <ComputerDesktopIcon className="w-3 h-3" />
-                  Assistant scheduled
-                </span>
-                <button
-                  onClick={handleCancelAssistant}
-                  disabled={cancelling}
-                  className="text-[11px] text-neutral-400 hover:text-red-500 transition-colors disabled:opacity-50"
-                  title="Cancel assistant"
-                >
-                  {cancelling ? '…' : 'Cancel'}
-                </button>
-              </span>
-            ) : (
-              <button
-                onClick={handleScheduleAssistant}
-                disabled={scheduling}
-                className="flex items-center gap-1.5 px-2.5 py-1 text-[12px] font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 rounded-full transition-colors"
-              >
-                <ComputerDesktopIcon className="w-3 h-3" />
-                {scheduling ? 'Scheduling…' : 'Schedule assistant'}
-              </button>
-            )
-          )}
+          {/* Record in person */}
+          <button
+            onClick={async () => {
+              const resolvedNoteId = await flushNoteSave();
+              onStartRecording?.(
+                isAdHoc ? (adHocTitle || 'Ad-hoc meeting') : (event?.title ?? 'Meeting'),
+                isAdHoc ? undefined : event?.id,
+                resolvedNoteId ?? undefined,
+              );
+            }}
+            className="flex items-center gap-1.5 px-2.5 py-1 text-[12px] font-medium text-neutral-700 bg-neutral-100 hover:bg-neutral-200 rounded-full transition-colors"
+          >
+            <MicrophoneIcon className="w-3 h-3" />
+            Record in person
+          </button>
 
-          {/* Send assistant — after start, has Google Meet link (scheduled) */}
-          {!isAdHoc && hasGoogleMeetLink && isAfterStart && !botScheduled && (
-            <button
-              onClick={handleScheduleAssistant}
-              disabled={scheduling}
-              className="flex items-center gap-1.5 px-2.5 py-1 text-[12px] font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 rounded-full transition-colors"
-            >
-              <ComputerDesktopIcon className="w-3 h-3" />
-              {scheduling ? 'Sending…' : 'Send assistant'}
-            </button>
-          )}
-          {!isAdHoc && hasGoogleMeetLink && isAfterStart && botScheduled && (
-            <span className="text-[12px] text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-full font-medium flex items-center gap-1.5">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse flex-shrink-0" />
-              {event?.attendee_bot_state === 'joining' ? 'Assistant joining…'
-                : event?.attendee_bot_state === 'recording' ? 'Assistant in meeting'
-                : 'Assistant scheduled'}
-            </span>
-          )}
-
-
-          {/* Bot status indicator — replaces Record + Finish while bot is active */}
-          {adHocBotActive && adHocBotStatus === 'sent' && (
-            <span className="flex items-center gap-1.5 text-[12px] font-medium text-amber-700 bg-amber-50 px-2.5 py-1 rounded-full">
-              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse flex-shrink-0" />
-              Assistant joining in ~30s
-            </span>
-          )}
-          {adHocBotActive && adHocBotStatus === 'in_meeting' && (
-            <span className="flex items-center gap-1.5 text-[12px] font-medium text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse flex-shrink-0" />
-              Assistant in meeting — write live notes below
-            </span>
-          )}
-          {adHocBotActive && adHocBotStatus === 'processing' && (
-            <span className="flex items-center gap-1.5 text-[12px] font-medium text-neutral-500 bg-neutral-100 px-2.5 py-1 rounded-full">
-              <span className="w-3 h-3 rounded-full border-2 border-neutral-300 border-t-neutral-500 animate-spin flex-shrink-0" />
-              Transcribing…
-            </span>
-          )}
-
-          {/* Bot failure fallback — reappears after 2-minute timeout */}
-          {adHocBotFailed && (
-            <span className="text-[12px] text-amber-700 bg-amber-50 px-2.5 py-1 rounded-full">
-              Bot didn&apos;t join —
-            </span>
-          )}
-
-          {/* Record in person — hidden while bot is active (ad-hoc or scheduled) */}
-          {!adHocBotActive && !botScheduled && (
-            <button
-              onClick={async () => {
-                const resolvedNoteId = await flushNoteSave();
-                onStartRecording?.(
-                  isAdHoc ? (adHocTitle || 'Ad-hoc meeting') : (event?.title ?? 'Meeting'),
-                  isAdHoc ? undefined : event?.id,
-                  resolvedNoteId ?? undefined,
-                );
-              }}
-              className="flex items-center gap-1.5 px-2.5 py-1 text-[12px] font-medium text-neutral-700 bg-neutral-100 hover:bg-neutral-200 rounded-full transition-colors"
-            >
-              <MicrophoneIcon className="w-3 h-3" />
-              Record in person
-            </button>
-          )}
-
-          {/* Finish — triggers AI analysis. Hidden while bot is active. */}
-          {(noteBody.trim() || adHocTitle.trim() || (isDraftNote && event?.id === transcript?.id)) && !adHocBotActive && !botScheduled && (
+          {/* Finish — triggers AI analysis */}
+          {(noteBody.trim() || adHocTitle.trim() || (isDraftNote && event?.id === transcript?.id)) && (
             <button
               onClick={handleProcessNote}
               disabled={noteProcessing}
               className="flex items-center gap-1.5 px-2.5 py-1 text-[12px] font-medium text-indigo-600 border border-indigo-200 hover:bg-indigo-50 disabled:opacity-50 rounded-full transition-colors"
             >
               <SparklesIcon className="w-3 h-3" />
-              {noteProcessing ? 'Processing…' : adHocBotFailed ? 'Finish (process notes)' : 'Finish'}
+              {noteProcessing ? 'Processing…' : 'Finish'}
             </button>
           )}
         </div>
@@ -1260,9 +978,7 @@ const handleRetry = async () => {
               setNoteBody(e.target.value);
               debouncedNoteBodySave(e.target.value);
             }}
-            placeholder={adHocBotSent
-              ? 'Jot live notes — they\'ll be combined with the transcript when the meeting ends…'
-              : isAdHoc
+            placeholder={isAdHoc
               ? 'Write what was discussed, decided, or any action items…'
               : 'Jot down key points before or during the meeting…'}
             rows={5}

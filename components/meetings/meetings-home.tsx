@@ -1,11 +1,9 @@
 'use client';
 
 import { useMemo, useState, useEffect } from 'react';
-import { getBotSession, type BotSessionStatus } from '@/lib/meetings/bot-session';
 import {
   MicrophoneIcon,
   DocumentTextIcon,
-  ComputerDesktopIcon,
   XMarkIcon,
   ArrowPathIcon,
   CheckIcon,
@@ -106,7 +104,6 @@ function AttendeeAvatars({ attendees }: { attendees: Array<{ email: string; name
 }
 
 function SourceIcon({ source }: { source: string }) {
-  if (source === 'bot') return <ComputerDesktopIcon className="w-4 h-4 text-violet-400" />;
   if (source === 'recording') return <MicrophoneIcon className="w-4 h-4 text-red-400" />;
   return <DocumentTextIcon className="w-4 h-4 text-blue-400" />;
 }
@@ -114,18 +111,7 @@ function SourceIcon({ source }: { source: string }) {
 function progressStatus(t: Transcript): { label: string; pulse: boolean } {
   if (t.source === 'recording') return { label: 'Transcribing recording…', pulse: true };
   if (t.source === 'text') return { label: 'Processing notes…', pulse: true };
-  if (t.botState === 'scheduled') return { label: 'Assistant scheduled', pulse: false };
-  if (t.botState === 'joining') return { label: 'Bot joining meeting…', pulse: true };
-  if (t.botState === 'recording') return { label: 'Bot recording…', pulse: true };
-  if (t.botState === 'processing') return { label: 'Transcribing…', pulse: true };
   return { label: 'Processing…', pulse: true };
-}
-
-function BotStateBadge({ state }: { state?: string | null }) {
-  if (state === 'scheduled') return <span className="text-[10px] font-medium text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded">Scheduled</span>;
-  if (state === 'joining') return <span className="text-[10px] font-medium text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded">Joining…</span>;
-  if (state === 'recording') return <span className="text-[10px] font-medium text-red-600 bg-red-50 px-1.5 py-0.5 rounded animate-pulse">Recording</span>;
-  return null;
 }
 
 export default function MeetingsHome({
@@ -139,8 +125,6 @@ export default function MeetingsHome({
 }: MeetingsHomeProps) {
   const [retryingIds, setRetryingIds] = useState<Set<string>>(new Set());
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-  // Bot session statuses for draft text notes — read from localStorage
-  const [botSessions, setBotSessions] = useState<Map<string, BotSessionStatus>>(new Map());
   const now = new Date();
   const todayStr = now.toDateString();
   const tomorrowStr = new Date(now.getTime() + 86400000).toDateString();
@@ -160,47 +144,20 @@ export default function MeetingsHome({
     return { label, events };
   }, [upcoming]); // eslint-disable-line
 
-  // Read bot session statuses from localStorage for draft text notes in the Live section.
-  // Re-reads whenever transcripts change (new note appears, status updates on return).
-  useEffect(() => {
-    const map = new Map<string, BotSessionStatus>();
-    for (const t of transcripts) {
-      if (t.source !== 'text' || t.hasDocument || t.summary) continue;
-      const session = getBotSession(t.id);
-      if (session && session.status !== 'done' && session.status !== 'failed') {
-        map.set(t.id, session.status);
-      }
-    }
-    setBotSessions(map);
-  }, [transcripts]);
-
-  // Live: bot currently in meeting OR draft text note (saved but AI not yet run)
+  // Live: draft text note (saved but AI not yet run)
   const live = useMemo(() => {
-    // Hide text notes whose ID is already referenced by a linked bot/recording transcript
-    const linkedNoteIds = new Set(
-      transcripts.filter(t => t.source !== 'text' && t.calendarEventId).map(t => t.calendarEventId!)
-    );
     const items = transcripts.filter((t) =>
-      // Bot actively joining/recording — user can still take notes
-      (t.source === 'bot' && !t.processed && (t.botState === 'recording' || t.botState === 'joining')) ||
-      // Draft text note — only if no linked bot transcript has taken over
-      (!linkedNoteIds.has(t.id) && t.source === 'text' && t.processed && !t.hasDocument && !t.summary && t.botState !== 'failed')
+      t.source === 'text' && t.processed && !t.hasDocument && !t.summary && t.botState !== 'failed'
     );
     return items.sort((a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime());
   }, [transcripts]);
 
-  // In-progress transcripts — AI processing phase only (bot left / recording uploaded)
-  // Excludes bot recording/joining (those are in Live) and draft text notes.
-  // Deduplicate by calendarEventId: keep highest-priority source (recording > bot > upload > text).
+    // In-progress transcripts — AI processing phase (recording uploaded, text note processing)
   const inProgress = useMemo(() => {
     const all = transcripts
-      .filter((t) =>
-        !t.processed && t.botState !== 'failed' &&
-        // Exclude bot recording/joining — those show in Live
-        !(t.source === 'bot' && (t.botState === 'recording' || t.botState === 'joining'))
-      )
+      .filter((t) => !t.processed && t.botState !== 'failed')
       .sort((a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime());
-    const sourcePriority: Record<string, number> = { recording: 3, bot: 2, upload: 1, text: 0 };
+    const sourcePriority: Record<string, number> = { recording: 3, upload: 1, text: 0 };
     const seen = new Map<string, Transcript>();
     for (const t of all) {
       const key = t.calendarEventId ?? t.id;
@@ -288,7 +245,6 @@ export default function MeetingsHome({
                 </div>
                 {/* Badge + CTA */}
                 <div className="flex items-center gap-2 flex-shrink-0">
-                  <BotStateBadge state={event.attendee_bot_state} />
                   <span className="text-[11px] font-medium text-indigo-600">Prepare →</span>
                 </div>
               </button>
@@ -297,18 +253,15 @@ export default function MeetingsHome({
         </section>
       )}
 
-      {/* ── Live — bot recording or open draft note ── */}
+      {/* ── Live — open draft note ── */}
       {live.length > 0 && (
         <section className="mb-8">
           <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-3">Live</h2>
           <div className="space-y-0.5">
-            {live.map((t) => {
-              const isBot = t.source === 'bot';
-              const isDraft = t.source === 'text';
-              return (
+            {live.map((t) => (
                 <div key={t.id} className="group/lv relative flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-neutral-50 transition-colors">
                   <button
-                    onClick={() => onSelectMeeting(t.source === 'bot' && t.processed ? t.id : (t.calendarEventId ?? t.id))}
+                    onClick={() => onSelectMeeting(t.calendarEventId ?? t.id)}
                     className="flex items-center gap-3 flex-1 min-w-0 text-left"
                   >
                     <div className="w-8 h-8 rounded-lg bg-neutral-100 flex items-center justify-center flex-shrink-0">
@@ -317,41 +270,8 @@ export default function MeetingsHome({
                     <div className="flex-1 min-w-0">
                       <p className="text-[13px] font-medium text-neutral-800 truncate">{t.title || 'Untitled meeting'}</p>
                       <div className="flex items-center gap-1.5 mt-0.5">
-                        {isBot && (
-                          <>
-                            <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse flex-shrink-0" />
-                            <span className="text-[11px] text-neutral-400">
-                              {t.botState === 'joining' ? 'Bot joining…' : 'Bot recording'}
-                            </span>
-                          </>
-                        )}
-                        {isDraft && (() => {
-                          const botStatus = botSessions.get(t.id);
-                          if (botStatus === 'sent') return (
-                            <>
-                              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse flex-shrink-0" />
-                              <span className="text-[11px] text-amber-600">Joining soon</span>
-                            </>
-                          );
-                          if (botStatus === 'in_meeting') return (
-                            <>
-                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse flex-shrink-0" />
-                              <span className="text-[11px] text-emerald-600">In meeting</span>
-                            </>
-                          );
-                          if (botStatus === 'processing') return (
-                            <>
-                              <span className="w-2.5 h-2.5 rounded-full border-2 border-neutral-300 border-t-neutral-500 animate-spin flex-shrink-0" />
-                              <span className="text-[11px] text-neutral-500">Transcribing</span>
-                            </>
-                          );
-                          return (
-                            <>
-                              <span className="w-1.5 h-1.5 rounded-full bg-blue-400 flex-shrink-0" />
-                              <span className="text-[11px] text-neutral-400">Open note</span>
-                            </>
-                          );
-                        })()}
+                        <span className="w-1.5 h-1.5 rounded-full bg-blue-400 flex-shrink-0" />
+                        <span className="text-[11px] text-neutral-400">Open note</span>
                       </div>
                     </div>
                     <span className="text-[11px] text-neutral-400 flex-shrink-0 mr-1">
@@ -386,8 +306,7 @@ export default function MeetingsHome({
                     </button>
                   )}
                 </div>
-              );
-            })}
+            ))}
           </div>
         </section>
       )}
@@ -402,7 +321,7 @@ export default function MeetingsHome({
               return (
                 <div key={t.id} className="group/ip relative flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-neutral-50 transition-colors">
                   <button
-                    onClick={() => onSelectMeeting(t.source === 'bot' && t.processed ? t.id : (t.calendarEventId ?? t.id))}
+                    onClick={() => onSelectMeeting(t.calendarEventId ?? t.id)}
                     className="flex items-center gap-3 flex-1 min-w-0 text-left"
                   >
                     <div className="w-8 h-8 rounded-lg bg-neutral-100 flex items-center justify-center flex-shrink-0">
@@ -536,7 +455,7 @@ export default function MeetingsHome({
                   return (
                     <button
                       key={t.id}
-                      onClick={() => onSelectMeeting(t.source === 'bot' && t.processed ? t.id : (t.calendarEventId ?? t.id))}
+                      onClick={() => onSelectMeeting(t.calendarEventId ?? t.id)}
                       className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-neutral-50 transition-colors text-left"
                     >
                       <div className="w-8 h-8 rounded-lg bg-neutral-100 flex items-center justify-center flex-shrink-0">

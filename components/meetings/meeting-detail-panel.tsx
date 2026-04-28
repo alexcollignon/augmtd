@@ -46,9 +46,6 @@ interface MeetingDetailPanelProps {
   isOpen: boolean;
   onClose: () => void;
   onRefresh?: () => void;
-  botState?: string | null;
-  onScheduled?: (eventId: string) => void;
-  onCancelled?: (eventId: string) => void;
   onEdit?: () => void;
   onDelete?: () => void;
 }
@@ -101,9 +98,6 @@ export default function MeetingDetailPanel({
   isOpen,
   onClose,
   onRefresh,
-  botState: botStateProp,
-  onScheduled,
-  onCancelled,
   onEdit,
   onDelete,
 }: MeetingDetailPanelProps) {
@@ -111,11 +105,7 @@ export default function MeetingDetailPanel({
   const { primary } = formatMeetingTime(event.start_time, event.end_time);
   const duration = calculateDuration(event.start_time, event.end_time);
   const vipAttendees = getVIPAttendees(event.attendees);
-  const botState = botStateProp ?? event.attendee_bot_state ?? null;
-  const isMeet = !!event.meeting_link?.includes('meet.google.com');
   const isUpcoming = event.meeting_status !== 'completed';
-  const [schedulingBot, setSchedulingBot] = useState(false);
-  const [cancellingBot, setCancellingBot] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
@@ -243,7 +233,7 @@ export default function MeetingDetailPanel({
                             className="flex items-center gap-1.5 text-[13px] font-medium text-blue-600 hover:text-blue-700 transition-colors"
                           >
                             <VideoCameraIcon className="w-3.5 h-3.5" />
-                            {isMeet ? 'Join with Google Meet' : 'Join meeting'}
+                            Join meeting
                           </button>
                           <CopyLinkButton link={event.meeting_link} />
                         </div>
@@ -290,87 +280,6 @@ export default function MeetingDetailPanel({
                               ✦ {vipAttendees.length} VIP {vipAttendees.length === 1 ? 'attendee' : 'attendees'}
                             </div>
                           )}
-                        </div>
-                      )}
-
-                      {/* Meeting assistant — Google Meet + upcoming */}
-                      {isMeet && isUpcoming && (
-                        <div className="px-5 py-4 border-b border-neutral-100">
-                          <p className="text-[11px] font-medium text-neutral-400 mb-2.5 uppercase tracking-wide">Assistant</p>
-                          <div onClick={e => e.stopPropagation()}>
-                            {botState === 'joining' ? (
-                              <span className="inline-flex items-center gap-1.5 text-[12px] font-medium text-amber-600">
-                                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
-                                Joining meeting…
-                              </span>
-                            ) : botState === 'recording' ? (
-                              <span className="inline-flex items-center gap-1.5 text-[12px] font-medium text-red-600">
-                                <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
-                                Recording
-                              </span>
-                            ) : botState === 'done' ? (
-                              <span className="text-[12px] text-neutral-400">● Transcribed</span>
-                            ) : botState === 'cancelled' ? (
-                              schedulingBot ? (
-                                <span className="text-[12px] text-neutral-400 animate-pulse">Scheduling…</span>
-                              ) : (
-                                <button
-                                  onClick={async () => {
-                                    setSchedulingBot(true);
-                                    try {
-                                      const res = await fetch(`/api/meetings/${event.id}/enable-bot`, { method: 'POST' });
-                                      if (res.ok) onScheduled?.(event.id);
-                                      else setSchedulingBot(false);
-                                    } catch { setSchedulingBot(false); }
-                                  }}
-                                  className="text-[12px] text-neutral-500 hover:text-indigo-600 transition-colors"
-                                >
-                                  ↺ Re-enable assistant
-                                </button>
-                              )
-                            ) : botState === 'scheduled' ? (
-                              cancellingBot ? (
-                                <span className="text-[12px] text-neutral-400 animate-pulse">Removing…</span>
-                              ) : (
-                                <div className="flex items-center justify-between">
-                                  <span className="inline-flex items-center gap-1.5 text-[12px] font-medium text-emerald-600">
-                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                                    Assistant scheduled
-                                  </span>
-                                  <button
-                                    onClick={async () => {
-                                      setCancellingBot(true);
-                                      let ok = false;
-                                      try {
-                                        const res = await fetch(`/api/meetings/${event.id}/cancel-bot`, { method: 'DELETE' });
-                                        ok = res.ok;
-                                      } finally { setCancellingBot(false); }
-                                      if (ok) { setSchedulingBot(false); onCancelled?.(event.id); }
-                                    }}
-                                    className="text-[11px] text-neutral-400 hover:text-red-500 transition-colors"
-                                  >
-                                    Remove
-                                  </button>
-                                </div>
-                              )
-                            ) : schedulingBot ? (
-                              <span className="text-[12px] text-neutral-400 animate-pulse">Scheduling…</span>
-                            ) : (
-                              <button
-                                onClick={async () => {
-                                  setSchedulingBot(true);
-                                  try {
-                                    const res = await fetch(`/api/meetings/${event.id}/schedule-bot`, { method: 'POST' });
-                                    if (res.ok) onScheduled?.(event.id);
-                                    else setSchedulingBot(false);
-                                  } catch { setSchedulingBot(false); }
-                                }}
-                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[12px] font-medium text-indigo-600 bg-indigo-50 hover:bg-indigo-100 transition-colors"
-                              >
-                                + Send assistant to meeting
-                              </button>
-                            )}
-                          </div>
                         </div>
                       )}
 

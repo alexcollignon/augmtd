@@ -12,21 +12,14 @@ import NewMeetingModal from './new-meeting-modal';
 interface MeetingCardProps {
   event: CalendarEvent;
   userEmail: string;
-  botState?: string | null;
-  onScheduled?: (eventId: string) => void;
-  onCancelled?: (eventId: string) => void;
   onRefresh?: () => void;
 }
 
-export default function MeetingCard({ event, userEmail, botState: botStateProp, onScheduled, onCancelled, onRefresh }: MeetingCardProps) {
+export default function MeetingCard({ event, userEmail, onRefresh }: MeetingCardProps) {
   const [showDetail, setShowDetail] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
-  const [schedulingBot, setSchedulingBot] = useState(false);
-  const [cancellingBot, setCancellingBot] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
-
-  const botState = botStateProp ?? event.attendee_bot_state ?? null;
 
   const { primary } = formatMeetingTime(event.start_time, event.end_time);
   const duration = calculateDuration(event.start_time, event.end_time);
@@ -177,85 +170,6 @@ export default function MeetingCard({ event, userEmail, botState: botStateProp, 
             </div>
           </div>
 
-          {/* Bot controls — Google Meet + upcoming only */}
-          {isMeet && isUpcoming && (
-            <div className="mt-1.5" onClick={(e) => e.stopPropagation()}>
-              {botState === 'joining' ? (
-                <span className="inline-flex items-center gap-1 text-[10px] font-medium text-amber-600">
-                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
-                  Joining…
-                </span>
-              ) : botState === 'recording' ? (
-                <span className="inline-flex items-center gap-1 text-[10px] font-medium text-red-600">
-                  <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
-                  Recording
-                </span>
-              ) : botState === 'done' ? (
-                <span className="text-[10px] text-neutral-300">● Transcribed</span>
-              ) : botState === 'cancelled' ? (
-                schedulingBot ? (
-                  <span className="text-[10px] text-neutral-400 animate-pulse">Scheduling…</span>
-                ) : (
-                  <button
-                    onClick={async (e) => {
-                      e.preventDefault();
-                      setSchedulingBot(true);
-                      try {
-                        const res = await fetch(`/api/meetings/${event.id}/enable-bot`, { method: 'POST' });
-                        if (res.ok) onScheduled?.(event.id);
-                        else setSchedulingBot(false);
-                      } catch { setSchedulingBot(false); }
-                    }}
-                    className="text-[10px] text-neutral-400 hover:text-indigo-500 transition-colors"
-                  >
-                    ↺ Re-enable assistant
-                  </button>
-                )
-              ) : botState === 'scheduled' ? (
-                cancellingBot ? (
-                  <span className="text-[10px] text-neutral-400 animate-pulse">Removing…</span>
-                ) : (
-                  <span className="group/bot inline-flex items-center gap-1.5 text-[10px] font-medium text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                    Assistant scheduled
-                    <button
-                      onClick={async (e) => {
-                        e.preventDefault();
-                        setCancellingBot(true);
-                        let ok = false;
-                        try {
-                          const res = await fetch(`/api/meetings/${event.id}/cancel-bot`, { method: 'DELETE' });
-                          ok = res.ok;
-                        } finally { setCancellingBot(false); }
-                        if (ok) { setSchedulingBot(false); onCancelled?.(event.id); }
-                      }}
-                      className="opacity-0 group-hover/bot:opacity-100 text-neutral-400 hover:text-red-500 transition-all leading-none"
-                      title="Remove assistant"
-                    >
-                      ×
-                    </button>
-                  </span>
-                )
-              ) : schedulingBot ? (
-                <span className="text-[10px] text-neutral-400 animate-pulse">Scheduling…</span>
-              ) : (
-                <button
-                  onClick={async (e) => {
-                    e.preventDefault();
-                    setSchedulingBot(true);
-                    try {
-                      const res = await fetch(`/api/meetings/${event.id}/schedule-bot`, { method: 'POST' });
-                      if (res.ok) onScheduled?.(event.id);
-                      else setSchedulingBot(false);
-                    } catch { setSchedulingBot(false); }
-                  }}
-                  className="inline-flex items-center gap-1 text-[10px] font-medium text-indigo-500 bg-indigo-50 px-2 py-0.5 rounded-full hover:bg-indigo-100 transition-colors"
-                >
-                  + Send assistant
-                </button>
-              )}
-            </div>
-          )}
         </div>
       </article>
 
@@ -265,9 +179,6 @@ export default function MeetingCard({ event, userEmail, botState: botStateProp, 
         isOpen={showDetail}
         onClose={() => setShowDetail(false)}
         onRefresh={onRefresh}
-        botState={botState}
-        onScheduled={onScheduled}
-        onCancelled={onCancelled}
         onEdit={isUpcoming ? () => { setShowDetail(false); setShowEdit(true); } : undefined}
         onDelete={isUpcoming ? () => { setShowDetail(false); onRefresh?.(); } : undefined}
       />

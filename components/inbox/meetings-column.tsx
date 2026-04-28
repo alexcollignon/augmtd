@@ -26,12 +26,8 @@ interface MeetingsColumnProps {
 export default function MeetingsColumn({ isOpen, onToggle, meetings, loading, userEmail, onRefresh, onChatOpen }: MeetingsColumnProps) {
   const [showNewForm, setShowNewForm] = useState(false);
   const [initialDate, setInitialDate] = useState<Date | undefined>(undefined);
-  const [botStateMap, setBotStateMap] = useState<Map<string, string>>(new Map());
   const [calendarView, setCalendarView] = useState<'month' | 'week'>('month');
   const [weekClosing, setWeekClosing] = useState(false);
-
-  const handleScheduled = (eventId: string) => setBotStateMap(prev => new Map(prev).set(eventId, 'scheduled'));
-  const handleCancelled = (eventId: string) => setBotStateMap(prev => new Map(prev).set(eventId, 'cancelled'));
 
   const closeWeekView = () => {
     setWeekClosing(true);
@@ -61,9 +57,6 @@ export default function MeetingsColumn({ isOpen, onToggle, meetings, loading, us
           <WeekCalendar
             meetings={meetings}
             userEmail={userEmail}
-            botStateMap={botStateMap}
-            onScheduled={handleScheduled}
-            onCancelled={handleCancelled}
             onRefresh={onRefresh}
             onNewMeeting={(date) => { setInitialDate(date); setShowNewForm(true); }}
           />
@@ -161,9 +154,6 @@ export default function MeetingsColumn({ isOpen, onToggle, meetings, loading, us
             <CalendarSidebar
               meetings={meetings}
               userEmail={userEmail}
-              botStateMap={botStateMap}
-              onScheduled={handleScheduled}
-              onCancelled={handleCancelled}
               onRefresh={onRefresh}
               onNewMeeting={(date) => { setInitialDate(date); setShowNewForm(true); }}
             />

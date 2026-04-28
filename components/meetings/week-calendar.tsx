@@ -4,7 +4,6 @@ import { useState, useEffect, useRef } from 'react';
 import { ChevronLeftIcon, ChevronRightIcon, XMarkIcon, VideoCameraIcon, PencilSquareIcon, TrashIcon, MapPinIcon, CalendarIcon } from '@heroicons/react/24/outline';
 import { toast } from 'sonner';
 import type { CalendarEvent } from '@/lib/types/meetings';
-import { getDotColor } from './month-calendar';
 import { isUserOrganizer, formatMeetingTime, calculateDuration } from '@/lib/types/meetings';
 import NewMeetingModal from './new-meeting-modal';
 import AttendeeInput, { type AttendeeChip } from './attendee-input';
@@ -22,9 +21,6 @@ type Connection = { id: string; provider: string; email?: string };
 interface WeekCalendarProps {
   meetings: CalendarEvent[];
   userEmail: string;
-  botStateMap: Map<string, string>;
-  onScheduled: (eventId: string) => void;
-  onCancelled: (eventId: string) => void;
   onRefresh?: () => void;
   onNewMeeting?: (date: Date) => void;
 }
@@ -430,9 +426,6 @@ function EventPopover({ event, userEmail, style, onClose, onEdit, onDeleted }: E
 export default function WeekCalendar({
   meetings,
   userEmail,
-  botStateMap,
-  onScheduled,
-  onCancelled,
   onRefresh,
 }: WeekCalendarProps) {
   const [weekOffset, setWeekOffset] = useState(0);
@@ -595,8 +588,6 @@ export default function WeekCalendar({
                     const top = (startMins / 60) * HOUR_HEIGHT;
                     const height = Math.max(20, (durationMins / 60) * HOUR_HEIGHT - 2);
                     const colors = eventColor(event, userEmail);
-                    const botState = botStateMap.get(event.id) ?? event.attendee_bot_state;
-                    const dotColor = getDotColor(event, userEmail);
 
                     return (
                       <div
@@ -615,9 +606,6 @@ export default function WeekCalendar({
                           {height > 32 && (
                             <p className="text-[10px] leading-tight opacity-70 truncate mt-0.5">
                               {startDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
-                              {botState && botState !== 'cancelled' && (
-                                <span className={`ml-1 inline-block w-1.5 h-1.5 rounded-full ${dotColor}`} />
-                              )}
                             </p>
                           )}
                         </div>
