@@ -43,7 +43,7 @@ export async function GET(
   // For ad-hoc transcripts (no calendar event), synthesize a minimal event object
   const resolvedEvent = event ?? (transcriptRaw ? {
     id: transcriptRaw.id,
-    title: (transcriptRaw as any).title ?? 'Ad-hoc meeting',
+    title: (transcriptRaw as any).title || 'Ad-hoc meeting',
     start_time: (transcriptRaw as any).start_time,
     end_time: (() => {
       const start = new Date((transcriptRaw as any).start_time);
