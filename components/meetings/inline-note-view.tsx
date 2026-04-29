@@ -9,9 +9,9 @@ import {
   ArrowLeftIcon,
   ArrowPathIcon,
   TrashIcon,
-  EnvelopeIcon,
   SparklesIcon,
   ChevronRightIcon,
+  ChevronDownIcon,
   XMarkIcon,
   ClipboardDocumentIcon,
   PaperAirplaneIcon,
@@ -273,6 +273,7 @@ export default function InlineNoteView({
   const [deleting, setDeleting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [teaserValue, setTeaserValue] = useState('');
+  const [showAttendees, setShowAttendees] = useState(false);
 
   const recording = useRecordingContext();
 
@@ -322,21 +323,22 @@ export default function InlineNoteView({
         setAdHocTitle(data.event.title || '');
       }
 
-      if (data.transcript?.processed && onMeetingContextReady) {
+      if (data.event && onMeetingContextReady) {
+        const processed = data.transcript?.processed ?? false;
         onMeetingContextReady({
           title: data.event.title,
           date: data.event.start_time,
-          durationMinutes: data.transcript.durationMinutes ?? undefined,
+          durationMinutes: processed ? (data.transcript!.durationMinutes ?? undefined) : undefined,
           attendees: (data.event.attendees ?? []).map((a: any) => a.name || a.email || '').filter(Boolean),
-          summary: data.transcript.summary ?? undefined,
-          decisions: data.transcript.decisions?.map((d: any) => d.text) ?? [],
-          actionItems: (data.actionItems ?? []).map((a: any) => ({
+          summary: processed ? (data.transcript!.summary ?? undefined) : undefined,
+          decisions: processed ? (data.transcript!.decisions?.map((d: any) => d.text) ?? []) : [],
+          actionItems: processed ? (data.actionItems ?? []).map((a: any) => ({
             text: a.workTitle,
             assignee: a.assignee ?? undefined,
             status: a.category,
-          })),
-          risks: (data.transcript.risks ?? []).map((r: any) => ({ description: r.text, severity: r.severity })),
-          suggestedNextStep: data.transcript.suggestedNextStep ?? undefined,
+          })) : [],
+          risks: processed ? (data.transcript!.risks ?? []).map((r: any) => ({ description: r.text, severity: r.severity })) : [],
+          suggestedNextStep: processed ? (data.transcript!.suggestedNextStep ?? undefined) : undefined,
         });
       }
     } catch {
@@ -753,15 +755,6 @@ const handleRetry = async () => {
               </h1>
             )}
               <div className="flex items-center gap-1.5 flex-shrink-0">
-                {transcript?.processed && onRequestChat && (
-                  <button
-                    onClick={() => onRequestChat(`Draft a follow-up email summarizing this meeting for all attendees: ${(event!.attendees ?? []).map((a: any) => a.name || a.email).filter(Boolean).join(', ')}`)}
-                    className="p-1.5 border border-neutral-200 rounded-md text-neutral-500 hover:bg-neutral-50 transition-colors"
-                    title="Draft follow-up email"
-                  >
-                    <EnvelopeIcon className="w-3.5 h-3.5" />
-                  </button>
-                )}
                 {transcript && !confirmDelete && (
                   <button
                     onClick={() => setConfirmDelete(true)}
@@ -815,23 +808,71 @@ const handleRetry = async () => {
 
             {/* Attendees */}
             {(event!.attendees?.length ?? 0) > 0 && (
-              <div className="mt-3 flex items-center gap-2">
-                <div className="flex -space-x-1.5">
-                  {event!.attendees.slice(0, 6).map((a: any, i: number) => {
-                    const key = a.email ?? a.name ?? String(i);
-                    const color = attendeeColor(key);
-                    return (
-                      <div key={i} title={a.email || a.name || '?'} className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-semibold ring-2 ring-white ${color}`}>
-                        {getInitials(a.name, a.email)}
-                      </div>
-                    );
-                  })}
-                </div>
-                <span className="text-[12px] text-neutral-500">
-                  {event!.attendees.length <= 3
-                    ? event!.attendees.map((a: any) => (a.name || a.email || '').split(/\s+/)[0]).join(', ')
-                    : `${event!.attendees.slice(0, 2).map((a: any) => (a.name || a.email || '').split(/\s+/)[0]).join(', ')} & ${event!.attendees.length - 2} others`}
-                </span>
+              <div className="mt-3">
+                <button
+                  onClick={() => setShowAttendees((v) => !v)}
+                  className="flex items-center gap-2 group"
+                >
+                  <div className="flex -space-x-1.5">
+                    {event!.attendees.slice(0, 6).map((a: any, i: number) => {
+                      const key = a.email ?? a.name ?? String(i);
+                      const color = attendeeColor(key);
+                      return (
+                        <div key={i} className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-semibold ring-2 ring-white ${color}`}>
+                          {getInitials(a.name, a.email)}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <span className="text-[12px] text-neutral-500 group-hover:text-neutral-700 transition-colors">
+                    {event!.attendees.length <= 3
+                      ? event!.attendees.map((a: any) => (a.name || a.email || '').split(/\s+/)[0]).join(', ')
+                      : `${event!.attendees.slice(0, 2).map((a: any) => (a.name || a.email || '').split(/\s+/)[0]).join(', ')} & ${event!.attendees.length - 2} others`}
+                  </span>
+                  <ChevronDownIcon className={`w-3 h-3 text-neutral-400 transition-transform duration-150 ${showAttendees ? 'rotate-180' : ''}`} />
+                </button>
+
+                {showAttendees && (() => {
+                  const getDomain = (email?: string | null) => {
+                    if (!email) return 'Unknown';
+                    const at = email.indexOf('@');
+                    return at >= 0 ? email.slice(at + 1) : 'Unknown';
+                  };
+                  const grouped = event!.attendees.reduce((acc: Record<string, any[]>, a: any) => {
+                    const domain = getDomain(a.email);
+                    if (!acc[domain]) acc[domain] = [];
+                    acc[domain].push(a);
+                    return acc;
+                  }, {} as Record<string, any[]>);
+                  return (
+                    <div className="mt-2 rounded-xl border border-neutral-100 bg-white shadow-sm overflow-hidden">
+                      {Object.entries(grouped).map(([domain, members], gi) => (
+                        <div key={domain}>
+                          {gi > 0 && <div className="border-t border-neutral-50" />}
+                          <div className="px-3 pt-2 pb-1">
+                            <p className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wide">{domain}</p>
+                          </div>
+                          {(members as any[]).map((a: any, i: number) => {
+                            const key = a.email ?? a.name ?? String(i);
+                            const color = attendeeColor(key);
+                            return (
+                              <div key={i} className="flex items-center gap-2.5 px-3 py-1.5">
+                                <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-semibold flex-shrink-0 ${color}`}>
+                                  {getInitials(a.name, a.email)}
+                                </div>
+                                <div className="min-w-0">
+                                  {a.name && <p className="text-[12px] font-medium text-neutral-800 truncate">{a.name}</p>}
+                                  {a.email && <p className={`truncate ${a.name ? 'text-[11px] text-neutral-400' : 'text-[12px] text-neutral-600'}`}>{a.email}</p>}
+                                </div>
+                              </div>
+                            );
+                          })}
+                          <div className="pb-1" />
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
               </div>
             )}
           </>
