@@ -45,6 +45,15 @@ interface MeetingInsights {
   keyMoments: KeyMoment[];
   risks: MeetingRisk[];
   suggested_next_step: string | null;
+  generatedTitle?: string | null;
+}
+
+const GENERIC_TITLES = new Set([
+  '', 'untitled note', 'untitled meeting', 'ad-hoc meeting', 'meeting', 'new note',
+]);
+
+function isGenericTitle(title: string): boolean {
+  return GENERIC_TITLES.has(title.trim().toLowerCase());
 }
 
 /**
@@ -324,6 +333,10 @@ export async function storeTranscriptAndGenerateWork(
     },
   };
 
+  if (insights.generatedTitle && isGenericTitle(title)) {
+    transcriptUpdate.title = insights.generatedTitle;
+  }
+
   const { error: finalUpdateError } = await supabase
     .from('meeting_transcripts')
     .update(transcriptUpdate)
@@ -492,6 +505,7 @@ ${transcriptText}
 Return a JSON object with exactly these fields:
 
 {
+  "generatedTitle": "3–6 word descriptive title capturing the meeting topic (e.g. 'Q2 Budget Review', 'Product Roadmap Alignment', 'Client Onboarding Call'). Use null only if the provided meeting title already describes the topic well.",
   "document": "<meeting note — see rules below>",
   "decisions": [
     { "text": "Concrete thing decided", "owner": "Name or null", "date": "YYYY-MM-DD or null" }
@@ -572,6 +586,7 @@ Rules for other fields:
       risks: parsed.risks ?? [],
       keyMoments: parsed.keyMoments ?? [],
       suggested_next_step: parsed.suggested_next_step ?? null,
+      generatedTitle: parsed.generatedTitle ?? null,
     };
   } catch (error) {
     console.error('[MeetingBot] Error extracting meeting insights:', error);

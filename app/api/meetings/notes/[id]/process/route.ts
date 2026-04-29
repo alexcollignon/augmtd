@@ -49,6 +49,10 @@ export async function POST(
     undefined, // no live notes for text notes — the text IS the notes
   );
 
+  const GENERIC_TITLES = new Set([
+    '', 'untitled note', 'untitled meeting', 'ad-hoc meeting', 'meeting', 'new note',
+  ]);
+
   // Update transcript with results
   const update: Record<string, any> = {
     processed: true,
@@ -64,6 +68,10 @@ export async function POST(
       live_notes: '',
     },
   };
+
+  if (insights.generatedTitle && GENERIC_TITLES.has(transcript.title?.trim().toLowerCase() ?? '')) {
+    update.title = insights.generatedTitle;
+  }
 
   await supabase
     .from('meeting_transcripts')
