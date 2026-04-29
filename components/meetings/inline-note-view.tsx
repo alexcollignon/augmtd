@@ -14,6 +14,7 @@ import {
   ChevronRightIcon,
   XMarkIcon,
   ClipboardDocumentIcon,
+  PaperAirplaneIcon,
 } from '@heroicons/react/24/outline';
 import type { MeetingChatContext } from '@/components/meetings/meeting-chat-sidebar';
 import { useRecordingContext } from '@/context/recording-context';
@@ -84,6 +85,7 @@ interface InlineNoteViewProps {
   onBack: () => void;
   onMeetingContextReady?: (ctx: MeetingChatContext) => void;
   onRequestChat?: (autoMessage?: string) => void;
+  chatIsOpen?: boolean;
   onCreated?: (id: string) => void;
   onNoteRowCreated?: () => void;
   onStartRecording?: (title: string, calendarEventId?: string, noteId?: string) => void;
@@ -215,6 +217,7 @@ export default function InlineNoteView({
   onBack,
   onMeetingContextReady,
   onRequestChat,
+  chatIsOpen,
   onCreated,
   onNoteRowCreated,
   onStartRecording,
@@ -269,6 +272,7 @@ export default function InlineNoteView({
   const [highlightedSegment, setHighlightedSegment] = useState<number | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [teaserValue, setTeaserValue] = useState('');
 
   const recording = useRecordingContext();
 
@@ -681,7 +685,8 @@ const handleRetry = async () => {
   })();
 
   return (
-    <div className="px-6 py-8 max-w-2xl mx-auto">
+    <div className="flex flex-col flex-1">
+    <div className="px-6 pt-8 pb-4 max-w-2xl mx-auto w-full flex-1">
 
       {/* Back */}
       <div className="flex items-center gap-2 mb-4">
@@ -1227,6 +1232,55 @@ const handleRetry = async () => {
           highlightedSegment={highlightedSegment}
         />
       )}
+
+    </div>
+
+    {/* ── AI chat teaser — always at bottom, sticky when content scrolls ── */}
+    {onRequestChat && (
+      <div className={`sticky bottom-0 transition-all duration-200 ${chatIsOpen ? 'opacity-0 pointer-events-none translate-y-2' : 'opacity-100 translate-y-0'}`}>
+        <div className="relative px-6 max-w-2xl mx-auto w-full">
+          {/* Gradient fade over scrolling content above */}
+          <div className="absolute -top-16 inset-x-0 h-16 bg-gradient-to-t from-white to-transparent pointer-events-none" />
+          <div className="pb-8">
+            <div className="rounded-2xl bg-white shadow-sm border border-neutral-200 overflow-hidden">
+              <div className="px-4 pt-3 pb-1">
+                <textarea
+                  rows={1}
+                  value={teaserValue}
+                  onChange={(e) => setTeaserValue(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey && teaserValue.trim()) {
+                      e.preventDefault();
+                      onRequestChat(teaserValue.trim());
+                      setTeaserValue('');
+                    }
+                  }}
+                  placeholder="Ask about this meeting…"
+                  className="w-full resize-none bg-transparent text-[14px] text-neutral-800 placeholder:text-neutral-400 outline-none leading-relaxed"
+                />
+              </div>
+              <div className="flex items-center px-3 pb-3 pt-1">
+                <div className="ml-auto">
+                  <button
+                    onClick={() => {
+                      if (!teaserValue.trim()) return;
+                      onRequestChat(teaserValue.trim());
+                      setTeaserValue('');
+                    }}
+                    disabled={!teaserValue.trim()}
+                    className="w-7 h-7 rounded-full bg-indigo-600 text-white flex items-center justify-center disabled:opacity-30 disabled:cursor-not-allowed hover:bg-indigo-700 transition-colors"
+                  >
+                    <PaperAirplaneIcon className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        {/* Full-width white background strip so content doesn't bleed through */}
+        <div className="absolute inset-0 bg-white -z-10" />
+      </div>
+    )}
     </div>
   );
 }

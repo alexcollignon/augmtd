@@ -74,10 +74,15 @@ export default function MeetingsShell({
 
   const recording = useRecordingContext();
 
-  // Keep ref in sync with pathname-derived meeting id
+  // Keep ref in sync with pathname-derived meeting id; set correct panel per page type
   useEffect(() => {
     const match = pathname.match(/^\/meetings\/(.+)$/);
     selectedMeetingIdRef.current = match ? match[1] : null;
+    if (match) {
+      setRightPanel(null);
+    } else if (pathname === '/meetings') {
+      setRightPanel('calendar');
+    }
   }, [pathname]);
 
   // ── Data fetching ────────────────────────────────────────────────────────
@@ -238,6 +243,7 @@ export default function MeetingsShell({
     setActiveMeetingContext,
     filterPersonEmail,
     setFilterPersonEmail,
+    chatIsOpen: rightPanel === 'chat',
     openChatPanel: (autoMessage?: string) => {
       setChatAutoMessage(autoMessage);
       setRightPanel('chat');
@@ -343,19 +349,17 @@ export default function MeetingsShell({
         <div className={`flex-shrink-0 bg-neutral-50 flex flex-col transition-[width] duration-200 overflow-hidden ${rightPanel ? 'w-[316px]' : 'w-12'}`}>
           {/* Closed — icon strip */}
           <div className={`flex flex-col items-center pt-3 gap-1.5 transition-opacity duration-150 ${rightPanel ? 'opacity-0 pointer-events-none absolute' : 'opacity-100'}`}>
-            <button
-              onClick={() => setRightPanel('calendar')}
-              title="Calendar"
-              className="p-2 rounded-xl bg-white shadow-sm text-neutral-500 hover:bg-neutral-50 transition-colors"
-            >
-              <CalendarDaysIcon className="w-4 h-4" />
-            </button>
-            {!isHome && (
+            {isHome ? (
               <button
-                onClick={() => {
-                  setChatAutoMessage(undefined);
-                  setRightPanel('chat');
-                }}
+                onClick={() => setRightPanel('calendar')}
+                title="Calendar"
+                className="p-2 rounded-xl bg-white shadow-sm text-neutral-500 hover:bg-neutral-50 transition-colors"
+              >
+                <CalendarDaysIcon className="w-4 h-4" />
+              </button>
+            ) : (
+              <button
+                onClick={() => { setChatAutoMessage(undefined); setRightPanel('chat'); }}
                 title="AI Chat"
                 className="p-2 rounded-xl bg-white shadow-sm text-neutral-500 hover:bg-neutral-50 transition-colors"
               >
@@ -366,45 +370,44 @@ export default function MeetingsShell({
 
           {/* Open — full panel */}
           <div className={`flex-1 relative p-2 min-h-0 transition-opacity duration-150 ${rightPanel ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
-            {/* Calendar panel */}
-            <div className={`absolute inset-2 transition-opacity duration-200 ${rightPanel === 'calendar' ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}>
-              <div className="h-full flex flex-col rounded-2xl bg-white shadow-sm overflow-hidden">
-                <CalendarSidebar
-                  meetings={upcoming}
-                  userEmail={userEmail}
-                  onRefresh={fetchAll}
-                  onNewMeeting={() => setShowNewMeeting(true)}
-                  onClose={() => setRightPanel(null)}
-                  onOpenChat={() => { setChatAutoMessage(undefined); setRightPanel('chat'); }}
-                  showViewToggle
-                />
-              </div>
-            </div>
-
-            {/* Chat panel */}
-            <div className={`absolute inset-2 transition-all duration-200 ${rightPanel === 'chat' ? 'opacity-100 translate-x-0 pointer-events-auto' : 'opacity-0 -translate-x-2 pointer-events-none'}`}>
-              <div className="h-full flex flex-col rounded-2xl bg-white shadow-sm overflow-hidden">
-                {activeMeetingContext ? (
-                  <MeetingChatSidebar
-                    inline
-                    isOpen
-                    onClose={() => { setRightPanel(null); setChatAutoMessage(undefined); }}
-                    meetingContext={activeMeetingContext}
-                    onOpenWorkflow={handleOpenWorkflow}
-                    autoMessage={chatAutoMessage}
-                    onSwitchPanel={() => setRightPanel('calendar')}
-                  />
-                ) : (
-                  <ChatSidebar
-                    inline
-                    isOpen
+            {isHome ? (
+              /* Home: calendar only */
+              <div className="absolute inset-2">
+                <div className="h-full flex flex-col rounded-2xl bg-white shadow-sm overflow-hidden">
+                  <CalendarSidebar
+                    meetings={upcoming}
+                    userEmail={userEmail}
+                    onRefresh={fetchAll}
+                    onNewMeeting={() => setShowNewMeeting(true)}
                     onClose={() => setRightPanel(null)}
-                    context="meeting"
-                    onSwitchPanel={() => setRightPanel('calendar')}
+                    showViewToggle
                   />
-                )}
+                </div>
               </div>
-            </div>
+            ) : (
+              /* Meeting detail: chat only */
+              <div className={`absolute inset-2 transition-all duration-200 ${rightPanel === 'chat' ? 'opacity-100 translate-x-0 pointer-events-auto' : 'opacity-0 translate-x-2 pointer-events-none'}`}>
+                <div className="h-full flex flex-col rounded-2xl bg-white shadow-sm overflow-hidden">
+                  {activeMeetingContext ? (
+                    <MeetingChatSidebar
+                      inline
+                      isOpen
+                      onClose={() => { setRightPanel(null); setChatAutoMessage(undefined); }}
+                      meetingContext={activeMeetingContext}
+                      onOpenWorkflow={handleOpenWorkflow}
+                      autoMessage={chatAutoMessage}
+                    />
+                  ) : (
+                    <ChatSidebar
+                      inline
+                      isOpen
+                      onClose={() => setRightPanel(null)}
+                      context="meeting"
+                    />
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         </div>
 

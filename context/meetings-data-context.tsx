@@ -49,6 +49,7 @@ export interface MeetingsDataContextType {
   setFilterPersonEmail: (email: string | null) => void;
 
   // Shell actions called by subpages
+  chatIsOpen: boolean;
   openChatPanel: (autoMessage?: string) => void;
   openCaptureModal: () => void;
   openNewMeetingModal: () => void;

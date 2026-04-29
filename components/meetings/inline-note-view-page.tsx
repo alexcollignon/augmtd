@@ -16,6 +16,7 @@ export default function InlineNoteViewPage({ id }: InlineNoteViewPageProps) {
   const {
     fetchAll,
     setActiveMeetingContext,
+    chatIsOpen,
     openChatPanel,
     openCaptureModal,
   } = useMeetingsData();
@@ -35,6 +36,7 @@ export default function InlineNoteViewPage({ id }: InlineNoteViewPageProps) {
   }, [recording.state, recording.recordingNoteId, id, router, fetchAll, recording.reset]);
 
   return (
+    <div className="h-full flex flex-col">
     <InlineNoteView
       eventId={id}
       onBack={() => router.push('/meetings')}
@@ -45,9 +47,11 @@ export default function InlineNoteViewPage({ id }: InlineNoteViewPageProps) {
       onNoteRowCreated={fetchAll}
       onMeetingContextReady={setActiveMeetingContext}
       onRequestChat={(autoMessage) => openChatPanel(autoMessage)}
+      chatIsOpen={chatIsOpen}
       onStartRecording={(title, calendarEventId, noteId) =>
         recording.startRecording(title, calendarEventId, noteId)
       }
     />
+    </div>
   );
 }
