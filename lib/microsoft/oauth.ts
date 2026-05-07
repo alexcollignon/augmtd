@@ -28,7 +28,6 @@ export function getAuthUrl(redirectUri: string, state: string) {
     scopes: OUTLOOK_SCOPES,
     redirectUri,
     state,
-    prompt: 'consent',
   });
 }
 
