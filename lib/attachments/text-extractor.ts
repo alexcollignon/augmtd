@@ -12,11 +12,10 @@ export async function extractTextFromAttachment(
 ): Promise<string | null> {
   try {
     if (mimeType === 'application/pdf') {
-      const imported = await import('pdf-parse');
-      const PDFParse = (imported as any).PDFParse ?? (imported as any).default?.PDFParse;
-      const parser = new PDFParse({ data: buffer });
-      const result = await parser.getText();
-      return result.text || null;
+      const { getDocumentProxy, extractText } = await import('unpdf');
+      const pdf = await getDocumentProxy(new Uint8Array(buffer));
+      const { text } = await extractText(pdf, { mergePages: true });
+      return text.trim() || null;
     }
 
     if (
@@ -70,15 +69,7 @@ export async function extractTextFromAttachment(
     console.log(`[Attachments] Skipped unsupported MIME type: ${mimeType} (${filename})`);
     return null;
   } catch (err) {
-    // DOMMatrix/Path2D/ImageData are browser canvas APIs unavailable on Vercel Lambda.
-    // This is expected for PDFs processed on serverless — OCR fallback handles them.
-    const isCanvasApiMissing = err instanceof ReferenceError &&
-      /DOMMatrix|Path2D|ImageData/.test((err as Error).message ?? '');
-    if (isCanvasApiMissing) {
-      console.warn(`[Attachments] pdf-parse needs canvas APIs unavailable in this environment (${filename}) — OCR fallback will handle`);
-    } else {
-      console.error(`[Attachments] Failed to extract text from ${filename}:`, err);
-    }
+    console.error(`[Attachments] Failed to extract text from ${filename}:`, err);
     return null;
   }
 }

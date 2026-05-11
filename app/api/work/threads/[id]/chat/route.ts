@@ -436,6 +436,51 @@ export async function POST(
       }
     }
 
+    // PDF attachments: for Anthropic/Bedrock providers, inject as native document blocks.
+    // Handles PDFs where text extraction returned nothing (truly scanned, no text layer).
+    // The Bedrock adapter passes { type: 'document' } blocks through to Anthropic Messages API unchanged.
+    if (
+      attachments.length > 0 &&
+      (chatEndpoint.provider === 'bedrock' || chatEndpoint.provider === 'anthropic')
+    ) {
+      const pdfAttachRecords = userAttachments.filter((ua: any) =>
+        ua.mimeType === 'application/pdf' &&
+        !ua.extractedText &&
+        ua.storagePath &&
+        attachments.some((a: { id: string }) => a.id === ua.chatAttachId)
+      );
+      if (pdfAttachRecords.length > 0) {
+        const pdfResults = await Promise.all(
+          pdfAttachRecords.map(async (ua: any) => {
+            try {
+              const { data, error } = await adminClient.storage.from('email-attachments').download(ua.storagePath);
+              if (error || !data) return null;
+              const buf = Buffer.from(await data.arrayBuffer());
+              return { b64: buf.toString('base64'), filename: ua.filename as string };
+            } catch {
+              return null;
+            }
+          })
+        );
+        const pdfBlocks = pdfResults
+          .filter((r): r is { b64: string; filename: string } => r !== null)
+          .map((r) => ({
+            type: 'document' as const,
+            source: { type: 'base64' as const, media_type: 'application/pdf' as const, data: r.b64 },
+          }));
+        if (pdfBlocks.length > 0) {
+          const lastIdx = messages.findLastIndex((m) => m.role === 'user');
+          if (lastIdx !== -1) {
+            const lastMsg = messages[lastIdx];
+            const existingBlocks: any[] = Array.isArray(lastMsg.content)
+              ? lastMsg.content
+              : [{ type: 'text', text: typeof lastMsg.content === 'string' ? lastMsg.content : '' }];
+            messages[lastIdx] = { role: 'user', content: [...existingBlocks, ...pdfBlocks] as any };
+          }
+        }
+      }
+    }
+
     // Resolve workspace features for graceful context degradation
     const workspace = await getMyWorkspace(user.id, supabase);
     const features: WorkspaceFeatures = workspace?.features ?? DEFAULT_FEATURES;
