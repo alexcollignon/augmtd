@@ -28,7 +28,7 @@ export async function GET(request: NextRequest) {
   // Paginated browse path
   let query = supabase
     .from('knowledge_files')
-    .select('id, user_id, source_id, provider_file_id, filename, mime_type, size_bytes, indexed_at, knowledge_sources(provider, name)', { count: 'exact' })
+    .select('id, user_id, source_id, provider_file_id, filename, mime_type, size_bytes, indexed_at, folder_id, knowledge_sources(provider, folder_name)', { count: 'exact' })
     .eq('user_id', user.id)
     .order('indexed_at', { ascending: false })
     .range(offset, offset + limit - 1);

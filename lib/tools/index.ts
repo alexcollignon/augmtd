@@ -6,6 +6,9 @@
 export { webSearchDefinition, executeWebSearch } from './web-search';
 export { fetchUrlDefinition, executeFetchUrl } from './fetch-url';
 export { rssFeedDefinition, executeRssFeed } from './rss-feed';
+export { executeLinkedInPost } from './linkedin-post';
+export type { LinkedInPostConfig } from './linkedin-post';
+export { executeBrowserFetch } from './browser-fetch';
 
 // OpenAI function-calling format converter — used by chat route
 export function toOpenAITool(def: {

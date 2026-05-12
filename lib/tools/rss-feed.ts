@@ -41,7 +41,7 @@ function cutoffDate(since: string, lastRunAt?: string | null): Date {
     const d = new Date(lastRunAt);
     if (!isNaN(d.getTime())) return d;
   }
-  if (since === '7d') return new Date(Date.now() - 7 * 86_400_000);
+  if (since === '7d' || since === 'last_run') return new Date(Date.now() - 7 * 86_400_000);
   return new Date(Date.now() - 86_400_000); // 24h default
 }
 
@@ -108,9 +108,14 @@ export async function executeRssFeed(
   await Promise.allSettled(
     feeds.map(async feedUrl => {
       try {
+        const authConfig = config.auth as { username?: string; password?: string } | undefined;
+        const fetchHeaders: Record<string, string> = { 'User-Agent': 'Mozilla/5.0' };
+        if (authConfig?.username) {
+          fetchHeaders['Authorization'] = `Basic ${Buffer.from(`${authConfig.username}:${authConfig.password ?? ''}`).toString('base64')}`;
+        }
         const res = await fetch(feedUrl, {
           signal: AbortSignal.timeout(8000),
-          headers: { 'User-Agent': 'Mozilla/5.0' },
+          headers: fetchHeaders,
         });
         const text = await res.text();
         const xml = parser.parse(text) as Record<string, unknown>;

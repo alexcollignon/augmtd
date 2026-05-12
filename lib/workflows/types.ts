@@ -35,7 +35,7 @@ export interface ToolStep {
   config: Record<string, unknown>; // tool-specific params
 }
 
-// AI step — inline intelligence transformation. No identity, no KB, no memory.
+// AI step — inline intelligence transformation. No identity, no memory.
 export interface AIStep {
   type: 'ai';
   id: string;
@@ -43,6 +43,7 @@ export interface AIStep {
   prompt: string;                  // instruction — can reference previous step outputs
   output_format?: 'text' | 'markdown' | 'json';
   model_tier?: 'fast' | 'reasoning'; // maps to summarization vs conversation task type
+  kb_file_ids?: string[];          // optional KB files to inject as reference documents
 }
 
 // Agent step — reuses a custom agent's identity, instructions, KB, memory.

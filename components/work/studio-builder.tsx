@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import {
   ArrowLeftIcon,
   TrashIcon,
@@ -30,6 +30,13 @@ import {
   BriefcaseIcon,
   CpuChipIcon,
   BookOpenIcon,
+  ChevronDownIcon,
+  InboxIcon as InboxOutlineIcon,
+  LinkIcon,
+  LockClosedIcon,
+  EyeIcon,
+  EyeSlashIcon,
+  ComputerDesktopIcon,
 } from '@heroicons/react/24/outline';
 import type {
   Workflow, WorkflowStep, WorkflowTrigger, OutputConfig,
@@ -91,7 +98,114 @@ const AVAILABLE_TOOLS = [
   { id: 'web_search',        label: 'Search the web',            description: 'Give it a topic and it finds relevant pages — like asking Google. Use this when you don\'t know which site has the info.' },
   { id: 'fetch_url',         label: 'Read a specific web page',  description: 'Reads the full current content of a URL every run. Good for pages without a feed — a pricing page, job board, or competitor site. Returns the whole page each time.' },
   { id: 'rss_feed',          label: 'Follow a news feed or blog', description: 'For sites that publish a feed (most news sites and blogs). Returns only new articles since your last run — no duplicates, clean titles and dates. Look for the RSS icon on the site, or try adding /feed to the URL.' },
+  { id: 'linkedin_post',     label: 'Generate LinkedIn posts',   description: 'Drafts 1–3 LinkedIn post variants from previous step content. Configure tone, format, length, language, and optionally a voice reference file.' },
 ];
+
+type ToolIconEntry = { Icon: React.ComponentType<React.SVGProps<SVGSVGElement>>; bg: string };
+function LinkedInSVG({ className }: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z" />
+    </svg>
+  );
+}
+const TOOL_ICONS: Record<string, ToolIconEntry> = {
+  get_urgent_emails: { Icon: InboxOutlineIcon,       bg: 'bg-blue-500'    },
+  get_calendar:      { Icon: CalendarDaysIcon,       bg: 'bg-emerald-500' },
+  read_kb_file:      { Icon: BookOpenIcon,           bg: 'bg-violet-500'  },
+  web_search:        { Icon: MagnifyingGlassIcon,    bg: 'bg-amber-500'   },
+  fetch_url:         { Icon: LinkIcon,               bg: 'bg-sky-500'     },
+  rss_feed:          { Icon: NewspaperIcon,          bg: 'bg-orange-500'  },
+  linkedin_post:     { Icon: LinkedInSVG,            bg: 'bg-[#0A66C2]'   },
+  browser_fetch:     { Icon: LinkIcon,               bg: 'bg-sky-500'     },
+};
+
+function ToolPicker({ value, onChange }: { value: string; onChange: (id: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [rect, setRect] = useState<DOMRect | null>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const dropRef = useRef<HTMLDivElement>(null);
+  // browser_fetch is a variant of fetch_url — show fetch_url in the picker
+  const displayValue = value === 'browser_fetch' ? 'fetch_url' : value;
+  const selected = AVAILABLE_TOOLS.find(t => t.id === displayValue) ?? AVAILABLE_TOOLS[0];
+  const meta = TOOL_ICONS[selected.id];
+
+  function toggle() {
+    if (!open && btnRef.current) setRect(btnRef.current.getBoundingClientRect());
+    setOpen(o => !o);
+  }
+
+  useEffect(() => {
+    if (!open) return;
+    function onDown(e: MouseEvent) {
+      const target = e.target as Node;
+      const inBtn  = btnRef.current?.contains(target);
+      const inDrop = dropRef.current?.contains(target);
+      if (!inBtn && !inDrop) setOpen(false);
+    }
+    function onScroll(e: Event) {
+      // Close on page scroll but not when scrolling inside the dropdown itself
+      if (dropRef.current?.contains(e.target as Node)) return;
+      setOpen(false);
+    }
+    document.addEventListener('mousedown', onDown);
+    window.addEventListener('scroll', onScroll, true);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      window.removeEventListener('scroll', onScroll, true);
+    };
+  }, [open]);
+
+  return (
+    <div>
+      <button
+        ref={btnRef}
+        type="button"
+        onClick={toggle}
+        className="w-full flex items-center gap-2.5 px-3 py-2 border border-neutral-200 rounded-lg bg-white hover:border-neutral-300 transition-colors text-left"
+      >
+        {meta && (
+          <span className={`flex-shrink-0 w-6 h-6 rounded-md flex items-center justify-center ${meta.bg}`}>
+            <meta.Icon className="w-3.5 h-3.5 text-white" />
+          </span>
+        )}
+        <span className="flex-1 text-[13px] text-neutral-800">{selected.label}</span>
+        <ChevronDownIcon className={`w-4 h-4 text-neutral-400 transition-transform flex-shrink-0 ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && rect && (
+        <div
+          ref={dropRef}
+          style={{ position: 'fixed', top: rect.bottom + 4, left: rect.left, width: rect.width, zIndex: 9999 }}
+          className="bg-white border border-neutral-200 rounded-lg shadow-xl overflow-y-auto max-h-[420px]"
+        >
+          {AVAILABLE_TOOLS.map(t => {
+            const tm = TOOL_ICONS[t.id];
+            const isSelected = t.id === displayValue;
+            return (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => { onChange(t.id); setOpen(false); }}
+                className={`w-full flex items-start gap-2.5 px-3 py-2.5 hover:bg-neutral-50 transition-colors text-left ${isSelected ? 'bg-neutral-50' : ''}`}
+              >
+                {tm && (
+                  <span className={`flex-shrink-0 w-6 h-6 rounded-md flex items-center justify-center mt-0.5 ${tm.bg}`}>
+                    <tm.Icon className="w-3.5 h-3.5 text-white" />
+                  </span>
+                )}
+                <div className="min-w-0">
+                  <div className="text-[13px] text-neutral-800 leading-snug">{t.label}</div>
+                  <div className="text-[11px] text-neutral-500 leading-snug mt-0.5">{t.description}</div>
+                </div>
+                {isSelected && <CheckIcon className="w-4 h-4 text-indigo-500 flex-shrink-0 ml-auto mt-0.5" />}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function StudioBuilder({ workflow: initialWorkflow, agents, onClose, onBack }: Props) {
   const [workflow, setWorkflow] = useState<Workflow>(initialWorkflow);
@@ -402,6 +516,7 @@ export function StudioBuilder({ workflow: initialWorkflow, agents, onClose, onBa
                   isEnhancing={enhancingStepId === step.id}
                   isPending={enhancePendingStepId === step.id}
                   onEnhance={(prompt, label, ctx) => handleEnhanceStep(step.id, prompt, label, ctx)}
+                  onSave={save}
                 />
               ))}
             </div>
@@ -552,10 +667,10 @@ function TriggerEditor({ trigger, onChange }: { trigger: WorkflowTrigger; onChan
   );
 }
 
-function StepCard({ step, index, total, agents, onUpdate, onRemove, onMove, isEnhancing, isPending, onEnhance }: {
+function StepCard({ step, index, total, agents, onUpdate, onRemove, onMove, isEnhancing, isPending, onEnhance, onSave }: {
   step: WorkflowStep; index: number; total: number; agents: AgentOption[];
   onUpdate: (p: Partial<WorkflowStep>) => void; onRemove: () => void; onMove: (delta: -1 | 1) => void;
-  isEnhancing?: boolean; isPending?: boolean;
+  isEnhancing?: boolean; isPending?: boolean; onSave?: () => void;
   onEnhance?: (prompt: string, label: string, context: { step_type: 'ai' | 'tool' | 'agent'; tool_type?: string; output_format?: string; model_tier?: string; field: 'prompt' | 'query' }) => void;
 }) {
   const Icon = step.type === 'tool' ? WrenchScrewdriverIcon : step.type === 'ai' ? SparklesIcon : UserCircleIcon;
@@ -574,7 +689,8 @@ function StepCard({ step, index, total, agents, onUpdate, onRemove, onMove, isEn
           type="text"
           value={step.label}
           onChange={e => onUpdate({ label: e.target.value })}
-          className="flex-1 bg-transparent text-[13px] font-medium text-neutral-900 focus:outline-none"
+          placeholder="Step name"
+          className="flex-1 bg-transparent text-[13px] font-medium text-neutral-900 placeholder-neutral-400 focus:outline-none"
         />
         <div className="flex items-center gap-0.5">
           <button onClick={() => onMove(-1)} disabled={index === 0} className="p-1 hover:bg-neutral-200 rounded disabled:opacity-30">
@@ -589,7 +705,7 @@ function StepCard({ step, index, total, agents, onUpdate, onRemove, onMove, isEn
         </div>
       </div>
       <div className="p-3 space-y-3 bg-white">
-        {step.type === 'tool'  && <ToolStepFields  step={step as ToolStep}  onUpdate={onUpdate} isEnhancing={isEnhancing} isPending={isPending} onEnhance={onEnhance} />}
+        {step.type === 'tool'  && <ToolStepFields  step={step as ToolStep}  onUpdate={onUpdate} isEnhancing={isEnhancing} isPending={isPending} onEnhance={onEnhance} onSave={onSave} />}
         {step.type === 'ai'    && <AIStepFields    step={step as AIStep}    onUpdate={onUpdate} isEnhancing={isEnhancing} isPending={isPending} onEnhance={onEnhance} />}
         {step.type === 'agent' && <AgentStepFields step={step as AgentStep} agents={agents} onUpdate={onUpdate} isEnhancing={isEnhancing} isPending={isPending} onEnhance={onEnhance} />}
       </div>
@@ -599,20 +715,171 @@ function StepCard({ step, index, total, agents, onUpdate, onRemove, onMove, isEn
 
 type EnhanceFn = (prompt: string, label: string, context: { step_type: 'ai' | 'tool' | 'agent'; tool_type?: string; output_format?: string; model_tier?: string; field: 'prompt' | 'query' }) => void;
 
-function ToolStepFields({ step, onUpdate, isEnhancing, isPending, onEnhance }: {
+function LinkedInPostFields({ step, onUpdate }: { step: ToolStep; onUpdate: (p: Partial<ToolStep>) => void }) {
+  const [kbFiles, setKbFiles] = useState<Array<{ id: string; filename: string }>>([]);
+  useEffect(() => {
+    fetch('/api/knowledge/files?limit=50').then(r => r.json()).then(d => setKbFiles(d.data ?? [])).catch(() => {});
+  }, []);
+  const cfg = step.config;
+  const set = (k: string, v: unknown) => onUpdate({ config: { ...cfg, [k]: v } });
+  return (
+    <>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Tone">
+          <select value={(cfg.tone as string) ?? 'thought_leadership'} onChange={e => set('tone', e.target.value)}
+            className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-[13px] bg-white">
+            <option value="thought_leadership">Thought leadership</option>
+            <option value="conversational">Conversational</option>
+            <option value="data_driven">Data-driven</option>
+          </select>
+        </Field>
+        <Field label="Length">
+          <select value={(cfg.length as string) ?? 'standard'} onChange={e => set('length', e.target.value)}
+            className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-[13px] bg-white">
+            <option value="short">Short ~100w</option>
+            <option value="standard">Standard ~200w</option>
+            <option value="long">Long ~350w</option>
+          </select>
+        </Field>
+        <Field label="Format">
+          <select value={(cfg.format as string) ?? 'insight'} onChange={e => set('format', e.target.value)}
+            className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-[13px] bg-white">
+            <option value="story">Story</option>
+            <option value="insight">Insight</option>
+            <option value="question">Question</option>
+            <option value="list">List</option>
+          </select>
+        </Field>
+        <Field label="Language">
+          <select value={(cfg.language as string) ?? 'en'} onChange={e => set('language', e.target.value)}
+            className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-[13px] bg-white">
+            <option value="en">English</option>
+            <option value="de">German</option>
+            <option value="pt">Portuguese</option>
+          </select>
+        </Field>
+        <Field label="Variants">
+          <select value={String(cfg.variants ?? 1)} onChange={e => set('variants', Number(e.target.value))}
+            className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-[13px] bg-white">
+            <option value="1">1 draft</option>
+            <option value="2">2 drafts</option>
+            <option value="3">3 drafts</option>
+          </select>
+        </Field>
+        <Field label="Image prompt">
+          <label className="flex items-center gap-2 px-3 py-2 border border-neutral-200 rounded-lg cursor-pointer">
+            <input type="checkbox" checked={cfg.include_image_prompt === true} onChange={e => set('include_image_prompt', e.target.checked)}
+              className="rounded border-neutral-300 text-indigo-600 focus:ring-indigo-500" />
+            <span className="text-[13px] text-neutral-700">Include visual prompt</span>
+          </label>
+        </Field>
+      </div>
+      {kbFiles.length > 0 && (
+        <Field label="Voice reference" hint="Past posts or style guide">
+          <select value={(cfg.voice_kb_file_id as string) ?? ''} onChange={e => set('voice_kb_file_id', e.target.value || undefined)}
+            className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-[13px] bg-white">
+            <option value="">No voice reference</option>
+            {kbFiles.map(f => <option key={f.id} value={f.id}>{f.filename}</option>)}
+          </select>
+        </Field>
+      )}
+    </>
+  );
+}
+
+function FetchUrlAuth({ step, onUpdate, onSave }: { step: ToolStep; onUpdate: (p: Partial<ToolStep>) => void; onSave?: () => void }) {
+  const [showPw, setShowPw] = useState(false);
+  const enabled = !!step.config.auth_enabled;
+  const auth = (step.config.auth ?? {}) as { username?: string; password?: string };
+  const hasCredentials = !!(auth.username || auth.password);
+
+  function toggle() {
+    // Preserve credentials when toggling off — only flip the enabled flag
+    onUpdate({ config: { ...step.config, auth_enabled: !enabled } });
+  }
+
+  function clear() {
+    const { auth_enabled, auth: _a, ...rest } = step.config;
+    void auth_enabled; void _a;
+    onUpdate({ config: rest });
+  }
+
+  function setField(field: 'username' | 'password', value: string) {
+    onUpdate({ config: { ...step.config, auth_enabled: true, auth: { ...auth, [field]: value } } });
+  }
+
+  return (
+    <div className="border border-neutral-200 rounded-lg overflow-hidden">
+      <div className="flex items-center gap-2 px-3 py-2.5 bg-neutral-50">
+        <button
+          type="button"
+          onClick={toggle}
+          className="flex items-center gap-2 flex-1 text-left"
+        >
+          <LockClosedIcon className={`w-3.5 h-3.5 flex-shrink-0 ${enabled ? 'text-indigo-500' : 'text-neutral-400'}`} />
+          <span className={`text-[12px] font-medium ${enabled ? 'text-indigo-600' : 'text-neutral-500'}`}>
+            Authentication
+          </span>
+          <span className={`text-[11px] px-1.5 py-0.5 rounded-full font-medium ${enabled ? 'bg-indigo-100 text-indigo-600' : 'bg-neutral-200 text-neutral-500'}`}>
+            {enabled ? 'on' : 'off'}
+          </span>
+        </button>
+        {hasCredentials && (
+          <button
+            type="button"
+            onClick={clear}
+            className="text-[11px] text-neutral-400 hover:text-red-500 transition-colors flex-shrink-0"
+          >
+            Clear
+          </button>
+        )}
+      </div>
+      {enabled && (
+        <div className="px-3 py-3 space-y-2 border-t border-neutral-200">
+          <input
+            type="text"
+            value={auth.username ?? ''}
+            onChange={e => setField('username', e.target.value)}
+            onBlur={() => onSave?.()}
+            placeholder="Username or email"
+            autoComplete="off"
+            className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-[13px] focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400" />
+          <div className="relative">
+            <input
+              type={showPw ? 'text' : 'password'}
+              value={auth.password ?? ''}
+              onChange={e => setField('password', e.target.value)}
+              onBlur={() => onSave?.()}
+              placeholder="Password"
+              autoComplete="new-password"
+              className="w-full px-3 py-2 pr-9 border border-neutral-200 rounded-lg text-[13px] focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400" />
+            <button
+              type="button"
+              onClick={() => setShowPw(v => !v)}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600"
+            >
+              {showPw ? <EyeSlashIcon className="w-4 h-4" /> : <EyeIcon className="w-4 h-4" />}
+            </button>
+          </div>
+          <p className="text-[11px] text-neutral-400 leading-snug">
+            Uses HTTP Basic Auth. For sites that require a browser login, check if your source offers a subscriber RSS feed instead.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ToolStepFields({ step, onUpdate, isEnhancing, isPending, onEnhance, onSave }: {
   step: ToolStep; onUpdate: (p: Partial<ToolStep>) => void;
-  isEnhancing?: boolean; isPending?: boolean; onEnhance?: EnhanceFn;
+  isEnhancing?: boolean; isPending?: boolean; onSave?: () => void; onEnhance?: EnhanceFn;
 }) {
   const tool = AVAILABLE_TOOLS.find(t => t.id === step.tool);
   const query = (step.config.query as string) ?? '';
   return (
     <>
       <Field label="Tool">
-        <select value={step.tool} onChange={e => onUpdate({ tool: e.target.value, config: {} })}
-          className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-[13px] bg-white">
-          {AVAILABLE_TOOLS.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
-        </select>
-        {tool && <p className="text-[11.5px] text-neutral-500 mt-1">{tool.description}</p>}
+        <ToolPicker value={step.tool} onChange={id => onUpdate({ tool: id, config: {} })} />
       </Field>
       {step.tool === 'web_search' && (
         <div>
@@ -646,16 +913,48 @@ function ToolStepFields({ step, onUpdate, isEnhancing, isPending, onEnhance }: {
           )}
         </div>
       )}
-      {step.tool === 'fetch_url' && (
-        <Field label="URLs to fetch" hint="One URL per line, max 5">
-          <textarea
-            value={Array.isArray(step.config.urls) ? (step.config.urls as string[]).join('\n') : (step.config.urls as string) ?? ''}
-            onChange={e => onUpdate({ config: { ...step.config, urls: e.target.value.split('\n').map(s => s.trim()).filter(Boolean) } })}
-            placeholder={'https://example.com/pricing\nhttps://competitor.com/blog'}
-            rows={3}
-            className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-[13px] resize-y font-mono focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400" />
-        </Field>
-      )}
+      {(step.tool === 'fetch_url' || step.tool === 'browser_fetch') && (() => {
+        const isBrowser = step.tool === 'browser_fetch';
+        const urlValue = isBrowser
+          ? (step.config.url as string) ?? ''
+          : Array.isArray(step.config.urls) ? (step.config.urls as string[]).join('\n') : (step.config.urls as string) ?? '';
+        function toggleBrowser() {
+          const next = isBrowser ? 'fetch_url' : 'browser_fetch';
+          const firstUrl = isBrowser
+            ? (step.config.url as string) ?? ''
+            : (Array.isArray(step.config.urls) ? (step.config.urls as string[])[0] : step.config.urls as string) ?? '';
+          onUpdate({
+            tool: next,
+            config: next === 'browser_fetch'
+              ? { ...step.config, url: firstUrl, urls: undefined }
+              : { ...step.config, urls: [step.config.url as string].filter(Boolean), url: undefined },
+          });
+        }
+        return (
+          <>
+            <Field label="URL" hint={isBrowser ? undefined : 'One URL per line, max 5'}>
+              <textarea
+                value={urlValue}
+                onChange={e => {
+                  const val = e.target.value;
+                  isBrowser
+                    ? onUpdate({ config: { ...step.config, url: val.trim() } })
+                    : onUpdate({ config: { ...step.config, urls: val.split('\n').map(s => s.trim()).filter(Boolean) } });
+                }}
+                placeholder={isBrowser ? 'https://portal.example.com/dashboard' : 'https://example.com/pricing'}
+                rows={isBrowser ? 1 : 3}
+                className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-[13px] resize-y font-mono focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400" />
+            </Field>
+            <button type="button" onClick={toggleBrowser} className="flex items-center gap-2 text-left">
+              <div className={`relative flex-shrink-0 w-8 h-4 rounded-full transition-colors ${isBrowser ? 'bg-indigo-500' : 'bg-neutral-300'}`}>
+                <span className={`absolute top-0.5 w-3 h-3 bg-white rounded-full shadow transition-transform ${isBrowser ? 'translate-x-4' : 'translate-x-0.5'}`} />
+              </div>
+              <span className="text-[12px] text-neutral-500">Page doesn&apos;t load without a browser</span>
+            </button>
+            <FetchUrlAuth step={step} onUpdate={onUpdate} onSave={onSave} />
+          </>
+        );
+      })()}
       {step.tool === 'rss_feed' && (
         <>
           <Field label="Feed URLs" hint="One URL per line">
@@ -685,6 +984,8 @@ function ToolStepFields({ step, onUpdate, isEnhancing, isPending, onEnhance }: {
             className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-[13px] font-mono" />
         </Field>
       )}
+
+      {step.tool === 'linkedin_post' && <LinkedInPostFields step={step} onUpdate={onUpdate} />}
     </>
   );
 }
@@ -696,6 +997,40 @@ function AIStepFields({ step, onUpdate, isEnhancing, isPending, onEnhance }: {
   isPending?: boolean;
   onEnhance?: EnhanceFn;
 }) {
+  type KbFile = { id: string; filename: string; folder_id?: string | null };
+  type DriveFolder = { id: string; name: string; is_system: boolean };
+  const [kbFiles, setKbFiles] = useState<KbFile[]>([]);
+  const [driveFolders, setDriveFolders] = useState<DriveFolder[]>([]);
+  const [kbOpen, setKbOpen] = useState((step.kb_file_ids?.length ?? 0) > 0);
+
+  useEffect(() => {
+    Promise.all([
+      fetch('/api/knowledge/files?limit=50').then(r => r.json()).then(d => d.data ?? []),
+      fetch('/api/drive/folders').then(r => r.json()).then(d => Array.isArray(d) ? d : []),
+    ]).then(([files, folders]) => {
+      setKbFiles(files);
+      setDriveFolders(folders);
+    }).catch(() => {});
+  }, []);
+
+  const selectedIds = step.kb_file_ids ?? [];
+  function toggleKbFile(id: string) {
+    const next = selectedIds.includes(id) ? selectedIds.filter(x => x !== id) : [...selectedIds, id];
+    onUpdate({ kb_file_ids: next.length > 0 ? next : undefined });
+  }
+
+  const userFolders = driveFolders.filter(f => !f.is_system);
+  const folderNameMap = new Map(userFolders.map(f => [f.id, f.name]));
+  const kbByFolder = kbFiles.reduce<Record<string, KbFile[]>>((acc, f) => {
+    const name = f.folder_id ? (folderNameMap.get(f.folder_id) ?? 'Other') : 'Unfiled';
+    (acc[name] ??= []).push(f);
+    return acc;
+  }, {});
+  const kbFolders = [
+    ...userFolders.map(f => f.name).filter(n => kbByFolder[n]),
+    ...(kbByFolder['Unfiled'] ? ['Unfiled'] : []),
+  ];
+
   return (
     <>
       <div>
@@ -730,6 +1065,46 @@ function AIStepFields({ step, onUpdate, isEnhancing, isPending, onEnhance }: {
           />
         )}
       </div>
+      {kbFiles.length > 0 && (
+        <div>
+          <button
+            type="button"
+            onClick={() => setKbOpen(o => !o)}
+            className="flex items-center gap-1.5 text-[11.5px] font-medium text-neutral-500 hover:text-neutral-700 transition-colors"
+          >
+            <DocumentTextIcon className="w-3.5 h-3.5" />
+            Reference documents
+            {selectedIds.length > 0 && (
+              <span className="ml-1 px-1.5 py-0.5 rounded-full bg-indigo-100 text-indigo-700 text-[10px] font-semibold leading-none">
+                {selectedIds.length}
+              </span>
+            )}
+            <span className="text-neutral-400 text-[10px] ml-0.5">{kbOpen ? '▲' : '▼'}</span>
+          </button>
+          {kbOpen && (
+            <div className="mt-1.5 border border-neutral-200 rounded-lg overflow-hidden max-h-48 overflow-y-auto">
+              {kbFolders.map(folder => (
+                <div key={folder}>
+                  <div className="px-3 py-1.5 bg-neutral-50 border-b border-neutral-100 text-[10.5px] font-semibold text-neutral-400 uppercase tracking-wide">
+                    {folder}
+                  </div>
+                  {kbByFolder[folder].map(f => (
+                    <label key={f.id} className="flex items-center gap-2.5 px-3 py-2 cursor-pointer hover:bg-neutral-50 border-b border-neutral-100 last:border-0">
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.includes(f.id)}
+                        onChange={() => toggleKbFile(f.id)}
+                        className="rounded border-neutral-300 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <span className="text-[12px] text-neutral-700 truncate">{f.filename}</span>
+                    </label>
+                  ))}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       <div className="grid grid-cols-2 gap-3">
         <Field label="Output format">
           <select value={step.output_format ?? 'markdown'} onChange={e => onUpdate({ output_format: e.target.value as AIStep['output_format'] })}
