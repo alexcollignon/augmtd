@@ -5,9 +5,14 @@
 
 import { createClient } from '@supabase/supabase-js';
 
-const SUPABASE_URL = 'https://zvxdfnoegndzzxioxxwd.supabase.co';
-const SERVICE_ROLE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp2eGRmbm9lZ25kenp4aW94eHdkIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MDMwODQzOCwiZXhwIjoyMDg1ODg0NDM4fQ.PtH1OiefOArJghw9wE51fONjeDbqXKZac7MT0NZl0bo';
-const USER_ID = '08fe4449-e5eb-431d-9156-02e9324e5903';
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL ?? '';
+const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? '';
+const USER_ID = process.env.SEED_USER_ID ?? '08fe4449-e5eb-431d-9156-02e9324e5903';
+
+if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
+  console.error('Missing SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY env vars. Copy from .env.local and run:\n  SUPABASE_SERVICE_ROLE_KEY=... npx tsx scripts/seed-ahk.ts');
+  process.exit(1);
+}
 
 // Existing workflow IDs (created on 2026-05-12)
 const LINKEDIN_WORKFLOW_ID  = '41939e06-72b2-43eb-b64b-0abdb7627063';
