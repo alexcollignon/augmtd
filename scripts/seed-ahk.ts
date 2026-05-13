@@ -227,34 +227,35 @@ const briefingSteps = [
     label: 'Synthesise 7-section briefing',
     prompt: `You are preparing the weekly AHK Portugal Executive Briefing for the leadership team.
 
-Using all news and information from the previous steps, produce a structured briefing in German (Deutsch) following this exact format:
+REFERENCE TEMPLATES: The attached documents are real past AHK Portugal briefings. Before writing, study them carefully:
+- Match their exact formatting conventions (headings, bullet style, spacing, section order)
+- Match their tone: professional, concise, senior-executive audience, no fluff
+- Match their level of detail per item: typically 2–4 sentences, one source reference inline
+- Match how they handle the Quellenverzeichnis (numbered list or grouped by section)
+- If the templates use a specific KW notation, date format, or header style, replicate it exactly
 
----
+Using all news and information from the previous steps, produce a structured briefing in German (Deutsch) with these 7 sections:
 
-# AHK Portugal — Wochenbriefing [KW XX / YYYY]
+1. Executive Signals — Top-Meldungen der Woche
+   The 3–5 most important developments requiring senior leadership attention. State the implication for AHK Portugal or its member companies.
 
-## 1. Executive Signals — Top-Meldungen der Woche
-The 3–5 most important developments requiring senior leadership attention. Be specific and direct. State the implication for AHK Portugal or its member companies.
+2. Politische Entwicklungen
+   Key political and regulatory developments in Portugal, Germany, and the EU directly relevant to the bilateral business relationship.
 
-## 2. Politische Entwicklungen
-Key political and regulatory developments in Portugal, Germany, and the EU directly relevant to the bilateral business relationship.
+3. Wirtschaft & Märkte
+   Macroeconomic indicators, sector trends, and market movements relevant to German companies in Portugal and Portuguese companies with German exposure.
 
-## 3. Wirtschaft & Märkte
-Macroeconomic indicators, sector trends, and market movements relevant to German companies in Portugal and Portuguese companies with German exposure.
+4. Investitionsradar
+   Investment announcements, M&A activity, company expansions, and new market entries of bilateral interest.
 
-## 4. Investitionsradar
-Investment announcements, M&A activity, company expansions, and new market entries of bilateral interest.
+5. Deal Flow & Ausschreibungen
+   Public tenders and procurement opportunities. Sources: (a) dados.gov.pt dataset metadata — note the last update date and total contract volume for 2026; (b) web search results — extract any specific tenders or contracts relevant to German companies or bilateral business. Include: title, contracting authority, estimated value if available, deadline if available. Note: full real-time tender feed via IMPIC APIBase2 pending token delivery.
 
-## 5. Deal Flow & Ausschreibungen
-Public tenders and procurement opportunities. Sources: (a) dados.gov.pt dataset metadata — note the last update date and total contract volume for 2026; (b) web search results — extract any specific tenders or contracts relevant to German companies or bilateral business. Include: title, contracting authority, estimated value if available, deadline if available. Note: full real-time tender feed via IMPIC APIBase2 pending token delivery.
+6. Umwelt & Energie
+   Sustainability, green economy, energy transition, and ESG developments relevant to the German-Portuguese business community.
 
-## 6. Umwelt & Energie
-Sustainability, green economy, energy transition, and ESG developments relevant to the German-Portuguese business community.
-
-## 7. Quellenverzeichnis
-Complete list of all sources referenced, with publication name and date.
-
----
+7. Quellenverzeichnis
+   Complete list of all sources referenced, with publication name and date.
 
 RULES:
 - Write entirely in German (Deutsch)
@@ -264,7 +265,6 @@ RULES:
 - Prioritise quality over quantity — only include items with clear bilateral relevance`,
     output_format: 'markdown',
     model_tier: 'reasoning',
-    kb_file_ids: [], // populate once briefing examples are uploaded to KB
   },
 ];
 

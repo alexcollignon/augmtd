@@ -949,7 +949,7 @@ function ToolStepFields({ step, onUpdate, isEnhancing, isPending, onEnhance, onS
               <div className={`relative flex-shrink-0 w-8 h-4 rounded-full transition-colors ${isBrowser ? 'bg-indigo-500' : 'bg-neutral-300'}`}>
                 <span className={`absolute top-0.5 w-3 h-3 bg-white rounded-full shadow transition-transform ${isBrowser ? 'translate-x-4' : 'translate-x-0.5'}`} />
               </div>
-              <span className="text-[12px] text-neutral-500">Page doesn&apos;t load without a browser</span>
+              <span className="text-[12px] text-neutral-500">Page requires JavaScript to load <span className="text-neutral-400">(e.g. dashboards, search results)</span></span>
             </button>
             <FetchUrlAuth step={step} onUpdate={onUpdate} onSave={onSave} />
           </>
