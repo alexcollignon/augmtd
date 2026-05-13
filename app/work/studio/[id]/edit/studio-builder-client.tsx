@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
@@ -91,6 +91,8 @@ const AVAILABLE_TOOLS = [
   { id: 'get_calendar',      label: 'Fetch upcoming calendar',   description: 'Returns your next meetings with attendees and times.' },
   { id: 'read_kb_file',      label: 'Read a knowledge base file', description: 'Returns the full content of one KB file by id.' },
   { id: 'web_search',        label: 'Search the web',            description: 'Runs a web search (requires TAVILY_API_KEY to be set).' },
+  { id: 'linkedin_post',     label: 'Generate LinkedIn posts',   description: 'Drafts 1–3 LinkedIn post variants from previous step content. Configure tone, format, length, language, and optionally a voice reference file.' },
+  { id: 'browser_fetch',     label: 'Read a protected or complex page', description: 'For portals, dashboards, or pages that don\'t work with the standard page reader. Uses a full browser behind the scenes.' },
 ];
 
 export function StudioBuilderClient({ initialWorkflow, agents }: Props) {
@@ -597,7 +599,8 @@ function StepCard({
           type="text"
           value={step.label}
           onChange={e => onUpdate({ label: e.target.value })}
-          className="flex-1 bg-transparent text-[13px] font-medium text-neutral-900 focus:outline-none"
+          placeholder="Step name"
+          className="flex-1 bg-transparent text-[13px] font-medium text-neutral-900 placeholder-neutral-400 focus:outline-none"
         />
         <div className="flex items-center gap-0.5">
           <button onClick={() => onMove(-1)} disabled={index === 0} className="p-1 hover:bg-neutral-200 rounded disabled:opacity-30">
@@ -622,6 +625,78 @@ function StepCard({
 }
 
 type EnhanceFn = (prompt: string, label: string, context: { step_type: 'ai' | 'tool' | 'agent'; tool_type?: string; output_format?: string; model_tier?: string; field: 'prompt' | 'query' }) => void;
+
+function LinkedInPostFields({ step, onUpdate }: { step: ToolStep; onUpdate: (p: Partial<ToolStep>) => void }) {
+  const [kbFiles, setKbFiles] = useState<Array<{ id: string; filename: string }>>([]);
+  useEffect(() => {
+    fetch('/api/knowledge/files?limit=50').then(r => r.json()).then(d => setKbFiles(d.data ?? [])).catch(() => {});
+  }, []);
+  const cfg = step.config;
+  const set = (k: string, v: unknown) => onUpdate({ config: { ...cfg, [k]: v } });
+  return (
+    <>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Tone">
+          <select value={(cfg.tone as string) ?? 'thought_leadership'} onChange={e => set('tone', e.target.value)}
+            className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] bg-white">
+            <option value="thought_leadership">Thought leadership</option>
+            <option value="conversational">Conversational</option>
+            <option value="data_driven">Data-driven</option>
+          </select>
+        </Field>
+        <Field label="Length">
+          <select value={(cfg.length as string) ?? 'standard'} onChange={e => set('length', e.target.value)}
+            className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] bg-white">
+            <option value="short">Short ~100w</option>
+            <option value="standard">Standard ~200w</option>
+            <option value="long">Long ~350w</option>
+          </select>
+        </Field>
+        <Field label="Format">
+          <select value={(cfg.format as string) ?? 'insight'} onChange={e => set('format', e.target.value)}
+            className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] bg-white">
+            <option value="story">Story</option>
+            <option value="insight">Insight</option>
+            <option value="question">Question</option>
+            <option value="list">List</option>
+          </select>
+        </Field>
+        <Field label="Language">
+          <select value={(cfg.language as string) ?? 'en'} onChange={e => set('language', e.target.value)}
+            className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] bg-white">
+            <option value="en">English</option>
+            <option value="de">German</option>
+            <option value="pt">Portuguese</option>
+          </select>
+        </Field>
+        <Field label="Variants">
+          <select value={String(cfg.variants ?? 1)} onChange={e => set('variants', Number(e.target.value))}
+            className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] bg-white">
+            <option value="1">1 draft</option>
+            <option value="2">2 drafts</option>
+            <option value="3">3 drafts</option>
+          </select>
+        </Field>
+        <Field label="Image prompt">
+          <label className="flex items-center gap-2 px-3 py-2 border border-neutral-200 rounded-md cursor-pointer">
+            <input type="checkbox" checked={cfg.include_image_prompt === true} onChange={e => set('include_image_prompt', e.target.checked)}
+              className="rounded border-neutral-300 text-indigo-600 focus:ring-indigo-500" />
+            <span className="text-[13px] text-neutral-700">Include visual prompt</span>
+          </label>
+        </Field>
+      </div>
+      {kbFiles.length > 0 && (
+        <Field label="Voice reference">
+          <select value={(cfg.voice_kb_file_id as string) ?? ''} onChange={e => set('voice_kb_file_id', e.target.value || undefined)}
+            className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] bg-white">
+            <option value="">No voice reference (past posts or style guide)</option>
+            {kbFiles.map(f => <option key={f.id} value={f.id}>{f.filename}</option>)}
+          </select>
+        </Field>
+      )}
+    </>
+  );
+}
 
 function ToolStepFields({ step, onUpdate, isEnhancing, isPending, onEnhance }: {
   step: ToolStep; onUpdate: (p: Partial<ToolStep>) => void;
@@ -685,6 +760,7 @@ function ToolStepFields({ step, onUpdate, isEnhancing, isPending, onEnhance }: {
           />
         </Field>
       )}
+      {step.tool === 'linkedin_post' && <LinkedInPostFields step={step} onUpdate={onUpdate} />}
     </>
   );
 }
@@ -696,6 +772,40 @@ function AIStepFields({ step, onUpdate, isEnhancing, isPending, onEnhance }: {
   isPending?: boolean;
   onEnhance?: EnhanceFn;
 }) {
+  type KbFile = { id: string; filename: string; folder_id?: string | null };
+  type DriveFolder = { id: string; name: string; is_system: boolean };
+  const [kbFiles, setKbFiles] = useState<KbFile[]>([]);
+  const [driveFolders, setDriveFolders] = useState<DriveFolder[]>([]);
+  const [kbOpen, setKbOpen] = useState((step.kb_file_ids?.length ?? 0) > 0);
+
+  useEffect(() => {
+    Promise.all([
+      fetch('/api/knowledge/files?limit=50').then(r => r.json()).then(d => d.data ?? []),
+      fetch('/api/drive/folders').then(r => r.json()).then(d => Array.isArray(d) ? d : []),
+    ]).then(([files, folders]) => {
+      setKbFiles(files);
+      setDriveFolders(folders);
+    }).catch(() => {});
+  }, []);
+
+  const selectedIds = step.kb_file_ids ?? [];
+  function toggleKbFile(id: string) {
+    const next = selectedIds.includes(id) ? selectedIds.filter(x => x !== id) : [...selectedIds, id];
+    onUpdate({ kb_file_ids: next.length > 0 ? next : undefined });
+  }
+
+  const userFolders = driveFolders.filter(f => !f.is_system);
+  const folderNameMap = new Map(userFolders.map(f => [f.id, f.name]));
+  const kbByFolder = kbFiles.reduce<Record<string, KbFile[]>>((acc, f) => {
+    const name = f.folder_id ? (folderNameMap.get(f.folder_id) ?? 'Other') : 'Unfiled';
+    (acc[name] ??= []).push(f);
+    return acc;
+  }, {});
+  const kbFolders = [
+    ...userFolders.map(f => f.name).filter(n => kbByFolder[n]),
+    ...(kbByFolder['Unfiled'] ? ['Unfiled'] : []),
+  ];
+
   return (
     <>
       <div>
@@ -730,6 +840,46 @@ function AIStepFields({ step, onUpdate, isEnhancing, isPending, onEnhance }: {
           />
         )}
       </div>
+      {kbFiles.length > 0 && (
+        <div>
+          <button
+            type="button"
+            onClick={() => setKbOpen(o => !o)}
+            className="flex items-center gap-1.5 text-[11.5px] font-medium text-neutral-500 hover:text-neutral-700 transition-colors"
+          >
+            <DocumentTextIcon className="w-3.5 h-3.5" />
+            Reference documents
+            {selectedIds.length > 0 && (
+              <span className="ml-1 px-1.5 py-0.5 rounded-full bg-indigo-100 text-indigo-700 text-[10px] font-semibold leading-none">
+                {selectedIds.length}
+              </span>
+            )}
+            <span className="text-neutral-400 text-[10px] ml-0.5">{kbOpen ? '▲' : '▼'}</span>
+          </button>
+          {kbOpen && (
+            <div className="mt-1.5 border border-neutral-200 rounded-md overflow-hidden max-h-48 overflow-y-auto">
+              {kbFolders.map(folder => (
+                <div key={folder}>
+                  <div className="px-3 py-1.5 bg-neutral-50 border-b border-neutral-100 text-[10.5px] font-semibold text-neutral-400 uppercase tracking-wide">
+                    {folder}
+                  </div>
+                  {kbByFolder[folder].map(f => (
+                    <label key={f.id} className="flex items-center gap-2.5 px-3 py-2 cursor-pointer hover:bg-neutral-50 border-b border-neutral-100 last:border-0">
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.includes(f.id)}
+                        onChange={() => toggleKbFile(f.id)}
+                        className="rounded border-neutral-300 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <span className="text-[12px] text-neutral-700 truncate">{f.filename}</span>
+                    </label>
+                  ))}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       <div className="grid grid-cols-2 gap-3">
         <Field label="Output format">
           <select

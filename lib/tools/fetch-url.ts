@@ -48,10 +48,16 @@ export async function executeFetchUrl(config: Record<string, unknown>): Promise<
 
   if (urls.length === 0) return '[fetch_url] No valid URLs provided. URLs must be https:// and not point to private networks.';
 
+  const authConfig = config.auth as { username?: string; password?: string } | undefined;
+  const basicAuth = authConfig?.username
+    ? `Basic ${Buffer.from(`${authConfig.username}:${authConfig.password ?? ''}`).toString('base64')}`
+    : null;
+
   const key = process.env.TAVILY_API_KEY;
 
-  // Try Tavily /extract first — handles JS-rendered pages, returns clean markdown
-  if (key) {
+  // When credentials are provided, skip Tavily — it fetches from its own servers
+  // so our credentials would never reach the target site. Go direct instead.
+  if (!basicAuth && key) {
     try {
       const res = await fetch('https://api.tavily.com/extract', {
         method: 'POST',
@@ -69,11 +75,13 @@ export async function executeFetchUrl(config: Record<string, unknown>): Promise<
     } catch { /* fall through */ }
   }
 
-  // Fallback: direct fetch + HTML strip
+  // Direct fetch — with Basic Auth header when credentials are set
   const results = await Promise.allSettled(
     urls.map(async url => {
+      const headers: Record<string, string> = { 'User-Agent': 'Mozilla/5.0' };
+      if (basicAuth) headers['Authorization'] = basicAuth;
       const res = await fetch(url, {
-        headers: { 'User-Agent': 'Mozilla/5.0' },
+        headers,
         signal: AbortSignal.timeout(10000),
       });
       const html = await res.text();

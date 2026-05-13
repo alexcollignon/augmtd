@@ -11,7 +11,7 @@ import { buildInboxSnapshot } from '@/lib/inbox/chat-context';
 import { getCalendarContext } from '@/lib/calendar/calendar-context';
 import { formatCalendarContextForChat } from '@/lib/calendar/format-calendar-context';
 import { buildKBContext } from '@/lib/knowledge/build-kb-context';
-import { executeWebSearch, executeFetchUrl, executeRssFeed } from '@/lib/tools';
+import { executeWebSearch, executeFetchUrl, executeRssFeed, executeLinkedInPost, executeBrowserFetch } from '@/lib/tools';
 import type { WorkflowStep, StepOutput, ToolStep, AIStep, AgentStep } from './types';
 
 export interface StepContext {
@@ -80,6 +80,12 @@ async function executeToolStep(step: ToolStep, ctx: StepContext): Promise<string
     case 'web_search':        return await executeWebSearch(step.config);
     case 'fetch_url':         return await executeFetchUrl(step.config);
     case 'rss_feed':          return await executeRssFeed(step.config, ctx.lastRunAt);
+    case 'linkedin_post':     return await executeLinkedInPost(step.config, {
+      userId: ctx.userId,
+      supabase: ctx.supabase,
+      previousContent: formatPreviousOutputs(ctx.previousOutputs),
+    });
+    case 'browser_fetch':     return await executeBrowserFetch(step.config);
     default:
       throw new Error(`Unknown tool: ${step.tool}`);
   }
@@ -140,9 +146,24 @@ async function executeAIStep(step: AIStep, ctx: StepContext): Promise<string> {
     step.output_format === 'markdown' ? '\n\nRespond in clean, scannable markdown.' :
                                         '';
 
-  const systemPrompt =
+  let systemPrompt =
     `You are executing one step of an automated workflow named "${ctx.workflowName}". ` +
     `Use the previous step outputs below as your source material and produce the requested transformation.`;
+
+  if (step.kb_file_ids && step.kb_file_ids.length > 0) {
+    try {
+      const kb = await buildKBContext(ctx.userId, step.prompt, ctx.supabase, {
+        fileLimit: step.kb_file_ids.length,
+        maxChunksPerFile: 4,
+        threshold: 0.1,
+        maxTotalChars: 10000,
+        scopeFileIds: step.kb_file_ids,
+      });
+      if (kb?.context) {
+        systemPrompt += `\n\n<reference_documents>\nUse these documents as format and style reference for your output.\n${kb.context}\n</reference_documents>`;
+      }
+    } catch { /* non-fatal */ }
+  }
 
   const userPrompt = [
     previousBlock,
@@ -156,7 +177,7 @@ async function executeAIStep(step: AIStep, ctx: StepContext): Promise<string> {
       { role: 'user',   content: userPrompt },
     ],
     temperature: 0.3,
-    max_tokens: 2000,
+    max_tokens: 4000,
     ...(step.output_format === 'json' ? { response_format: { type: 'json_object' } } : {}),
   });
 
