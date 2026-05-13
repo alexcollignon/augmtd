@@ -157,10 +157,52 @@ export function nextRunFromTrigger(trigger: { type: string; cron?: string; timez
   return computeNextRun(trigger.cron, trigger.timezone, after);
 }
 
-/** Human-readable label fallback when the user didn't provide one. */
+const DOW_FULL = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+function fmtTime(hour: number, minute: number): string {
+  const suffix = hour < 12 ? 'am' : 'pm';
+  const h = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
+  const m = minute === 0 ? '' : `:${String(minute).padStart(2, '0')}`;
+  return `${h}${m}${suffix}`;
+}
+
+/** Convert a cron expression + optional timezone into a plain-English description. */
 export function describeCron(cron: string, timezone?: string): string {
-  // Keep simple — the builder UI provides friendly presets; this is the fallback.
-  return `Cron: ${cron}${timezone ? ` (${timezone})` : ''}`;
+  try {
+    const [min, hr, dom, , dow] = cron.trim().split(/\s+/);
+    const tzStr = timezone ? ` (${timezone})` : '';
+
+    // Sub-daily: hour field is */N or *
+    if (hr === '*') return `Every hour${tzStr}`;
+    const stepMatch = hr.match(/^\*\/(\d+)$/);
+    if (stepMatch) {
+      const n = parseInt(stepMatch[1], 10);
+      return `Every ${n} hours${tzStr}`;
+    }
+
+    const hour   = parseInt(hr,  10);
+    const minute = parseInt(min, 10);
+    if (!Number.isFinite(hour) || !Number.isFinite(minute)) throw new Error();
+
+    const timeStr = fmtTime(hour, minute);
+
+    // Monthly
+    if (dom !== '*') return `1st of every month at ${timeStr}${tzStr}`;
+
+    // Daily
+    if (dow === '*') return `Every day at ${timeStr}${tzStr}`;
+
+    // Weekly — one or more specific days
+    const days = dow.split(',').map(Number).filter(d => Number.isFinite(d) && d >= 0 && d <= 6);
+    if (days.length === 0) return `Every day at ${timeStr}${tzStr}`;
+    if (days.length === 5 && days.every(d => d >= 1 && d <= 5))
+      return `Every weekday at ${timeStr}${tzStr}`;
+    if (days.length === 7) return `Every day at ${timeStr}${tzStr}`;
+    const dayNames = days.sort((a, b) => a - b).map(d => DOW_FULL[d]).join(', ');
+    return `Every ${dayNames} at ${timeStr}${tzStr}`;
+  } catch {
+    return cron;
+  }
 }
 
 /** Validate a cron expression by attempting to parse it. Returns error message or null. */
