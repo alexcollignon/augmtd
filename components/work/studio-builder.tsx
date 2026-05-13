@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import {
   ArrowLeftIcon,
   TrashIcon,
@@ -30,19 +30,13 @@ import {
   BriefcaseIcon,
   CpuChipIcon,
   BookOpenIcon,
-  ChevronDownIcon,
-  InboxIcon as InboxOutlineIcon,
-  LinkIcon,
-  LockClosedIcon,
-  EyeIcon,
-  EyeSlashIcon,
-  ComputerDesktopIcon,
 } from '@heroicons/react/24/outline';
 import type {
   Workflow, WorkflowStep, WorkflowTrigger, OutputConfig,
   ToolStep, AIStep, AgentStep,
 } from '@/lib/workflows/types';
 import { makeStepId } from '@/lib/workflows/types';
+import { CRON_PRESETS } from '@/lib/workflows/schedule';
 
 interface AgentOption {
   id: string;
@@ -99,112 +93,6 @@ const AVAILABLE_TOOLS = [
   { id: 'rss_feed',          label: 'Follow a news feed or blog', description: 'For sites that publish a feed (most news sites and blogs). Returns only new articles since your last run — no duplicates, clean titles and dates. Look for the RSS icon on the site, or try adding /feed to the URL.' },
   { id: 'linkedin_post',     label: 'Generate LinkedIn posts',   description: 'Drafts 1–3 LinkedIn post variants from previous step content. Configure tone, format, length, language, and optionally a voice reference file.' },
 ];
-
-type ToolIconEntry = { Icon: React.ComponentType<React.SVGProps<SVGSVGElement>>; bg: string };
-function LinkedInSVG({ className }: React.SVGProps<SVGSVGElement>) {
-  return (
-    <svg className={className} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-      <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z" />
-    </svg>
-  );
-}
-const TOOL_ICONS: Record<string, ToolIconEntry> = {
-  get_urgent_emails: { Icon: InboxOutlineIcon,       bg: 'bg-blue-500'    },
-  get_calendar:      { Icon: CalendarDaysIcon,       bg: 'bg-emerald-500' },
-  read_kb_file:      { Icon: BookOpenIcon,           bg: 'bg-violet-500'  },
-  web_search:        { Icon: MagnifyingGlassIcon,    bg: 'bg-amber-500'   },
-  fetch_url:         { Icon: LinkIcon,               bg: 'bg-sky-500'     },
-  rss_feed:          { Icon: NewspaperIcon,          bg: 'bg-orange-500'  },
-  linkedin_post:     { Icon: LinkedInSVG,            bg: 'bg-[#0A66C2]'   },
-  browser_fetch:     { Icon: LinkIcon,               bg: 'bg-sky-500'     },
-};
-
-function ToolPicker({ value, onChange }: { value: string; onChange: (id: string) => void }) {
-  const [open, setOpen] = useState(false);
-  const [rect, setRect] = useState<DOMRect | null>(null);
-  const btnRef = useRef<HTMLButtonElement>(null);
-  const dropRef = useRef<HTMLDivElement>(null);
-  // browser_fetch is a variant of fetch_url — show fetch_url in the picker
-  const displayValue = value === 'browser_fetch' ? 'fetch_url' : value;
-  const selected = AVAILABLE_TOOLS.find(t => t.id === displayValue) ?? AVAILABLE_TOOLS[0];
-  const meta = TOOL_ICONS[selected.id];
-
-  function toggle() {
-    if (!open && btnRef.current) setRect(btnRef.current.getBoundingClientRect());
-    setOpen(o => !o);
-  }
-
-  useEffect(() => {
-    if (!open) return;
-    function onDown(e: MouseEvent) {
-      const target = e.target as Node;
-      const inBtn  = btnRef.current?.contains(target);
-      const inDrop = dropRef.current?.contains(target);
-      if (!inBtn && !inDrop) setOpen(false);
-    }
-    function onScroll(e: Event) {
-      // Close on page scroll but not when scrolling inside the dropdown itself
-      if (dropRef.current?.contains(e.target as Node)) return;
-      setOpen(false);
-    }
-    document.addEventListener('mousedown', onDown);
-    window.addEventListener('scroll', onScroll, true);
-    return () => {
-      document.removeEventListener('mousedown', onDown);
-      window.removeEventListener('scroll', onScroll, true);
-    };
-  }, [open]);
-
-  return (
-    <div>
-      <button
-        ref={btnRef}
-        type="button"
-        onClick={toggle}
-        className="w-full flex items-center gap-2.5 px-3 py-2 border border-neutral-200 rounded-lg bg-white hover:border-neutral-300 transition-colors text-left"
-      >
-        {meta && (
-          <span className={`flex-shrink-0 w-6 h-6 rounded-md flex items-center justify-center ${meta.bg}`}>
-            <meta.Icon className="w-3.5 h-3.5 text-white" />
-          </span>
-        )}
-        <span className="flex-1 text-[13px] text-neutral-800">{selected.label}</span>
-        <ChevronDownIcon className={`w-4 h-4 text-neutral-400 transition-transform flex-shrink-0 ${open ? 'rotate-180' : ''}`} />
-      </button>
-      {open && rect && (
-        <div
-          ref={dropRef}
-          style={{ position: 'fixed', top: rect.bottom + 4, left: rect.left, width: rect.width, zIndex: 9999 }}
-          className="bg-white border border-neutral-200 rounded-lg shadow-xl overflow-y-auto max-h-[420px]"
-        >
-          {AVAILABLE_TOOLS.map(t => {
-            const tm = TOOL_ICONS[t.id];
-            const isSelected = t.id === displayValue;
-            return (
-              <button
-                key={t.id}
-                type="button"
-                onClick={() => { onChange(t.id); setOpen(false); }}
-                className={`w-full flex items-start gap-2.5 px-3 py-2.5 hover:bg-neutral-50 transition-colors text-left ${isSelected ? 'bg-neutral-50' : ''}`}
-              >
-                {tm && (
-                  <span className={`flex-shrink-0 w-6 h-6 rounded-md flex items-center justify-center mt-0.5 ${tm.bg}`}>
-                    <tm.Icon className="w-3.5 h-3.5 text-white" />
-                  </span>
-                )}
-                <div className="min-w-0">
-                  <div className="text-[13px] text-neutral-800 leading-snug">{t.label}</div>
-                  <div className="text-[11px] text-neutral-500 leading-snug mt-0.5">{t.description}</div>
-                </div>
-                {isSelected && <CheckIcon className="w-4 h-4 text-indigo-500 flex-shrink-0 ml-auto mt-0.5" />}
-              </button>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
 
 export function StudioBuilder({ workflow: initialWorkflow, agents, onClose, onBack }: Props) {
   const [workflow, setWorkflow] = useState<Workflow>(initialWorkflow);
@@ -515,7 +403,6 @@ export function StudioBuilder({ workflow: initialWorkflow, agents, onClose, onBa
                   isEnhancing={enhancingStepId === step.id}
                   isPending={enhancePendingStepId === step.id}
                   onEnhance={(prompt, label, ctx) => handleEnhanceStep(step.id, prompt, label, ctx)}
-                  onSave={save}
                 />
               ))}
             </div>
@@ -592,107 +479,10 @@ function AddStepButton({
   );
 }
 
-// ── Trigger helpers ────────────────────────────────────────────────────────────
-const DOW_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-const DOW_FULL   = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-const HOURS = Array.from({ length: 24 }, (_, i) => i);
-const MINUTES = [0, 15, 30, 45];
-
-const COMMON_TIMEZONES = [
-  'Europe/Lisbon', 'Europe/London', 'Europe/Paris', 'Europe/Berlin',
-  'Europe/Madrid', 'America/New_York', 'America/Chicago', 'America/Los_Angeles',
-  'UTC',
-];
-
-function formatHour(h: number) {
-  if (h === 0)  return '12:00 am';
-  if (h < 12)  return `${h}:00 am`;
-  if (h === 12) return '12:00 pm';
-  return `${h - 12}:00 pm`;
-}
-
-type Freq = 'hourly' | 'every4h' | 'every8h' | 'every12h' | 'daily' | 'weekly' | 'monthly';
-
-function parseCronHuman(cron: string): { freq: Freq; days: number[]; hour: number; minute: number } {
-  const fallback = { freq: 'daily' as Freq, days: [], hour: 9, minute: 0 };
-  try {
-    const [min, hr, dom, , dow] = cron.trim().split(/\s+/);
-    if (hr === '*')          return { ...fallback, freq: 'hourly' };
-    if (hr === '*/4')        return { ...fallback, freq: 'every4h' };
-    if (hr === '*/8')        return { ...fallback, freq: 'every8h' };
-    if (hr === '*/12')       return { ...fallback, freq: 'every12h' };
-    const hour   = parseInt(hr,  10);
-    const minute = parseInt(min, 10);
-    if (!Number.isFinite(hour) || !Number.isFinite(minute)) return fallback;
-    if (dom !== '*') return { freq: 'monthly', days: [],                               hour, minute };
-    if (dow === '*') return { freq: 'daily',   days: [],                               hour, minute };
-    const days = dow.split(',').map(Number).filter(d => Number.isFinite(d));
-    return { freq: 'weekly', days, hour, minute };
-  } catch { return fallback; }
-}
-
-function buildCron(freq: Freq, days: number[], hour: number, minute: number): string {
-  if (freq === 'hourly')   return `0 * * * *`;
-  if (freq === 'every4h')  return `0 */4 * * *`;
-  if (freq === 'every8h')  return `0 */8 * * *`;
-  if (freq === 'every12h') return `0 */12 * * *`;
-  if (freq === 'monthly')  return `${minute} ${hour} 1 * *`;
-  if (freq === 'weekly')   return `${minute} ${hour} * * ${days.length ? days.join(',') : '1'}`;
-  return `${minute} ${hour} * * *`;
-}
-
-function cronPreview(freq: Freq, days: number[], hour: number, minute: number, tz: string): string {
-  if (freq === 'hourly')   return `Every hour · ${tz}`;
-  if (freq === 'every4h')  return `Every 4 hours · ${tz}`;
-  if (freq === 'every8h')  return `Every 8 hours · ${tz}`;
-  if (freq === 'every12h') return `Every 12 hours · ${tz}`;
-  const timeStr = minute === 0 ? formatHour(hour) : `${hour}:${String(minute).padStart(2, '0')} ${hour < 12 ? 'am' : 'pm'}`;
-  if (freq === 'daily')   return `Every day at ${timeStr} · ${tz}`;
-  if (freq === 'monthly') return `1st of every month at ${timeStr} · ${tz}`;
-  if (days.length === 0)  return `Pick at least one day · ${tz}`;
-  if (days.length === 5 && days.every(d => d >= 1 && d <= 5)) return `Every weekday at ${timeStr} · ${tz}`;
-  if (days.length === 7)  return `Every day at ${timeStr} · ${tz}`;
-  const dayNames = days.sort((a, b) => a - b).map(d => DOW_FULL[d]).join(', ');
-  return `Every ${dayNames} at ${timeStr} · ${tz}`;
-}
-
 function TriggerEditor({ trigger, onChange }: { trigger: WorkflowTrigger; onChange: (t: WorkflowTrigger) => void }) {
   const userTz = typeof Intl !== 'undefined' ? Intl.DateTimeFormat().resolvedOptions().timeZone : 'UTC';
-  const existingCron = 'cron' in trigger ? (trigger.cron ?? '0 9 * * *') : '0 9 * * *';
-  const existingTz   = 'timezone' in trigger ? (trigger.timezone ?? userTz) : userTz;
-  const { freq: initFreq, days: initDays, hour: initHour, minute: initMinute } = parseCronHuman(existingCron);
-
-  const [freq,   setFreq]   = useState<Freq>(initFreq);
-  const [days,   setDays]   = useState<number[]>(initDays);
-  const [hour,   setHour]   = useState(initHour);
-  const [minute, setMinute] = useState(initMinute);
-  const [tz,     setTz]     = useState(existingTz);
-
-  useEffect(() => {
-    if (trigger.type !== 'schedule') return;
-    onChange({ type: 'schedule', cron: buildCron(freq, days, hour, minute), timezone: tz });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [freq, days, hour, minute, tz]);
-
-  function toggleDay(d: number) {
-    setDays(prev => prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d]);
-  }
-
-  const subDaily = freq === 'hourly' || freq === 'every4h' || freq === 'every8h' || freq === 'every12h';
-
-  const freqOptions: Array<{ value: Freq; label: string }> = [
-    { value: 'hourly',   label: 'Hourly'    },
-    { value: 'every4h',  label: 'Every 4h'  },
-    { value: 'every8h',  label: 'Every 8h'  },
-    { value: 'every12h', label: 'Every 12h' },
-    { value: 'daily',    label: 'Daily'     },
-    { value: 'weekly',   label: 'Weekly'    },
-    { value: 'monthly',  label: 'Monthly'   },
-  ];
-
   return (
     <>
-      {/* Manual / On a schedule toggle */}
       <div className="flex gap-2">
         <button
           onClick={() => onChange({ type: 'manual' })}
@@ -703,10 +493,14 @@ function TriggerEditor({ trigger, onChange }: { trigger: WorkflowTrigger; onChan
           }`}
         >
           <BoltIcon className="w-4 h-4 inline mr-1.5" />
-          Run manually
+          Manual only
         </button>
         <button
-          onClick={() => onChange({ type: 'schedule', cron: buildCron(freq, days, hour, minute), timezone: tz })}
+          onClick={() => onChange({
+            type: 'schedule',
+            cron: 'cron' in trigger ? (trigger.cron ?? '0 9 * * *') : '0 9 * * *',
+            timezone: 'timezone' in trigger ? (trigger.timezone ?? userTz) : userTz,
+          })}
           className={`flex-1 px-3 py-2 text-[12.5px] font-medium rounded-lg border transition-colors ${
             trigger.type === 'schedule'
               ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
@@ -716,107 +510,53 @@ function TriggerEditor({ trigger, onChange }: { trigger: WorkflowTrigger; onChan
           On a schedule
         </button>
       </div>
-
       {trigger.type === 'schedule' && (
-        <div className="pt-3 space-y-4">
-
-          {/* Frequency */}
-          <div>
-            <p className="text-[11px] font-medium text-neutral-500 uppercase tracking-wide mb-1.5">Frequency</p>
-            <div className="flex flex-wrap gap-1.5">
-              {freqOptions.map(o => (
-                <button
-                  key={o.value}
-                  onClick={() => setFreq(o.value)}
-                  className={`px-3 py-1.5 rounded-lg text-[12.5px] font-medium border transition-colors ${
-                    freq === o.value
-                      ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
-                      : 'border-neutral-200 text-neutral-500 hover:bg-neutral-50'
-                  }`}
-                >
-                  {o.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Day picker (weekly only) */}
-          {freq === 'weekly' && (
-            <div>
-              <p className="text-[11px] font-medium text-neutral-500 uppercase tracking-wide mb-1.5">Day</p>
-              <div className="flex gap-1">
-                {DOW_LABELS.map((label, i) => (
-                  <button
-                    key={i}
-                    onClick={() => toggleDay(i)}
-                    className={`w-9 py-1.5 rounded-lg text-[12px] font-medium border transition-colors ${
-                      days.includes(i)
-                        ? 'bg-indigo-500 border-indigo-500 text-white'
-                        : 'border-neutral-200 text-neutral-500 hover:bg-neutral-50'
-                    }`}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Time — hidden for sub-daily (hourly/every-Nh) */}
-          {!subDaily && (
-            <div>
-              <p className="text-[11px] font-medium text-neutral-500 uppercase tracking-wide mb-1.5">Time</p>
-              <div className="flex gap-2 items-center">
-                <select
-                  value={hour}
-                  onChange={e => setHour(Number(e.target.value))}
-                  className="px-2 py-1.5 border border-neutral-200 rounded-lg text-[13px] bg-white focus:outline-none focus:ring-2 focus:ring-indigo-100"
-                >
-                  {HOURS.map(h => (
-                    <option key={h} value={h}>{formatHour(h)}</option>
-                  ))}
-                </select>
-                <select
-                  value={minute}
-                  onChange={e => setMinute(Number(e.target.value))}
-                  className="px-2 py-1.5 border border-neutral-200 rounded-lg text-[13px] bg-white focus:outline-none focus:ring-2 focus:ring-indigo-100"
-                >
-                  {MINUTES.map(m => (
-                    <option key={m} value={m}>:{String(m).padStart(2, '0')}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-          )}
-
-          {/* Timezone */}
-          <div>
-            <p className="text-[11px] font-medium text-neutral-500 uppercase tracking-wide mb-1.5">Timezone</p>
-            <select
-              value={COMMON_TIMEZONES.includes(tz) ? tz : '__custom__'}
-              onChange={e => { if (e.target.value !== '__custom__') setTz(e.target.value); }}
-              className="w-full px-2 py-1.5 border border-neutral-200 rounded-lg text-[13px] bg-white focus:outline-none focus:ring-2 focus:ring-indigo-100"
-            >
-              {COMMON_TIMEZONES.map(t => <option key={t} value={t}>{t}</option>)}
-              {!COMMON_TIMEZONES.includes(tz) && <option value="__custom__">{tz}</option>}
-            </select>
-          </div>
-
-          {/* Plain-language preview */}
-          <p className="text-[12px] text-indigo-700 bg-indigo-50 rounded-lg px-3 py-2">
-            {cronPreview(freq, days, hour, minute, tz)}
+        <div className="pt-3 space-y-3">
+          <p className="text-[11.5px] text-amber-600 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+            Workflows run once daily. Time is approximate — the dispatch fires at 9am UTC.
           </p>
-
+          <Field label="Preset">
+            <select
+              value={trigger.cron ?? ''}
+              onChange={e => onChange({ ...trigger, cron: e.target.value })}
+              className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-[13px] bg-white"
+            >
+              {CRON_PRESETS.some(p => p.cron === trigger.cron) ? null : (
+                <option value={trigger.cron ?? ''}>Custom: {trigger.cron}</option>
+              )}
+              {CRON_PRESETS.map(p => (
+                <option key={p.cron} value={p.cron}>{p.label}</option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Custom cron (optional)">
+            <input
+              type="text"
+              value={trigger.cron ?? ''}
+              onChange={e => onChange({ ...trigger, cron: e.target.value })}
+              placeholder="0 9 * * 1"
+              className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-[13px] font-mono focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400"
+            />
+          </Field>
+          <Field label="Timezone">
+            <input
+              type="text"
+              value={trigger.timezone ?? userTz}
+              onChange={e => onChange({ ...trigger, timezone: e.target.value })}
+              placeholder="Europe/Lisbon"
+              className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-[13px] font-mono focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400"
+            />
+          </Field>
         </div>
       )}
     </>
   );
 }
 
-function StepCard({ step, index, total, agents, onUpdate, onRemove, onMove, isEnhancing, isPending, onEnhance, onSave }: {
+function StepCard({ step, index, total, agents, onUpdate, onRemove, onMove, isEnhancing, isPending, onEnhance }: {
   step: WorkflowStep; index: number; total: number; agents: AgentOption[];
   onUpdate: (p: Partial<WorkflowStep>) => void; onRemove: () => void; onMove: (delta: -1 | 1) => void;
-  isEnhancing?: boolean; isPending?: boolean; onSave?: () => void;
+  isEnhancing?: boolean; isPending?: boolean;
   onEnhance?: (prompt: string, label: string, context: { step_type: 'ai' | 'tool' | 'agent'; tool_type?: string; output_format?: string; model_tier?: string; field: 'prompt' | 'query' }) => void;
 }) {
   const Icon = step.type === 'tool' ? WrenchScrewdriverIcon : step.type === 'ai' ? SparklesIcon : UserCircleIcon;
@@ -851,7 +591,7 @@ function StepCard({ step, index, total, agents, onUpdate, onRemove, onMove, isEn
         </div>
       </div>
       <div className="p-3 space-y-3 bg-white">
-        {step.type === 'tool'  && <ToolStepFields  step={step as ToolStep}  onUpdate={onUpdate} isEnhancing={isEnhancing} isPending={isPending} onEnhance={onEnhance} onSave={onSave} />}
+        {step.type === 'tool'  && <ToolStepFields  step={step as ToolStep}  onUpdate={onUpdate} isEnhancing={isEnhancing} isPending={isPending} onEnhance={onEnhance} />}
         {step.type === 'ai'    && <AIStepFields    step={step as AIStep}    onUpdate={onUpdate} isEnhancing={isEnhancing} isPending={isPending} onEnhance={onEnhance} />}
         {step.type === 'agent' && <AgentStepFields step={step as AgentStep} agents={agents} onUpdate={onUpdate} isEnhancing={isEnhancing} isPending={isPending} onEnhance={onEnhance} />}
       </div>
@@ -933,99 +673,20 @@ function LinkedInPostFields({ step, onUpdate }: { step: ToolStep; onUpdate: (p: 
   );
 }
 
-function FetchUrlAuth({ step, onUpdate, onSave }: { step: ToolStep; onUpdate: (p: Partial<ToolStep>) => void; onSave?: () => void }) {
-  const [showPw, setShowPw] = useState(false);
-  const enabled = !!step.config.auth_enabled;
-  const auth = (step.config.auth ?? {}) as { username?: string; password?: string };
-  const hasCredentials = !!(auth.username || auth.password);
-
-  function toggle() {
-    // Preserve credentials when toggling off — only flip the enabled flag
-    onUpdate({ config: { ...step.config, auth_enabled: !enabled } });
-  }
-
-  function clear() {
-    const { auth_enabled, auth: _a, ...rest } = step.config;
-    void auth_enabled; void _a;
-    onUpdate({ config: rest });
-  }
-
-  function setField(field: 'username' | 'password', value: string) {
-    onUpdate({ config: { ...step.config, auth_enabled: true, auth: { ...auth, [field]: value } } });
-  }
-
-  return (
-    <div className="border border-neutral-200 rounded-lg overflow-hidden">
-      <div className="flex items-center gap-2 px-3 py-2.5 bg-neutral-50">
-        <button
-          type="button"
-          onClick={toggle}
-          className="flex items-center gap-2 flex-1 text-left"
-        >
-          <LockClosedIcon className={`w-3.5 h-3.5 flex-shrink-0 ${enabled ? 'text-indigo-500' : 'text-neutral-400'}`} />
-          <span className={`text-[12px] font-medium ${enabled ? 'text-indigo-600' : 'text-neutral-500'}`}>
-            Authentication
-          </span>
-          <span className={`text-[11px] px-1.5 py-0.5 rounded-full font-medium ${enabled ? 'bg-indigo-100 text-indigo-600' : 'bg-neutral-200 text-neutral-500'}`}>
-            {enabled ? 'on' : 'off'}
-          </span>
-        </button>
-        {hasCredentials && (
-          <button
-            type="button"
-            onClick={clear}
-            className="text-[11px] text-neutral-400 hover:text-red-500 transition-colors flex-shrink-0"
-          >
-            Clear
-          </button>
-        )}
-      </div>
-      {enabled && (
-        <div className="px-3 py-3 space-y-2 border-t border-neutral-200">
-          <input
-            type="text"
-            value={auth.username ?? ''}
-            onChange={e => setField('username', e.target.value)}
-            onBlur={() => onSave?.()}
-            placeholder="Username or email"
-            autoComplete="off"
-            className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-[13px] focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400" />
-          <div className="relative">
-            <input
-              type={showPw ? 'text' : 'password'}
-              value={auth.password ?? ''}
-              onChange={e => setField('password', e.target.value)}
-              onBlur={() => onSave?.()}
-              placeholder="Password"
-              autoComplete="new-password"
-              className="w-full px-3 py-2 pr-9 border border-neutral-200 rounded-lg text-[13px] focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400" />
-            <button
-              type="button"
-              onClick={() => setShowPw(v => !v)}
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600"
-            >
-              {showPw ? <EyeSlashIcon className="w-4 h-4" /> : <EyeIcon className="w-4 h-4" />}
-            </button>
-          </div>
-          <p className="text-[11px] text-neutral-400 leading-snug">
-            Uses HTTP Basic Auth. For sites that require a browser login, check if your source offers a subscriber RSS feed instead.
-          </p>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ToolStepFields({ step, onUpdate, isEnhancing, isPending, onEnhance, onSave }: {
+function ToolStepFields({ step, onUpdate, isEnhancing, isPending, onEnhance }: {
   step: ToolStep; onUpdate: (p: Partial<ToolStep>) => void;
-  isEnhancing?: boolean; isPending?: boolean; onSave?: () => void; onEnhance?: EnhanceFn;
+  isEnhancing?: boolean; isPending?: boolean; onEnhance?: EnhanceFn;
 }) {
   const tool = AVAILABLE_TOOLS.find(t => t.id === step.tool);
   const query = (step.config.query as string) ?? '';
   return (
     <>
       <Field label="Tool">
-        <ToolPicker value={step.tool} onChange={id => onUpdate({ tool: id, config: {} })} />
+        <select value={step.tool} onChange={e => onUpdate({ tool: e.target.value, config: {} })}
+          className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-[13px] bg-white">
+          {AVAILABLE_TOOLS.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
+        </select>
+        {tool && <p className="text-[11.5px] text-neutral-500 mt-1">{tool.description}</p>}
       </Field>
       {step.tool === 'web_search' && (
         <div>
@@ -1059,48 +720,16 @@ function ToolStepFields({ step, onUpdate, isEnhancing, isPending, onEnhance, onS
           )}
         </div>
       )}
-      {(step.tool === 'fetch_url' || step.tool === 'browser_fetch') && (() => {
-        const isBrowser = step.tool === 'browser_fetch';
-        const urlValue = isBrowser
-          ? (step.config.url as string) ?? ''
-          : Array.isArray(step.config.urls) ? (step.config.urls as string[]).join('\n') : (step.config.urls as string) ?? '';
-        function toggleBrowser() {
-          const next = isBrowser ? 'fetch_url' : 'browser_fetch';
-          const firstUrl = isBrowser
-            ? (step.config.url as string) ?? ''
-            : (Array.isArray(step.config.urls) ? (step.config.urls as string[])[0] : step.config.urls as string) ?? '';
-          onUpdate({
-            tool: next,
-            config: next === 'browser_fetch'
-              ? { ...step.config, url: firstUrl, urls: undefined }
-              : { ...step.config, urls: [step.config.url as string].filter(Boolean), url: undefined },
-          });
-        }
-        return (
-          <>
-            <Field label="URL" hint={isBrowser ? undefined : 'One URL per line, max 5'}>
-              <textarea
-                value={urlValue}
-                onChange={e => {
-                  const val = e.target.value;
-                  isBrowser
-                    ? onUpdate({ config: { ...step.config, url: val.trim() } })
-                    : onUpdate({ config: { ...step.config, urls: val.split('\n').map(s => s.trim()).filter(Boolean) } });
-                }}
-                placeholder={isBrowser ? 'https://portal.example.com/dashboard' : 'https://example.com/pricing'}
-                rows={isBrowser ? 1 : 3}
-                className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-[13px] resize-y font-mono focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400" />
-            </Field>
-            <button type="button" onClick={toggleBrowser} className="flex items-center gap-2 text-left">
-              <div className={`relative flex-shrink-0 w-8 h-4 rounded-full transition-colors ${isBrowser ? 'bg-indigo-500' : 'bg-neutral-300'}`}>
-                <span className={`absolute top-0.5 w-3 h-3 bg-white rounded-full shadow transition-transform ${isBrowser ? 'translate-x-4' : 'translate-x-0.5'}`} />
-              </div>
-              <span className="text-[12px] text-neutral-500">Page requires JavaScript to load <span className="text-neutral-400">(e.g. dashboards, search results)</span></span>
-            </button>
-            <FetchUrlAuth step={step} onUpdate={onUpdate} onSave={onSave} />
-          </>
-        );
-      })()}
+      {step.tool === 'fetch_url' && (
+        <Field label="URLs to fetch" hint="One URL per line, max 5">
+          <textarea
+            value={Array.isArray(step.config.urls) ? (step.config.urls as string[]).join('\n') : (step.config.urls as string) ?? ''}
+            onChange={e => onUpdate({ config: { ...step.config, urls: e.target.value.split('\n').map(s => s.trim()).filter(Boolean) } })}
+            placeholder={'https://example.com/pricing\nhttps://competitor.com/blog'}
+            rows={3}
+            className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-[13px] resize-y font-mono focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400" />
+        </Field>
+      )}
       {step.tool === 'rss_feed' && (
         <>
           <Field label="Feed URLs" hint="One URL per line">
@@ -1130,7 +759,6 @@ function ToolStepFields({ step, onUpdate, isEnhancing, isPending, onEnhance, onS
             className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-[13px] font-mono" />
         </Field>
       )}
-
       {step.tool === 'linkedin_post' && <LinkedInPostFields step={step} onUpdate={onUpdate} />}
     </>
   );

@@ -108,14 +108,9 @@ export async function executeRssFeed(
   await Promise.allSettled(
     feeds.map(async feedUrl => {
       try {
-        const authConfig = config.auth as { username?: string; password?: string } | undefined;
-        const fetchHeaders: Record<string, string> = { 'User-Agent': 'Mozilla/5.0' };
-        if (authConfig?.username) {
-          fetchHeaders['Authorization'] = `Basic ${Buffer.from(`${authConfig.username}:${authConfig.password ?? ''}`).toString('base64')}`;
-        }
         const res = await fetch(feedUrl, {
           signal: AbortSignal.timeout(8000),
-          headers: fetchHeaders,
+          headers: { 'User-Agent': 'Mozilla/5.0' },
         });
         const text = await res.text();
         const xml = parser.parse(text) as Record<string, unknown>;

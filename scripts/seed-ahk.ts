@@ -4,6 +4,7 @@
 // Run:        npx tsx scripts/seed-ahk.ts patch     — patches steps on existing workflows
 
 import { createClient } from '@supabase/supabase-js';
+import { computeNextRun } from '../lib/workflows/schedule';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL ?? '';
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? '';
@@ -292,33 +293,44 @@ const briefingWorkflow = {
 
 // ── Run ───────────────────────────────────────────────────────────────────────
 
-async function patch() {
-  console.log('Patching existing AHK workflows with updated steps...\n');
+function nextRun(trigger: { cron: string; timezone: string }) {
+  const d = computeNextRun(trigger.cron, trigger.timezone);
+  return d ? d.toISOString() : null;
+}
 
+async function patch() {
+  console.log('Patching existing AHK workflows with updated steps + next_run_at...\n');
+
+  const linkedinNextRun = nextRun(linkedinWorkflow.trigger);
   const { error: e1 } = await supabase
     .from('workflows')
-    .update({ steps: linkedinSteps })
+    .update({ steps: linkedinSteps, next_run_at: linkedinNextRun })
     .eq('id', LINKEDIN_WORKFLOW_ID)
     .eq('user_id', USER_ID);
-  console.log(e1 ? `✗ LinkedIn patch failed: ${e1.message}` : `✓ LinkedIn workflow steps updated (${LINKEDIN_WORKFLOW_ID})`);
+  console.log(e1 ? `✗ LinkedIn patch failed: ${e1.message}` : `✓ LinkedIn workflow updated — next run: ${linkedinNextRun} (${LINKEDIN_WORKFLOW_ID})`);
 
+  const briefingNextRun = nextRun(briefingWorkflow.trigger);
   const { error: e2 } = await supabase
     .from('workflows')
-    .update({ steps: briefingSteps })
+    .update({ steps: briefingSteps, next_run_at: briefingNextRun })
     .eq('id', BRIEFING_WORKFLOW_ID)
     .eq('user_id', USER_ID);
-  console.log(e2 ? `✗ Briefing patch failed: ${e2.message}` : `✓ Briefing workflow steps updated (${BRIEFING_WORKFLOW_ID})`);
+  console.log(e2 ? `✗ Briefing patch failed: ${e2.message}` : `✓ Briefing workflow updated — next run: ${briefingNextRun} (${BRIEFING_WORKFLOW_ID})`);
 }
 
 async function create() {
   console.log('Creating AHK Portugal workflows...\n');
 
   const { data: linkedin, error: e1 } = await supabase
-    .from('workflows').insert(linkedinWorkflow).select('id, name').single();
+    .from('workflows')
+    .insert({ ...linkedinWorkflow, next_run_at: nextRun(linkedinWorkflow.trigger) })
+    .select('id, name').single();
   console.log(e1 ? `✗ LinkedIn insert failed: ${e1.message}` : `✓ Created: "${linkedin!.name}" (${linkedin!.id})`);
 
   const { data: briefing, error: e2 } = await supabase
-    .from('workflows').insert(briefingWorkflow).select('id, name').single();
+    .from('workflows')
+    .insert({ ...briefingWorkflow, next_run_at: nextRun(briefingWorkflow.trigger) })
+    .select('id, name').single();
   console.log(e2 ? `✗ Briefing insert failed: ${e2.message}` : `✓ Created: "${briefing!.name}" (${briefing!.id})`);
 
   console.log(`\nNext steps:`);
