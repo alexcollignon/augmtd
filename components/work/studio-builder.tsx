@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import {
   ArrowLeftIcon,
   TrashIcon,
@@ -43,7 +43,6 @@ import type {
   ToolStep, AIStep, AgentStep,
 } from '@/lib/workflows/types';
 import { makeStepId } from '@/lib/workflows/types';
-import { CRON_PRESETS } from '@/lib/workflows/schedule';
 
 interface AgentOption {
   id: string;
@@ -593,10 +592,88 @@ function AddStepButton({
   );
 }
 
+// ── Trigger helpers ────────────────────────────────────────────────────────────
+const DOW_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const DOW_FULL   = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const HOURS = Array.from({ length: 24 }, (_, i) => i);
+const MINUTES = [0, 15, 30, 45];
+
+const COMMON_TIMEZONES = [
+  'Europe/Lisbon', 'Europe/London', 'Europe/Paris', 'Europe/Berlin',
+  'Europe/Madrid', 'America/New_York', 'America/Chicago', 'America/Los_Angeles',
+  'UTC',
+];
+
+function formatHour(h: number) {
+  if (h === 0)  return '12:00 am';
+  if (h < 12)  return `${h}:00 am`;
+  if (h === 12) return '12:00 pm';
+  return `${h - 12}:00 pm`;
+}
+
+function parseCronHuman(cron: string): { freq: 'daily' | 'weekly' | 'monthly'; days: number[]; hour: number; minute: number } {
+  const fallback = { freq: 'daily' as const, days: [1], hour: 9, minute: 0 };
+  try {
+    const [min, hr, dom, , dow] = cron.trim().split(/\s+/);
+    const hour   = parseInt(hr,  10);
+    const minute = parseInt(min, 10);
+    if (!Number.isFinite(hour) || !Number.isFinite(minute)) return fallback;
+    if (dom !== '*') return { freq: 'monthly', days: [], hour, minute };
+    if (dow === '*') return { freq: 'daily',   days: [], hour, minute };
+    const days = dow.split(',').map(Number).filter(Number.isFinite);
+    return { freq: 'weekly', days, hour, minute };
+  } catch { return fallback; }
+}
+
+function buildCron(freq: 'daily' | 'weekly' | 'monthly', days: number[], hour: number, minute: number): string {
+  if (freq === 'monthly') return `${minute} ${hour} 1 * *`;
+  if (freq === 'weekly')  return `${minute} ${hour} * * ${days.length ? days.join(',') : '1'}`;
+  return `${minute} ${hour} * * *`;
+}
+
+function cronPreview(freq: 'daily' | 'weekly' | 'monthly', days: number[], hour: number, minute: number, tz: string): string {
+  const timeStr = minute === 0 ? formatHour(hour) : `${hour}:${String(minute).padStart(2, '0')} ${hour < 12 ? 'am' : 'pm'}`;
+  if (freq === 'daily')   return `Every day at ${timeStr} · ${tz}`;
+  if (freq === 'monthly') return `1st of every month at ${timeStr} · ${tz}`;
+  if (days.length === 0)  return `Pick at least one day · ${tz}`;
+  if (days.length === 5 && days.every(d => d >= 1 && d <= 5)) return `Every weekday at ${timeStr} · ${tz}`;
+  if (days.length === 7)  return `Every day at ${timeStr} · ${tz}`;
+  const dayNames = days.sort((a, b) => a - b).map(d => DOW_FULL[d]).join(', ');
+  return `Every ${dayNames} at ${timeStr} · ${tz}`;
+}
+
 function TriggerEditor({ trigger, onChange }: { trigger: WorkflowTrigger; onChange: (t: WorkflowTrigger) => void }) {
   const userTz = typeof Intl !== 'undefined' ? Intl.DateTimeFormat().resolvedOptions().timeZone : 'UTC';
+  const existingCron = 'cron' in trigger ? (trigger.cron ?? '0 9 * * *') : '0 9 * * *';
+  const existingTz   = 'timezone' in trigger ? (trigger.timezone ?? userTz) : userTz;
+  const { freq: initFreq, days: initDays, hour: initHour, minute: initMinute } = parseCronHuman(existingCron);
+
+  const [freq,   setFreq]   = useState<'daily' | 'weekly' | 'monthly'>(initFreq);
+  const [days,   setDays]   = useState<number[]>(initDays);
+  const [hour,   setHour]   = useState(initHour);
+  const [minute, setMinute] = useState(initMinute);
+  const [tz,     setTz]     = useState(existingTz);
+
+  // Push changes upstream whenever any field changes
+  useEffect(() => {
+    if (trigger.type !== 'schedule') return;
+    onChange({ type: 'schedule', cron: buildCron(freq, days, hour, minute), timezone: tz });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [freq, days, hour, minute, tz]);
+
+  function toggleDay(d: number) {
+    setDays(prev => prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d]);
+  }
+
+  const freqOptions: Array<{ value: 'daily' | 'weekly' | 'monthly'; label: string }> = [
+    { value: 'daily',   label: 'Daily'   },
+    { value: 'weekly',  label: 'Weekly'  },
+    { value: 'monthly', label: 'Monthly' },
+  ];
+
   return (
     <>
+      {/* Manual / On a schedule toggle */}
       <div className="flex gap-2">
         <button
           onClick={() => onChange({ type: 'manual' })}
@@ -607,14 +684,10 @@ function TriggerEditor({ trigger, onChange }: { trigger: WorkflowTrigger; onChan
           }`}
         >
           <BoltIcon className="w-4 h-4 inline mr-1.5" />
-          Manual only
+          Run manually
         </button>
         <button
-          onClick={() => onChange({
-            type: 'schedule',
-            cron: 'cron' in trigger ? (trigger.cron ?? '0 9 * * *') : '0 9 * * *',
-            timezone: 'timezone' in trigger ? (trigger.timezone ?? userTz) : userTz,
-          })}
+          onClick={() => onChange({ type: 'schedule', cron: buildCron(freq, days, hour, minute), timezone: tz })}
           className={`flex-1 px-3 py-2 text-[12.5px] font-medium rounded-lg border transition-colors ${
             trigger.type === 'schedule'
               ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
@@ -624,43 +697,97 @@ function TriggerEditor({ trigger, onChange }: { trigger: WorkflowTrigger; onChan
           On a schedule
         </button>
       </div>
+
       {trigger.type === 'schedule' && (
-        <div className="pt-3 space-y-3">
-          <p className="text-[11.5px] text-amber-600 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
-            Workflows run once daily. Time is approximate — the dispatch fires at 9am UTC.
-          </p>
-          <Field label="Preset">
-            <select
-              value={trigger.cron ?? ''}
-              onChange={e => onChange({ ...trigger, cron: e.target.value })}
-              className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-[13px] bg-white"
-            >
-              {CRON_PRESETS.some(p => p.cron === trigger.cron) ? null : (
-                <option value={trigger.cron ?? ''}>Custom: {trigger.cron}</option>
-              )}
-              {CRON_PRESETS.map(p => (
-                <option key={p.cron} value={p.cron}>{p.label}</option>
+        <div className="pt-3 space-y-4">
+
+          {/* Frequency */}
+          <div>
+            <p className="text-[11px] font-medium text-neutral-500 uppercase tracking-wide mb-1.5">Frequency</p>
+            <div className="flex gap-1.5">
+              {freqOptions.map(o => (
+                <button
+                  key={o.value}
+                  onClick={() => setFreq(o.value)}
+                  className={`px-3 py-1.5 rounded-lg text-[12.5px] font-medium border transition-colors ${
+                    freq === o.value
+                      ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
+                      : 'border-neutral-200 text-neutral-500 hover:bg-neutral-50'
+                  }`}
+                >
+                  {o.label}
+                </button>
               ))}
+            </div>
+          </div>
+
+          {/* Day picker (weekly only) */}
+          {freq === 'weekly' && (
+            <div>
+              <p className="text-[11px] font-medium text-neutral-500 uppercase tracking-wide mb-1.5">Day</p>
+              <div className="flex gap-1">
+                {DOW_LABELS.map((label, i) => (
+                  <button
+                    key={i}
+                    onClick={() => toggleDay(i)}
+                    className={`w-9 py-1.5 rounded-lg text-[12px] font-medium border transition-colors ${
+                      days.includes(i)
+                        ? 'bg-indigo-500 border-indigo-500 text-white'
+                        : 'border-neutral-200 text-neutral-500 hover:bg-neutral-50'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Time */}
+          <div>
+            <p className="text-[11px] font-medium text-neutral-500 uppercase tracking-wide mb-1.5">Time</p>
+            <div className="flex gap-2 items-center">
+              <select
+                value={hour}
+                onChange={e => setHour(Number(e.target.value))}
+                className="px-2 py-1.5 border border-neutral-200 rounded-lg text-[13px] bg-white focus:outline-none focus:ring-2 focus:ring-indigo-100"
+              >
+                {HOURS.map(h => (
+                  <option key={h} value={h}>{formatHour(h)}</option>
+                ))}
+              </select>
+              {MINUTES.length > 1 && (
+                <select
+                  value={minute}
+                  onChange={e => setMinute(Number(e.target.value))}
+                  className="px-2 py-1.5 border border-neutral-200 rounded-lg text-[13px] bg-white focus:outline-none focus:ring-2 focus:ring-indigo-100"
+                >
+                  {MINUTES.map(m => (
+                    <option key={m} value={m}>:{String(m).padStart(2, '0')}</option>
+                  ))}
+                </select>
+              )}
+            </div>
+          </div>
+
+          {/* Timezone */}
+          <div>
+            <p className="text-[11px] font-medium text-neutral-500 uppercase tracking-wide mb-1.5">Timezone</p>
+            <select
+              value={COMMON_TIMEZONES.includes(tz) ? tz : '__custom__'}
+              onChange={e => { if (e.target.value !== '__custom__') setTz(e.target.value); }}
+              className="w-full px-2 py-1.5 border border-neutral-200 rounded-lg text-[13px] bg-white focus:outline-none focus:ring-2 focus:ring-indigo-100"
+            >
+              {COMMON_TIMEZONES.map(t => <option key={t} value={t}>{t}</option>)}
+              {!COMMON_TIMEZONES.includes(tz) && <option value="__custom__">{tz}</option>}
             </select>
-          </Field>
-          <Field label="Custom cron (optional)">
-            <input
-              type="text"
-              value={trigger.cron ?? ''}
-              onChange={e => onChange({ ...trigger, cron: e.target.value })}
-              placeholder="0 9 * * 1"
-              className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-[13px] font-mono focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400"
-            />
-          </Field>
-          <Field label="Timezone">
-            <input
-              type="text"
-              value={trigger.timezone ?? userTz}
-              onChange={e => onChange({ ...trigger, timezone: e.target.value })}
-              placeholder="Europe/Lisbon"
-              className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-[13px] font-mono focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400"
-            />
-          </Field>
+          </div>
+
+          {/* Plain-language preview */}
+          <p className="text-[12px] text-indigo-700 bg-indigo-50 rounded-lg px-3 py-2">
+            {cronPreview(freq, days, hour, minute, tz)}
+          </p>
+
         </div>
       )}
     </>
