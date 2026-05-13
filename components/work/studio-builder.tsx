@@ -497,48 +497,59 @@ const COMMON_TZS = [
 
 const DOW_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-function parseCronHuman(cron: string): { freq: Freq; days: number[]; hour: number; minute: number } {
-  const [min, hr, dom, , dow] = (cron ?? '0 9 * * *').trim().split(/\s+/);
-  const minute = parseInt(min, 10) || 0;
-  const hour   = parseInt(hr,  10);
-  if (hr === '*') return { freq: 'hourly',   days: [], hour: 9,    minute: 0 };
-  if (hr === '*/4') return { freq: 'every4h', days: [], hour: 9,   minute: 0 };
-  if (hr === '*/8') return { freq: 'every8h', days: [], hour: 9,   minute: 0 };
-  if (hr === '*/12') return { freq: 'every12h', days: [], hour: 9, minute: 0 };
-  if (dom !== '*') return { freq: 'monthly', days: [], hour: isNaN(hour) ? 9 : hour, minute };
-  if (dow === '*') return { freq: 'daily',   days: [], hour: isNaN(hour) ? 9 : hour, minute };
+function parseCronHuman(cron: string): { freq: Freq; days: number[]; hour: number; minute: number; dom: number } {
+  const [, hr, domF, , dow] = (cron ?? '0 9 * * *').trim().split(/\s+/);
+  // step-with-base: "8/4", "0/8", "0/12"
+  const stepBase = hr.match(/^(\d+)\/(\d+)$/);
+  if (stepBase) {
+    const base = parseInt(stepBase[1], 10), step = parseInt(stepBase[2], 10);
+    const freq = step === 4 ? 'every4h' : step === 8 ? 'every8h' : 'every12h';
+    return { freq, days: [], hour: base, minute: 0, dom: 1 };
+  }
+  if (hr === '*')    return { freq: 'hourly',   days: [], hour: 0, minute: 0, dom: 1 };
+  if (hr === '*/4')  return { freq: 'every4h',  days: [], hour: 0, minute: 0, dom: 1 };
+  if (hr === '*/8')  return { freq: 'every8h',  days: [], hour: 0, minute: 0, dom: 1 };
+  if (hr === '*/12') return { freq: 'every12h', days: [], hour: 0, minute: 0, dom: 1 };
+  const hour   = parseInt(hr, 10);
+  const domNum = parseInt(domF, 10);
+  if (domF !== '*') return { freq: 'monthly', days: [], hour: isNaN(hour) ? 9 : hour, minute: 0, dom: isNaN(domNum) ? 1 : domNum };
+  if (dow === '*')  return { freq: 'daily',   days: [], hour: isNaN(hour) ? 9 : hour, minute: 0, dom: 1 };
   const days = dow.split(',').map(Number).filter(n => n >= 0 && n <= 6);
-  return { freq: 'weekly', days, hour: isNaN(hour) ? 9 : hour, minute };
+  return { freq: 'weekly', days, hour: isNaN(hour) ? 9 : hour, minute: 0, dom: 1 };
 }
 
-function buildCron(freq: Freq, days: number[], hour: number, minute: number): string {
-  const m = minute, h = hour;
+function buildCron(freq: Freq, days: number[], hour: number, _minute: number, dom: number): string {
+  const h = hour;
   if (freq === 'hourly')   return `0 * * * *`;
-  if (freq === 'every4h')  return `0 */4 * * *`;
-  if (freq === 'every8h')  return `0 */8 * * *`;
-  if (freq === 'every12h') return `0 */12 * * *`;
-  if (freq === 'daily')    return `${m} ${h} * * *`;
-  if (freq === 'monthly')  return `${m} ${h} 1 * *`;
-  // weekly
+  if (freq === 'every4h')  return h === 0 ? `0 */4 * * *`  : `0 ${h}/4 * * *`;
+  if (freq === 'every8h')  return h === 0 ? `0 */8 * * *`  : `0 ${h}/8 * * *`;
+  if (freq === 'every12h') return h === 0 ? `0 */12 * * *` : `0 ${h}/12 * * *`;
+  if (freq === 'daily')    return `0 ${h} * * *`;
+  if (freq === 'monthly')  return `0 ${h} ${dom} * *`;
   const d = days.length > 0 ? days.sort((a,b)=>a-b).join(',') : '1';
-  return `${m} ${h} * * ${d}`;
+  return `0 ${h} * * ${d}`;
 }
 
-function fmtHour12(h: number, m: number): string {
+function fmtHour12(h: number): string {
   const suffix = h < 12 ? 'am' : 'pm';
   const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
-  return `${h12}:${String(m).padStart(2,'0')}${suffix}`;
+  return `${h12}${suffix}`;
 }
 
-function cronPreview(freq: Freq, days: number[], hour: number, minute: number, tz: string): string {
-  const t = fmtHour12(hour, minute);
+function ordinal(n: number): string {
+  const s = ['th','st','nd','rd'], v = n % 100;
+  return n + (s[(v-20)%10] ?? s[v] ?? s[0]);
+}
+
+function cronPreview(freq: Freq, days: number[], hour: number, _minute: number, dom: number, tz: string): string {
+  const t = fmtHour12(hour);
   const tzShort = tz.split('/').pop()?.replace(/_/g, ' ') ?? tz;
-  if (freq === 'hourly')   return `Every hour`;
-  if (freq === 'every4h')  return `Every 4 hours`;
-  if (freq === 'every8h')  return `Every 8 hours`;
-  if (freq === 'every12h') return `Every 12 hours`;
+  if (freq === 'hourly')   return `Every hour · ${tzShort}`;
+  if (freq === 'every4h')  return `Every 4 hours from ${t} · ${tzShort}`;
+  if (freq === 'every8h')  return `Every 8 hours from ${t} · ${tzShort}`;
+  if (freq === 'every12h') return `Every 12 hours from ${t} · ${tzShort}`;
   if (freq === 'daily')    return `Every day at ${t} · ${tzShort}`;
-  if (freq === 'monthly')  return `1st of every month at ${t} · ${tzShort}`;
+  if (freq === 'monthly')  return `${ordinal(dom)} of every month at ${t} · ${tzShort}`;
   const dayNames = (days.length > 0 ? days.sort((a,b)=>a-b) : [1]).map(d => DOW_LABELS[d]).join(', ');
   return `Every ${dayNames} at ${t} · ${tzShort}`;
 }
@@ -550,22 +561,22 @@ function TriggerEditor({ trigger, onChange }: { trigger: WorkflowTrigger; onChan
   const [days, setDays] = useState<number[]>(parsed.days);
   const [hour, setHour] = useState(parsed.hour);
   const [minute, setMinute] = useState(parsed.minute);
+  const [dom, setDom] = useState(parsed.dom);
   const [tz, setTz] = useState(trigger.type === 'schedule' ? (trigger.timezone ?? userTz) : userTz);
 
-  const isSubDaily = freq === 'hourly' || freq === 'every4h' || freq === 'every8h' || freq === 'every12h';
-
-  const emit = (f: Freq, d: number[], h: number, m: number, z: string) => {
-    onChange({ type: 'schedule', cron: buildCron(f, d, h, m), timezone: z });
+  const emit = (f: Freq, d: number[], h: number, m: number, domVal: number, z: string) => {
+    onChange({ type: 'schedule', cron: buildCron(f, d, h, m, domVal), timezone: z });
   };
 
-  const handleFreq = (f: Freq) => { setFreq(f); emit(f, days, hour, minute, tz); };
-  const handleDay = (d: number) => {
+  const handleFreq   = (f: Freq)   => { setFreq(f);   emit(f,    days, hour, minute, dom, tz); };
+  const handleDay    = (d: number) => {
     const next = days.includes(d) ? days.filter(x => x !== d) : [...days, d];
-    setDays(next); emit(freq, next, hour, minute, tz);
+    setDays(next); emit(freq, next, hour, minute, dom, tz);
   };
-  const handleHour = (h: number)   => { setHour(h);   emit(freq, days, h,    minute, tz); };
-  const handleMinute = (m: number) => { setMinute(m); emit(freq, days, hour, m,      tz); };
-  const handleTz = (z: string)     => { setTz(z);    emit(freq, days, hour, minute, z); };
+  const handleHour   = (h: number) => { setHour(h);   emit(freq, days, h,    minute, dom, tz); };
+  const handleMinute = (m: number) => { setMinute(m); emit(freq, days, hour, m,      dom, tz); };
+  const handleDom    = (d: number) => { setDom(d);    emit(freq, days, hour, minute, d,   tz); };
+  const handleTz     = (z: string) => { setTz(z);     emit(freq, days, hour, minute, dom, z);  };
 
   return (
     <>
@@ -583,7 +594,7 @@ function TriggerEditor({ trigger, onChange }: { trigger: WorkflowTrigger; onChan
         </button>
         <button
           onClick={() => {
-            const cron = buildCron(freq, days, hour, minute);
+            const cron = buildCron(freq, days, hour, minute, dom);
             onChange({ type: 'schedule', cron, timezone: tz });
           }}
           className={`flex-1 px-3 py-2 text-[12.5px] font-medium rounded-lg border transition-colors ${
@@ -634,29 +645,51 @@ function TriggerEditor({ trigger, onChange }: { trigger: WorkflowTrigger; onChan
             </div>
           )}
 
-          {/* Time picker — hidden for sub-daily */}
-          {!isSubDaily && (
-            <div className="flex gap-2 items-center">
+          {/* Sub-daily: starting at time */}
+          {(freq === 'every4h' || freq === 'every8h' || freq === 'every12h') && (
+            <div className="flex items-center gap-2">
+              <span className="text-[12px] text-neutral-500">Starting at</span>
+              <input
+                type="time"
+                step="3600"
+                value={`${String(hour).padStart(2, '0')}:00`}
+                onChange={e => {
+                  const [h] = e.target.value.split(':').map(Number);
+                  if (!isNaN(h)) { handleHour(h); }
+                }}
+                className="px-2 py-1.5 border border-neutral-200 rounded-lg text-[13px] bg-white focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400"
+              />
+            </div>
+          )}
+
+          {/* Monthly: day of month */}
+          {freq === 'monthly' && (
+            <div className="flex items-center gap-2">
+              <span className="text-[12px] text-neutral-500">On the</span>
               <select
-                value={hour}
-                onChange={e => handleHour(parseInt(e.target.value, 10))}
+                value={dom}
+                onChange={e => handleDom(parseInt(e.target.value, 10))}
                 className="px-2 py-1.5 border border-neutral-200 rounded-lg text-[13px] bg-white"
               >
-                {Array.from({ length: 24 }, (_, i) => {
-                  const label = i === 0 ? '12 am' : i < 12 ? `${i} am` : i === 12 ? '12 pm' : `${i - 12} pm`;
-                  return <option key={i} value={i}>{label}</option>;
-                })}
-              </select>
-              <select
-                value={minute}
-                onChange={e => handleMinute(parseInt(e.target.value, 10))}
-                className="px-2 py-1.5 border border-neutral-200 rounded-lg text-[13px] bg-white"
-              >
-                {[0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55].map(m => (
-                  <option key={m} value={m}>{String(m).padStart(2, '0')}</option>
+                {Array.from({ length: 28 }, (_, i) => i + 1).map(d => (
+                  <option key={d} value={d}>{ordinal(d)}</option>
                 ))}
               </select>
             </div>
+          )}
+
+          {/* Time picker — daily, weekly, monthly */}
+          {(freq === 'daily' || freq === 'weekly' || freq === 'monthly') && (
+            <input
+              type="time"
+              step="3600"
+              value={`${String(hour).padStart(2, '0')}:00`}
+              onChange={e => {
+                const [h] = e.target.value.split(':').map(Number);
+                if (!isNaN(h)) handleHour(h);
+              }}
+              className="px-2 py-1.5 border border-neutral-200 rounded-lg text-[13px] bg-white focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400"
+            />
           )}
 
           {/* Timezone */}
@@ -671,7 +704,7 @@ function TriggerEditor({ trigger, onChange }: { trigger: WorkflowTrigger; onChan
 
           {/* Live preview */}
           <p className="text-[12px] text-indigo-600 bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-2">
-            {cronPreview(freq, days, hour, minute, tz)}
+            {cronPreview(freq, days, hour, minute, dom, tz)}
           </p>
         </div>
       )}

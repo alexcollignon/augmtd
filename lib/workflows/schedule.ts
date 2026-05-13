@@ -58,7 +58,8 @@ function parseField(raw: string, min: number, max: number): ParsedField {
       const n = parseInt(base, 10);
       if (!Number.isFinite(n)) throw new Error(`Invalid cron value: "${part}"`);
       start = n;
-      end = n;
+      // N/S notation: "start at N, step by S through max" — end is the field max, not N
+      end = step > 1 ? max : n;
     }
 
     if (start < min || end > max || start > end) {

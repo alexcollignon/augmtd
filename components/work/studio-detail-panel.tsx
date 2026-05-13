@@ -60,6 +60,15 @@ export function StudioDetailPanel({ workflow: initialWorkflow, initialTab = 'run
     setConfirmingDelete(false);
   }, [initialWorkflow.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const fetchWorkflow = useCallback(async (wfId: string) => {
+    const res = await fetch(`/api/workflows/${wfId}`);
+    if (res.ok) {
+      const { workflow: updated } = await res.json();
+      setWorkflow(updated);
+      onWorkflowUpdated(updated);
+    }
+  }, [onWorkflowUpdated]);
+
   const fetchRuns = useCallback(async (wfId: string) => {
     const res = await fetch(`/api/workflows/${wfId}/runs`);
     if (res.ok) {
@@ -75,13 +84,17 @@ export function StudioDetailPanel({ workflow: initialWorkflow, initialTab = 'run
     fetchRuns(initialWorkflow.id);
   }, [initialWorkflow.id, fetchRuns]);
 
-  // Poll while runs are active
+  // Poll while runs are active; refresh workflow metadata once all runs settle
   useEffect(() => {
     const anyActive = runs.some(r => r.status === 'queued' || r.status === 'running');
     if (!anyActive) return;
-    const interval = setInterval(() => fetchRuns(workflow.id), 4000);
+    const interval = setInterval(async () => {
+      await fetchRuns(workflow.id);
+      // Keep workflow header (next_run_at / last_run_at) in sync while runs are active
+      fetchWorkflow(workflow.id);
+    }, 4000);
     return () => clearInterval(interval);
-  }, [runs, workflow.id, fetchRuns]);
+  }, [runs, workflow.id, fetchRuns, fetchWorkflow]);
 
   const runNow = useCallback(async () => {
     setRunning(true);
@@ -204,7 +217,7 @@ export function StudioDetailPanel({ workflow: initialWorkflow, initialTab = 'run
             <div className="flex items-center justify-center h-24">
               <div className="w-5 h-5 border-2 border-neutral-200 border-t-indigo-500 rounded-full animate-spin" />
             </div>
-          ) : runs.length === 0 ? (
+          ) : runs.length === 0 && !(workflow.status === 'active' && workflow.trigger.type === 'schedule' && workflow.next_run_at) ? (
             <div className="text-center py-12">
               <ClockIcon className="w-8 h-8 text-neutral-300 mx-auto mb-2" />
               <p className="text-[13px] font-medium text-neutral-600">No runs yet</p>
@@ -214,6 +227,23 @@ export function StudioDetailPanel({ workflow: initialWorkflow, initialTab = 'run
             </div>
           ) : (
             <div className="space-y-2">
+              {(() => {
+                const hasActiveRun = runs.some(r => r.status === 'queued' || r.status === 'running');
+                const showUpcoming =
+                  workflow.status === 'active' &&
+                  workflow.trigger.type === 'schedule' &&
+                  workflow.next_run_at &&
+                  !hasActiveRun;
+                return showUpcoming ? (
+                  <div className="flex items-center gap-3 px-3.5 py-3 rounded-lg border border-dashed border-neutral-200 bg-neutral-50/60">
+                    <ClockIcon className="w-4 h-4 text-neutral-300 flex-shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[12.5px] font-medium text-neutral-400">Scheduled run</div>
+                      <div className="text-[11.5px] text-neutral-400">{fmtTime(workflow.next_run_at)}</div>
+                    </div>
+                  </div>
+                ) : null;
+              })()}
               {runs.map(run => (
                 <RunCard
                   key={run.id}
