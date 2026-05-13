@@ -94,8 +94,8 @@ export async function GET(request: NextRequest) {
     const runId = (run as { id: string }).id;
     enqueued.push(runId);
 
-    const baseUrl = process.env.VERCEL_URL
-      ? `https://${process.env.VERCEL_URL}`
+    const baseUrl = process.env.VERCEL_PROJECT_PRODUCTION_URL
+      ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
       : (process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000');
 
     fetch(`${baseUrl}/api/workflows/execute`, {
