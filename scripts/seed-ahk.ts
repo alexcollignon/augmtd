@@ -200,13 +200,25 @@ const briefingSteps = [
   {
     type: 'tool',
     id: stepId(),
-    label: 'Base.gov.pt — Public Tenders',
-    tool: 'browser_fetch',
+    label: 'Base.gov.pt — Contratos Públicos (dados.gov.pt)',
+    tool: 'fetch_url',
     config: {
-      url: 'https://www.base.gov.pt/Base4/pt/pesquisa/?type=contratos',
-      // WebKnight WAF blocks headless Chrome — returns homepage shell, not tender data.
-      // API access requested via base.gov.pt contact form (May 2026).
-      // Once API credentials arrive: replace with fetch_url + direct API endpoint.
+      // IMPIC publishes biweekly contract dumps here — free, no auth, no WAF.
+      // Returns dataset metadata: last update date + download URLs for current year file.
+      // TODO (once IMPIC APIBase2 token arrives): replace with
+      //   url: 'https://www.base.gov.pt/APIBase2/GetInfoContrato?numDias=7'
+      //   headers: { '_AcessToken': '<token>' }
+      // which gives real-time last-7-days contracts as JSON.
+      urls: ['https://dados.gov.pt/api/1/datasets/contratos-publicos-portal-base-impic-contratos-de-2012-a-2026/'],
+    },
+  },
+  {
+    type: 'tool',
+    id: stepId(),
+    label: 'Licitações Públicas — Pesquisa Recente',
+    tool: 'web_search',
+    config: {
+      query: 'adjudicação contrato público Portugal empresa alemã investimento infraestrutura semana',
     },
   },
   {
@@ -234,7 +246,7 @@ Macroeconomic indicators, sector trends, and market movements relevant to German
 Investment announcements, M&A activity, company expansions, and new market entries of bilateral interest.
 
 ## 5. Deal Flow & Ausschreibungen
-Public tenders and procurement opportunities from Base.gov.pt and other sources. Include: title, contracting authority, estimated value if available, deadline if available.
+Public tenders and procurement opportunities. Sources: (a) dados.gov.pt dataset metadata — note the last update date and total contract volume for 2026; (b) web search results — extract any specific tenders or contracts relevant to German companies or bilateral business. Include: title, contracting authority, estimated value if available, deadline if available. Note: full real-time tender feed via IMPIC APIBase2 pending token delivery.
 
 ## 6. Umwelt & Energie
 Sustainability, green economy, energy transition, and ESG developments relevant to the German-Portuguese business community.
