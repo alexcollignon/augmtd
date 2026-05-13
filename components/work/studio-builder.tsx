@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import {
   ArrowLeftIcon,
   TrashIcon,
@@ -611,27 +611,41 @@ function formatHour(h: number) {
   return `${h - 12}:00 pm`;
 }
 
-function parseCronHuman(cron: string): { freq: 'daily' | 'weekly' | 'monthly'; days: number[]; hour: number; minute: number } {
-  const fallback = { freq: 'daily' as const, days: [1], hour: 9, minute: 0 };
+type Freq = 'hourly' | 'every4h' | 'every8h' | 'every12h' | 'daily' | 'weekly' | 'monthly';
+
+function parseCronHuman(cron: string): { freq: Freq; days: number[]; hour: number; minute: number } {
+  const fallback = { freq: 'daily' as Freq, days: [], hour: 9, minute: 0 };
   try {
     const [min, hr, dom, , dow] = cron.trim().split(/\s+/);
+    if (hr === '*')          return { ...fallback, freq: 'hourly' };
+    if (hr === '*/4')        return { ...fallback, freq: 'every4h' };
+    if (hr === '*/8')        return { ...fallback, freq: 'every8h' };
+    if (hr === '*/12')       return { ...fallback, freq: 'every12h' };
     const hour   = parseInt(hr,  10);
     const minute = parseInt(min, 10);
     if (!Number.isFinite(hour) || !Number.isFinite(minute)) return fallback;
-    if (dom !== '*') return { freq: 'monthly', days: [], hour, minute };
-    if (dow === '*') return { freq: 'daily',   days: [], hour, minute };
-    const days = dow.split(',').map(Number).filter(Number.isFinite);
+    if (dom !== '*') return { freq: 'monthly', days: [],                               hour, minute };
+    if (dow === '*') return { freq: 'daily',   days: [],                               hour, minute };
+    const days = dow.split(',').map(Number).filter(d => Number.isFinite(d));
     return { freq: 'weekly', days, hour, minute };
   } catch { return fallback; }
 }
 
-function buildCron(freq: 'daily' | 'weekly' | 'monthly', days: number[], hour: number, minute: number): string {
-  if (freq === 'monthly') return `${minute} ${hour} 1 * *`;
-  if (freq === 'weekly')  return `${minute} ${hour} * * ${days.length ? days.join(',') : '1'}`;
+function buildCron(freq: Freq, days: number[], hour: number, minute: number): string {
+  if (freq === 'hourly')   return `0 * * * *`;
+  if (freq === 'every4h')  return `0 */4 * * *`;
+  if (freq === 'every8h')  return `0 */8 * * *`;
+  if (freq === 'every12h') return `0 */12 * * *`;
+  if (freq === 'monthly')  return `${minute} ${hour} 1 * *`;
+  if (freq === 'weekly')   return `${minute} ${hour} * * ${days.length ? days.join(',') : '1'}`;
   return `${minute} ${hour} * * *`;
 }
 
-function cronPreview(freq: 'daily' | 'weekly' | 'monthly', days: number[], hour: number, minute: number, tz: string): string {
+function cronPreview(freq: Freq, days: number[], hour: number, minute: number, tz: string): string {
+  if (freq === 'hourly')   return `Every hour · ${tz}`;
+  if (freq === 'every4h')  return `Every 4 hours · ${tz}`;
+  if (freq === 'every8h')  return `Every 8 hours · ${tz}`;
+  if (freq === 'every12h') return `Every 12 hours · ${tz}`;
   const timeStr = minute === 0 ? formatHour(hour) : `${hour}:${String(minute).padStart(2, '0')} ${hour < 12 ? 'am' : 'pm'}`;
   if (freq === 'daily')   return `Every day at ${timeStr} · ${tz}`;
   if (freq === 'monthly') return `1st of every month at ${timeStr} · ${tz}`;
@@ -648,13 +662,12 @@ function TriggerEditor({ trigger, onChange }: { trigger: WorkflowTrigger; onChan
   const existingTz   = 'timezone' in trigger ? (trigger.timezone ?? userTz) : userTz;
   const { freq: initFreq, days: initDays, hour: initHour, minute: initMinute } = parseCronHuman(existingCron);
 
-  const [freq,   setFreq]   = useState<'daily' | 'weekly' | 'monthly'>(initFreq);
+  const [freq,   setFreq]   = useState<Freq>(initFreq);
   const [days,   setDays]   = useState<number[]>(initDays);
   const [hour,   setHour]   = useState(initHour);
   const [minute, setMinute] = useState(initMinute);
   const [tz,     setTz]     = useState(existingTz);
 
-  // Push changes upstream whenever any field changes
   useEffect(() => {
     if (trigger.type !== 'schedule') return;
     onChange({ type: 'schedule', cron: buildCron(freq, days, hour, minute), timezone: tz });
@@ -665,10 +678,16 @@ function TriggerEditor({ trigger, onChange }: { trigger: WorkflowTrigger; onChan
     setDays(prev => prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d]);
   }
 
-  const freqOptions: Array<{ value: 'daily' | 'weekly' | 'monthly'; label: string }> = [
-    { value: 'daily',   label: 'Daily'   },
-    { value: 'weekly',  label: 'Weekly'  },
-    { value: 'monthly', label: 'Monthly' },
+  const subDaily = freq === 'hourly' || freq === 'every4h' || freq === 'every8h' || freq === 'every12h';
+
+  const freqOptions: Array<{ value: Freq; label: string }> = [
+    { value: 'hourly',   label: 'Hourly'    },
+    { value: 'every4h',  label: 'Every 4h'  },
+    { value: 'every8h',  label: 'Every 8h'  },
+    { value: 'every12h', label: 'Every 12h' },
+    { value: 'daily',    label: 'Daily'     },
+    { value: 'weekly',   label: 'Weekly'    },
+    { value: 'monthly',  label: 'Monthly'   },
   ];
 
   return (
@@ -704,7 +723,7 @@ function TriggerEditor({ trigger, onChange }: { trigger: WorkflowTrigger; onChan
           {/* Frequency */}
           <div>
             <p className="text-[11px] font-medium text-neutral-500 uppercase tracking-wide mb-1.5">Frequency</p>
-            <div className="flex gap-1.5">
+            <div className="flex flex-wrap gap-1.5">
               {freqOptions.map(o => (
                 <button
                   key={o.value}
@@ -743,20 +762,20 @@ function TriggerEditor({ trigger, onChange }: { trigger: WorkflowTrigger; onChan
             </div>
           )}
 
-          {/* Time */}
-          <div>
-            <p className="text-[11px] font-medium text-neutral-500 uppercase tracking-wide mb-1.5">Time</p>
-            <div className="flex gap-2 items-center">
-              <select
-                value={hour}
-                onChange={e => setHour(Number(e.target.value))}
-                className="px-2 py-1.5 border border-neutral-200 rounded-lg text-[13px] bg-white focus:outline-none focus:ring-2 focus:ring-indigo-100"
-              >
-                {HOURS.map(h => (
-                  <option key={h} value={h}>{formatHour(h)}</option>
-                ))}
-              </select>
-              {MINUTES.length > 1 && (
+          {/* Time — hidden for sub-daily (hourly/every-Nh) */}
+          {!subDaily && (
+            <div>
+              <p className="text-[11px] font-medium text-neutral-500 uppercase tracking-wide mb-1.5">Time</p>
+              <div className="flex gap-2 items-center">
+                <select
+                  value={hour}
+                  onChange={e => setHour(Number(e.target.value))}
+                  className="px-2 py-1.5 border border-neutral-200 rounded-lg text-[13px] bg-white focus:outline-none focus:ring-2 focus:ring-indigo-100"
+                >
+                  {HOURS.map(h => (
+                    <option key={h} value={h}>{formatHour(h)}</option>
+                  ))}
+                </select>
                 <select
                   value={minute}
                   onChange={e => setMinute(Number(e.target.value))}
@@ -766,9 +785,9 @@ function TriggerEditor({ trigger, onChange }: { trigger: WorkflowTrigger; onChan
                     <option key={m} value={m}>:{String(m).padStart(2, '0')}</option>
                   ))}
                 </select>
-              )}
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Timezone */}
           <div>

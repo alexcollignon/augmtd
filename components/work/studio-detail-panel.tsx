@@ -9,6 +9,7 @@ import {
   PresentationChartBarIcon, EnvelopeIcon, ArchiveBoxIcon,
 } from '@heroicons/react/24/outline';
 import type { Workflow, WorkflowRun, DocumentArtifact } from '@/lib/workflows/types';
+import { describeCron } from '@/lib/workflows/schedule';
 import { MarkdownText } from '@/components/work/chat-message';
 
 interface Props {
@@ -126,7 +127,7 @@ export function StudioDetailPanel({ workflow: initialWorkflow, initialTab = 'run
   const stepCount = workflow.steps.length;
   const triggerLabel =
     workflow.trigger.type === 'schedule'
-      ? (workflow.trigger.label ?? workflow.trigger.cron)
+      ? (workflow.trigger.label ?? describeCron(workflow.trigger.cron ?? '', workflow.trigger.timezone))
       : 'Manual trigger only';
 
   return (
@@ -272,7 +273,7 @@ export function StudioDetailPanel({ workflow: initialWorkflow, initialTab = 'run
               <Row label="Status"><span className="capitalize">{workflow.status}</span></Row>
               <Row label="Trigger">
                 {workflow.trigger.type === 'schedule'
-                  ? `${workflow.trigger.label ?? workflow.trigger.cron}${workflow.trigger.timezone ? ` (${workflow.trigger.timezone})` : ''}`
+                  ? (workflow.trigger.label ?? describeCron(workflow.trigger.cron ?? '', workflow.trigger.timezone))
                   : 'Manual only'}
               </Row>
               <Row label="Steps">{stepCount}</Row>
