@@ -40,11 +40,6 @@ function RunStatusIcon({ status }: { status: WorkflowRun['status'] }) {
 
 function fmtTime(iso: string | null): string {
   if (!iso) return '—';
-  return new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-}
-
-function fmtNextRun(iso: string | null): string {
-  if (!iso) return '—';
   return new Date(iso).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
@@ -150,7 +145,7 @@ export function StudioDetailPanel({ workflow: initialWorkflow, initialTab = 'run
                 {workflow.status}
               </span>
               {workflow.trigger.type === 'schedule' && workflow.next_run_at && workflow.status === 'active'
-                ? <span>Next run: {fmtNextRun(workflow.next_run_at)}</span>
+                ? <span>Next run: {fmtTime(workflow.next_run_at)}</span>
                 : <span>{triggerLabel}</span>
               }
               {workflow.last_run_at && <span>Last run {fmtTime(workflow.last_run_at)}</span>}
