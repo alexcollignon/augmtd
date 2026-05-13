@@ -504,42 +504,41 @@ const COMMON_TZS = [
 const DOW_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 function parseCronHuman(cron: string): { freq: Freq; days: number[]; hour: number; minute: number; dom: number } {
-  const [min, hr, domF, , dow] = (cron ?? '0 9 * * *').trim().split(/\s+/);
-  const minute = parseInt(min, 10) || 0;
+  const [, hr, domF, , dow] = (cron ?? '0 9 * * *').trim().split(/\s+/);
   const stepBase = hr.match(/^(\d+)\/(\d+)$/);
   if (stepBase) {
     const base = parseInt(stepBase[1], 10), step = parseInt(stepBase[2], 10);
     const freq = step === 4 ? 'every4h' : step === 8 ? 'every8h' : 'every12h';
-    return { freq, days: [], hour: base, minute, dom: 1 };
+    return { freq, days: [], hour: base, minute: 0, dom: 1 };
   }
-  if (hr === '*')    return { freq: 'hourly',   days: [], hour: 0, minute, dom: 1 };
+  if (hr === '*')    return { freq: 'hourly',   days: [], hour: 0, minute: 0, dom: 1 };
   if (hr === '*/4')  return { freq: 'every4h',  days: [], hour: 0, minute: 0, dom: 1 };
   if (hr === '*/8')  return { freq: 'every8h',  days: [], hour: 0, minute: 0, dom: 1 };
   if (hr === '*/12') return { freq: 'every12h', days: [], hour: 0, minute: 0, dom: 1 };
   const hour   = parseInt(hr, 10);
   const domNum = parseInt(domF, 10);
-  if (domF !== '*') return { freq: 'monthly', days: [], hour: isNaN(hour) ? 9 : hour, minute, dom: isNaN(domNum) ? 1 : domNum };
-  if (dow === '*')  return { freq: 'daily',   days: [], hour: isNaN(hour) ? 9 : hour, minute, dom: 1 };
+  if (domF !== '*') return { freq: 'monthly', days: [], hour: isNaN(hour) ? 9 : hour, minute: 0, dom: isNaN(domNum) ? 1 : domNum };
+  if (dow === '*')  return { freq: 'daily',   days: [], hour: isNaN(hour) ? 9 : hour, minute: 0, dom: 1 };
   const days = dow.split(',').map(Number).filter(n => n >= 0 && n <= 6);
-  return { freq: 'weekly', days, hour: isNaN(hour) ? 9 : hour, minute, dom: 1 };
+  return { freq: 'weekly', days, hour: isNaN(hour) ? 9 : hour, minute: 0, dom: 1 };
 }
 
-function buildCron(freq: Freq, days: number[], hour: number, minute: number, dom: number): string {
-  const m = minute, h = hour;
-  if (freq === 'hourly')   return `${m} * * * *`;
+function buildCron(freq: Freq, days: number[], hour: number, _minute: number, dom: number): string {
+  const h = hour;
+  if (freq === 'hourly')   return `0 * * * *`;
   if (freq === 'every4h')  return h === 0 ? `0 */4 * * *`  : `0 ${h}/4 * * *`;
   if (freq === 'every8h')  return h === 0 ? `0 */8 * * *`  : `0 ${h}/8 * * *`;
   if (freq === 'every12h') return h === 0 ? `0 */12 * * *` : `0 ${h}/12 * * *`;
-  if (freq === 'daily')    return `${m} ${h} * * *`;
-  if (freq === 'monthly')  return `${m} ${h} ${dom} * *`;
+  if (freq === 'daily')    return `0 ${h} * * *`;
+  if (freq === 'monthly')  return `0 ${h} ${dom} * *`;
   const d = days.length > 0 ? days.sort((a, b) => a - b).join(',') : '1';
-  return `${m} ${h} * * ${d}`;
+  return `0 ${h} * * ${d}`;
 }
 
-function fmtHour12(h: number, m: number): string {
+function fmtHour12(h: number): string {
   const suffix = h < 12 ? 'am' : 'pm';
   const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
-  return `${h12}:${String(m).padStart(2, '0')}${suffix}`;
+  return `${h12}${suffix}`;
 }
 
 function ordinal(n: number): string {
@@ -547,10 +546,10 @@ function ordinal(n: number): string {
   return n + (s[(v - 20) % 10] ?? s[v] ?? s[0]);
 }
 
-function cronPreview(freq: Freq, days: number[], hour: number, minute: number, dom: number, tz: string): string {
-  const t = fmtHour12(hour, minute);
+function cronPreview(freq: Freq, days: number[], hour: number, _minute: number, dom: number, tz: string): string {
+  const t = fmtHour12(hour);
   const tzShort = tz.split('/').pop()?.replace(/_/g, ' ') ?? tz;
-  if (freq === 'hourly')   return minute === 0 ? `Every hour · ${tzShort}` : `Every hour at :${String(minute).padStart(2, '0')} · ${tzShort}`;
+  if (freq === 'hourly')   return `Every hour · ${tzShort}`;
   if (freq === 'every4h')  return `Every 4 hours from ${t} · ${tzShort}`;
   if (freq === 'every8h')  return `Every 8 hours from ${t} · ${tzShort}`;
   if (freq === 'every12h') return `Every 12 hours from ${t} · ${tzShort}`;
@@ -656,22 +655,6 @@ function TriggerEditor({
             </div>
           )}
 
-          {/* Hourly: minute offset only */}
-          {freq === 'hourly' && (
-            <div className="flex items-center gap-2">
-              <span className="text-[12px] text-neutral-500">At minute</span>
-              <select
-                value={minute}
-                onChange={e => handleMinute(parseInt(e.target.value, 10))}
-                className="px-2 py-1.5 border border-neutral-200 rounded-md text-[13px] bg-white"
-              >
-                {[0,5,10,15,20,25,30,35,40,45,50,55].map(m => (
-                  <option key={m} value={m}>:{String(m).padStart(2,'0')}</option>
-                ))}
-              </select>
-            </div>
-          )}
-
           {/* Sub-daily: starting at */}
           {(freq === 'every4h' || freq === 'every8h' || freq === 'every12h') && (
             <div className="flex items-center gap-2">
@@ -709,12 +692,11 @@ function TriggerEditor({
           {(freq === 'daily' || freq === 'weekly' || freq === 'monthly') && (
             <input
               type="time"
-              step="300"
-              value={`${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`}
+              step="3600"
+              value={`${String(hour).padStart(2, '0')}:00`}
               onChange={e => {
-                const [h, m] = e.target.value.split(':').map(Number);
+                const [h] = e.target.value.split(':').map(Number);
                 if (!isNaN(h)) handleHour(h);
-                if (!isNaN(m)) handleMinute(m);
               }}
               className="px-2 py-1.5 border border-neutral-200 rounded-md text-[13px] bg-white focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400"
             />
