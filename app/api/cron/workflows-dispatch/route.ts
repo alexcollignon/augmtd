@@ -3,11 +3,12 @@
 // workflow_runs row, and triggers the executor. The executor is invoked via
 // fetch-and-forget so this endpoint returns fast and doesn't block the cron.
 
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, after } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { nextRunFromTrigger } from '@/lib/workflows/schedule';
+import { runWorkflow } from '@/lib/workflows/run-workflow';
 
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 export async function GET(request: NextRequest) {
   // Auth: Vercel Cron sends Bearer CRON_SECRET
@@ -89,23 +90,15 @@ export async function GET(request: NextRequest) {
       next_run_at: nextRun ? nextRun.toISOString() : null,
     }).eq('id', wf.id);
 
-    // Fire-and-forget executor invocation. We don't await — the executor runs
-    // asynchronously and we return from the cron dispatcher quickly.
+    // after() keeps the Vercel function alive past the response — a bare fetch()
+    // is killed immediately when the response is sent (same bug fixed in /run route).
     const runId = (run as { id: string }).id;
     enqueued.push(runId);
 
-    const baseUrl = process.env.VERCEL_PROJECT_PRODUCTION_URL
-      ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
-      : (process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000');
-
-    fetch(`${baseUrl}/api/workflows/execute`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.CRON_SECRET}`,
-      },
-      body: JSON.stringify({ run_id: runId, workflow_id: wf.id }),
-    }).catch(err => console.error(`[workflows-dispatch] executor fire failed for ${runId}:`, err));
+    const wfId = wf.id;
+    after(async () => {
+      await runWorkflow({ workflowId: wfId, runId, triggerSource: 'schedule' });
+    });
   }
 
   return NextResponse.json({
