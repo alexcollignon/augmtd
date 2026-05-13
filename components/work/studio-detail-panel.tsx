@@ -40,7 +40,7 @@ function RunStatusIcon({ status }: { status: WorkflowRun['status'] }) {
 
 function fmtTime(iso: string | null): string {
   if (!iso) return '—';
-  return new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  return new Date(iso).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
 export function StudioDetailPanel({ workflow: initialWorkflow, initialTab = 'runs', onEdit, onWorkflowUpdated, onWorkflowDeleted, onOpenThread, onOpenArtifact }: Props) {
@@ -144,11 +144,11 @@ export function StudioDetailPanel({ workflow: initialWorkflow, initialTab = 'run
               <span className={`font-medium capitalize ${workflow.status === 'active' ? 'text-emerald-600' : workflow.status === 'paused' ? 'text-amber-600' : 'text-neutral-400'}`}>
                 {workflow.status}
               </span>
-              <span>{triggerLabel}</span>
+              {workflow.trigger.type === 'schedule' && workflow.next_run_at && workflow.status === 'active'
+                ? <span>Next run: {fmtTime(workflow.next_run_at)}</span>
+                : <span>{triggerLabel}</span>
+              }
               {workflow.last_run_at && <span>Last run {fmtTime(workflow.last_run_at)}</span>}
-              {workflow.next_run_at && workflow.status === 'active' && (
-                <span className="text-emerald-600">Next {fmtTime(workflow.next_run_at)}</span>
-              )}
             </div>
           </div>
 
@@ -344,11 +344,16 @@ function RunCard({ run, workflowId, onOpenThread, onOpenArtifact, onDeleted }: {
       >
         <RunStatusIcon status={run.status} />
         <div className="flex-1 min-w-0">
-          <div className="text-[12.5px] font-medium text-neutral-900 capitalize">
-            {run.triggered_by} run — {run.status}
+          <div className="text-[12.5px] font-medium text-neutral-900">
+            {run.triggered_by === 'schedule' ? 'Scheduled' : 'Manual'} run
+            {run.status === 'queued' && <span className="ml-1.5 text-[11px] font-normal text-neutral-400 bg-neutral-100 px-1.5 py-0.5 rounded-full">Queued</span>}
+            {run.status === 'running' && <span className="ml-1.5 text-[11px] font-normal text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded-full">Running…</span>}
+            {run.status === 'failed' && <span className="ml-1.5 text-[11px] font-normal text-red-600 bg-red-50 px-1.5 py-0.5 rounded-full">Failed</span>}
           </div>
           <div className="text-[11px] text-neutral-500 mt-0.5">
-            {fmtTime(run.started_at)}
+            {run.status === 'queued'
+              ? (run.created_at ? `Queued ${fmtTime(run.created_at)}` : 'Waiting to start…')
+              : fmtTime(run.started_at)}
             {duration !== null ? ` · ${duration}s` : ''}
           </div>
         </div>
