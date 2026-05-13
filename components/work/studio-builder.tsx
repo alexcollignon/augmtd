@@ -636,27 +636,17 @@ function TriggerEditor({ trigger, onChange }: { trigger: WorkflowTrigger; onChan
 
           {/* Time picker — hidden for sub-daily */}
           {!isSubDaily && (
-            <div className="flex gap-2 items-center">
-              <select
-                value={hour}
-                onChange={e => handleHour(parseInt(e.target.value, 10))}
-                className="px-2 py-1.5 border border-neutral-200 rounded-lg text-[13px] bg-white"
-              >
-                {Array.from({ length: 24 }, (_, i) => {
-                  const label = i === 0 ? '12 am' : i < 12 ? `${i} am` : i === 12 ? '12 pm' : `${i - 12} pm`;
-                  return <option key={i} value={i}>{label}</option>;
-                })}
-              </select>
-              <select
-                value={minute}
-                onChange={e => handleMinute(parseInt(e.target.value, 10))}
-                className="px-2 py-1.5 border border-neutral-200 rounded-lg text-[13px] bg-white"
-              >
-                {[0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55].map(m => (
-                  <option key={m} value={m}>{String(m).padStart(2, '0')}</option>
-                ))}
-              </select>
-            </div>
+            <input
+              type="time"
+              step="300"
+              value={`${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`}
+              onChange={e => {
+                const [h, m] = e.target.value.split(':').map(Number);
+                if (!isNaN(h)) handleHour(h);
+                if (!isNaN(m)) handleMinute(m);
+              }}
+              className="px-2 py-1.5 border border-neutral-200 rounded-lg text-[13px] bg-white focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400"
+            />
           )}
 
           {/* Timezone */}
