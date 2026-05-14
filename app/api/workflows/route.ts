@@ -3,6 +3,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { createClient as createAdminClient } from '@supabase/supabase-js';
 import { computeNextRun } from '@/lib/workflows/schedule';
 import { DEFAULT_TRIGGER, DEFAULT_OUTPUT_CONFIG } from '@/lib/workflows/types';
 import type { WorkflowTrigger, WorkflowStep, OutputConfig, WorkflowStatus } from '@/lib/workflows/types';
@@ -17,7 +18,7 @@ export async function GET() {
   // RLS returns own workflows + shared company workflows automatically
   const { data, error } = await supabase
     .from('workflows')
-    .select('id, user_id, name, description, icon, color, status, trigger, steps, output_config, last_run_at, next_run_at, created_at, updated_at, shared_with_company, company_id')
+    .select('id, user_id, name, description, icon, color, status, trigger, steps, output_config, last_run_at, next_run_at, created_at, updated_at, shared_with_company, sharing_mode, company_id')
     .order('updated_at', { ascending: false });
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
@@ -35,6 +36,18 @@ export async function GET() {
     (profiles ?? []).forEach((p: { user_id: string; full_name: string | null; email: string | null }) => {
       ownerNames[p.user_id] = p.full_name ?? p.email?.split('@')[0] ?? 'Teammate';
     });
+    const stillMissing = foreignUserIds.filter(id => !ownerNames[id] || ownerNames[id] === 'Teammate');
+    if (stillMissing.length > 0) {
+      const admin = createAdminClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.SUPABASE_SERVICE_ROLE_KEY!,
+        { auth: { autoRefreshToken: false, persistSession: false } },
+      );
+      await Promise.all(stillMissing.map(async (uid) => {
+        const { data: { user: authUser } } = await admin.auth.admin.getUserById(uid);
+        if (authUser?.email) ownerNames[uid] = authUser.email.split('@')[0];
+      }));
+    }
   }
 
   const workflows = rows.map(w => ({

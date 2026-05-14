@@ -46,6 +46,7 @@ export async function PATCH(
     steps: WorkflowStep[];
     output_config: OutputConfig;
     shared_with_company: boolean;
+    sharing_mode: 'live' | 'template' | null;
   }>;
   try { body = await request.json(); } catch { return NextResponse.json({ error: 'Invalid body' }, { status: 400 }); }
 
@@ -82,8 +83,14 @@ export async function PATCH(
   const update: Record<string, unknown> = { ...body };
   if (nextRunAt !== undefined) update.next_run_at = nextRunAt;
 
+  // Derive shared_with_company from sharing_mode for backwards compat
+  if ('sharing_mode' in body) {
+    update.shared_with_company = body.sharing_mode !== null;
+  }
+
   // If turning on sharing, ensure company_id is set
-  if (body.shared_with_company === true && !(existing as { company_id?: string | null }).company_id) {
+  const turningOnSharing = body.shared_with_company === true || (body.sharing_mode !== undefined && body.sharing_mode !== null);
+  if (turningOnSharing && !(existing as { company_id?: string | null }).company_id) {
     const { data: membership } = await supabase
       .from('company_members')
       .select('company_id')

@@ -3,6 +3,8 @@
 import { useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { SparklesIcon, ArrowUpTrayIcon, XMarkIcon, DocumentTextIcon, FolderOpenIcon, GlobeAltIcon } from '@heroicons/react/24/outline';
+import { SharingModeSelector } from '@/components/work/sharing-mode-selector';
+import type { SharingMode } from '@/lib/workflows/types';
 import { AgentKnowledgeFile } from './agent-knowledge-section';
 import { AGENT_ICONS, AgentIcon, DEFAULT_ICON } from './agent-icons';
 import { DriveFilePicker } from './drive-file-picker';
@@ -36,7 +38,7 @@ export interface AgentFormData {
 }
 
 interface Props {
-  initial?: AgentFormData & { id?: string; memory_text?: string; sources?: AgentKnowledgeFile[]; conversation_starters?: string[] | null; web_enabled?: boolean; shared_with_company?: boolean };
+  initial?: AgentFormData & { id?: string; memory_text?: string; sources?: AgentKnowledgeFile[]; conversation_starters?: string[] | null; web_enabled?: boolean; shared_with_company?: boolean; sharing_mode?: SharingMode | null };
   mode: 'create' | 'edit';
 }
 
@@ -65,7 +67,7 @@ export function AgentForm({ initial, mode }: Props) {
   );
   const [isGeneratingStarters, setIsGeneratingStarters] = useState(false);
   const [webEnabled, setWebEnabled] = useState(initial?.web_enabled ?? false);
-  const [sharedWithCompany, setSharedWithCompany] = useState(initial?.shared_with_company ?? false);
+  const [sharingMode, setSharingMode] = useState<SharingMode | null>(initial?.sharing_mode ?? null);
 
   const enhanceAbortRef = useRef<AbortController | null>(null);
   const fileInputRef    = useRef<HTMLInputElement>(null);
@@ -239,7 +241,7 @@ export function AgentForm({ initial, mode }: Props) {
         const res = await fetch('/api/agents', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, description, instructions, color, icon, conversation_starters: startersToSend, web_enabled: webEnabled, shared_with_company: sharedWithCompany }),
+          body: JSON.stringify({ name, description, instructions, color, icon, conversation_starters: startersToSend, web_enabled: webEnabled, sharing_mode: sharingMode, shared_with_company: sharingMode !== null }),
         });
         if (!res.ok) throw new Error('Failed to create agent');
         const { agent } = await res.json();
@@ -257,7 +259,7 @@ export function AgentForm({ initial, mode }: Props) {
         await fetch(`/api/agents/${agentId}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, description, instructions, color, icon, conversation_starters: startersToSend, web_enabled: webEnabled, shared_with_company: sharedWithCompany }),
+          body: JSON.stringify({ name, description, instructions, color, icon, conversation_starters: startersToSend, web_enabled: webEnabled, sharing_mode: sharingMode, shared_with_company: sharingMode !== null }),
         });
       }
       router.push('/work');
@@ -603,22 +605,9 @@ export function AgentForm({ initial, mode }: Props) {
           </div>
 
           {/* Share with team */}
-          <div className="rounded-2xl bg-white border border-neutral-100 shadow-sm px-4 py-3 flex-shrink-0 flex items-center justify-between">
-            <div>
-              <p className="text-[10.5px] font-semibold text-neutral-600 uppercase tracking-wide">Share with Team</p>
-              <p className="text-[11px] text-neutral-400 mt-0.5">Make this agent visible to everyone in your workspace.</p>
-            </div>
-            <button
-              type="button"
-              onClick={() => setSharedWithCompany(v => !v)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium transition-colors ${
-                sharedWithCompany
-                  ? 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100'
-                  : 'bg-neutral-100 text-neutral-500 hover:bg-neutral-200'
-              }`}
-            >
-              {sharedWithCompany ? 'Shared' : 'Private'}
-            </button>
+          <div className="rounded-2xl bg-white border border-neutral-100 shadow-sm px-4 py-3 flex-shrink-0 space-y-2">
+            <p className="text-[10.5px] font-semibold text-neutral-600 uppercase tracking-wide">Team Sharing</p>
+            <SharingModeSelector value={sharingMode} onChange={setSharingMode} />
           </div>
 
           {/* Conversation starters */}

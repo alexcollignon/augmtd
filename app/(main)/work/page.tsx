@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
+import { createClient as createAdminClient } from '@supabase/supabase-js';
 import { WorkPageClient } from '@/app/work/work-page-client';
 import { getMyWorkspace } from '@/lib/workspace/features';
 export const metadata = { title: 'Chat — AUGMTD' };
@@ -79,6 +80,18 @@ export default async function WorkPage({
     (agentProfiles ?? []).forEach((p: { user_id: string; full_name: string | null; email: string | null }) => {
       agentOwnerNames[p.user_id] = p.full_name ?? p.email?.split('@')[0] ?? 'Teammate';
     });
+    const stillMissingAgents = foreignAgentUserIds.filter(id => !agentOwnerNames[id] || agentOwnerNames[id] === 'Teammate');
+    if (stillMissingAgents.length > 0) {
+      const admin = createAdminClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.SUPABASE_SERVICE_ROLE_KEY!,
+        { auth: { autoRefreshToken: false, persistSession: false } },
+      );
+      await Promise.all(stillMissingAgents.map(async (uid) => {
+        const { data: { user: authUser } } = await admin.auth.admin.getUserById(uid);
+        if (authUser?.email) agentOwnerNames[uid] = authUser.email.split('@')[0];
+      }));
+    }
   }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const enrichedAgents = agentRows.map((a: any) => ({

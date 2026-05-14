@@ -39,7 +39,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const body = await request.json();
-    const allowed = ['name', 'description', 'instructions', 'color', 'icon', 'memory_text', 'conversation_starters', 'web_enabled', 'shared_with_company'] as const;
+    const allowed = ['name', 'description', 'instructions', 'color', 'icon', 'memory_text', 'conversation_starters', 'web_enabled', 'shared_with_company', 'sharing_mode'] as const;
     const updates: Record<string, unknown> = {};
     for (const key of allowed) {
       if (key in body) updates[key] = body[key];
@@ -67,6 +67,23 @@ export async function PATCH(request: NextRequest, { params }: Params) {
         });
         updates.conversation_starters = generated;
       }
+    }
+
+    // Derive shared_with_company from sharing_mode for backwards compat
+    if ('sharing_mode' in updates) {
+      updates.shared_with_company = updates.sharing_mode !== null;
+    }
+
+    // Backfill company_id when enabling sharing
+    const turningOnSharing = updates.shared_with_company === true || (updates.sharing_mode !== undefined && updates.sharing_mode !== null);
+    if (turningOnSharing) {
+      const { data: membership } = await supabase
+        .from('company_members')
+        .select('company_id')
+        .eq('user_id', user.id)
+        .eq('status', 'active')
+        .single();
+      if (membership?.company_id) updates.company_id = membership.company_id;
     }
 
     const { data: agent, error } = await supabase

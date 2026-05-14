@@ -187,6 +187,8 @@ export interface RunWorkflowOptions {
   triggerSource: TriggerSource;
   /** If a run row already exists (queued by dispatcher), pass its id. Otherwise one is created. */
   runId?: string;
+  /** User who triggered the run. Defaults to workflow.user_id (owner). For shared runs, pass the teammate's id so notifications + thread belong to them. */
+  runnerId?: string;
 }
 
 export interface RunWorkflowResult {
@@ -211,6 +213,7 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
   }
 
   const workflow = wfRow as Workflow;
+  const runnerId = opts.runnerId ?? workflow.user_id;
 
   // Create or reuse run row
   let runId = opts.runId;
@@ -221,7 +224,7 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
       .from('workflow_runs')
       .insert({
         workflow_id: workflow.id,
-        user_id: workflow.user_id,
+        user_id: runnerId,
         status: 'running',
         triggered_by: opts.triggerSource,
         started_at: startedAt.toISOString(),
@@ -243,7 +246,7 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
   const { data: threadRow, error: threadErr } = await admin
     .from('work_threads')
     .insert({
-      user_id: workflow.user_id,
+      user_id: runnerId,
       title: threadTitle,
       workflow_id: workflow.id,
       status: 'active',
@@ -340,17 +343,21 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
     await admin.from('workflow_notifications').insert({
       workflow_run_id: runId,
       workflow_id: workflow.id,
-      user_id: workflow.user_id,
+      user_id: runnerId,
       title: `${workflow.name} — run complete`,
       summary: materialised.artifact ? `${materialised.artifact.title} is ready.` : materialised.messageContent.slice(0, 200),
     });
   } else if (notificationMode === 'email_digest') {
+    // For runners who aren't the owner, use their own connections (not the owner's notification_email_ids)
+    const notifEmailIds = runnerId === workflow.user_id
+      ? workflow.output_config.notification_email_ids
+      : undefined; // sendWorkflowEmail will fall back to runner's auth email
     await sendWorkflowEmail({
-      userId: workflow.user_id,
+      userId: runnerId,
       workflowName: workflow.name,
       messageContent: materialised.messageContent,
       artifact: materialised.artifact,
-      notificationEmailIds: workflow.output_config.notification_email_ids,
+      notificationEmailIds: notifEmailIds,
     });
   }
 

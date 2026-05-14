@@ -82,6 +82,8 @@ export interface OutputConfig {
 
 export type WorkflowStatus = 'draft' | 'active' | 'paused';
 
+export type SharingMode = 'live';
+
 export interface Workflow {
   id: string;
   user_id: string;
@@ -100,6 +102,7 @@ export interface Workflow {
   // Team sharing (populated by API)
   company_id?: string | null;
   shared_with_company?: boolean;
+  sharing_mode?: SharingMode | null;
   is_owned_by_me?: boolean;
   owner_name?: string | null;
 }
