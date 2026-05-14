@@ -7,6 +7,7 @@ import { createClient as createAdminClient, SupabaseClient } from '@supabase/sup
 import { randomUUID } from 'crypto';
 import { executeStep } from './execute-step';
 import { nextRunFromTrigger } from './schedule';
+import { sendWorkflowEmail } from './email-notification';
 import { buildArtifactFile, getFileExt, getMimeType } from '@/lib/artifacts/builders';
 import type {
   Workflow, WorkflowRun, StepOutput, TriggerSource, OutputConfig,
@@ -335,13 +336,20 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
 
   // Notification
   const notificationMode = workflow.output_config.notification_mode;
-  if (notificationMode === 'inbox_card' || notificationMode === 'email_digest') {
+  if (notificationMode === 'inbox_card') {
     await admin.from('workflow_notifications').insert({
       workflow_run_id: runId,
       workflow_id: workflow.id,
       user_id: workflow.user_id,
       title: `${workflow.name} — run complete`,
       summary: materialised.artifact ? `${materialised.artifact.title} is ready.` : materialised.messageContent.slice(0, 200),
+    });
+  } else if (notificationMode === 'email_digest') {
+    await sendWorkflowEmail({
+      userId: workflow.user_id,
+      workflowName: workflow.name,
+      messageContent: materialised.messageContent,
+      artifact: materialised.artifact,
     });
   }
 

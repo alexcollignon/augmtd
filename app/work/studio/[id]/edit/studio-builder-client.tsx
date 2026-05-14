@@ -1178,7 +1178,7 @@ function OutputEditor({
         >
           <option value="inbox_card">Inbox card (badge + notification)</option>
           <option value="silent">Silent (no notification)</option>
-          <option value="email_digest">Email digest (future)</option>
+          <option value="email_digest">Email digest</option>
         </select>
       </Field>
     </>

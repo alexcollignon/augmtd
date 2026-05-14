@@ -1141,7 +1141,7 @@ function OutputEditor({ output, onChange }: { output: OutputConfig; onChange: (o
           className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-[13px] bg-white">
           <option value="inbox_card">Inbox card (badge + notification)</option>
           <option value="silent">Silent (no notification)</option>
-          <option value="email_digest">Email digest (future)</option>
+          <option value="email_digest">Email digest</option>
         </select>
       </Field>
     </>
