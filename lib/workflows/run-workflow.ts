@@ -350,6 +350,7 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
       workflowName: workflow.name,
       messageContent: materialised.messageContent,
       artifact: materialised.artifact,
+      notificationEmailIds: workflow.output_config.notification_email_ids,
     });
   }
 

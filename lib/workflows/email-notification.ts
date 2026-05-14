@@ -135,6 +135,7 @@ export async function sendWorkflowEmail(params: {
   workflowName: string;
   messageContent: string;
   artifact?: DocumentArtifact;
+  notificationEmailIds?: string[];
 }): Promise<void> {
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey) {
@@ -148,11 +149,28 @@ export async function sendWorkflowEmail(params: {
     { auth: { autoRefreshToken: false, persistSession: false } },
   );
 
-  // Get user email from auth
-  const { data: { user }, error: userErr } = await admin.auth.admin.getUserById(params.userId);
-  if (userErr || !user?.email) {
-    console.error('[workflow-email] could not resolve user email:', userErr);
-    return;
+  // Resolve recipient addresses from selected connection IDs
+  let toAddresses: string[] = [];
+  if (params.notificationEmailIds && params.notificationEmailIds.length > 0) {
+    const { data: conns } = await admin
+      .from('connections')
+      .select('id, metadata')
+      .eq('user_id', params.userId)
+      .eq('status', 'active')
+      .in('id', params.notificationEmailIds);
+    toAddresses = (conns ?? [])
+      .map((c: { metadata: unknown }) => (c.metadata as Record<string, string>)?.email)
+      .filter(Boolean) as string[];
+  }
+
+  // Fallback to auth email if no connection IDs configured
+  if (toAddresses.length === 0) {
+    const { data: { user }, error: userErr } = await admin.auth.admin.getUserById(params.userId);
+    if (userErr || !user?.email) {
+      console.error('[workflow-email] could not resolve recipient email:', userErr);
+      return;
+    }
+    toAddresses = [user.email];
   }
 
   // Build presigned URL for artifact (7 day expiry)
@@ -186,7 +204,7 @@ export async function sendWorkflowEmail(params: {
   const resend = new Resend(apiKey);
   const { error } = await resend.emails.send({
     from: 'augmtd <workflows@augmtd.ai>',
-    to: user.email,
+    to: toAddresses,
     subject: `${params.workflowName} — run complete`,
     html,
   });

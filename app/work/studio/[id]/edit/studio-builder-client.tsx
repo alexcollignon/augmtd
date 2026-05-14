@@ -1130,6 +1130,22 @@ function OutputEditor({
   output: OutputConfig;
   onChange: (o: OutputConfig) => void;
 }) {
+  const [connections, setConnections] = useState<{ id: string; provider: string; email: string }[]>([]);
+
+  useEffect(() => {
+    if (output.notification_mode !== 'email_digest') return;
+    fetch('/api/connections')
+      .then(r => r.json())
+      .then(d => setConnections(d.connections ?? []))
+      .catch(() => {});
+  }, [output.notification_mode]);
+
+  const toggleEmailId = (id: string) => {
+    const current = output.notification_email_ids ?? [];
+    const next = current.includes(id) ? current.filter(x => x !== id) : [...current, id];
+    onChange({ ...output, notification_email_ids: next });
+  };
+
   return (
     <>
       <Field label="Destination">
@@ -1181,6 +1197,29 @@ function OutputEditor({
           <option value="email_digest">Email digest</option>
         </select>
       </Field>
+      {output.notification_mode === 'email_digest' && connections.length > 0 && (
+        <Field label="Send to">
+          <div className="space-y-1.5">
+            {connections.map(c => {
+              const checked = (output.notification_email_ids ?? []).includes(c.id);
+              return (
+                <label key={c.id} className="flex items-center gap-2.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => toggleEmailId(c.id)}
+                    className="w-3.5 h-3.5 rounded accent-indigo-600"
+                  />
+                  <span className="text-[13px] text-neutral-700 truncate">{c.email}</span>
+                  <span className={`text-[11px] px-1.5 py-0.5 rounded font-medium ${c.provider === 'gmail' ? 'bg-red-50 text-red-600' : 'bg-blue-50 text-blue-600'}`}>
+                    {c.provider === 'gmail' ? 'Gmail' : 'Outlook'}
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+        </Field>
+      )}
     </>
   );
 }
