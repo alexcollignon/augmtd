@@ -74,10 +74,10 @@ export default async function WorkPage({
   if (foreignAgentUserIds.length > 0) {
     const { data: agentProfiles } = await supabase
       .from('profiles')
-      .select('user_id, full_name')
+      .select('user_id, full_name, email')
       .in('user_id', foreignAgentUserIds);
-    (agentProfiles ?? []).forEach((p: { user_id: string; full_name: string | null }) => {
-      agentOwnerNames[p.user_id] = p.full_name ?? 'Teammate';
+    (agentProfiles ?? []).forEach((p: { user_id: string; full_name: string | null; email: string | null }) => {
+      agentOwnerNames[p.user_id] = p.full_name ?? p.email?.split('@')[0] ?? 'Teammate';
     });
   }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

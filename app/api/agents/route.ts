@@ -25,10 +25,10 @@ export async function GET() {
     if (foreignUserIds.length > 0) {
       const { data: profiles } = await supabase
         .from('profiles')
-        .select('user_id, full_name')
+        .select('user_id, full_name, email')
         .in('user_id', foreignUserIds);
-      (profiles ?? []).forEach((p: { user_id: string; full_name: string | null }) => {
-        ownerNames[p.user_id] = p.full_name ?? 'Teammate';
+      (profiles ?? []).forEach((p: { user_id: string; full_name: string | null; email: string | null }) => {
+        ownerNames[p.user_id] = p.full_name ?? p.email?.split('@')[0] ?? 'Teammate';
       });
     }
 
