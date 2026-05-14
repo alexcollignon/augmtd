@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { createClient as createAdminClient } from '@supabase/supabase-js';
 import { generateStartersForAgent } from '@/lib/agents/generate-starters';
 
 // GET /api/agents — list user's custom agents
@@ -12,7 +13,7 @@ export async function GET() {
     // RLS returns own active agents + shared company agents
     const { data: rows, error } = await supabase
       .from('custom_agents')
-      .select('id, user_id, name, description, instructions, memory_text, color, icon, is_active, created_at, updated_at, conversation_starters, web_enabled, shared_with_company')
+      .select('id, user_id, name, description, instructions, memory_text, color, icon, is_active, created_at, updated_at, conversation_starters, web_enabled, shared_with_company, sharing_mode')
       .eq('is_active', true)
       .order('created_at', { ascending: true });
 
@@ -25,11 +26,23 @@ export async function GET() {
     if (foreignUserIds.length > 0) {
       const { data: profiles } = await supabase
         .from('profiles')
-        .select('user_id, full_name, email')
-        .in('user_id', foreignUserIds);
-      (profiles ?? []).forEach((p: { user_id: string; full_name: string | null; email: string | null }) => {
-        ownerNames[p.user_id] = p.full_name ?? p.email?.split('@')[0] ?? 'Teammate';
+        .select('id, full_name, email')
+        .in('id', foreignUserIds);
+      (profiles ?? []).forEach((p: { id: string; full_name: string | null; email: string | null }) => {
+        ownerNames[p.id] = p.full_name ?? p.email?.split('@')[0] ?? 'Teammate';
       });
+      const stillMissing = foreignUserIds.filter(id => !ownerNames[id] || ownerNames[id] === 'Teammate');
+      if (stillMissing.length > 0) {
+        const admin = createAdminClient(
+          process.env.NEXT_PUBLIC_SUPABASE_URL!,
+          process.env.SUPABASE_SERVICE_ROLE_KEY!,
+          { auth: { autoRefreshToken: false, persistSession: false } },
+        );
+        await Promise.all(stillMissing.map(async (uid) => {
+          const { data: { user: authUser } } = await admin.auth.admin.getUserById(uid);
+          if (authUser?.email) ownerNames[uid] = authUser.email.split('@')[0];
+        }));
+      }
     }
 
     const agents = agentRows.map(a => ({

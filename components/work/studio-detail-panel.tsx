@@ -1,15 +1,15 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import {
   PlayIcon, PauseIcon, PencilSquareIcon,
   ClockIcon, CheckCircleIcon, XCircleIcon, ArrowPathIcon, TrashIcon,
   ClipboardDocumentIcon, CheckIcon, DocumentArrowDownIcon,
   ChatBubbleLeftRightIcon, DocumentTextIcon, TableCellsIcon,
   PresentationChartBarIcon, EnvelopeIcon, ArchiveBoxIcon,
-  DocumentDuplicateIcon, ShareIcon,
+  DocumentDuplicateIcon, ShareIcon, ChevronDownIcon, LockClosedIcon, UsersIcon,
 } from '@heroicons/react/24/outline';
-import type { Workflow, WorkflowRun, DocumentArtifact } from '@/lib/workflows/types';
+import type { Workflow, WorkflowRun, DocumentArtifact, SharingMode } from '@/lib/workflows/types';
 import { describeCron } from '@/lib/workflows/schedule';
 import { MarkdownText } from '@/components/work/chat-message';
 
@@ -53,7 +53,9 @@ export function StudioDetailPanel({ workflow: initialWorkflow, initialTab = 'run
   const [running, setRunning] = useState(false);
   const [togglingStatus, setTogglingStatus] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
-  const [togglingShare, setTogglingShare] = useState(false);
+  const [savingShareMode, setSavingShareMode] = useState(false);
+  const [shareDropdownOpen, setShareDropdownOpen] = useState(false);
+  const shareDropdownRef = useRef<HTMLDivElement>(null);
 
   // Sync when a different workflow is selected (component uses key= so this rarely fires,
   // but keep it as a safety net — respect initialTab so new workflows open on settings)
@@ -99,6 +101,17 @@ export function StudioDetailPanel({ workflow: initialWorkflow, initialTab = 'run
     return () => clearInterval(interval);
   }, [runs, workflow.id, fetchRuns, fetchWorkflow]);
 
+  useEffect(() => {
+    if (!shareDropdownOpen) return;
+    function handleClickOutside(e: MouseEvent) {
+      if (shareDropdownRef.current && !shareDropdownRef.current.contains(e.target as Node)) {
+        setShareDropdownOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [shareDropdownOpen]);
+
   const runNow = useCallback(async () => {
     setRunning(true);
     try {
@@ -114,14 +127,13 @@ export function StudioDetailPanel({ workflow: initialWorkflow, initialTab = 'run
     }
   }, [workflow.id, fetchRuns]);
 
-  const toggleShare = useCallback(async () => {
-    setTogglingShare(true);
-    const next = !workflow.shared_with_company;
+  const setShareMode = useCallback(async (mode: SharingMode | null) => {
+    setSavingShareMode(true);
     try {
       const res = await fetch(`/api/workflows/${workflow.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ shared_with_company: next }),
+        body: JSON.stringify({ sharing_mode: mode }),
       });
       if (res.ok) {
         const { workflow: updated } = await res.json();
@@ -129,9 +141,9 @@ export function StudioDetailPanel({ workflow: initialWorkflow, initialTab = 'run
         onWorkflowUpdated(updated);
       }
     } finally {
-      setTogglingShare(false);
+      setSavingShareMode(false);
     }
-  }, [workflow, onWorkflowUpdated]);
+  }, [workflow.id, onWorkflowUpdated]);
 
   const toggleStatus = useCallback(async () => {
     setTogglingStatus(true);
@@ -213,19 +225,50 @@ export function StudioDetailPanel({ workflow: initialWorkflow, initialTab = 'run
                   <PencilSquareIcon className="w-3.5 h-3.5" />
                   Edit
                 </button>
-                <button
-                  onClick={toggleShare}
-                  disabled={togglingShare}
-                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 border text-[12px] font-medium rounded-md transition-colors disabled:opacity-50 ${
-                    workflow.shared_with_company
-                      ? 'border-indigo-200 bg-indigo-50 text-indigo-600 hover:bg-indigo-100'
-                      : 'border-neutral-200 hover:bg-neutral-50 text-neutral-700'
-                  }`}
-                  title={workflow.shared_with_company ? 'Stop sharing with team' : 'Share with team'}
-                >
-                  <ShareIcon className="w-3.5 h-3.5" />
-                  {workflow.shared_with_company ? 'Shared' : 'Share'}
-                </button>
+                {/* Sharing dropdown */}
+                <div ref={shareDropdownRef} className="relative">
+                  <button
+                    onClick={() => setShareDropdownOpen(o => !o)}
+                    disabled={savingShareMode}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 border text-[12px] font-medium rounded-md transition-colors disabled:opacity-50 ${
+                      workflow.sharing_mode === 'live'
+                        ? 'border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100'
+                        : 'border-neutral-200 hover:bg-neutral-50 text-neutral-700'
+                    }`}
+                  >
+                    {workflow.sharing_mode === 'live'
+                      ? <><UsersIcon className="w-3.5 h-3.5" />Shared</>
+                      : <><LockClosedIcon className="w-3.5 h-3.5" />Private</>
+                    }
+                    <ChevronDownIcon className="w-3 h-3 ml-0.5 opacity-60" />
+                  </button>
+                  {shareDropdownOpen && (
+                    <div className="absolute right-0 top-full mt-1 w-44 bg-white rounded-lg border border-neutral-200 shadow-lg z-50 overflow-hidden">
+                      <button
+                        onClick={() => { setShareMode(null); setShareDropdownOpen(false); }}
+                        className={`w-full flex items-center gap-2.5 px-3 py-2.5 text-[12.5px] hover:bg-neutral-50 transition-colors ${!workflow.sharing_mode ? 'text-neutral-900 font-medium' : 'text-neutral-600'}`}
+                      >
+                        <LockClosedIcon className="w-4 h-4 flex-shrink-0 text-neutral-400" />
+                        <div className="text-left">
+                          <div>Private</div>
+                          <div className="text-[11px] text-neutral-400 font-normal">Only you</div>
+                        </div>
+                        {!workflow.sharing_mode && <span className="ml-auto text-indigo-600">✓</span>}
+                      </button>
+                      <button
+                        onClick={() => { setShareMode('live'); setShareDropdownOpen(false); }}
+                        className={`w-full flex items-center gap-2.5 px-3 py-2.5 text-[12.5px] hover:bg-neutral-50 transition-colors border-t border-neutral-100 ${workflow.sharing_mode === 'live' ? 'text-neutral-900 font-medium' : 'text-neutral-600'}`}
+                      >
+                        <UsersIcon className="w-4 h-4 flex-shrink-0 text-neutral-400" />
+                        <div className="text-left">
+                          <div>Shared</div>
+                          <div className="text-[11px] text-neutral-400 font-normal">Visible to your team</div>
+                        </div>
+                        {workflow.sharing_mode === 'live' && <span className="ml-auto text-indigo-600">✓</span>}
+                      </button>
+                    </div>
+                  )}
+                </div>
               </>
             ) : (
               <>

@@ -36,9 +36,10 @@ import {
 } from '@heroicons/react/24/outline';
 import type {
   Workflow, WorkflowStep, WorkflowTrigger, OutputConfig,
-  ToolStep, AIStep, AgentStep,
+  ToolStep, AIStep, AgentStep, SharingMode,
 } from '@/lib/workflows/types';
 import { makeStepId } from '@/lib/workflows/types';
+import { SharingModeSelector } from '@/components/work/sharing-mode-selector';
 
 interface AgentOption {
   id: string;
@@ -344,18 +345,11 @@ export function StudioBuilderClient({ initialWorkflow, agents }: Props) {
                 />
               </Field>
               {workflow.is_owned_by_me !== false && (
-                <Field label="Share with team">
-                  <button
-                    type="button"
-                    onClick={() => patch('shared_with_company', !workflow.shared_with_company)}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium transition-colors ${
-                      workflow.shared_with_company
-                        ? 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100'
-                        : 'bg-neutral-100 text-neutral-500 hover:bg-neutral-200'
-                    }`}
-                  >
-                    {workflow.shared_with_company ? 'Shared' : 'Private'}
-                  </button>
+                <Field label="Team sharing">
+                  <SharingModeSelector
+                    value={(workflow.sharing_mode as SharingMode | null | undefined) ?? null}
+                    onChange={(mode) => patch('sharing_mode', mode)}
+                  />
                 </Field>
               )}
             </Panel>

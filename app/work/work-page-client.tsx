@@ -225,6 +225,7 @@ export function WorkPageClient({
     setSelectedWorkflowId(workflow_id);
   }
 
+
   function handleWorkflowUpdated(updated: Workflow) {
     setStudioWorkflows(prev => prev?.map(w => w.id === updated.id ? updated : w) ?? null);
   }
