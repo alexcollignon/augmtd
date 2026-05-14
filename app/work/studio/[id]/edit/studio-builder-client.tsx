@@ -343,6 +343,21 @@ export function StudioBuilderClient({ initialWorkflow, agents }: Props) {
                   className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400"
                 />
               </Field>
+              {workflow.is_owned_by_me !== false && (
+                <Field label="Share with team">
+                  <button
+                    type="button"
+                    onClick={() => patch('shared_with_company', !workflow.shared_with_company)}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium transition-colors ${
+                      workflow.shared_with_company
+                        ? 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100'
+                        : 'bg-neutral-100 text-neutral-500 hover:bg-neutral-200'
+                    }`}
+                  >
+                    {workflow.shared_with_company ? 'Shared' : 'Private'}
+                  </button>
+                </Field>
+              )}
             </Panel>
 
             {/* Trigger */}

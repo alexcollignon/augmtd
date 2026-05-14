@@ -52,8 +52,7 @@ export default async function WorkPage({
       .limit(10),
     supabase
       .from('custom_agents')
-      .select('id, name, description, color, icon, conversation_starters, web_enabled')
-      .eq('user_id', user.id)
+      .select('id, user_id, name, description, color, icon, conversation_starters, web_enabled, shared_with_company')
       .eq('is_active', true)
       .order('created_at', { ascending: true }),
     // If opening a specific thread (e.g. workflow run thread), fetch it directly
@@ -67,6 +66,26 @@ export default async function WorkPage({
           .single()
       : Promise.resolve({ data: null }),
   ]);
+
+  // Resolve owner names for shared agents owned by others
+  const agentRows = agentsData ?? [];
+  const foreignAgentUserIds = [...new Set(agentRows.filter((a: { user_id: string }) => a.user_id !== user.id).map((a: { user_id: string }) => a.user_id))];
+  const agentOwnerNames: Record<string, string> = {};
+  if (foreignAgentUserIds.length > 0) {
+    const { data: agentProfiles } = await supabase
+      .from('profiles')
+      .select('user_id, full_name')
+      .in('user_id', foreignAgentUserIds);
+    (agentProfiles ?? []).forEach((p: { user_id: string; full_name: string | null }) => {
+      agentOwnerNames[p.user_id] = p.full_name ?? 'Teammate';
+    });
+  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const enrichedAgents = agentRows.map((a: any) => ({
+    ...a,
+    is_owned_by_me: a.user_id === user.id,
+    owner_name: (a.user_id !== user.id ? (agentOwnerNames[a.user_id] ?? 'Teammate') : null) as string | null,
+  }));
 
   // Merge the directly-fetched thread (e.g. a workflow run thread) into the list
   // if it isn't already there (workflow run threads are excluded from the main query).
@@ -85,7 +104,7 @@ export default async function WorkPage({
       initialActiveThreadId={initialThreadId || null}
       initialChatInput={initialChatInput || null}
       initialSavedWorkflows={savedWorkflowsData || []}
-      initialAgents={agentsData || []}
+      initialAgents={enrichedAgents}
       initialSection={initialSection}
       initialWorkflowId={initialWorkflowId || null}
       initialAgentId={initialAgentId || null}

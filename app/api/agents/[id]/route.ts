@@ -15,16 +15,15 @@ export async function GET(_req: NextRequest, { params }: Params) {
     const { data: agent, error } = await supabase
       .from('custom_agents')
       .select(`
-        id, name, description, instructions, memory_text, color, icon, is_active, created_at, updated_at,
-        conversation_starters, web_enabled,
+        id, user_id, name, description, instructions, memory_text, color, icon, is_active, created_at, updated_at,
+        conversation_starters, web_enabled, shared_with_company,
         agent_knowledge_sources (id, name, knowledge_file_id, created_at)
       `)
       .eq('id', id)
-      .eq('user_id', user.id)
       .single();
 
     if (error || !agent) return NextResponse.json({ error: 'Not found' }, { status: 404 });
-    return NextResponse.json({ agent });
+    return NextResponse.json({ agent: { ...agent, is_owned_by_me: (agent as { user_id: string }).user_id === user.id } });
   } catch (err) {
     console.error('[Agents/id] GET error:', err);
     return NextResponse.json({ error: 'Failed to load agent' }, { status: 500 });
@@ -40,7 +39,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const body = await request.json();
-    const allowed = ['name', 'description', 'instructions', 'color', 'icon', 'memory_text', 'conversation_starters', 'web_enabled'] as const;
+    const allowed = ['name', 'description', 'instructions', 'color', 'icon', 'memory_text', 'conversation_starters', 'web_enabled', 'shared_with_company'] as const;
     const updates: Record<string, unknown> = {};
     for (const key of allowed) {
       if (key in body) updates[key] = body[key];

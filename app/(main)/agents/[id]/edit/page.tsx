@@ -17,7 +17,7 @@ export default async function EditAgentPage({
   const { data: agent } = await supabase
     .from('custom_agents')
     .select(`
-      id, name, description, instructions, memory_text, color, icon, conversation_starters, web_enabled,
+      id, name, description, instructions, memory_text, color, icon, conversation_starters, web_enabled, shared_with_company,
       agent_knowledge_sources (id, name, knowledge_file_id)
     `)
     .eq('id', id)
@@ -41,6 +41,7 @@ export default async function EditAgentPage({
           sources: (agent.agent_knowledge_sources ?? []) as any,
           conversation_starters: (agent as any).conversation_starters ?? null,
           web_enabled: (agent as any).web_enabled ?? false,
+          shared_with_company: (agent as any).shared_with_company ?? false,
         }}
       />
     </div>

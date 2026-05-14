@@ -7,6 +7,7 @@ import {
   ClipboardDocumentIcon, CheckIcon, DocumentArrowDownIcon,
   ChatBubbleLeftRightIcon, DocumentTextIcon, TableCellsIcon,
   PresentationChartBarIcon, EnvelopeIcon, ArchiveBoxIcon,
+  DocumentDuplicateIcon, ShareIcon,
 } from '@heroicons/react/24/outline';
 import type { Workflow, WorkflowRun, DocumentArtifact } from '@/lib/workflows/types';
 import { describeCron } from '@/lib/workflows/schedule';
@@ -20,6 +21,7 @@ interface Props {
   onWorkflowDeleted: (id: string) => void;
   onOpenThread?: (threadId: string) => void;
   onOpenArtifact?: (threadId: string, artifactId: string) => void;
+  onClone?: (id: string) => void;
 }
 
 type Tab = 'runs' | 'artifacts' | 'settings';
@@ -43,7 +45,7 @@ function fmtTime(iso: string | null): string {
   return new Date(iso).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
-export function StudioDetailPanel({ workflow: initialWorkflow, initialTab = 'runs', onEdit, onWorkflowUpdated, onWorkflowDeleted, onOpenThread, onOpenArtifact }: Props) {
+export function StudioDetailPanel({ workflow: initialWorkflow, initialTab = 'runs', onEdit, onWorkflowUpdated, onWorkflowDeleted, onOpenThread, onOpenArtifact, onClone }: Props) {
   const [workflow, setWorkflow] = useState<Workflow>(initialWorkflow);
   const [runs, setRuns] = useState<WorkflowRun[]>([]);
   const [runsLoading, setRunsLoading] = useState(true);
@@ -51,6 +53,7 @@ export function StudioDetailPanel({ workflow: initialWorkflow, initialTab = 'run
   const [running, setRunning] = useState(false);
   const [togglingStatus, setTogglingStatus] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [togglingShare, setTogglingShare] = useState(false);
 
   // Sync when a different workflow is selected (component uses key= so this rarely fires,
   // but keep it as a safety net — respect initialTab so new workflows open on settings)
@@ -110,6 +113,25 @@ export function StudioDetailPanel({ workflow: initialWorkflow, initialTab = 'run
       setRunning(false);
     }
   }, [workflow.id, fetchRuns]);
+
+  const toggleShare = useCallback(async () => {
+    setTogglingShare(true);
+    const next = !workflow.shared_with_company;
+    try {
+      const res = await fetch(`/api/workflows/${workflow.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shared_with_company: next }),
+      });
+      if (res.ok) {
+        const { workflow: updated } = await res.json();
+        setWorkflow(updated);
+        onWorkflowUpdated(updated);
+      }
+    } finally {
+      setTogglingShare(false);
+    }
+  }, [workflow, onWorkflowUpdated]);
 
   const toggleStatus = useCallback(async () => {
     setTogglingStatus(true);
@@ -174,21 +196,53 @@ export function StudioDetailPanel({ workflow: initialWorkflow, initialTab = 'run
               <PlayIcon className="w-3.5 h-3.5" />
               {running ? 'Starting…' : 'Run now'}
             </button>
-            <button
-              onClick={toggleStatus}
-              disabled={togglingStatus || stepCount === 0}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-neutral-200 hover:bg-neutral-50 text-neutral-700 text-[12px] font-medium rounded-md transition-colors disabled:opacity-50"
-            >
-              {workflow.status === 'active' ? <PauseIcon className="w-3.5 h-3.5" /> : <PlayIcon className="w-3.5 h-3.5" />}
-              {workflow.status === 'active' ? 'Pause' : 'Activate'}
-            </button>
-            <button
-              onClick={onEdit}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-neutral-200 hover:bg-neutral-50 text-neutral-700 text-[12px] font-medium rounded-md transition-colors"
-            >
-              <PencilSquareIcon className="w-3.5 h-3.5" />
-              Edit
-            </button>
+            {workflow.is_owned_by_me !== false ? (
+              <>
+                <button
+                  onClick={toggleStatus}
+                  disabled={togglingStatus || stepCount === 0}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-neutral-200 hover:bg-neutral-50 text-neutral-700 text-[12px] font-medium rounded-md transition-colors disabled:opacity-50"
+                >
+                  {workflow.status === 'active' ? <PauseIcon className="w-3.5 h-3.5" /> : <PlayIcon className="w-3.5 h-3.5" />}
+                  {workflow.status === 'active' ? 'Pause' : 'Activate'}
+                </button>
+                <button
+                  onClick={onEdit}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-neutral-200 hover:bg-neutral-50 text-neutral-700 text-[12px] font-medium rounded-md transition-colors"
+                >
+                  <PencilSquareIcon className="w-3.5 h-3.5" />
+                  Edit
+                </button>
+                <button
+                  onClick={toggleShare}
+                  disabled={togglingShare}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 border text-[12px] font-medium rounded-md transition-colors disabled:opacity-50 ${
+                    workflow.shared_with_company
+                      ? 'border-indigo-200 bg-indigo-50 text-indigo-600 hover:bg-indigo-100'
+                      : 'border-neutral-200 hover:bg-neutral-50 text-neutral-700'
+                  }`}
+                  title={workflow.shared_with_company ? 'Stop sharing with team' : 'Share with team'}
+                >
+                  <ShareIcon className="w-3.5 h-3.5" />
+                  {workflow.shared_with_company ? 'Shared' : 'Share'}
+                </button>
+              </>
+            ) : (
+              <>
+                <span className="text-[11.5px] text-neutral-400">
+                  Shared by {workflow.owner_name ?? 'Teammate'}
+                </span>
+                {onClone && (
+                  <button
+                    onClick={() => onClone(workflow.id)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-neutral-200 hover:bg-neutral-50 text-neutral-700 text-[12px] font-medium rounded-md transition-colors"
+                  >
+                    <DocumentDuplicateIcon className="w-3.5 h-3.5" />
+                    Clone
+                  </button>
+                )}
+              </>
+            )}
           </div>
         </div>
 

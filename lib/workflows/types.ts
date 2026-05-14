@@ -97,6 +97,11 @@ export interface Workflow {
   next_run_at: string | null;
   created_at: string;
   updated_at: string;
+  // Team sharing (populated by API)
+  company_id?: string | null;
+  shared_with_company?: boolean;
+  is_owned_by_me?: boolean;
+  owner_name?: string | null;
 }
 
 // ── Run record ─────────────────────────────────────────────────────────────────

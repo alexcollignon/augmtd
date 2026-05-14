@@ -20,11 +20,10 @@ export async function GET(
     .from('workflows')
     .select('*')
     .eq('id', id)
-    .eq('user_id', user.id)
     .single();
 
   if (error || !data) return NextResponse.json({ error: 'Not found' }, { status: 404 });
-  return NextResponse.json({ workflow: data });
+  return NextResponse.json({ workflow: { ...data, is_owned_by_me: data.user_id === user.id } });
 }
 
 export async function PATCH(
@@ -46,6 +45,7 @@ export async function PATCH(
     trigger: WorkflowTrigger;
     steps: WorkflowStep[];
     output_config: OutputConfig;
+    shared_with_company: boolean;
   }>;
   try { body = await request.json(); } catch { return NextResponse.json({ error: 'Invalid body' }, { status: 400 }); }
 
@@ -58,10 +58,10 @@ export async function PATCH(
     if (cronErr) return NextResponse.json({ error: cronErr }, { status: 400 });
   }
 
-  // Load existing row to decide next_run_at
+  // Load existing row to decide next_run_at (owner-only write — eq user_id enforces this)
   const { data: existing, error: loadErr } = await supabase
     .from('workflows')
-    .select('status, trigger')
+    .select('status, trigger, company_id')
     .eq('id', id)
     .eq('user_id', user.id)
     .single();
@@ -81,6 +81,17 @@ export async function PATCH(
 
   const update: Record<string, unknown> = { ...body };
   if (nextRunAt !== undefined) update.next_run_at = nextRunAt;
+
+  // If turning on sharing, ensure company_id is set
+  if (body.shared_with_company === true && !(existing as { company_id?: string | null }).company_id) {
+    const { data: membership } = await supabase
+      .from('company_members')
+      .select('company_id')
+      .eq('user_id', user.id)
+      .eq('status', 'active')
+      .single();
+    if (membership?.company_id) update.company_id = membership.company_id;
+  }
 
   const { data, error } = await supabase
     .from('workflows')

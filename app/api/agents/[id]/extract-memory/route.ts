@@ -27,14 +27,15 @@ export async function POST(request: NextRequest, { params }: Params) {
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
 
-    // Load agent
+    // Load agent — RLS allows reads of shared agents; check ownership separately
     const { data: agent } = await supabase
       .from('custom_agents')
-      .select('id, memory_text')
+      .select('id, user_id, memory_text')
       .eq('id', agentId)
-      .eq('user_id', user.id)
       .single();
     if (!agent) return NextResponse.json({ error: 'Agent not found' }, { status: 404 });
+
+    const isOwner = (agent as { user_id: string }).user_id === user.id;
 
     // Load last 20 messages from this thread
     const { data: messages } = await adminClient
@@ -51,7 +52,19 @@ export async function POST(request: NextRequest, { params }: Params) {
       .map((m: { role: string; content: string }) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
       .join('\n');
 
-    const existingMemory = agent.memory_text ?? '';
+    // Non-owner: read personal memory from agent_memories table
+    let existingMemory = '';
+    if (isOwner) {
+      existingMemory = (agent as { memory_text: string | null }).memory_text ?? '';
+    } else {
+      const { data: memRow } = await adminClient
+        .from('agent_memories')
+        .select('memory_text')
+        .eq('agent_id', agentId)
+        .eq('user_id', user.id)
+        .single();
+      existingMemory = (memRow as { memory_text: string | null } | null)?.memory_text ?? '';
+    }
 
     const extractPrompt = `You are a memory extractor. Review this conversation and identify key facts worth remembering for future sessions with this user.
 
@@ -99,11 +112,21 @@ ${newMemory}`;
       newMemory = (compressed.choices?.[0]?.message?.content ?? newMemory).trim();
     }
 
-    await supabase
-      .from('custom_agents')
-      .update({ memory_text: newMemory.slice(0, MAX_MEMORY_CHARS) })
-      .eq('id', agentId)
-      .eq('user_id', user.id);
+    if (isOwner) {
+      await adminClient
+        .from('custom_agents')
+        .update({ memory_text: newMemory.slice(0, MAX_MEMORY_CHARS) })
+        .eq('id', agentId);
+    } else {
+      await adminClient
+        .from('agent_memories')
+        .upsert({
+          agent_id: agentId,
+          user_id: user.id,
+          memory_text: newMemory.slice(0, MAX_MEMORY_CHARS),
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'agent_id,user_id' });
+    }
 
     return NextResponse.json({ ok: true });
   } catch (err) {
