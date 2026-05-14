@@ -75,6 +75,7 @@ export interface OutputConfig {
   artifact_type?: ArtifactType;
   title_template?: string;        // e.g. "AHK Briefing — {{date}}"
   notification_mode: NotificationMode;
+  notification_email_ids?: string[]; // connection IDs to send email digest to; empty = none selected yet
 }
 
 // ── Workflow record ────────────────────────────────────────────────────────────
