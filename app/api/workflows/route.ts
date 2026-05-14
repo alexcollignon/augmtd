@@ -31,10 +31,10 @@ export async function GET() {
   if (foreignUserIds.length > 0) {
     const { data: profiles } = await supabase
       .from('profiles')
-      .select('user_id, full_name, email')
-      .in('user_id', foreignUserIds);
-    (profiles ?? []).forEach((p: { user_id: string; full_name: string | null; email: string | null }) => {
-      ownerNames[p.user_id] = p.full_name ?? p.email?.split('@')[0] ?? 'Teammate';
+      .select('id, full_name, email')
+      .in('id', foreignUserIds);
+    (profiles ?? []).forEach((p: { id: string; full_name: string | null; email: string | null }) => {
+      ownerNames[p.id] = p.full_name ?? p.email?.split('@')[0] ?? 'Teammate';
     });
     const stillMissing = foreignUserIds.filter(id => !ownerNames[id] || ownerNames[id] === 'Teammate');
     if (stillMissing.length > 0) {
