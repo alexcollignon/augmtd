@@ -212,6 +212,19 @@ export function WorkPageClient({
     await fetch(`/api/workflows/${id}`, { method: 'DELETE' });
   }
 
+  async function handleCloneWorkflow(id: string) {
+    const res = await fetch(`/api/workflows/${id}/clone`, { method: 'POST' });
+    if (!res.ok) return;
+    const { workflow_id } = await res.json();
+    // Reload workflows list
+    const listRes = await fetch('/api/workflows');
+    if (listRes.ok) {
+      const { workflows } = await listRes.json();
+      setStudioWorkflows(workflows);
+    }
+    setSelectedWorkflowId(workflow_id);
+  }
+
   function handleWorkflowUpdated(updated: Workflow) {
     setStudioWorkflows(prev => prev?.map(w => w.id === updated.id ? updated : w) ?? null);
   }
@@ -558,6 +571,7 @@ export function WorkPageClient({
               onCreate={() => { setSelectedWorkflowId(null); setEditingWorkflowId(null); }}
               onRename={handleRenameWorkflow}
               onDelete={handleDeleteWorkflow}
+              onClone={handleCloneWorkflow}
             />
           )}
 
@@ -636,6 +650,7 @@ export function WorkPageClient({
                 onWorkflowDeleted={handleDeleteWorkflow}
                 onOpenThread={handleOpenWorkflowThread}
                 onOpenArtifact={handleOpenWorkflowArtifact}
+                onClone={handleCloneWorkflow}
               />
             ) : selectedWorkflowId && (studioLoading || studioWorkflows === null) ? (
               // Workflow selected but list not loaded yet (e.g. back-nav before fetch completes)

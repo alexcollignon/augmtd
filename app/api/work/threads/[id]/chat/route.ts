@@ -216,14 +216,27 @@ export async function POST(
       agentId
         ? adminClient
             .from('custom_agents')
-            .select('id, name, instructions, memory_text, web_enabled, agent_knowledge_sources(knowledge_file_id)')
+            .select('id, user_id, name, instructions, memory_text, web_enabled, agent_knowledge_sources(knowledge_file_id)')
             .eq('id', agentId)
-            .eq('user_id', user.id)
             .single()
         : Promise.resolve({ data: null }),
     ]);
 
-    const agent = (agentResult as { data: { id: string; name: string; instructions: string | null; memory_text: string | null; web_enabled: boolean | null; agent_knowledge_sources: Array<{ knowledge_file_id: string | null }> } | null }).data ?? null;
+    const agentRaw = (agentResult as { data: { id: string; user_id: string; name: string; instructions: string | null; memory_text: string | null; web_enabled: boolean | null; agent_knowledge_sources: Array<{ knowledge_file_id: string | null }> } | null }).data ?? null;
+
+    // For shared agents used by non-owners, load personal memory from agent_memories
+    let agentMemoryText = agentRaw?.memory_text ?? null;
+    if (agentRaw && agentRaw.user_id !== user.id) {
+      const { data: memRow } = await adminClient
+        .from('agent_memories')
+        .select('memory_text')
+        .eq('agent_id', agentRaw.id)
+        .eq('user_id', user.id)
+        .single();
+      agentMemoryText = (memRow as { memory_text: string | null } | null)?.memory_text ?? null;
+    }
+
+    const agent = agentRaw ? { ...agentRaw, memory_text: agentMemoryText } : null;
     const agentFileIds: string[] = agent
       ? agent.agent_knowledge_sources
           .map((s: { knowledge_file_id: string | null }) => s.knowledge_file_id)

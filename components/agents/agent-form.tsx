@@ -36,7 +36,7 @@ export interface AgentFormData {
 }
 
 interface Props {
-  initial?: AgentFormData & { id?: string; memory_text?: string; sources?: AgentKnowledgeFile[]; conversation_starters?: string[] | null; web_enabled?: boolean };
+  initial?: AgentFormData & { id?: string; memory_text?: string; sources?: AgentKnowledgeFile[]; conversation_starters?: string[] | null; web_enabled?: boolean; shared_with_company?: boolean };
   mode: 'create' | 'edit';
 }
 
@@ -65,6 +65,7 @@ export function AgentForm({ initial, mode }: Props) {
   );
   const [isGeneratingStarters, setIsGeneratingStarters] = useState(false);
   const [webEnabled, setWebEnabled] = useState(initial?.web_enabled ?? false);
+  const [sharedWithCompany, setSharedWithCompany] = useState(initial?.shared_with_company ?? false);
 
   const enhanceAbortRef = useRef<AbortController | null>(null);
   const fileInputRef    = useRef<HTMLInputElement>(null);
@@ -238,7 +239,7 @@ export function AgentForm({ initial, mode }: Props) {
         const res = await fetch('/api/agents', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, description, instructions, color, icon, conversation_starters: startersToSend, web_enabled: webEnabled }),
+          body: JSON.stringify({ name, description, instructions, color, icon, conversation_starters: startersToSend, web_enabled: webEnabled, shared_with_company: sharedWithCompany }),
         });
         if (!res.ok) throw new Error('Failed to create agent');
         const { agent } = await res.json();
@@ -256,7 +257,7 @@ export function AgentForm({ initial, mode }: Props) {
         await fetch(`/api/agents/${agentId}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, description, instructions, color, icon, conversation_starters: startersToSend, web_enabled: webEnabled }),
+          body: JSON.stringify({ name, description, instructions, color, icon, conversation_starters: startersToSend, web_enabled: webEnabled, shared_with_company: sharedWithCompany }),
         });
       }
       router.push('/work');
@@ -598,6 +599,25 @@ export function AgentForm({ initial, mode }: Props) {
             >
               <GlobeAltIcon className="w-3.5 h-3.5" />
               {webEnabled ? 'On' : 'Off'}
+            </button>
+          </div>
+
+          {/* Share with team */}
+          <div className="rounded-2xl bg-white border border-neutral-100 shadow-sm px-4 py-3 flex-shrink-0 flex items-center justify-between">
+            <div>
+              <p className="text-[10.5px] font-semibold text-neutral-600 uppercase tracking-wide">Share with Team</p>
+              <p className="text-[11px] text-neutral-400 mt-0.5">Make this agent visible to everyone in your workspace.</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setSharedWithCompany(v => !v)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium transition-colors ${
+                sharedWithCompany
+                  ? 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100'
+                  : 'bg-neutral-100 text-neutral-500 hover:bg-neutral-200'
+              }`}
+            >
+              {sharedWithCompany ? 'Shared' : 'Private'}
             </button>
           </div>
 

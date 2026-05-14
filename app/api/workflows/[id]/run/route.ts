@@ -19,12 +19,11 @@ export async function POST(
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   try { await requireFeature('studio', supabase, user.id); } catch (err) { return handleWorkspaceError(err); }
 
-  // Ownership check
+  // Allow owner OR any company member if shared — RLS handles the access check
   const { data: wf, error: wfErr } = await supabase
     .from('workflows')
     .select('id, user_id, steps')
     .eq('id', workflowId)
-    .eq('user_id', user.id)
     .single();
 
   if (wfErr || !wf) return NextResponse.json({ error: 'Not found' }, { status: 404 });
