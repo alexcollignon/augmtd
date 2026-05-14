@@ -338,7 +338,13 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
   }
 
   // Notification
-  const notificationMode = workflow.output_config.notification_mode;
+  // Non-owners running a shared workflow always get an inbox card — they haven't
+  // configured their own email notification preferences on this workflow.
+  const isOwnerRun = runnerId === workflow.user_id;
+  const notificationMode = isOwnerRun
+    ? workflow.output_config.notification_mode
+    : 'inbox_card';
+
   if (notificationMode === 'inbox_card') {
     await admin.from('workflow_notifications').insert({
       workflow_run_id: runId,
@@ -348,16 +354,12 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
       summary: materialised.artifact ? `${materialised.artifact.title} is ready.` : materialised.messageContent.slice(0, 200),
     });
   } else if (notificationMode === 'email_digest') {
-    // For runners who aren't the owner, use their own connections (not the owner's notification_email_ids)
-    const notifEmailIds = runnerId === workflow.user_id
-      ? workflow.output_config.notification_email_ids
-      : undefined; // sendWorkflowEmail will fall back to runner's auth email
     await sendWorkflowEmail({
       userId: runnerId,
       workflowName: workflow.name,
       messageContent: materialised.messageContent,
       artifact: materialised.artifact,
-      notificationEmailIds: notifEmailIds,
+      notificationEmailIds: workflow.output_config.notification_email_ids,
     });
   }
 
