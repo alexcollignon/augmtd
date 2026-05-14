@@ -203,7 +203,7 @@ export async function sendWorkflowEmail(params: {
 
   const resend = new Resend(apiKey);
   const { error } = await resend.emails.send({
-    from: 'augmtd <workflows@augmtd.ai>',
+    from: 'augmtd <noreply@workflows.augmtd.ai>',
     to: toAddresses,
     subject: `${params.workflowName} — run complete`,
     html,
