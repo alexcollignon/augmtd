@@ -9,6 +9,8 @@ export { rssFeedDefinition, executeRssFeed } from './rss-feed';
 export { executeLinkedInPost } from './linkedin-post';
 export type { LinkedInPostConfig } from './linkedin-post';
 export { executeBrowserFetch } from './browser-fetch';
+export { executePtTenders } from './pt-tenders';
+export type { PtTendersConfig } from './pt-tenders';
 
 // OpenAI function-calling format converter — used by chat route
 export function toOpenAITool(def: {

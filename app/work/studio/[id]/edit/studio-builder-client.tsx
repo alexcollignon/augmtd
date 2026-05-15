@@ -36,6 +36,7 @@ import {
   BookOpenIcon,
   ChevronDownIcon,
   LockClosedIcon,
+  BuildingOfficeIcon,
 } from '@heroicons/react/24/outline';
 import type {
   Workflow, WorkflowStep, WorkflowTrigger, OutputConfig,
@@ -97,6 +98,7 @@ const AVAILABLE_TOOLS = [
   { id: 'fetch_url',         label: 'Read a web page',           description: 'Reads the full current content of a URL every run. Good for pages without a feed — a pricing page, job board, or competitor site.' },
   { id: 'rss_feed',          label: 'Follow a news feed or blog', description: 'For sites that publish a feed (most news sites and blogs). Returns only new articles since your last run — no duplicates, clean titles and dates.' },
   { id: 'linkedin_post',     label: 'Generate LinkedIn posts',   description: 'Drafts 1–3 LinkedIn post variants from previous step content. Configure tone, format, and language.' },
+  { id: 'get_pt_tenders',   label: 'Portuguese public tenders', description: 'Fetches recently awarded contracts and open procurement announcements from Portal Base (Base.gov.pt). Requires PORTAL_BASE_TOKEN.' },
 ];
 
 const TOOL_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -108,6 +110,7 @@ const TOOL_ICONS: Record<string, React.ComponentType<{ className?: string }>> = 
   browser_fetch:     GlobeAltIcon,
   rss_feed:          NewspaperIcon,
   linkedin_post:     MegaphoneIcon,
+  get_pt_tenders:    BuildingOfficeIcon,
 };
 
 export function StudioBuilderClient({ initialWorkflow, agents }: Props) {
@@ -1108,6 +1111,56 @@ function ToolStepFields({ step, onUpdate, isEnhancing, isPending, onEnhance }: {
         </Field>
       )}
       {step.tool === 'linkedin_post' && <LinkedInPostFields step={step} onUpdate={onUpdate} />}
+      {step.tool === 'get_pt_tenders' && <PtTendersFields step={step} onUpdate={onUpdate} />}
+    </>
+  );
+}
+
+function PtTendersFields({ step, onUpdate }: { step: ToolStep; onUpdate: (p: Partial<ToolStep>) => void }) {
+  return (
+    <>
+      <Field label="Days back">
+        <select
+          value={String(step.config.days ?? 7)}
+          onChange={e => onUpdate({ config: { ...step.config, days: Number(e.target.value) } })}
+          className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] bg-white"
+        >
+          <option value="7">Last 7 days</option>
+          <option value="14">Last 14 days</option>
+          <option value="30">Last 30 days</option>
+          <option value="90">Last 90 days</option>
+        </select>
+      </Field>
+      <Field label="Data">
+        <select
+          value={(step.config.endpoint as string) ?? 'both'}
+          onChange={e => onUpdate({ config: { ...step.config, endpoint: e.target.value } })}
+          className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] bg-white"
+        >
+          <option value="both">Contracts + Announcements</option>
+          <option value="contracts">Awarded contracts only</option>
+          <option value="announcements">Open announcements only</option>
+        </select>
+      </Field>
+      <Field label="CPV prefix filter" hint="Optional — e.g. 45 (construction), 72 (IT)">
+        <input
+          type="text"
+          value={(step.config.cpv_prefix as string) ?? ''}
+          onChange={e => onUpdate({ config: { ...step.config, cpv_prefix: e.target.value || undefined } })}
+          placeholder="Leave blank to include all categories"
+          className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px]"
+        />
+      </Field>
+      <Field label="Minimum value (€)" hint="Optional — filter out small contracts">
+        <input
+          type="number"
+          value={(step.config.min_value as number) ?? ''}
+          onChange={e => onUpdate({ config: { ...step.config, min_value: e.target.value ? Number(e.target.value) : undefined } })}
+          placeholder="e.g. 50000"
+          min={0}
+          className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px]"
+        />
+      </Field>
     </>
   );
 }

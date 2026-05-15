@@ -201,16 +201,11 @@ const briefingSteps = [
   {
     type: 'tool',
     id: stepId(),
-    label: 'Base.gov.pt — Contratos Públicos (dados.gov.pt)',
-    tool: 'fetch_url',
+    label: 'Base.gov.pt — Contratos Públicos (últimos 7 dias)',
+    tool: 'get_pt_tenders',
     config: {
-      // IMPIC publishes biweekly contract dumps here — free, no auth, no WAF.
-      // Returns dataset metadata: last update date + download URLs for current year file.
-      // TODO (once IMPIC APIBase2 token arrives): replace with
-      //   url: 'https://www.base.gov.pt/APIBase2/GetInfoContrato?numDias=7'
-      //   headers: { '_AcessToken': '<token>' }
-      // which gives real-time last-7-days contracts as JSON.
-      urls: ['https://dados.gov.pt/api/1/datasets/contratos-publicos-portal-base-impic-contratos-de-2012-a-2026/'],
+      days: 7,
+      endpoint: 'both',
     },
   },
   {
@@ -250,7 +245,7 @@ Using all news and information from the previous steps, produce a structured bri
    Investment announcements, M&A activity, company expansions, and new market entries of bilateral interest.
 
 5. Deal Flow & Ausschreibungen
-   Public tenders and procurement opportunities. Sources: (a) dados.gov.pt dataset metadata — note the last update date and total contract volume for 2026; (b) web search results — extract any specific tenders or contracts relevant to German companies or bilateral business. Include: title, contracting authority, estimated value if available, deadline if available. Note: full real-time tender feed via IMPIC APIBase2 pending token delivery.
+   Public tenders and procurement opportunities from Portal Base (Base.gov.pt). For each item include: title / object, contracting authority, estimated or contracted value, publication date, and deadline if available. Flag any contracts or announcements with bilateral relevance (German companies operating in Portugal, infrastructure, energy, technology, professional services).
 
 6. Umwelt & Energie
    Sustainability, green economy, energy transition, and ESG developments relevant to the German-Portuguese business community.
