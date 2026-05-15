@@ -11,7 +11,7 @@ import { buildInboxSnapshot } from '@/lib/inbox/chat-context';
 import { getCalendarContext } from '@/lib/calendar/calendar-context';
 import { formatCalendarContextForChat } from '@/lib/calendar/format-calendar-context';
 import { buildKBContext } from '@/lib/knowledge/build-kb-context';
-import { executeWebSearch, executeFetchUrl, executeRssFeed, executeLinkedInPost, executeBrowserFetch } from '@/lib/tools';
+import { executeWebSearch, executeFetchUrl, executeRssFeed, executeLinkedInPost, executeBrowserFetch, executePtTenders } from '@/lib/tools';
 import type { WorkflowStep, StepOutput, ToolStep, AIStep, AgentStep } from './types';
 
 export interface StepContext {
@@ -86,6 +86,7 @@ async function executeToolStep(step: ToolStep, ctx: StepContext): Promise<string
       previousContent: formatPreviousOutputs(ctx.previousOutputs),
     });
     case 'browser_fetch':     return await executeBrowserFetch(step.config);
+    case 'get_pt_tenders':    return await executePtTenders(step.config);
     default:
       throw new Error(`Unknown tool: ${step.tool}`);
   }

@@ -34,6 +34,7 @@ interface Props {
   onRename: (id: string, name: string) => void;
   onDelete: (id: string) => void;
   onClone: (id: string) => void;
+  onHover?: (id: string) => void;
 }
 
 function WorkflowIcon({ icon, color }: { icon: string; color: string }) {
@@ -58,7 +59,7 @@ function relativeTime(dateStr: string): string {
   return new Date(dateStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
-export function StudioSidebar({ workflows, selectedId, onSelect, onCreate, onRename, onDelete, onClone }: Props) {
+export function StudioSidebar({ workflows, selectedId, onSelect, onCreate, onRename, onDelete, onClone, onHover }: Props) {
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
@@ -92,7 +93,7 @@ export function StudioSidebar({ workflows, selectedId, onSelect, onCreate, onRen
     return (
       <div
         className="relative"
-        onMouseEnter={() => setHoveredId(w.id)}
+        onMouseEnter={() => { setHoveredId(w.id); onHover?.(w.id); }}
         onMouseLeave={() => { setHoveredId(null); setConfirmDeleteId(null); }}
       >
         {!isTeam && editingId === w.id ? (
