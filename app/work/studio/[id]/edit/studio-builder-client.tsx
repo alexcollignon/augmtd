@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
@@ -33,6 +34,8 @@ import {
   BriefcaseIcon,
   CpuChipIcon,
   BookOpenIcon,
+  ChevronDownIcon,
+  LockClosedIcon,
 } from '@heroicons/react/24/outline';
 import type {
   Workflow, WorkflowStep, WorkflowTrigger, OutputConfig,
@@ -90,10 +93,22 @@ const AVAILABLE_TOOLS = [
   { id: 'get_urgent_emails', label: 'Fetch urgent unread emails', description: 'Pulls unread items from your inbox with sender, subject, preview.' },
   { id: 'get_calendar',      label: 'Fetch upcoming calendar',   description: 'Returns your next meetings with attendees and times.' },
   { id: 'read_kb_file',      label: 'Read a knowledge base file', description: 'Returns the full content of one KB file by id.' },
-  { id: 'web_search',        label: 'Search the web',            description: 'Runs a web search (requires TAVILY_API_KEY to be set).' },
-  { id: 'linkedin_post',     label: 'Generate LinkedIn posts',   description: 'Drafts 1–3 LinkedIn post variants from previous step content. Configure tone, format, length, language, and optionally a voice reference file.' },
-  { id: 'browser_fetch',     label: 'Read a protected or complex page', description: 'For portals, dashboards, or pages that don\'t work with the standard page reader. Uses a full browser behind the scenes.' },
+  { id: 'web_search',        label: 'Search the web',            description: 'Give it a topic and it finds relevant pages — like asking Google. Use this when you don\'t know which site has the info.' },
+  { id: 'fetch_url',         label: 'Read a web page',           description: 'Reads the full current content of a URL every run. Good for pages without a feed — a pricing page, job board, or competitor site.' },
+  { id: 'rss_feed',          label: 'Follow a news feed or blog', description: 'For sites that publish a feed (most news sites and blogs). Returns only new articles since your last run — no duplicates, clean titles and dates.' },
+  { id: 'linkedin_post',     label: 'Generate LinkedIn posts',   description: 'Drafts 1–3 LinkedIn post variants from previous step content. Configure tone, format, and language.' },
 ];
+
+const TOOL_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
+  get_urgent_emails: EnvelopeIcon,
+  get_calendar:      CalendarDaysIcon,
+  read_kb_file:      DocumentTextIcon,
+  web_search:        MagnifyingGlassIcon,
+  fetch_url:         GlobeAltIcon,
+  browser_fetch:     GlobeAltIcon,
+  rss_feed:          NewspaperIcon,
+  linkedin_post:     MegaphoneIcon,
+};
 
 export function StudioBuilderClient({ initialWorkflow, agents }: Props) {
   const router = useRouter();
@@ -462,10 +477,13 @@ function Panel({ title, children, headerRight }: { title: string; children: Reac
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
     <div>
-      <label className="block text-[11.5px] font-medium text-neutral-600 mb-1">{label}</label>
+      <div className="flex items-baseline justify-between mb-1">
+        <label className="block text-[11.5px] font-medium text-neutral-600">{label}</label>
+        {hint && <span className="text-[10.5px] text-neutral-400">{hint}</span>}
+      </div>
       {children}
     </div>
   );
@@ -866,23 +884,106 @@ function LinkedInPostFields({ step, onUpdate }: { step: ToolStep; onUpdate: (p: 
   );
 }
 
+function ToolPicker({ value, onChange }: { value: string; onChange: (toolId: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState({ top: 0, left: 0, width: 0 });
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const dropRef = useRef<HTMLDivElement>(null);
+
+  const displayId = value === 'browser_fetch' ? 'fetch_url' : value;
+  const current = AVAILABLE_TOOLS.find(t => t.id === displayId);
+  const SelectedIcon = TOOL_ICONS[displayId] ?? WrenchScrewdriverIcon;
+
+  const handleOpen = () => {
+    if (btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect();
+      setPos({ top: r.bottom + 4, left: r.left, width: r.width });
+    }
+    setOpen(o => !o);
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    const onMouseDown = (e: MouseEvent) => {
+      if (!btnRef.current?.contains(e.target as Node) && !dropRef.current?.contains(e.target as Node))
+        setOpen(false);
+    };
+    const onScroll = (e: Event) => {
+      if (!dropRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onMouseDown);
+    document.addEventListener('scroll', onScroll, true);
+    return () => {
+      document.removeEventListener('mousedown', onMouseDown);
+      document.removeEventListener('scroll', onScroll, true);
+    };
+  }, [open]);
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        onClick={handleOpen}
+        className="w-full flex items-center gap-2.5 px-3 py-2 border border-neutral-200 rounded-md bg-white text-left hover:bg-neutral-50 transition-colors"
+      >
+        <div className="w-6 h-6 rounded-md bg-neutral-100 flex items-center justify-center flex-shrink-0">
+          <SelectedIcon className="w-3.5 h-3.5 text-neutral-600" />
+        </div>
+        <span className="text-[13px] text-neutral-800 flex-1 truncate">{current?.label ?? value}</span>
+        <ChevronDownIcon className="w-3.5 h-3.5 text-neutral-400 flex-shrink-0" />
+      </button>
+      {open && createPortal(
+        <div
+          ref={dropRef}
+          style={{ position: 'fixed', top: pos.top, left: pos.left, width: pos.width, zIndex: 9999 }}
+          className="bg-white border border-neutral-200 rounded-xl shadow-lg overflow-hidden"
+        >
+          <div className="max-h-72 overflow-y-auto">
+            {AVAILABLE_TOOLS.map(t => {
+              const Icon = TOOL_ICONS[t.id] ?? WrenchScrewdriverIcon;
+              const isSelected = t.id === displayId;
+              return (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => { onChange(t.id); setOpen(false); }}
+                  className={`w-full flex items-start gap-3 px-3 py-2.5 text-left transition-colors ${isSelected ? 'bg-indigo-50' : 'hover:bg-neutral-50'}`}
+                >
+                  <div className={`w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0 mt-0.5 ${isSelected ? 'bg-indigo-100' : 'bg-neutral-100'}`}>
+                    <Icon className={`w-4 h-4 ${isSelected ? 'text-indigo-600' : 'text-neutral-500'}`} />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-[12.5px] font-medium text-neutral-800">{t.label}</div>
+                    <div className="text-[11px] text-neutral-500 leading-snug mt-0.5">{t.description}</div>
+                  </div>
+                  {isSelected && <CheckIcon className="w-3.5 h-3.5 text-indigo-500 flex-shrink-0 mt-1 ml-auto" />}
+                </button>
+              );
+            })}
+          </div>
+        </div>,
+        document.body,
+      )}
+    </>
+  );
+}
+
 function ToolStepFields({ step, onUpdate, isEnhancing, isPending, onEnhance }: {
   step: ToolStep; onUpdate: (p: Partial<ToolStep>) => void;
   isEnhancing?: boolean; isPending?: boolean; onEnhance?: EnhanceFn;
 }) {
-  const tool = AVAILABLE_TOOLS.find(t => t.id === step.tool);
   const query = (step.config.query as string) ?? '';
+  const isFetchBased = step.tool === 'fetch_url' || step.tool === 'browser_fetch';
+  const auth = step.config.auth as { username: string; password: string } | undefined;
+
   return (
     <>
       <Field label="Tool">
-        <select
+        <ToolPicker
           value={step.tool}
-          onChange={e => onUpdate({ tool: e.target.value, config: {} })}
-          className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] bg-white"
-        >
-          {AVAILABLE_TOOLS.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
-        </select>
-        {tool && <p className="text-[11.5px] text-neutral-500 mt-1">{tool.description}</p>}
+          onChange={toolId => onUpdate({ tool: toolId, config: {} })}
+        />
       </Field>
       {step.tool === 'web_search' && (
         <div>
@@ -916,6 +1017,84 @@ function ToolStepFields({ step, onUpdate, isEnhancing, isPending, onEnhance }: {
             />
           )}
         </div>
+      )}
+      {isFetchBased && (
+        <>
+          <Field label="URLs to read" hint="One URL per line, max 5">
+            <textarea
+              value={Array.isArray(step.config.urls) ? (step.config.urls as string[]).join('\n') : (step.config.urls as string) ?? ''}
+              onChange={e => onUpdate({ config: { ...step.config, urls: e.target.value.split('\n').map(s => s.trim()).filter(Boolean) } })}
+              placeholder={'https://example.com/pricing\nhttps://competitor.com/blog'}
+              rows={3}
+              className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] resize-y font-mono focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400"
+            />
+          </Field>
+          <label className="flex items-center gap-2 px-3 py-2 border border-neutral-200 rounded-md cursor-pointer bg-neutral-50">
+            <input
+              type="checkbox"
+              checked={step.tool === 'browser_fetch'}
+              onChange={e => onUpdate({ tool: e.target.checked ? 'browser_fetch' : 'fetch_url', config: step.config })}
+              className="rounded border-neutral-300 text-indigo-600 focus:ring-indigo-500"
+            />
+            <span className="text-[12.5px] text-neutral-700">Page requires JavaScript to load (e.g. dashboards, search results)</span>
+          </label>
+          <div>
+            <label className="flex items-center gap-2 mb-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={!!auth}
+                onChange={e => onUpdate({ config: { ...step.config, auth: e.target.checked ? { username: '', password: '' } : undefined } })}
+                className="rounded border-neutral-300 text-indigo-600 focus:ring-indigo-500"
+              />
+              <span className="flex items-center gap-1.5 text-[12px] font-medium text-neutral-600">
+                <LockClosedIcon className="w-3.5 h-3.5" />
+                Basic authentication (for paywalled pages)
+              </span>
+            </label>
+            {auth && (
+              <div className="grid grid-cols-2 gap-2 pl-6">
+                <input
+                  type="text"
+                  placeholder="Username"
+                  value={auth.username ?? ''}
+                  onChange={e => onUpdate({ config: { ...step.config, auth: { ...auth, username: e.target.value } } })}
+                  className="px-3 py-2 border border-neutral-200 rounded-md text-[12px] focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400"
+                />
+                <input
+                  type="password"
+                  placeholder="Password"
+                  value={auth.password ?? ''}
+                  onChange={e => onUpdate({ config: { ...step.config, auth: { ...auth, password: e.target.value } } })}
+                  className="px-3 py-2 border border-neutral-200 rounded-md text-[12px] focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400"
+                />
+              </div>
+            )}
+          </div>
+        </>
+      )}
+      {step.tool === 'rss_feed' && (
+        <>
+          <Field label="Feed URLs" hint="One URL per line">
+            <textarea
+              value={Array.isArray(step.config.feeds) ? (step.config.feeds as string[]).join('\n') : (step.config.feeds as string) ?? ''}
+              onChange={e => onUpdate({ config: { ...step.config, feeds: e.target.value.split('\n').map(s => s.trim()).filter(Boolean) } })}
+              placeholder={'https://hnrss.org/frontpage\nhttps://feeds.feedburner.com/example'}
+              rows={3}
+              className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] resize-y font-mono focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400"
+            />
+          </Field>
+          <Field label="Time window">
+            <select
+              value={(step.config.since as string) ?? 'last_run'}
+              onChange={e => onUpdate({ config: { ...step.config, since: e.target.value } })}
+              className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] bg-white"
+            >
+              <option value="last_run">Since last run</option>
+              <option value="24h">Past 24 hours</option>
+              <option value="7d">Past 7 days</option>
+            </select>
+          </Field>
+        </>
       )}
       {step.tool === 'read_kb_file' && (
         <Field label="Knowledge file id">
