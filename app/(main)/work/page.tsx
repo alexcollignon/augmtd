@@ -35,7 +35,7 @@ export default async function WorkPage({
 
   const THREAD_COLS = 'id, title, plan, artifact, artifacts, status, auto_generated, saved_workflow_id, is_generating, created_at, updated_at, agent_id, workflow_id';
 
-  const [{ data: threads }, { data: savedWorkflowsData }, { data: agentsData }, initialThreadResult] = await Promise.all([
+  const [{ data: threads }, { data: savedWorkflowsData }, { data: agentsData }, initialThreadResult, { data: workflowsData }] = await Promise.all([
     supabase
       .from('work_threads')
       .select(THREAD_COLS)
@@ -66,6 +66,10 @@ export default async function WorkPage({
           .eq('user_id', user.id)
           .single()
       : Promise.resolve({ data: null }),
+    supabase
+      .from('workflows')
+      .select('id, user_id, name, description, icon, color, status, trigger, steps, output_config, last_run_at, next_run_at, created_at, updated_at, shared_with_company, sharing_mode, company_id')
+      .order('updated_at', { ascending: false }),
   ]);
 
   // Resolve owner names for shared agents owned by others
@@ -108,6 +112,26 @@ export default async function WorkPage({
     ? [extraThread, ...baseThreads]
     : baseThreads;
 
+  // Resolve owner names for shared workflows
+  const workflowRows = workflowsData ?? [];
+  const foreignWorkflowUserIds = [...new Set(workflowRows.filter((w: { user_id: string }) => w.user_id !== user.id).map((w: { user_id: string }) => w.user_id))];
+  const workflowOwnerNames: Record<string, string> = {};
+  if (foreignWorkflowUserIds.length > 0) {
+    const { data: wfProfiles } = await supabase
+      .from('profiles')
+      .select('id, full_name, email')
+      .in('id', foreignWorkflowUserIds);
+    (wfProfiles ?? []).forEach((p: { id: string; full_name: string | null; email: string | null }) => {
+      workflowOwnerNames[p.id] = p.full_name ?? p.email?.split('@')[0] ?? 'Teammate';
+    });
+  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const initialWorkflows = workflowRows.map((w: any) => ({
+    ...w,
+    is_owned_by_me: w.user_id === user.id,
+    owner_name: w.user_id !== user.id ? (workflowOwnerNames[w.user_id] ?? 'Teammate') : null,
+  }));
+
   return (
     <WorkPageClient
       userId={user.id}
@@ -121,6 +145,7 @@ export default async function WorkPage({
       initialSection={initialSection}
       initialWorkflowId={initialWorkflowId || null}
       initialAgentId={initialAgentId || null}
+      initialWorkflows={initialWorkflows}
     />
   );
 }

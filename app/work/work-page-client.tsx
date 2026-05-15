@@ -13,10 +13,11 @@ import Link from 'next/link';
 import { ChevronRightIcon, ChevronLeftIcon, PlusIcon, RectangleStackIcon, ClockIcon, DocumentArrowDownIcon, ArchiveBoxIcon, Cog6ToothIcon } from '@heroicons/react/24/outline';
 import { WorkTabBar } from '@/components/work/work-tab-bar';
 import { StudioSidebar } from '@/components/work/studio-sidebar';
-import { StudioEmptyState, WORKFLOW_TEMPLATES, type WorkflowTemplate } from '@/components/work/studio-empty-state';
+import { WORKFLOW_TEMPLATES, type WorkflowTemplate } from '@/components/work/studio-empty-state';
+import { StudioHomeGrid } from '@/components/work/studio-home-grid';
 import { StudioDetailPanel } from '@/components/work/studio-detail-panel';
 import { StudioBuilder } from '@/components/work/studio-builder';
-import type { Workflow } from '@/lib/workflows/types';
+import type { Workflow, WorkflowRun } from '@/lib/workflows/types';
 import { ThreadArtifactsPanel, AllArtifactsPanel } from '@/components/work/chat-artifact-panel';
 import { ChatThreadSidebar, ChatThread } from '@/components/work/chat-thread-sidebar';
 import { ChatEmptyState } from '@/components/work/chat-empty-state';
@@ -70,6 +71,7 @@ export interface WorkPageClientProps {
   initialSection?: 'chat' | 'studio';
   initialWorkflowId?: string | null;
   initialAgentId?: string | null;
+  initialWorkflows?: Workflow[];
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -86,6 +88,7 @@ export function WorkPageClient({
   initialSection = 'chat',
   initialWorkflowId = null,
   initialAgentId = null,
+  initialWorkflows = [],
 }: WorkPageClientProps) {
   const router = useRouter();
   const { workspace } = useWorkspace();
@@ -122,10 +125,20 @@ export function WorkPageClient({
   const [activeSection, setActiveSection] = useState<'chat' | 'studio'>(
     initialSection === 'studio' && studioEnabled ? 'studio' : 'chat'
   );
-  const [studioWorkflows, setStudioWorkflows] = useState<Workflow[] | null>(null);
+  const [studioWorkflows, setStudioWorkflows] = useState<Workflow[] | null>(initialWorkflows.length > 0 ? initialWorkflows : null);
   const [studioLoading, setStudioLoading] = useState(false);
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(initialWorkflowId);
   const [editingWorkflowId, setEditingWorkflowId] = useState<string | null>(null);
+  const runsCacheRef = useRef<Map<string, WorkflowRun[]>>(new Map());
+
+  function prefetchRuns(id: string) {
+    if (runsCacheRef.current.has(id)) return;
+    runsCacheRef.current.set(id, []); // mark as in-flight
+    fetch(`/api/workflows/${id}/runs`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (data?.runs) runsCacheRef.current.set(id, data.runs); })
+      .catch(() => runsCacheRef.current.delete(id));
+  }
 
   const selectedWorkflow = studioWorkflows?.find(w => w.id === selectedWorkflowId) ?? null;
   const isBuilding = activeSection === 'studio' && !!editingWorkflowId && editingWorkflowId === selectedWorkflow?.id;
@@ -573,6 +586,7 @@ export function WorkPageClient({
               onRename={handleRenameWorkflow}
               onDelete={handleDeleteWorkflow}
               onClone={handleCloneWorkflow}
+              onHover={prefetchRuns}
             />
           )}
 
@@ -646,6 +660,7 @@ export function WorkPageClient({
               <StudioDetailPanel
                 key={selectedWorkflow.id}
                 workflow={selectedWorkflow}
+                initialRuns={runsCacheRef.current.get(selectedWorkflow.id)}
                 onEdit={() => setEditingWorkflowId(selectedWorkflow.id)}
                 onWorkflowUpdated={handleWorkflowUpdated}
                 onWorkflowDeleted={handleDeleteWorkflow}
@@ -659,7 +674,11 @@ export function WorkPageClient({
                 <div className="w-5 h-5 border-2 border-neutral-200 border-t-indigo-500 rounded-full animate-spin" />
               </div>
             ) : (
-              <StudioEmptyState
+              <StudioHomeGrid
+                myWorkflows={(studioWorkflows ?? []).filter(w => w.is_owned_by_me !== false)}
+                teamWorkflows={(studioWorkflows ?? []).filter(w => w.is_owned_by_me === false)}
+                userFirstName={userFullName?.split(' ')[0]}
+                onSelect={(id) => { setSelectedWorkflowId(id); setEditingWorkflowId(null); }}
                 onCreate={handleCreateWorkflow}
                 onUseTemplate={handleUseTemplate}
                 onGenerateFromDescription={handleGenerateWorkflow}
