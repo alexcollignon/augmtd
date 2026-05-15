@@ -4,56 +4,57 @@
 //
 // Auth: PORTAL_BASE_TOKEN env var  (header: _AcessToken)
 // Docs: https://www.base.gov.pt/APIBase2
-//
-// Endpoints used:
-//   GET /GetInfoContrato?numDias=N   — contracts signed in the last N days
-//   GET /GetInfoAnuncio?numDias=N    — open tender announcements in last N days
 
 const BASE_URL = 'https://www.base.gov.pt/APIBase2';
 const MAX_DAYS = 90;
-const MAX_ITEMS = 30; // cap returned rows per endpoint to keep output manageable
+const MAX_ITEMS = 30;
 
-// ── Response shapes (partial — only fields we surface) ────────────────────────
+// ── Actual response shapes (verified against live API) ────────────────────────
 
 interface BaseContract {
-  idContrato?: string;
+  idcontrato?: string;
   objectoContrato?: string;
   descContrato?: string;
-  adjudicante?: string[];
+  adjudicante?: string[];       // ["NIF - Entity name"]
   adjudicatarios?: string[];
   dataPublicacao?: string;
   dataCelebracaoContrato?: string;
-  precoContratual?: string;
-  precoBaseProcedimento?: string;
+  precoContratual?: number;     // numeric, e.g. 198999.99
+  precoBaseProcedimento?: number;
+  PrecoTotalEfetivo?: number;
   cpv?: string[];
-  prazoExecucao?: string;
+  prazoExecucao?: number;       // days
   localExecucao?: string[];
   tipoprocedimento?: string;
   tipoContrato?: string[];
-  Ano?: string;
+  Ano?: number;
 }
 
 interface BaseAnnouncement {
   nAnuncio?: string;
-  TipoAnuncio?: string;
-  objectoContrato?: string;
-  adjudicante?: string[];
+  IdIncm?: string;
+  tipoActo?: string;            // "Anúncio de procedimento"
+  descricaoAnuncio?: string;    // the tender title/description
+  designacaoEntidade?: string;  // contracting entity name
+  nifEntidade?: string;
   dataPublicacao?: string;
-  precoBaseProcedimento?: string;
-  cpv?: string[];
-  prazoExecucao?: string;
-  localExecucao?: string[];
-  tipoprocedimento?: string;
-  tipoContrato?: string[];
-  Ano?: string;
+  PrecoBase?: string;           // string "9000.00"
+  CPVs?: string[];              // capital, plural
+  modeloAnuncio?: string;       // procedure type
+  tiposContrato?: string[];     // plural
+  PrazoPropostas?: number;      // days to submit
+  DataLimitePropostas?: string; // deadline date
+  url?: string;                 // link to DR publication
+  PecasProcedimento?: string;   // link to tender docs
+  Ano?: number;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function formatEur(raw: string | undefined): string {
-  if (!raw) return '';
-  const n = parseFloat(raw.replace(',', '.'));
-  if (isNaN(n)) return raw;
+function formatEur(value: number | string | undefined): string {
+  if (value === undefined || value === null) return '';
+  const n = typeof value === 'number' ? value : parseFloat(String(value).replace(',', '.'));
+  if (isNaN(n) || n === 0) return '';
   return new Intl.NumberFormat('pt-PT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n);
 }
 
@@ -61,31 +62,46 @@ function joinArr(arr: string[] | undefined): string {
   return (arr ?? []).filter(Boolean).join('; ');
 }
 
+// Strip NIF prefix from entity strings like "600010180 - ESTADO-MAIOR..."
+function stripNif(s: string): string {
+  return s.replace(/^\d{9}\s*-\s*/, '');
+}
+
+function formatEntityArr(arr: string[] | undefined): string {
+  return (arr ?? []).map(stripNif).filter(Boolean).join('; ');
+}
+
 function formatContract(c: BaseContract, idx: number): string {
+  const value = formatEur(c.precoContratual);
   const lines: string[] = [
     `### ${idx + 1}. ${c.objectoContrato ?? '(sem título)'}`,
-    `- **Adjudicante:** ${joinArr(c.adjudicante) || '—'}`,
-    `- **Adjudicatário:** ${joinArr(c.adjudicatarios) || '—'}`,
-    `- **Valor contratual:** ${formatEur(c.precoContratual) || '—'}`,
-    `- **Publicação:** ${c.dataPublicacao ?? '—'}  |  **Celebração:** ${c.dataCelebracaoContrato ?? '—'}`,
+    `- **Adjudicante:** ${formatEntityArr(c.adjudicante) || '—'}`,
+    `- **Adjudicatário:** ${formatEntityArr(c.adjudicatarios) || '—'}`,
+    `- **Valor:** ${value || '—'}`,
+    `- **Data contrato:** ${c.dataCelebracaoContrato ?? c.dataPublicacao ?? '—'}`,
     `- **CPV:** ${joinArr(c.cpv) || '—'}`,
     `- **Local:** ${joinArr(c.localExecucao) || '—'}`,
-    `- **Prazo:** ${c.prazoExecucao ? `${c.prazoExecucao} dias` : '—'}`,
+    `- **Prazo execução:** ${c.prazoExecucao ? `${c.prazoExecucao} dias` : '—'}`,
     `- **Procedimento:** ${c.tipoprocedimento ?? '—'}`,
   ];
   return lines.join('\n');
 }
 
 function formatAnnouncement(a: BaseAnnouncement, idx: number): string {
+  const value = formatEur(a.PrecoBase);
+  const deadline = a.DataLimitePropostas && a.DataLimitePropostas !== ''
+    ? a.DataLimitePropostas
+    : (a.PrazoPropostas ? `${a.PrazoPropostas} dias` : '—');
   const lines: string[] = [
-    `### ${idx + 1}. ${a.objectoContrato ?? '(sem título)'}`,
-    `- **Anúncio nº:** ${a.nAnuncio ?? '—'}  |  **Tipo:** ${a.TipoAnuncio ?? '—'}`,
-    `- **Entidade:** ${joinArr(a.adjudicante) || '—'}`,
-    `- **Base:** ${formatEur(a.precoBaseProcedimento) || '—'}`,
-    `- **Publicação:** ${a.dataPublicacao ?? '—'}`,
-    `- **CPV:** ${joinArr(a.cpv) || '—'}`,
-    `- **Local:** ${joinArr(a.localExecucao) || '—'}`,
-    `- **Procedimento:** ${a.tipoprocedimento ?? '—'}`,
+    `### ${idx + 1}. ${a.descricaoAnuncio ?? '(sem título)'}`,
+    `- **Entidade:** ${a.designacaoEntidade ?? '—'}`,
+    `- **Tipo:** ${a.modeloAnuncio ?? a.tipoActo ?? '—'}`,
+    `- **Base:** ${value || '—'}`,
+    `- **Publicação:** ${a.dataPublicacao ?? '—'}  |  **Limite propostas:** ${deadline}`,
+    `- **CPV:** ${joinArr(a.CPVs) || '—'}`,
+    `- **Contrato:** ${joinArr(a.tiposContrato) || '—'}`,
+    ...(a.url ? [`- **Anúncio:** ${a.url}`] : []),
+    ...(a.PecasProcedimento ? [`- **Documentos:** ${a.PecasProcedimento}`] : []),
   ];
   return lines.join('\n');
 }
@@ -109,7 +125,6 @@ async function callApi<T>(
   }
 
   const data = await res.json();
-  // API returns either an array or a single object or an error string
   if (typeof data === 'string') throw new Error(`Portal Base: ${data}`);
   return (Array.isArray(data) ? data : [data]) as T[];
 }
@@ -117,13 +132,9 @@ async function callApi<T>(
 // ── Public API ────────────────────────────────────────────────────────────────
 
 export interface PtTendersConfig {
-  /** How many days back to fetch. Default 7, max 90. */
   days?: number;
-  /** Which endpoint to query. Default 'both'. */
   endpoint?: 'contracts' | 'announcements' | 'both';
-  /** Optional CPV code prefix filter (e.g. "45" = construction, "72" = IT). */
   cpv_prefix?: string;
-  /** Optional minimum contract value in EUR. */
   min_value?: number;
 }
 
@@ -147,10 +158,7 @@ export async function executePtTenders(config: Record<string, unknown>): Promise
       let contracts = await callApi<BaseContract>('GetInfoContrato', params, token);
 
       if (minValue !== undefined) {
-        contracts = contracts.filter(c => {
-          const v = parseFloat((c.precoContratual ?? '0').replace(',', '.'));
-          return !isNaN(v) && v >= minValue;
-        });
+        contracts = contracts.filter(c => (c.precoContratual ?? 0) >= minValue);
       }
 
       contracts = contracts.slice(0, MAX_ITEMS);
@@ -175,7 +183,7 @@ export async function executePtTenders(config: Record<string, unknown>): Promise
 
       if (minValue !== undefined) {
         announcements = announcements.filter(a => {
-          const v = parseFloat((a.precoBaseProcedimento ?? '0').replace(',', '.'));
+          const v = parseFloat((a.PrecoBase ?? '0').replace(',', '.'));
           return !isNaN(v) && v >= minValue;
         });
       }
