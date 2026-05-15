@@ -42,7 +42,7 @@ export const TIER_DEFAULTS: Record<TierType, Record<TaskType, ModelEndpoint>> = 
 
   // ── Private shared — Fireworks AI (fully private, no data leaves to OpenAI/Anthropic)
   // Kimi K2 Instruct for planning/generation/conversation (stronger than DeepSeek V3.2 on agentic/coding).
-  // Llama-3.3-70B for classification/summarization/assignment.
+  // gpt-oss-120b for classification/summarization/assignment (replaced Llama-3.3-70B, decommissioned May 14 2026).
   // Qwen3-VL-30B for OCR — real vision model (replaced Together AI's text-only Qwen3.5-9B stopgap).
   // Embeddings stay on Together AI — switching would require re-indexing all KB content.
   private_shared: {
@@ -50,15 +50,15 @@ export const TIER_DEFAULTS: Record<TierType, Record<TaskType, ModelEndpoint>> = 
                      baseURL: 'https://api.fireworks.ai/inference/v1' },
     generation:    { provider: 'fireworks', model: 'accounts/fireworks/models/kimi-k2p6',
                      baseURL: 'https://api.fireworks.ai/inference/v1' },
-    summarization: { provider: 'fireworks', model: 'accounts/fireworks/models/llama-v3p3-70b-instruct',
+    summarization: { provider: 'fireworks', model: 'accounts/fireworks/models/gpt-oss-120b',
                      baseURL: 'https://api.fireworks.ai/inference/v1' },
-    classification:{ provider: 'fireworks', model: 'accounts/fireworks/models/llama-v3p3-70b-instruct',
+    classification:{ provider: 'fireworks', model: 'accounts/fireworks/models/gpt-oss-120b',
                      baseURL: 'https://api.fireworks.ai/inference/v1' },
     embeddings:    { provider: 'openai_compatible', model: 'intfloat/multilingual-e5-large-instruct',
                      baseURL: 'https://api.together.xyz/v1' },
     ocr:           { provider: 'fireworks', model: 'accounts/fireworks/models/qwen3-vl-30b-a3b-instruct',
                      baseURL: 'https://api.fireworks.ai/inference/v1' },
-    assignment:    { provider: 'fireworks', model: 'accounts/fireworks/models/llama-v3p3-70b-instruct',
+    assignment:    { provider: 'fireworks', model: 'accounts/fireworks/models/gpt-oss-120b',
                      baseURL: 'https://api.fireworks.ai/inference/v1' },
     conversation:  { provider: 'fireworks', model: 'accounts/fireworks/models/kimi-k2p6',
                      baseURL: 'https://api.fireworks.ai/inference/v1' },
@@ -83,7 +83,7 @@ export const TIER_DEFAULTS: Record<TierType, Record<TaskType, ModelEndpoint>> = 
   // ── Bedrock optimised — Bedrock for user-facing, Fireworks for background ────
   // Conversation / generation / OCR stay on AWS Bedrock EU (Claude Haiku 4.5) for
   // quality and data-residency guarantees on interactive work.
-  // Email triage, summarization, assignment → Llama 3.3 70B on Fireworks (cheap).
+  // Email triage, summarization, assignment → gpt-oss-120b on Fireworks (replaced Llama-3.3-70B, decommissioned May 14 2026).
   // processEmail (planning task) → Kimi K2 on Fireworks (frontier quality, 46% cheaper).
   // Embeddings stay on Together AI — same as private_shared, no re-indexing needed.
   bedrock_optimised: {
@@ -92,11 +92,11 @@ export const TIER_DEFAULTS: Record<TierType, Record<TaskType, ModelEndpoint>> = 
     ocr:           { provider: 'bedrock',           model: 'eu.anthropic.claude-haiku-4-5-20251001-v1:0', maxTokensDefault: 4096 },
     planning:      { provider: 'fireworks',         model: 'accounts/fireworks/models/kimi-k2p6',
                      baseURL: 'https://api.fireworks.ai/inference/v1' },
-    classification:{ provider: 'fireworks',         model: 'accounts/fireworks/models/llama-v3p3-70b-instruct',
+    classification:{ provider: 'fireworks',         model: 'accounts/fireworks/models/gpt-oss-120b',
                      baseURL: 'https://api.fireworks.ai/inference/v1' },
-    summarization: { provider: 'fireworks',         model: 'accounts/fireworks/models/llama-v3p3-70b-instruct',
+    summarization: { provider: 'fireworks',         model: 'accounts/fireworks/models/gpt-oss-120b',
                      baseURL: 'https://api.fireworks.ai/inference/v1' },
-    assignment:    { provider: 'fireworks',         model: 'accounts/fireworks/models/llama-v3p3-70b-instruct',
+    assignment:    { provider: 'fireworks',         model: 'accounts/fireworks/models/gpt-oss-120b',
                      baseURL: 'https://api.fireworks.ai/inference/v1' },
     embeddings:    { provider: 'openai_compatible', model: 'intfloat/multilingual-e5-large-instruct',
                      baseURL: 'https://api.together.xyz/v1' },
