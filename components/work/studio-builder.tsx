@@ -34,6 +34,8 @@ import {
   BuildingOfficeIcon,
   IdentificationIcon,
   Cog6ToothIcon,
+  PlusIcon,
+  EllipsisVerticalIcon,
 } from '@heroicons/react/24/outline';
 import type {
   Workflow, WorkflowStep, WorkflowTrigger, OutputConfig,
@@ -143,6 +145,7 @@ const STEP_TYPE_ICONS = {
 
 type ActivePanel = 'identity' | 'trigger' | 'output' | { stepId: string };
 type EnhanceFn = (prompt: string, label: string, context: { step_type: 'ai' | 'tool' | 'agent'; tool_type?: string; output_format?: string; model_tier?: string; field: 'prompt' | 'query' }) => void;
+type Suggestion = { category: 'quality' | 'coverage' | 'timing'; title: string; reason: string };
 
 export function StudioBuilder({ workflow: initialWorkflow, agents, onClose, onBack }: Props) {
   const [workflow, setWorkflow] = useState<Workflow>(initialWorkflow);
@@ -151,6 +154,14 @@ export function StudioBuilder({ workflow: initialWorkflow, agents, onClose, onBa
   const [activePanel, setActivePanel] = useState<ActivePanel>('identity');
   const [enhancingStepId, setEnhancingStepId] = useState<string | null>(null);
   const [enhancePendingStepId, setEnhancePendingStepId] = useState<string | null>(null);
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+
+  useEffect(() => {
+    fetch(`/api/workflows/${initialWorkflow.id}/suggestions`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.suggestions) setSuggestions(d.suggestions); })
+      .catch(() => {});
+  }, [initialWorkflow.id]);
 
   const resolvedPanel: ActivePanel = (() => {
     if (typeof activePanel === 'object') {
@@ -203,6 +214,14 @@ export function StudioBuilder({ workflow: initialWorkflow, agents, onClose, onBa
     const saved = await save();
     onClose(saved ?? workflow);
   }, [save, onClose, workflow]);
+
+  const runNow = useCallback(async () => {
+    await fetch(`/api/workflows/${workflow.id}/runs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ trigger_source: 'manual' }),
+    }).catch(() => {});
+  }, [workflow.id]);
 
   const addStep = useCallback((type: WorkflowStep['type']) => {
     const id = makeStepId();
@@ -296,101 +315,70 @@ export function StudioBuilder({ workflow: initialWorkflow, agents, onClose, onBa
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Header */}
-      <header className="px-6 py-3 border-b border-neutral-100 flex-shrink-0 flex items-center justify-between bg-white">
-        <button onClick={onBack}
-          className="inline-flex items-center gap-1.5 text-[12.5px] text-neutral-500 hover:text-neutral-900 transition-colors">
-          <ArrowLeftIcon className="w-3.5 h-3.5" />
-          Back
-        </button>
-        <div className="flex items-center gap-3">
+      <header className="h-12 px-4 border-b border-neutral-100 flex-shrink-0 flex items-center bg-white gap-4">
+        <div className="flex items-center gap-2.5 flex-1 min-w-0">
+          <button onClick={onBack}
+            className="inline-flex items-center gap-1.5 text-[12px] text-neutral-400 hover:text-neutral-700 transition-colors flex-shrink-0">
+            <ArrowLeftIcon className="w-3.5 h-3.5" />
+            Back
+          </button>
+          <div className="w-px h-4 bg-neutral-200 flex-shrink-0" />
+          <div className={`w-6 h-6 rounded-md ${colorBg} flex items-center justify-center flex-shrink-0`}>
+            <PreviewIcon className="w-3.5 h-3.5 text-white" />
+          </div>
+          <span className="text-[13px] font-semibold text-neutral-800 truncate">{workflow.name || 'Untitled'}</span>
+        </div>
+        <div className="flex items-center gap-3 flex-shrink-0">
+          <span className="inline-flex items-center gap-1 text-[11px] text-neutral-500 bg-neutral-100 px-2 py-1 rounded-md">
+            <LockClosedIcon className="w-3 h-3" />
+            Private
+          </span>
           {savedAt && (
-            <span className="text-[11.5px] text-emerald-600 inline-flex items-center gap-1">
-              <CheckIcon className="w-3.5 h-3.5" />
-              Saved {savedAt.toLocaleTimeString()}
+            <span className="text-[11px] text-neutral-400">
+              Autosaved {savedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
             </span>
           )}
+        </div>
+        <div className="flex items-center gap-2 flex-1 justify-end">
+          <button onClick={runNow}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-neutral-200 text-neutral-700 text-[12px] font-medium rounded-md hover:bg-neutral-50 transition-colors">
+            <BoltIcon className="w-3.5 h-3.5" />
+            Test run
+          </button>
           <button onClick={() => save()} disabled={saving}
-            className="px-3 py-1.5 border border-neutral-200 hover:bg-neutral-50 text-neutral-700 text-[12px] font-medium rounded-md transition-colors disabled:opacity-50">
+            className="px-3 py-1.5 border border-neutral-200 text-neutral-700 text-[12px] font-medium rounded-md hover:bg-neutral-50 transition-colors disabled:opacity-50">
             {saving ? 'Saving…' : 'Save'}
           </button>
           <button onClick={saveAndClose} disabled={saving}
-            className="px-3 py-1.5 bg-neutral-900 hover:bg-neutral-800 text-white text-[12px] font-medium rounded-md transition-colors disabled:opacity-50">
+            className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-[12px] font-medium rounded-md transition-colors disabled:opacity-50">
             Save & close
           </button>
         </div>
       </header>
 
-      {/* Split body */}
-      <div className="flex-1 flex overflow-hidden bg-neutral-50">
-        {/* Left rail */}
-        <div className="w-64 flex-shrink-0 border-r border-neutral-150 bg-white flex flex-col overflow-hidden">
-          {/* Workflow mini preview */}
-          <div className="px-4 py-3.5 border-b border-neutral-100 flex items-center gap-3 flex-shrink-0">
-            <div className={`w-8 h-8 rounded-xl ${colorBg} flex items-center justify-center flex-shrink-0 shadow-sm`}>
-              <PreviewIcon className="w-4 h-4 text-white" />
-            </div>
-            <span className="text-[13px] font-semibold text-neutral-800 truncate flex-1">
-              {workflow.name || 'Untitled workflow'}
-            </span>
-          </div>
+      {/* 3-column body */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* AI Assistant column */}
+        <div className="w-[248px] flex-shrink-0 border-r border-neutral-100 bg-neutral-50/60 flex flex-col overflow-hidden">
+          <AIAssistantPanel suggestions={suggestions} />
+        </div>
 
-          <div className="flex-1 overflow-y-auto py-3 flex flex-col gap-4">
-            {/* Configure */}
-            <div className="px-3">
-              <p className="text-[10px] font-semibold text-neutral-400 uppercase tracking-widest px-2 mb-1">Configure</p>
-              <RailNavItem label="Identity" icon={IdentificationIcon} active={resolvedPanel === 'identity'} onClick={() => setActivePanel('identity')} />
-              <RailNavItem label="Trigger"  icon={BoltIcon}           active={resolvedPanel === 'trigger'}  onClick={() => setActivePanel('trigger')} />
-            </div>
-
-            {/* Steps */}
-            <div className="px-3 flex-1">
-              <p className="text-[10px] font-semibold text-neutral-400 uppercase tracking-widest px-2 mb-1">
-                Steps{workflow.steps.length > 0 ? ` · ${workflow.steps.length}` : ''}
-              </p>
-              {workflow.steps.length === 0 && (
-                <p className="px-2 py-1.5 text-[11.5px] text-neutral-400">No steps yet</p>
-              )}
-              <div className="space-y-0.5 mb-2">
-                {workflow.steps.map((step, idx) => (
-                  <StepRailRow
-                    key={step.id}
-                    step={step}
-                    index={idx}
-                    total={workflow.steps.length}
-                    active={typeof resolvedPanel === 'object' && resolvedPanel.stepId === step.id}
-                    onClick={() => setActivePanel({ stepId: step.id })}
-                    onRemove={() => removeStep(step.id)}
-                    onMove={d => moveStep(step.id, d)}
-                  />
-                ))}
-              </div>
-              <div className="flex gap-1">
-                {([
-                  { type: 'tool' as const,  Icon: WrenchScrewdriverIcon, label: 'Tool',  disabled: false },
-                  { type: 'ai' as const,    Icon: SparklesIcon,          label: 'AI',    disabled: false },
-                  { type: 'agent' as const, Icon: UserCircleIcon,        label: 'Agent', disabled: agents.length === 0 },
-                ]).map(({ type, Icon, label, disabled }) => (
-                  <button key={type} onClick={() => addStep(type)} disabled={disabled}
-                    title={disabled ? 'Create a custom agent first' : undefined}
-                    className="flex-1 flex items-center justify-center gap-1 py-1.5 text-[11px] font-medium text-neutral-500 border border-dashed border-neutral-200 rounded-md hover:bg-neutral-50 hover:border-neutral-300 hover:text-neutral-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
-                    <Icon className="w-3 h-3" />
-                    {label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Output */}
-            <div className="px-3">
-              <p className="text-[10px] font-semibold text-neutral-400 uppercase tracking-widest px-2 mb-1">Output</p>
-              <RailNavItem label="Output config" icon={Cog6ToothIcon} active={resolvedPanel === 'output'} onClick={() => setActivePanel('output')} />
-            </div>
-          </div>
+        {/* Visual workflow center */}
+        <div className="flex-1 overflow-y-auto bg-neutral-50 flex justify-center">
+          <VisualWorkflowColumn
+            workflow={workflow}
+            activePanel={resolvedPanel}
+            agents={agents}
+            onSelectPanel={setActivePanel}
+            onAddStep={addStep}
+            onMoveStep={moveStep}
+            onRemoveStep={removeStep}
+          />
         </div>
 
         {/* Right config panel */}
-        <div className="flex-1 overflow-y-auto">
-          <div className="max-w-2xl mx-auto px-10 py-9">
+        <div className="w-[296px] flex-shrink-0 border-l border-neutral-100 bg-white overflow-y-auto">
+          <div className="px-5 py-6 space-y-5">
             {resolvedPanel === 'identity' && (
               <IdentitySection workflow={workflow} patch={patch} />
             )}
@@ -412,16 +400,280 @@ export function StudioBuilder({ workflow: initialWorkflow, agents, onClose, onBa
                 <StepConfigSection
                   step={step}
                   index={activeStepIndex}
+                  total={workflow.steps.length}
                   agents={agents}
                   isEnhancing={enhancingStepId === step.id}
                   isPending={enhancePendingStepId === step.id}
                   onUpdate={p => updateStep(step.id, p)}
                   onEnhance={(prompt, label, ctx) => handleEnhanceStep(step.id, prompt, label, ctx)}
+                  onRemove={() => removeStep(step.id)}
+                  onMove={d => moveStep(step.id, d)}
                 />
               );
             })()}
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Visual workflow components ────────────────────────────────────────────────
+
+function AIAssistantPanel({ suggestions }: { suggestions: Suggestion[] }) {
+  const catStyles: Record<string, string> = {
+    quality:  'bg-violet-100 text-violet-700',
+    coverage: 'bg-blue-100 text-blue-700',
+    timing:   'bg-amber-100 text-amber-700',
+  };
+  return (
+    <div className="flex flex-col h-full">
+      <div className="px-4 pt-4 pb-3 border-b border-neutral-100 flex-shrink-0">
+        <div className="flex items-center gap-2">
+          <SparklesIcon className="w-4 h-4 text-indigo-500" />
+          <span className="text-[12.5px] font-semibold text-neutral-800">AI Suggestions</span>
+        </div>
+        <p className="text-[11px] text-neutral-400 mt-0.5">Based on workflow and run history</p>
+      </div>
+      <div className="flex-1 overflow-y-auto p-3 space-y-2.5">
+        {suggestions.length === 0 ? (
+          <p className="text-[11.5px] text-neutral-400 text-center pt-8 px-2">
+            Run your workflow to get AI improvement suggestions
+          </p>
+        ) : (
+          suggestions.map((s, i) => (
+            <div key={i} className="bg-white border border-neutral-100 rounded-xl p-3 shadow-sm space-y-1.5">
+              <span className={`inline-block text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${catStyles[s.category] ?? 'bg-neutral-100 text-neutral-600'}`}>
+                {s.category}
+              </span>
+              <p className="text-[12.5px] font-medium text-neutral-800 leading-snug">{s.title}</p>
+              <p className="text-[11px] text-neutral-500 leading-snug">{s.reason}</p>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+function VisualWorkflowColumn({
+  workflow, activePanel, agents, onSelectPanel, onAddStep, onMoveStep, onRemoveStep,
+}: {
+  workflow: Workflow;
+  activePanel: ActivePanel;
+  agents: AgentOption[];
+  onSelectPanel: (p: ActivePanel) => void;
+  onAddStep: (type: WorkflowStep['type']) => void;
+  onMoveStep: (id: string, d: -1 | 1) => void;
+  onRemoveStep: (id: string) => void;
+}) {
+  const colorBg = WORKFLOW_COLORS.find(c => c.key === workflow.color)?.bg ?? 'bg-indigo-500';
+  const PreviewIcon = WORKFLOW_ICONS.find(i => i.key === workflow.icon)?.Icon ?? BoltIcon;
+  const [addOpen, setAddOpen] = useState(false);
+  const addRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!addOpen) return;
+    const onMouseDown = (e: MouseEvent) => {
+      if (!addRef.current?.contains(e.target as Node)) setAddOpen(false);
+    };
+    document.addEventListener('mousedown', onMouseDown);
+    return () => document.removeEventListener('mousedown', onMouseDown);
+  }, [addOpen]);
+
+  return (
+    <div className="flex flex-col items-center py-8 px-4 w-full max-w-[280px]">
+      {/* Identity card */}
+      <div role="button" tabIndex={0}
+        onClick={() => onSelectPanel('identity')}
+        onKeyDown={e => e.key === 'Enter' && onSelectPanel('identity')}
+        className={`w-full flex items-center gap-3 px-4 py-3 bg-white rounded-2xl border-2 cursor-pointer transition-all ${
+          activePanel === 'identity' ? 'border-indigo-300 shadow-md' : 'border-neutral-100 hover:border-neutral-200 shadow-sm'
+        }`}
+      >
+        <div className={`w-9 h-9 rounded-xl ${colorBg} flex items-center justify-center flex-shrink-0`}>
+          <PreviewIcon className="w-5 h-5 text-white" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="text-[12px] font-semibold text-neutral-800 truncate">{workflow.name || 'Untitled'}</div>
+          <div className="text-[10.5px] text-neutral-400 truncate">{workflow.description || 'Identity & appearance'}</div>
+        </div>
+      </div>
+
+      <FlowConnector />
+
+      {/* Trigger */}
+      <TriggerFlowCard
+        trigger={workflow.trigger}
+        active={activePanel === 'trigger'}
+        onClick={() => onSelectPanel('trigger')}
+      />
+
+      {/* Steps */}
+      {workflow.steps.map((step, idx) => (
+        <div key={step.id} className="flex flex-col items-center w-full">
+          <FlowConnector />
+          <StepFlowCard
+            step={step}
+            index={idx}
+            total={workflow.steps.length}
+            active={typeof activePanel === 'object' && activePanel.stepId === step.id}
+            onClick={() => onSelectPanel({ stepId: step.id })}
+            onMove={d => onMoveStep(step.id, d)}
+            onRemove={() => onRemoveStep(step.id)}
+          />
+        </div>
+      ))}
+
+      <FlowConnector />
+
+      {/* Add step */}
+      <div className="relative" ref={addRef}>
+        <button onClick={() => setAddOpen(o => !o)}
+          className="flex items-center gap-1.5 px-3.5 py-2 border-2 border-dashed border-neutral-300 rounded-xl text-[12px] text-neutral-500 hover:border-indigo-400 hover:text-indigo-600 hover:bg-indigo-50/50 transition-all">
+          <PlusIcon className="w-3.5 h-3.5" />
+          Add step
+        </button>
+        {addOpen && (
+          <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1.5 bg-white border border-neutral-200 rounded-xl shadow-xl z-50 overflow-hidden min-w-[160px]">
+            {([
+              { type: 'tool' as const,  Icon: WrenchScrewdriverIcon, label: 'Tool step',  disabled: false },
+              { type: 'ai' as const,    Icon: SparklesIcon,          label: 'AI step',    disabled: false },
+              { type: 'agent' as const, Icon: UserCircleIcon,        label: 'Agent step', disabled: agents.length === 0 },
+            ] as const).map(({ type, Icon, label, disabled }) => (
+              <button key={type}
+                onClick={() => { if (!disabled) { onAddStep(type); setAddOpen(false); } }}
+                disabled={disabled}
+                className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-left hover:bg-neutral-50 disabled:opacity-40 transition-colors">
+                <Icon className="w-4 h-4 text-neutral-500" />
+                <span className="text-[12.5px] text-neutral-700">{label}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <FlowConnector />
+
+      {/* Output */}
+      <OutputFlowCard
+        output={workflow.output_config}
+        active={activePanel === 'output'}
+        onClick={() => onSelectPanel('output')}
+      />
+    </div>
+  );
+}
+
+function FlowConnector() {
+  return (
+    <div className="flex flex-col items-center flex-shrink-0">
+      <div className="w-px h-4 bg-neutral-200" />
+      <div className="w-1.5 h-1.5 rounded-full bg-neutral-300" />
+      <div className="w-px h-4 bg-neutral-200" />
+    </div>
+  );
+}
+
+function TriggerFlowCard({ trigger, active, onClick }: {
+  trigger: WorkflowTrigger; active: boolean; onClick: () => void;
+}) {
+  return (
+    <div role="button" tabIndex={0}
+      onClick={onClick} onKeyDown={e => e.key === 'Enter' && onClick()}
+      className={`w-full flex items-center gap-3 px-4 py-3 bg-white rounded-xl border-2 cursor-pointer transition-all ${
+        active ? 'border-indigo-300 shadow-md' : 'border-neutral-100 hover:border-neutral-200 shadow-sm'
+      }`}
+    >
+      <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${
+        trigger.type === 'schedule' ? 'bg-amber-100' : 'bg-neutral-100'
+      }`}>
+        {trigger.type === 'schedule'
+          ? <ClockIcon className="w-4 h-4 text-amber-600" />
+          : <BoltIcon className="w-4 h-4 text-neutral-500" />}
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="text-[10.5px] font-semibold text-neutral-400 uppercase tracking-widest mb-0.5">Trigger</div>
+        <div className="text-[13px] font-medium text-neutral-800">
+          {trigger.type === 'schedule' ? 'Scheduled' : 'Manual trigger'}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StepFlowCard({ step, index, total, active, onClick, onMove, onRemove }: {
+  step: WorkflowStep; index: number; total: number; active: boolean;
+  onClick: () => void; onMove: (d: -1 | 1) => void; onRemove: () => void;
+}) {
+  const colors = STEP_TYPE_COLORS[step.type];
+  const TypeIcon = STEP_TYPE_ICONS[step.type];
+  const toolId = step.type === 'tool' ? (step as ToolStep).tool : null;
+  const toolStyle = toolId ? (TOOL_STYLES[toolId] ?? null) : null;
+  const bgClass = toolStyle ? toolStyle.bg : colors.bg;
+  const isLinkedIn = toolId === 'linkedin_post';
+  return (
+    <div role="button" tabIndex={0}
+      onClick={onClick} onKeyDown={e => e.key === 'Enter' && onClick()}
+      className={`w-full flex items-center gap-3 px-4 py-3 bg-white rounded-xl border-2 cursor-pointer transition-all group ${
+        active ? 'border-indigo-300 shadow-md' : 'border-neutral-100 hover:border-neutral-200 shadow-sm'
+      }`}
+    >
+      <div className={`w-8 h-8 rounded-lg ${bgClass} flex items-center justify-center flex-shrink-0`}>
+        {isLinkedIn ? (
+          <svg viewBox="0 0 24 24" className="w-4 h-4" fill="white" aria-hidden="true">
+            <path d="M6.94 5a2 2 0 1 1-4-.002 2 2 0 0 1 4 .002zM7 8.48H3V21h4V8.48zm6.32 0H9.34V21h3.94v-6.57c0-3.66 4.77-4 4.77 0V21H22v-7.93c0-6.17-7.06-5.94-8.72-2.91l.04-1.68z"/>
+          </svg>
+        ) : (
+          <TypeIcon className="w-4 h-4 text-white" />
+        )}
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="text-[10.5px] font-semibold text-neutral-400 uppercase tracking-widest mb-0.5">Step {index + 1}</div>
+        <div className="text-[13px] font-medium text-neutral-800 truncate">{step.label || '(unnamed)'}</div>
+      </div>
+      <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
+        onClick={e => e.stopPropagation()}>
+        <button type="button" onClick={e => { e.stopPropagation(); onMove(-1); }} disabled={index === 0}
+          className="p-1 hover:bg-neutral-100 rounded disabled:opacity-30 transition-colors">
+          <ArrowUpIcon className="w-3 h-3 text-neutral-400" />
+        </button>
+        <button type="button" onClick={e => { e.stopPropagation(); onMove(1); }} disabled={index === total - 1}
+          className="p-1 hover:bg-neutral-100 rounded disabled:opacity-30 transition-colors">
+          <ArrowDownIcon className="w-3 h-3 text-neutral-400" />
+        </button>
+        <button type="button" onClick={e => { e.stopPropagation(); onRemove(); }}
+          className="p-1 hover:bg-red-50 rounded transition-colors">
+          <TrashIcon className="w-3 h-3 text-red-400" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function OutputFlowCard({ output, active, onClick }: {
+  output: OutputConfig; active: boolean; onClick: () => void;
+}) {
+  const destLabel: Record<string, string> = {
+    thread_message: 'Message in thread',
+    artifact: 'Document artifact',
+    multiple_artifacts: 'Multiple documents',
+    email_draft: 'Email draft',
+    living_document: 'Living document',
+  };
+  return (
+    <div role="button" tabIndex={0}
+      onClick={onClick} onKeyDown={e => e.key === 'Enter' && onClick()}
+      className={`w-full flex items-center gap-3 px-4 py-3 bg-white rounded-xl border-2 cursor-pointer transition-all ${
+        active ? 'border-indigo-300 shadow-md' : 'border-neutral-100 hover:border-neutral-200 shadow-sm'
+      }`}
+    >
+      <div className="w-8 h-8 rounded-lg bg-emerald-100 flex items-center justify-center flex-shrink-0">
+        <Cog6ToothIcon className="w-4 h-4 text-emerald-600" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="text-[10.5px] font-semibold text-neutral-400 uppercase tracking-widest mb-0.5">Output</div>
+        <div className="text-[13px] font-medium text-neutral-800">{destLabel[output.destination] ?? output.destination}</div>
       </div>
     </div>
   );
@@ -553,20 +805,34 @@ function IdentitySection({ workflow, patch }: {
 }
 
 function StepConfigSection({
-  step, index, agents, isEnhancing, isPending, onUpdate, onEnhance,
+  step, index, total, agents, isEnhancing, isPending, onUpdate, onEnhance, onRemove, onMove,
 }: {
-  step: WorkflowStep; index: number; agents: AgentOption[];
+  step: WorkflowStep; index: number; total: number; agents: AgentOption[];
   isEnhancing?: boolean; isPending?: boolean;
   onUpdate: (p: Partial<WorkflowStep>) => void;
   onEnhance?: EnhanceFn;
+  onRemove?: () => void;
+  onMove?: (d: -1 | 1) => void;
 }) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
   const colors = STEP_TYPE_COLORS[step.type];
   const TypeIcon = STEP_TYPE_ICONS[step.type];
   const typeLabel = { tool: 'Tool', ai: 'AI', agent: 'Agent' }[step.type];
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onMouseDown = (e: MouseEvent) => {
+      if (!menuRef.current?.contains(e.target as Node)) setMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onMouseDown);
+    return () => document.removeEventListener('mousedown', onMouseDown);
+  }, [menuOpen]);
+
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-3">
-        <div className={`w-9 h-9 rounded-xl ${colors.bg} flex items-center justify-center flex-shrink-0`}>
+      <div className="flex items-start gap-2.5">
+        <div className={`w-9 h-9 rounded-xl ${colors.bg} flex items-center justify-center flex-shrink-0 mt-0.5`}>
           <TypeIcon className="w-5 h-5 text-white" />
         </div>
         <div className="flex-1 min-w-0">
@@ -581,6 +847,42 @@ function StepConfigSection({
             placeholder="Step name"
           />
         </div>
+        {(onRemove || onMove) && (
+          <div className="relative flex-shrink-0" ref={menuRef}>
+            <button type="button" onClick={() => setMenuOpen(o => !o)}
+              className="p-1.5 rounded-md hover:bg-neutral-100 text-neutral-400 transition-colors">
+              <EllipsisVerticalIcon className="w-4 h-4" />
+            </button>
+            {menuOpen && (
+              <div className="absolute right-0 top-full mt-1 bg-white border border-neutral-200 rounded-xl shadow-xl z-50 overflow-hidden min-w-[140px]">
+                {onMove && (
+                  <>
+                    <button type="button" onClick={() => { onMove(-1); setMenuOpen(false); }}
+                      disabled={index === 0}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-left text-[12.5px] text-neutral-700 hover:bg-neutral-50 disabled:opacity-40 transition-colors">
+                      <ArrowUpIcon className="w-3.5 h-3.5 text-neutral-400" />
+                      Move up
+                    </button>
+                    <button type="button" onClick={() => { onMove(1); setMenuOpen(false); }}
+                      disabled={index === total - 1}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-left text-[12.5px] text-neutral-700 hover:bg-neutral-50 disabled:opacity-40 transition-colors">
+                      <ArrowDownIcon className="w-3.5 h-3.5 text-neutral-400" />
+                      Move down
+                    </button>
+                    <div className="border-t border-neutral-100" />
+                  </>
+                )}
+                {onRemove && (
+                  <button type="button" onClick={() => { onRemove(); setMenuOpen(false); }}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-left text-[12.5px] text-red-600 hover:bg-red-50 transition-colors">
+                    <TrashIcon className="w-3.5 h-3.5" />
+                    Delete step
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        )}
       </div>
       <div className="border-t border-neutral-100" />
       {step.type === 'tool' && (
