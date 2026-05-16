@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient as createServerSupabase } from '@/lib/supabase/server';
 import { createClient } from '@supabase/supabase-js';
 import { searchKnowledge } from '@/lib/knowledge/indexer';
+import { sanitizeError } from '@/lib/utils/api-error';
 
 export async function GET(request: NextRequest) {
   const supabase = await createServerSupabase();
@@ -36,7 +37,7 @@ export async function GET(request: NextRequest) {
   if (sourceId) query = query.eq('source_id', sourceId);
 
   const { data, error, count } = await query;
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return NextResponse.json({ error: sanitizeError(error) }, { status: 500 });
 
   return NextResponse.json({ data: data ?? [], total: count ?? 0 });
 }

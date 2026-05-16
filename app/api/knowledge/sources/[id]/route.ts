@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient as createServerSupabase } from '@/lib/supabase/server';
+import { sanitizeError } from '@/lib/utils/api-error';
 
 export async function DELETE(
   _request: NextRequest,
@@ -25,6 +26,6 @@ export async function DELETE(
     .delete()
     .eq('id', id);
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return NextResponse.json({ error: sanitizeError(error) }, { status: 500 });
   return NextResponse.json({ success: true });
 }

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { sanitizeError } from '@/lib/utils/api-error';
 
 // GET /api/connections
 // Returns active Gmail + Outlook connections for the current user (id, provider, email only)
@@ -20,7 +21,7 @@ export async function GET() {
       .order('created_at', { ascending: true });
 
     if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
+      return NextResponse.json({ error: sanitizeError(error) }, { status: 500 });
     }
 
     const result = (connections ?? []).map((c) => ({

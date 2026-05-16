@@ -8,6 +8,7 @@ import { formatCalendarContextForChat } from '@/lib/calendar/format-calendar-con
 import { buildUserContextBlock } from '@/lib/context/build-user-context';
 import { getMyWorkspace } from '@/lib/workspace/features';
 import { DEFAULT_FEATURES } from '@/lib/workspace/types';
+import { checkRateLimit } from '@/lib/utils/rate-limit';
 export const maxDuration = 60;
 
 // ── System prompt ────────────────────────────────────────────────────────────
@@ -103,6 +104,14 @@ export async function POST(request: NextRequest) {
     const { data: { user }, error } = await supabase.auth.getUser();
     if (error || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const rl = checkRateLimit(`assistant:${user.id}`, 20, 60_000);
+    if (!rl.allowed) {
+      return NextResponse.json(
+        { error: 'Too many requests' },
+        { status: 429, headers: { 'Retry-After': String(Math.ceil(rl.retryAfterMs / 1000)) } },
+      );
     }
 
     const body = await request.json();

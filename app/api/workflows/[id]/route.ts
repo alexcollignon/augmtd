@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase/server';
 import { computeNextRun, validateCron } from '@/lib/workflows/schedule';
 import type { WorkflowTrigger, WorkflowStep, OutputConfig, WorkflowStatus } from '@/lib/workflows/types';
 import { requireFeature, handleWorkspaceError } from '@/lib/workspace/require-feature';
+import { sanitizeError } from '@/lib/utils/api-error';
 
 export async function GET(
   _request: NextRequest,
@@ -108,7 +109,7 @@ export async function PATCH(
     .select('*')
     .single();
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return NextResponse.json({ error: sanitizeError(error) }, { status: 500 });
   return NextResponse.json({ workflow: data });
 }
 
@@ -128,6 +129,6 @@ export async function DELETE(
     .eq('id', id)
     .eq('user_id', user.id);
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return NextResponse.json({ error: sanitizeError(error) }, { status: 500 });
   return NextResponse.json({ ok: true });
 }

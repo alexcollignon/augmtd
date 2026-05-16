@@ -4,6 +4,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { runWorkflow } from '@/lib/workflows/run-workflow';
+import { sanitizeError } from '@/lib/utils/api-error';
 
 export const maxDuration = 300;
 
@@ -33,8 +34,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(result);
   } catch (err) {
     console.error('[workflows/execute] failed:', err);
-    return NextResponse.json({
-      error: err instanceof Error ? err.message : String(err),
-    }, { status: 500 });
+    return NextResponse.json({ error: sanitizeError(err) }, { status: 500 });
   }
 }

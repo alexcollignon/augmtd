@@ -8,9 +8,22 @@
 const MAX_CONTENT_CHARS = 6000;
 const DEFAULT_TIMEOUT_MS = 30_000;
 
+const PRIVATE_HOST_RE = /^(localhost|127\.|0\.0\.0\.0|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.|metadata\.google\.internal|100\.100\.100\.100|\[::1\]|::1$)/i;
+
+function isValidBrowserUrl(raw: string): boolean {
+  try {
+    const u = new URL(raw);
+    if (u.protocol !== 'https:' && u.protocol !== 'http:') return false;
+    if (PRIVATE_HOST_RE.test(u.hostname)) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function executeBrowserFetch(config: Record<string, unknown>): Promise<string> {
   const url = typeof config.url === 'string' ? config.url.trim() : null;
-  if (!url) return '[browser_fetch] No URL provided.';
+  if (!url || !isValidBrowserUrl(url)) return '[browser_fetch] Invalid or disallowed URL.';
 
   const waitFor      = typeof config.wait_for      === 'string' ? config.wait_for      : null;
   const extract      = typeof config.extract       === 'string' ? config.extract       : 'body';
@@ -53,7 +66,6 @@ export async function executeBrowserFetch(config: Record<string, unknown>): Prom
       userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
       viewport: { width: 1280, height: 800 },
       locale: 'pt-PT',
-      ignoreHTTPSErrors: true,
     });
 
     // Remove webdriver flag

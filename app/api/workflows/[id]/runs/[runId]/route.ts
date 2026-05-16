@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createAdminClient } from '@supabase/supabase-js';
 import { requireFeature, handleWorkspaceError } from '@/lib/workspace/require-feature';
+import { sanitizeError } from '@/lib/utils/api-error';
 
 export async function DELETE(
   _request: NextRequest,
@@ -36,6 +37,6 @@ export async function DELETE(
   );
 
   const { error } = await admin.from('workflow_runs').delete().eq('id', runId);
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return NextResponse.json({ error: sanitizeError(error) }, { status: 500 });
   return NextResponse.json({ ok: true });
 }
