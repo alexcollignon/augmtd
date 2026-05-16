@@ -5,12 +5,11 @@ import {
   PlayIcon, PauseIcon, PencilSquareIcon,
   ClockIcon, CheckCircleIcon, XCircleIcon, ArrowPathIcon, TrashIcon,
   ClipboardDocumentIcon, CheckIcon, DocumentArrowDownIcon,
-  ChatBubbleLeftRightIcon, DocumentTextIcon, TableCellsIcon,
-  PresentationChartBarIcon, EnvelopeIcon,
+  DocumentTextIcon, TableCellsIcon, PresentationChartBarIcon, EnvelopeIcon,
   DocumentDuplicateIcon, ChevronDownIcon, LockClosedIcon, UsersIcon,
-  EllipsisVerticalIcon, SparklesIcon, WrenchScrewdriverIcon, UserCircleIcon,
+  EllipsisVerticalIcon, SparklesIcon,
   BoltIcon, CalendarDaysIcon, MagnifyingGlassIcon, NewspaperIcon,
-  GlobeAltIcon, MegaphoneIcon, BuildingOfficeIcon, ChevronRightIcon,
+  GlobeAltIcon, MegaphoneIcon, BuildingOfficeIcon,
 } from '@heroicons/react/24/outline';
 import type { Workflow, WorkflowRun, WorkflowStep, DocumentArtifact, SharingMode } from '@/lib/workflows/types';
 import { describeCron } from '@/lib/workflows/schedule';
@@ -43,12 +42,7 @@ const WORKFLOW_COLOR_MAP: Record<string, string> = {
   indigo: 'bg-indigo-500', violet: 'bg-violet-500', blue: 'bg-blue-500',
   emerald: 'bg-emerald-500', amber: 'bg-amber-500', rose: 'bg-rose-500', neutral: 'bg-neutral-500',
 };
-const STEP_TYPE_COLORS = {
-  tool:  { bg: 'bg-blue-500',    light: 'bg-blue-50',    text: 'text-blue-700' },
-  ai:    { bg: 'bg-violet-500',  light: 'bg-violet-50',  text: 'text-violet-700' },
-  agent: { bg: 'bg-emerald-500', light: 'bg-emerald-50', text: 'text-emerald-700' },
-};
-const STEP_TYPE_ICONS = { tool: WrenchScrewdriverIcon, ai: SparklesIcon, agent: UserCircleIcon };
+
 const TOOL_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
   get_urgent_emails: EnvelopeIcon, get_calendar: CalendarDaysIcon,
   read_kb_file: DocumentTextIcon, web_search: MagnifyingGlassIcon,
@@ -98,6 +92,18 @@ function groupByDate(runs: WorkflowRun[]): Array<{ label: string; runs: Workflow
     groups[label].push(run);
   }
   return Object.entries(groups).map(([label, runs]) => ({ label, runs }));
+}
+
+function StatusBadge({ status }: { status: Workflow['status'] }) {
+  const isActive = status === 'active';
+  return (
+    <span className={`inline-flex items-center gap-1 text-[10.5px] font-semibold px-1.5 py-0.5 rounded-full ${
+      isActive ? 'bg-emerald-50 text-emerald-700' : 'bg-neutral-100 text-neutral-500'
+    }`}>
+      <span className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-emerald-500' : 'bg-neutral-400'}`} />
+      {isActive ? 'Active' : 'Paused'}
+    </span>
+  );
 }
 
 function RunStatusPill({ status }: { status: WorkflowRun['status'] }) {
@@ -170,7 +176,7 @@ export function StudioDetailPanel({
     if (prefetched && prefetched.length > 0) {
       setRuns(prefetched);
       setRunsLoading(false);
-      fetchRuns(initialWorkflow.id); // refresh silently in background
+      fetchRuns(initialWorkflow.id);
     } else {
       setRunsLoading(true);
       setRuns([]);
@@ -257,17 +263,6 @@ export function StudioDetailPanel({
     return describeCron(workflow.trigger.cron ?? '', workflow.trigger.timezone);
   })();
 
-  const nextRunLabel = (() => {
-    if (!workflow.next_run_at || workflow.status !== 'active') return null;
-    const diff = new Date(workflow.next_run_at).getTime() - Date.now();
-    if (diff < 0) return 'soon';
-    const m = Math.floor(diff / 60000);
-    if (m < 60) return `in ${m}m`;
-    const h = Math.floor(m / 60);
-    if (h < 24) return `in ${h}h`;
-    return `in ${Math.floor(h / 24)}d`;
-  })();
-
   const TABS: Array<{ id: Tab; label: string; count?: number }> = [
     { id: 'overview',  label: 'Overview' },
     { id: 'documents', label: 'Documents', count: allDocs.length || undefined },
@@ -282,20 +277,44 @@ export function StudioDetailPanel({
       {/* ── Header ── */}
       <header className="px-5 pt-5 pb-0 border-b border-neutral-100 flex-shrink-0">
 
-        {/* Actions row */}
-        <div className="flex items-center justify-end gap-2 mb-4">
-          <button onClick={runNow} disabled={running || stepCount === 0}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-[12px] font-medium rounded-lg transition-colors disabled:opacity-40">
-            <PlayIcon className="w-3.5 h-3.5" />
-            {running ? 'Starting…' : 'Run now'}
-          </button>
-          {isOwner ? (
-            <>
+        {/* Identity + actions row */}
+        <div className="flex items-start gap-3 mb-3">
+          {/* Icon */}
+          <div className={`w-12 h-12 rounded-xl ${colorBg} flex items-center justify-center flex-shrink-0 shadow-sm`}>
+            <WorkflowIcon className="w-6 h-6 text-white" />
+          </div>
+
+          {/* Name + description */}
+          <div className="flex-1 min-w-0 pt-0.5">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h2 className="text-[16px] font-semibold text-neutral-900 leading-tight truncate">{workflow.name}</h2>
+              <StatusBadge status={workflow.status} />
+            </div>
+            {workflow.description && (
+              <p className="text-[12px] text-neutral-500 mt-0.5 leading-snug">{workflow.description}</p>
+            )}
+          </div>
+
+          {/* Action buttons */}
+          <div className="flex items-center gap-1.5 flex-shrink-0 pt-0.5">
+            <button onClick={runNow} disabled={running || stepCount === 0}
+              className="inline-flex items-center gap-1.5 px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-[12.5px] font-medium rounded-lg transition-colors disabled:opacity-40">
+              <PlayIcon className="w-3.5 h-3.5" />
+              {running ? 'Starting…' : 'Start workflow'}
+            </button>
+            <button
+              onClick={() => { const t = runs.find(r => r.thread_id)?.thread_id; if (t && onOpenThread) onOpenThread(t); }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-neutral-200 hover:bg-neutral-50 text-neutral-700 text-[12px] font-medium rounded-full transition-colors">
+              <SparklesIcon className="w-3.5 h-3.5 text-indigo-400" />
+              Ask
+            </button>
+            {isOwner && (
               <button onClick={onEdit}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-neutral-200 hover:bg-neutral-50 text-neutral-700 text-[12px] font-medium rounded-lg transition-colors">
-                <PencilSquareIcon className="w-3.5 h-3.5" />
-                Edit
+                className="p-1.5 border border-neutral-200 rounded-lg hover:bg-neutral-50 transition-colors text-neutral-600">
+                <PencilSquareIcon className="w-4 h-4" />
               </button>
+            )}
+            {isOwner ? (
               <div className="relative" ref={moreRef}>
                 <button onClick={() => { setMoreOpen(o => !o); setShareOpen(false); }}
                   className="p-1.5 border border-neutral-200 rounded-lg hover:bg-neutral-50 transition-colors text-neutral-600">
@@ -303,15 +322,12 @@ export function StudioDetailPanel({
                 </button>
                 {(moreOpen || shareOpen) && (
                   <div className="absolute right-0 top-full mt-1.5 w-48 bg-white border border-neutral-200 rounded-xl shadow-lg overflow-hidden z-20">
-                    {/* Pause / Activate */}
                     <button onClick={toggleStatus} disabled={togglingStatus || stepCount === 0}
                       className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-[12.5px] text-neutral-700 hover:bg-neutral-50 transition-colors disabled:opacity-40">
                       {workflow.status === 'active'
                         ? <><PauseIcon className="w-4 h-4" /> Pause</>
                         : <><PlayIcon className="w-4 h-4" /> Activate</>}
                     </button>
-
-                    {/* Sharing */}
                     <div className="border-t border-neutral-100" />
                     <button onClick={() => setShareOpen(o => !o)} disabled={savingShareMode}
                       className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-[12.5px] text-neutral-700 hover:bg-neutral-50 transition-colors">
@@ -343,7 +359,6 @@ export function StudioDetailPanel({
                         </button>
                       </div>
                     )}
-
                     <div className="border-t border-neutral-100" />
                     <button onClick={() => { setConfirmingDelete(true); setMoreOpen(false); setActiveTab('settings'); }}
                       className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-[12.5px] text-red-600 hover:bg-red-50 transition-colors">
@@ -352,47 +367,37 @@ export function StudioDetailPanel({
                   </div>
                 )}
               </div>
-            </>
-          ) : (
-            <>
-              <span className="text-[11.5px] text-neutral-400">Shared by {workflow.owner_name ?? 'Teammate'}</span>
-              {onClone && (
-                <button onClick={() => onClone(workflow.id)}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-neutral-200 hover:bg-neutral-50 text-neutral-700 text-[12px] font-medium rounded-lg transition-colors">
-                  <DocumentDuplicateIcon className="w-3.5 h-3.5" /> Clone
-                </button>
-              )}
-            </>
-          )}
+            ) : (
+              <>
+                <span className="text-[11.5px] text-neutral-400">Shared by {workflow.owner_name ?? 'Teammate'}</span>
+                {onClone && (
+                  <button onClick={() => onClone(workflow.id)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-neutral-200 hover:bg-neutral-50 text-neutral-700 text-[12px] font-medium rounded-lg transition-colors">
+                    <DocumentDuplicateIcon className="w-3.5 h-3.5" /> Clone
+                  </button>
+                )}
+              </>
+            )}
+          </div>
         </div>
 
-        {/* Identity */}
-        <div className="flex items-start gap-3 mb-4">
-          <div className={`w-10 h-10 rounded-xl ${colorBg} flex items-center justify-center flex-shrink-0 shadow-sm`}>
-            <WorkflowIcon className="w-5 h-5 text-white" />
-          </div>
-          <div className="flex-1 min-w-0 pt-0.5">
-            <div className="flex items-center gap-2 flex-wrap">
-              <h2 className="text-[15px] font-semibold text-neutral-900 leading-tight truncate">{workflow.name}</h2>
-              <span className={`inline-flex items-center gap-1 text-[10.5px] font-semibold px-1.5 py-0.5 rounded-full ${
-                workflow.status === 'active' ? 'bg-emerald-50 text-emerald-700' : 'bg-neutral-100 text-neutral-500'
-              }`}>
-                <span className={`w-1.5 h-1.5 rounded-full ${workflow.status === 'active' ? 'bg-emerald-500' : 'bg-neutral-400'}`} />
-                {workflow.status === 'active' ? 'Active' : 'Paused'}
-              </span>
-            </div>
-            {workflow.description && (
-              <p className="text-[12px] text-neutral-500 mt-0.5 leading-snug">{workflow.description}</p>
-            )}
-            <div className="flex items-center gap-2 mt-1.5 text-[11.5px] text-neutral-400 flex-wrap">
-              <span className="flex items-center gap-1">
-                <ClockIcon className="w-3 h-3" />
-                {scheduleLabel ?? 'Manual only'}
-              </span>
-              {nextRunLabel && <span>· Next <span className="text-neutral-600 font-medium">{nextRunLabel}</span></span>}
-              {runs[0] && <span>· Last <span className="text-neutral-600 font-medium">{relativeTime(runs[0].created_at)}</span></span>}
-            </div>
-          </div>
+        {/* Metadata row */}
+        <div className="flex items-center gap-2 mb-3 text-[11.5px] text-neutral-400 flex-wrap">
+          <span className="flex items-center gap-1">
+            <ClockIcon className="w-3 h-3" />
+            {scheduleLabel ?? 'Manual only'}
+          </span>
+          {runs[0] && (
+            <span>· Last <span className="text-neutral-600 font-medium">{relativeTime(runs[0].created_at)}</span></span>
+          )}
+          <button
+            onClick={() => { setMoreOpen(false); setShareOpen(o => !o); }}
+            className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 border border-neutral-200 rounded-lg hover:bg-neutral-50 text-neutral-600 text-[11.5px] transition-colors">
+            {workflow.sharing_mode === 'live'
+              ? <UsersIcon className="w-3.5 h-3.5" />
+              : <LockClosedIcon className="w-3.5 h-3.5" />}
+            {workflow.sharing_mode === 'live' ? 'Shared' : 'Share'}
+          </button>
         </div>
 
         {/* Tabs */}
@@ -415,11 +420,19 @@ export function StudioDetailPanel({
 
       {/* ── Body ── */}
       <div className="flex-1 overflow-y-auto bg-neutral-50/60">
-        {activeTab === 'overview' && (
-          <OverviewPane workflow={workflow} runs={runs} loading={runsLoading}
-            onOpenThread={onOpenThread} onOpenArtifact={onOpenArtifact}
+        {(activeTab === 'overview' || activeTab === 'history') && (
+          <OverviewPane
+            workflow={workflow}
+            runs={runs}
+            loading={runsLoading}
+            onOpenThread={onOpenThread}
+            onOpenArtifact={onOpenArtifact}
             onRunDeleted={runId => setRuns(prev => prev.filter(r => r.id !== runId))}
-            workflowId={workflow.id} />
+            workflowId={workflow.id}
+            runNow={runNow}
+            onActivate={toggleStatus}
+            onViewAll={() => setActiveTab('history')}
+          />
         )}
         {activeTab === 'documents' && (
           <DocumentsPane docs={allDocs} onOpenArtifact={onOpenArtifact} />
@@ -436,17 +449,94 @@ export function StudioDetailPanel({
 
 // ── Overview ──────────────────────────────────────────────────────────────────
 
-function OverviewPane({ workflow, runs, loading, onOpenThread, onOpenArtifact, onRunDeleted, workflowId }: {
+function OverviewPane({ workflow, runs, loading, onOpenThread, onOpenArtifact, onRunDeleted, workflowId, runNow, onActivate, onViewAll }: {
   workflow: Workflow; runs: WorkflowRun[]; loading: boolean;
   onOpenThread?: (id: string) => void;
   onOpenArtifact?: (threadId: string, artifactId: string) => void;
   onRunDeleted?: (runId: string) => void;
   workflowId: string;
+  runNow: () => void;
+  onActivate: () => void;
+  onViewAll: () => void;
 }) {
-  const steps = workflow.steps;
-  const succeeded = runs.filter(r => r.status === 'succeeded');
   const lastRun = runs[0] ?? null;
+  const latestRunThreadId = runs.find(r => r.thread_id)?.thread_id ?? null;
+  const latestSucceededRun = runs.find(r => r.status === 'succeeded') ?? null;
 
+  return (
+    <div className="p-5 flex gap-5">
+
+      {/* Left column */}
+      <div className="flex-1 min-w-0 space-y-4">
+
+        {/* Stat cards */}
+        <div className="grid grid-cols-3 gap-2.5">
+          <LastRunCard lastRun={lastRun} />
+          <NextRunCard workflow={workflow} onActivate={onActivate} />
+          <TrustSourcesCard workflow={workflow} runs={runs} loading={loading} />
+        </div>
+
+        {/* Ask this workflow */}
+        <AskWorkflowBox
+          workflow={workflow}
+          latestRunThreadId={latestRunThreadId}
+          onOpenThread={onOpenThread}
+          runNow={runNow}
+        />
+
+        {/* Latest briefing */}
+        <LatestBriefingCard runs={runs} onOpenArtifact={onOpenArtifact} />
+
+        {/* Chat input */}
+        <WorkflowChatBar
+          latestSucceededRun={latestSucceededRun}
+          onOpenThread={onOpenThread}
+        />
+      </div>
+
+      {/* Right column: Past runs */}
+      <div className="w-[210px] flex-shrink-0">
+        <PastRunsPanel
+          runs={runs}
+          loading={loading}
+          onOpenThread={onOpenThread}
+          onViewAll={onViewAll}
+          workflowId={workflowId}
+          onRunDeleted={onRunDeleted}
+        />
+      </div>
+
+    </div>
+  );
+}
+
+// ── Stat cards ─────────────────────────────────────────────────────────────────
+
+function LastRunCard({ lastRun }: { lastRun: WorkflowRun | null }) {
+  const toolBullets = lastRun?.step_outputs
+    ?.filter(s => s.step_type === 'tool' && s.output != null)
+    .slice(0, 3) ?? [];
+
+  return (
+    <div className="bg-white rounded-xl border border-neutral-150 p-3">
+      <div className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wide mb-1">LAST RUN</div>
+      <div className="text-[14px] font-semibold text-neutral-900 mb-1">{lastRun ? relativeTime(lastRun.created_at) : 'Never'}</div>
+      {lastRun && <RunStatusPill status={lastRun.status} />}
+      {toolBullets.length > 0 && (
+        <ul className="mt-2 space-y-0.5">
+          {toolBullets.map((s, i) => (
+            <li key={i} className="text-[10.5px] text-neutral-400 flex items-center gap-1.5">
+              <span className="w-1 h-1 rounded-full bg-neutral-300 flex-shrink-0" />
+              {s.label}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function NextRunCard({ workflow, onActivate }: { workflow: Workflow; onActivate: () => void }) {
   const nextRunLabel = (() => {
     if (!workflow.next_run_at || workflow.status !== 'active') return null;
     const diff = new Date(workflow.next_run_at).getTime() - Date.now();
@@ -458,197 +548,285 @@ function OverviewPane({ workflow, runs, loading, onOpenThread, onOpenArtifact, o
     return `in ${Math.floor(h / 24)}d`;
   })();
 
-  const nextRunDate = workflow.next_run_at
-    ? new Date(workflow.next_run_at).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+  const nextRunDate = workflow.next_run_at && workflow.status === 'active'
+    ? new Date(workflow.next_run_at).toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
     : null;
 
-  return (
-    <div className="p-5">
-      <div className="grid grid-cols-3 gap-2.5">
-        <StatCard label="Last run" value={lastRun ? relativeTime(lastRun.created_at) : 'Never'}>
-          {lastRun && <RunStatusPill status={lastRun.status} />}
-        </StatCard>
-        <StatCard label="Total runs" value={loading ? '…' : String(runs.length)}>
-          {!loading && runs.length > 0 && (
-            <div className="text-[11px] text-neutral-400 mt-0.5">{succeeded.length} completed</div>
-          )}
-        </StatCard>
-        <StatCard
-          label="Next run"
-          value={workflow.trigger.type !== 'schedule' ? 'Manual' : (nextRunLabel ?? (workflow.status !== 'active' ? 'Paused' : '—'))}
-        >
-          {nextRunDate && workflow.status === 'active' && (
-            <div className="text-[11px] text-neutral-400 mt-0.5 truncate" title={nextRunDate}>{nextRunDate}</div>
-          )}
-          {workflow.trigger.type === 'schedule' && workflow.status !== 'active' && (
-            <div className="text-[11px] text-neutral-400 mt-0.5">Activate to schedule</div>
-          )}
-        </StatCard>
-      </div>
+  const value = workflow.trigger.type !== 'schedule'
+    ? 'Manual'
+    : (nextRunLabel ?? (workflow.status !== 'active' ? 'Paused' : '—'));
 
-      {/* History */}
-      <div className="mt-5">
-        <p className="text-[10.5px] font-semibold text-neutral-400 uppercase tracking-widest mb-2">History</p>
-        {loading ? (
-          <div className="flex items-center justify-center h-16">
-            <div className="w-4 h-4 border-2 border-neutral-200 border-t-indigo-500 rounded-full animate-spin" />
-          </div>
-        ) : (() => {
-          const hasActiveRun = runs.some(r => r.status === 'queued' || r.status === 'running');
-          const showUpcoming = workflow.status === 'active' && workflow.trigger.type === 'schedule'
-            && workflow.next_run_at && !hasActiveRun;
-          if (runs.length === 0 && !showUpcoming) {
-            return (
-              <div className="flex flex-col items-center justify-center py-10 text-center">
-                <div className="w-8 h-8 rounded-xl bg-neutral-100 flex items-center justify-center mb-2">
-                  <ClockIcon className="w-4 h-4 text-neutral-400" />
-                </div>
-                <p className="text-[12px] text-neutral-400">No runs yet</p>
-              </div>
-            );
-          }
-          const groups = groupByDate(runs);
-          return (
-            <div className="space-y-4">
-              {showUpcoming && (
-                <div className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl border border-dashed border-neutral-200 bg-white">
-                  <ClockIcon className="w-4 h-4 text-neutral-300 flex-shrink-0" />
-                  <div className="min-w-0 flex-1">
-                    <div className="text-[12px] font-medium text-neutral-400">Upcoming scheduled run</div>
-                    <div className="text-[11px] text-neutral-400">{fmtDateTime(workflow.next_run_at)}</div>
-                  </div>
-                </div>
-              )}
-              {groups.map(({ label, runs: groupRuns }) => (
-                <div key={label}>
-                  <p className="text-[10.5px] font-semibold text-neutral-400 uppercase tracking-widest mb-1.5">{label}</p>
-                  <div className="space-y-1.5">
-                    {groupRuns.map(run => (
-                      <RunCard key={run.id} run={run} workflowId={workflowId}
-                        onOpenThread={onOpenThread} onOpenArtifact={onOpenArtifact}
-                        onDeleted={onRunDeleted} />
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          );
-        })()}
-      </div>
-    </div>
-  );
-}
-
-function StatCard({ label, value, children }: { label: string; value: string; children?: React.ReactNode }) {
   return (
     <div className="bg-white rounded-xl border border-neutral-150 p-3">
-      <div className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wide mb-1">{label}</div>
+      <div className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wide mb-1">NEXT RUN</div>
       <div className="text-[14px] font-semibold text-neutral-900">{value}</div>
-      {children}
+      {nextRunDate && (
+        <div className="text-[11px] text-neutral-400 mt-0.5 truncate">{nextRunDate}</div>
+      )}
+      {workflow.trigger.type === 'schedule' && workflow.status !== 'active' && (
+        <>
+          <div className="text-[11px] text-neutral-400 mt-0.5">Status: Paused</div>
+          <button onClick={onActivate}
+            className="mt-2 text-[10.5px] text-indigo-600 font-medium hover:underline">
+            Activate schedule
+          </button>
+        </>
+      )}
     </div>
   );
 }
 
-function StepRow({ step, index, isLast }: { step: WorkflowStep; index: number; isLast: boolean }) {
-  const colors = STEP_TYPE_COLORS[step.type];
-  const TypeIcon = STEP_TYPE_ICONS[step.type];
-  const toolId = step.type === 'tool' ? (step as { tool: string }).tool : undefined;
-  const ToolIcon = toolId ? (TOOL_ICONS[toolId] ?? TypeIcon) : TypeIcon;
-  const typeLabel = step.type === 'ai' ? 'AI' : step.type === 'tool' ? 'Fetch' : 'Agent';
+function TrustSourcesCard({ workflow, runs, loading }: { workflow: Workflow; runs: WorkflowRun[]; loading: boolean }) {
+  const toolStepCount = workflow.steps.filter(s => s.type === 'tool').length;
+  const confidence = (() => {
+    if (loading || runs.length === 0) return 'No data';
+    const rate = runs.filter(r => r.status === 'succeeded').length / runs.length;
+    if (rate > 0.8) return 'High';
+    if (rate > 0.5) return 'Medium';
+    return 'Low';
+  })();
+  const confidenceColor = confidence === 'High'
+    ? 'text-emerald-600'
+    : confidence === 'Medium'
+    ? 'text-amber-600'
+    : 'text-neutral-400';
 
   return (
-    <div className="relative">
-      <div className="bg-white rounded-xl border border-neutral-150 px-3 py-2.5 flex items-center gap-2.5">
-        <div className={`w-6 h-6 rounded-md ${colors.bg} flex items-center justify-center flex-shrink-0 text-white text-[10px] font-bold`}>
-          {index + 1}
-        </div>
-        <div className="w-5 h-5 rounded-md bg-neutral-100 flex items-center justify-center flex-shrink-0">
-          <ToolIcon className="w-3 h-3 text-neutral-500" />
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="text-[12.5px] font-medium text-neutral-900 truncate">{step.label || '(unnamed)'}</div>
-        </div>
-        <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${colors.light} ${colors.text} flex-shrink-0`}>
-          {typeLabel}
-        </span>
-      </div>
-      {!isLast && <div className="absolute left-[18px] top-full w-px h-1.5 bg-neutral-200" />}
+    <div className="bg-white rounded-xl border border-neutral-150 p-3">
+      <div className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wide mb-1">TRUST & SOURCES</div>
+      <div className="text-[14px] font-semibold text-neutral-900">{toolStepCount} source{toolStepCount !== 1 ? 's' : ''}</div>
+      <div className={`text-[11px] font-medium mt-0.5 ${confidenceColor}`}>Confidence: {confidence}</div>
+      <button className="mt-2 inline-flex items-center gap-1 text-[10.5px] text-neutral-500 border border-neutral-200 rounded-md px-2 py-0.5 hover:bg-neutral-50 transition-colors">
+        <GlobeAltIcon className="w-3 h-3" /> View sources
+      </button>
     </div>
   );
 }
 
-// ── History ───────────────────────────────────────────────────────────────────
+// ── Ask this workflow box ──────────────────────────────────────────────────────
 
-function HistoryPane({ runs, loading, workflow, workflowId, onOpenThread, onOpenArtifact, onRunDeleted }: {
-  runs: WorkflowRun[]; loading: boolean; workflow: Workflow; workflowId: string;
+function AskWorkflowBox({ workflow, latestRunThreadId, onOpenThread, runNow }: {
+  workflow: Workflow;
+  latestRunThreadId: string | null;
   onOpenThread?: (id: string) => void;
-  onOpenArtifact?: (threadId: string, artifactId: string) => void;
-  onRunDeleted?: (runId: string) => void;
+  runNow: () => void;
 }) {
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-24">
-        <div className="w-5 h-5 border-2 border-neutral-200 border-t-indigo-500 rounded-full animate-spin" />
-      </div>
-    );
-  }
+  const colorBg = WORKFLOW_COLOR_MAP[workflow.color ?? 'indigo'] ?? 'bg-indigo-500';
+  const WFIcon = WORKFLOW_ICON_MAP[workflow.icon ?? 'bolt'] ?? BoltIcon;
 
-  const hasActiveRun = runs.some(r => r.status === 'queued' || r.status === 'running');
-  const showUpcoming = workflow.status === 'active' && workflow.trigger.type === 'schedule'
-    && workflow.next_run_at && !hasActiveRun;
-
-  if (runs.length === 0 && !showUpcoming) {
-    return (
-      <div className="flex flex-col items-center justify-center py-16 text-center px-6">
-        <div className="w-10 h-10 rounded-2xl bg-neutral-100 flex items-center justify-center mb-3">
-          <ClockIcon className="w-5 h-5 text-neutral-400" />
-        </div>
-        <h3 className="text-[13px] font-semibold text-neutral-700 mb-1">No runs yet</h3>
-        <p className="text-[12px] text-neutral-400 max-w-xs">Trigger manually or activate to run on schedule.</p>
-      </div>
-    );
-  }
-
-  const groups = groupByDate(runs);
+  const handleClick = () => {
+    if (latestRunThreadId && onOpenThread) {
+      onOpenThread(latestRunThreadId);
+    } else {
+      runNow();
+    }
+  };
 
   return (
-    <div className="p-5 space-y-4">
-      {showUpcoming && (
-        <div className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl border border-dashed border-neutral-200 bg-white">
-          <ClockIcon className="w-4 h-4 text-neutral-300 flex-shrink-0" />
-          <div className="min-w-0 flex-1">
-            <div className="text-[12px] font-medium text-neutral-400">Upcoming scheduled run</div>
-            <div className="text-[11px] text-neutral-400">{fmtDateTime(workflow.next_run_at)}</div>
-          </div>
+    <button onClick={handleClick}
+      className="w-full bg-neutral-50 rounded-xl border border-neutral-100 px-4 py-3 flex items-start gap-3 hover:bg-neutral-100 transition-colors text-left">
+      <div className={`w-8 h-8 rounded-lg ${colorBg} flex items-center justify-center flex-shrink-0`}>
+        <WFIcon className="w-4 h-4 text-white" />
+      </div>
+      <div>
+        <div className="text-[12.5px] font-medium text-neutral-800">Ask this workflow</div>
+        <div className="text-[11px] text-neutral-400 mt-0.5">Private Cloud · chat with this workflow&apos;s memory, last run, sources and outputs</div>
+      </div>
+    </button>
+  );
+}
+
+// ── Latest briefing card ───────────────────────────────────────────────────────
+
+function LatestBriefingCard({ runs, onOpenArtifact }: {
+  runs: WorkflowRun[];
+  onOpenArtifact?: (threadId: string, artifactId: string) => void;
+}) {
+  const lastSucceeded = runs.find(r => r.status === 'succeeded');
+  if (!lastSucceeded) return null;
+
+  const lastAiStep = [...(lastSucceeded.step_outputs ?? [])].reverse()
+    .find(s => s.step_type === 'ai' && typeof s.output === 'string');
+  const aiOutput = lastAiStep?.output as string | undefined;
+  if (!aiOutput) return null;
+
+  const dateChip = new Date(lastSucceeded.created_at).toLocaleDateString(undefined, {
+    weekday: 'short', day: 'numeric', month: 'short',
+  });
+
+  const succeededCount = runs.filter(r => r.status === 'succeeded').length;
+  const totalToolOutputs = runs.reduce((acc, r) =>
+    acc + (r.step_outputs?.filter(s => s.step_type === 'tool' && s.output != null).length ?? 0), 0);
+  const avgSignal = runs.length > 0 ? Math.round(totalToolOutputs / runs.length) : 0;
+
+  const firstRunAt = runs[runs.length - 1]?.created_at;
+  const weeksRunning = firstRunAt
+    ? Math.max(1, Math.ceil((Date.now() - new Date(firstRunAt).getTime()) / (7 * 86400000)))
+    : 1;
+
+  const hasArtifact = (lastSucceeded.artifacts?.length ?? 0) > 0 && lastSucceeded.thread_id;
+
+  return (
+    <div className="bg-white rounded-xl border border-neutral-150 p-3">
+      <div className="flex items-center gap-2 mb-2.5">
+        <span className="text-[10px] font-semibold text-neutral-400 uppercase tracking-widest flex-1">LATEST BRIEFING</span>
+        <span className="text-[10px] text-neutral-500 bg-neutral-100 px-2 py-0.5 rounded-full">{dateChip}</span>
+        {runs.length > 1 && succeededCount > 1 && (
+          <span className="text-[10px] text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">
+            +{succeededCount - 1} vs last week
+          </span>
+        )}
+      </div>
+
+      <div className="relative max-h-40 overflow-hidden">
+        <div className="text-[12px] text-neutral-700 prose prose-sm prose-neutral max-w-none">
+          <MarkdownText content={aiOutput} />
+        </div>
+        <div className="absolute bottom-0 left-0 right-0 h-10 bg-gradient-to-t from-white to-transparent pointer-events-none" />
+      </div>
+
+      <div className="mt-3 flex items-center gap-3 text-[10.5px] text-neutral-400 border-t border-neutral-100 pt-2.5">
+        <span>RUNS {succeededCount} · {weeksRunning} week{weeksRunning !== 1 ? 's' : ''}</span>
+        <span className="text-neutral-200">·</span>
+        <span>AVG SIGNAL {avgSignal}</span>
+        {hasArtifact && onOpenArtifact && (
+          <button
+            onClick={() => onOpenArtifact(lastSucceeded.thread_id!, lastSucceeded.artifacts![0].id!)}
+            className="ml-auto text-[10.5px] text-indigo-500 hover:underline">
+            Open doc →
+          </button>
+        )}
+      </div>
+
+      {runs.length > 3 && (
+        <div className="mt-1.5 text-[10.5px] text-neutral-400 italic">
+          Agent has run {runs.length} times and is refining sources.
         </div>
       )}
-      {groups.map(({ label, runs: groupRuns }) => (
-        <div key={label}>
-          <p className="text-[10.5px] font-semibold text-neutral-400 uppercase tracking-widest mb-1.5">{label}</p>
-          <div className="space-y-1.5">
-            {groupRuns.map(run => (
-              <RunCard key={run.id} run={run} workflowId={workflowId}
-                onOpenThread={onOpenThread} onOpenArtifact={onOpenArtifact}
-                onDeleted={onRunDeleted} />
-            ))}
-          </div>
-        </div>
-      ))}
     </div>
   );
 }
 
-function RunCard({ run, workflowId, onOpenThread, onOpenArtifact, onDeleted }: {
-  run: WorkflowRun; workflowId: string;
+// ── Workflow chat input bar ────────────────────────────────────────────────────
+
+const WORKFLOW_SUGGESTIONS = [
+  'What changed since last week?',
+  'Which item is most relevant for AUGMTD?',
+  'Turn this into a LinkedIn post',
+];
+
+function WorkflowChatBar({ latestSucceededRun, onOpenThread }: {
+  latestSucceededRun: WorkflowRun | null;
   onOpenThread?: (id: string) => void;
-  onOpenArtifact?: (threadId: string, artifactId: string) => void;
+}) {
+  const [value, setValue] = useState('');
+
+  const submitText = (text: string) => {
+    if (latestSucceededRun?.thread_id && onOpenThread) {
+      onOpenThread(latestSucceededRun.thread_id);
+    }
+    setValue('');
+    void text;
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="border border-neutral-200 rounded-xl px-4 py-3 flex items-center gap-3 bg-white">
+        <SparklesIcon className="w-4 h-4 text-indigo-400 flex-shrink-0" />
+        <input
+          value={value}
+          onChange={e => setValue(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') submitText(value); }}
+          placeholder="Ask about this workflow…"
+          className="flex-1 text-[12.5px] text-neutral-700 placeholder-neutral-400 outline-none border-none bg-transparent"
+        />
+      </div>
+      <div className="flex gap-1.5 flex-wrap">
+        <span className="text-[10.5px] text-neutral-400 self-center">SUGGESTED</span>
+        {WORKFLOW_SUGGESTIONS.map(s => (
+          <button key={s} onClick={() => submitText(s)}
+            className="text-[11px] text-neutral-500 border border-neutral-200 rounded-full px-2.5 py-1 hover:bg-neutral-50 transition-colors">
+            {s}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Past runs panel (right column) ────────────────────────────────────────────
+
+function PastRunsPanel({ runs, loading, onOpenThread, onViewAll, workflowId, onRunDeleted }: {
+  runs: WorkflowRun[];
+  loading: boolean;
+  onOpenThread?: (id: string) => void;
+  onViewAll: () => void;
+  workflowId: string;
+  onRunDeleted?: (runId: string) => void;
+}) {
+  const last30 = runs.filter(r => Date.now() - new Date(r.created_at).getTime() < 30 * 86400000);
+  const shown = runs.slice(0, 8);
+
+  return (
+    <div>
+      <div className="flex items-center gap-1.5 mb-3">
+        <span className="text-[11px] font-semibold text-neutral-700 flex-1">Past runs</span>
+        <span className="text-[10px] text-neutral-400">Last 30d · {last30.length}</span>
+        <button onClick={onViewAll} className="text-[10px] text-indigo-500 hover:underline ml-1">View all</button>
+      </div>
+
+      {loading ? (
+        <div className="flex justify-center py-6">
+          <div className="w-4 h-4 border-2 border-neutral-200 border-t-indigo-500 rounded-full animate-spin" />
+        </div>
+      ) : shown.length === 0 ? (
+        <div className="text-[11px] text-neutral-400 text-center py-6">No runs yet</div>
+      ) : (
+        <div className="space-y-2.5">
+          {shown.map(run => (
+            <PastRunRow key={run.id} run={run} workflowId={workflowId} onOpenThread={onOpenThread} onDeleted={onRunDeleted} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PastRunRow({ run, workflowId, onOpenThread, onDeleted }: {
+  run: WorkflowRun;
+  workflowId: string;
+  onOpenThread?: (id: string) => void;
   onDeleted?: (runId: string) => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+
+  const dotColor = run.status === 'succeeded'
+    ? 'bg-emerald-400'
+    : (run.status === 'failed' || run.status === 'cancelled')
+    ? 'bg-amber-400'
+    : 'bg-neutral-300';
+
+  const statusLabel = run.status === 'succeeded'
+    ? 'Completed'
+    : (run.status === 'failed' || run.status === 'cancelled')
+    ? 'Needs attention'
+    : 'Running…';
+
+  const dateStr = run.started_at
+    ? new Date(run.started_at).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' }) +
+      ', ' + new Date(run.started_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+    : fmtDateTime(run.created_at);
+
   const duration = fmtDuration(run.started_at, run.completed_at);
-  const hasDetails = (run.step_outputs?.length ?? 0) > 0 || run.error;
+
+  const aiSummary = (() => {
+    const aiStep = [...(run.step_outputs ?? [])].reverse()
+      .find(s => s.step_type === 'ai' && typeof s.output === 'string');
+    if (!aiStep) return null;
+    const firstLine = (aiStep.output as string).split('\n').find(l => l.trim().length > 0) ?? '';
+    return firstLine.length > 60 ? firstLine.slice(0, 60) + '…' : firstLine || null;
+  })();
 
   const handleDelete = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -659,92 +837,43 @@ function RunCard({ run, workflowId, onOpenThread, onOpenArtifact, onDeleted }: {
   };
 
   return (
-    <div className="bg-white rounded-xl border border-neutral-150 overflow-hidden">
-      <div className="flex items-center gap-2.5 px-3 py-2.5">
+    <div className="group">
+      <button
+        onClick={() => { if (run.thread_id && onOpenThread) onOpenThread(run.thread_id); }}
+        className="w-full flex items-start gap-2 text-left hover:bg-neutral-50 rounded-lg px-1.5 py-1.5 transition-colors">
+        <span className={`w-2.5 h-2.5 rounded-full ${dotColor} mt-[3px] flex-shrink-0`} />
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <RunStatusPill status={run.status} />
-            <span className="text-[11.5px] text-neutral-500">
-              {run.triggered_by === 'schedule' ? 'Scheduled' : 'Manual'}
-            </span>
-            {duration && <span className="text-[11px] text-neutral-400">· {duration}</span>}
+          <div className="text-[11px] text-neutral-600 leading-snug">
+            <span className="font-medium">{statusLabel}</span>
+            <span className="text-neutral-300 mx-1">·</span>
+            <span>{dateStr}</span>
+            {duration && <><span className="text-neutral-300 mx-1">·</span><span>{duration}</span></>}
           </div>
-          <div className="text-[11px] text-neutral-400 mt-0.5">{fmtDateTime(run.started_at)}</div>
-        </div>
-        <div className="flex items-center gap-1 flex-shrink-0" onClick={e => e.stopPropagation()}>
-          {run.thread_id && onOpenThread && (
-            <button onClick={() => onOpenThread(run.thread_id!)} title="View output"
-              className="p-1.5 text-neutral-400 hover:text-indigo-600 transition-colors rounded-md hover:bg-indigo-50">
-              <ChatBubbleLeftRightIcon className="w-3.5 h-3.5" />
-            </button>
+          {aiSummary && (
+            <div className="text-[10.5px] text-neutral-400 italic truncate mt-0.5">{aiSummary}</div>
           )}
-          {run.thread_id && (run.artifacts?.length ?? 0) > 0 && onOpenArtifact && (
-            <button onClick={() => onOpenArtifact(run.thread_id!, run.artifacts![0].id!)} title="Open document"
-              className="p-1.5 text-neutral-400 hover:text-indigo-600 transition-colors rounded-md hover:bg-indigo-50">
-              <DocumentArrowDownIcon className="w-3.5 h-3.5" />
-            </button>
-          )}
-          {hasDetails && (
-            <button onClick={() => setExpanded(v => !v)}
-              className="p-1.5 text-neutral-400 hover:text-neutral-600 transition-colors rounded-md hover:bg-neutral-100">
-              <ChevronRightIcon className={`w-3.5 h-3.5 transition-transform ${expanded ? 'rotate-90' : ''}`} />
-            </button>
-          )}
-          {run.status !== 'running' && onDeleted && (
-            confirmingDelete ? (
-              <>
-                <button onClick={handleDelete} disabled={deleting}
-                  className="px-2 py-0.5 bg-red-600 hover:bg-red-700 text-white text-[10.5px] font-medium rounded transition-colors disabled:opacity-50">
-                  Delete
-                </button>
-                <button onClick={e => { e.stopPropagation(); setConfirmingDelete(false); }}
-                  className="px-2 py-0.5 border border-neutral-200 text-neutral-600 text-[10.5px] font-medium rounded hover:bg-neutral-50">
-                  Cancel
-                </button>
-              </>
-            ) : (
-              <button onClick={e => { e.stopPropagation(); setConfirmingDelete(true); }}
-                className="p-1.5 text-neutral-300 hover:text-red-500 transition-colors rounded-md hover:bg-red-50">
-                <TrashIcon className="w-3.5 h-3.5" />
-              </button>
-            )
+          {run.error && !aiSummary && (
+            <div className="text-[10.5px] text-red-400 truncate mt-0.5">{run.error}</div>
           )}
         </div>
-      </div>
-
-      <div className={`grid transition-[grid-template-rows] duration-200 ease-in-out ${expanded ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'}`}>
-        <div className="overflow-hidden">
-          <div className="border-t border-neutral-100 px-3 py-3 bg-neutral-50/60 space-y-2">
-            {run.error && (
-              <div className="text-[12px] text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{run.error}</div>
-            )}
-            {(run.step_outputs ?? []).map((s, i) => (
-              <div key={i} className="bg-white rounded-lg border border-neutral-150 p-3">
-                <div className="flex items-center justify-between mb-1">
-                  <div className="text-[10px] uppercase tracking-wide text-neutral-400 font-semibold">
-                    Step {i + 1} · {s.step_type === 'ai' ? 'AI' : s.step_type === 'tool' ? 'Fetch' : 'Agent'}
-                  </div>
-                  {!s.error && s.output != null && (
-                    <CopyButton text={typeof s.output === 'string' ? s.output : JSON.stringify(s.output, null, 2)} />
-                  )}
-                </div>
-                <div className="text-[12px] font-medium text-neutral-800 mb-1">{s.label}</div>
-                {s.error ? (
-                  <div className="text-[11.5px] text-red-700">{s.error}</div>
-                ) : typeof s.output === 'string' ? (
-                  <div className="text-[11.5px] text-neutral-600 max-h-48 overflow-y-auto prose prose-sm prose-neutral max-w-none">
-                    <MarkdownText content={s.output} />
-                  </div>
-                ) : (
-                  <pre className="text-[11px] text-neutral-600 whitespace-pre-wrap font-sans max-h-48 overflow-y-auto">
-                    {JSON.stringify(s.output, null, 2)}
-                  </pre>
-                )}
-              </div>
-            ))}
-          </div>
+      </button>
+      {run.status !== 'running' && onDeleted && (
+        <div className="flex justify-end px-1.5 -mt-0.5">
+          {confirmingDelete ? (
+            <div className="flex gap-1.5">
+              <button onClick={handleDelete} disabled={deleting}
+                className="text-[10px] text-red-600 hover:underline disabled:opacity-50">Delete</button>
+              <button onClick={() => setConfirmingDelete(false)}
+                className="text-[10px] text-neutral-400 hover:underline">Cancel</button>
+            </div>
+          ) : (
+            <button onClick={e => { e.stopPropagation(); setConfirmingDelete(true); }}
+              className="opacity-0 group-hover:opacity-100 transition-opacity text-[10px] text-neutral-300 hover:text-red-400">
+              <TrashIcon className="w-3 h-3" />
+            </button>
+          )}
         </div>
-      </div>
+      )}
     </div>
   );
 }
@@ -831,6 +960,8 @@ function SettingsPane({ workflow, confirmingDelete, setConfirmingDelete, onDelet
   );
 }
 
+// ── Shared helpers ─────────────────────────────────────────────────────────────
+
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
   return (
@@ -849,3 +980,4 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
     </div>
   );
 }
+
