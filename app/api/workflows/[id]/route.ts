@@ -48,6 +48,7 @@ export async function PATCH(
     output_config: OutputConfig;
     shared_with_company: boolean;
     sharing_mode: 'live' | 'template' | null;
+    pinned: boolean;
   }>;
   try { body = await request.json(); } catch { return NextResponse.json({ error: 'Invalid body' }, { status: 400 }); }
 

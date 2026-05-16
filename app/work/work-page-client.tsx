@@ -225,6 +225,17 @@ export function WorkPageClient({
     await fetch(`/api/workflows/${id}`, { method: 'DELETE' });
   }
 
+  async function handlePinWorkflow(id: string, pinned: boolean) {
+    setStudioWorkflows(prev =>
+      prev?.map(w => w.id === id ? { ...w, pinned } : w) ?? null
+    );
+    await fetch(`/api/workflows/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pinned }),
+    });
+  }
+
   async function handleCloneWorkflow(id: string) {
     const res = await fetch(`/api/workflows/${id}/clone`, { method: 'POST' });
     if (!res.ok) return;
@@ -682,6 +693,7 @@ export function WorkPageClient({
                 onCreate={handleCreateWorkflow}
                 onUseTemplate={handleUseTemplate}
                 onGenerateFromDescription={handleGenerateWorkflow}
+                onPinWorkflow={handlePinWorkflow}
               />
             )
           )}

@@ -68,7 +68,7 @@ export default async function WorkPage({
       : Promise.resolve({ data: null }),
     supabase
       .from('workflows')
-      .select('id, user_id, name, description, icon, color, status, trigger, steps, output_config, last_run_at, next_run_at, created_at, updated_at, shared_with_company, sharing_mode, company_id')
+      .select('id, user_id, name, description, icon, color, status, trigger, steps, output_config, last_run_at, next_run_at, created_at, updated_at, shared_with_company, sharing_mode, company_id, pinned')
       .order('updated_at', { ascending: false }),
   ]);
 

@@ -501,49 +501,52 @@ function IdentitySection({ workflow, patch }: {
   return (
     <div className="space-y-6">
       <SectionHeader title="Identity" subtitle="Name and appearance of this workflow." />
-      <div className="space-y-3">
-        <div className="flex items-center gap-4">
-          <div className={`w-12 h-12 rounded-2xl ${colorBg} flex items-center justify-center flex-shrink-0 shadow-sm`}>
-            <PreviewIcon className="w-6 h-6 text-white" />
+      <div className="flex gap-6 items-start">
+        {/* Left: icon + colour pickers */}
+        <div className="flex flex-col gap-2.5 flex-shrink-0">
+          <div className={`w-14 h-14 rounded-2xl ${colorBg} flex items-center justify-center shadow-sm transition-colors`}>
+            <PreviewIcon className="w-7 h-7 text-white" />
           </div>
-          <div className="flex gap-1 flex-wrap" style={{ maxWidth: 216 }}>
+          <div className="flex gap-1 flex-wrap" style={{ maxWidth: 164 }}>
             {WORKFLOW_ICONS.map(({ key, Icon }) => (
               <button key={key} type="button" onClick={() => patch('icon', key)}
-                className={`w-7 h-7 rounded-md flex items-center justify-center transition-all ${
-                  workflow.icon === key ? 'bg-neutral-200 ring-2 ring-neutral-400' : 'text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600'
+                className={`w-6 h-6 rounded-md flex items-center justify-center transition-all ${
+                  workflow.icon === key ? 'bg-neutral-200 text-neutral-700' : 'text-neutral-300 hover:bg-neutral-100 hover:text-neutral-600'
                 }`}>
-                <Icon className="w-3.5 h-3.5" />
+                <Icon className="w-3 h-3" />
               </button>
             ))}
           </div>
+          <div className="flex gap-1.5 flex-wrap" style={{ maxWidth: 164 }}>
+            {WORKFLOW_COLORS.map(c => (
+              <button key={c.key} type="button" onClick={() => patch('color', c.key)}
+                className={`w-5 h-5 rounded-full ${c.bg} transition-all ${
+                  workflow.color === c.key ? `ring-2 ring-offset-1 ${c.ring}` : 'opacity-50 hover:opacity-90'
+                }`} />
+            ))}
+          </div>
         </div>
-        <div className="flex gap-2">
-          {WORKFLOW_COLORS.map(c => (
-            <button key={c.key} type="button" onClick={() => patch('color', c.key)}
-              className={`w-6 h-6 rounded-full ${c.bg} transition-all ${
-                workflow.color === c.key ? `ring-2 ring-offset-2 ${c.ring}` : 'opacity-60 hover:opacity-100'
-              }`} />
-          ))}
-        </div>
-      </div>
-      <div className="space-y-4">
-        <Field label="Name">
-          <input type="text" value={workflow.name} onChange={e => patch('name', e.target.value)}
-            className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400" />
-        </Field>
-        <Field label="Description">
-          <input type="text" value={workflow.description ?? ''} onChange={e => patch('description', e.target.value)}
-            placeholder="What does this workflow produce?"
-            className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400" />
-        </Field>
-        {workflow.is_owned_by_me !== false && (
-          <Field label="Team sharing">
-            <SharingModeSelector
-              value={(workflow.sharing_mode as SharingMode | null | undefined) ?? null}
-              onChange={mode => patch('sharing_mode', mode)}
-            />
+
+        {/* Right: name, description, sharing */}
+        <div className="flex-1 space-y-4 min-w-0">
+          <Field label="Name">
+            <input type="text" value={workflow.name} onChange={e => patch('name', e.target.value)}
+              className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400" />
           </Field>
-        )}
+          <Field label="Description">
+            <input type="text" value={workflow.description ?? ''} onChange={e => patch('description', e.target.value)}
+              placeholder="What does this workflow produce?"
+              className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400" />
+          </Field>
+          {workflow.is_owned_by_me !== false && (
+            <Field label="Team sharing">
+              <SharingModeSelector
+                value={(workflow.sharing_mode as SharingMode | null | undefined) ?? null}
+                onChange={mode => patch('sharing_mode', mode)}
+              />
+            </Field>
+          )}
+        </div>
       </div>
     </div>
   );
