@@ -137,7 +137,7 @@ export function StudioDetailPanel({
 }: Props) {
   const [workflow, setWorkflow] = useState<Workflow>(initialWorkflow);
   const [runs, setRuns] = useState<WorkflowRun[]>(initialRuns ?? []);
-  const [runsLoading, setRunsLoading] = useState(!initialRuns);
+  const [runsLoading, setRunsLoading] = useState(initialRuns == null);
   const [activeTab, setActiveTab] = useState<Tab>(initialTab);
   const [running, setRunning] = useState(false);
   const [togglingStatus, setTogglingStatus] = useState(false);
@@ -172,12 +172,13 @@ export function StudioDetailPanel({
   }, []);
 
   useEffect(() => {
-    const prefetched = initialRuns;
-    if (prefetched && prefetched.length > 0) {
-      setRuns(prefetched);
+    if (initialRuns != null) {
+      // Already have data (possibly from prefetch) — show it immediately, refresh in background
+      setRuns(initialRuns);
       setRunsLoading(false);
       fetchRuns(initialWorkflow.id);
     } else {
+      // No prefetch data — show loading until fetch completes
       setRunsLoading(true);
       setRuns([]);
       fetchRuns(initialWorkflow.id);
@@ -289,6 +290,13 @@ export function StudioDetailPanel({
             <div className="flex items-center gap-2 flex-wrap">
               <h2 className="text-[16px] font-semibold text-neutral-900 leading-tight truncate">{workflow.name}</h2>
               <StatusBadge status={workflow.status} />
+              {isOwner && (
+                <span className="inline-flex items-center gap-1 text-[11px] font-medium text-neutral-500">
+                  {workflow.sharing_mode === 'live'
+                    ? <><UsersIcon className="w-3 h-3 text-indigo-500" /><span className="text-indigo-600">Shared</span></>
+                    : <><LockClosedIcon className="w-3 h-3" />Private</>}
+                </span>
+              )}
             </div>
             {workflow.description && (
               <p className="text-[12px] text-neutral-500 mt-0.5 leading-snug">{workflow.description}</p>
@@ -300,18 +308,13 @@ export function StudioDetailPanel({
             <button onClick={runNow} disabled={running || stepCount === 0}
               className="inline-flex items-center gap-1.5 px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-[12.5px] font-medium rounded-lg transition-colors disabled:opacity-40">
               <PlayIcon className="w-3.5 h-3.5" />
-              {running ? 'Starting…' : 'Start workflow'}
-            </button>
-            <button
-              onClick={() => { const t = runs.find(r => r.thread_id)?.thread_id; if (t && onOpenThread) onOpenThread(t); }}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-neutral-200 hover:bg-neutral-50 text-neutral-700 text-[12px] font-medium rounded-full transition-colors">
-              <SparklesIcon className="w-3.5 h-3.5 text-indigo-400" />
-              Ask
+              {running ? 'Running…' : 'Run workflow'}
             </button>
             {isOwner && (
               <button onClick={onEdit}
-                className="p-1.5 border border-neutral-200 rounded-lg hover:bg-neutral-50 transition-colors text-neutral-600">
-                <PencilSquareIcon className="w-4 h-4" />
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-neutral-200 rounded-lg hover:bg-neutral-50 transition-colors text-neutral-600 text-[12px] font-medium">
+                <PencilSquareIcon className="w-3.5 h-3.5" />
+                Edit
               </button>
             )}
             {isOwner ? (
@@ -382,7 +385,7 @@ export function StudioDetailPanel({
         </div>
 
         {/* Metadata row */}
-        <div className="flex items-center gap-2 mb-3 text-[11.5px] text-neutral-400 flex-wrap">
+        <div className="flex items-center gap-2 mb-3 text-[11.5px] text-neutral-400">
           <span className="flex items-center gap-1">
             <ClockIcon className="w-3 h-3" />
             {scheduleLabel ?? 'Manual only'}
@@ -390,14 +393,6 @@ export function StudioDetailPanel({
           {runs[0] && (
             <span>· Last <span className="text-neutral-600 font-medium">{relativeTime(runs[0].created_at)}</span></span>
           )}
-          <button
-            onClick={() => { setMoreOpen(false); setShareOpen(o => !o); }}
-            className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 border border-neutral-200 rounded-lg hover:bg-neutral-50 text-neutral-600 text-[11.5px] transition-colors">
-            {workflow.sharing_mode === 'live'
-              ? <UsersIcon className="w-3.5 h-3.5" />
-              : <LockClosedIcon className="w-3.5 h-3.5" />}
-            {workflow.sharing_mode === 'live' ? 'Shared' : 'Share'}
-          </button>
         </div>
 
         {/* Tabs */}

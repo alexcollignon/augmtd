@@ -39,6 +39,7 @@ import {
   Cog6ToothIcon,
   PlusIcon,
   EllipsisVerticalIcon,
+  PaperAirplaneIcon,
 } from '@heroicons/react/24/outline';
 import type {
   Workflow, WorkflowStep, WorkflowTrigger, OutputConfig,
@@ -147,7 +148,7 @@ const STEP_TYPE_ICONS = {
 
 type ActivePanel = 'identity' | 'trigger' | 'output' | { stepId: string };
 type EnhanceFn = (prompt: string, label: string, context: { step_type: 'ai' | 'tool' | 'agent'; tool_type?: string; output_format?: string; model_tier?: string; field: 'prompt' | 'query' }) => void;
-type Suggestion = { category: 'quality' | 'coverage' | 'timing'; title: string; reason: string };
+type ChatMsg = { role: 'user' | 'assistant'; content: string; patched?: boolean };
 
 export function StudioBuilderClient({ initialWorkflow, agents }: Props) {
   const router = useRouter();
@@ -157,14 +158,6 @@ export function StudioBuilderClient({ initialWorkflow, agents }: Props) {
   const [activePanel, setActivePanel] = useState<ActivePanel>('identity');
   const [enhancingStepId, setEnhancingStepId] = useState<string | null>(null);
   const [enhancePendingStepId, setEnhancePendingStepId] = useState<string | null>(null);
-  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
-
-  useEffect(() => {
-    fetch(`/api/workflows/${initialWorkflow.id}/suggestions`)
-      .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d?.suggestions) setSuggestions(d.suggestions); })
-      .catch(() => {});
-  }, [initialWorkflow.id]);
 
   // Guard: if active step was removed, fall back to identity
   const resolvedPanel: ActivePanel = (() => {
@@ -181,6 +174,10 @@ export function StudioBuilderClient({ initialWorkflow, agents }: Props) {
 
   const patch = useCallback(<K extends keyof Workflow>(key: K, value: Workflow[K]) => {
     setWorkflow(w => ({ ...w, [key]: value }));
+  }, []);
+
+  const patchBulk = useCallback((updates: Partial<Workflow>) => {
+    setWorkflow(w => ({ ...w, ...updates }));
   }, []);
 
   const save = useCallback(async () => {
@@ -369,12 +366,12 @@ export function StudioBuilderClient({ initialWorkflow, agents }: Props) {
       {/* 3-column body */}
       <div className="flex-1 flex overflow-hidden">
         {/* AI Assistant column */}
-        <div className="w-[248px] flex-shrink-0 border-r border-neutral-100 bg-neutral-50/60 flex flex-col overflow-hidden">
-          <AIAssistantPanel suggestions={suggestions} />
+        <div className="flex-none w-[27%] min-w-[220px] max-w-[320px] border-r border-neutral-100 bg-white flex flex-col overflow-hidden">
+          <AIAssistantPanel workflow={workflow} onPatch={patchBulk} />
         </div>
 
         {/* Visual workflow center */}
-        <div className="flex-1 overflow-y-auto bg-neutral-50 flex justify-center">
+        <div className="flex-1 min-w-0 overflow-y-auto bg-neutral-50/60 flex justify-center">
           <VisualWorkflowColumn
             workflow={workflow}
             activePanel={resolvedPanel}
@@ -385,8 +382,8 @@ export function StudioBuilderClient({ initialWorkflow, agents }: Props) {
         </div>
 
         {/* Right config panel */}
-        <div className="w-[296px] flex-shrink-0 border-l border-neutral-100 bg-white overflow-y-auto">
-          <div className="px-5 py-6 space-y-5">
+        <div className="flex-none w-[36%] min-w-[260px] max-w-[420px] border-l border-neutral-100 bg-white overflow-y-auto">
+          <div className="px-4 py-5 space-y-5">
             {resolvedPanel === 'identity' && (
               <IdentitySection workflow={workflow} patch={patch} />
             )}
@@ -443,41 +440,124 @@ export function StudioBuilderClient({ initialWorkflow, agents }: Props) {
 
 // ── Visual workflow components ────────────────────────────────────────────────
 
-function AIAssistantPanel({ suggestions }: { suggestions: Suggestion[] }) {
-  const catStyles: Record<string, string> = {
-    quality:  'bg-violet-100 text-violet-700',
-    coverage: 'bg-blue-100 text-blue-700',
-    timing:   'bg-amber-100 text-amber-700',
+function AIAssistantPanel({ workflow, onPatch }: {
+  workflow: Workflow;
+  onPatch: (p: Partial<Workflow>) => void;
+}) {
+  const [messages, setMessages] = useState<ChatMsg[]>([]);
+  const [input, setInput] = useState('');
+  const [loading, setLoading] = useState(false);
+  const bottomRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  const send = async () => {
+    const text = input.trim();
+    if (!text || loading) return;
+    const next: ChatMsg[] = [...messages, { role: 'user', content: text }];
+    setMessages(next);
+    setInput('');
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/workflows/${workflow.id}/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messages: next.map(m => ({ role: m.role, content: m.content })),
+          workflow,
+        }),
+      });
+      const data = await res.json();
+      setMessages(prev => [...prev, {
+        role: 'assistant',
+        content: data.reply ?? 'Something went wrong.',
+        patched: !!data.patch,
+      }]);
+      if (data.patch) onPatch(data.patch);
+    } catch {
+      setMessages(prev => [...prev, { role: 'assistant', content: 'Something went wrong. Please try again.' }]);
+    } finally {
+      setLoading(false);
+    }
   };
+
   return (
     <div className="flex flex-col h-full">
-      <div className="px-4 pt-4 pb-3 border-b border-neutral-100 flex-shrink-0">
-        <div className="flex items-center gap-2">
-          <SparklesIcon className="w-4 h-4 text-indigo-500" />
-          <span className="text-[12.5px] font-semibold text-neutral-800">AI Suggestions</span>
-        </div>
-        <p className="text-[11px] text-neutral-400 mt-0.5">Based on workflow and run history</p>
+      {/* Header */}
+      <div className="px-3 pt-3 pb-2.5 border-b border-neutral-100 flex-shrink-0">
+        <button type="button" onClick={() => setMessages([])}
+          className="flex items-center gap-1.5 text-[11.5px] font-medium text-neutral-500 hover:text-neutral-800 transition-colors">
+          <PlusIcon className="w-3.5 h-3.5" />
+          New conversation
+        </button>
       </div>
-      <div className="flex-1 overflow-y-auto p-3 space-y-2.5">
-        {suggestions.length === 0 ? (
-          <p className="text-[11.5px] text-neutral-400 text-center pt-8 px-2">
-            Run your workflow to get AI improvement suggestions
-          </p>
-        ) : (
-          suggestions.map((s, i) => (
-            <div key={i} className="bg-white border border-neutral-100 rounded-xl p-3 shadow-sm space-y-1.5">
-              <span className={`inline-block text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${catStyles[s.category] ?? 'bg-neutral-100 text-neutral-600'}`}>
-                {s.category}
-              </span>
-              <p className="text-[12.5px] font-medium text-neutral-800 leading-snug">{s.title}</p>
-              <p className="text-[11px] text-neutral-500 leading-snug">{s.reason}</p>
-              <div className="flex gap-1.5 pt-0.5">
-                <button type="button" className="flex-1 px-2 py-1 text-[11px] font-medium bg-indigo-50 text-indigo-700 rounded-md hover:bg-indigo-100 transition-colors">Apply</button>
-                <button type="button" className="flex-1 px-2 py-1 text-[11px] font-medium bg-neutral-50 text-neutral-500 rounded-md hover:bg-neutral-100 transition-colors">Dismiss</button>
-              </div>
+
+      {/* Messages / greeting */}
+      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 min-h-0">
+        {messages.length === 0 ? (
+          <div>
+            <div className="w-7 h-7 rounded-full bg-indigo-500 flex items-center justify-center mb-3">
+              <SparklesIcon className="w-4 h-4 text-white" />
             </div>
-          ))
+            <p className="text-[15px] font-semibold text-neutral-900 leading-snug">How can I help?</p>
+            <p className="text-[13px] text-neutral-500 mt-1 leading-relaxed">Ask me to change or improve this workflow.</p>
+          </div>
+        ) : (
+          <>
+            {messages.map((m, i) => (
+              <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                {m.role === 'user' ? (
+                  <div className="max-w-[80%] bg-neutral-100 rounded-2xl rounded-br-sm px-4 py-2.5">
+                    <p className="text-[13.5px] text-neutral-800 leading-relaxed whitespace-pre-wrap">{m.content}</p>
+                  </div>
+                ) : (
+                  <div className="flex-1 min-w-0 space-y-1.5">
+                    <p className="text-[13.5px] text-neutral-800 leading-relaxed">{m.content}</p>
+                    {m.patched && (
+                      <div className="flex items-center gap-1 text-[11.5px] text-emerald-600 font-medium">
+                        <CheckIcon className="w-3.5 h-3.5" />
+                        Applied to workflow
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            ))}
+            {loading && (
+              <div className="flex gap-1 pt-1">
+                <span className="w-1.5 h-1.5 bg-neutral-300 rounded-full animate-bounce [animation-delay:0ms]" />
+                <span className="w-1.5 h-1.5 bg-neutral-300 rounded-full animate-bounce [animation-delay:150ms]" />
+                <span className="w-1.5 h-1.5 bg-neutral-300 rounded-full animate-bounce [animation-delay:300ms]" />
+              </div>
+            )}
+            <div ref={bottomRef} />
+          </>
         )}
+      </div>
+
+      {/* Input */}
+      <div className="px-3 pb-3 flex-shrink-0">
+        <div className="rounded-2xl bg-white shadow-sm border border-neutral-200 overflow-hidden">
+          <textarea
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
+            placeholder="Ask anything..."
+            rows={1}
+            disabled={loading}
+            className="w-full px-4 pt-3 pb-1 text-[14px] text-neutral-800 placeholder:text-neutral-400 bg-transparent outline-none resize-none leading-relaxed disabled:opacity-50"
+          />
+          <div className="flex items-center px-3 pb-3 pt-1">
+            <div className="ml-auto">
+              <button type="button" onClick={send} disabled={!input.trim() || loading}
+                className="w-7 h-7 rounded-full bg-indigo-600 text-white flex items-center justify-center disabled:opacity-30 hover:bg-indigo-700 transition-colors">
+                <PaperAirplaneIcon className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -549,7 +629,7 @@ function VisualWorkflowColumn({
   onAddStep: (type: WorkflowStep['type'], insertAt?: number) => void;
 }) {
   return (
-    <div className="flex flex-col items-center py-8 px-4 w-full max-w-[280px]">
+    <div className="flex flex-col items-center py-8 px-6 w-full max-w-[420px]">
       {/* Header */}
       <div className="w-full mb-5">
         <div className="flex items-center justify-between mb-0.5">
@@ -601,35 +681,33 @@ function VisualWorkflowColumn({
 function TriggerFlowCard({ trigger, active, onClick }: {
   trigger: WorkflowTrigger; active: boolean; onClick: () => void;
 }) {
-  const subtitle = trigger.type === 'manual'
+  const title = trigger.type === 'manual'
     ? 'Manual trigger'
-    : (() => {
-        try { return triggerShortTitle(trigger); } catch { return 'Scheduled'; }
-      })();
+    : (() => { try { return triggerShortTitle(trigger); } catch { return 'Scheduled'; } })();
   return (
     <div role="button" tabIndex={0}
       onClick={onClick} onKeyDown={e => e.key === 'Enter' && onClick()}
-      className={`w-full flex items-center gap-3 px-3.5 py-3 bg-white rounded-xl border-2 cursor-pointer transition-all ${
-        active ? 'border-indigo-300 shadow-md' : 'border-neutral-100 hover:border-neutral-200 shadow-sm'
+      className={`w-full flex items-center gap-3 px-4 py-3.5 bg-white rounded-xl border-2 cursor-pointer transition-all ${
+        active ? 'border-indigo-400 shadow-md' : 'border-neutral-100 hover:border-neutral-200 shadow-sm'
       }`}
     >
-      <div className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 ${
+      <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${
         trigger.type === 'schedule' ? 'bg-amber-100' : 'bg-neutral-100'
       }`}>
         {trigger.type === 'schedule'
-          ? <ClockIcon className="w-3.5 h-3.5 text-amber-600" />
-          : <BoltIcon className="w-3.5 h-3.5 text-neutral-500" />}
+          ? <ClockIcon className="w-4 h-4 text-amber-600" />
+          : <BoltIcon className="w-4 h-4 text-neutral-500" />}
       </div>
       <div className="flex-1 min-w-0">
         <div className="text-[10px] font-semibold text-neutral-400 uppercase tracking-widest mb-0.5">Trigger</div>
-        <div className="text-[12.5px] font-medium text-neutral-800 truncate">{subtitle}</div>
+        <div className="text-[13px] font-semibold text-neutral-800 truncate">{title}</div>
       </div>
-      <ChevronRightIcon className="w-3.5 h-3.5 text-neutral-300 flex-shrink-0" />
+      <ChevronRightIcon className="w-4 h-4 text-neutral-300 flex-shrink-0" />
     </div>
   );
 }
 
-function StepFlowCard({ step, index, active, onClick }: {
+function StepFlowCard({ step, index: _index, active, onClick }: {
   step: WorkflowStep; index: number; active: boolean;
   onClick: () => void;
 }) {
@@ -643,77 +721,79 @@ function StepFlowCard({ step, index, active, onClick }: {
   const subtitle = (() => {
     if (step.type === 'tool') {
       const t = AVAILABLE_TOOLS.find(x => x.id === (step as ToolStep).tool);
-      return t?.label ?? (step as ToolStep).tool;
+      const toolLabel = t?.label ?? (step as ToolStep).tool;
+      const cfg = (step as ToolStep).config;
+      const detail = (cfg.query as string) || (cfg.url as string) || (cfg.topic as string) || (cfg.keywords as string) || '';
+      return detail ? `${toolLabel} · ${detail.length > 38 ? detail.slice(0, 38) + '…' : detail}` : toolLabel;
     }
     if (step.type === 'ai') {
       const p = (step as AIStep).prompt?.trim();
-      return p ? (p.length > 35 ? p.slice(0, 35) + '…' : p) : 'No instruction yet';
+      const snippet = p ? (p.length > 42 ? p.slice(0, 42) + '…' : p) : 'No instruction yet';
+      return `AI · ${snippet}`;
     }
-    return (step as AgentStep).prompt?.trim().slice(0, 35) || 'No task yet';
+    const p = (step as AgentStep).prompt?.trim();
+    const snippet = p ? (p.length > 42 ? p.slice(0, 42) + '…' : p) : 'No task yet';
+    return `Agent · ${snippet}`;
   })();
 
   return (
     <div role="button" tabIndex={0}
       onClick={onClick} onKeyDown={e => e.key === 'Enter' && onClick()}
-      className={`w-full flex items-center gap-3 px-3.5 py-3 bg-white rounded-xl border-2 cursor-pointer transition-all ${
-        active ? 'border-indigo-300 shadow-md' : 'border-neutral-100 hover:border-neutral-200 shadow-sm'
+      className={`w-full flex items-center gap-3 px-4 py-3.5 bg-white rounded-xl border-2 cursor-pointer transition-all ${
+        active ? 'border-indigo-400 shadow-md' : 'border-neutral-100 hover:border-neutral-200 shadow-sm'
       }`}
     >
-      <div className="w-5 h-5 rounded-full bg-neutral-100 flex items-center justify-center flex-shrink-0 text-[10px] font-semibold text-neutral-500">
-        {index + 1}
-      </div>
-      <div className={`w-7 h-7 rounded-lg ${bgClass} flex items-center justify-center flex-shrink-0`}>
+      <div className={`w-9 h-9 rounded-xl ${bgClass} flex items-center justify-center flex-shrink-0`}>
         {isLinkedIn ? (
-          <svg viewBox="0 0 24 24" className="w-3.5 h-3.5" fill="white" aria-hidden="true">
+          <svg viewBox="0 0 24 24" className="w-4 h-4" fill="white" aria-hidden="true">
             <path d="M6.94 5a2 2 0 1 1-4-.002 2 2 0 0 1 4 .002zM7 8.48H3V21h4V8.48zm6.32 0H9.34V21h3.94v-6.57c0-3.66 4.77-4 4.77 0V21H22v-7.93c0-6.17-7.06-5.94-8.72-2.91l.04-1.68z"/>
           </svg>
         ) : (
-          <TypeIcon className="w-3.5 h-3.5 text-white" />
+          <TypeIcon className="w-4 h-4 text-white" />
         )}
       </div>
       <div className="flex-1 min-w-0">
-        <div className="text-[12.5px] font-medium text-neutral-800 truncate leading-tight">{step.label || '(unnamed)'}</div>
-        <div className="text-[10.5px] text-neutral-400 truncate leading-tight mt-0.5">{subtitle}</div>
+        <div className="text-[13px] font-semibold text-neutral-800 truncate leading-tight">{step.label || '(unnamed)'}</div>
+        <div className="text-[11.5px] text-neutral-400 truncate leading-tight mt-0.5">{subtitle}</div>
       </div>
-      <ChevronRightIcon className="w-3.5 h-3.5 text-neutral-300 flex-shrink-0" />
+      <ChevronRightIcon className="w-4 h-4 text-neutral-300 flex-shrink-0" />
     </div>
   );
 }
 
-function OutputFlowCard({ output, stepNum, active, onClick }: {
+function OutputFlowCard({ output, stepNum: _stepNum, active, onClick }: {
   output: OutputConfig; stepNum: number; active: boolean; onClick: () => void;
 }) {
-  const destLabel: Record<string, string> = {
-    thread_message: 'Inbox card',
-    artifact: 'Document artifact',
-    multiple_artifacts: 'Multiple documents',
-    email_draft: 'Email draft',
-    living_document: 'Living document',
+  const destTitle: Record<string, string> = {
+    thread_message: 'Send to inbox',
+    artifact: 'Create document',
+    multiple_artifacts: 'Create documents',
+    email_draft: 'Draft email',
+    living_document: 'Update document',
   };
   const notifLabel: Record<string, string> = {
     inbox_card: 'badge + notification',
     silent: 'silent',
     email_digest: 'email digest',
   };
-  const subtitle = `${destLabel[output.destination] ?? output.destination} · ${notifLabel[output.notification_mode] ?? output.notification_mode}`;
+  const title = output.title_template || destTitle[output.destination] || 'Output';
+  const subtitle = `${destTitle[output.destination] ?? output.destination} · ${notifLabel[output.notification_mode] ?? output.notification_mode}`;
   return (
     <div role="button" tabIndex={0}
       onClick={onClick} onKeyDown={e => e.key === 'Enter' && onClick()}
-      className={`w-full flex items-center gap-3 px-3.5 py-3 bg-white rounded-xl border-2 cursor-pointer transition-all ${
-        active ? 'border-indigo-300 shadow-md' : 'border-neutral-100 hover:border-neutral-200 shadow-sm'
+      className={`w-full flex items-center gap-3 px-4 py-3.5 bg-white rounded-xl border-2 cursor-pointer transition-all ${
+        active ? 'border-indigo-400 shadow-md' : 'border-neutral-100 hover:border-neutral-200 shadow-sm'
       }`}
     >
-      <div className="w-5 h-5 rounded-full bg-neutral-100 flex items-center justify-center flex-shrink-0 text-[10px] font-semibold text-neutral-500">
-        {stepNum}
-      </div>
-      <div className="w-7 h-7 rounded-lg bg-emerald-100 flex items-center justify-center flex-shrink-0">
-        <Cog6ToothIcon className="w-3.5 h-3.5 text-emerald-600" />
+      <div className="w-9 h-9 rounded-xl bg-emerald-100 flex items-center justify-center flex-shrink-0">
+        <EnvelopeIcon className="w-4 h-4 text-emerald-600" />
       </div>
       <div className="flex-1 min-w-0">
         <div className="text-[10px] font-semibold text-neutral-400 uppercase tracking-widest mb-0.5">Output</div>
-        <div className="text-[10.5px] text-neutral-400 truncate">{subtitle}</div>
+        <div className="text-[13px] font-semibold text-neutral-800 truncate leading-tight">{title}</div>
+        <div className="text-[11.5px] text-neutral-400 truncate mt-0.5">{subtitle}</div>
       </div>
-      <ChevronRightIcon className="w-3.5 h-3.5 text-neutral-300 flex-shrink-0" />
+      <ChevronRightIcon className="w-4 h-4 text-neutral-300 flex-shrink-0" />
     </div>
   );
 }
@@ -738,23 +818,13 @@ function IdentitySection({
     <div className="space-y-6">
       <SectionHeader title="Identity" subtitle="Name and appearance of this workflow." />
 
-      <div className="flex gap-6 items-start">
-        {/* Left: icon + colour pickers */}
-        <div className="flex flex-col gap-2.5 flex-shrink-0">
-          <div className={`w-14 h-14 rounded-2xl ${colorBg} flex items-center justify-center shadow-sm transition-colors`}>
-            <PreviewIcon className="w-7 h-7 text-white" />
+      <div className="space-y-4">
+        {/* Icon preview + colour row */}
+        <div className="flex items-center gap-3">
+          <div className={`w-12 h-12 rounded-2xl ${colorBg} flex items-center justify-center shadow-sm transition-colors flex-shrink-0`}>
+            <PreviewIcon className="w-6 h-6 text-white" />
           </div>
-          <div className="flex gap-1 flex-wrap" style={{ maxWidth: 164 }}>
-            {WORKFLOW_ICONS.map(({ key, Icon }) => (
-              <button key={key} type="button" onClick={() => patch('icon', key)}
-                className={`w-6 h-6 rounded-md flex items-center justify-center transition-all ${
-                  workflow.icon === key ? 'bg-neutral-200 text-neutral-700' : 'text-neutral-300 hover:bg-neutral-100 hover:text-neutral-600'
-                }`}>
-                <Icon className="w-3 h-3" />
-              </button>
-            ))}
-          </div>
-          <div className="flex gap-1.5 flex-wrap" style={{ maxWidth: 164 }}>
+          <div className="flex gap-1.5 flex-wrap flex-1">
             {WORKFLOW_COLORS.map(c => (
               <button key={c.key} type="button" onClick={() => patch('color', c.key)}
                 className={`w-5 h-5 rounded-full ${c.bg} transition-all ${
@@ -764,26 +834,36 @@ function IdentitySection({
           </div>
         </div>
 
-        {/* Right: name, description, sharing */}
-        <div className="flex-1 space-y-4 min-w-0">
-          <Field label="Name">
-            <input type="text" value={workflow.name} onChange={e => patch('name', e.target.value)}
-              className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400" />
-          </Field>
-          <Field label="Description">
-            <input type="text" value={workflow.description ?? ''} onChange={e => patch('description', e.target.value)}
-              placeholder="What does this workflow produce?"
-              className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400" />
-          </Field>
-          {workflow.is_owned_by_me !== false && (
-            <Field label="Team sharing">
-              <SharingModeSelector
-                value={(workflow.sharing_mode as SharingMode | null | undefined) ?? null}
-                onChange={mode => patch('sharing_mode', mode)}
-              />
-            </Field>
-          )}
+        {/* Icon picker grid */}
+        <div className="flex gap-1 flex-wrap">
+          {WORKFLOW_ICONS.map(({ key, Icon }) => (
+            <button key={key} type="button" onClick={() => patch('icon', key)}
+              className={`w-6 h-6 rounded-md flex items-center justify-center transition-all ${
+                workflow.icon === key ? 'bg-neutral-200 text-neutral-700' : 'text-neutral-300 hover:bg-neutral-100 hover:text-neutral-600'
+              }`}>
+              <Icon className="w-3 h-3" />
+            </button>
+          ))}
         </div>
+
+        {/* Name, description, sharing */}
+        <Field label="Name">
+          <input type="text" value={workflow.name} onChange={e => patch('name', e.target.value)}
+            className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400" />
+        </Field>
+        <Field label="Description">
+          <input type="text" value={workflow.description ?? ''} onChange={e => patch('description', e.target.value)}
+            placeholder="What does this workflow produce?"
+            className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400" />
+        </Field>
+        {workflow.is_owned_by_me !== false && (
+          <Field label="Team sharing">
+            <SharingModeSelector
+              value={(workflow.sharing_mode as SharingMode | null | undefined) ?? null}
+              onChange={mode => patch('sharing_mode', mode)}
+            />
+          </Field>
+        )}
       </div>
     </div>
   );

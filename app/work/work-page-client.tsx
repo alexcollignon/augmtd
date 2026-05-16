@@ -130,15 +130,25 @@ export function WorkPageClient({
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(initialWorkflowId);
   const [editingWorkflowId, setEditingWorkflowId] = useState<string | null>(null);
   const runsCacheRef = useRef<Map<string, WorkflowRun[]>>(new Map());
+  const runsInflightRef = useRef<Set<string>>(new Set());
 
   function prefetchRuns(id: string) {
-    if (runsCacheRef.current.has(id)) return;
-    runsCacheRef.current.set(id, []); // mark as in-flight
+    if (runsCacheRef.current.has(id) || runsInflightRef.current.has(id)) return;
+    runsInflightRef.current.add(id);
     fetch(`/api/workflows/${id}/runs`)
       .then(r => r.ok ? r.json() : null)
-      .then(data => { if (data?.runs) runsCacheRef.current.set(id, data.runs); })
-      .catch(() => runsCacheRef.current.delete(id));
+      .then(data => {
+        runsCacheRef.current.set(id, data?.runs ?? []);
+        runsInflightRef.current.delete(id);
+      })
+      .catch(() => runsInflightRef.current.delete(id));
   }
+
+  // Eagerly prefetch runs for visible workflows as soon as the list is available
+  useEffect(() => {
+    if (!studioWorkflows) return;
+    studioWorkflows.slice(0, 8).forEach(w => prefetchRuns(w.id));
+  }, [studioWorkflows?.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const selectedWorkflow = studioWorkflows?.find(w => w.id === selectedWorkflowId) ?? null;
   const isBuilding = activeSection === 'studio' && !!editingWorkflowId && editingWorkflowId === selectedWorkflow?.id;
