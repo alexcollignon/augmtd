@@ -32,6 +32,7 @@ import {
   CpuChipIcon,
   BookOpenIcon,
   ChevronDownIcon,
+  ChevronRightIcon,
   LockClosedIcon,
   BuildingOfficeIcon,
   IdentificationIcon,
@@ -225,7 +226,7 @@ export function StudioBuilderClient({ initialWorkflow, agents }: Props) {
     }).catch(() => {});
   }, [workflow.id]);
 
-  const addStep = useCallback((type: WorkflowStep['type']) => {
+  const addStep = useCallback((type: WorkflowStep['type'], insertAt?: number) => {
     const id = makeStepId();
     let step: WorkflowStep;
     if (type === 'tool') {
@@ -235,7 +236,12 @@ export function StudioBuilderClient({ initialWorkflow, agents }: Props) {
     } else {
       step = { id, type: 'agent', label: 'New agent step', agent_id: agents[0]?.id ?? '', prompt: '' } as AgentStep;
     }
-    setWorkflow(w => ({ ...w, steps: [...w.steps, step] }));
+    setWorkflow(w => {
+      const steps = [...w.steps];
+      if (insertAt !== undefined) steps.splice(insertAt, 0, step);
+      else steps.push(step);
+      return { ...w, steps };
+    });
     setActivePanel({ stepId: id });
   }, [agents]);
 
@@ -375,8 +381,6 @@ export function StudioBuilderClient({ initialWorkflow, agents }: Props) {
             agents={agents}
             onSelectPanel={setActivePanel}
             onAddStep={addStep}
-            onMoveStep={moveStep}
-            onRemoveStep={removeStep}
           />
         </div>
 
@@ -387,8 +391,23 @@ export function StudioBuilderClient({ initialWorkflow, agents }: Props) {
               <IdentitySection workflow={workflow} patch={patch} />
             )}
             {resolvedPanel === 'trigger' && (
-              <div className="space-y-5">
-                <SectionHeader title="Trigger" subtitle="When should this workflow run?" />
+              <div className="space-y-6">
+                <div className="flex items-start gap-2.5">
+                  <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5 ${
+                    workflow.trigger.type === 'schedule' ? 'bg-amber-500' : 'bg-neutral-400'
+                  }`}>
+                    {workflow.trigger.type === 'schedule'
+                      ? <ClockIcon className="w-5 h-5 text-white" />
+                      : <BoltIcon className="w-5 h-5 text-white" />}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[10.5px] text-neutral-400 uppercase tracking-wide font-semibold mb-0.5">Trigger · Step</div>
+                    <div className="text-[18px] font-semibold text-neutral-900 leading-tight">
+                      {workflow.trigger.type === 'manual' ? 'Manual trigger' : triggerShortTitle(workflow.trigger)}
+                    </div>
+                  </div>
+                </div>
+                <div className="border-t border-neutral-100" />
                 <TriggerEditor trigger={workflow.trigger} onChange={t => patch('trigger', t)} />
               </div>
             )}
@@ -452,6 +471,10 @@ function AIAssistantPanel({ suggestions }: { suggestions: Suggestion[] }) {
               </span>
               <p className="text-[12.5px] font-medium text-neutral-800 leading-snug">{s.title}</p>
               <p className="text-[11px] text-neutral-500 leading-snug">{s.reason}</p>
+              <div className="flex gap-1.5 pt-0.5">
+                <button type="button" className="flex-1 px-2 py-1 text-[11px] font-medium bg-indigo-50 text-indigo-700 rounded-md hover:bg-indigo-100 transition-colors">Apply</button>
+                <button type="button" className="flex-1 px-2 py-1 text-[11px] font-medium bg-neutral-50 text-neutral-500 rounded-md hover:bg-neutral-100 transition-colors">Dismiss</button>
+              </div>
             </div>
           ))
         )}
@@ -460,51 +483,87 @@ function AIAssistantPanel({ suggestions }: { suggestions: Suggestion[] }) {
   );
 }
 
+function InlineAddButton({ insertAt, agents, onAdd }: {
+  insertAt: number;
+  agents: AgentOption[];
+  onAdd: (type: WorkflowStep['type'], at: number) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onMouseDown = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onMouseDown);
+    return () => document.removeEventListener('mousedown', onMouseDown);
+  }, [open]);
+  return (
+    <div className="relative flex-shrink-0" ref={ref}>
+      <button type="button" onClick={() => setOpen(o => !o)}
+        className="w-5 h-5 rounded-full border-2 border-dashed border-neutral-300 flex items-center justify-center hover:border-indigo-400 hover:bg-indigo-50 transition-all group">
+        <PlusIcon className="w-2.5 h-2.5 text-neutral-400 group-hover:text-indigo-500" />
+      </button>
+      {open && (
+        <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1.5 bg-white border border-neutral-200 rounded-xl shadow-xl z-50 overflow-hidden min-w-[150px]">
+          {([
+            { type: 'tool' as const,  Icon: WrenchScrewdriverIcon, label: 'Tool step',  disabled: false },
+            { type: 'ai' as const,    Icon: SparklesIcon,          label: 'AI step',    disabled: false },
+            { type: 'agent' as const, Icon: UserCircleIcon,        label: 'Agent step', disabled: agents.length === 0 },
+          ] as const).map(({ type, Icon, label, disabled }) => (
+            <button key={type}
+              onClick={() => { if (!disabled) { onAdd(type, insertAt); setOpen(false); } }}
+              disabled={disabled}
+              className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-left hover:bg-neutral-50 disabled:opacity-40 transition-colors">
+              <Icon className="w-4 h-4 text-neutral-500" />
+              <span className="text-[12.5px] text-neutral-700">{label}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function InlineDivider({ insertAt, agents, onAdd }: {
+  insertAt: number;
+  agents: AgentOption[];
+  onAdd: (type: WorkflowStep['type'], at: number) => void;
+}) {
+  return (
+    <div className="flex flex-col items-center flex-shrink-0">
+      <div className="w-px h-2 bg-neutral-200" />
+      <InlineAddButton insertAt={insertAt} agents={agents} onAdd={onAdd} />
+      <div className="w-px h-2 bg-neutral-200" />
+    </div>
+  );
+}
+
 function VisualWorkflowColumn({
-  workflow, activePanel, agents, onSelectPanel, onAddStep, onMoveStep, onRemoveStep,
+  workflow, activePanel, agents, onSelectPanel, onAddStep,
 }: {
   workflow: Workflow;
   activePanel: ActivePanel;
   agents: AgentOption[];
   onSelectPanel: (p: ActivePanel) => void;
-  onAddStep: (type: WorkflowStep['type']) => void;
-  onMoveStep: (id: string, d: -1 | 1) => void;
-  onRemoveStep: (id: string) => void;
+  onAddStep: (type: WorkflowStep['type'], insertAt?: number) => void;
 }) {
-  const colorBg = WORKFLOW_COLORS.find(c => c.key === workflow.color)?.bg ?? 'bg-indigo-500';
-  const PreviewIcon = WORKFLOW_ICONS.find(i => i.key === workflow.icon)?.Icon ?? BoltIcon;
-  const [addOpen, setAddOpen] = useState(false);
-  const addRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!addOpen) return;
-    const onMouseDown = (e: MouseEvent) => {
-      if (!addRef.current?.contains(e.target as Node)) setAddOpen(false);
-    };
-    document.addEventListener('mousedown', onMouseDown);
-    return () => document.removeEventListener('mousedown', onMouseDown);
-  }, [addOpen]);
-
   return (
     <div className="flex flex-col items-center py-8 px-4 w-full max-w-[280px]">
-      {/* Identity card */}
-      <div role="button" tabIndex={0}
-        onClick={() => onSelectPanel('identity')}
-        onKeyDown={e => e.key === 'Enter' && onSelectPanel('identity')}
-        className={`w-full flex items-center gap-3 px-4 py-3 bg-white rounded-2xl border-2 cursor-pointer transition-all ${
-          activePanel === 'identity' ? 'border-indigo-300 shadow-md' : 'border-neutral-100 hover:border-neutral-200 shadow-sm'
-        }`}
-      >
-        <div className={`w-9 h-9 rounded-xl ${colorBg} flex items-center justify-center flex-shrink-0`}>
-          <PreviewIcon className="w-5 h-5 text-white" />
+      {/* Header */}
+      <div className="w-full mb-5">
+        <div className="flex items-center justify-between mb-0.5">
+          <h2 className="text-[14px] font-semibold text-neutral-900">Workflow</h2>
+          <button type="button"
+            className="flex items-center gap-1 text-[11px] font-medium text-indigo-600 hover:text-indigo-800 transition-colors">
+            <SparklesIcon className="w-3.5 h-3.5" />
+            Auto-improve
+          </button>
         </div>
-        <div className="flex-1 min-w-0">
-          <div className="text-[12px] font-semibold text-neutral-800 truncate">{workflow.name || 'Untitled'}</div>
-          <div className="text-[10.5px] text-neutral-400 truncate">{workflow.description || 'Identity & appearance'}</div>
-        </div>
+        <p className="text-[11px] text-neutral-400">
+          {workflow.steps.length} step{workflow.steps.length !== 1 ? 's' : ''} · click any step to edit
+        </p>
       </div>
-
-      <FlowConnector />
 
       {/* Trigger */}
       <TriggerFlowCard
@@ -513,55 +572,25 @@ function VisualWorkflowColumn({
         onClick={() => onSelectPanel('trigger')}
       />
 
-      {/* Steps */}
+      {/* Steps with inline add dividers */}
       {workflow.steps.map((step, idx) => (
         <div key={step.id} className="flex flex-col items-center w-full">
-          <FlowConnector />
+          <InlineDivider insertAt={idx} agents={agents} onAdd={onAddStep} />
           <StepFlowCard
             step={step}
             index={idx}
-            total={workflow.steps.length}
             active={typeof activePanel === 'object' && activePanel.stepId === step.id}
             onClick={() => onSelectPanel({ stepId: step.id })}
-            onMove={d => onMoveStep(step.id, d)}
-            onRemove={() => onRemoveStep(step.id)}
           />
         </div>
       ))}
 
-      <FlowConnector />
-
-      {/* Add step */}
-      <div className="relative" ref={addRef}>
-        <button onClick={() => setAddOpen(o => !o)}
-          className="flex items-center gap-1.5 px-3.5 py-2 border-2 border-dashed border-neutral-300 rounded-xl text-[12px] text-neutral-500 hover:border-indigo-400 hover:text-indigo-600 hover:bg-indigo-50/50 transition-all">
-          <PlusIcon className="w-3.5 h-3.5" />
-          Add step
-        </button>
-        {addOpen && (
-          <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1.5 bg-white border border-neutral-200 rounded-xl shadow-xl z-50 overflow-hidden min-w-[160px]">
-            {([
-              { type: 'tool' as const,  Icon: WrenchScrewdriverIcon, label: 'Tool step',  disabled: false },
-              { type: 'ai' as const,    Icon: SparklesIcon,          label: 'AI step',    disabled: false },
-              { type: 'agent' as const, Icon: UserCircleIcon,        label: 'Agent step', disabled: agents.length === 0 },
-            ] as const).map(({ type, Icon, label, disabled }) => (
-              <button key={type}
-                onClick={() => { if (!disabled) { onAddStep(type); setAddOpen(false); } }}
-                disabled={disabled}
-                className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-left hover:bg-neutral-50 disabled:opacity-40 transition-colors">
-                <Icon className="w-4 h-4 text-neutral-500" />
-                <span className="text-[12.5px] text-neutral-700">{label}</span>
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-
-      <FlowConnector />
+      <InlineDivider insertAt={workflow.steps.length} agents={agents} onAdd={onAddStep} />
 
       {/* Output */}
       <OutputFlowCard
         output={workflow.output_config}
+        stepNum={workflow.steps.length + 2}
         active={activePanel === 'output'}
         onClick={() => onSelectPanel('output')}
       />
@@ -569,46 +598,40 @@ function VisualWorkflowColumn({
   );
 }
 
-function FlowConnector() {
-  return (
-    <div className="flex flex-col items-center flex-shrink-0">
-      <div className="w-px h-4 bg-neutral-200" />
-      <div className="w-1.5 h-1.5 rounded-full bg-neutral-300" />
-      <div className="w-px h-4 bg-neutral-200" />
-    </div>
-  );
-}
-
 function TriggerFlowCard({ trigger, active, onClick }: {
   trigger: WorkflowTrigger; active: boolean; onClick: () => void;
 }) {
+  const subtitle = trigger.type === 'manual'
+    ? 'Manual trigger'
+    : (() => {
+        try { return triggerShortTitle(trigger); } catch { return 'Scheduled'; }
+      })();
   return (
     <div role="button" tabIndex={0}
       onClick={onClick} onKeyDown={e => e.key === 'Enter' && onClick()}
-      className={`w-full flex items-center gap-3 px-4 py-3 bg-white rounded-xl border-2 cursor-pointer transition-all ${
+      className={`w-full flex items-center gap-3 px-3.5 py-3 bg-white rounded-xl border-2 cursor-pointer transition-all ${
         active ? 'border-indigo-300 shadow-md' : 'border-neutral-100 hover:border-neutral-200 shadow-sm'
       }`}
     >
-      <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${
+      <div className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 ${
         trigger.type === 'schedule' ? 'bg-amber-100' : 'bg-neutral-100'
       }`}>
         {trigger.type === 'schedule'
-          ? <ClockIcon className="w-4 h-4 text-amber-600" />
-          : <BoltIcon className="w-4 h-4 text-neutral-500" />}
+          ? <ClockIcon className="w-3.5 h-3.5 text-amber-600" />
+          : <BoltIcon className="w-3.5 h-3.5 text-neutral-500" />}
       </div>
       <div className="flex-1 min-w-0">
-        <div className="text-[10.5px] font-semibold text-neutral-400 uppercase tracking-widest mb-0.5">Trigger</div>
-        <div className="text-[13px] font-medium text-neutral-800">
-          {trigger.type === 'schedule' ? 'Scheduled' : 'Manual trigger'}
-        </div>
+        <div className="text-[10px] font-semibold text-neutral-400 uppercase tracking-widest mb-0.5">Trigger</div>
+        <div className="text-[12.5px] font-medium text-neutral-800 truncate">{subtitle}</div>
       </div>
+      <ChevronRightIcon className="w-3.5 h-3.5 text-neutral-300 flex-shrink-0" />
     </div>
   );
 }
 
-function StepFlowCard({ step, index, total, active, onClick, onMove, onRemove }: {
-  step: WorkflowStep; index: number; total: number; active: boolean;
-  onClick: () => void; onMove: (d: -1 | 1) => void; onRemove: () => void;
+function StepFlowCard({ step, index, active, onClick }: {
+  step: WorkflowStep; index: number; active: boolean;
+  onClick: () => void;
 }) {
   const colors = STEP_TYPE_COLORS[step.type];
   const TypeIcon = STEP_TYPE_ICONS[step.type];
@@ -616,129 +639,82 @@ function StepFlowCard({ step, index, total, active, onClick, onMove, onRemove }:
   const toolStyle = toolId ? (TOOL_STYLES[toolId] ?? null) : null;
   const bgClass = toolStyle ? toolStyle.bg : colors.bg;
   const isLinkedIn = toolId === 'linkedin_post';
+
+  const subtitle = (() => {
+    if (step.type === 'tool') {
+      const t = AVAILABLE_TOOLS.find(x => x.id === (step as ToolStep).tool);
+      return t?.label ?? (step as ToolStep).tool;
+    }
+    if (step.type === 'ai') {
+      const p = (step as AIStep).prompt?.trim();
+      return p ? (p.length > 35 ? p.slice(0, 35) + '…' : p) : 'No instruction yet';
+    }
+    return (step as AgentStep).prompt?.trim().slice(0, 35) || 'No task yet';
+  })();
+
   return (
     <div role="button" tabIndex={0}
       onClick={onClick} onKeyDown={e => e.key === 'Enter' && onClick()}
-      className={`w-full flex items-center gap-3 px-4 py-3 bg-white rounded-xl border-2 cursor-pointer transition-all group ${
+      className={`w-full flex items-center gap-3 px-3.5 py-3 bg-white rounded-xl border-2 cursor-pointer transition-all ${
         active ? 'border-indigo-300 shadow-md' : 'border-neutral-100 hover:border-neutral-200 shadow-sm'
       }`}
     >
-      <div className={`w-8 h-8 rounded-lg ${bgClass} flex items-center justify-center flex-shrink-0`}>
+      <div className="w-5 h-5 rounded-full bg-neutral-100 flex items-center justify-center flex-shrink-0 text-[10px] font-semibold text-neutral-500">
+        {index + 1}
+      </div>
+      <div className={`w-7 h-7 rounded-lg ${bgClass} flex items-center justify-center flex-shrink-0`}>
         {isLinkedIn ? (
-          <svg viewBox="0 0 24 24" className="w-4 h-4" fill="white" aria-hidden="true">
+          <svg viewBox="0 0 24 24" className="w-3.5 h-3.5" fill="white" aria-hidden="true">
             <path d="M6.94 5a2 2 0 1 1-4-.002 2 2 0 0 1 4 .002zM7 8.48H3V21h4V8.48zm6.32 0H9.34V21h3.94v-6.57c0-3.66 4.77-4 4.77 0V21H22v-7.93c0-6.17-7.06-5.94-8.72-2.91l.04-1.68z"/>
           </svg>
         ) : (
-          <TypeIcon className="w-4 h-4 text-white" />
+          <TypeIcon className="w-3.5 h-3.5 text-white" />
         )}
       </div>
       <div className="flex-1 min-w-0">
-        <div className="text-[10.5px] font-semibold text-neutral-400 uppercase tracking-widest mb-0.5">Step {index + 1}</div>
-        <div className="text-[13px] font-medium text-neutral-800 truncate">{step.label || '(unnamed)'}</div>
+        <div className="text-[12.5px] font-medium text-neutral-800 truncate leading-tight">{step.label || '(unnamed)'}</div>
+        <div className="text-[10.5px] text-neutral-400 truncate leading-tight mt-0.5">{subtitle}</div>
       </div>
-      <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
-        onClick={e => e.stopPropagation()}>
-        <button type="button" onClick={e => { e.stopPropagation(); onMove(-1); }} disabled={index === 0}
-          className="p-1 hover:bg-neutral-100 rounded disabled:opacity-30 transition-colors">
-          <ArrowUpIcon className="w-3 h-3 text-neutral-400" />
-        </button>
-        <button type="button" onClick={e => { e.stopPropagation(); onMove(1); }} disabled={index === total - 1}
-          className="p-1 hover:bg-neutral-100 rounded disabled:opacity-30 transition-colors">
-          <ArrowDownIcon className="w-3 h-3 text-neutral-400" />
-        </button>
-        <button type="button" onClick={e => { e.stopPropagation(); onRemove(); }}
-          className="p-1 hover:bg-red-50 rounded transition-colors">
-          <TrashIcon className="w-3 h-3 text-red-400" />
-        </button>
-      </div>
+      <ChevronRightIcon className="w-3.5 h-3.5 text-neutral-300 flex-shrink-0" />
     </div>
   );
 }
 
-function OutputFlowCard({ output, active, onClick }: {
-  output: OutputConfig; active: boolean; onClick: () => void;
+function OutputFlowCard({ output, stepNum, active, onClick }: {
+  output: OutputConfig; stepNum: number; active: boolean; onClick: () => void;
 }) {
   const destLabel: Record<string, string> = {
-    thread_message: 'Message in thread',
+    thread_message: 'Inbox card',
     artifact: 'Document artifact',
     multiple_artifacts: 'Multiple documents',
     email_draft: 'Email draft',
     living_document: 'Living document',
   };
+  const notifLabel: Record<string, string> = {
+    inbox_card: 'badge + notification',
+    silent: 'silent',
+    email_digest: 'email digest',
+  };
+  const subtitle = `${destLabel[output.destination] ?? output.destination} · ${notifLabel[output.notification_mode] ?? output.notification_mode}`;
   return (
     <div role="button" tabIndex={0}
       onClick={onClick} onKeyDown={e => e.key === 'Enter' && onClick()}
-      className={`w-full flex items-center gap-3 px-4 py-3 bg-white rounded-xl border-2 cursor-pointer transition-all ${
+      className={`w-full flex items-center gap-3 px-3.5 py-3 bg-white rounded-xl border-2 cursor-pointer transition-all ${
         active ? 'border-indigo-300 shadow-md' : 'border-neutral-100 hover:border-neutral-200 shadow-sm'
       }`}
     >
-      <div className="w-8 h-8 rounded-lg bg-emerald-100 flex items-center justify-center flex-shrink-0">
-        <Cog6ToothIcon className="w-4 h-4 text-emerald-600" />
+      <div className="w-5 h-5 rounded-full bg-neutral-100 flex items-center justify-center flex-shrink-0 text-[10px] font-semibold text-neutral-500">
+        {stepNum}
+      </div>
+      <div className="w-7 h-7 rounded-lg bg-emerald-100 flex items-center justify-center flex-shrink-0">
+        <Cog6ToothIcon className="w-3.5 h-3.5 text-emerald-600" />
       </div>
       <div className="flex-1 min-w-0">
-        <div className="text-[10.5px] font-semibold text-neutral-400 uppercase tracking-widest mb-0.5">Output</div>
-        <div className="text-[13px] font-medium text-neutral-800">{destLabel[output.destination] ?? output.destination}</div>
+        <div className="text-[10px] font-semibold text-neutral-400 uppercase tracking-widest mb-0.5">Output</div>
+        <div className="text-[10.5px] text-neutral-400 truncate">{subtitle}</div>
       </div>
+      <ChevronRightIcon className="w-3.5 h-3.5 text-neutral-300 flex-shrink-0" />
     </div>
-  );
-}
-
-// ── Rail components ───────────────────────────────────────────────────────────
-
-function RailNavItem({
-  label, icon: Icon, active, onClick,
-}: { label: string; icon: React.ComponentType<{ className?: string }>; active: boolean; onClick: () => void }) {
-  return (
-    <button
-      onClick={onClick}
-      className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-left text-[12.5px] font-medium transition-colors ${
-        active ? 'bg-indigo-50 text-indigo-700' : 'text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900'
-      }`}
-    >
-      <Icon className={`w-4 h-4 flex-shrink-0 ${active ? 'text-indigo-500' : 'text-neutral-400'}`} />
-      {label}
-    </button>
-  );
-}
-
-function StepRailRow({
-  step, index, total, active, onClick, onRemove, onMove,
-}: {
-  step: WorkflowStep; index: number; total: number; active: boolean;
-  onClick: () => void; onRemove: () => void; onMove: (d: -1 | 1) => void;
-}) {
-  const colors = STEP_TYPE_COLORS[step.type];
-  const TypeIcon = STEP_TYPE_ICONS[step.type];
-  return (
-    <button
-      onClick={onClick}
-      className={`w-full flex items-center gap-2 px-2 py-2 rounded-lg text-left transition-colors group ${
-        active ? 'bg-indigo-50' : 'hover:bg-neutral-50'
-      }`}
-    >
-      <div className={`w-5 h-5 rounded-md ${colors.bg} flex items-center justify-center flex-shrink-0`}>
-        <TypeIcon className="w-3 h-3 text-white" />
-      </div>
-      <div className="flex-1 min-w-0">
-        <div className={`text-[12px] font-medium truncate ${active ? 'text-indigo-700' : 'text-neutral-700'}`}>
-          {step.label || '(unnamed)'}
-        </div>
-      </div>
-      <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
-        <button type="button" onClick={e => { e.stopPropagation(); onMove(-1); }} disabled={index === 0}
-          className="p-0.5 hover:bg-neutral-200 rounded disabled:opacity-30 transition-colors">
-          <ArrowUpIcon className="w-3 h-3 text-neutral-400" />
-        </button>
-        <button type="button" onClick={e => { e.stopPropagation(); onMove(1); }} disabled={index === total - 1}
-          className="p-0.5 hover:bg-neutral-200 rounded disabled:opacity-30 transition-colors">
-          <ArrowDownIcon className="w-3 h-3 text-neutral-400" />
-        </button>
-        <button type="button" onClick={e => { e.stopPropagation(); onRemove(); }}
-          className="p-0.5 hover:bg-red-50 rounded transition-colors">
-          <TrashIcon className="w-3 h-3 text-red-400" />
-        </button>
-      </div>
-    </button>
   );
 }
 
@@ -999,6 +975,20 @@ function cronPreview(freq: Freq, days: number[], hour: number, _minute: number, 
   if (freq === 'monthly')  return `${ordinal(dom)} of every month at ${t} · ${tzShort}`;
   const dayNames = (days.length > 0 ? days.sort((a, b) => a - b) : [1]).map(d => DOW_LABELS[d]).join(', ');
   return `Every ${dayNames} at ${t} · ${tzShort}`;
+}
+
+function triggerShortTitle(trigger: WorkflowTrigger): string {
+  if (trigger.type === 'manual') return 'Manual trigger';
+  const { freq, days, hour, dom } = parseCronHuman(trigger.cron ?? '0 9 * * *');
+  const t = `${String(hour).padStart(2, '0')}:00`;
+  if (freq === 'hourly')   return 'Every hour';
+  if (freq === 'every4h')  return `Every 4h from ${t}`;
+  if (freq === 'every8h')  return `Every 8h from ${t}`;
+  if (freq === 'every12h') return `Every 12h from ${t}`;
+  if (freq === 'daily')    return `Every day · ${t}`;
+  if (freq === 'monthly')  return `${ordinal(dom)} of month · ${t}`;
+  const dayNames = (days.length > 0 ? days.sort((a, b) => a - b) : [1]).map(d => DOW_LABELS[d]).join(', ');
+  return `Every ${dayNames} · ${t}`;
 }
 
 function TriggerEditor({ trigger, onChange }: { trigger: WorkflowTrigger; onChange: (t: WorkflowTrigger) => void }) {
@@ -1342,6 +1332,47 @@ function KbFilePickerField({ value, onChange }: { value: string; onChange: (id: 
   );
 }
 
+function InlineToolGrid({ value, onChange }: { value: string; onChange: (toolId: string) => void }) {
+  const displayId = value === 'browser_fetch' ? 'fetch_url' : value;
+  const groups = [
+    { label: 'Web & Research',  ids: ['web_search', 'fetch_url', 'rss_feed', 'get_pt_tenders'] },
+    { label: 'Your Workspace',  ids: ['get_urgent_emails', 'get_calendar', 'read_kb_file'] },
+    { label: 'Social & Output', ids: ['linkedin_post'] },
+  ];
+  return (
+    <div className="space-y-3">
+      {groups.map(g => {
+        const tools = g.ids.map(id => AVAILABLE_TOOLS.find(t => t.id === id)!).filter(Boolean);
+        return (
+          <div key={g.label}>
+            <div className="text-[10px] font-semibold text-neutral-400 uppercase tracking-widest mb-1.5">{g.label}</div>
+            <div className="grid grid-cols-2 gap-1.5">
+              {tools.map(t => {
+                const isSelected = t.id === displayId;
+                return (
+                  <button key={t.id} type="button"
+                    onClick={() => onChange(t.id)}
+                    className={`flex items-center gap-2 px-2.5 py-2 rounded-lg border text-left transition-all ${
+                      isSelected
+                        ? 'bg-indigo-50 border-indigo-200'
+                        : 'bg-white border-neutral-200 hover:border-neutral-300 hover:bg-neutral-50'
+                    }`}>
+                    <ToolPickerIcon toolId={t.id} size="sm" />
+                    <span className={`text-[11.5px] font-medium leading-tight truncate ${isSelected ? 'text-indigo-800' : 'text-neutral-700'}`}>
+                      {t.label}
+                    </span>
+                    {isSelected && <CheckIcon className="w-3 h-3 text-indigo-500 flex-shrink-0 ml-auto" />}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function ToolStepFields({ step, onUpdate, isEnhancing, isPending, onEnhance }: {
   step: ToolStep; onUpdate: (p: Partial<ToolStep>) => void;
   isEnhancing?: boolean; isPending?: boolean; onEnhance?: EnhanceFn;
@@ -1352,8 +1383,8 @@ function ToolStepFields({ step, onUpdate, isEnhancing, isPending, onEnhance }: {
 
   return (
     <>
-      <Field label="Tool">
-        <ToolPicker value={step.tool} onChange={toolId => onUpdate({ tool: toolId, config: {} })} />
+      <Field label="Choose a tool">
+        <InlineToolGrid value={step.tool} onChange={toolId => onUpdate({ tool: toolId, config: {} })} />
       </Field>
       {step.tool === 'web_search' && (
         <div>
@@ -1592,23 +1623,32 @@ function AIStepFields({ step, onUpdate, isEnhancing, isPending, onEnhance }: {
           )}
         </div>
       )}
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="Output format">
-          <select value={step.output_format ?? 'markdown'} onChange={e => onUpdate({ output_format: e.target.value as AIStep['output_format'] })}
-            className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] bg-white">
-            <option value="markdown">Formatted</option>
-            <option value="text">Text only</option>
-            <option value="json">Structured (JSON)</option>
-          </select>
-        </Field>
-        <Field label="Model">
-          <select value={step.model_tier ?? 'fast'} onChange={e => onUpdate({ model_tier: e.target.value as AIStep['model_tier'] })}
-            className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] bg-white">
-            <option value="fast">Fast</option>
-            <option value="reasoning">Thorough</option>
-          </select>
-        </Field>
-      </div>
+      <Field label="Output format">
+        <div className="flex rounded-lg border border-neutral-200 overflow-hidden">
+          {([
+            { value: 'markdown', label: 'Markdown' },
+            { value: 'text',     label: 'Bullet list' },
+            { value: 'json',     label: 'Structured' },
+          ] as const).map(({ value: v, label }) => (
+            <button key={v} type="button"
+              onClick={() => onUpdate({ output_format: v })}
+              className={`flex-1 px-2 py-1.5 text-[11.5px] font-medium transition-colors border-r border-neutral-200 last:border-0 ${
+                (step.output_format ?? 'markdown') === v
+                  ? 'bg-indigo-500 text-white'
+                  : 'bg-white text-neutral-600 hover:bg-neutral-50'
+              }`}>
+              {label}
+            </button>
+          ))}
+        </div>
+      </Field>
+      <Field label="Model">
+        <select value={step.model_tier ?? 'fast'} onChange={e => onUpdate({ model_tier: e.target.value as AIStep['model_tier'] })}
+          className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] bg-white">
+          <option value="fast">Fast · standard quality</option>
+          <option value="reasoning">Thorough · higher quality</option>
+        </select>
+      </Field>
     </>
   );
 }
