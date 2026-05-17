@@ -189,6 +189,8 @@ export interface RunWorkflowOptions {
   runId?: string;
   /** User who triggered the run. Defaults to workflow.user_id (owner). For shared runs, pass the teammate's id so notifications + thread belong to them. */
   runnerId?: string;
+  /** Test mode: skip notifications, skip updating last_run_at/next_run_at. */
+  isTest?: boolean;
 }
 
 export interface RunWorkflowResult {
@@ -337,30 +339,32 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
       .eq('id', threadId);
   }
 
-  // Notification
-  // Non-owners running a shared workflow always get an inbox card — they haven't
-  // configured their own email notification preferences on this workflow.
-  const isOwnerRun = runnerId === workflow.user_id;
-  const notificationMode = isOwnerRun
-    ? workflow.output_config.notification_mode
-    : 'inbox_card';
+  // Notification — skip entirely for test runs
+  if (!opts.isTest) {
+    // Non-owners running a shared workflow always get an inbox card — they haven't
+    // configured their own email notification preferences on this workflow.
+    const isOwnerRun = runnerId === workflow.user_id;
+    const notificationMode = isOwnerRun
+      ? workflow.output_config.notification_mode
+      : 'inbox_card';
 
-  if (notificationMode === 'inbox_card') {
-    await admin.from('workflow_notifications').insert({
-      workflow_run_id: runId,
-      workflow_id: workflow.id,
-      user_id: runnerId,
-      title: `${workflow.name} — run complete`,
-      summary: materialised.artifact ? `${materialised.artifact.title} is ready.` : materialised.messageContent.slice(0, 200),
-    });
-  } else if (notificationMode === 'email_digest') {
-    await sendWorkflowEmail({
-      userId: runnerId,
-      workflowName: workflow.name,
-      messageContent: materialised.messageContent,
-      artifact: materialised.artifact,
-      notificationEmailIds: workflow.output_config.notification_email_ids,
-    });
+    if (notificationMode === 'inbox_card') {
+      await admin.from('workflow_notifications').insert({
+        workflow_run_id: runId,
+        workflow_id: workflow.id,
+        user_id: runnerId,
+        title: `${workflow.name} — run complete`,
+        summary: materialised.artifact ? `${materialised.artifact.title} is ready.` : materialised.messageContent.slice(0, 200),
+      });
+    } else if (notificationMode === 'email_digest') {
+      await sendWorkflowEmail({
+        userId: runnerId,
+        workflowName: workflow.name,
+        messageContent: materialised.messageContent,
+        artifact: materialised.artifact,
+        notificationEmailIds: workflow.output_config.notification_email_ids,
+      });
+    }
   }
 
   // Update run row: success
@@ -371,12 +375,14 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
     completed_at: completedAt.toISOString(),
   }).eq('id', runId);
 
-  // Update workflow: last_run_at + next_run_at
-  const nextRun = nextRunFromTrigger(workflow.trigger as { type: string; cron?: string; timezone?: string }, completedAt);
-  await admin.from('workflows').update({
-    last_run_at: completedAt.toISOString(),
-    next_run_at: nextRun ? nextRun.toISOString() : null,
-  }).eq('id', workflow.id);
+  // Update workflow timestamps — skip for test runs
+  if (!opts.isTest) {
+    const nextRun = nextRunFromTrigger(workflow.trigger as { type: string; cron?: string; timezone?: string }, completedAt);
+    await admin.from('workflows').update({
+      last_run_at: completedAt.toISOString(),
+      next_run_at: nextRun ? nextRun.toISOString() : null,
+    }).eq('id', workflow.id);
+  }
 
   return { runId, status: 'succeeded', threadId };
 }

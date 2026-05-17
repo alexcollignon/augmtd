@@ -158,6 +158,7 @@ export function StudioBuilderClient({ initialWorkflow, agents }: Props) {
   const [activePanel, setActivePanel] = useState<ActivePanel>('identity');
   const [enhancingStepId, setEnhancingStepId] = useState<string | null>(null);
   const [enhancePendingStepId, setEnhancePendingStepId] = useState<string | null>(null);
+  const [testRunId, setTestRunId] = useState<string | null>(null);
 
   // Guard: if active step was removed, fall back to identity
   const resolvedPanel: ActivePanel = (() => {
@@ -215,13 +216,18 @@ export function StudioBuilderClient({ initialWorkflow, agents }: Props) {
     router.push(`/work?section=studio&workflow=${workflow.id}`);
   }, [save, router, workflow.id]);
 
-  const runNow = useCallback(async () => {
-    await fetch(`/api/workflows/${workflow.id}/runs`, {
+  const startTestRun = useCallback(async () => {
+    await save();
+    const res = await fetch(`/api/workflows/${workflow.id}/run`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ trigger_source: 'manual' }),
-    }).catch(() => {});
-  }, [workflow.id]);
+      body: JSON.stringify({ test: true }),
+    }).catch(() => null);
+    if (res?.ok) {
+      const { run_id } = await res.json();
+      setTestRunId(run_id);
+    }
+  }, [save, workflow.id]);
 
   const addStep = useCallback((type: WorkflowStep['type'], insertAt?: number) => {
     const id = makeStepId();
@@ -347,8 +353,8 @@ export function StudioBuilderClient({ initialWorkflow, agents }: Props) {
           )}
         </div>
         <div className="flex items-center gap-2 flex-1 justify-end">
-          <button onClick={runNow}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-neutral-200 text-neutral-700 text-[12px] font-medium rounded-md hover:bg-neutral-50 transition-colors">
+          <button onClick={startTestRun} disabled={saving || workflow.steps.length === 0}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-neutral-200 text-neutral-700 text-[12px] font-medium rounded-md hover:bg-neutral-50 transition-colors disabled:opacity-40">
             <BoltIcon className="w-3.5 h-3.5" />
             Test run
           </button>
@@ -381,8 +387,8 @@ export function StudioBuilderClient({ initialWorkflow, agents }: Props) {
           />
         </div>
 
-        {/* Right config panel */}
-        <div className="flex-none w-[36%] min-w-[260px] max-w-[420px] border-l border-neutral-100 bg-white overflow-y-auto">
+        {/* Right config panel (or test run panel) */}
+        <div className="flex-none w-[36%] min-w-[260px] max-w-[420px] border-l border-neutral-100 bg-white overflow-y-auto relative">
           <div className="px-4 py-5 space-y-5">
             {resolvedPanel === 'identity' && (
               <IdentitySection workflow={workflow} patch={patch} />
@@ -432,7 +438,143 @@ export function StudioBuilderClient({ initialWorkflow, agents }: Props) {
               );
             })()}
           </div>
+
+          {/* Test run panel — slides over the config panel */}
+          {testRunId && (
+            <TestRunPanel
+              workflowId={workflow.id}
+              runId={testRunId}
+              steps={workflow.steps}
+              onClose={async () => {
+                await fetch(`/api/workflows/${workflow.id}/runs/${testRunId}`, { method: 'DELETE' }).catch(() => {});
+                setTestRunId(null);
+              }}
+            />
+          )}
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Test run panel ────────────────────────────────────────────────────────────
+
+type StepOutput = { step_type: string; label: string; output?: unknown; error?: string };
+
+function TestRunPanel({ workflowId, runId, steps, onClose }: {
+  workflowId: string;
+  runId: string;
+  steps: WorkflowStep[];
+  onClose: () => void;
+}) {
+  const [status, setStatus] = useState<'queued' | 'running' | 'succeeded' | 'failed'>('queued');
+  const [stepOutputs, setStepOutputs] = useState<StepOutput[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<Record<number, boolean>>({});
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    const poll = async () => {
+      const res = await fetch(`/api/workflows/${workflowId}/runs/${runId}`).catch(() => null);
+      if (!res?.ok) return;
+      const { run } = await res.json();
+      setStatus(run.status);
+      if (run.step_outputs) setStepOutputs(run.step_outputs);
+      if (run.error) setError(run.error);
+      if (run.status === 'succeeded' || run.status === 'failed') {
+        clearInterval(intervalRef.current!);
+      }
+    };
+    poll();
+    intervalRef.current = setInterval(poll, 2000);
+    return () => clearInterval(intervalRef.current!);
+  }, [workflowId, runId]);
+
+  const isDone = status === 'succeeded' || status === 'failed';
+
+  return (
+    <div className="absolute inset-0 bg-white flex flex-col z-10">
+      <div className="flex items-center gap-2.5 px-4 py-3.5 border-b border-neutral-100 flex-shrink-0">
+        <BoltIcon className="w-4 h-4 text-indigo-500 flex-shrink-0" />
+        <span className="text-[13px] font-semibold text-neutral-800 flex-1">Test run</span>
+        {!isDone && (
+          <span className="inline-flex items-center gap-1.5 text-[11px] text-neutral-500">
+            <span className="w-3 h-3 border-2 border-neutral-200 border-t-indigo-500 rounded-full animate-spin" />
+            Running…
+          </span>
+        )}
+        {isDone && (
+          <span className={`text-[11px] font-medium ${status === 'succeeded' ? 'text-emerald-600' : 'text-red-500'}`}>
+            {status === 'succeeded' ? '✓ Complete' : '✗ Failed'}
+          </span>
+        )}
+        {isDone && (
+          <button onClick={onClose}
+            className="ml-1 text-[11px] text-neutral-400 hover:text-neutral-700 border border-neutral-200 rounded-md px-2.5 py-1 transition-colors">
+            Close
+          </button>
+        )}
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-2">
+        {steps.map((step, i) => {
+          const out = stepOutputs[i];
+          const isRunning = !isDone && stepOutputs.length === i;
+          const isPending = !out && !isRunning;
+          const isExpanded = expanded[i];
+          const outputText = out
+            ? (typeof out.output === 'string' ? out.output : JSON.stringify(out.output, null, 2))
+            : null;
+
+          return (
+            <div key={step.id} className={`rounded-xl border transition-colors ${
+              out?.error ? 'border-red-200 bg-red-50' : out ? 'border-emerald-100 bg-emerald-50/40' : isRunning ? 'border-indigo-100 bg-indigo-50/40' : 'border-neutral-100 bg-neutral-50'
+            }`}>
+              <button
+                onClick={() => out && setExpanded(e => ({ ...e, [i]: !e[i] }))}
+                className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-left"
+                disabled={!out}>
+                <span className="flex-shrink-0 w-4 h-4 flex items-center justify-center">
+                  {isRunning ? (
+                    <span className="w-3 h-3 border-2 border-indigo-200 border-t-indigo-500 rounded-full animate-spin" />
+                  ) : out?.error ? (
+                    <span className="w-3 h-3 rounded-full bg-red-400" />
+                  ) : out ? (
+                    <CheckIcon className="w-3.5 h-3.5 text-emerald-600" />
+                  ) : (
+                    <span className={`w-2 h-2 rounded-full ${isPending ? 'bg-neutral-300' : 'bg-neutral-300'}`} />
+                  )}
+                </span>
+                <div className="flex-1 min-w-0">
+                  <div className={`text-[12px] font-medium ${isPending ? 'text-neutral-400' : 'text-neutral-800'}`}>
+                    {step.label}
+                  </div>
+                  {out && !out.error && outputText && !isExpanded && (
+                    <div className="text-[10.5px] text-neutral-500 truncate mt-0.5">{outputText.slice(0, 80)}</div>
+                  )}
+                  {out?.error && (
+                    <div className="text-[10.5px] text-red-500 truncate mt-0.5">{out.error}</div>
+                  )}
+                </div>
+                {out && !out.error && (
+                  <ChevronRightIcon className={`w-3.5 h-3.5 text-neutral-400 flex-shrink-0 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
+                )}
+              </button>
+              {isExpanded && outputText && (
+                <div className="px-3.5 pb-3 text-[11px] text-neutral-600 leading-relaxed whitespace-pre-wrap max-h-48 overflow-y-auto border-t border-neutral-100 pt-2.5">
+                  {outputText.slice(0, 2000)}{outputText.length > 2000 ? '\n…' : ''}
+                </div>
+              )}
+            </div>
+          );
+        })}
+        {error && (
+          <div className="rounded-xl border border-red-200 bg-red-50 px-3.5 py-3 text-[12px] text-red-600">{error}</div>
+        )}
+      </div>
+
+      <div className="px-4 py-3 border-t border-neutral-100 flex-shrink-0">
+        <p className="text-[10.5px] text-neutral-400">Test output is not saved to inbox or history.</p>
       </div>
     </div>
   );
@@ -634,11 +776,6 @@ function VisualWorkflowColumn({
       <div className="w-full mb-5">
         <div className="flex items-center justify-between mb-0.5">
           <h2 className="text-[14px] font-semibold text-neutral-900">Workflow</h2>
-          <button type="button"
-            className="flex items-center gap-1 text-[11px] font-medium text-indigo-600 hover:text-indigo-800 transition-colors">
-            <SparklesIcon className="w-3.5 h-3.5" />
-            Auto-improve
-          </button>
         </div>
         <p className="text-[11px] text-neutral-400">
           {workflow.steps.length} step{workflow.steps.length !== 1 ? 's' : ''} · click any step to edit
