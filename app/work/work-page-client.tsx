@@ -296,8 +296,10 @@ export function WorkPageClient({
     setActiveSection('chat');
     setActiveAgentId(null);
     setActiveThreadId(threadId);
-    setActiveArtifactId(artifactId);
-    setArtifactPanelOpen(true);
+    if (artifactId) {
+      setActiveArtifactId(artifactId);
+      setArtifactPanelOpen(true);
+    }
   }
 
   // Enrich threads with agent name/color for the sidebar tag.

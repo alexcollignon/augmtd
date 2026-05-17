@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import {
   PlayIcon, PauseIcon, PencilSquareIcon,
-  ClockIcon, CheckCircleIcon, XCircleIcon, ArrowPathIcon, TrashIcon,
+  ClockIcon, CheckCircleIcon, XCircleIcon, ArrowPathIcon, TrashIcon, PaperAirplaneIcon,
   ClipboardDocumentIcon, CheckIcon, DocumentArrowDownIcon,
   DocumentTextIcon, TableCellsIcon, PresentationChartBarIcon, EnvelopeIcon,
   DocumentDuplicateIcon, ChevronDownIcon, LockClosedIcon, UsersIcon,
@@ -11,7 +11,7 @@ import {
   BoltIcon, CalendarDaysIcon, MagnifyingGlassIcon, NewspaperIcon,
   GlobeAltIcon, MegaphoneIcon, BuildingOfficeIcon,
 } from '@heroicons/react/24/outline';
-import type { Workflow, WorkflowRun, WorkflowStep, DocumentArtifact, SharingMode } from '@/lib/workflows/types';
+import type { Workflow, WorkflowRun, ToolStep, DocumentArtifact, SharingMode } from '@/lib/workflows/types';
 import { describeCron } from '@/lib/workflows/schedule';
 import { MarkdownText } from '@/components/work/chat-message';
 
@@ -455,8 +455,7 @@ function OverviewPane({ workflow, runs, loading, onOpenThread, onOpenArtifact, o
   onViewAll: () => void;
 }) {
   const lastRun = runs[0] ?? null;
-  const latestRunThreadId = runs.find(r => r.thread_id)?.thread_id ?? null;
-  const latestSucceededRun = runs.find(r => r.status === 'succeeded') ?? null;
+  const chatInputRef = useRef<HTMLInputElement | null>(null);
 
   return (
     <div className="p-5 flex gap-5">
@@ -474,18 +473,17 @@ function OverviewPane({ workflow, runs, loading, onOpenThread, onOpenArtifact, o
         {/* Ask this workflow */}
         <AskWorkflowBox
           workflow={workflow}
-          latestRunThreadId={latestRunThreadId}
-          onOpenThread={onOpenThread}
-          runNow={runNow}
+          onFocusChat={() => { chatInputRef.current?.focus(); chatInputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }); }}
         />
 
         {/* Latest briefing */}
         <LatestBriefingCard runs={runs} onOpenArtifact={onOpenArtifact} />
 
-        {/* Chat input */}
+        {/* Inline chat */}
         <WorkflowChatBar
-          latestSucceededRun={latestSucceededRun}
-          onOpenThread={onOpenThread}
+          workflowId={workflowId}
+          workflow={workflow}
+          inputRef={chatInputRef}
         />
       </div>
 
@@ -503,6 +501,23 @@ function OverviewPane({ workflow, runs, loading, onOpenThread, onOpenArtifact, o
 
     </div>
   );
+}
+
+// ── Shared maps ───────────────────────────────────────────────────────────────
+
+const TOOL_LABEL_MAP: Record<string, string> = {
+  web_search: 'Web search', fetch_url: 'Web page', browser_fetch: 'Web page (browser)',
+  rss_feed: 'RSS feed', get_emails: 'Email inbox', get_calendar: 'Calendar',
+  search_knowledge: 'Knowledge base', linkedin_post: 'LinkedIn', get_pt_tenders: 'Portuguese tenders',
+};
+
+function getSourceDetail(step: ToolStep): string {
+  const cfg = step.config;
+  const url = (cfg.url as string | undefined) ?? (cfg.feed_url as string | undefined);
+  const query = (cfg.query as string | undefined) ?? (cfg.keywords as string | undefined);
+  if (url) { try { return new URL(url).hostname.replace('www.', ''); } catch { return url.slice(0, 30); } }
+  if (query) return query.length > 34 ? query.slice(0, 34) + '…' : query;
+  return '';
 }
 
 // ── Stat cards ─────────────────────────────────────────────────────────────────
@@ -572,7 +587,9 @@ function NextRunCard({ workflow, onActivate }: { workflow: Workflow; onActivate:
 }
 
 function TrustSourcesCard({ workflow, runs, loading }: { workflow: Workflow; runs: WorkflowRun[]; loading: boolean }) {
-  const toolStepCount = workflow.steps.filter(s => s.type === 'tool').length;
+  const [showSources, setShowSources] = useState(false);
+  const toolSteps = workflow.steps.filter((s): s is ToolStep => s.type === 'tool');
+  const toolStepCount = toolSteps.length;
   const confidence = (() => {
     if (loading || runs.length === 0) return 'No data';
     const rate = runs.filter(r => r.status === 'succeeded').length / runs.length;
@@ -591,41 +608,51 @@ function TrustSourcesCard({ workflow, runs, loading }: { workflow: Workflow; run
       <div className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wide mb-1">TRUST & SOURCES</div>
       <div className="text-[14px] font-semibold text-neutral-900">{toolStepCount} source{toolStepCount !== 1 ? 's' : ''}</div>
       <div className={`text-[11px] font-medium mt-0.5 ${confidenceColor}`}>Confidence: {confidence}</div>
-      <button className="mt-2 inline-flex items-center gap-1 text-[10.5px] text-neutral-500 border border-neutral-200 rounded-md px-2 py-0.5 hover:bg-neutral-50 transition-colors">
-        <GlobeAltIcon className="w-3 h-3" /> View sources
-      </button>
+      {toolStepCount > 0 && (
+        <button onClick={() => setShowSources(v => !v)}
+          className="mt-2 inline-flex items-center gap-1 text-[10.5px] text-neutral-500 border border-neutral-200 rounded-md px-2 py-0.5 hover:bg-neutral-50 transition-colors">
+          <GlobeAltIcon className="w-3 h-3" /> {showSources ? 'Hide' : 'View sources'}
+        </button>
+      )}
+      {showSources && (
+        <div className="mt-2 pt-2 border-t border-neutral-100 space-y-1.5">
+          {toolSteps.map((s, i) => {
+            const label = TOOL_LABEL_MAP[s.tool ?? ''] ?? (s.tool ?? 'Tool');
+            const detail = getSourceDetail(s);
+            return (
+              <div key={s.id || i} className="flex items-start gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-neutral-300 mt-[4px] flex-shrink-0" />
+                <div className="text-[10.5px] text-neutral-600 leading-snug">
+                  <span className="font-medium">{label}</span>
+                  {detail && <span className="text-neutral-400"> · {detail}</span>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
 
 // ── Ask this workflow box ──────────────────────────────────────────────────────
 
-function AskWorkflowBox({ workflow, latestRunThreadId, onOpenThread, runNow }: {
+function AskWorkflowBox({ workflow, onFocusChat }: {
   workflow: Workflow;
-  latestRunThreadId: string | null;
-  onOpenThread?: (id: string) => void;
-  runNow: () => void;
+  onFocusChat: () => void;
 }) {
   const colorBg = WORKFLOW_COLOR_MAP[workflow.color ?? 'indigo'] ?? 'bg-indigo-500';
   const WFIcon = WORKFLOW_ICON_MAP[workflow.icon ?? 'bolt'] ?? BoltIcon;
 
-  const handleClick = () => {
-    if (latestRunThreadId && onOpenThread) {
-      onOpenThread(latestRunThreadId);
-    } else {
-      runNow();
-    }
-  };
-
   return (
-    <button onClick={handleClick}
+    <button onClick={onFocusChat}
       className="w-full bg-neutral-50 rounded-xl border border-neutral-100 px-4 py-3 flex items-start gap-3 hover:bg-neutral-100 transition-colors text-left">
       <div className={`w-8 h-8 rounded-lg ${colorBg} flex items-center justify-center flex-shrink-0`}>
         <WFIcon className="w-4 h-4 text-white" />
       </div>
       <div>
         <div className="text-[12.5px] font-medium text-neutral-800">Ask this workflow</div>
-        <div className="text-[11px] text-neutral-400 mt-0.5">Private Cloud · chat with this workflow&apos;s memory, last run, sources and outputs</div>
+        <div className="text-[11px] text-neutral-400 mt-0.5">Chat with this workflow&apos;s memory, last run, sources and outputs</div>
       </div>
     </button>
   );
@@ -637,6 +664,7 @@ function LatestBriefingCard({ runs, onOpenArtifact }: {
   runs: WorkflowRun[];
   onOpenArtifact?: (threadId: string, artifactId: string) => void;
 }) {
+  const [expanded, setExpanded] = useState(false);
   const lastSucceeded = runs.find(r => r.status === 'succeeded');
   if (!lastSucceeded) return null;
 
@@ -660,6 +688,7 @@ function LatestBriefingCard({ runs, onOpenArtifact }: {
     : 1;
 
   const hasArtifact = (lastSucceeded.artifacts?.length ?? 0) > 0 && lastSucceeded.thread_id;
+  const isLong = aiOutput.length > 600;
 
   return (
     <div className="bg-white rounded-xl border border-neutral-150 p-3">
@@ -673,24 +702,42 @@ function LatestBriefingCard({ runs, onOpenArtifact }: {
         )}
       </div>
 
-      <div className="relative max-h-40 overflow-hidden">
+      <div className={`relative ${!expanded && isLong ? 'max-h-48 overflow-hidden' : ''}`}>
         <div className="text-[12px] text-neutral-700 prose prose-sm prose-neutral max-w-none">
           <MarkdownText content={aiOutput} />
         </div>
-        <div className="absolute bottom-0 left-0 right-0 h-10 bg-gradient-to-t from-white to-transparent pointer-events-none" />
+        {!expanded && isLong && (
+          <div className="absolute bottom-0 left-0 right-0 h-12 bg-gradient-to-t from-white to-transparent pointer-events-none" />
+        )}
       </div>
+
+      {isLong && (
+        <button onClick={() => setExpanded(v => !v)}
+          className="mt-1.5 text-[10.5px] text-indigo-500 hover:underline font-medium">
+          {expanded ? 'Show less ↑' : 'Read full output ↓'}
+        </button>
+      )}
 
       <div className="mt-3 flex items-center gap-3 text-[10.5px] text-neutral-400 border-t border-neutral-100 pt-2.5">
         <span>RUNS {succeededCount} · {weeksRunning} week{weeksRunning !== 1 ? 's' : ''}</span>
         <span className="text-neutral-200">·</span>
         <span>AVG SIGNAL {avgSignal}</span>
-        {hasArtifact && onOpenArtifact && (
-          <button
-            onClick={() => onOpenArtifact(lastSucceeded.thread_id!, lastSucceeded.artifacts![0].id!)}
-            className="ml-auto text-[10.5px] text-indigo-500 hover:underline">
-            Open doc →
-          </button>
-        )}
+        <div className="ml-auto flex items-center gap-2">
+          {hasArtifact && onOpenArtifact && (
+            <button
+              onClick={() => onOpenArtifact(lastSucceeded.thread_id!, lastSucceeded.artifacts![0].id!)}
+              className="text-[10.5px] text-indigo-500 hover:underline">
+              Open doc →
+            </button>
+          )}
+          {lastSucceeded.thread_id && onOpenArtifact && !hasArtifact && (
+            <button
+              onClick={() => onOpenArtifact(lastSucceeded.thread_id!, '')}
+              className="text-[10.5px] text-neutral-400 hover:text-indigo-500 hover:underline transition-colors">
+              Open in chat →
+            </button>
+          )}
+        </div>
       </div>
 
       {runs.length > 3 && (
@@ -702,7 +749,9 @@ function LatestBriefingCard({ runs, onOpenArtifact }: {
   );
 }
 
-// ── Workflow chat input bar ────────────────────────────────────────────────────
+// ── Workflow inline chat bar ───────────────────────────────────────────────────
+
+type WorkflowChatMsg = { role: 'user' | 'assistant'; content: string };
 
 const WORKFLOW_SUGGESTIONS = [
   'What changed since last week?',
@@ -710,37 +759,80 @@ const WORKFLOW_SUGGESTIONS = [
   'Turn this into a LinkedIn post',
 ];
 
-function WorkflowChatBar({ latestSucceededRun, onOpenThread }: {
-  latestSucceededRun: WorkflowRun | null;
-  onOpenThread?: (id: string) => void;
+function WorkflowChatBar({ workflowId, workflow, inputRef }: {
+  workflowId: string;
+  workflow: Workflow;
+  inputRef?: React.RefObject<HTMLInputElement | null>;
 }) {
+  const [messages, setMessages] = useState<WorkflowChatMsg[]>([]);
   const [value, setValue] = useState('');
+  const [loading, setLoading] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
-  const submitText = (text: string) => {
-    if (latestSucceededRun?.thread_id && onOpenThread) {
-      onOpenThread(latestSucceededRun.thread_id);
-    }
+  const submit = async (text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed || loading) return;
+    const userMsg: WorkflowChatMsg = { role: 'user', content: trimmed };
+    const next = [...messages, userMsg];
+    setMessages(next);
     setValue('');
-    void text;
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/workflows/${workflowId}/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages: next, workflow }),
+      });
+      if (res.ok) {
+        const { reply } = await res.json();
+        setMessages(prev => [...prev, { role: 'assistant', content: reply ?? '…' }]);
+        setTimeout(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' }), 50);
+      }
+    } finally { setLoading(false); }
   };
 
   return (
     <div className="space-y-2">
-      <div className="border border-neutral-200 rounded-xl px-4 py-3 flex items-center gap-3 bg-white">
+      {messages.length > 0 && (
+        <div ref={scrollRef} className="max-h-52 overflow-y-auto space-y-2 px-0.5">
+          {messages.map((m, i) => (
+            <div key={i} className={m.role === 'user'
+              ? 'ml-8 bg-neutral-100 rounded-xl px-3 py-2 text-[12px] text-neutral-700'
+              : 'bg-white border border-neutral-100 rounded-xl px-3 py-2 text-[12px] text-neutral-700 leading-relaxed'}>
+              {m.content}
+            </div>
+          ))}
+          {loading && (
+            <div className="flex items-center gap-2 px-1 text-[11px] text-neutral-400">
+              <span className="w-3 h-3 border border-neutral-300 border-t-indigo-500 rounded-full animate-spin flex-shrink-0" />
+              Thinking…
+            </div>
+          )}
+        </div>
+      )}
+      <div className="border border-neutral-200 rounded-xl px-4 py-3 flex items-center gap-3 bg-white focus-within:border-indigo-300 transition-colors">
         <SparklesIcon className="w-4 h-4 text-indigo-400 flex-shrink-0" />
         <input
+          ref={inputRef}
           value={value}
           onChange={e => setValue(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter') submitText(value); }}
+          onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(value); } }}
           placeholder="Ask about this workflow…"
-          className="flex-1 text-[12.5px] text-neutral-700 placeholder-neutral-400 outline-none border-none bg-transparent"
+          disabled={loading}
+          className="flex-1 text-[12.5px] text-neutral-700 placeholder-neutral-400 outline-none border-none bg-transparent disabled:opacity-60"
         />
+        {value.trim() && (
+          <button onClick={() => submit(value)} disabled={loading}
+            className="w-6 h-6 rounded-full bg-indigo-600 hover:bg-indigo-700 flex items-center justify-center flex-shrink-0 transition-colors disabled:opacity-40">
+            <PaperAirplaneIcon className="w-3 h-3 text-white" />
+          </button>
+        )}
       </div>
       <div className="flex gap-1.5 flex-wrap">
         <span className="text-[10.5px] text-neutral-400 self-center">SUGGESTED</span>
         {WORKFLOW_SUGGESTIONS.map(s => (
-          <button key={s} onClick={() => submitText(s)}
-            className="text-[11px] text-neutral-500 border border-neutral-200 rounded-full px-2.5 py-1 hover:bg-neutral-50 transition-colors">
+          <button key={s} onClick={() => submit(s)} disabled={loading}
+            className="text-[11px] text-neutral-500 border border-neutral-200 rounded-full px-2.5 py-1 hover:bg-neutral-50 transition-colors disabled:opacity-40">
             {s}
           </button>
         ))}
