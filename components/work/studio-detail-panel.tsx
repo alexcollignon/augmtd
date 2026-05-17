@@ -587,7 +587,7 @@ function NextRunCard({ workflow, onActivate }: { workflow: Workflow; onActivate:
 }
 
 function TrustSourcesCard({ workflow, runs, loading }: { workflow: Workflow; runs: WorkflowRun[]; loading: boolean }) {
-  const [showSources, setShowSources] = useState(false);
+  const [showModal, setShowModal] = useState(false);
   const toolSteps = workflow.steps.filter((s): s is ToolStep => s.type === 'tool');
   const toolStepCount = toolSteps.length;
   const confidence = (() => {
@@ -604,34 +604,52 @@ function TrustSourcesCard({ workflow, runs, loading }: { workflow: Workflow; run
     : 'text-neutral-400';
 
   return (
-    <div className="bg-white rounded-xl border border-neutral-150 p-3">
-      <div className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wide mb-1">TRUST & SOURCES</div>
-      <div className="text-[14px] font-semibold text-neutral-900">{toolStepCount} source{toolStepCount !== 1 ? 's' : ''}</div>
-      <div className={`text-[11px] font-medium mt-0.5 ${confidenceColor}`}>Confidence: {confidence}</div>
-      {toolStepCount > 0 && (
-        <button onClick={() => setShowSources(v => !v)}
-          className="mt-2 inline-flex items-center gap-1 text-[10.5px] text-neutral-500 border border-neutral-200 rounded-md px-2 py-0.5 hover:bg-neutral-50 transition-colors">
-          <GlobeAltIcon className="w-3 h-3" /> {showSources ? 'Hide' : 'View sources'}
-        </button>
-      )}
-      {showSources && (
-        <div className="mt-2 pt-2 border-t border-neutral-100 space-y-1.5">
-          {toolSteps.map((s, i) => {
-            const label = TOOL_LABEL_MAP[s.tool ?? ''] ?? (s.tool ?? 'Tool');
-            const detail = getSourceDetail(s);
-            return (
-              <div key={s.id || i} className="flex items-start gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-neutral-300 mt-[4px] flex-shrink-0" />
-                <div className="text-[10.5px] text-neutral-600 leading-snug">
-                  <span className="font-medium">{label}</span>
-                  {detail && <span className="text-neutral-400"> · {detail}</span>}
-                </div>
+    <>
+      <div className="bg-white rounded-xl border border-neutral-150 p-3">
+        <div className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wide mb-1">TRUST & SOURCES</div>
+        <div className="text-[14px] font-semibold text-neutral-900">{toolStepCount} source{toolStepCount !== 1 ? 's' : ''}</div>
+        <div className={`text-[11px] font-medium mt-0.5 ${confidenceColor}`}>Confidence: {confidence}</div>
+        {toolStepCount > 0 && (
+          <button onClick={() => setShowModal(true)}
+            className="mt-2 inline-flex items-center gap-1 text-[10.5px] text-neutral-500 border border-neutral-200 rounded-md px-2 py-0.5 hover:bg-neutral-50 transition-colors">
+            <GlobeAltIcon className="w-3 h-3" /> View sources
+          </button>
+        )}
+      </div>
+
+      {showModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={() => setShowModal(false)}>
+          <div className="absolute inset-0 bg-black/30 backdrop-blur-[2px]" />
+          <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-sm overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-neutral-100">
+              <div>
+                <h3 className="text-[14px] font-semibold text-neutral-900">Data sources</h3>
+                <p className="text-[11.5px] text-neutral-400 mt-0.5">{toolStepCount} source{toolStepCount !== 1 ? 's' : ''} · Confidence: <span className={confidenceColor}>{confidence}</span></p>
               </div>
-            );
-          })}
+              <button onClick={() => setShowModal(false)} className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-neutral-100 transition-colors text-neutral-400 text-[16px] leading-none">×</button>
+            </div>
+            <div className="px-5 py-4 space-y-3 max-h-80 overflow-y-auto">
+              {toolSteps.map((s, i) => {
+                const label = TOOL_LABEL_MAP[s.tool ?? ''] ?? (s.tool ?? 'Tool');
+                const detail = getSourceDetail(s);
+                const Icon = TOOL_ICONS[s.tool ?? ''] ?? GlobeAltIcon;
+                return (
+                  <div key={s.id || i} className="flex items-start gap-3">
+                    <div className="w-8 h-8 rounded-lg bg-neutral-100 flex items-center justify-center flex-shrink-0">
+                      <Icon className="w-4 h-4 text-neutral-500" />
+                    </div>
+                    <div className="flex-1 min-w-0 pt-0.5">
+                      <div className="text-[12.5px] font-medium text-neutral-800">{label}</div>
+                      {detail && <div className="text-[11px] text-neutral-400 truncate mt-0.5">{detail}</div>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         </div>
       )}
-    </div>
+    </>
   );
 }
 
@@ -888,23 +906,14 @@ function PastRunRow({ run, workflowId, onOpenThread, onDeleted }: {
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
-  const dotColor = run.status === 'succeeded'
-    ? 'bg-emerald-400'
-    : (run.status === 'failed' || run.status === 'cancelled')
-    ? 'bg-amber-400'
-    : 'bg-neutral-300';
+  const isSucceeded = run.status === 'succeeded';
+  const isFailed = run.status === 'failed' || run.status === 'cancelled';
+  const dotColor = isSucceeded ? 'bg-emerald-400' : isFailed ? 'bg-amber-400' : 'bg-neutral-300';
+  const statusLabel = isSucceeded ? 'Completed' : isFailed ? 'Needs attention' : 'Running…';
 
-  const statusLabel = run.status === 'succeeded'
-    ? 'Completed'
-    : (run.status === 'failed' || run.status === 'cancelled')
-    ? 'Needs attention'
-    : 'Running…';
-
-  const dateStr = run.started_at
-    ? new Date(run.started_at).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' }) +
-      ', ' + new Date(run.started_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
-    : fmtDateTime(run.created_at);
-
+  const ts = run.started_at ?? run.created_at;
+  const dateLine = new Date(ts).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+  const timeLine = new Date(ts).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
   const duration = fmtDuration(run.started_at, run.completed_at);
 
   const aiSummary = (() => {
@@ -912,7 +921,7 @@ function PastRunRow({ run, workflowId, onOpenThread, onDeleted }: {
       .find(s => s.step_type === 'ai' && typeof s.output === 'string');
     if (!aiStep) return null;
     const firstLine = (aiStep.output as string).split('\n').find(l => l.trim().length > 0) ?? '';
-    return firstLine.length > 60 ? firstLine.slice(0, 60) + '…' : firstLine || null;
+    return firstLine.length > 52 ? firstLine.slice(0, 52) + '…' : firstLine || null;
   })();
 
   const handleDelete = async (e: React.MouseEvent) => {
@@ -927,25 +936,27 @@ function PastRunRow({ run, workflowId, onOpenThread, onDeleted }: {
     <div className="group">
       <button
         onClick={() => { if (run.thread_id && onOpenThread) onOpenThread(run.thread_id); }}
-        className="w-full flex items-start gap-2 text-left hover:bg-neutral-50 rounded-lg px-1.5 py-1.5 transition-colors">
-        <span className={`w-2.5 h-2.5 rounded-full ${dotColor} mt-[3px] flex-shrink-0`} />
-        <div className="flex-1 min-w-0">
-          <div className="text-[11px] text-neutral-600 leading-snug">
-            <span className="font-medium">{statusLabel}</span>
-            <span className="text-neutral-300 mx-1">·</span>
-            <span>{dateStr}</span>
-            {duration && <><span className="text-neutral-300 mx-1">·</span><span>{duration}</span></>}
+        className="w-full text-left bg-white border border-neutral-150 rounded-xl px-3 py-2.5 hover:border-neutral-300 hover:shadow-sm transition-all">
+        {/* Top row: status dot + label + date/time */}
+        <div className="flex items-start gap-2">
+          <span className={`w-2 h-2 rounded-full ${dotColor} mt-[3px] flex-shrink-0`} />
+          <div className="flex-1 min-w-0">
+            <span className="text-[11.5px] font-semibold text-neutral-700">{statusLabel}</span>
           </div>
-          {aiSummary && (
-            <div className="text-[10.5px] text-neutral-400 italic truncate mt-0.5">{aiSummary}</div>
-          )}
-          {run.error && !aiSummary && (
-            <div className="text-[10.5px] text-red-400 truncate mt-0.5">{run.error}</div>
-          )}
+          <div className="text-right flex-shrink-0">
+            <div className="text-[10px] text-neutral-400 leading-snug">{dateLine}</div>
+            <div className="text-[10px] text-neutral-400 leading-snug">{timeLine}{duration && ` · ${duration}`}</div>
+          </div>
         </div>
+        {/* Preview line */}
+        {(aiSummary || run.error) && (
+          <div className={`mt-1.5 text-[10.5px] truncate pl-4 ${run.error && !aiSummary ? 'text-red-400' : 'text-neutral-400'}`}>
+            {aiSummary ?? run.error}
+          </div>
+        )}
       </button>
       {run.status !== 'running' && onDeleted && (
-        <div className="flex justify-end px-1.5 -mt-0.5">
+        <div className="flex justify-end pr-1 -mt-0.5">
           {confirmingDelete ? (
             <div className="flex gap-1.5">
               <button onClick={handleDelete} disabled={deleting}
@@ -955,7 +966,7 @@ function PastRunRow({ run, workflowId, onOpenThread, onDeleted }: {
             </div>
           ) : (
             <button onClick={e => { e.stopPropagation(); setConfirmingDelete(true); }}
-              className="opacity-0 group-hover:opacity-100 transition-opacity text-[10px] text-neutral-300 hover:text-red-400">
+              className="opacity-0 group-hover:opacity-100 transition-opacity text-neutral-300 hover:text-red-400 py-0.5">
               <TrashIcon className="w-3 h-3" />
             </button>
           )}
