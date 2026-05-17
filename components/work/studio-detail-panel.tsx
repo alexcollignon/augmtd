@@ -14,6 +14,8 @@ import {
 import type { Workflow, WorkflowRun, ToolStep, DocumentArtifact, SharingMode } from '@/lib/workflows/types';
 import { describeCron } from '@/lib/workflows/schedule';
 import { MarkdownText } from '@/components/work/chat-message';
+import { contentType, DocPreview, PptxPreview, XlsxPreview, EmailPreview } from '@/components/work/chat-artifact-panel';
+import type { DocContent, PptxContent, XlsxContent, EmailContent } from '@/lib/types/inbox';
 
 interface Props {
   workflow: Workflow;
@@ -206,13 +208,29 @@ export function StudioDetailPanel({
 
   const runNow = useCallback(async () => {
     setRunning(true);
+    // Optimistically add a queued run so the UI updates instantly
+    const optimisticRun: WorkflowRun = {
+      id: `optimistic-${Date.now()}`,
+      workflow_id: workflow.id,
+      user_id: '',
+      status: 'queued',
+      triggered_by: 'manual',
+      created_at: new Date().toISOString(),
+      started_at: null,
+      completed_at: null,
+      thread_id: null,
+      error: null,
+      step_outputs: [],
+    };
+    setRuns(prev => [optimisticRun, ...prev]);
+    setActiveTab('overview');
     try {
       const res = await fetch(`/api/workflows/${workflow.id}/run`, { method: 'POST' });
       if (res.ok) {
-        await fetchRuns(workflow.id);
-        setActiveTab('history');
+        fetchRuns(workflow.id); // refresh in background, don't await
       } else {
         const { error } = await res.json().catch(() => ({ error: 'Run failed' }));
+        setRuns(prev => prev.filter(r => r.id !== optimisticRun.id));
         alert(error);
       }
     } finally { setRunning(false); }
@@ -470,12 +488,6 @@ function OverviewPane({ workflow, runs, loading, onOpenThread, onOpenArtifact, o
           <TrustSourcesCard workflow={workflow} runs={runs} loading={loading} />
         </div>
 
-        {/* Ask this workflow */}
-        <AskWorkflowBox
-          workflow={workflow}
-          onFocusChat={() => { chatInputRef.current?.focus(); chatInputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }); }}
-        />
-
         {/* Latest briefing */}
         <LatestBriefingCard runs={runs} onOpenArtifact={onOpenArtifact} />
 
@@ -511,6 +523,18 @@ const TOOL_LABEL_MAP: Record<string, string> = {
   search_knowledge: 'Knowledge base', linkedin_post: 'LinkedIn', get_pt_tenders: 'Portuguese tenders',
 };
 
+function formatSince(since: string, lastRunAt?: string | null): string {
+  if (since === 'last_run') {
+    if (lastRunAt) return new Date(lastRunAt).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+    return 'Last run';
+  }
+  const days = since.match(/^(\d+)d$/);
+  if (days) return `Last ${days[1]} day${days[1] === '1' ? '' : 's'}`;
+  const hours = since.match(/^(\d+)h$/);
+  if (hours) return `Last ${hours[1]} hour${hours[1] === '1' ? '' : 's'}`;
+  try { return new Date(since).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }); } catch { return since; }
+}
+
 function getSourceDetail(step: ToolStep): string {
   const cfg = step.config;
   const url = (cfg.url as string | undefined) ?? (cfg.feed_url as string | undefined);
@@ -518,6 +542,128 @@ function getSourceDetail(step: ToolStep): string {
   if (url) { try { return new URL(url).hostname.replace('www.', ''); } catch { return url.slice(0, 30); } }
   if (query) return query.length > 34 ? query.slice(0, 34) + '…' : query;
   return '';
+}
+
+interface ParsedItem { title: string; url: string | null; meta: string | null; snippet: string | null }
+
+function parseToolOutputItems(output: unknown): ParsedItem[] {
+  if (typeof output !== 'string' || !output.trim()) return [];
+  // Split on numbered list entries: "1. ", "2. " etc.
+  const chunks = output.split(/\n(?=\d+\. )/).filter(c => /^\d+\./.test(c.trim()));
+  if (chunks.length === 0) return [];
+  return chunks.map(chunk => {
+    const body = chunk.replace(/^\d+\.\s*/, '');
+    const lines = body.split('\n').map(l => l.replace(/^\s+/, '')).filter(Boolean);
+    if (!lines.length) return null;
+    const titleRaw = lines[0].replace(/\*\*/g, '');
+    let url: string | null = null;
+    let meta: string | null = null;
+    const snippetParts: string[] = [];
+    for (let i = 1; i < lines.length; i++) {
+      const l = lines[i];
+      if (/^https?:\/\/\S+/.test(l)) { url = l.match(/^(https?:\/\/\S+)/)?.[1] ?? null; }
+      else if (i === 1 && !url) { meta = l; }
+      else { snippetParts.push(l); }
+    }
+    const snippet = snippetParts.join(' ').slice(0, 180) || null;
+    return { title: titleRaw, url, meta, snippet } as ParsedItem;
+  }).filter((x): x is ParsedItem => x !== null);
+}
+
+// ── Source row (collapsible) ──────────────────────────────────────────────────
+
+function SourceRow({ step: s, typeLabel, Icon, url, query, topic, since, items, hasRun }: {
+  step: ToolStep;
+  typeLabel: string;
+  Icon: React.ComponentType<{ className?: string }>;
+  url: string | undefined;
+  query: string | undefined;
+  topic: string | undefined;
+  since: string | undefined;
+  items: ParsedItem[];
+  hasRun: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const hasItems = items.length > 0;
+
+  return (
+    <div className="py-3">
+      {/* Clickable header row */}
+      <button
+        onClick={() => hasItems && setOpen(v => !v)}
+        className={`w-full flex items-start gap-3 text-left ${hasItems ? 'cursor-pointer group' : 'cursor-default'}`}
+      >
+        <div className="w-8 h-8 rounded-lg bg-neutral-100 flex items-center justify-center flex-shrink-0 mt-0.5">
+          <Icon className="w-4 h-4 text-neutral-500" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-[12.5px] font-semibold text-neutral-800">{s.label}</span>
+            <span className="text-[10px] text-neutral-400 bg-neutral-100 px-1.5 py-0.5 rounded-full leading-relaxed">{typeLabel}</span>
+            {hasItems && (
+              <span className="text-[10px] text-neutral-400">{items.length} item{items.length !== 1 ? 's' : ''}</span>
+            )}
+          </div>
+          {url && (
+            <a href={url} target="_blank" rel="noopener noreferrer"
+              className="block mt-1 text-[11px] text-indigo-500 hover:text-indigo-700 hover:underline break-all leading-snug"
+              onClick={e => e.stopPropagation()}>
+              {url}
+            </a>
+          )}
+          {query && (
+            <div className="mt-1">
+              <span className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wide">Query </span>
+              <span className="text-[11px] text-neutral-600">{query}</span>
+            </div>
+          )}
+          {topic && (
+            <div className="mt-0.5">
+              <span className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wide">Topic </span>
+              <span className="text-[11px] text-neutral-600">{topic}</span>
+            </div>
+          )}
+          {since && (
+            <div className="mt-0.5">
+              <span className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wide">Since </span>
+              <span className="text-[11px] text-neutral-600">{since}</span>
+            </div>
+          )}
+        </div>
+        {hasItems && (
+          <ChevronDownIcon className={`w-3.5 h-3.5 text-neutral-400 flex-shrink-0 mt-1 transition-transform ${open ? 'rotate-180' : ''}`} />
+        )}
+        {!hasItems && !hasRun && (
+          <span className="text-[10px] text-neutral-300 flex-shrink-0 mt-1 italic">no runs yet</span>
+        )}
+      </button>
+
+      {/* Collapsible items */}
+      {open && hasItems && (
+        <div className="mt-2 ml-11 space-y-1.5">
+          {items.map((item, j) => (
+            <div key={j} className="bg-neutral-50 rounded-lg px-2.5 py-2">
+              {item.url ? (
+                <a href={item.url} target="_blank" rel="noopener noreferrer"
+                  className="text-[11.5px] font-medium text-indigo-600 hover:text-indigo-800 hover:underline leading-snug block"
+                  onClick={e => e.stopPropagation()}>
+                  {item.title}
+                </a>
+              ) : (
+                <div className="text-[11.5px] font-medium text-neutral-700 leading-snug">{item.title}</div>
+              )}
+              {item.meta && (
+                <div className="text-[10.5px] text-neutral-400 mt-0.5">{item.meta}</div>
+              )}
+              {item.snippet && (
+                <div className="text-[10.5px] text-neutral-500 mt-1 leading-relaxed line-clamp-2">{item.snippet}</div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ── Stat cards ─────────────────────────────────────────────────────────────────
@@ -588,8 +734,13 @@ function NextRunCard({ workflow, onActivate }: { workflow: Workflow; onActivate:
 
 function TrustSourcesCard({ workflow, runs, loading }: { workflow: Workflow; runs: WorkflowRun[]; loading: boolean }) {
   const [showModal, setShowModal] = useState(false);
-  const toolSteps = workflow.steps.filter((s): s is ToolStep => s.type === 'tool');
-  const toolStepCount = toolSteps.length;
+
+  // Preserve original index so we can look up step_outputs[idx]
+  const toolStepsWithIdx = workflow.steps
+    .map((s, i) => ({ step: s, idx: i }))
+    .filter((x): x is { step: ToolStep; idx: number } => x.step.type === 'tool');
+
+  const toolStepCount = toolStepsWithIdx.length;
   const confidence = (() => {
     if (loading || runs.length === 0) return 'No data';
     const rate = runs.filter(r => r.status === 'succeeded').length / runs.length;
@@ -602,6 +753,8 @@ function TrustSourcesCard({ workflow, runs, loading }: { workflow: Workflow; run
     : confidence === 'Medium'
     ? 'text-amber-600'
     : 'text-neutral-400';
+
+  const lastSucceededRun = runs.find(r => r.status === 'succeeded');
 
   return (
     <>
@@ -624,12 +777,15 @@ function TrustSourcesCard({ workflow, runs, loading }: { workflow: Workflow; run
             <div className="flex items-center justify-between px-5 py-4 border-b border-neutral-100">
               <div>
                 <h3 className="text-[14px] font-semibold text-neutral-900">Data sources</h3>
-                <p className="text-[11.5px] text-neutral-400 mt-0.5">{toolStepCount} source{toolStepCount !== 1 ? 's' : ''} · Confidence: <span className={confidenceColor}>{confidence}</span></p>
+                <p className="text-[11.5px] text-neutral-400 mt-0.5">
+                  {toolStepCount} source{toolStepCount !== 1 ? 's' : ''} · Confidence: <span className={confidenceColor}>{confidence}</span>
+                  {lastSucceededRun && <span className="ml-1 text-neutral-300">· from {relativeTime(lastSucceededRun.created_at)}</span>}
+                </p>
               </div>
               <button onClick={() => setShowModal(false)} className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-neutral-100 transition-colors text-neutral-400 text-[16px] leading-none">×</button>
             </div>
-            <div className="px-5 py-2 max-h-[60vh] overflow-y-auto divide-y divide-neutral-100">
-              {toolSteps.map((s, i) => {
+            <div className="px-5 py-2 max-h-[65vh] overflow-y-auto divide-y divide-neutral-100">
+              {toolStepsWithIdx.map(({ step: s, idx }) => {
                 const typeLabel = TOOL_LABEL_MAP[s.tool ?? ''] ?? (s.tool ?? 'Tool');
                 const Icon = TOOL_ICONS[s.tool ?? ''] ?? GlobeAltIcon;
                 const cfg = s.config;
@@ -637,43 +793,23 @@ function TrustSourcesCard({ workflow, runs, loading }: { workflow: Workflow; run
                 const query = (cfg.query as string | undefined) ?? (cfg.keywords as string | undefined);
                 const topic = cfg.topic as string | undefined;
                 const since = cfg.since as string | undefined;
+
+                const stepOutput = lastSucceededRun?.step_outputs?.[idx]?.output;
+                const items = parseToolOutputItems(stepOutput);
+
                 return (
-                  <div key={s.id || i} className="flex items-start gap-3 py-3.5">
-                    <div className="w-8 h-8 rounded-lg bg-neutral-100 flex items-center justify-center flex-shrink-0 mt-0.5">
-                      <Icon className="w-4 h-4 text-neutral-500" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-[12.5px] font-semibold text-neutral-800">{s.label}</span>
-                        <span className="text-[10px] text-neutral-400 bg-neutral-100 px-1.5 py-0.5 rounded-full leading-relaxed">{typeLabel}</span>
-                      </div>
-                      {url && (
-                        <a href={url} target="_blank" rel="noopener noreferrer"
-                          className="block mt-1 text-[11px] text-indigo-500 hover:text-indigo-700 hover:underline break-all leading-snug"
-                          onClick={e => e.stopPropagation()}>
-                          {url}
-                        </a>
-                      )}
-                      {query && (
-                        <div className="mt-1">
-                          <span className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wide">Query </span>
-                          <span className="text-[11px] text-neutral-600">{query}</span>
-                        </div>
-                      )}
-                      {topic && (
-                        <div className="mt-0.5">
-                          <span className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wide">Topic </span>
-                          <span className="text-[11px] text-neutral-600">{topic}</span>
-                        </div>
-                      )}
-                      {since && (
-                        <div className="mt-0.5">
-                          <span className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wide">Since </span>
-                          <span className="text-[11px] text-neutral-600">{since}</span>
-                        </div>
-                      )}
-                    </div>
-                  </div>
+                  <SourceRow
+                    key={s.id || idx}
+                    step={s}
+                    typeLabel={typeLabel}
+                    Icon={Icon}
+                    url={url}
+                    query={query}
+                    topic={topic}
+                    since={since ? formatSince(since, lastSucceededRun?.created_at) : undefined}
+                    items={items}
+                    hasRun={!!lastSucceededRun}
+                  />
                 );
               })}
             </div>
@@ -713,7 +849,7 @@ function LatestBriefingCard({ runs, onOpenArtifact }: {
   runs: WorkflowRun[];
   onOpenArtifact?: (threadId: string, artifactId: string) => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [summaryOpen, setSummaryOpen] = useState(false);
   const lastSucceeded = runs.find(r => r.status === 'succeeded');
   if (!lastSucceeded) return null;
 
@@ -721,6 +857,10 @@ function LatestBriefingCard({ runs, onOpenArtifact }: {
     .find(s => s.step_type === 'ai' && typeof s.output === 'string');
   const aiOutput = lastAiStep?.output as string | undefined;
   if (!aiOutput) return null;
+
+  const artifact = lastSucceeded.artifacts?.[0];
+  const ct = artifact?.content ? contentType(artifact) : 'none';
+  const hasInlineArtifact = ct !== 'none';
 
   const dateChip = new Date(lastSucceeded.created_at).toLocaleDateString(undefined, {
     weekday: 'short', day: 'numeric', month: 'short',
@@ -736,21 +876,77 @@ function LatestBriefingCard({ runs, onOpenArtifact }: {
     ? Math.max(1, Math.ceil((Date.now() - new Date(firstRunAt).getTime()) / (7 * 86400000)))
     : 1;
 
-  const hasArtifact = (lastSucceeded.artifacts?.length ?? 0) > 0 && lastSucceeded.thread_id;
-  const isLong = aiOutput.length > 600;
-
   return (
     <div className="bg-white rounded-xl border border-neutral-150 p-3">
+      {/* Header */}
       <div className="flex items-center gap-2 mb-2.5">
         <span className="text-[10px] font-semibold text-neutral-400 uppercase tracking-widest flex-1">LATEST BRIEFING</span>
         <span className="text-[10px] text-neutral-500 bg-neutral-100 px-2 py-0.5 rounded-full">{dateChip}</span>
-        {runs.length > 1 && succeededCount > 1 && (
-          <span className="text-[10px] text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">
-            +{succeededCount - 1} vs last week
-          </span>
-        )}
       </div>
 
+      {hasInlineArtifact ? (
+        <>
+          {/* Artifact title */}
+          {artifact!.title && (
+            <div className="text-[13px] font-semibold text-neutral-800 mb-2.5 leading-snug">{artifact!.title}</div>
+          )}
+
+          {/* Inline artifact preview */}
+          <div className="max-h-96 overflow-y-auto rounded-lg border border-neutral-100 bg-neutral-50/60 px-3 py-3">
+            {ct === 'doc' && <DocPreview content={artifact!.content as DocContent} />}
+            {ct === 'pptx' && <PptxPreview content={artifact!.content as PptxContent} />}
+            {ct === 'xlsx' && <XlsxPreview content={artifact!.content as XlsxContent} />}
+            {ct === 'email' && lastSucceeded.thread_id && (
+              <EmailPreview
+                content={artifact!.content as EmailContent}
+                artifact={artifact!}
+                threadId={lastSucceeded.thread_id}
+                onSent={() => {}}
+              />
+            )}
+          </div>
+
+          {/* Collapsible AI summary */}
+          <button onClick={() => setSummaryOpen(v => !v)}
+            className="mt-2.5 flex items-center gap-1.5 text-[11px] text-neutral-400 hover:text-neutral-600 transition-colors">
+            <ChevronDownIcon className={`w-3 h-3 transition-transform ${summaryOpen ? 'rotate-180' : ''}`} />
+            AI summary
+          </button>
+          {summaryOpen && (
+            <div className="mt-2 text-[12px] text-neutral-600 prose prose-sm prose-neutral max-w-none">
+              <MarkdownText content={aiOutput} />
+            </div>
+          )}
+        </>
+      ) : (
+        /* No artifact — plain AI output view (existing behaviour) */
+        <AiOutputView aiOutput={aiOutput} />
+      )}
+
+      {/* Footer */}
+      <div className="mt-3 flex items-center gap-3 text-[10.5px] text-neutral-400 border-t border-neutral-100 pt-2.5">
+        <span>RUNS {succeededCount} · {weeksRunning} week{weeksRunning !== 1 ? 's' : ''}</span>
+        <span className="text-neutral-200">·</span>
+        <span>AVG SIGNAL {avgSignal}</span>
+        <div className="ml-auto">
+          {lastSucceeded.thread_id && onOpenArtifact && (
+            <button
+              onClick={() => onOpenArtifact(lastSucceeded.thread_id!, artifact?.id ?? '')}
+              className="text-[10.5px] text-indigo-500 hover:underline transition-colors">
+              Open in chat →
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AiOutputView({ aiOutput }: { aiOutput: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const isLong = aiOutput.length > 600;
+  return (
+    <>
       <div className={`relative ${!expanded && isLong ? 'max-h-48 overflow-hidden' : ''}`}>
         <div className="text-[12px] text-neutral-700 prose prose-sm prose-neutral max-w-none">
           <MarkdownText content={aiOutput} />
@@ -759,42 +955,13 @@ function LatestBriefingCard({ runs, onOpenArtifact }: {
           <div className="absolute bottom-0 left-0 right-0 h-12 bg-gradient-to-t from-white to-transparent pointer-events-none" />
         )}
       </div>
-
       {isLong && (
         <button onClick={() => setExpanded(v => !v)}
           className="mt-1.5 text-[10.5px] text-indigo-500 hover:underline font-medium">
           {expanded ? 'Show less ↑' : 'Read full output ↓'}
         </button>
       )}
-
-      <div className="mt-3 flex items-center gap-3 text-[10.5px] text-neutral-400 border-t border-neutral-100 pt-2.5">
-        <span>RUNS {succeededCount} · {weeksRunning} week{weeksRunning !== 1 ? 's' : ''}</span>
-        <span className="text-neutral-200">·</span>
-        <span>AVG SIGNAL {avgSignal}</span>
-        <div className="ml-auto flex items-center gap-2">
-          {hasArtifact && onOpenArtifact && (
-            <button
-              onClick={() => onOpenArtifact(lastSucceeded.thread_id!, lastSucceeded.artifacts![0].id!)}
-              className="text-[10.5px] text-indigo-500 hover:underline">
-              Open doc →
-            </button>
-          )}
-          {lastSucceeded.thread_id && onOpenArtifact && !hasArtifact && (
-            <button
-              onClick={() => onOpenArtifact(lastSucceeded.thread_id!, '')}
-              className="text-[10.5px] text-neutral-400 hover:text-indigo-500 hover:underline transition-colors">
-              Open in chat →
-            </button>
-          )}
-        </div>
-      </div>
-
-      {runs.length > 3 && (
-        <div className="mt-1.5 text-[10.5px] text-neutral-400 italic">
-          Agent has run {runs.length} times and is refining sources.
-        </div>
-      )}
-    </div>
+    </>
   );
 }
 

@@ -13,6 +13,22 @@ function stripBulletPrefix(line: string): string {
   return line.trim().replace(/^[-•*]\s+/, '');
 }
 
+function markdownToRuns(text: string, size: number, color: string): TextRun[] {
+  const runs: TextRun[] = [];
+  const re = /\*\*\*(.+?)\*\*\*|\*\*(.+?)\*\*|\*(.+?)\*/g;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) runs.push(new TextRun({ text: text.slice(last, m.index), size, font: 'Arial', color }));
+    if (m[1]) runs.push(new TextRun({ text: m[1], bold: true, italics: true, size, font: 'Arial', color }));
+    else if (m[2]) runs.push(new TextRun({ text: m[2], bold: true, size, font: 'Arial', color }));
+    else if (m[3]) runs.push(new TextRun({ text: m[3], italics: true, size, font: 'Arial', color }));
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) runs.push(new TextRun({ text: text.slice(last), size, font: 'Arial', color }));
+  return runs.length ? runs : [new TextRun({ text, size, font: 'Arial', color })];
+}
+
 export function buildDocx(content: DocContent, options?: { pageSize?: 'letter' | 'a4' }): Promise<Buffer> {
   const isA4 = options?.pageSize === 'a4';
   const NUMBERING_REF = 'bullet-list';
@@ -68,18 +84,19 @@ export function buildDocx(content: DocContent, options?: { pageSize?: 'letter' |
       const lines = para.split('\n').filter(Boolean);
 
       for (const line of lines) {
+        if (/^-{3,}$/.test(line.trim())) continue; // skip horizontal rules
         if (isBulletLine(line)) {
           children.push(
             new Paragraph({
               numbering: { reference: NUMBERING_REF, level: 0 },
-              children: [new TextRun({ text: stripBulletPrefix(line), size: 24, font: 'Arial', color: '1F2937' })],
+              children: markdownToRuns(stripBulletPrefix(line), 24, '1F2937'),
               spacing: { after: 80 },
             })
           );
         } else {
           children.push(
             new Paragraph({
-              children: [new TextRun({ text: line, size: 24, font: 'Arial', color: '1F2937' })],
+              children: markdownToRuns(line, 24, '1F2937'),
               spacing: { after: 160 },
             })
           );

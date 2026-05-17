@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
+import { MarkdownText } from '@/components/work/chat-message';
 import {
   ChevronLeftIcon,
   ChevronRightIcon,
@@ -25,7 +26,7 @@ import { computeVersionedArtifacts, VersionedArtifact } from '@/lib/artifacts/ve
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function contentType(artifact: DocumentArtifact): 'doc' | 'pptx' | 'xlsx' | 'email' | 'none' {
+export function contentType(artifact: DocumentArtifact): 'doc' | 'pptx' | 'xlsx' | 'email' | 'none' {
   if (!artifact.content) return 'none';
   const c = artifact.content as unknown as Record<string, unknown>;
   if ('slides' in c) return 'pptx';
@@ -56,7 +57,7 @@ function shortType(artifact: DocumentArtifact): string {
 
 // ── Previews ──────────────────────────────────────────────────────────────────
 
-function DocPreview({ content }: { content: DocContent }) {
+export function DocPreview({ content }: { content: DocContent }) {
   return (
     <div className="space-y-4 text-[13.5px]">
       <div>
@@ -79,9 +80,9 @@ function DocPreview({ content }: { content: DocContent }) {
             </h2>
           )}
           {section.paragraphs.map((p, pi) => (
-            <p key={pi} className="text-neutral-700 leading-relaxed">
-              {p}
-            </p>
+            <div key={pi} className="text-neutral-700 leading-relaxed text-[13.5px] prose prose-sm prose-neutral max-w-none">
+              <MarkdownText content={p} />
+            </div>
           ))}
         </div>
       ))}
@@ -89,7 +90,7 @@ function DocPreview({ content }: { content: DocContent }) {
   );
 }
 
-function PptxPreview({ content }: { content: PptxContent }) {
+export function PptxPreview({ content }: { content: PptxContent }) {
   return (
     <div className="space-y-3">
       {content.slides.map((slide, i) => (
@@ -125,7 +126,7 @@ function PptxPreview({ content }: { content: PptxContent }) {
   );
 }
 
-function XlsxPreview({ content }: { content: XlsxContent }) {
+export function XlsxPreview({ content }: { content: XlsxContent }) {
   const [activeIdx, setActiveIdx] = useState(0);
   const sheet = content.sheets[activeIdx] ?? content.sheets[0];
   if (!sheet) return <p className="text-[13px] text-neutral-400">No data</p>;
@@ -187,7 +188,7 @@ interface EmailPreviewProps {
   onSent: (sentAt: string, sentTo: string) => void;
 }
 
-function EmailPreview({ content, artifact, threadId, onSent }: EmailPreviewProps) {
+export function EmailPreview({ content, artifact, threadId, onSent }: EmailPreviewProps) {
   const [to, setTo] = useState(content.to || '');
   const [cc, setCc] = useState(content.cc || '');
   const [sending, setSending] = useState(false);
