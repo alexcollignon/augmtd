@@ -906,14 +906,23 @@ function PastRunRow({ run, workflowId, onOpenThread, onDeleted }: {
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
-  const isSucceeded = run.status === 'succeeded';
-  const isFailed = run.status === 'failed' || run.status === 'cancelled';
-  const dotColor = isSucceeded ? 'bg-emerald-400' : isFailed ? 'bg-amber-400' : 'bg-neutral-300';
-  const statusLabel = isSucceeded ? 'Completed' : isFailed ? 'Needs attention' : 'Running…';
+  const dotColor = run.status === 'succeeded'
+    ? 'bg-emerald-400'
+    : (run.status === 'failed' || run.status === 'cancelled')
+    ? 'bg-amber-400'
+    : 'bg-neutral-300';
 
-  const ts = run.started_at ?? run.created_at;
-  const dateLine = new Date(ts).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
-  const timeLine = new Date(ts).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  const statusLabel = run.status === 'succeeded'
+    ? 'Completed'
+    : (run.status === 'failed' || run.status === 'cancelled')
+    ? 'Needs attention'
+    : 'Running…';
+
+  const dateStr = run.started_at
+    ? new Date(run.started_at).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' }) +
+      ', ' + new Date(run.started_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+    : fmtDateTime(run.created_at);
+
   const duration = fmtDuration(run.started_at, run.completed_at);
 
   const aiSummary = (() => {
@@ -921,7 +930,7 @@ function PastRunRow({ run, workflowId, onOpenThread, onDeleted }: {
       .find(s => s.step_type === 'ai' && typeof s.output === 'string');
     if (!aiStep) return null;
     const firstLine = (aiStep.output as string).split('\n').find(l => l.trim().length > 0) ?? '';
-    return firstLine.length > 52 ? firstLine.slice(0, 52) + '…' : firstLine || null;
+    return firstLine.length > 60 ? firstLine.slice(0, 60) + '…' : firstLine || null;
   })();
 
   const handleDelete = async (e: React.MouseEvent) => {
@@ -936,27 +945,25 @@ function PastRunRow({ run, workflowId, onOpenThread, onDeleted }: {
     <div className="group">
       <button
         onClick={() => { if (run.thread_id && onOpenThread) onOpenThread(run.thread_id); }}
-        className="w-full text-left bg-white border border-neutral-150 rounded-xl px-3 py-2.5 hover:border-neutral-300 hover:shadow-sm transition-all">
-        {/* Top row: status dot + label + date/time */}
-        <div className="flex items-start gap-2">
-          <span className={`w-2 h-2 rounded-full ${dotColor} mt-[3px] flex-shrink-0`} />
-          <div className="flex-1 min-w-0">
-            <span className="text-[11.5px] font-semibold text-neutral-700">{statusLabel}</span>
+        className="w-full flex items-start gap-2 text-left hover:bg-neutral-50 rounded-lg px-1.5 py-1.5 transition-colors">
+        <span className={`w-2.5 h-2.5 rounded-full ${dotColor} mt-[3px] flex-shrink-0`} />
+        <div className="flex-1 min-w-0">
+          <div className="text-[11px] text-neutral-600 leading-snug">
+            <span className="font-medium">{statusLabel}</span>
+            <span className="text-neutral-300 mx-1">·</span>
+            <span>{dateStr}</span>
+            {duration && <><span className="text-neutral-300 mx-1">·</span><span>{duration}</span></>}
           </div>
-          <div className="text-right flex-shrink-0">
-            <div className="text-[10px] text-neutral-400 leading-snug">{dateLine}</div>
-            <div className="text-[10px] text-neutral-400 leading-snug">{timeLine}{duration && ` · ${duration}`}</div>
-          </div>
+          {aiSummary && (
+            <div className="text-[10.5px] text-neutral-400 italic truncate mt-0.5">{aiSummary}</div>
+          )}
+          {run.error && !aiSummary && (
+            <div className="text-[10.5px] text-red-400 truncate mt-0.5">{run.error}</div>
+          )}
         </div>
-        {/* Preview line */}
-        {(aiSummary || run.error) && (
-          <div className={`mt-1.5 text-[10.5px] truncate pl-4 ${run.error && !aiSummary ? 'text-red-400' : 'text-neutral-400'}`}>
-            {aiSummary ?? run.error}
-          </div>
-        )}
       </button>
       {run.status !== 'running' && onDeleted && (
-        <div className="flex justify-end pr-1 -mt-0.5">
+        <div className="flex justify-end px-1.5 -mt-0.5">
           {confirmingDelete ? (
             <div className="flex gap-1.5">
               <button onClick={handleDelete} disabled={deleting}
@@ -966,7 +973,7 @@ function PastRunRow({ run, workflowId, onOpenThread, onDeleted }: {
             </div>
           ) : (
             <button onClick={e => { e.stopPropagation(); setConfirmingDelete(true); }}
-              className="opacity-0 group-hover:opacity-100 transition-opacity text-neutral-300 hover:text-red-400 py-0.5">
+              className="opacity-0 group-hover:opacity-100 transition-opacity text-[10px] text-neutral-300 hover:text-red-400">
               <TrashIcon className="w-3 h-3" />
             </button>
           )}
