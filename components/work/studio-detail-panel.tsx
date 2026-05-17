@@ -620,7 +620,7 @@ function TrustSourcesCard({ workflow, runs, loading }: { workflow: Workflow; run
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={() => setShowModal(false)}>
           <div className="absolute inset-0 bg-black/30 backdrop-blur-[2px]" />
-          <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-sm overflow-hidden" onClick={e => e.stopPropagation()}>
+          <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-lg overflow-hidden" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between px-5 py-4 border-b border-neutral-100">
               <div>
                 <h3 className="text-[14px] font-semibold text-neutral-900">Data sources</h3>
@@ -628,19 +628,50 @@ function TrustSourcesCard({ workflow, runs, loading }: { workflow: Workflow; run
               </div>
               <button onClick={() => setShowModal(false)} className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-neutral-100 transition-colors text-neutral-400 text-[16px] leading-none">×</button>
             </div>
-            <div className="px-5 py-4 space-y-3 max-h-80 overflow-y-auto">
+            <div className="px-5 py-2 max-h-[60vh] overflow-y-auto divide-y divide-neutral-100">
               {toolSteps.map((s, i) => {
-                const label = TOOL_LABEL_MAP[s.tool ?? ''] ?? (s.tool ?? 'Tool');
-                const detail = getSourceDetail(s);
+                const typeLabel = TOOL_LABEL_MAP[s.tool ?? ''] ?? (s.tool ?? 'Tool');
                 const Icon = TOOL_ICONS[s.tool ?? ''] ?? GlobeAltIcon;
+                const cfg = s.config;
+                const url = (cfg.feed_url as string | undefined) ?? (cfg.url as string | undefined);
+                const query = (cfg.query as string | undefined) ?? (cfg.keywords as string | undefined);
+                const topic = cfg.topic as string | undefined;
+                const since = cfg.since as string | undefined;
                 return (
-                  <div key={s.id || i} className="flex items-start gap-3">
-                    <div className="w-8 h-8 rounded-lg bg-neutral-100 flex items-center justify-center flex-shrink-0">
+                  <div key={s.id || i} className="flex items-start gap-3 py-3.5">
+                    <div className="w-8 h-8 rounded-lg bg-neutral-100 flex items-center justify-center flex-shrink-0 mt-0.5">
                       <Icon className="w-4 h-4 text-neutral-500" />
                     </div>
-                    <div className="flex-1 min-w-0 pt-0.5">
-                      <div className="text-[12.5px] font-medium text-neutral-800">{label}</div>
-                      {detail && <div className="text-[11px] text-neutral-400 truncate mt-0.5">{detail}</div>}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-[12.5px] font-semibold text-neutral-800">{s.label}</span>
+                        <span className="text-[10px] text-neutral-400 bg-neutral-100 px-1.5 py-0.5 rounded-full leading-relaxed">{typeLabel}</span>
+                      </div>
+                      {url && (
+                        <a href={url} target="_blank" rel="noopener noreferrer"
+                          className="block mt-1 text-[11px] text-indigo-500 hover:text-indigo-700 hover:underline break-all leading-snug"
+                          onClick={e => e.stopPropagation()}>
+                          {url}
+                        </a>
+                      )}
+                      {query && (
+                        <div className="mt-1">
+                          <span className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wide">Query </span>
+                          <span className="text-[11px] text-neutral-600">{query}</span>
+                        </div>
+                      )}
+                      {topic && (
+                        <div className="mt-0.5">
+                          <span className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wide">Topic </span>
+                          <span className="text-[11px] text-neutral-600">{topic}</span>
+                        </div>
+                      )}
+                      {since && (
+                        <div className="mt-0.5">
+                          <span className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wide">Since </span>
+                          <span className="text-[11px] text-neutral-600">{since}</span>
+                        </div>
+                      )}
                     </div>
                   </div>
                 );
