@@ -3,6 +3,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { requireFeature, handleWorkspaceError } from '@/lib/workspace/require-feature';
+import { sanitizeError } from '@/lib/utils/api-error';
 
 export async function GET(
   request: NextRequest,
@@ -24,7 +25,7 @@ export async function GET(
     .order('created_at', { ascending: false })
     .limit(Math.min(limit, 100));
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return NextResponse.json({ error: sanitizeError(error) }, { status: 500 });
 
   const runs = data ?? [];
   const threadIds = runs.map((r: any) => r.thread_id).filter(Boolean);

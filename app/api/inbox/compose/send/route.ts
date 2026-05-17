@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { sendGmailEmail, EmailAttachment } from '@/lib/google/gmail';
 import { sendOutlookEmail } from '@/lib/microsoft/outlook';
 import { requireFeature, handleWorkspaceError } from '@/lib/workspace/require-feature';
+import { checkRateLimit } from '@/lib/utils/rate-limit';
 
 export async function POST(request: NextRequest) {
   try {
@@ -16,6 +17,14 @@ export async function POST(request: NextRequest) {
       await requireFeature('email', supabase, user.id);
     } catch (err) {
       return handleWorkspaceError(err);
+    }
+
+    const rl = checkRateLimit(`send:${user.id}`, 10, 60_000);
+    if (!rl.allowed) {
+      return NextResponse.json(
+        { error: 'Too many requests' },
+        { status: 429, headers: { 'Retry-After': String(Math.ceil(rl.retryAfterMs / 1000)) } },
+      );
     }
 
     const body = await request.json();

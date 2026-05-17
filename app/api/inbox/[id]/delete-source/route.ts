@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { trashGmailThread } from '@/lib/google/gmail';
+import { sanitizeError } from '@/lib/utils/api-error';
 import { trashOutlookMessage } from '@/lib/microsoft/outlook';
 
 export async function POST(
@@ -74,6 +75,6 @@ export async function POST(
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('Delete source error:', error);
-    return NextResponse.json({ error: error instanceof Error ? error.message : 'Failed to delete email' }, { status: 502 });
+    return NextResponse.json({ error: sanitizeError(error) }, { status: 502 });
   }
 }

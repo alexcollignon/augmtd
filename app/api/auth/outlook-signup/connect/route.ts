@@ -1,8 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthUrl } from '@/lib/microsoft/oauth';
+import { checkRateLimit } from '@/lib/utils/rate-limit';
 
 export async function GET(request: NextRequest) {
   try {
+    const ip = request.headers.get('x-forwarded-for')?.split(',')[0].trim() ?? 'unknown';
+    const rl = checkRateLimit(`oauth:${ip}`, 10, 300_000);
+    if (!rl.allowed) {
+      return NextResponse.json(
+        { error: 'Too many requests' },
+        { status: 429, headers: { 'Retry-After': String(Math.ceil(rl.retryAfterMs / 1000)) } },
+      );
+    }
+
     const origin = request.nextUrl.origin;
 
     const state = Buffer.from(JSON.stringify({

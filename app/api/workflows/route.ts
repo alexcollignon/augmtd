@@ -8,6 +8,7 @@ import { computeNextRun } from '@/lib/workflows/schedule';
 import { DEFAULT_TRIGGER, DEFAULT_OUTPUT_CONFIG } from '@/lib/workflows/types';
 import type { WorkflowTrigger, WorkflowStep, OutputConfig, WorkflowStatus } from '@/lib/workflows/types';
 import { requireFeature, handleWorkspaceError } from '@/lib/workspace/require-feature';
+import { sanitizeError } from '@/lib/utils/api-error';
 
 export async function GET() {
   const supabase = await createClient();
@@ -18,10 +19,10 @@ export async function GET() {
   // RLS returns own workflows + shared company workflows automatically
   const { data, error } = await supabase
     .from('workflows')
-    .select('id, user_id, name, description, icon, color, status, trigger, steps, output_config, last_run_at, next_run_at, created_at, updated_at, shared_with_company, sharing_mode, company_id')
+    .select('id, user_id, name, description, icon, color, status, trigger, steps, output_config, last_run_at, next_run_at, created_at, updated_at, shared_with_company, sharing_mode, company_id, pinned')
     .order('updated_at', { ascending: false });
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return NextResponse.json({ error: sanitizeError(error) }, { status: 500 });
 
   const rows = data ?? [];
 
@@ -117,6 +118,6 @@ export async function POST(request: NextRequest) {
     .select('*')
     .single();
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return NextResponse.json({ error: sanitizeError(error) }, { status: 500 });
   return NextResponse.json({ workflow: data });
 }

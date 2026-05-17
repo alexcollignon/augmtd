@@ -10,6 +10,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient as createServerClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/server';
 import { syncEmailsForConnection } from '@/lib/email-sync/sync-emails';
+import { sanitizeError } from '@/lib/utils/api-error';
 
 export const maxDuration = 30;
 
@@ -102,6 +103,6 @@ export async function POST(request: NextRequest) {
       .update({ backfill_status: 'failed' })
       .eq('id', connectionId);
 
-    return NextResponse.json({ error: err instanceof Error ? err.message : 'Unknown' }, { status: 500 });
+    return NextResponse.json({ error: sanitizeError(err) }, { status: 500 });
   }
 }

@@ -6,6 +6,7 @@ import { buildKBContext } from '@/lib/knowledge/build-kb-context';
 import { getCalendarContext } from '@/lib/calendar/calendar-context';
 import { formatCalendarContextForChat } from '@/lib/calendar/format-calendar-context';
 import { buildUserContextBlock } from '@/lib/context/build-user-context';
+import { checkRateLimit } from '@/lib/utils/rate-limit';
 
 /** Strip HTML tags from a draft body so the AI sees clean text, not markup. */
 function stripHtmlForAI(html: string): string {
@@ -91,6 +92,14 @@ export async function POST(request: NextRequest) {
     const { data: { user }, error } = await supabase.auth.getUser();
     if (error || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const rl = checkRateLimit(`inbox-chat:${user.id}`, 20, 60_000);
+    if (!rl.allowed) {
+      return NextResponse.json(
+        { error: 'Too many requests' },
+        { status: 429, headers: { 'Retry-After': String(Math.ceil(rl.retryAfterMs / 1000)) } },
+      );
     }
 
     const { client: openaiClient, model: chatModel } = await getAIClient(user.id, 'conversation', supabase);

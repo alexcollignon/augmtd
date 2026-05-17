@@ -19,6 +19,7 @@ import { createClient as createAdminClient } from '@supabase/supabase-js';
 import { getMyWorkspace } from '@/lib/workspace/features';
 import { DEFAULT_FEATURES, type WorkspaceFeatures } from '@/lib/workspace/types';
 import { webSearchDefinition, fetchUrlDefinition, executeWebSearch, executeFetchUrl } from '@/lib/tools';
+import { checkRateLimit } from '@/lib/utils/rate-limit';
 
 export const maxDuration = 60;
 
@@ -147,6 +148,14 @@ export async function POST(
     const { data: { user }, error: userError } = await supabase.auth.getUser();
     if (userError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const rl = checkRateLimit(`chat:${user.id}`, 20, 60_000);
+    if (!rl.allowed) {
+      return NextResponse.json(
+        { error: 'Too many requests' },
+        { status: 429, headers: { 'Retry-After': String(Math.ceil(rl.retryAfterMs / 1000)) } },
+      );
     }
 
     const { data: thread, error: threadError } = await supabase

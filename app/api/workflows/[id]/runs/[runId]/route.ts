@@ -1,9 +1,31 @@
-// ─── DELETE /api/workflows/[id]/runs/[runId] — remove a queued/failed run ─────
+// ─── GET + DELETE /api/workflows/[id]/runs/[runId] ────────────────────────────
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createAdminClient } from '@supabase/supabase-js';
 import { requireFeature, handleWorkspaceError } from '@/lib/workspace/require-feature';
+import { sanitizeError } from '@/lib/utils/api-error';
+
+export async function GET(
+  _request: NextRequest,
+  { params }: { params: Promise<{ id: string; runId: string }> },
+) {
+  const { id: workflowId, runId } = await params;
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  try { await requireFeature('studio', supabase, user.id); } catch (err) { return handleWorkspaceError(err); }
+
+  const { data: run, error } = await supabase
+    .from('workflow_runs')
+    .select('id, status, step_outputs, error, started_at, completed_at, created_at')
+    .eq('id', runId)
+    .eq('workflow_id', workflowId)
+    .single();
+
+  if (error || !run) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  return NextResponse.json({ run });
+}
 
 export async function DELETE(
   _request: NextRequest,
@@ -36,6 +58,6 @@ export async function DELETE(
   );
 
   const { error } = await admin.from('workflow_runs').delete().eq('id', runId);
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return NextResponse.json({ error: sanitizeError(error) }, { status: 500 });
   return NextResponse.json({ ok: true });
 }

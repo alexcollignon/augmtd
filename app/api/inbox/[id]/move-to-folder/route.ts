@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { moveGmailThreadToLabel, createGmailLabel } from '@/lib/google/gmail';
+import { sanitizeError } from '@/lib/utils/api-error';
 import { moveOutlookMessageToFolder, createOutlookFolder } from '@/lib/microsoft/outlook';
 
 // POST /api/inbox/[id]/move-to-folder — move email to a folder/label and dismiss inbox item
@@ -96,6 +97,6 @@ export async function POST(
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('[MoveToFolder] POST error:', error);
-    return NextResponse.json({ error: error instanceof Error ? error.message : 'Failed to move email' }, { status: 502 });
+    return NextResponse.json({ error: sanitizeError(error) }, { status: 502 });
   }
 }

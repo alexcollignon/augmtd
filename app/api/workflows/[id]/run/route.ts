@@ -11,7 +11,7 @@ import { runWorkflow } from '@/lib/workflows/run-workflow';
 export const maxDuration = 300;
 
 export async function POST(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   let { id: workflowId } = await params;
@@ -19,6 +19,9 @@ export async function POST(
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   try { await requireFeature('studio', supabase, user.id); } catch (err) { return handleWorkspaceError(err); }
+
+  const body = await request.json().catch(() => ({})) as { test?: boolean };
+  const isTest = body.test === true;
 
   // Allow owner OR any company member if shared — RLS handles the access check
   const { data: wf, error: wfErr } = await supabase
@@ -71,7 +74,7 @@ export async function POST(
 
   // Fire the executor after the response is sent
   after(async () => {
-    await runWorkflow({ workflowId, runId, triggerSource: 'manual', runnerId: user.id });
+    await runWorkflow({ workflowId, runId, triggerSource: 'manual', runnerId: user.id, isTest });
   });
 
   return NextResponse.json({ run_id: runId, status: 'queued' });

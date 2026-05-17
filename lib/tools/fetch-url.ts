@@ -1,6 +1,6 @@
 // ─── Fetch URL tool (Tavily extract + direct fallback) ────────────────────────
 
-const PRIVATE_IP_RE = /^https?:\/\/(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/i;
+const PRIVATE_IP_RE = /^https?:\/\/(localhost|127\.|0\.0\.0\.0|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.)/i;
 const MAX_URLS = 5;
 const MAX_CONTENT_CHARS = 4000;
 
