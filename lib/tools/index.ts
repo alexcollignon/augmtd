@@ -13,6 +13,8 @@ export { executePtTenders } from './pt-tenders';
 export type { PtTendersConfig } from './pt-tenders';
 export { executeDeepResearch } from './deep-research';
 export type { DeepResearchConfig } from './deep-research';
+export { executeWorkflowOutput } from './workflow-output';
+export type { WorkflowOutputConfig } from './workflow-output';
 
 // OpenAI function-calling format converter — used by chat route
 export function toOpenAITool(def: {
