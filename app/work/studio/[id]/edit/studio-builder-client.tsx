@@ -1962,6 +1962,20 @@ function OutputEditor({ output, onChange }: { output: OutputConfig; onChange: (o
           </Field>
         </>
       )}
+      <Field label="Output language" hint="All AI steps in this workflow write in this language">
+        <select value={output.output_language ?? 'en'} onChange={e => onChange({ ...output, output_language: e.target.value || undefined })}
+          className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] bg-white">
+          <option value="en">English</option>
+          <option value="de">Deutsch</option>
+          <option value="pt">Português</option>
+          <option value="fr">Français</option>
+          <option value="es">Español</option>
+          <option value="it">Italiano</option>
+          <option value="nl">Nederlands</option>
+          <option value="zh">中文</option>
+          <option value="ja">日本語</option>
+        </select>
+      </Field>
       <Field label="Notifications">
         <select value={output.notification_mode}
           onChange={e => onChange({ ...output, notification_mode: e.target.value as OutputConfig['notification_mode'] })}
