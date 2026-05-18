@@ -794,7 +794,10 @@ function TrustSourcesCard({ workflow, runs, loading }: { workflow: Workflow; run
                 const topic = cfg.topic as string | undefined;
                 const since = cfg.since as string | undefined;
 
-                const stepOutput = lastSucceededRun?.step_outputs?.[idx]?.output;
+                const stepOutput = (
+                  lastSucceededRun?.step_outputs?.find(o => o.step_id === s.id)
+                  ?? lastSucceededRun?.step_outputs?.[idx]
+                )?.output;
                 const items = parseToolOutputItems(stepOutput);
 
                 return (
