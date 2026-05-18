@@ -101,13 +101,16 @@ const AVAILABLE_TOOLS = [
   { id: 'fetch_url',         label: 'Read a web page',            description: 'Reads the full current content of a URL every run.' },
   { id: 'rss_feed',          label: 'Follow a news feed or blog', description: 'Returns only new articles since your last run — no duplicates.' },
   { id: 'get_pt_tenders',    label: 'Portuguese public tenders',  description: 'Fetches contracts and announcements from Portal Base (Base.gov.pt).' },
-  { id: 'linkedin_post',     label: 'Generate LinkedIn posts',    description: 'Drafts 1–3 LinkedIn post variants from previous step content.' },
+  { id: 'linkedin_post',       label: 'Generate LinkedIn posts',    description: 'Drafts 1–3 LinkedIn post variants from previous step content.' },
+  { id: 'deep_research',       label: 'Deep research',              description: 'Takes topics from the previous step and researches each one in depth using AI + web search. Returns cited findings.' },
+  { id: 'get_workflow_output', label: 'Read workflow output',       description: 'Reads the output of another workflow and passes it as context to the next step. Compose workflows together.' },
 ];
 
 const TOOL_GROUPS = [
   { label: 'Your workspace', ids: ['get_urgent_emails', 'get_calendar', 'read_kb_file'] },
-  { label: 'Web & research', ids: ['web_search', 'fetch_url', 'rss_feed', 'get_pt_tenders'] },
+  { label: 'Web & research', ids: ['web_search', 'fetch_url', 'rss_feed', 'get_pt_tenders', 'deep_research'] },
   { label: 'Social media',   ids: ['linkedin_post'] },
+  { label: 'Pipeline',       ids: ['get_workflow_output'] },
 ];
 
 const TOOL_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -118,8 +121,10 @@ const TOOL_ICONS: Record<string, React.ComponentType<{ className?: string }>> = 
   fetch_url:         GlobeAltIcon,
   browser_fetch:     GlobeAltIcon,
   rss_feed:          NewspaperIcon,
-  linkedin_post:     MegaphoneIcon,
-  get_pt_tenders:    BuildingOfficeIcon,
+  linkedin_post:        MegaphoneIcon,
+  get_pt_tenders:       BuildingOfficeIcon,
+  deep_research:        MagnifyingGlassIcon,
+  get_workflow_output:  ArrowPathIcon,
 };
 
 const TOOL_STYLES: Record<string, { bg: string; logo?: string }> = {
@@ -130,8 +135,10 @@ const TOOL_STYLES: Record<string, { bg: string; logo?: string }> = {
   fetch_url:         { bg: 'bg-sky-500' },
   browser_fetch:     { bg: 'bg-sky-500' },
   rss_feed:          { bg: 'bg-orange-500' },
-  linkedin_post:     { bg: 'bg-[#0A66C2]' },
-  get_pt_tenders:    { bg: 'bg-emerald-600' },
+  linkedin_post:        { bg: 'bg-[#0A66C2]' },
+  get_pt_tenders:       { bg: 'bg-emerald-600' },
+  deep_research:        { bg: 'bg-indigo-600' },
+  get_workflow_output:  { bg: 'bg-teal-500' },
 };
 
 const STEP_TYPE_COLORS = {
@@ -434,6 +441,7 @@ export function StudioBuilderClient({ initialWorkflow, agents }: Props) {
                   onEnhance={(prompt, label, ctx) => handleEnhanceStep(step.id, prompt, label, ctx)}
                   onRemove={() => removeStep(step.id)}
                   onMove={d => moveStep(step.id, d)}
+                  currentWorkflowId={workflow.id}
                 />
               );
             })()}
@@ -1007,7 +1015,7 @@ function IdentitySection({
 }
 
 function StepConfigSection({
-  step, index, total, agents, isEnhancing, isPending, onUpdate, onEnhance, onRemove, onMove,
+  step, index, total, agents, isEnhancing, isPending, onUpdate, onEnhance, onRemove, onMove, currentWorkflowId,
 }: {
   step: WorkflowStep; index: number; total: number; agents: AgentOption[];
   isEnhancing?: boolean; isPending?: boolean;
@@ -1015,6 +1023,7 @@ function StepConfigSection({
   onEnhance?: EnhanceFn;
   onRemove?: () => void;
   onMove?: (d: -1 | 1) => void;
+  currentWorkflowId?: string;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -1045,7 +1054,7 @@ function StepConfigSection({
             type="text"
             value={step.label}
             onChange={e => onUpdate({ label: e.target.value })}
-            className="text-[18px] font-semibold text-neutral-900 bg-transparent focus:outline-none w-full placeholder-neutral-300 leading-tight"
+            className="text-[18px] font-semibold text-neutral-900 bg-transparent w-full placeholder-neutral-300 leading-tight border-b border-transparent hover:border-neutral-300 focus:border-indigo-400 focus:outline-none transition-colors"
             placeholder="Step name"
           />
         </div>
@@ -1091,7 +1100,7 @@ function StepConfigSection({
 
       {step.type === 'tool' && (
         <ToolStepFields step={step as ToolStep} onUpdate={onUpdate as (p: Partial<ToolStep>) => void}
-          isEnhancing={isEnhancing} isPending={isPending} onEnhance={onEnhance} />
+          isEnhancing={isEnhancing} isPending={isPending} onEnhance={onEnhance} currentWorkflowId={currentWorkflowId} />
       )}
       {step.type === 'ai' && (
         <AIStepFields step={step as AIStep} onUpdate={onUpdate as (p: Partial<AIStep>) => void}
@@ -1552,9 +1561,10 @@ function KbFilePickerField({ value, onChange }: { value: string; onChange: (id: 
 function InlineToolGrid({ value, onChange }: { value: string; onChange: (toolId: string) => void }) {
   const displayId = value === 'browser_fetch' ? 'fetch_url' : value;
   const groups = [
-    { label: 'Web & Research',  ids: ['web_search', 'fetch_url', 'rss_feed', 'get_pt_tenders'] },
+    { label: 'Web & Research',  ids: ['web_search', 'fetch_url', 'rss_feed', 'get_pt_tenders', 'deep_research'] },
     { label: 'Your Workspace',  ids: ['get_urgent_emails', 'get_calendar', 'read_kb_file'] },
     { label: 'Social & Output', ids: ['linkedin_post'] },
+    { label: 'Pipeline',        ids: ['get_workflow_output'] },
   ];
   return (
     <div className="space-y-3">
@@ -1590,9 +1600,10 @@ function InlineToolGrid({ value, onChange }: { value: string; onChange: (toolId:
   );
 }
 
-function ToolStepFields({ step, onUpdate, isEnhancing, isPending, onEnhance }: {
+function ToolStepFields({ step, onUpdate, isEnhancing, isPending, onEnhance, currentWorkflowId }: {
   step: ToolStep; onUpdate: (p: Partial<ToolStep>) => void;
   isEnhancing?: boolean; isPending?: boolean; onEnhance?: EnhanceFn;
+  currentWorkflowId?: string;
 }) {
   const query = (step.config.query as string) ?? '';
   const isFetchBased = step.tool === 'fetch_url' || step.tool === 'browser_fetch';
@@ -1699,6 +1710,10 @@ function ToolStepFields({ step, onUpdate, isEnhancing, isPending, onEnhance }: {
       )}
       {step.tool === 'linkedin_post' && <LinkedInPostFields step={step} onUpdate={onUpdate} />}
       {step.tool === 'get_pt_tenders' && <PtTendersFields step={step} onUpdate={onUpdate} />}
+      {step.tool === 'deep_research' && <DeepResearchFields step={step} onUpdate={onUpdate} />}
+      {step.tool === 'get_workflow_output' && (
+        <WorkflowOutputFields step={step} onUpdate={onUpdate} currentWorkflowId={currentWorkflowId ?? ''} />
+      )}
     </>
   );
 }
@@ -1736,6 +1751,168 @@ function PtTendersFields({ step, onUpdate }: { step: ToolStep; onUpdate: (p: Par
           onChange={e => onUpdate({ config: { ...step.config, min_value: e.target.value ? Number(e.target.value) : undefined } })}
           placeholder="e.g. 50000" min={0}
           className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px]" />
+      </Field>
+    </>
+  );
+}
+
+function DeepResearchFields({ step, onUpdate }: { step: ToolStep; onUpdate: (p: Partial<ToolStep>) => void }) {
+  const queriesRaw = Array.isArray(step.config.queries)
+    ? (step.config.queries as string[]).join('\n')
+    : (step.config.queries as string) ?? '';
+
+  return (
+    <>
+      <Field label="Research focus" hint="What makes a topic relevant for this workflow">
+        <input
+          type="text"
+          value={(step.config.focus as string) ?? ''}
+          onChange={e => onUpdate({ config: { ...step.config, focus: e.target.value } })}
+          placeholder="e.g. German-Portuguese bilateral business and investment"
+          className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400"
+        />
+      </Field>
+      <Field label="Explicit queries" hint="One per line. Leave blank to extract topics automatically from the previous step.">
+        <textarea
+          value={queriesRaw}
+          onChange={e => {
+            const lines = e.target.value.split('\n').map(s => s.trim()).filter(Boolean);
+            onUpdate({ config: { ...step.config, queries: lines.length > 0 ? lines : undefined } });
+          }}
+          placeholder={'OpenAI competitor pricing changes\nAnthropic model releases this week'}
+          rows={3}
+          className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] resize-y font-mono focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400"
+        />
+      </Field>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Max topics">
+          <input type="number" min={1} max={10}
+            value={(step.config.max_topics as number) ?? 6}
+            onChange={e => onUpdate({ config: { ...step.config, max_topics: Number(e.target.value) } })}
+            className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px]" />
+        </Field>
+        <Field label="Searches per topic">
+          <input type="number" min={1} max={5}
+            value={(step.config.max_searches as number) ?? 3}
+            onChange={e => onUpdate({ config: { ...step.config, max_searches: Number(e.target.value) } })}
+            className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px]" />
+        </Field>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Output language">
+          <select value={(step.config.language as string) ?? 'en'}
+            onChange={e => onUpdate({ config: { ...step.config, language: e.target.value } })}
+            className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] bg-white">
+            <option value="en">English</option>
+            <option value="de">Deutsch</option>
+            <option value="pt">Português</option>
+            <option value="fr">Français</option>
+            <option value="es">Español</option>
+            <option value="it">Italiano</option>
+            <option value="nl">Nederlands</option>
+          </select>
+        </Field>
+        <Field label="Model">
+          <select value={(step.config.model as string) ?? 'fast'}
+            onChange={e => onUpdate({ config: { ...step.config, model: e.target.value } })}
+            className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] bg-white">
+            <option value="fast">Fast (Haiku)</option>
+            <option value="thorough">Thorough (Sonnet)</option>
+          </select>
+        </Field>
+      </div>
+      <p className="text-[11px] text-neutral-400 leading-relaxed">
+        Runs on AWS Bedrock (EU) — data stays within AWS infrastructure regardless of your account tier.
+      </p>
+    </>
+  );
+}
+
+function WorkflowOutputFields({
+  step, onUpdate, currentWorkflowId,
+}: {
+  step: ToolStep;
+  onUpdate: (p: Partial<ToolStep>) => void;
+  currentWorkflowId: string;
+}) {
+  const [workflows, setWorkflows] = useState<Array<{ id: string; name: string }>>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch('/api/workflows')
+      .then(r => r.json())
+      .then(d => setWorkflows((d.workflows ?? []).filter((w: { id: string }) => w.id !== currentWorkflowId)))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [currentWorkflowId]);
+
+  const sourceId = (step.config.source_workflow_id as string) ?? '';
+  const runCount = (step.config.run_count as number) ?? 1;
+  const outputOnly = step.config.output_only !== false;
+
+  return (
+    <>
+      <Field label="Source workflow">
+        <select
+          value={sourceId}
+          onChange={e => onUpdate({ config: { ...step.config, source_workflow_id: e.target.value } })}
+          className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-[13px] bg-white focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400"
+        >
+          <option value="">
+            {loading ? 'Loading…' : workflows.length === 0 ? 'No other workflows yet' : 'Select a workflow…'}
+          </option>
+          {workflows.map(w => (
+            <option key={w.id} value={w.id}>{w.name}</option>
+          ))}
+        </select>
+      </Field>
+
+      <Field label="What to read">
+        <div className="grid grid-cols-2 gap-2">
+          {([
+            { value: true,  label: 'Final output', hint: 'The finished result of the last step' },
+            { value: false, label: 'All step data', hint: 'Raw data from every step (RSS, searches, etc.)' },
+          ] as { value: boolean; label: string; hint: string }[]).map(opt => (
+            <button
+              key={String(opt.value)}
+              type="button"
+              onClick={() => onUpdate({ config: { ...step.config, output_only: opt.value } })}
+              className={`flex flex-col gap-0.5 px-3 py-2.5 rounded-lg border text-left transition-all ${
+                outputOnly === opt.value
+                  ? 'bg-indigo-50 border-indigo-200'
+                  : 'bg-white border-neutral-200 hover:border-neutral-300'
+              }`}
+            >
+              <span className={`text-[12px] font-semibold ${outputOnly === opt.value ? 'text-indigo-800' : 'text-neutral-700'}`}>
+                {opt.label}
+              </span>
+              <span className="text-[11px] text-neutral-400 leading-snug">{opt.hint}</span>
+            </button>
+          ))}
+        </div>
+      </Field>
+
+      <Field label="How many runs">
+        <div className="grid grid-cols-3 gap-2">
+          {([
+            { value: 1, label: 'Latest only' },
+            { value: 3, label: 'Last 3' },
+            { value: 7, label: 'Last 7' },
+          ] as { value: number; label: string }[]).map(opt => (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => onUpdate({ config: { ...step.config, run_count: opt.value } })}
+              className={`px-2 py-2 rounded-lg border text-[12px] font-medium transition-all ${
+                runCount === opt.value
+                  ? 'bg-indigo-50 border-indigo-200 text-indigo-800'
+                  : 'bg-white border-neutral-200 text-neutral-600 hover:border-neutral-300'
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
       </Field>
     </>
   );

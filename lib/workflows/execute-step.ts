@@ -11,7 +11,7 @@ import { buildInboxSnapshot } from '@/lib/inbox/chat-context';
 import { getCalendarContext } from '@/lib/calendar/calendar-context';
 import { formatCalendarContextForChat } from '@/lib/calendar/format-calendar-context';
 import { buildKBContext } from '@/lib/knowledge/build-kb-context';
-import { executeWebSearch, executeFetchUrl, executeRssFeed, executeLinkedInPost, executeBrowserFetch, executePtTenders, executeDeepResearch } from '@/lib/tools';
+import { executeWebSearch, executeFetchUrl, executeRssFeed, executeLinkedInPost, executeBrowserFetch, executePtTenders, executeDeepResearch, executeWorkflowOutput } from '@/lib/tools';
 import type { WorkflowStep, StepOutput, ToolStep, AIStep, AgentStep } from './types';
 
 export interface StepContext {
@@ -21,6 +21,8 @@ export interface StepContext {
   workflowName: string;
   lastRunAt?: string | null;  // workflow.last_run_at — used by rss_feed since:'last_run'
   outputLanguage?: string;    // BCP-47 from output_config.output_language — injected into AI steps
+  workflowId?: string;        // current workflow id — used by get_workflow_output to prevent self-reference
+  runnerId?: string;          // user who triggered this run (may differ from userId for shared runs)
 }
 
 // ── Public entrypoint ─────────────────────────────────────────────────────────
@@ -94,6 +96,8 @@ async function executeToolStep(step: ToolStep, ctx: StepContext): Promise<string
       if (!drConfig.language && ctx.outputLanguage) drConfig.language = ctx.outputLanguage;
       return await executeDeepResearch(drConfig, formatPreviousOutputs(ctx.previousOutputs));
     }
+    case 'get_workflow_output':
+      return await executeWorkflowOutput(step.config, ctx);
     default:
       throw new Error(`Unknown tool: ${step.tool}`);
   }

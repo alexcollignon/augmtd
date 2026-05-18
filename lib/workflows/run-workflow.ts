@@ -278,6 +278,8 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
   for (const step of steps) {
     const out = await executeStep(step, {
       userId: workflow.user_id,
+      runnerId,
+      workflowId: workflow.id,
       supabase: admin,
       previousOutputs: stepOutputs,
       workflowName: workflow.name,
