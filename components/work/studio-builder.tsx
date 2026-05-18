@@ -101,11 +101,12 @@ const AVAILABLE_TOOLS = [
   { id: 'rss_feed',          label: 'Follow a news feed or blog', description: 'Returns only new articles since your last run — no duplicates.' },
   { id: 'get_pt_tenders',    label: 'Portuguese public tenders',  description: 'Fetches contracts and announcements from Portal Base (Base.gov.pt).' },
   { id: 'linkedin_post',     label: 'Generate LinkedIn posts',    description: 'Drafts 1–3 LinkedIn post variants from previous step content.' },
+  { id: 'deep_research',    label: 'Deep research',              description: 'Takes topics from the previous step and researches each one in depth using AI + web search. Returns cited findings.' },
 ];
 
 const TOOL_GROUPS = [
   { label: 'Your workspace', ids: ['get_urgent_emails', 'get_calendar', 'read_kb_file'] },
-  { label: 'Web & research', ids: ['web_search', 'fetch_url', 'rss_feed', 'get_pt_tenders'] },
+  { label: 'Web & research', ids: ['web_search', 'fetch_url', 'rss_feed', 'get_pt_tenders', 'deep_research'] },
   { label: 'Social media',   ids: ['linkedin_post'] },
 ];
 
@@ -119,6 +120,7 @@ const TOOL_ICONS: Record<string, React.ComponentType<{ className?: string }>> = 
   rss_feed:          NewspaperIcon,
   linkedin_post:     MegaphoneIcon,
   get_pt_tenders:    BuildingOfficeIcon,
+  deep_research:     MagnifyingGlassIcon,
 };
 
 const TOOL_STYLES: Record<string, { bg: string; logo?: string }> = {
@@ -131,6 +133,7 @@ const TOOL_STYLES: Record<string, { bg: string; logo?: string }> = {
   rss_feed:          { bg: 'bg-orange-500' },
   linkedin_post:     { bg: 'bg-[#0A66C2]' },
   get_pt_tenders:    { bg: 'bg-emerald-600' },
+  deep_research:     { bg: 'bg-indigo-600' },
 };
 
 const STEP_TYPE_COLORS = {
@@ -1555,7 +1558,7 @@ function KbFilePickerField({ value, onChange }: { value: string; onChange: (id: 
 function InlineToolGrid({ value, onChange }: { value: string; onChange: (toolId: string) => void }) {
   const displayId = value === 'browser_fetch' ? 'fetch_url' : value;
   const groups = [
-    { label: 'Web & Research',  ids: ['web_search', 'fetch_url', 'rss_feed', 'get_pt_tenders'] },
+    { label: 'Web & Research',  ids: ['web_search', 'fetch_url', 'rss_feed', 'get_pt_tenders', 'deep_research'] },
     { label: 'Your Workspace',  ids: ['get_urgent_emails', 'get_calendar', 'read_kb_file'] },
     { label: 'Social & Output', ids: ['linkedin_post'] },
   ];
@@ -1698,6 +1701,7 @@ function ToolStepFields({ step, onUpdate, isEnhancing, isPending, onEnhance }: {
       )}
       {step.tool === 'linkedin_post' && <LinkedInPostFields step={step} onUpdate={onUpdate} />}
       {step.tool === 'get_pt_tenders' && <PtTendersFields step={step} onUpdate={onUpdate} />}
+      {step.tool === 'deep_research' && <DeepResearchFields step={step} onUpdate={onUpdate} />}
     </>
   );
 }
@@ -1734,6 +1738,88 @@ function PtTendersFields({ step, onUpdate }: { step: ToolStep; onUpdate: (p: Par
           placeholder="e.g. 50000" min={0}
           className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px]" />
       </Field>
+    </>
+  );
+}
+
+function DeepResearchFields({ step, onUpdate }: { step: ToolStep; onUpdate: (p: Partial<ToolStep>) => void }) {
+  const queriesRaw = Array.isArray(step.config.queries)
+    ? (step.config.queries as string[]).join('\n')
+    : (step.config.queries as string) ?? '';
+
+  return (
+    <>
+      <Field label="Research focus" hint="What makes a topic relevant for this workflow">
+        <input
+          type="text"
+          value={(step.config.focus as string) ?? ''}
+          onChange={e => onUpdate({ config: { ...step.config, focus: e.target.value } })}
+          placeholder="e.g. German-Portuguese bilateral business and investment"
+          className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400"
+        />
+      </Field>
+      <Field label="Explicit queries" hint="One per line. Leave blank to extract topics from the previous step automatically.">
+        <textarea
+          value={queriesRaw}
+          onChange={e => {
+            const lines = e.target.value.split('\n').map(s => s.trim()).filter(Boolean);
+            onUpdate({ config: { ...step.config, queries: lines.length > 0 ? lines : undefined } });
+          }}
+          placeholder={'OpenAI competitor pricing changes\nAnthropic model releases this week'}
+          rows={3}
+          className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] resize-y font-mono focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400"
+        />
+      </Field>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Max topics">
+          <input
+            type="number"
+            min={1} max={10}
+            value={(step.config.max_topics as number) ?? 6}
+            onChange={e => onUpdate({ config: { ...step.config, max_topics: Number(e.target.value) } })}
+            className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px]"
+          />
+        </Field>
+        <Field label="Searches per topic">
+          <input
+            type="number"
+            min={1} max={5}
+            value={(step.config.max_searches as number) ?? 3}
+            onChange={e => onUpdate({ config: { ...step.config, max_searches: Number(e.target.value) } })}
+            className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px]"
+          />
+        </Field>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Output language">
+          <select
+            value={(step.config.language as string) ?? 'en'}
+            onChange={e => onUpdate({ config: { ...step.config, language: e.target.value } })}
+            className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] bg-white"
+          >
+            <option value="en">English</option>
+            <option value="de">Deutsch</option>
+            <option value="pt">Português</option>
+            <option value="fr">Français</option>
+            <option value="es">Español</option>
+            <option value="it">Italiano</option>
+            <option value="nl">Nederlands</option>
+          </select>
+        </Field>
+        <Field label="Model">
+          <select
+            value={(step.config.model as string) ?? 'fast'}
+            onChange={e => onUpdate({ config: { ...step.config, model: e.target.value } })}
+            className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] bg-white"
+          >
+            <option value="fast">Fast (Haiku)</option>
+            <option value="thorough">Thorough (Sonnet)</option>
+          </select>
+        </Field>
+      </div>
+      <p className="text-[11px] text-neutral-400 leading-relaxed">
+        Runs on AWS Bedrock (EU) — data stays within AWS infrastructure regardless of your account tier.
+      </p>
     </>
   );
 }
@@ -1951,6 +2037,20 @@ function OutputEditor({ output, onChange }: { output: OutputConfig; onChange: (o
           </Field>
         </>
       )}
+      <Field label="Output language" hint="All AI steps in this workflow write in this language">
+        <select value={output.output_language ?? 'en'} onChange={e => onChange({ ...output, output_language: e.target.value || undefined })}
+          className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] bg-white">
+          <option value="en">English</option>
+          <option value="de">Deutsch</option>
+          <option value="pt">Português</option>
+          <option value="fr">Français</option>
+          <option value="es">Español</option>
+          <option value="it">Italiano</option>
+          <option value="nl">Nederlands</option>
+          <option value="zh">中文</option>
+          <option value="ja">日本語</option>
+        </select>
+      </Field>
       <Field label="Notifications">
         <select value={output.notification_mode} onChange={e => onChange({ ...output, notification_mode: e.target.value as OutputConfig['notification_mode'] })}
           className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] bg-white">

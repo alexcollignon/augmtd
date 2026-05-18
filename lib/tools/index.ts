@@ -11,6 +11,8 @@ export type { LinkedInPostConfig } from './linkedin-post';
 export { executeBrowserFetch } from './browser-fetch';
 export { executePtTenders } from './pt-tenders';
 export type { PtTendersConfig } from './pt-tenders';
+export { executeDeepResearch } from './deep-research';
+export type { DeepResearchConfig } from './deep-research';
 
 // OpenAI function-calling format converter — used by chat route
 export function toOpenAITool(def: {

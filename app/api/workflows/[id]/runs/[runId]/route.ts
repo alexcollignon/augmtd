@@ -59,5 +59,19 @@ export async function DELETE(
 
   const { error } = await admin.from('workflow_runs').delete().eq('id', runId);
   if (error) return NextResponse.json({ error: sanitizeError(error) }, { status: 500 });
+
+  // If no runs remain, reset last_run_at so the next run fetches a full 7-day window
+  const { count } = await admin
+    .from('workflow_runs')
+    .select('id', { count: 'exact', head: true })
+    .eq('workflow_id', workflowId);
+
+  if (count === 0) {
+    await admin
+      .from('workflows')
+      .update({ last_run_at: null })
+      .eq('id', workflowId);
+  }
+
   return NextResponse.json({ ok: true });
 }

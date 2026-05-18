@@ -11,7 +11,7 @@ import { buildInboxSnapshot } from '@/lib/inbox/chat-context';
 import { getCalendarContext } from '@/lib/calendar/calendar-context';
 import { formatCalendarContextForChat } from '@/lib/calendar/format-calendar-context';
 import { buildKBContext } from '@/lib/knowledge/build-kb-context';
-import { executeWebSearch, executeFetchUrl, executeRssFeed, executeLinkedInPost, executeBrowserFetch, executePtTenders } from '@/lib/tools';
+import { executeWebSearch, executeFetchUrl, executeRssFeed, executeLinkedInPost, executeBrowserFetch, executePtTenders, executeDeepResearch } from '@/lib/tools';
 import type { WorkflowStep, StepOutput, ToolStep, AIStep, AgentStep } from './types';
 
 export interface StepContext {
@@ -20,6 +20,7 @@ export interface StepContext {
   previousOutputs: StepOutput[];
   workflowName: string;
   lastRunAt?: string | null;  // workflow.last_run_at — used by rss_feed since:'last_run'
+  outputLanguage?: string;    // BCP-47 from output_config.output_language — injected into AI steps
 }
 
 // ── Public entrypoint ─────────────────────────────────────────────────────────
@@ -87,6 +88,12 @@ async function executeToolStep(step: ToolStep, ctx: StepContext): Promise<string
     });
     case 'browser_fetch':     return await executeBrowserFetch(step.config);
     case 'get_pt_tenders':    return await executePtTenders(step.config);
+    case 'deep_research': {
+      const drConfig = { ...(step.config as unknown as Parameters<typeof executeDeepResearch>[0]) };
+      // Inherit output language if not explicitly set on the step
+      if (!drConfig.language && ctx.outputLanguage) drConfig.language = ctx.outputLanguage;
+      return await executeDeepResearch(drConfig, formatPreviousOutputs(ctx.previousOutputs));
+    }
     default:
       throw new Error(`Unknown tool: ${step.tool}`);
   }
@@ -147,9 +154,14 @@ async function executeAIStep(step: AIStep, ctx: StepContext): Promise<string> {
     step.output_format === 'markdown' ? '\n\nRespond in clean, scannable markdown.' :
                                         '';
 
+  const langInstruction = ctx.outputLanguage && ctx.outputLanguage !== 'en'
+    ? ` Write your response in ${getOutputLanguageName(ctx.outputLanguage)}.`
+    : '';
+
   let systemPrompt =
     `You are executing one step of an automated workflow named "${ctx.workflowName}". ` +
-    `Use the previous step outputs below as your source material and produce the requested transformation.`;
+    `Use the previous step outputs below as your source material and produce the requested transformation.` +
+    langInstruction;
 
   if (step.kb_file_ids && step.kb_file_ids.length > 0) {
     try {
@@ -178,11 +190,27 @@ async function executeAIStep(step: AIStep, ctx: StepContext): Promise<string> {
       { role: 'user',   content: userPrompt },
     ],
     temperature: 0.3,
-    max_tokens: 4000,
+    max_tokens: step.model_tier === 'reasoning' ? 12000 : 4000,
     ...(step.output_format === 'json' ? { response_format: { type: 'json_object' } } : {}),
   });
 
   return res.choices[0]?.message?.content?.trim() ?? '';
+}
+
+// ── Language helper ───────────────────────────────────────────────────────────
+
+function getOutputLanguageName(code: string): string {
+  const map: Record<string, string> = {
+    de: 'German (Deutsch)',
+    pt: 'Portuguese (Português)',
+    fr: 'French (Français)',
+    es: 'Spanish (Español)',
+    it: 'Italian (Italiano)',
+    nl: 'Dutch (Nederlands)',
+    zh: 'Chinese (中文)',
+    ja: 'Japanese (日本語)',
+  };
+  return map[code] ?? code;
 }
 
 // ── Agent step ────────────────────────────────────────────────────────────────

@@ -282,6 +282,7 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
       previousOutputs: stepOutputs,
       workflowName: workflow.name,
       lastRunAt: workflow.last_run_at,
+      outputLanguage: workflow.output_config.output_language,
     });
     stepOutputs.push(out);
     if (out.error) {

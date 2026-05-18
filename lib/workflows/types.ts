@@ -76,6 +76,7 @@ export interface OutputConfig {
   title_template?: string;        // e.g. "AHK Briefing — {{date}}"
   notification_mode: NotificationMode;
   notification_email_ids?: string[]; // connection IDs to send email digest to; empty = none selected yet
+  output_language?: string;          // BCP-47 code — injected into all AI steps; default 'en'
 }
 
 // ── Workflow record ────────────────────────────────────────────────────────────
