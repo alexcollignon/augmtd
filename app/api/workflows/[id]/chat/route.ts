@@ -29,7 +29,7 @@ Patch rules:
 - For step changes, return the COMPLETE updated "steps" array (preserve all existing steps with their ids unless removing one)
 - Step ids must be preserved. New steps get an id of "step_" + 8 random alphanumeric chars
 - For name, description, trigger, output_config — return only the changed keys
-- Do not hallucinate tool names; use only: web_search, fetch_url, browser_fetch, rss_feed, get_emails, get_calendar, search_knowledge, browser_navigate, linkedin_post
+- Available tool names: web_search, fetch_url, browser_fetch, rss_feed, get_urgent_emails, get_calendar, read_kb_file, linkedin_post, get_pt_tenders, deep_research, get_workflow_output
 - Keep reply concise (1-2 sentences)`;
 
 export async function POST(
@@ -46,11 +46,18 @@ export async function POST(
   const messages: ChatMessage[] = (body.messages ?? []).slice(-20); // last 20 turns
   const workflow: Partial<Workflow> = body.workflow ?? {};
 
+  // Summarise steps to avoid blowing the context window with long prompts
+  const stepSummaries = (workflow.steps ?? []).map((s, i: number) => {
+    const r = s as unknown as Record<string, unknown>;
+    if (r.type === 'tool') return { index: i + 1, id: r.id, type: 'tool', label: r.label, tool: r.tool };
+    if (r.type === 'ai')   return { index: i + 1, id: r.id, type: 'ai',   label: r.label, model_tier: r.model_tier, prompt_preview: String(r.prompt ?? '').slice(0, 120) + '…' };
+    return { index: i + 1, id: r.id, type: r.type, label: r.label };
+  });
   const contextMsg = `Current workflow:\n${JSON.stringify({
     name: workflow.name,
     description: workflow.description,
     trigger: workflow.trigger,
-    steps: workflow.steps,
+    steps: stepSummaries,
     output_config: workflow.output_config,
   }, null, 2)}`;
 
@@ -67,14 +74,26 @@ export async function POST(
       max_tokens: 2000,
     });
 
-    const raw = (response.choices[0]?.message?.content ?? '{}').trim();
-    // Strip markdown code fences if model wraps response anyway
-    const clean = raw.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
+    const raw = (response.choices[0]?.message?.content ?? '').trim();
+
     let result: { reply?: string; patch?: Partial<Workflow> } = {};
-    try { result = JSON.parse(clean); } catch { /* fall through to default reply */ }
+    // 1. Strip markdown fences
+    let clean = raw.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim();
+    // 2. Try direct parse
+    try {
+      result = JSON.parse(clean);
+    } catch {
+      // 3. Extract first {...} block (handles extra prose before/after JSON)
+      const match = clean.match(/\{[\s\S]*\}/);
+      if (match) {
+        try { result = JSON.parse(match[0]); } catch { /* still failed */ }
+      }
+    }
+    // 4. If still no reply, use raw text as the reply (better than a hardcoded error)
+    const reply = result.reply ?? (raw.length > 0 ? raw.replace(/^```[\s\S]*?```\n?/g, '').trim() : "I couldn't process that. Try rephrasing.");
 
     return NextResponse.json({
-      reply: result.reply ?? "I couldn't process that. Try rephrasing.",
+      reply,
       patch: result.patch ?? null,
     });
   } catch {

@@ -318,13 +318,21 @@ export async function POST(
       contextParts.push(prefetchedContext);
     }
 
-    // Existing artifacts — inject so AI knows what has already been produced
-    const existingArtifacts = ((thread as any).artifacts || []) as Array<{ id: string; title: string; type: string }>;
+    // Existing artifacts — inject title + full content so AI can reference and edit them
+    const existingArtifacts = ((thread as any).artifacts || []) as DocumentArtifact[];
     if (existingArtifacts.length > 0) {
+      const artifactBlocks = existingArtifacts.map(a => {
+        const raw = a.type === 'document' && a.content
+          ? serializeDocContent(a.content as import('@/lib/types/inbox').DocContent)
+          : null;
+        const docContent = raw && raw.length > 12000 ? raw.slice(0, 12000) + '\n\n[...document truncated for context...]' : raw;
+        return docContent
+          ? `DOCUMENT: "${a.title}"\n---\n${docContent}\n---`
+          : `DOCUMENT: "${a.title}" (${a.type}) — no preview available`;
+      }).join('\n\n');
       contextParts.push(
-        'DOCUMENTS ALREADY CREATED IN THIS CONVERSATION:\n' +
-        existingArtifacts.map(a => `- "${a.title}" (${a.type})`).join('\n') +
-        '\n\nIf the user refers to any of these, treat it as iteration — ask what to change. Do not start a new document flow.'
+        'DOCUMENTS ALREADY CREATED IN THIS CONVERSATION:\n\n' + artifactBlocks +
+        '\n\nWhen the user asks to edit or update any of these documents, call generate_document immediately — do NOT ask clarifying questions about content you can already see above.'
       );
     }
 
@@ -514,6 +522,7 @@ export async function POST(
       supabase,
       adminClient,
       thread,
+      existingArtifacts: ((thread as any).artifacts || []) as DocumentArtifact[],
       userContextBlock: userContextBlock || undefined,
       kbSources: [] as Array<{ id: string; title: string; type: 'kb' }>,
       // Pre-populate with @mention KB content so generate_document is grounded
@@ -1118,6 +1127,7 @@ interface RunContext {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   adminClient: any;
   thread: { user_attachments?: unknown };
+  existingArtifacts: DocumentArtifact[];
   userContextBlock?: string;
   /** Accumulates real KB file data from search_knowledge_base calls — used to enrich request_clarification sources */
   kbSources: Array<{ id: string; title: string; type: 'kb' }>;
@@ -1143,6 +1153,18 @@ function validateClarificationInput(input: Record<string, unknown>): string | nu
     return 'The "question" field must be a declarative statement, not a question. Remove the question mark and rewrite as a confident declaration of what you will create. Example: "I\'ll create a pricing summary using the three documents I found."';
   }
   return null;
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function serializeDocContent(doc: import('@/lib/types/inbox').DocContent): string {
+  const lines: string[] = [doc.title];
+  if (doc.subtitle) lines.push(doc.subtitle);
+  for (const section of doc.sections) {
+    lines.push(`\n## ${section.heading}`);
+    for (const p of section.paragraphs) lines.push(p);
+  }
+  return lines.join('\n\n');
 }
 
 // ── Tool execution ────────────────────────────────────────────────────────────
@@ -1445,10 +1467,26 @@ async function executeChatTool(
 
       const toolRegistry = await buildToolRegistry(ctx.userId, ctx.supabase);
 
-      // Prepend KB text so the generator model is grounded in the actual source documents
-      const groundedContext = ctx.kbContext
-        ? `SOURCE DOCUMENTS (from knowledge base — use this content as the primary source):\n\n${ctx.kbContext}\n\n---\n\nINSTRUCTIONS: ${instructions}`
-        : instructions;
+      // If there's an existing document artifact, serialise its content so the
+      // generator modifies it rather than replacing it from scratch.
+      const existingDoc = ctx.existingArtifacts
+        .filter(a => a.type === 'document' && a.content)
+        .at(-1); // most recent document
+      const existingDocText = existingDoc?.content
+        ? serializeDocContent(existingDoc.content as import('@/lib/types/inbox').DocContent)
+        : null;
+
+      // Build grounded context: existing doc first (if any), then KB sources, then instructions
+      let groundedContext: string;
+      if (existingDocText) {
+        groundedContext =
+          `EXISTING DOCUMENT TO MODIFY — preserve all sections unless explicitly told to change or remove them:\n\n${existingDocText}\n\n---\n\nREQUESTED CHANGES: ${instructions}` +
+          (ctx.kbContext ? `\n\nADDITIONAL SOURCE MATERIAL:\n${ctx.kbContext}` : '');
+      } else {
+        groundedContext = ctx.kbContext
+          ? `SOURCE DOCUMENTS (from knowledge base — use this content as the primary source):\n\n${ctx.kbContext}\n\n---\n\nINSTRUCTIONS: ${instructions}`
+          : instructions;
+      }
 
       const pipelineResult = await runFullPipeline({
         userId: ctx.userId,
@@ -1469,7 +1507,13 @@ async function executeChatTool(
       }
 
       const artifact = newArtifacts[0];
-      artifact.title = instructions.slice(0, 60);
+      // Inherit parent title so version grouping works; tag parent_id for chain traversal
+      if (existingDoc) {
+        artifact.title = existingDoc.title;
+        artifact.parent_id = existingDoc.id;
+      } else {
+        artifact.title = instructions.slice(0, 60);
+      }
 
       const { data: freshThread } = await ctx.adminClient
         .from('work_threads')
@@ -1477,8 +1521,11 @@ async function executeChatTool(
         .eq('id', ctx.threadId)
         .single();
       const existing = ((freshThread?.artifacts as DocumentArtifact[]) || []);
-      const regeneratedTypes = new Set(newArtifacts.map((a: DocumentArtifact) => a.type));
-      const kept = existing.filter((a: DocumentArtifact) => !regeneratedTypes.has(a.type));
+      // When editing an existing doc, keep all previous versions — just append.
+      // When generating fresh, remove prior artifacts of the same type (old behaviour).
+      const kept = existingDoc
+        ? existing
+        : existing.filter((a: DocumentArtifact) => !new Set(newArtifacts.map((n: DocumentArtifact) => n.type)).has(a.type));
       const updated = [...kept, ...newArtifacts];
 
       await ctx.adminClient
