@@ -1263,12 +1263,17 @@ const handleRetry = async () => {
           </h2>
           <audio
             controls
+            preload="metadata"
             src={audioUrl}
             className="w-full h-9"
             style={{ accentColor: '#6366f1' }}
             onDurationChange={(e) => {
               const d = e.currentTarget.duration;
               if (isFinite(d) && d > 0) setAudioDuration(d);
+            }}
+            onError={(e) => {
+              const err = (e.currentTarget as HTMLAudioElement).error;
+              console.error('[Audio] Failed to load recording:', err?.code, err?.message);
             }}
           />
         </section>
