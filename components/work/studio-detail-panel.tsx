@@ -413,48 +413,22 @@ export function StudioDetailPanel({
           )}
         </div>
 
-        {/* Tabs */}
-        <div className="flex items-center -mb-px">
-          {TABS.map(tab => (
-            <button key={tab.id} onClick={() => setActiveTab(tab.id)}
-              className={`flex items-center gap-1.5 px-3 py-2 text-[12.5px] font-medium border-b-2 transition-colors ${
-                activeTab === tab.id ? 'text-neutral-900 border-neutral-900' : 'text-neutral-400 border-transparent hover:text-neutral-600'
-              }`}>
-              {tab.label}
-              {tab.count !== undefined && (
-                <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold ${
-                  activeTab === tab.id ? 'bg-neutral-100 text-neutral-600' : 'bg-neutral-100 text-neutral-400'
-                }`}>{tab.count}</span>
-              )}
-            </button>
-          ))}
-        </div>
       </header>
 
       {/* ── Body ── */}
       <div className="flex-1 overflow-y-auto bg-neutral-50/60">
-        {(activeTab === 'overview' || activeTab === 'history') && (
-          <OverviewPane
-            workflow={workflow}
-            runs={runs}
-            loading={runsLoading}
-            onOpenThread={onOpenThread}
-            onOpenArtifact={onOpenArtifact}
-            onRunDeleted={runId => setRuns(prev => prev.filter(r => r.id !== runId))}
-            workflowId={workflow.id}
-            runNow={runNow}
-            onActivate={toggleStatus}
-            onViewAll={() => setActiveTab('history')}
-          />
-        )}
-        {activeTab === 'documents' && (
-          <DocumentsPane docs={allDocs} onOpenArtifact={onOpenArtifact} />
-        )}
-        {activeTab === 'settings' && (
-          <SettingsPane workflow={workflow} confirmingDelete={confirmingDelete}
-            setConfirmingDelete={setConfirmingDelete} onDelete={handleDelete}
-            scheduleLabel={scheduleLabel} />
-        )}
+        <OverviewPane
+          workflow={workflow}
+          runs={runs}
+          loading={runsLoading}
+          onOpenThread={onOpenThread}
+          onOpenArtifact={onOpenArtifact}
+          onRunDeleted={runId => setRuns(prev => prev.filter(r => r.id !== runId))}
+          workflowId={workflow.id}
+          runNow={runNow}
+          onActivate={toggleStatus}
+          onViewAll={() => {}}
+        />
       </div>
     </div>
   );
