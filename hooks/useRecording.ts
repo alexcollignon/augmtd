@@ -37,6 +37,7 @@ export function useRecording(
   const [recordingNoteId, setRecordingNoteIdState] = useState<string | undefined>();
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const mimeTypeRef = useRef<string>('audio/webm');
   const chunksRef = useRef<Blob[]>([]);
   const startTimeRef = useRef<number>(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -91,7 +92,13 @@ export function useRecording(
   const startRecording = useCallback(async (title: string, calendarEventId?: string, existingNoteId?: string) => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+      const mimeType = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', ''].find(
+        (t) => t === '' || MediaRecorder.isTypeSupported(t),
+      ) ?? '';
+      mimeTypeRef.current = mimeType || 'audio/webm';
+      const recorder = mimeType
+        ? new MediaRecorder(stream, { mimeType })
+        : new MediaRecorder(stream);
       mediaRecorderRef.current = recorder;
       chunksRef.current = [];
       titleRef.current = title;
@@ -144,9 +151,13 @@ export function useRecording(
     setState('uploading');
     setUploadProgress(0);
 
-    const rawBlob = new Blob(chunksRef.current, { type: 'audio/webm' });
+    const capturedMimeType = mimeTypeRef.current;
+    const rawBlob = new Blob(chunksRef.current, { type: capturedMimeType });
     const durationMs = Date.now() - startTimeRef.current;
-    const blob = await fixWebmDuration(rawBlob, durationMs);
+    // fixWebmDuration only applies to WebM containers
+    const blob = capturedMimeType.includes('webm')
+      ? await fixWebmDuration(rawBlob, durationMs)
+      : rawBlob;
     const startTime = new Date(startTimeRef.current).toISOString();
     const endTime = new Date().toISOString();
     const title = titleRef.current || 'Untitled meeting';
@@ -160,7 +171,7 @@ export function useRecording(
       const presignRes = await fetch('/api/meetings/recordings/presign', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filename: 'recording.webm', mimeType: 'audio/webm' }),
+        body: JSON.stringify({ filename: 'recording.webm', mimeType: capturedMimeType }),
       });
       if (!presignRes.ok) throw new Error('Failed to get upload URL');
       const { signedUrl, storagePath } = await presignRes.json();
@@ -169,7 +180,7 @@ export function useRecording(
       await new Promise<void>((resolve, reject) => {
         const xhr = new XMLHttpRequest();
         xhr.open('PUT', signedUrl);
-        xhr.setRequestHeader('Content-Type', 'audio/webm');
+        xhr.setRequestHeader('Content-Type', capturedMimeType);
         xhr.upload.onprogress = (e) => {
           if (e.lengthComputable) setUploadProgress(Math.round((e.loaded / e.total) * 100));
         };

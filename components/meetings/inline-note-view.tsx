@@ -977,6 +977,13 @@ const handleRetry = async () => {
         </div>
       )}
 
+      {recording.state === 'error' && recording.errorMessage && (
+        <div className="mb-4 px-3 py-2 bg-red-50 border border-red-100 rounded-xl flex items-center gap-2">
+          <span className="text-[12px] text-red-600 flex-1">{recording.errorMessage}</span>
+          <button onClick={recording.reset} className="text-[11px] text-red-400 hover:text-red-600 underline flex-shrink-0">Dismiss</button>
+        </div>
+      )}
+
       {(!transcript || isDraftNote) && !noteProcessing && recording.state !== 'recording' && recording.state !== 'uploading' && recording.state !== 'processing' && (
         <div className="flex items-center gap-2 mb-4 flex-wrap">
           {/* Time until (scheduled only) */}
