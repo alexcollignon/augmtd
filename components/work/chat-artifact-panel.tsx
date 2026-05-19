@@ -443,11 +443,12 @@ interface ThreadArtifactsPanelProps {
   thread: { id: string; title: string; artifacts?: DocumentArtifact[] };
   onClose: () => void;
   onArtifactsUpdate?: (artifacts: DocumentArtifact[]) => void;
+  viewSignal?: number;
   initialDetailId?: string | null;
   activeArtifactId?: string | null;
 }
 
-export function ThreadArtifactsPanel({ thread, onClose, onArtifactsUpdate, initialDetailId, activeArtifactId }: ThreadArtifactsPanelProps) {
+export function ThreadArtifactsPanel({ thread, onClose, onArtifactsUpdate, initialDetailId, activeArtifactId, viewSignal }: ThreadArtifactsPanelProps) {
   const [detailId, setDetailId] = useState<string | null>(initialDetailId ?? null);
 
   const versioned = useMemo(
@@ -459,9 +460,10 @@ export function ThreadArtifactsPanel({ thread, onClose, onArtifactsUpdate, initi
   const detailArtifact = versioned.find(a => a.id === detailId) ?? null;
 
   // Sync when parent selects an artifact (e.g. on generation or clicking inline chip)
+  // viewSignal increments on every chip click so this fires even if the id didn't change
   useEffect(() => {
-    if (activeArtifactId && activeArtifactId !== detailId) setDetailId(activeArtifactId);
-  }, [activeArtifactId]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (activeArtifactId) setDetailId(activeArtifactId);
+  }, [activeArtifactId, viewSignal]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // If showing detail but artifact no longer exists, go back to list
   useEffect(() => {
@@ -523,7 +525,7 @@ export function ThreadArtifactsPanel({ thread, onClose, onArtifactsUpdate, initi
                   <p className="text-[11px] text-neutral-400 mt-0.5 leading-snug">
                     {shortType(a)}
                     {a.versionTotal > 1 && (
-                      <span className="ml-1.5 font-mono">{a.versionTotal} versions</span>
+                      <span className="ml-1.5 font-mono">{a.versionLabel} · {a.versionTotal} versions</span>
                     )}
                   </p>
                 </div>

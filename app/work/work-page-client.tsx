@@ -111,6 +111,7 @@ export function WorkPageClient({
   const [isCreating, setIsCreating] = useState(false);
   const [artifactPanelOpen, setArtifactPanelOpen] = useState(false);
   const [activeArtifactId, setActiveArtifactId] = useState<string | null>(null);
+  const [artifactViewSignal, setArtifactViewSignal] = useState(0);
   const [activeAgentId, setActiveAgentId] = useState<string | null>(initialAgentId);
   const [isTemporaryMode, setIsTemporaryMode] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
@@ -555,8 +556,8 @@ export function WorkPageClient({
 
   function handleViewArtifact(id: string) {
     setActiveArtifactId(id);
+    setArtifactViewSignal(s => s + 1); // always navigate to detail even if same id
     setArtifactPanelOpen(true);
-    // Don't change activeThreadId — user stays in current thread, panel shows globally
   }
 
   function handleThreadTitleUpdate(id: string, title: string, persist = false) {
@@ -825,6 +826,7 @@ export function WorkPageClient({
             onClose={() => setArtifactPanelOpen(false)}
             onArtifactsUpdate={(artifacts) => handleThreadArtifactsUpdate(activeThread.id, artifacts)}
             activeArtifactId={activeArtifactId}
+            viewSignal={artifactViewSignal}
           />
         )}
       </div>

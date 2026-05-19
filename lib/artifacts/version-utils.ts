@@ -35,12 +35,23 @@ export function computeVersionedArtifacts(artifacts: DocumentArtifact[]): Versio
     return current.id ?? current.generated_at;
   }
 
+  // Artifacts that are referenced as a parent — they are chain roots
+  const isChainRoot = new Set<string>();
+  for (const a of artifacts) {
+    if (a.parent_id) isChainRoot.add(a.parent_id);
+  }
+
   const groups = new Map<string, DocumentArtifact[]>();
   for (const a of artifacts) {
     let key: string;
     if (a.parent_id && byId.has(a.parent_id)) {
+      // Child in a chain — use the chain root's id
       key = rootId(a);
+    } else if (isChainRoot.has(a.id ?? '')) {
+      // This artifact IS the root of a chain — use its own id so children can match it
+      key = a.id!;
     } else {
+      // Standalone — group by normalised title
       key = (a.title ?? '').trim().toLowerCase();
     }
     if (!groups.has(key)) groups.set(key, []);
