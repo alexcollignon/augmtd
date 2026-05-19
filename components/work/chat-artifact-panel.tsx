@@ -22,7 +22,7 @@ import {
   EmailContent,
   QAReport,
 } from '@/lib/types/inbox';
-import { computeVersionedArtifacts, VersionedArtifact } from '@/lib/artifacts/version-utils';
+import { computeVersionedArtifacts, latestVersions, VersionedArtifact } from '@/lib/artifacts/version-utils';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -325,11 +325,24 @@ interface ArtifactDetailViewProps {
   allArtifacts: DocumentArtifact[];
   onBack: () => void;
   onClose: () => void;
+  onNavigate: (id: string) => void;
   onArtifactsUpdate?: (artifacts: DocumentArtifact[]) => void;
 }
 
-function ArtifactDetailView({ artifact, threadId, allArtifacts, onBack, onClose, onArtifactsUpdate }: ArtifactDetailViewProps) {
+function ArtifactDetailView({ artifact, threadId, allArtifacts, onBack, onClose, onNavigate, onArtifactsUpdate }: ArtifactDetailViewProps) {
   const ct = contentType(artifact);
+
+  // All versions of this document, oldest first
+  const versionGroup = useMemo(() => {
+    const all = computeVersionedArtifacts(allArtifacts);
+    return all
+      .filter(a => a.groupId === artifact.groupId)
+      .sort((a, b) => a.versionIndex - b.versionIndex);
+  }, [allArtifacts, artifact.groupId]);
+
+  const hasVersions = versionGroup.length > 1;
+  const prevVersion = hasVersions ? versionGroup[artifact.versionIndex - 1] : null;
+  const nextVersion = hasVersions ? versionGroup[artifact.versionIndex + 1] : null;
 
   function handleSent(sentAt: string, sentTo: string) {
     if (onArtifactsUpdate) {
@@ -355,11 +368,34 @@ function ArtifactDetailView({ artifact, threadId, allArtifacts, onBack, onClose,
           <div className="flex-1 min-w-0">
             <p className="text-[12.5px] font-medium text-neutral-700 truncate">
               {artifact.title}
-              {artifact.versionLabel && (
-                <span className="ml-1.5 font-mono text-[10px] text-neutral-400 font-normal">{artifact.versionLabel}</span>
-              )}
             </p>
           </div>
+
+          {/* Version navigator */}
+          {hasVersions && (
+            <div className="flex items-center gap-0.5 flex-shrink-0">
+              <button
+                onClick={() => prevVersion && onNavigate(prevVersion.id!)}
+                disabled={!prevVersion}
+                className="p-1 rounded hover:bg-neutral-100 text-neutral-400 disabled:opacity-30 transition-colors"
+                title="Previous version"
+              >
+                <ChevronLeftIcon className="w-3 h-3" />
+              </button>
+              <span className="font-mono text-[10px] text-neutral-400 px-0.5 min-w-[28px] text-center">
+                {artifact.versionLabel}
+              </span>
+              <button
+                onClick={() => nextVersion && onNavigate(nextVersion.id!)}
+                disabled={!nextVersion}
+                className="p-1 rounded hover:bg-neutral-100 text-neutral-400 disabled:opacity-30 transition-colors"
+                title="Next version"
+              >
+                <ChevronRightIcon className="w-3 h-3" />
+              </button>
+            </div>
+          )}
+
           {artifact.storage_path && (
             <button
               onClick={() => window.open(`/api/work/threads/${threadId}/download?artifactId=${artifact.id}`)}
@@ -432,6 +468,9 @@ export function ThreadArtifactsPanel({ thread, onClose, onArtifactsUpdate, initi
     if (detailId && !detailArtifact) setDetailId(null);
   }, [detailId, detailArtifact]);
 
+  // Collapsed list: one row per document group (latest version)
+  const listItems = useMemo(() => latestVersions(versioned), [versioned]);
+
   if (detailArtifact) {
     return (
       <ArtifactDetailView
@@ -440,6 +479,7 @@ export function ThreadArtifactsPanel({ thread, onClose, onArtifactsUpdate, initi
         allArtifacts={thread.artifacts ?? []}
         onBack={() => setDetailId(null)}
         onClose={onClose}
+        onNavigate={id => setDetailId(id)}
         onArtifactsUpdate={onArtifactsUpdate}
       />
     );
@@ -460,15 +500,15 @@ export function ThreadArtifactsPanel({ thread, onClose, onArtifactsUpdate, initi
           </button>
         </div>
 
-        {/* List */}
+        {/* List — one row per document, showing latest version */}
         <div className="flex-1 overflow-y-auto">
-          {versioned.length === 0 ? (
+          {listItems.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full gap-3 py-16">
               <DocumentTextIcon className="w-8 h-8 text-neutral-200" />
               <p className="text-[13px] text-neutral-400 text-center">No artifacts yet</p>
             </div>
           ) : (
-            versioned.map(a => (
+            listItems.map(a => (
               <div
                 key={a.id ?? a.generated_at}
                 onClick={() => setDetailId(a.id ?? null)}
@@ -479,13 +519,13 @@ export function ThreadArtifactsPanel({ thread, onClose, onArtifactsUpdate, initi
               >
                 <ArtifactIcon artifact={a} className="w-4 h-4 flex-shrink-0 text-neutral-400" />
                 <div className="flex-1 min-w-0">
-                  <p className="text-[12.5px] truncate leading-snug text-neutral-700">
-                    {a.title}
-                    {a.versionLabel && (
-                      <span className="ml-1.5 font-mono text-[10px] text-neutral-400 font-normal">{a.versionLabel}</span>
+                  <p className="text-[12.5px] truncate leading-snug text-neutral-700">{a.title}</p>
+                  <p className="text-[11px] text-neutral-400 mt-0.5 leading-snug">
+                    {shortType(a)}
+                    {a.versionTotal > 1 && (
+                      <span className="ml-1.5 font-mono">{a.versionTotal} versions</span>
                     )}
                   </p>
-                  <p className="text-[11px] text-neutral-400 mt-0.5 leading-snug">{shortType(a)}</p>
                 </div>
                 {a.storage_path && (
                   <button
@@ -511,10 +551,9 @@ export function ThreadArtifactsPanel({ thread, onClose, onArtifactsUpdate, initi
 
 // ── Global all-artifacts panel ────────────────────────────────────────────────
 
-interface FlatArtifact extends DocumentArtifact {
+interface FlatArtifact extends VersionedArtifact {
   threadId: string;
   threadTitle: string;
-  versionLabel: string;
 }
 
 interface AllArtifactsPanelProps {
@@ -530,10 +569,10 @@ export function AllArtifactsPanel({
   onClose,
   onSelectThread,
 }: AllArtifactsPanelProps) {
-  // Flatten all artifacts across all threads, sorted newest first
+  // Flatten all artifacts across all threads — latest version per group only, newest first
   const allFlat: FlatArtifact[] = threads
     .flatMap(t =>
-      computeVersionedArtifacts(t.artifacts ?? []).map(a => ({
+      latestVersions(computeVersionedArtifacts(t.artifacts ?? [])).map(a => ({
         ...a,
         threadId: t.id,
         threadTitle: t.title,
@@ -605,13 +644,13 @@ export function AllArtifactsPanel({
                 <div className="flex-1 min-w-0">
                   <p className={`text-[12.5px] truncate leading-snug ${
                     (a.id ?? null) === activeId ? 'text-indigo-700 font-medium' : 'text-neutral-700'
-                  }`}>
-                    {a.title}
-                    {a.versionLabel && (
-                      <span className="ml-1.5 font-mono text-[10px] text-neutral-400 font-normal">{a.versionLabel}</span>
+                  }`}>{a.title}</p>
+                  <p className="text-[11px] text-neutral-400 truncate leading-snug mt-0.5">
+                    {a.threadTitle}
+                    {a.versionTotal > 1 && (
+                      <span className="ml-1.5 font-mono">{a.versionTotal} versions</span>
                     )}
                   </p>
-                  <p className="text-[11px] text-neutral-400 truncate leading-snug mt-0.5">{a.threadTitle}</p>
                 </div>
                 {a.storage_path && (
                   <button

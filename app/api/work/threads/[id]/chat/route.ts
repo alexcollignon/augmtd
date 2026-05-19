@@ -1499,7 +1499,13 @@ async function executeChatTool(
       }
 
       const artifact = newArtifacts[0];
-      artifact.title = instructions.slice(0, 60);
+      // Inherit parent title so version grouping works; tag parent_id for chain traversal
+      if (existingDoc) {
+        artifact.title = existingDoc.title;
+        artifact.parent_id = existingDoc.id;
+      } else {
+        artifact.title = instructions.slice(0, 60);
+      }
 
       const { data: freshThread } = await ctx.adminClient
         .from('work_threads')
