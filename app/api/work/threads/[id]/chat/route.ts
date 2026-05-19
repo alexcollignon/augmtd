@@ -318,13 +318,21 @@ export async function POST(
       contextParts.push(prefetchedContext);
     }
 
-    // Existing artifacts — inject so AI knows what has already been produced
-    const existingArtifacts = ((thread as any).artifacts || []) as Array<{ id: string; title: string; type: string }>;
+    // Existing artifacts — inject title + full content so AI can reference and edit them
+    const existingArtifacts = ((thread as any).artifacts || []) as DocumentArtifact[];
     if (existingArtifacts.length > 0) {
+      const artifactBlocks = existingArtifacts.map(a => {
+        const raw = a.type === 'document' && a.content
+          ? serializeDocContent(a.content as import('@/lib/types/inbox').DocContent)
+          : null;
+        const docContent = raw && raw.length > 12000 ? raw.slice(0, 12000) + '\n\n[...document truncated for context...]' : raw;
+        return docContent
+          ? `DOCUMENT: "${a.title}"\n---\n${docContent}\n---`
+          : `DOCUMENT: "${a.title}" (${a.type}) — no preview available`;
+      }).join('\n\n');
       contextParts.push(
-        'DOCUMENTS ALREADY CREATED IN THIS CONVERSATION:\n' +
-        existingArtifacts.map(a => `- "${a.title}" (${a.type})`).join('\n') +
-        '\n\nIf the user refers to any of these, treat it as iteration — ask what to change. Do not start a new document flow.'
+        'DOCUMENTS ALREADY CREATED IN THIS CONVERSATION:\n\n' + artifactBlocks +
+        '\n\nWhen the user asks to edit or update any of these documents, call generate_document immediately — do NOT ask clarifying questions about content you can already see above.'
       );
     }
 
