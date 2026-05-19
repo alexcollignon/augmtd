@@ -1521,8 +1521,11 @@ async function executeChatTool(
         .eq('id', ctx.threadId)
         .single();
       const existing = ((freshThread?.artifacts as DocumentArtifact[]) || []);
-      const regeneratedTypes = new Set(newArtifacts.map((a: DocumentArtifact) => a.type));
-      const kept = existing.filter((a: DocumentArtifact) => !regeneratedTypes.has(a.type));
+      // When editing an existing doc, keep all previous versions — just append.
+      // When generating fresh, remove prior artifacts of the same type (old behaviour).
+      const kept = existingDoc
+        ? existing
+        : existing.filter((a: DocumentArtifact) => !new Set(newArtifacts.map((n: DocumentArtifact) => n.type)).has(a.type));
       const updated = [...kept, ...newArtifacts];
 
       await ctx.adminClient
