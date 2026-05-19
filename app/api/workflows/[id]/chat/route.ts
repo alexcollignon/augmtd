@@ -47,10 +47,11 @@ export async function POST(
   const workflow: Partial<Workflow> = body.workflow ?? {};
 
   // Summarise steps to avoid blowing the context window with long prompts
-  const stepSummaries = (workflow.steps ?? []).map((s: Record<string, unknown>, i: number) => {
-    if (s.type === 'tool') return { index: i + 1, id: s.id, type: 'tool', label: s.label, tool: s.tool };
-    if (s.type === 'ai')   return { index: i + 1, id: s.id, type: 'ai',   label: s.label, model_tier: s.model_tier, prompt_preview: String(s.prompt ?? '').slice(0, 120) + '…' };
-    return { index: i + 1, id: s.id, type: s.type, label: s.label };
+  const stepSummaries = (workflow.steps ?? []).map((s, i: number) => {
+    const r = s as unknown as Record<string, unknown>;
+    if (r.type === 'tool') return { index: i + 1, id: r.id, type: 'tool', label: r.label, tool: r.tool };
+    if (r.type === 'ai')   return { index: i + 1, id: r.id, type: 'ai',   label: r.label, model_tier: r.model_tier, prompt_preview: String(r.prompt ?? '').slice(0, 120) + '…' };
+    return { index: i + 1, id: r.id, type: r.type, label: r.label };
   });
   const contextMsg = `Current workflow:\n${JSON.stringify({
     name: workflow.name,

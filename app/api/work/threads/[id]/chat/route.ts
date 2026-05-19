@@ -514,6 +514,7 @@ export async function POST(
       supabase,
       adminClient,
       thread,
+      existingArtifacts: ((thread as any).artifacts || []) as DocumentArtifact[],
       userContextBlock: userContextBlock || undefined,
       kbSources: [] as Array<{ id: string; title: string; type: 'kb' }>,
       // Pre-populate with @mention KB content so generate_document is grounded
@@ -1118,6 +1119,7 @@ interface RunContext {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   adminClient: any;
   thread: { user_attachments?: unknown };
+  existingArtifacts: DocumentArtifact[];
   userContextBlock?: string;
   /** Accumulates real KB file data from search_knowledge_base calls — used to enrich request_clarification sources */
   kbSources: Array<{ id: string; title: string; type: 'kb' }>;
@@ -1143,6 +1145,18 @@ function validateClarificationInput(input: Record<string, unknown>): string | nu
     return 'The "question" field must be a declarative statement, not a question. Remove the question mark and rewrite as a confident declaration of what you will create. Example: "I\'ll create a pricing summary using the three documents I found."';
   }
   return null;
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function serializeDocContent(doc: import('@/lib/types/inbox').DocContent): string {
+  const lines: string[] = [doc.title];
+  if (doc.subtitle) lines.push(doc.subtitle);
+  for (const section of doc.sections) {
+    lines.push(`\n## ${section.heading}`);
+    for (const p of section.paragraphs) lines.push(p);
+  }
+  return lines.join('\n\n');
 }
 
 // ── Tool execution ────────────────────────────────────────────────────────────
@@ -1445,10 +1459,26 @@ async function executeChatTool(
 
       const toolRegistry = await buildToolRegistry(ctx.userId, ctx.supabase);
 
-      // Prepend KB text so the generator model is grounded in the actual source documents
-      const groundedContext = ctx.kbContext
-        ? `SOURCE DOCUMENTS (from knowledge base — use this content as the primary source):\n\n${ctx.kbContext}\n\n---\n\nINSTRUCTIONS: ${instructions}`
-        : instructions;
+      // If there's an existing document artifact, serialise its content so the
+      // generator modifies it rather than replacing it from scratch.
+      const existingDoc = ctx.existingArtifacts
+        .filter(a => a.type === 'document' && a.content)
+        .at(-1); // most recent document
+      const existingDocText = existingDoc?.content
+        ? serializeDocContent(existingDoc.content as import('@/lib/types/inbox').DocContent)
+        : null;
+
+      // Build grounded context: existing doc first (if any), then KB sources, then instructions
+      let groundedContext: string;
+      if (existingDocText) {
+        groundedContext =
+          `EXISTING DOCUMENT TO MODIFY — preserve all sections unless explicitly told to change or remove them:\n\n${existingDocText}\n\n---\n\nREQUESTED CHANGES: ${instructions}` +
+          (ctx.kbContext ? `\n\nADDITIONAL SOURCE MATERIAL:\n${ctx.kbContext}` : '');
+      } else {
+        groundedContext = ctx.kbContext
+          ? `SOURCE DOCUMENTS (from knowledge base — use this content as the primary source):\n\n${ctx.kbContext}\n\n---\n\nINSTRUCTIONS: ${instructions}`
+          : instructions;
+      }
 
       const pipelineResult = await runFullPipeline({
         userId: ctx.userId,
