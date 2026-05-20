@@ -14,7 +14,7 @@ import type { FolderEmailSummary, MessageDetail } from '@/lib/google/gmail';
 import AiChatPanel from '@/components/shared/ai-chat-panel';
 import WorkflowPanel from '@/components/inbox/workflow-panel';
 import MeetingsColumn from '@/components/inbox/meetings-column';
-import { ArrowPathIcon, ChatBubbleLeftIcon, SparklesIcon, Bars3Icon, QueueListIcon, ArchiveBoxArrowDownIcon, XMarkIcon, MagnifyingGlassIcon, PencilSquareIcon, CalendarDaysIcon, TrashIcon, PaperClipIcon, EnvelopeIcon } from '@heroicons/react/24/outline';
+import { ArrowPathIcon, ChatBubbleLeftIcon, SparklesIcon, Bars3Icon, QueueListIcon, ArchiveBoxArrowDownIcon, XMarkIcon, MagnifyingGlassIcon, PencilSquareIcon, CalendarDaysIcon, TrashIcon, PaperClipIcon, EnvelopeIcon, FolderIcon } from '@heroicons/react/24/outline';
 import ComposePanel from '@/components/inbox/compose-panel';
 import { toast } from 'sonner';
 import type { CalendarEvent } from '@/lib/types/meetings';
@@ -179,6 +179,7 @@ export function InboxPageClient({
   const [meetingsLoading, setMeetingsLoading] = useState(true);
   const [viewMode, setViewMode] = useState<ViewMode>('chronological');
   const [density, setDensity] = useState<Density>('normal');
+  const [showFolderRail, setShowFolderRail] = useState(false);
   const [folderSections, setFolderSections] = useState<ConnectionFolders[] | null>(null);
   const [foldersLoading, setFoldersLoading] = useState(false);
   const [selectedFolder, setSelectedFolder] = useState<SelectedFolder | null>(null);
@@ -251,8 +252,11 @@ export function InboxPageClient({
 
   const handleDensity = (d: Density) => {
     setDensity(d);
-    localStorage.setItem('inboxDensity', d);
   };
+
+  useEffect(() => {
+    localStorage.setItem('inboxDensity', density);
+  }, [density]);
 
   // Sync connection state
   useEffect(() => {
@@ -886,22 +890,24 @@ export function InboxPageClient({
                     })}
                   </div>
 
-                  {/* Density toggles + action icons */}
+                  {/* Density toggle + folder + action icons */}
                   <div className="flex items-center ml-auto">
                     <button
-                      onClick={() => handleDensity('normal')}
-                      title="Normal density"
-                      className={`p-1 transition-colors ${density === 'normal' ? 'text-neutral-400' : 'text-neutral-300 hover:text-neutral-400'}`}
+                      onClick={() => handleDensity(density === 'compact' ? 'normal' : 'compact')}
+                      title={density === 'compact' ? 'Normal view' : 'Compact view'}
+                      className="p-1 transition-colors text-neutral-300 hover:text-neutral-400"
                     >
-                      <QueueListIcon className="w-3.5 h-3.5" />
+                      {density === 'compact' ? <QueueListIcon className="w-3.5 h-3.5" /> : <Bars3Icon className="w-3.5 h-3.5" />}
                     </button>
-                    <button
-                      onClick={() => handleDensity('compact')}
-                      title="Compact density"
-                      className={`p-1 transition-colors ${density === 'compact' ? 'text-neutral-400' : 'text-neutral-300 hover:text-neutral-400'}`}
-                    >
-                      <Bars3Icon className="w-3.5 h-3.5" />
-                    </button>
+                    {folderSections && folderSections.length > 0 && (
+                      <button
+                        onClick={() => setShowFolderRail(v => !v)}
+                        title={showFolderRail ? 'Hide folders' : 'Show folders'}
+                        className={`p-1 transition-colors ${showFolderRail ? 'text-indigo-500' : 'text-neutral-300 hover:text-neutral-400'}`}
+                      >
+                        <FolderIcon className="w-3.5 h-3.5" />
+                      </button>
+                    )}
                     <div className="w-px h-3.5 bg-neutral-200 mx-1" />
                     <button
                       onClick={() => { if (isSyncing) return; preSyncCountRef.current = inboxItems.length; setIsSyncing(true); fetch('/api/connections/sync', { method: 'POST' }).catch(() => setIsSyncing(false)); }}
@@ -962,15 +968,20 @@ export function InboxPageClient({
                 </div>
               )}
 
-              {/* Folder rail */}
+              {/* Folder rail — always mounted when folders available, animated open/close */}
               {folderSections && folderSections.length > 0 && (
-                <FolderRail
-                  connections={folderSections}
-                  selectedFolder={selectedFolder}
-                  onSelectFolder={handleSelectFolder}
-                  onCreateFolder={handleCreateFolder}
-                  loading={foldersLoading}
-                />
+                <div
+                  className="overflow-hidden transition-[max-height,opacity] duration-200 ease-in-out flex-shrink-0"
+                  style={{ maxHeight: showFolderRail ? '480px' : '0px', opacity: showFolderRail ? 1 : 0 }}
+                >
+                  <FolderRail
+                    connections={folderSections}
+                    selectedFolder={selectedFolder}
+                    onSelectFolder={handleSelectFolder}
+                    onCreateFolder={handleCreateFolder}
+                    loading={foldersLoading}
+                  />
+                </div>
               )}
 
               {/* Bulk action bar */}
@@ -1040,7 +1051,7 @@ export function InboxPageClient({
               )}
 
               {/* Email list */}
-              <div className="flex-1 overflow-y-auto">
+              <div key={density} className="flex-1 overflow-y-auto animate-[fadeIn_120ms_ease-out]">
                 {selectedFolder ? (
                   <FolderEmailList
                     folderName={selectedFolder.folderName}
