@@ -357,6 +357,13 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
     const el = replyTextareaRef.current;
     if (!el) return;
 
+    // If el just mounted empty but replyBody already has content (e.g. AI draft injected
+    // in the same batch as setReplyOpen), seed el first so the sig appends to the draft
+    // rather than overwriting it.
+    if (!el.innerHTML.trim() && replyBody) {
+      el.innerHTML = replyBody;
+    }
+
     const existing = el.querySelector('[data-sig="1"]') as HTMLElement | null;
     if (existing) existing.remove();
 
