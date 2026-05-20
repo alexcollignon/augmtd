@@ -125,3 +125,8 @@ body {
 .email-body-html blockquote { border-left: 3px solid #e5e7eb; padding-left: 0.75em; margin: 0.5em 0; color: #737373; }
 /* Hide tracking pixels and zero-size images */
 .email-body-html img[width="1"], .email-body-html img[height="1"] { display: none; }
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
