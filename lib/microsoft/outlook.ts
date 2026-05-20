@@ -486,6 +486,31 @@ export async function moveOutlookMessageToFolder(
   await client.api(`/me/messages/${outlookMessageId}/move`).post({ destinationId: folderId });
 }
 
+export async function getOutlookMessageDetail(
+  encryptedTokens: string,
+  messageId: string,
+): Promise<import('@/lib/google/gmail').MessageDetail> {
+  const client = await getGraphClient(encryptedTokens);
+  const m = await client
+    .api(`/me/messages/${messageId}`)
+    .select('id,subject,from,toRecipients,receivedDateTime,body,bodyPreview')
+    .get();
+  const htmlBody = m.body?.contentType === 'html' ? m.body.content : null;
+  const bodyText = htmlBody
+    ? htmlBody.replace(/<br\s*\/?>/gi, '\n').replace(/<\/p>/gi, '\n\n').replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').trim()
+    : m.body?.content ?? m.bodyPreview ?? '';
+  return {
+    id: m.id,
+    subject: m.subject || '(no subject)',
+    from: m.from?.emailAddress?.address ?? '',
+    fromName: m.from?.emailAddress?.name ?? m.from?.emailAddress?.address ?? '',
+    to: (m.toRecipients ?? []).map((r: any) => r.emailAddress.address).join(', '),
+    date: m.receivedDateTime,
+    body: bodyText,
+    htmlBody,
+  };
+}
+
 export async function archiveOutlookMessage(
   encryptedTokens: string,
   outlookMessageId: string,

@@ -1,7 +1,7 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { listGmailAllFolders } from '@/lib/google/gmail';
-import { listOutlookAllFolders } from '@/lib/microsoft/outlook';
+import { listGmailAllFolders, createGmailLabel } from '@/lib/google/gmail';
+import { listOutlookAllFolders, createOutlookFolder } from '@/lib/microsoft/outlook';
 
 // GET /api/inbox/folders — list all folders across all active connections
 export async function GET() {
@@ -38,10 +38,12 @@ export async function GET() {
               },
             );
           }
-          return { connectionId: conn.id, provider: conn.provider, folders };
+          const email = (conn.metadata as any)?.email ?? '';
+          return { connectionId: conn.id, provider: conn.provider, email, folders };
         } catch (err) {
           console.error(`[Folders] Failed to list folders for ${conn.provider} connection ${conn.id}:`, err);
-          return { connectionId: conn.id, provider: conn.provider, folders: [], error: String(err) };
+          const email = (conn.metadata as any)?.email ?? '';
+          return { connectionId: conn.id, provider: conn.provider, email, folders: [], error: String(err) };
         }
       })
     );
@@ -50,5 +52,43 @@ export async function GET() {
   } catch (error) {
     console.error('[Folders] GET error:', error);
     return NextResponse.json({ error: 'Failed to list folders' }, { status: 500 });
+  }
+}
+
+// POST /api/inbox/folders — create a new folder/label
+export async function POST(request: NextRequest) {
+  try {
+    const supabase = await createClient();
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    if (authError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+    const { connectionId, name } = await request.json();
+    if (!connectionId || !name?.trim()) {
+      return NextResponse.json({ error: 'connectionId and name are required' }, { status: 400 });
+    }
+
+    const { data: connection } = await supabase
+      .from('connections')
+      .select('id, provider, metadata')
+      .eq('id', connectionId)
+      .eq('user_id', user.id)
+      .eq('status', 'active')
+      .single();
+
+    if (!connection) return NextResponse.json({ error: 'Connection not found' }, { status: 404 });
+
+    const folder =
+      connection.provider === 'gmail'
+        ? await createGmailLabel(connection.metadata.tokens, name.trim())
+        : connection.provider === 'outlook'
+        ? await createOutlookFolder(connection.metadata.tokens, name.trim())
+        : null;
+
+    if (!folder) return NextResponse.json({ error: 'Unsupported provider' }, { status: 400 });
+
+    return NextResponse.json({ folder });
+  } catch (error) {
+    console.error('[Folders] POST error:', error);
+    return NextResponse.json({ error: 'Failed to create folder' }, { status: 500 });
   }
 }
