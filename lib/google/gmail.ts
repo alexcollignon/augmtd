@@ -557,6 +557,54 @@ export async function trashGmailThread(
   await gmail.users.threads.trash({ userId: 'me', id: threadId });
 }
 
+export interface MessageDetail {
+  id: string;
+  subject: string;
+  from: string;
+  fromName: string;
+  to: string;
+  date: string;
+  body: string;
+  htmlBody: string | null;
+}
+
+export async function getGmailMessageDetail(
+  encryptedTokens: string,
+  messageId: string,
+): Promise<MessageDetail> {
+  const gmail = await getGmailClient(encryptedTokens);
+  const res = await gmail.users.messages.get({ userId: 'me', id: messageId, format: 'full' });
+  const msg = res.data as GmailMessage;
+
+  const headers = msg.payload?.headers ?? [];
+  const getHeader = (name: string) => headers.find((h: any) => h.name.toLowerCase() === name.toLowerCase())?.value ?? '';
+
+  let body = '';
+  let htmlBody = '';
+  const extractBody = (part: any) => {
+    if (part.mimeType === 'text/plain' && part.body?.data) {
+      body = Buffer.from(part.body.data, 'base64').toString('utf-8');
+    } else if (part.mimeType === 'text/html' && part.body?.data) {
+      htmlBody = Buffer.from(part.body.data, 'base64').toString('utf-8');
+    }
+    if (part.parts) part.parts.forEach(extractBody);
+  };
+  if (msg.payload) extractBody(msg.payload);
+
+  const fromRaw = getHeader('From');
+  const nameMatch = fromRaw.match(/^"?([^"<]+)"?\s*</);
+  return {
+    id: msg.id ?? messageId,
+    subject: getHeader('Subject') || '(no subject)',
+    from: fromRaw.replace(/.*<(.+)>.*/, '$1').trim() || fromRaw,
+    fromName: nameMatch ? nameMatch[1].trim() : fromRaw,
+    to: getHeader('To'),
+    date: getHeader('Date'),
+    body,
+    htmlBody: htmlBody || null,
+  };
+}
+
 export async function sendGmailReply(params: SendGmailReplyParams): Promise<string> {
   const { encryptedTokens, threadId, to, subject, body, inReplyTo, references, attachments = [], cc, bcc } = params;
 

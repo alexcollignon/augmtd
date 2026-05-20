@@ -7,7 +7,10 @@ import Link from 'next/link';
 import EmailListSections from '@/components/inbox/email-list-sections';
 import EmailListChronological from '@/components/inbox/email-list-chronological';
 import SentEmailList, { type SentEmail } from '@/components/inbox/sent-email-list';
+import FolderRail, { type ConnectionFolders, type SelectedFolder } from '@/components/inbox/folder-rail';
+import FolderEmailList from '@/components/inbox/folder-email-list';
 import WorkDetailInline from '@/components/inbox/work-detail-inline';
+import type { FolderEmailSummary, MessageDetail } from '@/lib/google/gmail';
 import AiChatPanel from '@/components/shared/ai-chat-panel';
 import WorkflowPanel from '@/components/inbox/workflow-panel';
 import MeetingsColumn from '@/components/inbox/meetings-column';
@@ -85,6 +88,74 @@ function SentEmailDetail({ email }: { email: SentEmail }) {
   );
 }
 
+function FolderEmailDetail({ email, connectionId, folderSections, onMoved }: { email: MessageDetail; connectionId: string; folderSections: ConnectionFolders[]; onMoved: () => void }) {
+  const [showMoveMenu, setShowMoveMenu] = useState(false);
+  const [isMoving, setIsMoving] = useState(false);
+  const dateStr = email.date
+    ? new Date(email.date).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })
+    : '';
+  const conn = folderSections.find(c => c.connectionId === connectionId);
+  const allFolders = conn?.folders ?? [];
+
+  const handleMove = async (folderId: string) => {
+    setIsMoving(true);
+    setShowMoveMenu(false);
+    try {
+      await fetch('/api/inbox/folder-email-detail', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ connectionId, messageId: email.id, folderId }),
+      });
+      onMoved();
+    } catch { /* non-fatal */ } finally {
+      setIsMoving(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-col h-full overflow-hidden">
+      <div className="flex-shrink-0 px-6 pt-5 pb-3 border-b border-neutral-100">
+        <div className="flex items-start justify-between gap-3">
+          <h2 className="text-[15px] font-semibold text-neutral-900 mb-2 flex-1 min-w-0">{email.subject}</h2>
+          <div className="relative flex-shrink-0">
+            <button
+              onClick={() => setShowMoveMenu(v => !v)}
+              disabled={isMoving}
+              title="Move to folder"
+              className="p-1.5 rounded-lg text-neutral-400 hover:text-neutral-600 hover:bg-neutral-50 transition-colors disabled:opacity-50"
+            >
+              {isMoving
+                ? <div className="w-4 h-4 border-2 border-neutral-300 border-t-indigo-500 rounded-full animate-spin" />
+                : <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v8.25m19.5 0A2.25 2.25 0 0 1 19.5 16.5H6.75A2.25 2.25 0 0 1 4.5 14.25V6" /></svg>
+              }
+            </button>
+            {showMoveMenu && allFolders.length > 0 && (
+              <div className="absolute right-0 top-full mt-1 w-48 bg-white rounded-xl shadow-lg border border-neutral-100 py-1 z-20 max-h-56 overflow-y-auto">
+                {allFolders.map(f => (
+                  <button key={f.id} onClick={() => handleMove(f.id)} className="w-full text-left px-3 py-1.5 text-[12px] text-neutral-700 hover:bg-neutral-50 transition-colors truncate">
+                    {f.name}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+        <div className="space-y-0.5 text-[12px] text-neutral-500">
+          <div><span className="font-medium text-neutral-700">From:</span> {email.fromName || email.from}{email.fromName ? ` <${email.from}>` : ''}</div>
+          {email.to && <div><span className="font-medium text-neutral-700">To:</span> {email.to}</div>}
+          {dateStr && <div><span className="font-medium text-neutral-700">Date:</span> {dateStr}</div>}
+        </div>
+      </div>
+      <div className="flex-1 overflow-y-auto px-6 py-4 text-[13px] text-neutral-800 leading-relaxed">
+        {email.htmlBody
+          ? <div dangerouslySetInnerHTML={{ __html: email.htmlBody }} />
+          : <pre className="whitespace-pre-wrap font-sans">{email.body ?? ''}</pre>
+        }
+      </div>
+    </div>
+  );
+}
+
 interface InboxPageClientProps {
   initialUser: any;
   initialUserFullName?: string;
@@ -114,6 +185,13 @@ export function InboxPageClient({
   const [sentLoading, setSentLoading] = useState(false);
   const [sentLoaded, setSentLoaded] = useState(false);
   const [selectedSentEmail, setSelectedSentEmail] = useState<SentEmail | null>(null);
+  const [folderSections, setFolderSections] = useState<ConnectionFolders[] | null>(null);
+  const [foldersLoading, setFoldersLoading] = useState(false);
+  const [selectedFolder, setSelectedFolder] = useState<SelectedFolder | null>(null);
+  const [folderEmails, setFolderEmails] = useState<FolderEmailSummary[]>([]);
+  const [folderEmailsLoading, setFolderEmailsLoading] = useState(false);
+  const [selectedFolderEmailId, setSelectedFolderEmailId] = useState<string | null>(null);
+  const [selectedFolderEmail, setSelectedFolderEmail] = useState<MessageDetail | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isBulkArchiving, setIsBulkArchiving] = useState(false);
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
@@ -186,6 +264,7 @@ export function InboxPageClient({
     setActiveTab(tab);
     setSelectedItem(null);
     setSelectedSentEmail(null);
+    setSelectedFolder(null);
     if (tab === 'sent' && !sentLoaded) {
       setSentLoading(true);
       try {
@@ -235,6 +314,62 @@ export function InboxPageClient({
       channel.close();
     };
   }, [fetchMeetings]);
+
+  // Folder management
+  const fetchFolders = useCallback(async () => {
+    setFoldersLoading(true);
+    try {
+      const res = await fetch('/api/inbox/folders');
+      if (!res.ok) return;
+      const data = await res.json();
+      // Enrich each connection with its email address from metadata
+      const enriched: ConnectionFolders[] = (data.connections ?? []).map((c: any) => ({
+        connectionId: c.connectionId,
+        provider: c.provider,
+        email: c.email ?? '',
+        folders: c.folders ?? [],
+      }));
+      setFolderSections(enriched);
+    } catch { /* non-fatal */ } finally {
+      setFoldersLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { fetchFolders(); }, [fetchFolders]);
+
+  const handleSelectFolder = useCallback(async (folder: SelectedFolder | null) => {
+    setSelectedFolder(folder);
+    setSelectedFolderEmailId(null);
+    setSelectedFolderEmail(null);
+    if (!folder) return;
+    setFolderEmailsLoading(true);
+    try {
+      const res = await fetch(`/api/inbox/folder-emails?connectionId=${folder.connectionId}&folderId=${encodeURIComponent(folder.folderId)}`);
+      const data = await res.json();
+      setFolderEmails(data.emails ?? []);
+    } catch { setFolderEmails([]); } finally {
+      setFolderEmailsLoading(false);
+    }
+  }, []);
+
+  const handleSelectFolderEmail = useCallback(async (email: FolderEmailSummary) => {
+    if (!selectedFolder) return;
+    setSelectedFolderEmailId(email.id);
+    setSelectedFolderEmail(null);
+    try {
+      const res = await fetch(`/api/inbox/folder-email-detail?connectionId=${selectedFolder.connectionId}&messageId=${encodeURIComponent(email.id)}`);
+      if (res.ok) setSelectedFolderEmail(await res.json());
+    } catch { /* non-fatal */ }
+  }, [selectedFolder]);
+
+  const handleCreateFolder = useCallback(async (connectionId: string, name: string) => {
+    await fetch('/api/inbox/folders', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ connectionId, name }),
+    });
+    fetchFolders();
+  }, [fetchFolders]);
 
   // Deep-link: ?item=<uuid> auto-selects a specific inbox item (e.g. from desk card)
   useEffect(() => {
@@ -871,6 +1006,17 @@ export function InboxPageClient({
                 ))}
               </div>
 
+              {/* Folder rail — inbox tab only */}
+              {activeTab === 'inbox' && folderSections && folderSections.length > 0 && (
+                <FolderRail
+                  connections={folderSections}
+                  selectedFolder={selectedFolder}
+                  onSelectFolder={handleSelectFolder}
+                  onCreateFolder={handleCreateFolder}
+                  loading={foldersLoading}
+                />
+              )}
+
               {/* Bulk action bar — inbox only */}
               {activeTab === 'inbox' && selectedIds.size > 0 && (
                 <div className="flex-shrink-0 flex items-center gap-2 px-3 py-2 border-b border-indigo-100 bg-indigo-50 min-h-[36px]">
@@ -939,7 +1085,16 @@ export function InboxPageClient({
 
               {/* Email list */}
               <div className="flex-1 overflow-y-auto">
-                {activeTab === 'sent' ? (
+                {activeTab === 'inbox' && selectedFolder ? (
+                  <FolderEmailList
+                    folderName={selectedFolder.folderName}
+                    emails={folderEmails}
+                    loading={folderEmailsLoading}
+                    selectedId={selectedFolderEmailId}
+                    onSelect={handleSelectFolderEmail}
+                    density={density}
+                  />
+                ) : activeTab === 'sent' ? (
                   <SentEmailList
                     emails={sentEmails}
                     selectedId={selectedSentEmail?.id ?? null}
@@ -1008,6 +1163,8 @@ export function InboxPageClient({
                       onSent={closeChat}
                       connectionId={(selectedItem as any)?.connection_id ?? undefined}
                     />
+                  ) : selectedFolderEmail ? (
+                    <FolderEmailDetail email={selectedFolderEmail} connectionId={selectedFolder?.connectionId ?? ''} folderSections={folderSections ?? []} onMoved={() => { handleSelectFolder(selectedFolder); }} />
                   ) : selectedSentEmail ? (
                     <SentEmailDetail email={selectedSentEmail} />
                   ) : (
