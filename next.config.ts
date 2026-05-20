@@ -14,6 +14,7 @@ const securityHeaders = [
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: blob: https:",
       "font-src 'self' data:",
+      "media-src 'self' https://*.supabase.co",
       "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.openai.com https://api.anthropic.com https://api.fireworks.ai https://api.together.xyz https://graph.microsoft.com https://login.microsoftonline.com https://*.googleapis.com https://accounts.google.com https://api.tavily.com",
       "frame-src 'self' https://accounts.google.com https://docs.google.com https://drive.google.com",
       "object-src 'none'",
