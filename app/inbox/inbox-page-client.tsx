@@ -1130,6 +1130,7 @@ export function InboxPageClient({
                       onReplyBodyChange={setReplyBody}
                       onReplyOpenChange={handleReplyOpenChange}
                       onOpenWorkflowPanel={() => setRightPanel('workflow')}
+                      folderSections={folderSections ?? undefined}
                     />
                   )}
               </div>

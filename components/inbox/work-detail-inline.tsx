@@ -20,6 +20,7 @@ import {
   TrashIcon,
 } from '@heroicons/react/24/outline';
 import type { InboxItem } from '@/lib/types/inbox';
+import type { ConnectionFolders } from '@/components/inbox/folder-rail';
 
 import RsvpButtons from './rsvp-buttons';
 import KbFilePicker from './kb-file-picker';
@@ -68,6 +69,15 @@ interface PendingAttachment {
   mimeType: string;
 }
 
+// System folder names that don't make sense as move destinations
+const EXCLUDED_SYSTEM_FOLDERS = new Set([
+  'sent', 'sent items', 'sent mail',
+  'trash', 'deleted items', 'bin',
+  'drafts',
+  'spam', 'junk', 'junk email',
+  'all mail', 'outbox',
+]);
+
 interface WorkDetailInlineProps {
   item: InboxItem | null;
   onItemConfirmed?: (ids: string[], action: 'confirm_as_mine' | 'not_my_task') => void;
@@ -78,9 +88,10 @@ interface WorkDetailInlineProps {
   onReplyBodyChange: (body: string) => void;
   onReplyOpenChange?: (open: boolean) => void;
   onOpenWorkflowPanel?: () => void;
+  folderSections?: ConnectionFolders[];
 }
 
-export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeetings, pendingReplyDraft, onReplySent, replyBody, onReplyBodyChange, onReplyOpenChange, onOpenWorkflowPanel }: WorkDetailInlineProps) {
+export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeetings, pendingReplyDraft, onReplySent, replyBody, onReplyBodyChange, onReplyOpenChange, onOpenWorkflowPanel, folderSections }: WorkDetailInlineProps) {
   const [expandedEmails, setExpandedEmails] = useState<Record<number, boolean>>({});
   const [showAllHistory, setShowAllHistory] = useState(false);
   const [threadEmails, setThreadEmails] = useState<any[] | null>(null);
@@ -108,9 +119,19 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteConfirmPending, setDeleteConfirmPending] = useState(false);
   const [showMoveMenu, setShowMoveMenu] = useState(false);
-  const [folders, setFolders] = useState<{ id: string; name: string }[] | null>(null);
-  const [isLoadingFolders, setIsLoadingFolders] = useState(false);
   const [isMoving, setIsMoving] = useState(false);
+
+  // Derive move-target folders from folderSections: same connection, exclude system folders
+  // that aren't meaningful destinations (Sent, Trash, Drafts, Spam, etc.)
+  const availableFolders = (() => {
+    const connId = (item as any)?.connection_id;
+    if (!connId || !folderSections) return null;
+    const conn = folderSections.find(c => c.connectionId === connId);
+    if (!conn) return null;
+    return conn.folders.filter(f =>
+      !f.isSystem || !EXCLUDED_SYSTEM_FOLDERS.has(f.name.toLowerCase())
+    );
+  })();
   const moveMenuRef = useRef<HTMLDivElement>(null);
   const moveBtnRef = useRef<HTMLButtonElement>(null);
   const [moveMenuPos, setMoveMenuPos] = useState<{ top: number; right: number } | null>(null);
@@ -331,7 +352,6 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
   // Reset folder + reply state when item changes
   useEffect(() => {
     setShowMoveMenu(false);
-    setFolders(null);
     setExpandedEmails({});
     setReplyOpen(false);
     setShowSignature(true);
@@ -512,23 +532,12 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
     }
   };
 
-  const handleOpenMoveMenu = async () => {
+  const handleOpenMoveMenu = () => {
     if (moveBtnRef.current) {
       const rect = moveBtnRef.current.getBoundingClientRect();
       setMoveMenuPos({ top: rect.top, right: window.innerWidth - rect.right });
     }
     setShowMoveMenu(true);
-    if (folders !== null) return;
-    setIsLoadingFolders(true);
-    try {
-      const res = await fetch(`/api/inbox/${item.id}/email-folders`);
-      const data = await res.json();
-      setFolders(res.ok ? (data.folders ?? []) : []);
-    } catch {
-      setFolders([]);
-    } finally {
-      setIsLoadingFolders(false);
-    }
   };
 
   const handleMoveToFolder = async (folderId: string, folderName: string, createNew = false) => {
@@ -1136,16 +1145,10 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
                   </button>
                   {showMoveMenu && moveMenuPos && (
                     <div className="fixed bg-white border border-neutral-200 shadow-lg min-w-[180px] z-[9999] rounded-md" style={{ top: moveMenuPos.top - 4, right: moveMenuPos.right, transform: 'translateY(-100%)' }}>
-                      {isLoadingFolders ? (
-                        <div className="px-4 py-3 text-[12px] text-neutral-400 flex items-center gap-2">
-                          <div className="w-3 h-3 border-2 border-neutral-300 border-t-transparent rounded-full animate-spin" />
-                          Loading folders…
-                        </div>
-                      ) : (
-                        <>
-                          {!!folders?.length && (
+                      <>
+                          {!!availableFolders?.length && (
                             <div className="max-h-48 overflow-y-auto">
-                              {folders.map(f => (
+                              {availableFolders.map(f => (
                                 <button
                                   key={f.id}
                                   onClick={() => handleMoveToFolder(f.id, f.name)}
@@ -1192,7 +1195,6 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
                             )}
                           </div>
                         </>
-                      )}
                     </div>
                   )}
                 </div>
