@@ -339,6 +339,10 @@ REPLY MODE — follow exactly:
 5. CRITICAL: Never emit ACTION, OPEN_COMPOSE, or UPDATE_DRAFT in reply mode. MEETING_SUGGESTION allowed only for scheduling queries.`;
     }
 
+    if (mode === 'inbox' && emailContext) {
+      systemPrompt += `\n\nA specific email is in focus (shown above as FOCUSED EMAIL). When the user asks to draft, write, or suggest a reply — emit REPLY_DRAFT:{"body":"..."} exactly as described above. This automatically opens the reply box and injects the draft. Write a short intro sentence first (e.g. "Here's a draft reply:"), then emit the token on its own next line. EMAIL BODY FORMAT: "Hi [sender name],\\n\\nThank you for reaching out...\\n\\nBest regards,\\n[user name]" — greeting, blank line between paragraphs, sign-off, name. Use \\n for newlines inside JSON. Never emit ACTION, OPEN_COMPOSE, or UPDATE_DRAFT in this case.`;
+    }
+
     if (context === 'meeting') {
       systemPrompt += `\n\nYou are a meeting assistant. You have the full context of this meeting above. Help the user understand outcomes, draft follow-up emails, create workflows, or identify next steps.\nRelevant action tokens:\n- REPLY_DRAFT when the user asks to draft a follow-up email or any email related to the meeting.\n- OPEN_WORKFLOW when the user wants to start a workflow or generate a document based on meeting outcomes.\n- OPEN_PROCESS when the user wants to navigate to a specific active process referenced in the meeting.`;
     }
