@@ -6,7 +6,7 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import EmailListSections from '@/components/inbox/email-list-sections';
 import EmailListChronological from '@/components/inbox/email-list-chronological';
-import SentEmailList, { type SentEmail } from '@/components/inbox/sent-email-list';
+import { type SentEmail } from '@/components/inbox/sent-email-list';
 import FolderRail, { type ConnectionFolders, type SelectedFolder } from '@/components/inbox/folder-rail';
 import FolderEmailList from '@/components/inbox/folder-email-list';
 import WorkDetailInline from '@/components/inbox/work-detail-inline';
@@ -23,7 +23,6 @@ import type { InboxItem } from '@/lib/types/inbox';
 
 type ViewMode = 'chronological' | 'smart';
 type Density = 'normal' | 'compact';
-type InboxTab = 'inbox' | 'sent';
 
 function markdownToHtml(text: string): string {
   // If the AI already emitted HTML tags, skip escaping and just structure it
@@ -180,11 +179,6 @@ export function InboxPageClient({
   const [meetingsLoading, setMeetingsLoading] = useState(true);
   const [viewMode, setViewMode] = useState<ViewMode>('chronological');
   const [density, setDensity] = useState<Density>('normal');
-  const [activeTab, setActiveTab] = useState<InboxTab>('inbox');
-  const [sentEmails, setSentEmails] = useState<SentEmail[]>([]);
-  const [sentLoading, setSentLoading] = useState(false);
-  const [sentLoaded, setSentLoaded] = useState(false);
-  const [selectedSentEmail, setSelectedSentEmail] = useState<SentEmail | null>(null);
   const [folderSections, setFolderSections] = useState<ConnectionFolders[] | null>(null);
   const [foldersLoading, setFoldersLoading] = useState(false);
   const [selectedFolder, setSelectedFolder] = useState<SelectedFolder | null>(null);
@@ -259,27 +253,6 @@ export function InboxPageClient({
     setDensity(d);
     localStorage.setItem('inboxDensity', d);
   };
-
-  const switchToTab = useCallback(async (tab: InboxTab) => {
-    setActiveTab(tab);
-    setSelectedItem(null);
-    setSelectedSentEmail(null);
-    setSelectedFolder(null);
-    if (tab === 'sent' && !sentLoaded) {
-      setSentLoading(true);
-      try {
-        const res = await fetch('/api/inbox/sent');
-        if (res.ok) {
-          const data = await res.json();
-          setSentEmails(data.emails ?? []);
-          setSentLoaded(true);
-        }
-      } catch { /* non-fatal */ } finally {
-        setSentLoading(false);
-      }
-    }
-  }, [sentLoaded]);
-
 
   // Sync connection state
   useEffect(() => {
@@ -989,25 +962,8 @@ export function InboxPageClient({
                 </div>
               )}
 
-              {/* Inbox / Sent tab row */}
-              <div className="flex-shrink-0 flex border-b border-neutral-100">
-                {(['inbox', 'sent'] as const).map(tab => (
-                  <button
-                    key={tab}
-                    onClick={() => switchToTab(tab)}
-                    className={`flex-1 py-1.5 text-[11px] font-semibold uppercase tracking-wide transition-colors ${
-                      activeTab === tab
-                        ? 'text-indigo-600 border-b-2 border-indigo-500 -mb-px'
-                        : 'text-neutral-400 hover:text-neutral-600'
-                    }`}
-                  >
-                    {tab === 'inbox' ? 'Inbox' : 'Sent'}
-                  </button>
-                ))}
-              </div>
-
-              {/* Folder rail — inbox tab only */}
-              {activeTab === 'inbox' && folderSections && folderSections.length > 0 && (
+              {/* Folder rail */}
+              {folderSections && folderSections.length > 0 && (
                 <FolderRail
                   connections={folderSections}
                   selectedFolder={selectedFolder}
@@ -1017,8 +973,8 @@ export function InboxPageClient({
                 />
               )}
 
-              {/* Bulk action bar — inbox only */}
-              {activeTab === 'inbox' && selectedIds.size > 0 && (
+              {/* Bulk action bar */}
+              {!selectedFolder && selectedIds.size > 0 && (
                 <div className="flex-shrink-0 flex items-center gap-2 px-3 py-2 border-b border-indigo-100 bg-indigo-50 min-h-[36px]">
                   {isBulkArchiving ? (
                     <div className="flex items-center gap-2 flex-1">
@@ -1085,7 +1041,7 @@ export function InboxPageClient({
 
               {/* Email list */}
               <div className="flex-1 overflow-y-auto">
-                {activeTab === 'inbox' && selectedFolder ? (
+                {selectedFolder ? (
                   <FolderEmailList
                     folderName={selectedFolder.folderName}
                     emails={folderEmails}
@@ -1093,14 +1049,6 @@ export function InboxPageClient({
                     selectedId={selectedFolderEmailId}
                     onSelect={handleSelectFolderEmail}
                     density={density}
-                  />
-                ) : activeTab === 'sent' ? (
-                  <SentEmailList
-                    emails={sentEmails}
-                    selectedId={selectedSentEmail?.id ?? null}
-                    onSelect={(email) => { setSelectedSentEmail(email); setSelectedItem(null); setComposeMode(false); }}
-                    loading={sentLoading}
-                    compact={density === 'compact'}
                   />
                 ) : inboxItems.length === 0 && !isSyncing ? (
                   <div className="flex flex-col items-center justify-center h-full py-16 px-4 text-center">
@@ -1165,8 +1113,6 @@ export function InboxPageClient({
                     />
                   ) : selectedFolderEmail ? (
                     <FolderEmailDetail email={selectedFolderEmail} connectionId={selectedFolder?.connectionId ?? ''} folderSections={folderSections ?? []} onMoved={() => { handleSelectFolder(selectedFolder); }} />
-                  ) : selectedSentEmail ? (
-                    <SentEmailDetail email={selectedSentEmail} />
                   ) : (
                     <WorkDetailInline
                       key={selectedItem?.id ?? 'empty'}
