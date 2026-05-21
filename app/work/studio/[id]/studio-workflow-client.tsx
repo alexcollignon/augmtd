@@ -250,7 +250,7 @@ export function StudioWorkflowClient({ workflow: initialWorkflow, initialRuns }:
 
   const handleDelete = useCallback(async () => {
     const res = await fetch(`/api/workflows/${workflow.id}`, { method: 'DELETE' });
-    if (res.ok) router.push('/work?section=studio');
+    if (res.ok) router.push('/studio');
   }, [workflow.id, router]);
 
   const TABS: Array<{ id: Tab; label: string; count?: number }> = [
@@ -268,7 +268,7 @@ export function StudioWorkflowClient({ workflow: initialWorkflow, initialRuns }:
 
         {/* Back + actions row */}
         <div className="flex items-center justify-between mb-5">
-          <Link href="/work?section=studio"
+          <Link href="/studio"
             className="inline-flex items-center gap-1 text-[12px] text-neutral-400 hover:text-neutral-700 transition-colors">
             <ArrowLeftIcon className="w-3 h-3" />
             All workflows
