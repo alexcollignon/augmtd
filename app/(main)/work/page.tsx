@@ -2,23 +2,18 @@ import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createAdminClient } from '@supabase/supabase-js';
 import { WorkPageClient } from '@/app/work/work-page-client';
-import { getMyWorkspace } from '@/lib/workspace/features';
 export const metadata = { title: 'Chat — AUGMTD' };
 
 export default async function WorkPage({
   searchParams,
 }: {
-  searchParams: Promise<{ thread?: string; prompt?: string; section?: string; workflow?: string; agent?: string }>;
+  searchParams: Promise<{ thread?: string; prompt?: string; agent?: string }>;
 }) {
-  const { thread: initialThreadId, prompt: initialChatInput, section, workflow: initialWorkflowId, agent: initialAgentId } = await searchParams;
+  const { thread: initialThreadId, prompt: initialChatInput, agent: initialAgentId } = await searchParams;
   const supabase = await createClient();
 
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/login');
-
-  const workspace = await getMyWorkspace(user.id, supabase);
-  const studioEnabled = workspace?.features.studio ?? true;
-  const initialSection = (section === 'studio' && studioEnabled) ? 'studio' : 'chat';
 
   // Cleanup stale temporary threads (fire-and-forget, non-blocking)
   void supabase
@@ -35,7 +30,7 @@ export default async function WorkPage({
 
   const THREAD_COLS = 'id, title, plan, artifact, artifacts, status, auto_generated, saved_workflow_id, is_generating, created_at, updated_at, agent_id, workflow_id';
 
-  const [{ data: threads }, { data: savedWorkflowsData }, { data: agentsData }, initialThreadResult, { data: workflowsData }] = await Promise.all([
+  const [{ data: threads }, { data: savedWorkflowsData }, { data: agentsData }, initialThreadResult] = await Promise.all([
     supabase
       .from('work_threads')
       .select(THREAD_COLS)
@@ -66,10 +61,6 @@ export default async function WorkPage({
           .eq('user_id', user.id)
           .single()
       : Promise.resolve({ data: null }),
-    supabase
-      .from('workflows')
-      .select('id, user_id, name, description, icon, color, status, trigger, steps, output_config, last_run_at, next_run_at, created_at, updated_at, shared_with_company, sharing_mode, company_id, pinned')
-      .order('updated_at', { ascending: false }),
   ]);
 
   // Resolve owner names for shared agents owned by others
@@ -112,26 +103,6 @@ export default async function WorkPage({
     ? [extraThread, ...baseThreads]
     : baseThreads;
 
-  // Resolve owner names for shared workflows
-  const workflowRows = workflowsData ?? [];
-  const foreignWorkflowUserIds = [...new Set(workflowRows.filter((w: { user_id: string }) => w.user_id !== user.id).map((w: { user_id: string }) => w.user_id))];
-  const workflowOwnerNames: Record<string, string> = {};
-  if (foreignWorkflowUserIds.length > 0) {
-    const { data: wfProfiles } = await supabase
-      .from('profiles')
-      .select('id, full_name, email')
-      .in('id', foreignWorkflowUserIds);
-    (wfProfiles ?? []).forEach((p: { id: string; full_name: string | null; email: string | null }) => {
-      workflowOwnerNames[p.id] = p.full_name ?? p.email?.split('@')[0] ?? 'Teammate';
-    });
-  }
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const initialWorkflows = workflowRows.map((w: any) => ({
-    ...w,
-    is_owned_by_me: w.user_id === user.id,
-    owner_name: w.user_id !== user.id ? (workflowOwnerNames[w.user_id] ?? 'Teammate') : null,
-  }));
-
   return (
     <WorkPageClient
       userId={user.id}
@@ -142,10 +113,7 @@ export default async function WorkPage({
       initialChatInput={initialChatInput || null}
       initialSavedWorkflows={savedWorkflowsData || []}
       initialAgents={enrichedAgents}
-      initialSection={initialSection}
-      initialWorkflowId={initialWorkflowId || null}
       initialAgentId={initialAgentId || null}
-      initialWorkflows={initialWorkflows}
     />
   );
 }

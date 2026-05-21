@@ -220,7 +220,7 @@ export function StudioBuilderClient({ initialWorkflow, agents }: Props) {
 
   const saveAndClose = useCallback(async () => {
     await save();
-    router.push(`/work?section=studio&workflow=${workflow.id}`);
+    router.push(`/studio?workflow=${workflow.id}`);
   }, [save, router, workflow.id]);
 
   const startTestRun = useCallback(async () => {
@@ -336,7 +336,7 @@ export function StudioBuilderClient({ initialWorkflow, agents }: Props) {
       <header className="h-12 px-4 border-b border-neutral-100 flex-shrink-0 flex items-center bg-white gap-4 z-10">
         <div className="flex items-center gap-2.5 flex-1 min-w-0">
           <Link
-            href={`/work?section=studio&workflow=${workflow.id}`}
+            href={`/studio?workflow=${workflow.id}`}
             className="inline-flex items-center gap-1.5 text-[12px] text-neutral-400 hover:text-neutral-700 transition-colors flex-shrink-0"
           >
             <ArrowLeftIcon className="w-3.5 h-3.5" />
