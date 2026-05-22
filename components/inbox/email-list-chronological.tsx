@@ -75,6 +75,7 @@ export default function EmailListChronological({ items, selectedId, onSelect, co
                 hasAnySelected={hasAnySelected}
                 onDelete={onDelete}
                 onArchive={onArchive}
+                selectedIds={selectedIds}
               />
             ))}
           </div>
