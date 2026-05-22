@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { StudioSidebar } from '@/components/work/studio-sidebar';
+import { ArrowLeftIcon } from '@heroicons/react/24/outline';
 import { WORKFLOW_TEMPLATES, type WorkflowTemplate } from '@/components/work/studio-empty-state';
 import { StudioHomeGrid } from '@/components/work/studio-home-grid';
 import { StudioDetailPanel } from '@/components/work/studio-detail-panel';
@@ -172,24 +172,8 @@ export function StudioPageClient({
   return (
     <div className="flex flex-1 min-w-0 overflow-hidden bg-neutral-50">
 
-      {/* Left: workflow list sidebar — hidden when builder is open */}
-      <div className={`w-[220px] flex-shrink-0 flex flex-col bg-neutral-50 p-2 ${isBuilding ? 'hidden' : ''}`}>
-        <div className="flex-1 flex flex-col rounded-2xl bg-white shadow-sm overflow-hidden">
-          <StudioSidebar
-            workflows={studioWorkflows ?? []}
-            selectedId={selectedWorkflowId}
-            onSelect={(id) => { setSelectedWorkflowId(id); setEditingWorkflowId(null); }}
-            onCreate={() => { setSelectedWorkflowId(null); setEditingWorkflowId(null); }}
-            onRename={handleRenameWorkflow}
-            onDelete={handleDeleteWorkflow}
-            onClone={handleCloneWorkflow}
-            onHover={prefetchRuns}
-          />
-        </div>
-      </div>
-
-      {/* Right: main content */}
-      <div className="flex-1 min-w-0 flex flex-col bg-neutral-50 pl-2 pt-2 pb-2 overflow-hidden">
+      {/* Full-width main content */}
+      <div className="flex-1 min-w-0 flex flex-col bg-neutral-50 p-2 overflow-hidden">
         <div className="flex-1 flex flex-col rounded-2xl bg-white shadow-sm overflow-hidden">
           {isBuilding && selectedWorkflow ? (
             <StudioBuilder
@@ -201,22 +185,34 @@ export function StudioPageClient({
                 const w = selectedWorkflow;
                 if (w && w.name === 'Untitled workflow' && (!w.steps || w.steps.length === 0) && !w.description) {
                   handleDeleteWorkflow(w.id);
+                  setSelectedWorkflowId(null);
                 }
                 setEditingWorkflowId(null);
               }}
             />
           ) : selectedWorkflow ? (
-            <StudioDetailPanel
-              key={selectedWorkflow.id}
-              workflow={selectedWorkflow}
-              initialRuns={runsCacheRef.current.get(selectedWorkflow.id)}
-              onEdit={() => setEditingWorkflowId(selectedWorkflow.id)}
-              onWorkflowUpdated={handleWorkflowUpdated}
-              onWorkflowDeleted={handleDeleteWorkflow}
-              onOpenThread={handleOpenWorkflowThread}
-              onOpenArtifact={handleOpenWorkflowArtifact}
-              onClone={handleCloneWorkflow}
-            />
+            <div className="flex flex-col flex-1 overflow-hidden">
+              <div className="flex-shrink-0 px-6 pt-4 pb-0">
+                <button
+                  onClick={() => setSelectedWorkflowId(null)}
+                  className="inline-flex items-center gap-1 text-[12px] text-neutral-400 hover:text-neutral-700 transition-colors"
+                >
+                  <ArrowLeftIcon className="w-3 h-3" />
+                  Studio
+                </button>
+              </div>
+              <StudioDetailPanel
+                key={selectedWorkflow.id}
+                workflow={selectedWorkflow}
+                initialRuns={runsCacheRef.current.get(selectedWorkflow.id)}
+                onEdit={() => setEditingWorkflowId(selectedWorkflow.id)}
+                onWorkflowUpdated={handleWorkflowUpdated}
+                onWorkflowDeleted={handleDeleteWorkflow}
+                onOpenThread={handleOpenWorkflowThread}
+                onOpenArtifact={handleOpenWorkflowArtifact}
+                onClone={handleCloneWorkflow}
+              />
+            </div>
           ) : studioLoading || studioWorkflows === null ? (
             <div className="flex items-center justify-center flex-1">
               <div className="w-5 h-5 border-2 border-neutral-200 border-t-indigo-500 rounded-full animate-spin" />
