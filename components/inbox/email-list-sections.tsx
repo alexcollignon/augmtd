@@ -97,6 +97,7 @@ export default function EmailListSections({ items, selectedId, onSelect, compact
                     hasAnySelected={hasAnySelected}
                     onDelete={onDelete}
                     onArchive={onArchive}
+                    selectedIds={selectedIds}
                   />
                 ))}
               </div>

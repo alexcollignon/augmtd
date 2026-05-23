@@ -15,6 +15,7 @@ interface EmailListCardProps {
   hasAnySelected?: boolean;
   onDelete?: (id: string) => void;
   onArchive?: (id: string) => void;
+  selectedIds?: Set<string>;
 }
 
 function formatTime(dateStr: string): string {
@@ -26,7 +27,7 @@ function formatTime(dateStr: string): string {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
-export default function EmailListCard({ item, isSelected, onSelect, compact = false, isChecked = false, onToggleCheck, hasAnySelected = false, onDelete, onArchive }: EmailListCardProps) {
+export default function EmailListCard({ item, isSelected, onSelect, compact = false, isChecked = false, onToggleCheck, hasAnySelected = false, onDelete, onArchive, selectedIds }: EmailListCardProps) {
   const [pendingAction, setPendingAction] = useState<'delete' | 'archive' | null>(null);
   const sourceData = item.source_data;
 
@@ -67,9 +68,17 @@ export default function EmailListCard({ item, isSelected, onSelect, compact = fa
     </div>
   );
 
+  const handleDragStart = (e: React.DragEvent) => {
+    const ids = selectedIds?.has(item.id) && (selectedIds.size > 1) ? [...selectedIds] : [item.id];
+    e.dataTransfer.setData('application/x-inbox-items', JSON.stringify(ids));
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
   if (compact) {
     return (
       <div
+        draggable
+        onDragStart={handleDragStart}
         onClick={() => onSelect(item)}
         className={`w-full text-left relative rounded-md transition-colors cursor-pointer group ${
           isChecked ? 'bg-indigo-50/60' : isSelected ? 'bg-indigo-50' : 'bg-white hover:bg-neutral-50'
@@ -100,6 +109,8 @@ export default function EmailListCard({ item, isSelected, onSelect, compact = fa
 
   return (
     <div
+      draggable
+      onDragStart={handleDragStart}
       onClick={() => { if (!pendingAction) onSelect(item); }}
       className={`w-full text-left relative rounded-md transition-colors cursor-pointer group ${
         isChecked ? 'bg-indigo-50/60' : isSelected ? 'bg-indigo-50' : 'bg-white hover:bg-neutral-50'

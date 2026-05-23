@@ -7,14 +7,14 @@ import Link from 'next/link';
 import EmailListSections from '@/components/inbox/email-list-sections';
 import EmailListChronological from '@/components/inbox/email-list-chronological';
 import { type SentEmail } from '@/components/inbox/sent-email-list';
-import FolderRail, { type ConnectionFolders, type SelectedFolder } from '@/components/inbox/folder-rail';
+import FolderSidebar, { type ConnectionFolders, type SelectedFolder } from '@/components/inbox/folder-rail';
 import FolderEmailList from '@/components/inbox/folder-email-list';
 import WorkDetailInline from '@/components/inbox/work-detail-inline';
 import type { FolderEmailSummary, MessageDetail } from '@/lib/google/gmail';
 import AiChatPanel from '@/components/shared/ai-chat-panel';
 import WorkflowPanel from '@/components/inbox/workflow-panel';
 import MeetingsColumn from '@/components/inbox/meetings-column';
-import { ArrowPathIcon, ChatBubbleLeftIcon, SparklesIcon, Bars3Icon, QueueListIcon, ArchiveBoxArrowDownIcon, XMarkIcon, MagnifyingGlassIcon, PencilSquareIcon, CalendarDaysIcon, TrashIcon, PaperClipIcon, EnvelopeIcon, FolderIcon } from '@heroicons/react/24/outline';
+import { ArrowPathIcon, ChatBubbleLeftIcon, SparklesIcon, Bars3Icon, QueueListIcon, ArchiveBoxArrowDownIcon, XMarkIcon, MagnifyingGlassIcon, CalendarDaysIcon, TrashIcon, PaperClipIcon, EnvelopeIcon } from '@heroicons/react/24/outline';
 import ComposePanel from '@/components/inbox/compose-panel';
 import { toast } from 'sonner';
 import type { CalendarEvent } from '@/lib/types/meetings';
@@ -160,6 +160,7 @@ interface InboxPageClientProps {
   initialUserFullName?: string;
   initialHasConnection: boolean;
   initialInboxItems: any[];
+  initialFolderSections?: ConnectionFolders[];
 }
 
 export function InboxPageClient({
@@ -167,6 +168,7 @@ export function InboxPageClient({
   initialUserFullName,
   initialHasConnection,
   initialInboxItems,
+  initialFolderSections,
 }: InboxPageClientProps) {
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -179,14 +181,20 @@ export function InboxPageClient({
   const [meetingsLoading, setMeetingsLoading] = useState(true);
   const [viewMode, setViewMode] = useState<ViewMode>('chronological');
   const [density, setDensity] = useState<Density>('normal');
-  const [showFolderRail, setShowFolderRail] = useState(false);
-  const [folderSections, setFolderSections] = useState<ConnectionFolders[] | null>(null);
+  const [folderSidebarCollapsed, setFolderSidebarCollapsed] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return localStorage.getItem('inbox_folder_sidebar_collapsed') === 'true';
+  });
   const [foldersLoading, setFoldersLoading] = useState(false);
+  const [folderSections, setFolderSections] = useState<ConnectionFolders[] | null>(initialFolderSections ?? null);
   const [selectedFolder, setSelectedFolder] = useState<SelectedFolder | null>(null);
   const [folderEmails, setFolderEmails] = useState<FolderEmailSummary[]>([]);
   const [folderEmailsLoading, setFolderEmailsLoading] = useState(false);
   const [selectedFolderEmailId, setSelectedFolderEmailId] = useState<string | null>(null);
   const [selectedFolderEmail, setSelectedFolderEmail] = useState<MessageDetail | null>(null);
+  const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(
+    initialFolderSections?.[0]?.connectionId ?? null
+  );
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isBulkArchiving, setIsBulkArchiving] = useState(false);
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
@@ -304,6 +312,7 @@ export function InboxPageClient({
         connectionId: c.connectionId,
         provider: c.provider,
         email: c.email ?? '',
+        picture: c.picture ?? null,
         folders: c.folders ?? [],
       }));
       setFolderSections(enriched);
@@ -312,7 +321,22 @@ export function InboxPageClient({
     }
   }, []);
 
-  useEffect(() => { fetchFolders(); }, [fetchFolders]);
+  // Only fetch client-side if SSR didn't provide initial data (e.g. no-JS fallback)
+  useEffect(() => { if (!initialFolderSections) fetchFolders(); }, [fetchFolders, initialFolderSections]);
+
+  // Set default selected connection when folderSections first populates (client-fetch fallback path)
+  useEffect(() => {
+    if (!selectedConnectionId && folderSections?.length) {
+      setSelectedConnectionId(folderSections[0].connectionId);
+    }
+  }, [folderSections]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleSelectConnection = useCallback((id: string) => {
+    setSelectedConnectionId(id);
+    if (selectedFolder && selectedFolder.connectionId !== id) {
+      setSelectedFolder(null);
+    }
+  }, [selectedFolder]);
 
   const handleSelectFolder = useCallback(async (folder: SelectedFolder | null) => {
     setSelectedFolder(folder);
@@ -552,6 +576,13 @@ export function InboxPageClient({
     if (viewMode === 'smart') {
       items = items.filter(item => (item as any).work_state !== 'noise');
     }
+    // Filter by selected account (items with null connection_id are shown for any account)
+    if (selectedConnectionId) {
+      items = items.filter(i => {
+        const cid = (i as any).connection_id;
+        return cid === null || cid === selectedConnectionId;
+      });
+    }
     const q = searchQuery.trim().toLowerCase();
     // Always show at least the most recent item when no search is active
     if (!q && items.length === 0 && inboxItems.length > 0) {
@@ -567,7 +598,7 @@ export function InboxPageClient({
         (sd?.snippet || '').toLowerCase().includes(q)
       );
     });
-  }, [inboxItems, searchQuery, viewMode]);
+  }, [inboxItems, searchQuery, viewMode, selectedConnectionId]);
 
   const handleItemConfirmed = (ids: string[], _action: 'confirm_as_mine' | 'not_my_task') => {
     const idsSet = new Set(ids);
@@ -680,6 +711,32 @@ export function InboxPageClient({
     setInboxItems(prev => prev.filter(i => i.id !== itemId));
     setSelectedItem(prev => (prev?.id === itemId ? null : prev));
     await fetch(`/api/inbox/${itemId}/archive-source`, { method: 'POST' });
+  }, []);
+
+  const handleDropToFolder = useCallback(async (folder: SelectedFolder, itemIds: string[]) => {
+    const name = folder.folderName.toLowerCase();
+    // Optimistically remove from inbox list and clear selection
+    setInboxItems(prev => prev.filter(i => !itemIds.includes(i.id)));
+    setSelectedItem(prev => (prev && itemIds.includes(prev.id) ? null : prev));
+    setSelectedIds(new Set());
+    const n = itemIds.length;
+    const label = n === 1 ? '1 email' : `${n} emails`;
+    if (name.includes('trash') || name.includes('deleted')) {
+      toast.success(`${label} moved to Trash`);
+      await Promise.all(itemIds.map(id => fetch(`/api/inbox/${id}/delete-source`, { method: 'POST' })));
+    } else if (name.includes('archive') || name === 'all mail') {
+      toast.success(`${label} archived`);
+      await Promise.all(itemIds.map(id => fetch(`/api/inbox/${id}/archive-source`, { method: 'POST' })));
+    } else {
+      toast.success(`${label} moved to ${folder.folderName}`);
+      await Promise.all(itemIds.map(id =>
+        fetch(`/api/inbox/${id}/move-to-folder`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ folderId: folder.folderId, folderName: folder.folderName }),
+        })
+      ));
+    }
   }, []);
 
   const handleChatAction = useCallback(async (type: string, itemId: string) => {
@@ -854,10 +911,32 @@ export function InboxPageClient({
         {hasConnection && (
           <div className="flex-1 min-h-0 relative overflow-hidden">
 
-            {/* 3-column inbox layout */}
+            {/* Folder sidebar + email list + detail + right panel */}
             <div className="absolute inset-0 flex min-h-0 overflow-hidden">
+
+            {/* Folder sidebar */}
+            {folderSections && folderSections.length > 0 && (
+              <FolderSidebar
+                connections={folderSections}
+                selectedFolder={selectedFolder}
+                onSelectFolder={handleSelectFolder}
+                onCreateFolder={handleCreateFolder}
+                loading={foldersLoading}
+                collapsed={folderSidebarCollapsed}
+                onToggleCollapsed={() => {
+                  const next = !folderSidebarCollapsed;
+                  setFolderSidebarCollapsed(next);
+                  localStorage.setItem('inbox_folder_sidebar_collapsed', String(next));
+                }}
+                onCompose={() => { setComposeMode(true); setRightPanel('chat'); setTimeout(() => chatInputRef.current?.focus(), 50); }}
+                onDropToFolder={handleDropToFolder}
+                selectedConnectionId={selectedConnectionId ?? ''}
+                onSelectConnection={handleSelectConnection}
+              />
+            )}
+
             {/* Left: email list */}
-            <div className="w-[272px] flex-shrink-0 flex flex-col bg-neutral-50 p-2">
+            <div className="w-[240px] flex-shrink-0 flex flex-col bg-neutral-50 p-2">
               <div className="flex-1 flex flex-col rounded-2xl bg-white shadow-sm overflow-hidden">
 
               {/* View + density toggles / search — animated crossfade */}
@@ -899,15 +978,6 @@ export function InboxPageClient({
                     >
                       {density === 'compact' ? <QueueListIcon className="w-3.5 h-3.5" /> : <Bars3Icon className="w-3.5 h-3.5" />}
                     </button>
-                    {folderSections && folderSections.length > 0 && (
-                      <button
-                        onClick={() => setShowFolderRail(v => !v)}
-                        title={showFolderRail ? 'Hide folders' : 'Show folders'}
-                        className={`p-1 transition-colors ${showFolderRail ? 'text-indigo-500' : 'text-neutral-300 hover:text-neutral-400'}`}
-                      >
-                        <FolderIcon className="w-3.5 h-3.5" />
-                      </button>
-                    )}
                     <div className="w-px h-3.5 bg-neutral-200 mx-1" />
                     <button
                       onClick={() => { if (isSyncing) return; preSyncCountRef.current = inboxItems.length; setIsSyncing(true); fetch('/api/connections/sync', { method: 'POST' }).catch(() => setIsSyncing(false)); }}
@@ -965,22 +1035,6 @@ export function InboxPageClient({
                         : 'Syncing…';
                     })()}
                   </span>
-                </div>
-              )}
-
-              {/* Folder rail — always mounted when folders available, animated open/close */}
-              {folderSections && folderSections.length > 0 && (
-                <div
-                  className="overflow-hidden transition-[max-height,opacity] duration-200 ease-in-out flex-shrink-0"
-                  style={{ maxHeight: showFolderRail ? '480px' : '0px', opacity: showFolderRail ? 1 : 0 }}
-                >
-                  <FolderRail
-                    connections={folderSections}
-                    selectedFolder={selectedFolder}
-                    onSelectFolder={handleSelectFolder}
-                    onCreateFolder={handleCreateFolder}
-                    loading={foldersLoading}
-                  />
                 </div>
               )}
 
@@ -1103,16 +1157,7 @@ export function InboxPageClient({
             {/* Middle: detail/compose */}
             <div className="flex-1 min-w-0 overflow-hidden flex flex-col bg-neutral-50 pl-2 pt-2 pb-2">
               <div className="relative flex-1 flex flex-col rounded-2xl bg-white shadow-sm overflow-hidden">
-                {/* Compose button — top-right, inline with email title */}
-                {!composeMode && (
-                  <button
-                    onClick={() => { setComposeMode(true); setRightPanel('chat'); setTimeout(() => chatInputRef.current?.focus(), 50); }}
-                    title="Compose new email"
-                    className="absolute top-[14px] right-5 z-10 p-1.5 rounded-lg text-neutral-400 hover:text-indigo-500 hover:bg-neutral-50 transition-colors"
-                  >
-                    <PencilSquareIcon className="w-4 h-4" />
-                  </button>
-                )}
+
               <div className="flex-1 min-h-0 overflow-hidden">
                   {composeMode ? (
                     <ComposePanel

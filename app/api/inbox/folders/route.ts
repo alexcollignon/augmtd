@@ -39,11 +39,13 @@ export async function GET() {
             );
           }
           const email = (conn.metadata as any)?.email ?? '';
-          return { connectionId: conn.id, provider: conn.provider, email, folders };
+          const picture = (conn.metadata as any)?.picture ?? null;
+          return { connectionId: conn.id, provider: conn.provider, email, picture, folders };
         } catch (err) {
           console.error(`[Folders] Failed to list folders for ${conn.provider} connection ${conn.id}:`, err);
           const email = (conn.metadata as any)?.email ?? '';
-          return { connectionId: conn.id, provider: conn.provider, email, folders: [], error: String(err) };
+          const picture = (conn.metadata as any)?.picture ?? null;
+          return { connectionId: conn.id, provider: conn.provider, email, picture, folders: [], error: String(err) };
         }
       })
     );
