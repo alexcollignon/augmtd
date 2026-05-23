@@ -24,9 +24,12 @@ export default async function PreparedWorkPage() {
 
   const hasConnection = (connections?.length ?? 0) > 0;
 
-  // Fetch folders for each connection in parallel, server-side so they're ready on first render
-  const folderSections: ConnectionFolders[] = hasConnection
-    ? (await Promise.all(
+  // Fetch folders server-side so they're ready on first render. Returns undefined on full failure
+  // so InboxPageClient falls back to its own client-side fetch.
+  let folderSections: ConnectionFolders[] | undefined;
+  if (hasConnection) {
+    try {
+      const results = await Promise.all(
         (connections ?? []).map(async (conn) => {
           try {
             let folders;
@@ -41,13 +44,19 @@ export default async function PreparedWorkPage() {
                 },
               );
             }
-            return { connectionId: conn.id, provider: conn.provider as 'gmail' | 'outlook', email: (conn.metadata as any)?.email ?? '', folders };
+            return { connectionId: conn.id, provider: conn.provider as 'gmail' | 'outlook', email: (conn.metadata as any)?.email ?? '', picture: (conn.metadata as any)?.picture ?? null, folders };
           } catch {
-            return { connectionId: conn.id, provider: conn.provider as 'gmail' | 'outlook', email: (conn.metadata as any)?.email ?? '', folders: [] };
+            return { connectionId: conn.id, provider: conn.provider as 'gmail' | 'outlook', email: (conn.metadata as any)?.email ?? '', picture: (conn.metadata as any)?.picture ?? null, folders: [] as ConnectionFolders['folders'] };
           }
         })
-      )).filter(c => c.folders.length > 0)
-    : [];
+      );
+      const populated = results.filter(c => c.folders.length > 0);
+      // Only use SSR result if at least one connection returned folders; otherwise let client fetch
+      if (populated.length > 0) folderSections = populated;
+    } catch {
+      // Non-fatal — client will fetch on mount
+    }
+  }
 
   return (
     <InboxPageClient

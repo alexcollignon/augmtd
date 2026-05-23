@@ -192,6 +192,9 @@ export function InboxPageClient({
   const [folderEmailsLoading, setFolderEmailsLoading] = useState(false);
   const [selectedFolderEmailId, setSelectedFolderEmailId] = useState<string | null>(null);
   const [selectedFolderEmail, setSelectedFolderEmail] = useState<MessageDetail | null>(null);
+  const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(
+    initialFolderSections?.[0]?.connectionId ?? null
+  );
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isBulkArchiving, setIsBulkArchiving] = useState(false);
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
@@ -309,6 +312,7 @@ export function InboxPageClient({
         connectionId: c.connectionId,
         provider: c.provider,
         email: c.email ?? '',
+        picture: c.picture ?? null,
         folders: c.folders ?? [],
       }));
       setFolderSections(enriched);
@@ -319,6 +323,20 @@ export function InboxPageClient({
 
   // Only fetch client-side if SSR didn't provide initial data (e.g. no-JS fallback)
   useEffect(() => { if (!initialFolderSections) fetchFolders(); }, [fetchFolders, initialFolderSections]);
+
+  // Set default selected connection when folderSections first populates (client-fetch fallback path)
+  useEffect(() => {
+    if (!selectedConnectionId && folderSections?.length) {
+      setSelectedConnectionId(folderSections[0].connectionId);
+    }
+  }, [folderSections]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleSelectConnection = useCallback((id: string) => {
+    setSelectedConnectionId(id);
+    if (selectedFolder && selectedFolder.connectionId !== id) {
+      setSelectedFolder(null);
+    }
+  }, [selectedFolder]);
 
   const handleSelectFolder = useCallback(async (folder: SelectedFolder | null) => {
     setSelectedFolder(folder);
@@ -558,6 +576,13 @@ export function InboxPageClient({
     if (viewMode === 'smart') {
       items = items.filter(item => (item as any).work_state !== 'noise');
     }
+    // Filter by selected account (items with null connection_id are shown for any account)
+    if (selectedConnectionId) {
+      items = items.filter(i => {
+        const cid = (i as any).connection_id;
+        return cid === null || cid === selectedConnectionId;
+      });
+    }
     const q = searchQuery.trim().toLowerCase();
     // Always show at least the most recent item when no search is active
     if (!q && items.length === 0 && inboxItems.length > 0) {
@@ -573,7 +598,7 @@ export function InboxPageClient({
         (sd?.snippet || '').toLowerCase().includes(q)
       );
     });
-  }, [inboxItems, searchQuery, viewMode]);
+  }, [inboxItems, searchQuery, viewMode, selectedConnectionId]);
 
   const handleItemConfirmed = (ids: string[], _action: 'confirm_as_mine' | 'not_my_task') => {
     const idsSet = new Set(ids);
@@ -905,6 +930,8 @@ export function InboxPageClient({
                 }}
                 onCompose={() => { setComposeMode(true); setRightPanel('chat'); setTimeout(() => chatInputRef.current?.focus(), 50); }}
                 onDropToFolder={handleDropToFolder}
+                selectedConnectionId={selectedConnectionId ?? ''}
+                onSelectConnection={handleSelectConnection}
               />
             )}
 

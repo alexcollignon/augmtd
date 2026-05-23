@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
+import Link from 'next/link';
 import {
   PlusIcon,
   FolderIcon,
@@ -11,6 +12,8 @@ import {
   TrashIcon,
   ExclamationCircleIcon,
   PencilSquareIcon,
+  ChevronDownIcon,
+  CheckIcon,
 } from '@heroicons/react/24/outline';
 
 function SidebarToggleIcon({ className }: { className?: string }) {
@@ -40,6 +43,7 @@ export interface ConnectionFolders {
   connectionId: string;
   provider: 'gmail' | 'outlook';
   email: string;
+  picture?: string | null;
   folders: FolderItem[];
 }
 
@@ -53,6 +57,8 @@ interface Props {
   onToggleCollapsed: () => void;
   onCompose: () => void;
   onDropToFolder?: (folder: SelectedFolder, itemIds: string[]) => void;
+  selectedConnectionId: string;
+  onSelectConnection: (id: string) => void;
 }
 
 function formatEmail(email: string): string {
@@ -60,6 +66,22 @@ function formatEmail(email: string): string {
   const [local, domain] = email.split('@');
   if (!domain) return email;
   return `${local.slice(0, 12)}…@${domain}`;
+}
+
+function AccountAvatar({ conn, size = 'md' }: { conn: ConnectionFolders; size?: 'sm' | 'md' }) {
+  const dim = size === 'sm' ? 'w-5 h-5 text-[9px]' : 'w-6 h-6 text-[10px]';
+  if (conn.picture) {
+    return <img src={conn.picture} alt={conn.email} className={`${dim} rounded-full object-cover flex-shrink-0`} />;
+  }
+  const initial = (conn.email.split('@')[0]?.[0] ?? '?').toUpperCase();
+  const colors = conn.provider === 'gmail'
+    ? 'bg-red-100 text-red-600'
+    : 'bg-blue-100 text-blue-600';
+  return (
+    <span className={`${dim} ${colors} rounded-full font-semibold flex items-center justify-center flex-shrink-0`}>
+      {initial}
+    </span>
+  );
 }
 
 const FOLDER_ORDER = ['inbox', 'sent', 'sent items', 'drafts', 'archive', 'all mail', 'trash', 'deleted items', 'spam', 'junk'];
@@ -81,12 +103,12 @@ function isInboxFolder(name: string): boolean {
 
 function folderIcon(name: string): React.ReactNode {
   const n = name.toLowerCase();
-  if (n === 'inbox')                        return <EnvelopeIcon className="w-3.5 h-3.5 flex-shrink-0" />;
-  if (n === 'sent' || n === 'sent items')   return <PaperAirplaneIcon className="w-3.5 h-3.5 flex-shrink-0" />;
-  if (n === 'drafts')                       return <DocumentTextIcon className="w-3.5 h-3.5 flex-shrink-0" />;
-  if (n.includes('archive') || n === 'all mail') return <ArchiveBoxIcon className="w-3.5 h-3.5 flex-shrink-0" />;
+  if (n === 'inbox')                              return <EnvelopeIcon className="w-3.5 h-3.5 flex-shrink-0" />;
+  if (n === 'sent' || n === 'sent items')         return <PaperAirplaneIcon className="w-3.5 h-3.5 flex-shrink-0" />;
+  if (n === 'drafts')                             return <DocumentTextIcon className="w-3.5 h-3.5 flex-shrink-0" />;
+  if (n.includes('archive') || n === 'all mail')  return <ArchiveBoxIcon className="w-3.5 h-3.5 flex-shrink-0" />;
   if (n.includes('trash') || n.includes('deleted')) return <TrashIcon className="w-3.5 h-3.5 flex-shrink-0" />;
-  if (n.includes('spam') || n.includes('junk'))     return <ExclamationCircleIcon className="w-3.5 h-3.5 flex-shrink-0" />;
+  if (n.includes('spam') || n.includes('junk'))   return <ExclamationCircleIcon className="w-3.5 h-3.5 flex-shrink-0" />;
   return <FolderIcon className="w-3.5 h-3.5 flex-shrink-0" />;
 }
 
@@ -100,16 +122,31 @@ export default function FolderSidebar({
   onToggleCollapsed,
   onCompose,
   onDropToFolder,
+  selectedConnectionId,
+  onSelectConnection,
 }: Props) {
   const [newFolderConnectionId, setNewFolderConnectionId] = useState<string | null>(null);
   const [newFolderName, setNewFolderName] = useState('');
   const [creating, setCreating] = useState(false);
   const [dragOverKey, setDragOverKey] = useState<string | null>(null);
+  const [accountDropdownOpen, setAccountDropdownOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (newFolderConnectionId) setTimeout(() => inputRef.current?.focus(), 30);
   }, [newFolderConnectionId]);
+
+  useEffect(() => {
+    if (!accountDropdownOpen) return;
+    const handle = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setAccountDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handle);
+    return () => document.removeEventListener('mousedown', handle);
+  }, [accountDropdownOpen]);
 
   const handleCreate = async (connectionId: string) => {
     if (!newFolderName.trim() || creating) return;
@@ -128,7 +165,8 @@ export default function FolderSidebar({
     setNewFolderConnectionId(null);
   };
 
-  const multiConnection = connections.length > 1;
+  const activeConn = connections.find(c => c.connectionId === selectedConnectionId) ?? connections[0];
+  const visibleConnections = activeConn ? [activeConn] : [];
 
   return (
     <div
@@ -137,6 +175,7 @@ export default function FolderSidebar({
       }`}
     >
     <div className="h-full flex flex-col rounded-2xl bg-white shadow-sm overflow-hidden">
+
       {/* Header: compose + collapse toggle */}
       <div className={`flex-shrink-0 px-2 pt-3 pb-2 flex items-center gap-1.5 ${collapsed ? 'justify-center' : ''}`}>
         {collapsed ? (
@@ -167,8 +206,64 @@ export default function FolderSidebar({
         )}
       </div>
 
+      {/* Account selector */}
+      {activeConn && (
+        <div className="flex-shrink-0 px-2 pb-2">
+          {collapsed ? (
+            <div className="flex justify-center py-0.5">
+              <AccountAvatar conn={activeConn} />
+            </div>
+          ) : (
+            <div className="relative" ref={dropdownRef}>
+              <button
+                onClick={() => setAccountDropdownOpen(v => !v)}
+                className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-neutral-50 transition-colors text-left"
+              >
+                <AccountAvatar conn={activeConn} />
+                <span className="flex-1 text-[12px] text-neutral-700 truncate min-w-0">
+                  {formatEmail(activeConn.email)}
+                </span>
+                <ChevronDownIcon className={`w-3 h-3 text-neutral-400 flex-shrink-0 transition-transform duration-150 ${accountDropdownOpen ? 'rotate-180' : ''}`} />
+              </button>
+
+              {accountDropdownOpen && (
+                <div className="absolute top-full left-0 right-0 mt-1 z-50 bg-white rounded-xl shadow-lg border border-neutral-100 py-1 overflow-hidden">
+                  {connections.map(conn => {
+                    const isActive = conn.connectionId === selectedConnectionId;
+                    return (
+                      <button
+                        key={conn.connectionId}
+                        onClick={() => { onSelectConnection(conn.connectionId); setAccountDropdownOpen(false); }}
+                        className={`w-full flex items-center gap-2 px-3 py-2 text-left transition-colors ${
+                          isActive ? 'bg-indigo-50 text-indigo-600' : 'text-neutral-700 hover:bg-neutral-50'
+                        }`}
+                      >
+                        <AccountAvatar conn={conn} />
+                        <span className="flex-1 text-[12px] truncate min-w-0">{conn.email}</span>
+                        {isActive && <CheckIcon className="w-3.5 h-3.5 text-indigo-500 flex-shrink-0" />}
+                      </button>
+                    );
+                  })}
+                  <div className="mx-2 my-1 border-t border-neutral-100" />
+                  <Link
+                    href="/settings"
+                    onClick={() => setAccountDropdownOpen(false)}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-left text-neutral-500 hover:bg-neutral-50 transition-colors"
+                  >
+                    <PlusIcon className="w-3.5 h-3.5 flex-shrink-0 text-neutral-400" />
+                    <span className="text-[12px]">Add email account</span>
+                  </Link>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="flex-shrink-0 mx-3 border-t border-neutral-100" />
+
       {/* Folder list — scrollable */}
-      <div className="flex-1 overflow-y-auto min-h-0 px-1.5 pb-1">
+      <div className="flex-1 overflow-y-auto min-h-0 px-1.5 py-1">
 
         {loading && (
           <div className="space-y-0.5 pt-1">
@@ -181,28 +276,17 @@ export default function FolderSidebar({
           </div>
         )}
 
-        {!loading && connections.map((conn, connIdx) => {
+        {!loading && visibleConnections.map((conn) => {
           const systemFolders = sortSystemFolders(conn.folders.filter(f => f.isSystem));
           const userFolders = conn.folders.filter(f => !f.isSystem);
           const isCreatingHere = newFolderConnectionId === conn.connectionId;
-          const providerColor = conn.provider === 'gmail' ? 'bg-red-400' : 'bg-blue-400';
 
           return (
             <div key={conn.connectionId}>
-              {/* Account header */}
-              {multiConnection && !collapsed && (
-                <div className="flex items-center gap-1.5 px-2 pt-2 pb-0.5">
-                  <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${providerColor}`} />
-                  <span className="text-[10px] text-neutral-400 truncate">{formatEmail(conn.email)}</span>
-                </div>
-              )}
-
-              {/* Section label (first account only, expanded) */}
-              {connIdx === 0 && !collapsed && (
-                <div className="flex items-center justify-between px-2 pt-2 pb-1">
-                  <span className="text-[10.5px] font-semibold text-neutral-400 uppercase tracking-wide">
-                    Folders
-                  </span>
+              {/* Section label */}
+              {!collapsed && (
+                <div className="px-2 pt-1 pb-1">
+                  <span className="text-[10.5px] font-semibold text-neutral-400 uppercase tracking-wide">Folders</span>
                 </div>
               )}
 
@@ -220,29 +304,19 @@ export default function FolderSidebar({
                     <button
                       key={folder.id}
                       title={collapsed ? folder.name : undefined}
-                      onClick={() =>
-                        isInbox
-                          ? onSelectFolder(null)
-                          : onSelectFolder(isSelected ? null : folderRef)
-                      }
+                      onClick={() => isInbox ? onSelectFolder(null) : onSelectFolder(isSelected ? null : folderRef)}
                       onDragOver={isInbox ? undefined : (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDragOverKey(dropKey); }}
                       onDragLeave={isInbox ? undefined : () => setDragOverKey(null)}
                       onDrop={isInbox || !onDropToFolder ? undefined : (e) => {
-                        e.preventDefault();
-                        setDragOverKey(null);
-                        try {
-                          const ids: string[] = JSON.parse(e.dataTransfer.getData('application/x-inbox-items'));
-                          if (ids.length) onDropToFolder(folderRef, ids);
-                        } catch { /* non-fatal */ }
+                        e.preventDefault(); setDragOverKey(null);
+                        try { const ids: string[] = JSON.parse(e.dataTransfer.getData('application/x-inbox-items')); if (ids.length) onDropToFolder(folderRef, ids); } catch { /* non-fatal */ }
                       }}
                       className={`w-full flex items-center rounded-lg transition-colors ${
                         collapsed ? 'justify-center p-2' : 'gap-2 px-2 py-1.5'
                       } ${
-                        isDragOver
-                          ? 'bg-indigo-100 text-indigo-700 ring-1 ring-indigo-300'
-                          : isSelected
-                          ? 'bg-indigo-50 text-indigo-600'
-                          : 'text-neutral-600 hover:bg-neutral-100'
+                        isDragOver ? 'bg-indigo-100 text-indigo-700 ring-1 ring-indigo-300'
+                        : isSelected ? 'bg-indigo-50 text-indigo-600'
+                        : 'text-neutral-600 hover:bg-neutral-100'
                       }`}
                     >
                       <span className={isDragOver || isSelected ? 'text-indigo-500' : 'text-neutral-400'}>
@@ -264,9 +338,7 @@ export default function FolderSidebar({
                   {!collapsed && <div className="mx-1 my-1.5 border-t border-neutral-100" />}
                   <div className="space-y-0.5">
                     {userFolders.map(folder => {
-                      const isSelected =
-                        selectedFolder?.connectionId === conn.connectionId &&
-                        selectedFolder.folderId === folder.id;
+                      const isSelected = selectedFolder?.connectionId === conn.connectionId && selectedFolder.folderId === folder.id;
                       const dropKey = `${conn.connectionId}:${folder.id}`;
                       const isDragOver = dragOverKey === dropKey;
                       const folderRef: SelectedFolder = { connectionId: conn.connectionId, folderId: folder.id, folderName: folder.name, provider: conn.provider };
@@ -278,21 +350,15 @@ export default function FolderSidebar({
                           onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDragOverKey(dropKey); }}
                           onDragLeave={() => setDragOverKey(null)}
                           onDrop={!onDropToFolder ? undefined : (e) => {
-                            e.preventDefault();
-                            setDragOverKey(null);
-                            try {
-                              const ids: string[] = JSON.parse(e.dataTransfer.getData('application/x-inbox-items'));
-                              if (ids.length) onDropToFolder(folderRef, ids);
-                            } catch { /* non-fatal */ }
+                            e.preventDefault(); setDragOverKey(null);
+                            try { const ids: string[] = JSON.parse(e.dataTransfer.getData('application/x-inbox-items')); if (ids.length) onDropToFolder(folderRef, ids); } catch { /* non-fatal */ }
                           }}
                           className={`w-full flex items-center rounded-lg transition-colors ${
                             collapsed ? 'justify-center p-2' : 'gap-2 px-2 py-1.5'
                           } ${
-                            isDragOver
-                              ? 'bg-indigo-100 text-indigo-700 ring-1 ring-indigo-300'
-                              : isSelected
-                              ? 'bg-indigo-50 text-indigo-600'
-                              : 'text-neutral-600 hover:bg-neutral-100'
+                            isDragOver ? 'bg-indigo-100 text-indigo-700 ring-1 ring-indigo-300'
+                            : isSelected ? 'bg-indigo-50 text-indigo-600'
+                            : 'text-neutral-600 hover:bg-neutral-100'
                           }`}
                         >
                           <span className={isDragOver || isSelected ? 'text-indigo-500' : 'text-neutral-400'}>
@@ -307,7 +373,6 @@ export default function FolderSidebar({
                       );
                     })}
 
-                    {/* New folder input */}
                     {isCreatingHere && !collapsed && (
                       <div className="flex items-center gap-1.5 px-2 py-1">
                         <FolderIcon className="w-3.5 h-3.5 flex-shrink-0 text-neutral-300" />
