@@ -388,10 +388,8 @@ export function InboxPageClient({
   }, []);
 
   const handleDeleteFolder = useCallback(async (connectionId: string, folderId: string) => {
-    const res = await fetch('/api/inbox/folders', {
+    const res = await fetch(`/api/inbox/folders?connectionId=${encodeURIComponent(connectionId)}&folderId=${encodeURIComponent(folderId)}`, {
       method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ connectionId, folderId }),
     });
     if (!res.ok) throw new Error('Failed to delete folder');
     setFolderSections(prev => prev?.map(c =>

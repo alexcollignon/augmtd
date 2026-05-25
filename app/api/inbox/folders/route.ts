@@ -139,7 +139,9 @@ export async function DELETE(request: NextRequest) {
     const { data: { user }, error: authError } = await supabase.auth.getUser();
     if (authError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { connectionId, folderId } = await request.json();
+    const { searchParams } = new URL(request.url);
+    const connectionId = searchParams.get('connectionId');
+    const folderId = searchParams.get('folderId');
     if (!connectionId || !folderId) {
       return NextResponse.json({ error: 'connectionId and folderId are required' }, { status: 400 });
     }
