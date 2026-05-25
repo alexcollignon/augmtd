@@ -212,7 +212,9 @@ export default function FolderSidebar({
             e.preventDefault(); setDragOverKey(null);
             try { const ids: string[] = JSON.parse(e.dataTransfer.getData('application/x-inbox-items')); if (ids.length) onDropToFolder(folderRef, ids); } catch { /* non-fatal */ }
           }}
-          className={`w-full flex items-center gap-1.5 pr-2 rounded-lg transition-all duration-150 ${isDragOver ? 'py-2.5' : 'py-1.5'} ${
+          className={`w-full flex gap-1.5 pr-2 rounded-lg transition-all duration-150 ${
+            isDragOver ? 'pt-2 pb-8 items-start' : 'py-1.5 items-center'
+          } ${
             isDragOver ? 'bg-indigo-100 text-indigo-700 ring-1 ring-indigo-300'
             : isSelected ? 'bg-indigo-50 text-indigo-600'
             : 'text-neutral-600 hover:bg-neutral-100'
@@ -392,8 +394,12 @@ export default function FolderSidebar({
                         e.preventDefault(); setDragOverKey(null);
                         try { const ids: string[] = JSON.parse(e.dataTransfer.getData('application/x-inbox-items')); if (ids.length) onDropToFolder(folderRef, ids); } catch { /* non-fatal */ }
                       }}
-                      className={`w-full flex items-center rounded-lg transition-all duration-150 ${
-                        collapsed ? 'justify-center p-2' : `gap-2 px-2 ${isDragOver ? 'py-2.5' : 'py-1.5'}`
+                      className={`w-full flex rounded-lg transition-all duration-150 ${
+                        collapsed
+                          ? 'justify-center p-2 items-center'
+                          : isDragOver
+                            ? 'gap-2 px-2 pt-2 pb-8 items-start'
+                            : 'gap-2 px-2 py-1.5 items-center'
                       } ${
                         isDragOver ? 'bg-indigo-100 text-indigo-700 ring-1 ring-indigo-300'
                         : isSelected ? 'bg-indigo-50 text-indigo-600'
