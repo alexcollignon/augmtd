@@ -7,7 +7,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import {
   EnvelopeIcon,
   ChatBubbleLeftEllipsisIcon,
-  RectangleStackIcon,
+  BoltIcon,
   VideoCameraIcon,
   FolderIcon,
   ClockIcon,
@@ -52,7 +52,7 @@ export default function SidebarNav({
   const navigation = [
     ...(features.email    ? [{ name: 'Inbox',    href: '/inbox',    icon: EnvelopeIcon }]    : []),
     { name: 'Chat', href: '/work', icon: ChatBubbleLeftEllipsisIcon },
-    ...(features.studio !== false ? [{ name: 'Studio', href: '/studio', icon: RectangleStackIcon, badgeCount: workflowNotifCount }] : []),
+    ...(features.studio !== false ? [{ name: 'Studio', href: '/studio', icon: BoltIcon, badgeCount: workflowNotifCount }] : []),
     ...(features.meetings ? [{ name: 'Meetings', href: '/meetings', icon: VideoCameraIcon }] : []),
     ...(features.drive    ? [{ name: 'Drive',    href: '/drive',    icon: FolderIcon }]      : []),
     ...(isSuperAdmin ? [{ name: 'Platform Admin', href: '/platform-admin', icon: ShieldCheckIcon }] : []),

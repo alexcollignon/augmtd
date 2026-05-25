@@ -163,6 +163,7 @@ export function StudioBuilder({ workflow: initialWorkflow, agents, onClose, onBa
   const [enhancingStepId, setEnhancingStepId] = useState<string | null>(null);
   const [enhancePendingStepId, setEnhancePendingStepId] = useState<string | null>(null);
   const [testRunId, setTestRunId] = useState<string | null>(null);
+  const [showAssistant, setShowAssistant] = useState(false);
 
   const resolvedPanel: ActivePanel = (() => {
     if (typeof activePanel === 'object') {
@@ -356,6 +357,18 @@ export function StudioBuilder({ workflow: initialWorkflow, agents, onClose, onBa
           )}
         </div>
         <div className="flex items-center gap-2 flex-1 justify-end">
+          <button
+            onClick={() => setShowAssistant(v => !v)}
+            title={showAssistant ? 'Hide AI assistant' : 'Open AI assistant'}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 border text-[12px] font-medium rounded-md transition-colors ${
+              showAssistant
+                ? 'border-indigo-200 bg-indigo-50 text-indigo-600 hover:bg-indigo-100'
+                : 'border-neutral-200 text-neutral-500 hover:bg-neutral-50 hover:text-neutral-700'
+            }`}
+          >
+            <SparklesIcon className="w-3.5 h-3.5" />
+            AI
+          </button>
           <button onClick={startTestRun} disabled={saving || workflow.steps.length === 0}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-neutral-200 text-neutral-700 text-[12px] font-medium rounded-md hover:bg-neutral-50 transition-colors disabled:opacity-40">
             <BoltIcon className="w-3.5 h-3.5" />
@@ -375,9 +388,11 @@ export function StudioBuilder({ workflow: initialWorkflow, agents, onClose, onBa
       {/* 3-column body */}
       <div className="flex-1 flex overflow-hidden">
         {/* AI Assistant column */}
-        <div className="flex-none w-[27%] min-w-[220px] max-w-[320px] border-r border-neutral-100 bg-white flex flex-col overflow-hidden">
-          <AIAssistantPanel workflow={workflow} onPatch={patchBulk} />
-        </div>
+        {showAssistant && (
+          <div className="flex-none w-[27%] min-w-[220px] max-w-[320px] border-r border-neutral-100 bg-white flex flex-col overflow-hidden">
+            <AIAssistantPanel workflow={workflow} onPatch={patchBulk} onClose={() => setShowAssistant(false)} />
+          </div>
+        )}
 
         {/* Visual workflow center */}
         <div className="flex-1 min-w-0 overflow-y-auto bg-neutral-50/60 flex justify-center">
@@ -598,9 +613,10 @@ function TestRunPanel({ workflowId, runId, steps, onClose }: {
 
 // ── Visual workflow components ────────────────────────────────────────────────
 
-function AIAssistantPanel({ workflow, onPatch }: {
+function AIAssistantPanel({ workflow, onPatch, onClose }: {
   workflow: Workflow;
   onPatch: (p: Partial<Workflow>) => void;
+  onClose?: () => void;
 }) {
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState('');
@@ -644,12 +660,18 @@ function AIAssistantPanel({ workflow, onPatch }: {
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="px-3 pt-3 pb-2.5 border-b border-neutral-100 flex-shrink-0">
+      <div className="px-3 pt-3 pb-2.5 border-b border-neutral-100 flex-shrink-0 flex items-center justify-between">
         <button type="button" onClick={() => setMessages([])}
           className="flex items-center gap-1.5 text-[11.5px] font-medium text-neutral-500 hover:text-neutral-800 transition-colors">
           <PlusIcon className="w-3.5 h-3.5" />
           New conversation
         </button>
+        {onClose && (
+          <button type="button" onClick={onClose}
+            className="p-1 rounded hover:bg-neutral-100 text-neutral-400 hover:text-neutral-700 transition-colors">
+            <ChevronDownIcon className="w-3.5 h-3.5 rotate-90" />
+          </button>
+        )}
       </div>
 
       {/* Messages / greeting */}
