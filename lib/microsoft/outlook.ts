@@ -464,6 +464,16 @@ export async function listOutlookAllFolders(
   return [...system, ...userRoots, ...userChildren];
 }
 
+export async function renameOutlookFolder(encryptedTokens: string, folderId: string, newName: string, onTokenRefresh?: TokenRefreshCallback): Promise<void> {
+  const client = await getGraphClient(encryptedTokens, onTokenRefresh);
+  await client.api(`/me/mailFolders/${folderId}`).patch({ displayName: newName });
+}
+
+export async function deleteOutlookFolder(encryptedTokens: string, folderId: string, onTokenRefresh?: TokenRefreshCallback): Promise<void> {
+  const client = await getGraphClient(encryptedTokens, onTokenRefresh);
+  await client.api(`/me/mailFolders/${folderId}`).delete();
+}
+
 export interface FolderEmailSummary {
   id: string;
   subject: string;

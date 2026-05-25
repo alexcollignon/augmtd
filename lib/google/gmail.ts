@@ -482,6 +482,19 @@ export async function listGmailAllFolders(
   return [...system, ...user];
 }
 
+export async function renameGmailLabel(encryptedTokens: string, labelId: string, newLeafName: string): Promise<void> {
+  const gmail = await getGmailClient(encryptedTokens);
+  const current = await gmail.users.labels.get({ userId: 'me', id: labelId });
+  const parts = (current.data.name ?? newLeafName).split('/');
+  parts[parts.length - 1] = newLeafName;
+  await gmail.users.labels.patch({ userId: 'me', id: labelId, requestBody: { name: parts.join('/') } });
+}
+
+export async function deleteGmailLabel(encryptedTokens: string, labelId: string): Promise<void> {
+  const gmail = await getGmailClient(encryptedTokens);
+  await gmail.users.labels.delete({ userId: 'me', id: labelId });
+}
+
 export interface FolderEmailSummary {
   id: string;
   subject: string;
