@@ -72,6 +72,14 @@ export default function EmailListCard({ item, isSelected, onSelect, compact = fa
     const ids = selectedIds?.has(item.id) && (selectedIds.size > 1) ? [...selectedIds] : [item.id];
     e.dataTransfer.setData('application/x-inbox-items', JSON.stringify(ids));
     e.dataTransfer.effectAllowed = 'move';
+
+    // Semi-transparent drag ghost so the drop target is visible underneath
+    const el = e.currentTarget as HTMLElement;
+    const ghost = el.cloneNode(true) as HTMLElement;
+    ghost.style.cssText = `position:fixed;top:-9999px;left:-9999px;width:${el.offsetWidth}px;opacity:0.45;pointer-events:none;`;
+    document.body.appendChild(ghost);
+    e.dataTransfer.setDragImage(ghost, el.offsetWidth / 2, el.offsetHeight / 2);
+    requestAnimationFrame(() => document.body.removeChild(ghost));
   };
 
   if (compact) {
