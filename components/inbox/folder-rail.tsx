@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import Link from 'next/link';
 import {
   PlusIcon,
@@ -13,6 +13,7 @@ import {
   ExclamationCircleIcon,
   PencilSquareIcon,
   ChevronDownIcon,
+  ChevronRightIcon,
   CheckIcon,
 } from '@heroicons/react/24/outline';
 
@@ -30,6 +31,28 @@ export interface FolderItem {
   id: string;
   name: string;
   isSystem: boolean;
+  parentId?: string | null;
+}
+
+type FolderNode = FolderItem & { children: FolderNode[] };
+
+function buildFolderTree(folders: FolderItem[]): FolderNode[] {
+  const map = new Map<string, FolderNode>(folders.map(f => [f.id, { ...f, children: [] }]));
+  const roots: FolderNode[] = [];
+  for (const f of folders) {
+    const node = map.get(f.id)!;
+    if (f.parentId && map.has(f.parentId)) {
+      map.get(f.parentId)!.children.push(node);
+    } else {
+      roots.push(node);
+    }
+  }
+  const sortNodes = (nodes: FolderNode[]) => {
+    nodes.sort((a, b) => a.name.localeCompare(b.name));
+    nodes.forEach(n => sortNodes(n.children));
+  };
+  sortNodes(roots);
+  return roots;
 }
 
 export interface SelectedFolder {
@@ -130,6 +153,7 @@ export default function FolderSidebar({
   const [creating, setCreating] = useState(false);
   const [dragOverKey, setDragOverKey] = useState<string | null>(null);
   const [accountDropdownOpen, setAccountDropdownOpen] = useState(false);
+  const [expandedFolderIds, setExpandedFolderIds] = useState<Set<string>>(new Set());
   const inputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -167,6 +191,60 @@ export default function FolderSidebar({
 
   const activeConn = connections.find(c => c.connectionId === selectedConnectionId) ?? connections[0];
   const visibleConnections = activeConn ? [activeConn] : [];
+
+  const renderFolderNode = (conn: ConnectionFolders, node: FolderNode, depth: number): React.ReactNode => {
+    const isSelected = selectedFolder?.connectionId === conn.connectionId && selectedFolder.folderId === node.id;
+    const isExpanded = expandedFolderIds.has(node.id);
+    const hasChildren = node.children.length > 0;
+    const dropKey = `${conn.connectionId}:${node.id}`;
+    const isDragOver = dragOverKey === dropKey;
+    const folderRef: SelectedFolder = { connectionId: conn.connectionId, folderId: node.id, folderName: node.name, provider: conn.provider };
+    const indentPx = 8 + depth * 14;
+
+    return (
+      <div key={node.id}>
+        <button
+          style={{ paddingLeft: `${indentPx}px` }}
+          onClick={() => onSelectFolder(isSelected ? null : folderRef)}
+          onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDragOverKey(dropKey); }}
+          onDragLeave={() => setDragOverKey(null)}
+          onDrop={!onDropToFolder ? undefined : (e) => {
+            e.preventDefault(); setDragOverKey(null);
+            try { const ids: string[] = JSON.parse(e.dataTransfer.getData('application/x-inbox-items')); if (ids.length) onDropToFolder(folderRef, ids); } catch { /* non-fatal */ }
+          }}
+          className={`w-full flex items-center gap-1.5 pr-2 py-1.5 rounded-lg transition-colors ${
+            isDragOver ? 'bg-indigo-100 text-indigo-700 ring-1 ring-indigo-300'
+            : isSelected ? 'bg-indigo-50 text-indigo-600'
+            : 'text-neutral-600 hover:bg-neutral-100'
+          }`}
+        >
+          <span
+            className={`flex-shrink-0 w-3.5 h-3.5 flex items-center justify-center ${isDragOver || isSelected ? 'text-indigo-400' : 'text-neutral-300'}`}
+            onClick={hasChildren ? (e) => {
+              e.stopPropagation();
+              setExpandedFolderIds(prev => {
+                const next = new Set(prev);
+                next.has(node.id) ? next.delete(node.id) : next.add(node.id);
+                return next;
+              });
+            } : undefined}
+          >
+            {hasChildren
+              ? <ChevronRightIcon className={`w-3 h-3 transition-transform duration-150 ${isExpanded ? 'rotate-90' : ''}`} />
+              : <span className="w-3" />
+            }
+          </span>
+          <span className={isDragOver || isSelected ? 'text-indigo-500' : 'text-neutral-400'}>
+            <FolderIcon className="w-3.5 h-3.5 flex-shrink-0" />
+          </span>
+          <span className={`text-[12px] truncate flex-1 min-w-0 ${isDragOver || isSelected ? 'font-medium' : ''}`}>
+            {node.name}
+          </span>
+        </button>
+        {isExpanded && node.children.map(child => renderFolderNode(conn, child, depth + 1))}
+      </div>
+    );
+  };
 
   return (
     <div
@@ -290,10 +368,13 @@ export default function FolderSidebar({
                 </div>
               )}
 
-              {/* System folders */}
+              {/* System folders — collapsed: main 5 only */}
               <div className="space-y-0.5">
                 {systemFolders.map(folder => {
                   const isInbox = isInboxFolder(folder.name);
+                  const n = folder.name.toLowerCase();
+                  const isMainFolder = isInbox || n === 'sent' || n === 'sent items' || n === 'drafts' || n.includes('trash') || n.includes('deleted') || n.includes('spam') || n.includes('junk');
+                  if (collapsed && !isMainFolder) return null;
                   const isSelected = isInbox
                     ? selectedFolder === null
                     : selectedFolder?.connectionId === conn.connectionId && selectedFolder.folderId === folder.id;
@@ -332,48 +413,14 @@ export default function FolderSidebar({
                 })}
               </div>
 
-              {/* User folders */}
-              {(userFolders.length > 0 || isCreatingHere) && (
+              {/* User folders — hidden when collapsed */}
+              {!collapsed && (userFolders.length > 0 || isCreatingHere) && (
                 <>
-                  {!collapsed && <div className="mx-1 my-1.5 border-t border-neutral-100" />}
+                  <div className="mx-1 my-1.5 border-t border-neutral-100" />
                   <div className="space-y-0.5">
-                    {userFolders.map(folder => {
-                      const isSelected = selectedFolder?.connectionId === conn.connectionId && selectedFolder.folderId === folder.id;
-                      const dropKey = `${conn.connectionId}:${folder.id}`;
-                      const isDragOver = dragOverKey === dropKey;
-                      const folderRef: SelectedFolder = { connectionId: conn.connectionId, folderId: folder.id, folderName: folder.name, provider: conn.provider };
-                      return (
-                        <button
-                          key={folder.id}
-                          title={collapsed ? folder.name : undefined}
-                          onClick={() => onSelectFolder(isSelected ? null : folderRef)}
-                          onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDragOverKey(dropKey); }}
-                          onDragLeave={() => setDragOverKey(null)}
-                          onDrop={!onDropToFolder ? undefined : (e) => {
-                            e.preventDefault(); setDragOverKey(null);
-                            try { const ids: string[] = JSON.parse(e.dataTransfer.getData('application/x-inbox-items')); if (ids.length) onDropToFolder(folderRef, ids); } catch { /* non-fatal */ }
-                          }}
-                          className={`w-full flex items-center rounded-lg transition-colors ${
-                            collapsed ? 'justify-center p-2' : 'gap-2 px-2 py-1.5'
-                          } ${
-                            isDragOver ? 'bg-indigo-100 text-indigo-700 ring-1 ring-indigo-300'
-                            : isSelected ? 'bg-indigo-50 text-indigo-600'
-                            : 'text-neutral-600 hover:bg-neutral-100'
-                          }`}
-                        >
-                          <span className={isDragOver || isSelected ? 'text-indigo-500' : 'text-neutral-400'}>
-                            <FolderIcon className="w-3.5 h-3.5 flex-shrink-0" />
-                          </span>
-                          {!collapsed && (
-                            <span className={`text-[12px] truncate ${isDragOver || isSelected ? 'font-medium' : ''}`}>
-                              {folder.name}
-                            </span>
-                          )}
-                        </button>
-                      );
-                    })}
+                    {buildFolderTree(userFolders).map(node => renderFolderNode(conn, node, 0))}
 
-                    {isCreatingHere && !collapsed && (
+                    {isCreatingHere && (
                       <div className="flex items-center gap-1.5 px-2 py-1">
                         <FolderIcon className="w-3.5 h-3.5 flex-shrink-0 text-neutral-300" />
                         <input

@@ -426,24 +426,42 @@ export async function listOutlookFolders(
     .sort((a: any, b: any) => a.name.localeCompare(b.name));
 }
 
+type OutlookRawFolder = { id: string; displayName: string; childFolders?: OutlookRawFolder[] };
+
+function flattenOutlookFolders(
+  folders: OutlookRawFolder[],
+  parentId: string | null,
+  systemIds: Set<string>,
+): Array<{ id: string; name: string; isSystem: boolean; parentId: string | null }> {
+  const result: Array<{ id: string; name: string; isSystem: boolean; parentId: string | null }> = [];
+  for (const f of folders) {
+    result.push({ id: f.id, name: f.displayName, isSystem: systemIds.has(f.id), parentId });
+    if (f.childFolders?.length) {
+      result.push(...flattenOutlookFolders(f.childFolders, f.id, systemIds));
+    }
+  }
+  return result;
+}
+
 export async function listOutlookAllFolders(
   encryptedTokens: string,
   onTokenRefresh?: TokenRefreshCallback,
-): Promise<{ id: string; name: string; isSystem: boolean }[]> {
+): Promise<{ id: string; name: string; isSystem: boolean; parentId?: string | null }[]> {
   const client = await getGraphClient(encryptedTokens, onTokenRefresh);
   const [res, systemIds] = await Promise.all([
-    client.api('/me/mailFolders').select('id,displayName').top(50).get(),
+    client.api('/me/mailFolders')
+      .select('id,displayName')
+      .expand('childFolders($select=id,displayName;$expand=childFolders($select=id,displayName))')
+      .top(50)
+      .get(),
     getSystemFolderIds(client),
   ]);
-  const all = (res.value ?? []) as Array<{ id: string; displayName: string }>;
-  const system = all
-    .filter(f => systemIds.has(f.id))
-    .map(f => ({ id: f.id, name: f.displayName, isSystem: true }));
-  const user = all
-    .filter(f => !systemIds.has(f.id))
-    .map(f => ({ id: f.id, name: f.displayName, isSystem: false }))
-    .sort((a, b) => a.name.localeCompare(b.name));
-  return [...system, ...user];
+  const all = flattenOutlookFolders(res.value ?? [], null, systemIds);
+  const system = all.filter(f => f.isSystem && f.parentId === null);
+  const userAll = all.filter(f => !f.isSystem);
+  const userRoots = userAll.filter(f => f.parentId === null).sort((a, b) => a.name.localeCompare(b.name));
+  const userChildren = userAll.filter(f => f.parentId !== null);
+  return [...system, ...userRoots, ...userChildren];
 }
 
 export interface FolderEmailSummary {
