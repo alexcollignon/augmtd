@@ -216,7 +216,7 @@ export default function FolderSidebar({
             e.preventDefault(); setDragOverKey(null);
             try { const ids: string[] = JSON.parse(e.dataTransfer.getData('application/x-inbox-items')); if (ids.length) onDropToFolder(folderRef, ids); } catch { /* non-fatal */ }
           }}
-          className={`w-full flex items-center gap-2 pr-2 rounded-lg transition-all duration-150 ${
+          className={`w-full flex items-center gap-2 pr-2 rounded-lg transition-all duration-150 text-left ${
             isDragOver ? 'pt-2 pb-8' : 'py-1.5'
           } ${
             isDragOver ? 'bg-indigo-100 text-indigo-700 ring-1 ring-indigo-300'
