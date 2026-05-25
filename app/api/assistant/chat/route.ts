@@ -46,7 +46,7 @@ GENERAL RULES:
 - If you used KB content, append exactly one line at the very end: KB_REFS:filename1.pdf|filename2.pdf (pipe-separated). Do not append if KB was not used.
 
 TOKEN RULES — emit only the appropriate token(s) at the very end of your response, after all text.
-Never emit more than one action token per response. Never emit a token mid-response.
+You may emit multiple ACTION tokens in one response (e.g. move + mark read). Never emit other token types more than once. Never emit a token mid-response.
 
 ─── EMAIL TOKENS ──────────────────────────────────────────────────────────────
 
@@ -124,6 +124,8 @@ export async function POST(request: NextRequest) {
       composeDraft,
       replyDraft,
       emailContext,
+      emailItemId,
+      availableFolders,
       fileContext,
       meetingContext,
     } = body as {
@@ -139,6 +141,8 @@ export async function POST(request: NextRequest) {
         summary?: string; keyPoints?: string[]; body?: string;
         isRead?: boolean;
       };
+      emailItemId?: string;
+      availableFolders?: { id: string; name: string }[];
       fileContext?: string;
       meetingContext?: {
         title: string;
@@ -340,7 +344,35 @@ REPLY MODE — follow exactly:
     }
 
     if (mode === 'inbox' && emailContext) {
-      systemPrompt += `\n\nA specific email is in focus (shown above as FOCUSED EMAIL). When the user asks to draft, write, or suggest a reply — emit REPLY_DRAFT:{"body":"..."} exactly as described above. This automatically opens the reply box and injects the draft. Write a short intro sentence first (e.g. "Here's a draft reply:"), then emit the token on its own next line. EMAIL BODY FORMAT: "Hi [sender name],\\n\\nThank you for reaching out...\\n\\nBest regards,\\n[user name]" — greeting, blank line between paragraphs, sign-off, name. Use \\n for newlines inside JSON. Never emit ACTION, OPEN_COMPOSE, or UPDATE_DRAFT in this case.`;
+      let inboxAddendum = `\n\nA specific email is in focus (shown above as FOCUSED EMAIL). When the user asks to draft, write, or suggest a reply — emit REPLY_DRAFT:{"body":"..."} exactly as described above. This automatically opens the reply box and injects the draft. Write a short intro sentence first (e.g. "Here's a draft reply:"), then emit the token on its own next line. EMAIL BODY FORMAT: "Hi [sender name],\\n\\nThank you for reaching out...\\n\\nBest regards,\\n[user name]" — greeting, blank line between paragraphs, sign-off, name. Use \\n for newlines inside JSON. Never emit OPEN_COMPOSE or UPDATE_DRAFT in this case.`;
+
+      if (emailItemId) {
+        const folderList = availableFolders?.length
+          ? availableFolders.map(f => `- "${f.name}" (id: ${f.id})`).join('\n')
+          : '(no custom folders)';
+        inboxAddendum += `
+
+FOLDER ACTIONS — you can act on this email (itemId: ${emailItemId})
+Emit ACTION tokens when the user asks to move, delete, archive, or change the read status of this email.
+
+Available folders to move to:
+${folderList}
+
+ACTION token formats — emit at end of response after any text:
+  ACTION:{"type":"move_to_folder","itemId":"${emailItemId}","folderId":"<id>","folderName":"<name>","label":"Move to <name>"}
+  ACTION:{"type":"delete","itemId":"${emailItemId}","label":"Delete"}
+  ACTION:{"type":"archive","itemId":"${emailItemId}","label":"Archive"}
+  ACTION:{"type":"mark_read","itemId":"${emailItemId}","label":"Mark as read"}
+  ACTION:{"type":"mark_unread","itemId":"${emailItemId}","label":"Mark as unread"}
+
+Rules for folder actions:
+- Only emit when the user explicitly asks to perform the operation (not just discussing it)
+- For move: match folder name case-insensitively; if the name is ambiguous or not in the list, ask which folder
+- You may emit multiple ACTION tokens in one response (e.g. move + mark read)
+- Do not emit a move action if no custom folders exist and the user hasn't specified a system folder`;
+      }
+
+      systemPrompt += inboxAddendum;
     }
 
     if (context === 'meeting') {

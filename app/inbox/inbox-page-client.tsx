@@ -769,7 +769,7 @@ export function InboxPageClient({
     }
   }, []);
 
-  const handleChatAction = useCallback(async (type: string, itemId: string) => {
+  const handleChatAction = useCallback(async (type: string, itemId: string, extra?: Record<string, string>) => {
     if (type === 'archive') {
       const res = await fetch(`/api/inbox/${itemId}/archive-source`, { method: 'POST' });
       if (!res.ok) throw new Error('Archive failed');
@@ -778,6 +778,30 @@ export function InboxPageClient({
     } else if (type === 'open') {
       const item = inboxItems.find(i => i.id === itemId);
       if (item) handleSelectItem(item);
+    } else if (type === 'delete') {
+      const res = await fetch(`/api/inbox/${itemId}/delete-source`, { method: 'POST' });
+      if (!res.ok) throw new Error('Delete failed');
+      setInboxItems(prev => prev.filter(i => i.id !== itemId));
+      setSelectedItem(prev => (prev?.id === itemId ? null : prev));
+    } else if (type === 'move_to_folder') {
+      const folderId = extra?.folderId ?? '';
+      const folderName = extra?.folderName ?? '';
+      const res = await fetch(`/api/inbox/${itemId}/move-to-folder`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folderId, folderName }),
+      });
+      if (!res.ok) throw new Error('Move failed');
+      setInboxItems(prev => prev.filter(i => i.id !== itemId));
+      setSelectedItem(prev => (prev?.id === itemId ? null : prev));
+    } else if (type === 'mark_read') {
+      const res = await fetch(`/api/inbox/${itemId}/mark-read`, { method: 'POST' });
+      if (!res.ok) throw new Error('Mark read failed');
+      setInboxItems(prev => prev.map(i => i.id === itemId ? { ...i, is_read: true } : i));
+    } else if (type === 'mark_unread') {
+      const res = await fetch(`/api/inbox/${itemId}/mark-unread`, { method: 'POST' });
+      if (!res.ok) throw new Error('Mark unread failed');
+      setInboxItems(prev => prev.map(i => i.id === itemId ? { ...i, is_read: false } : i));
     }
   }, [inboxItems]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -874,6 +898,11 @@ export function InboxPageClient({
           ...(replyIsOpen ? { replyDraft: replyBody } : {}),
           ...(fileContext ? { fileContext } : {}),
           ...(emailChipActive && emailChipData ? { emailContext: emailChipData } : {}),
+          ...(selectedItem ? { emailItemId: selectedItem.id } : {}),
+          availableFolders: folderSections
+            ?.find(c => c.connectionId === selectedConnectionId)
+            ?.folders.filter(f => !f.isSystem)
+            .map(f => ({ id: f.id, name: f.name })) ?? [],
         }),
       });
 
@@ -912,7 +941,7 @@ export function InboxPageClient({
       setStreamingContent('');
       setAttachedFiles([]);
     }
-  }, [chatHistory, chatStreaming, chatSources, attachedFiles, composeMode, composeDraft, replyIsOpen, replyBody, emailChipActive, emailChipData]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [chatHistory, chatStreaming, chatSources, attachedFiles, composeMode, composeDraft, replyIsOpen, replyBody, emailChipActive, emailChipData, selectedItem, folderSections, selectedConnectionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
