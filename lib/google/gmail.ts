@@ -469,11 +469,30 @@ export async function listGmailAllFolders(
   const system = labels
     .filter(l => l.id && GMAIL_SYSTEM_LABEL_NAMES[l.id!] && !HIDE.has(l.id!))
     .map(l => ({ id: l.id!, name: GMAIL_SYSTEM_LABEL_NAMES[l.id!], isSystem: true }));
-  const user = labels
+  const rawUser = labels
     .filter(l => l.type === 'user' && l.id && l.name && !HIDE.has(l.id!))
-    .map(l => ({ id: l.id!, name: l.name!, isSystem: false }))
-    .sort((a, b) => a.name.localeCompare(b.name));
+    .map(l => ({ id: l.id!, fullName: l.name! }));
+  const nameToId = new Map(rawUser.map(l => [l.fullName, l.id]));
+  const user = rawUser.map(l => {
+    const parts = l.fullName.split('/');
+    const name = parts[parts.length - 1];
+    const parentFullName = parts.length > 1 ? parts.slice(0, -1).join('/') : null;
+    return { id: l.id, name, isSystem: false, parentId: parentFullName ? (nameToId.get(parentFullName) ?? null) : null };
+  }).sort((a, b) => a.name.localeCompare(b.name));
   return [...system, ...user];
+}
+
+export async function renameGmailLabel(encryptedTokens: string, labelId: string, newLeafName: string): Promise<void> {
+  const gmail = await getGmailClient(encryptedTokens);
+  const current = await gmail.users.labels.get({ userId: 'me', id: labelId });
+  const parts = (current.data.name ?? newLeafName).split('/');
+  parts[parts.length - 1] = newLeafName;
+  await gmail.users.labels.patch({ userId: 'me', id: labelId, requestBody: { name: parts.join('/') } });
+}
+
+export async function deleteGmailLabel(encryptedTokens: string, labelId: string): Promise<void> {
+  const gmail = await getGmailClient(encryptedTokens);
+  await gmail.users.labels.delete({ userId: 'me', id: labelId });
 }
 
 export interface FolderEmailSummary {

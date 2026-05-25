@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import Link from 'next/link';
 import {
   PlusIcon,
@@ -13,7 +13,9 @@ import {
   ExclamationCircleIcon,
   PencilSquareIcon,
   ChevronDownIcon,
+  ChevronRightIcon,
   CheckIcon,
+  EllipsisHorizontalIcon,
 } from '@heroicons/react/24/outline';
 
 function SidebarToggleIcon({ className }: { className?: string }) {
@@ -30,6 +32,28 @@ export interface FolderItem {
   id: string;
   name: string;
   isSystem: boolean;
+  parentId?: string | null;
+}
+
+type FolderNode = FolderItem & { children: FolderNode[] };
+
+function buildFolderTree(folders: FolderItem[]): FolderNode[] {
+  const map = new Map<string, FolderNode>(folders.map(f => [f.id, { ...f, children: [] }]));
+  const roots: FolderNode[] = [];
+  for (const f of folders) {
+    const node = map.get(f.id)!;
+    if (f.parentId && map.has(f.parentId)) {
+      map.get(f.parentId)!.children.push(node);
+    } else {
+      roots.push(node);
+    }
+  }
+  const sortNodes = (nodes: FolderNode[]) => {
+    nodes.sort((a, b) => a.name.localeCompare(b.name));
+    nodes.forEach(n => sortNodes(n.children));
+  };
+  sortNodes(roots);
+  return roots;
 }
 
 export interface SelectedFolder {
@@ -59,6 +83,8 @@ interface Props {
   onDropToFolder?: (folder: SelectedFolder, itemIds: string[]) => void;
   selectedConnectionId: string;
   onSelectConnection: (id: string) => void;
+  onRenameFolder?: (connectionId: string, folderId: string, newName: string) => Promise<void>;
+  onDeleteFolder?: (connectionId: string, folderId: string) => Promise<void>;
 }
 
 function formatEmail(email: string): string {
@@ -101,6 +127,11 @@ function isInboxFolder(name: string): boolean {
   return name.toLowerCase() === 'inbox';
 }
 
+function isDroppableFolder(name: string): boolean {
+  const n = name.toLowerCase();
+  return !['inbox', 'sent', 'sent items', 'drafts', 'starred', 'important'].includes(n);
+}
+
 function folderIcon(name: string): React.ReactNode {
   const n = name.toLowerCase();
   if (n === 'inbox')                              return <EnvelopeIcon className="w-3.5 h-3.5 flex-shrink-0" />;
@@ -124,12 +155,19 @@ export default function FolderSidebar({
   onDropToFolder,
   selectedConnectionId,
   onSelectConnection,
+  onRenameFolder,
+  onDeleteFolder,
 }: Props) {
   const [newFolderConnectionId, setNewFolderConnectionId] = useState<string | null>(null);
   const [newFolderName, setNewFolderName] = useState('');
   const [creating, setCreating] = useState(false);
   const [dragOverKey, setDragOverKey] = useState<string | null>(null);
   const [accountDropdownOpen, setAccountDropdownOpen] = useState(false);
+  const [expandedFolderIds, setExpandedFolderIds] = useState<Set<string>>(new Set());
+  const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+  const renameInputRef = useRef<HTMLInputElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -148,6 +186,13 @@ export default function FolderSidebar({
     return () => document.removeEventListener('mousedown', handle);
   }, [accountDropdownOpen]);
 
+  useEffect(() => {
+    if (!menuOpenId) return;
+    const handle = () => setMenuOpenId(null);
+    document.addEventListener('click', handle);
+    return () => document.removeEventListener('click', handle);
+  }, [menuOpenId]);
+
   const handleCreate = async (connectionId: string) => {
     if (!newFolderName.trim() || creating) return;
     setCreating(true);
@@ -165,8 +210,122 @@ export default function FolderSidebar({
     setNewFolderConnectionId(null);
   };
 
+  const handleSubmitRename = async (connectionId: string, folderId: string) => {
+    const trimmed = renameValue.trim();
+    setRenamingId(null);
+    setRenameValue('');
+    if (!trimmed || !onRenameFolder) return;
+    try { await onRenameFolder(connectionId, folderId, trimmed); } catch { /* non-fatal */ }
+  };
+
   const activeConn = connections.find(c => c.connectionId === selectedConnectionId) ?? connections[0];
   const visibleConnections = activeConn ? [activeConn] : [];
+
+  const renderFolderNode = (conn: ConnectionFolders, node: FolderNode, depth: number): React.ReactNode => {
+    const isSelected = selectedFolder?.connectionId === conn.connectionId && selectedFolder.folderId === node.id;
+    const isExpanded = expandedFolderIds.has(node.id);
+    const hasChildren = node.children.length > 0;
+    const dropKey = `${conn.connectionId}:${node.id}`;
+    const isDragOver = dragOverKey === dropKey;
+    const folderRef: SelectedFolder = { connectionId: conn.connectionId, folderId: node.id, folderName: node.name, provider: conn.provider };
+    const indentPx = 8 + depth * 14;
+    const isMenuOpen = menuOpenId === node.id;
+    const isRenaming = renamingId === node.id;
+
+    return (
+      <div key={node.id} className="group/folder relative">
+        <button
+          style={{ paddingLeft: `${indentPx}px` }}
+          onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDragOverKey(dropKey); }}
+          onDragLeave={() => setDragOverKey(null)}
+          onDrop={!onDropToFolder ? undefined : (e) => {
+            e.preventDefault(); setDragOverKey(null);
+            try { const ids: string[] = JSON.parse(e.dataTransfer.getData('application/x-inbox-items')); if (ids.length) onDropToFolder(folderRef, ids); } catch { /* non-fatal */ }
+          }}
+          className={`w-full flex items-center gap-1.5 pr-6 rounded-lg transition-all duration-150 text-left ${
+            isDragOver ? 'pt-2 pb-8' : 'py-1.5'
+          } ${
+            isDragOver ? 'bg-indigo-100 text-indigo-700 ring-1 ring-indigo-300'
+            : isSelected ? 'bg-indigo-50 text-indigo-600'
+            : 'text-neutral-600 hover:bg-neutral-100'
+          }`}
+          onClick={() => {
+            if (hasChildren) {
+              setExpandedFolderIds(prev => {
+                const next = new Set(prev);
+                next.has(node.id) ? next.delete(node.id) : next.add(node.id);
+                return next;
+              });
+            }
+            if (!isRenaming) onSelectFolder(isSelected ? null : folderRef);
+          }}
+        >
+          <span className={`w-3 h-3 flex-shrink-0 flex items-center justify-center ${isDragOver || isSelected ? 'text-indigo-400' : 'text-neutral-300'}`}>
+            {hasChildren && <ChevronRightIcon className={`w-2.5 h-2.5 transition-transform duration-150 ${isExpanded ? 'rotate-90' : ''}`} />}
+          </span>
+          <span className={`flex-shrink-0 ${isDragOver || isSelected ? 'text-indigo-500' : 'text-neutral-400'}`}>
+            <FolderIcon className="w-3.5 h-3.5" />
+          </span>
+          {isRenaming ? (
+            <input
+              ref={renameInputRef}
+              value={renameValue}
+              onChange={e => setRenameValue(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') handleSubmitRename(conn.connectionId, node.id);
+                if (e.key === 'Escape') { setRenamingId(null); setRenameValue(''); }
+              }}
+              onBlur={() => handleSubmitRename(conn.connectionId, node.id)}
+              onClick={e => e.stopPropagation()}
+              className="flex-1 text-[12px] bg-transparent outline-none border-b border-indigo-400 min-w-0 py-0 text-neutral-700"
+            />
+          ) : (
+            <span className={`text-[12px] truncate flex-1 min-w-0 ${isDragOver || isSelected ? 'font-medium' : ''}`}>
+              {node.name}
+            </span>
+          )}
+        </button>
+
+        {!isRenaming && (
+          <button
+            onClick={e => { e.stopPropagation(); setMenuOpenId(isMenuOpen ? null : node.id); }}
+            className={`absolute right-1 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded transition-opacity ${
+              isMenuOpen ? 'opacity-100 bg-neutral-100' : 'opacity-0 group-hover/folder:opacity-100 hover:bg-neutral-100'
+            }`}
+          >
+            <EllipsisHorizontalIcon className="w-3.5 h-3.5 text-neutral-400" />
+          </button>
+        )}
+
+        {isMenuOpen && (
+          <div
+            className="absolute right-0 top-full z-50 bg-white rounded-xl shadow-lg border border-neutral-100 py-1 w-32"
+            onClick={e => e.stopPropagation()}
+          >
+            <button
+              onClick={() => {
+                setMenuOpenId(null);
+                setRenamingId(node.id);
+                setRenameValue(node.name);
+                setTimeout(() => renameInputRef.current?.focus(), 30);
+              }}
+              className="w-full text-left px-3 py-1.5 text-[12px] text-neutral-700 hover:bg-neutral-50 transition-colors"
+            >
+              Rename
+            </button>
+            <button
+              onClick={() => { setMenuOpenId(null); onDeleteFolder?.(conn.connectionId, node.id); }}
+              className="w-full text-left px-3 py-1.5 text-[12px] text-red-500 hover:bg-red-50 transition-colors"
+            >
+              Delete
+            </button>
+          </div>
+        )}
+
+        {isExpanded && node.children.map(child => renderFolderNode(conn, child, depth + 1))}
+      </div>
+    );
+  };
 
   return (
     <div
@@ -290,29 +449,37 @@ export default function FolderSidebar({
                 </div>
               )}
 
-              {/* System folders */}
+              {/* System folders — collapsed: main 5 only */}
               <div className="space-y-0.5">
                 {systemFolders.map(folder => {
                   const isInbox = isInboxFolder(folder.name);
+                  const n = folder.name.toLowerCase();
+                  const isMainFolder = isInbox || n === 'sent' || n === 'sent items' || n === 'drafts' || n.includes('trash') || n.includes('deleted') || n.includes('spam') || n.includes('junk');
+                  if (collapsed && !isMainFolder) return null;
                   const isSelected = isInbox
                     ? selectedFolder === null
                     : selectedFolder?.connectionId === conn.connectionId && selectedFolder.folderId === folder.id;
+                  const droppable = isDroppableFolder(folder.name);
                   const dropKey = `${conn.connectionId}:${folder.id}`;
-                  const isDragOver = dragOverKey === dropKey && !isInbox;
+                  const isDragOver = dragOverKey === dropKey && droppable;
                   const folderRef: SelectedFolder = { connectionId: conn.connectionId, folderId: folder.id, folderName: folder.name, provider: conn.provider };
                   return (
                     <button
                       key={folder.id}
                       title={collapsed ? folder.name : undefined}
                       onClick={() => isInbox ? onSelectFolder(null) : onSelectFolder(isSelected ? null : folderRef)}
-                      onDragOver={isInbox ? undefined : (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDragOverKey(dropKey); }}
-                      onDragLeave={isInbox ? undefined : () => setDragOverKey(null)}
-                      onDrop={isInbox || !onDropToFolder ? undefined : (e) => {
+                      onDragOver={!droppable ? undefined : (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDragOverKey(dropKey); }}
+                      onDragLeave={!droppable ? undefined : () => setDragOverKey(null)}
+                      onDrop={!droppable || !onDropToFolder ? undefined : (e) => {
                         e.preventDefault(); setDragOverKey(null);
                         try { const ids: string[] = JSON.parse(e.dataTransfer.getData('application/x-inbox-items')); if (ids.length) onDropToFolder(folderRef, ids); } catch { /* non-fatal */ }
                       }}
-                      className={`w-full flex items-center rounded-lg transition-colors ${
-                        collapsed ? 'justify-center p-2' : 'gap-2 px-2 py-1.5'
+                      className={`w-full flex rounded-lg transition-all duration-150 ${
+                        collapsed
+                          ? 'justify-center p-2 items-center'
+                          : isDragOver
+                            ? 'gap-2 px-2 pt-2 pb-8 items-start'
+                            : 'gap-2 px-2 py-1.5 items-center'
                       } ${
                         isDragOver ? 'bg-indigo-100 text-indigo-700 ring-1 ring-indigo-300'
                         : isSelected ? 'bg-indigo-50 text-indigo-600'
@@ -332,48 +499,14 @@ export default function FolderSidebar({
                 })}
               </div>
 
-              {/* User folders */}
-              {(userFolders.length > 0 || isCreatingHere) && (
+              {/* User folders — hidden when collapsed */}
+              {!collapsed && (userFolders.length > 0 || isCreatingHere) && (
                 <>
-                  {!collapsed && <div className="mx-1 my-1.5 border-t border-neutral-100" />}
+                  <div className="mx-1 my-1.5 border-t border-neutral-100" />
                   <div className="space-y-0.5">
-                    {userFolders.map(folder => {
-                      const isSelected = selectedFolder?.connectionId === conn.connectionId && selectedFolder.folderId === folder.id;
-                      const dropKey = `${conn.connectionId}:${folder.id}`;
-                      const isDragOver = dragOverKey === dropKey;
-                      const folderRef: SelectedFolder = { connectionId: conn.connectionId, folderId: folder.id, folderName: folder.name, provider: conn.provider };
-                      return (
-                        <button
-                          key={folder.id}
-                          title={collapsed ? folder.name : undefined}
-                          onClick={() => onSelectFolder(isSelected ? null : folderRef)}
-                          onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDragOverKey(dropKey); }}
-                          onDragLeave={() => setDragOverKey(null)}
-                          onDrop={!onDropToFolder ? undefined : (e) => {
-                            e.preventDefault(); setDragOverKey(null);
-                            try { const ids: string[] = JSON.parse(e.dataTransfer.getData('application/x-inbox-items')); if (ids.length) onDropToFolder(folderRef, ids); } catch { /* non-fatal */ }
-                          }}
-                          className={`w-full flex items-center rounded-lg transition-colors ${
-                            collapsed ? 'justify-center p-2' : 'gap-2 px-2 py-1.5'
-                          } ${
-                            isDragOver ? 'bg-indigo-100 text-indigo-700 ring-1 ring-indigo-300'
-                            : isSelected ? 'bg-indigo-50 text-indigo-600'
-                            : 'text-neutral-600 hover:bg-neutral-100'
-                          }`}
-                        >
-                          <span className={isDragOver || isSelected ? 'text-indigo-500' : 'text-neutral-400'}>
-                            <FolderIcon className="w-3.5 h-3.5 flex-shrink-0" />
-                          </span>
-                          {!collapsed && (
-                            <span className={`text-[12px] truncate ${isDragOver || isSelected ? 'font-medium' : ''}`}>
-                              {folder.name}
-                            </span>
-                          )}
-                        </button>
-                      );
-                    })}
+                    {buildFolderTree(userFolders).map(node => renderFolderNode(conn, node, 0))}
 
-                    {isCreatingHere && !collapsed && (
+                    {isCreatingHere && (
                       <div className="flex items-center gap-1.5 px-2 py-1">
                         <FolderIcon className="w-3.5 h-3.5 flex-shrink-0 text-neutral-300" />
                         <input

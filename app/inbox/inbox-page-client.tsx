@@ -372,6 +372,36 @@ export function InboxPageClient({
     fetchFolders();
   }, [fetchFolders]);
 
+  const handleRenameFolder = useCallback(async (connectionId: string, folderId: string, newName: string) => {
+    const res = await fetch('/api/inbox/folders', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ connectionId, folderId, name: newName }),
+    });
+    if (!res.ok) throw new Error('Failed to rename folder');
+    // Optimistically update local state
+    setFolderSections(prev => prev?.map(c =>
+      c.connectionId === connectionId
+        ? { ...c, folders: c.folders.map(f => f.id === folderId ? { ...f, name: newName } : f) }
+        : c
+    ) ?? null);
+  }, []);
+
+  const handleDeleteFolder = useCallback(async (connectionId: string, folderId: string) => {
+    const res = await fetch(`/api/inbox/folders?connectionId=${encodeURIComponent(connectionId)}&folderId=${encodeURIComponent(folderId)}`, {
+      method: 'DELETE',
+    });
+    if (!res.ok) throw new Error('Failed to delete folder');
+    setFolderSections(prev => prev?.map(c =>
+      c.connectionId === connectionId
+        ? { ...c, folders: c.folders.filter(f => f.id !== folderId) }
+        : c
+    ) ?? null);
+    if (selectedFolder?.connectionId === connectionId && selectedFolder.folderId === folderId) {
+      setSelectedFolder(null);
+    }
+  }, [selectedFolder]);
+
   // Deep-link: ?item=<uuid> auto-selects a specific inbox item (e.g. from desk card)
   useEffect(() => {
     const itemId = searchParams?.get('item');
@@ -932,6 +962,8 @@ export function InboxPageClient({
                 onDropToFolder={handleDropToFolder}
                 selectedConnectionId={selectedConnectionId ?? ''}
                 onSelectConnection={handleSelectConnection}
+                onRenameFolder={handleRenameFolder}
+                onDeleteFolder={handleDeleteFolder}
               />
             )}
 
