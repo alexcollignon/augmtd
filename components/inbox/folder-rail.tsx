@@ -124,6 +124,11 @@ function isInboxFolder(name: string): boolean {
   return name.toLowerCase() === 'inbox';
 }
 
+function isDroppableFolder(name: string): boolean {
+  const n = name.toLowerCase();
+  return !['inbox', 'sent', 'sent items', 'drafts', 'starred', 'important'].includes(n);
+}
+
 function folderIcon(name: string): React.ReactNode {
   const n = name.toLowerCase();
   if (n === 'inbox')                              return <EnvelopeIcon className="w-3.5 h-3.5 flex-shrink-0" />;
@@ -380,17 +385,18 @@ export default function FolderSidebar({
                   const isSelected = isInbox
                     ? selectedFolder === null
                     : selectedFolder?.connectionId === conn.connectionId && selectedFolder.folderId === folder.id;
+                  const droppable = isDroppableFolder(folder.name);
                   const dropKey = `${conn.connectionId}:${folder.id}`;
-                  const isDragOver = dragOverKey === dropKey && !isInbox;
+                  const isDragOver = dragOverKey === dropKey && droppable;
                   const folderRef: SelectedFolder = { connectionId: conn.connectionId, folderId: folder.id, folderName: folder.name, provider: conn.provider };
                   return (
                     <button
                       key={folder.id}
                       title={collapsed ? folder.name : undefined}
                       onClick={() => isInbox ? onSelectFolder(null) : onSelectFolder(isSelected ? null : folderRef)}
-                      onDragOver={isInbox ? undefined : (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDragOverKey(dropKey); }}
-                      onDragLeave={isInbox ? undefined : () => setDragOverKey(null)}
-                      onDrop={isInbox || !onDropToFolder ? undefined : (e) => {
+                      onDragOver={!droppable ? undefined : (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDragOverKey(dropKey); }}
+                      onDragLeave={!droppable ? undefined : () => setDragOverKey(null)}
+                      onDrop={!droppable || !onDropToFolder ? undefined : (e) => {
                         e.preventDefault(); setDragOverKey(null);
                         try { const ids: string[] = JSON.parse(e.dataTransfer.getData('application/x-inbox-items')); if (ids.length) onDropToFolder(folderRef, ids); } catch { /* non-fatal */ }
                       }}
