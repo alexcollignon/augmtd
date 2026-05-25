@@ -210,39 +210,39 @@ export default function FolderSidebar({
       <div key={node.id}>
         <button
           style={{ paddingLeft: `${indentPx}px` }}
-          onClick={() => onSelectFolder(isSelected ? null : folderRef)}
           onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDragOverKey(dropKey); }}
           onDragLeave={() => setDragOverKey(null)}
           onDrop={!onDropToFolder ? undefined : (e) => {
             e.preventDefault(); setDragOverKey(null);
             try { const ids: string[] = JSON.parse(e.dataTransfer.getData('application/x-inbox-items')); if (ids.length) onDropToFolder(folderRef, ids); } catch { /* non-fatal */ }
           }}
-          className={`w-full flex pr-2 rounded-lg transition-all duration-150 ${
-            isDragOver ? 'pt-2 pb-8 items-start' : 'py-1.5 items-center'
+          className={`w-full flex items-center gap-2 pr-2 rounded-lg transition-all duration-150 ${
+            isDragOver ? 'pt-2 pb-8' : 'py-1.5'
           } ${
             isDragOver ? 'bg-indigo-100 text-indigo-700 ring-1 ring-indigo-300'
             : isSelected ? 'bg-indigo-50 text-indigo-600'
             : 'text-neutral-600 hover:bg-neutral-100'
           }`}
-        >
-          {/* Fixed-width chevron slot keeps icon column aligned across parent/leaf nodes */}
-          <span
-            className={`flex-shrink-0 w-4 h-4 flex items-center justify-center ${isDragOver || isSelected ? 'text-indigo-400' : 'text-neutral-300'}`}
-            onClick={hasChildren ? (e) => {
-              e.stopPropagation();
+          onClick={() => {
+            if (hasChildren) {
               setExpandedFolderIds(prev => {
                 const next = new Set(prev);
                 next.has(node.id) ? next.delete(node.id) : next.add(node.id);
                 return next;
               });
-            } : undefined}
-          >
-            {hasChildren && <ChevronRightIcon className={`w-3 h-3 transition-transform duration-150 ${isExpanded ? 'rotate-90' : ''}`} />}
+            }
+            onSelectFolder(isSelected ? null : folderRef);
+          }}
+        >
+          <span className={`flex-shrink-0 ${isDragOver || isSelected ? 'text-indigo-500' : 'text-neutral-400'}`}>
+            <FolderIcon className="w-3.5 h-3.5" />
           </span>
-          <FolderIcon className={`w-3.5 h-3.5 flex-shrink-0 mr-1.5 ${isDragOver || isSelected ? 'text-indigo-500' : 'text-neutral-400'}`} />
           <span className={`text-[12px] truncate flex-1 min-w-0 ${isDragOver || isSelected ? 'font-medium' : ''}`}>
             {node.name}
           </span>
+          {hasChildren && (
+            <ChevronRightIcon className={`w-3 h-3 flex-shrink-0 transition-transform duration-150 ${isExpanded ? 'rotate-90' : ''} ${isDragOver || isSelected ? 'text-indigo-400' : 'text-neutral-300'}`} />
+          )}
         </button>
         {isExpanded && node.children.map(child => renderFolderNode(conn, child, depth + 1))}
       </div>
