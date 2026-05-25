@@ -33,11 +33,12 @@ interface ComposeDraft {
 }
 
 interface ParsedAction {
-  type: 'archive' | 'open' | 'delete' | 'move_to_folder' | 'mark_read' | 'mark_unread';
+  type: 'archive' | 'open' | 'delete' | 'move_to_folder' | 'mark_read' | 'mark_unread' | 'create_folder' | 'delete_folder';
   itemId: string;
   label: string;
   folderId?: string;
   folderName?: string;
+  connectionId?: string;
 }
 
 
@@ -255,7 +256,8 @@ function parseContent(raw: string) {
     .replace(ACTION_RE, (match) => {
       const json = match.slice('ACTION:'.length);
       const parsed = tryParse<ParsedAction>(json);
-      if (parsed?.type && parsed?.itemId && parsed?.label) actions.push(parsed);
+      const folderMgmt = parsed?.type === 'create_folder' || parsed?.type === 'delete_folder';
+      if (parsed?.type && parsed?.label && (parsed?.itemId || folderMgmt)) actions.push(parsed);
       return '';
     })
     .replace(/\nMEETING_SUGGESTION:\{.+\}/g, '')
@@ -290,11 +292,13 @@ function splitOnRefs(text: string): Array<{ type: 'text' | 'item'; value: string
 // ── Chip sub-components ───────────────────────────────────────────────────────
 
 const ACTION_CHIP_STYLES: Record<string, { border: string; confirmBtn: string; doItBtn: string }> = {
-  delete:       { border: 'border-red-200 bg-red-50',     confirmBtn: 'text-red-600 hover:text-red-800',     doItBtn: 'text-red-600 hover:text-red-800' },
+  delete:         { border: 'border-red-200 bg-red-50',       confirmBtn: 'text-red-600 hover:text-red-800',       doItBtn: 'text-red-600 hover:text-red-800' },
+  delete_folder:  { border: 'border-red-200 bg-red-50',       confirmBtn: 'text-red-600 hover:text-red-800',       doItBtn: 'text-red-600 hover:text-red-800' },
   move_to_folder: { border: 'border-indigo-200 bg-indigo-50', confirmBtn: 'text-indigo-600 hover:text-indigo-800', doItBtn: 'text-indigo-600 hover:text-indigo-800' },
-  mark_read:    { border: 'border-neutral-200 bg-neutral-50', confirmBtn: 'text-indigo-600 hover:text-indigo-800', doItBtn: 'text-indigo-600 hover:text-indigo-800' },
-  mark_unread:  { border: 'border-neutral-200 bg-neutral-50', confirmBtn: 'text-indigo-600 hover:text-indigo-800', doItBtn: 'text-indigo-600 hover:text-indigo-800' },
-  default:      { border: 'border-neutral-200 bg-neutral-50', confirmBtn: 'text-indigo-600 hover:text-indigo-800', doItBtn: 'text-indigo-600 hover:text-indigo-800' },
+  create_folder:  { border: 'border-emerald-200 bg-emerald-50', confirmBtn: 'text-emerald-700 hover:text-emerald-900', doItBtn: 'text-emerald-700 hover:text-emerald-900' },
+  mark_read:      { border: 'border-neutral-200 bg-neutral-50', confirmBtn: 'text-indigo-600 hover:text-indigo-800', doItBtn: 'text-indigo-600 hover:text-indigo-800' },
+  mark_unread:    { border: 'border-neutral-200 bg-neutral-50', confirmBtn: 'text-indigo-600 hover:text-indigo-800', doItBtn: 'text-indigo-600 hover:text-indigo-800' },
+  default:        { border: 'border-neutral-200 bg-neutral-50', confirmBtn: 'text-indigo-600 hover:text-indigo-800', doItBtn: 'text-indigo-600 hover:text-indigo-800' },
 };
 
 function ActionChip({ action, onAction }: {
@@ -310,6 +314,7 @@ function ActionChip({ action, onAction }: {
       const extra: Record<string, string> = {};
       if (action.folderId) extra.folderId = action.folderId;
       if (action.folderName) extra.folderName = action.folderName;
+      if (action.connectionId) extra.connectionId = action.connectionId;
       await onAction(action.type, action.itemId, Object.keys(extra).length ? extra : undefined);
       setState('done');
     } catch { setState('error'); }

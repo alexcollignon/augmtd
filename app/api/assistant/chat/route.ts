@@ -126,6 +126,7 @@ export async function POST(request: NextRequest) {
       emailContext,
       emailItemId,
       availableFolders,
+      activeConnectionId,
       fileContext,
       meetingContext,
     } = body as {
@@ -143,6 +144,7 @@ export async function POST(request: NextRequest) {
       };
       emailItemId?: string;
       availableFolders?: { id: string; name: string }[];
+      activeConnectionId?: string;
       fileContext?: string;
       meetingContext?: {
         title: string;
@@ -344,35 +346,44 @@ REPLY MODE — follow exactly:
     }
 
     if (mode === 'inbox' && emailContext) {
-      let inboxAddendum = `\n\nA specific email is in focus (shown above as FOCUSED EMAIL). When the user asks to draft, write, or suggest a reply — emit REPLY_DRAFT:{"body":"..."} exactly as described above. This automatically opens the reply box and injects the draft. Write a short intro sentence first (e.g. "Here's a draft reply:"), then emit the token on its own next line. EMAIL BODY FORMAT: "Hi [sender name],\\n\\nThank you for reaching out...\\n\\nBest regards,\\n[user name]" — greeting, blank line between paragraphs, sign-off, name. Use \\n for newlines inside JSON. Never emit OPEN_COMPOSE or UPDATE_DRAFT in this case.`;
+      systemPrompt += `\n\nA specific email is in focus (shown above as FOCUSED EMAIL). When the user asks to draft, write, or suggest a reply — emit REPLY_DRAFT:{"body":"..."} exactly as described above. This automatically opens the reply box and injects the draft. Write a short intro sentence first (e.g. "Here's a draft reply:"), then emit the token on its own next line. EMAIL BODY FORMAT: "Hi [sender name],\\n\\nThank you for reaching out...\\n\\nBest regards,\\n[user name]" — greeting, blank line between paragraphs, sign-off, name. Use \\n for newlines inside JSON. Never emit OPEN_COMPOSE or UPDATE_DRAFT in this case.`;
 
       if (emailItemId) {
         const folderList = availableFolders?.length
           ? availableFolders.map(f => `- "${f.name}" (id: ${f.id})`).join('\n')
           : '(no custom folders)';
-        inboxAddendum += `
+        systemPrompt += `
 
-FOLDER ACTIONS — you can act on this email (itemId: ${emailItemId})
+FOCUSED EMAIL ACTIONS (itemId: ${emailItemId})
 Emit ACTION tokens when the user asks to move, delete, archive, or change the read status of this email.
 
 Available folders to move to:
 ${folderList}
 
-ACTION token formats — emit at end of response after any text:
   ACTION:{"type":"move_to_folder","itemId":"${emailItemId}","folderId":"<id>","folderName":"<name>","label":"Move to <name>"}
   ACTION:{"type":"delete","itemId":"${emailItemId}","label":"Delete"}
   ACTION:{"type":"archive","itemId":"${emailItemId}","label":"Archive"}
   ACTION:{"type":"mark_read","itemId":"${emailItemId}","label":"Mark as read"}
   ACTION:{"type":"mark_unread","itemId":"${emailItemId}","label":"Mark as unread"}
 
-Rules for folder actions:
-- Only emit when the user explicitly asks to perform the operation (not just discussing it)
-- For move: match folder name case-insensitively; if the name is ambiguous or not in the list, ask which folder
-- You may emit multiple ACTION tokens in one response (e.g. move + mark read)
-- Do not emit a move action if no custom folders exist and the user hasn't specified a system folder`;
+Rules: only emit when explicitly asked; for move match folder name case-insensitively; you may emit multiple ACTION tokens.`;
       }
+    }
 
-      systemPrompt += inboxAddendum;
+    if (context === 'inbox' && activeConnectionId) {
+      const folderList = availableFolders?.length
+        ? availableFolders.map(f => `- "${f.name}" (id: ${f.id})`).join('\n')
+        : '(no custom folders yet)';
+      systemPrompt += `
+
+FOLDER MANAGEMENT — the user can create and delete folders on their email account.
+Current custom folders:
+${folderList}
+
+  ACTION:{"type":"create_folder","connectionId":"${activeConnectionId}","folderName":"<name>","label":"Create folder \\"<name>\\""}
+  ACTION:{"type":"delete_folder","connectionId":"${activeConnectionId}","folderId":"<id>","folderName":"<name>","label":"Delete folder \\"<name>\\""}
+
+Rules: only emit when explicitly asked; never delete system folders (Inbox, Sent, Drafts, Trash, Spam, Starred, Important); ask to confirm folder name before deleting.`;
     }
 
     if (context === 'meeting') {

@@ -802,8 +802,39 @@ export function InboxPageClient({
       const res = await fetch(`/api/inbox/${itemId}/mark-unread`, { method: 'POST' });
       if (!res.ok) throw new Error('Mark unread failed');
       setInboxItems(prev => prev.map(i => i.id === itemId ? { ...i, is_read: false } : i));
+    } else if (type === 'create_folder') {
+      const connectionId = extra?.connectionId ?? '';
+      const folderName = extra?.folderName ?? '';
+      const res = await fetch('/api/inbox/folders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ connectionId, name: folderName }),
+      });
+      if (!res.ok) throw new Error('Create folder failed');
+      const { folder } = await res.json();
+      setFolderSections(prev => prev?.map(c =>
+        c.connectionId === connectionId
+          ? { ...c, folders: [...c.folders, { id: folder.id, name: folder.name, isSystem: false }] }
+          : c
+      ) ?? null);
+    } else if (type === 'delete_folder') {
+      const connectionId = extra?.connectionId ?? '';
+      const folderId = extra?.folderId ?? '';
+      const folderName = extra?.folderName ?? '';
+      const res = await fetch(`/api/inbox/folders?connectionId=${encodeURIComponent(connectionId)}&folderId=${encodeURIComponent(folderId)}`, {
+        method: 'DELETE',
+      });
+      if (!res.ok) throw new Error('Delete folder failed');
+      setFolderSections(prev => prev?.map(c =>
+        c.connectionId === connectionId
+          ? { ...c, folders: c.folders.filter(f => f.id !== folderId) }
+          : c
+      ) ?? null);
+      if (selectedFolder?.connectionId === connectionId && selectedFolder.folderId === folderId) {
+        setSelectedFolder(null);
+      }
     }
-  }, [inboxItems]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [inboxItems, selectedFolder]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleOpenWorkflow = useCallback((itemId: string, skill?: string, prefillTitle?: string) => {
     const params = new URLSearchParams();
@@ -899,6 +930,7 @@ export function InboxPageClient({
           ...(fileContext ? { fileContext } : {}),
           ...(emailChipActive && emailChipData ? { emailContext: emailChipData } : {}),
           ...(selectedItem ? { emailItemId: selectedItem.id } : {}),
+          activeConnectionId: selectedConnectionId ?? undefined,
           availableFolders: folderSections
             ?.find(c => c.connectionId === selectedConnectionId)
             ?.folders.filter(f => !f.isSystem)
