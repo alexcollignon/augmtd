@@ -127,6 +127,7 @@ export async function POST(request: NextRequest) {
       emailItemId,
       availableFolders,
       activeConnectionId,
+      activeAccountEmail,
       fileContext,
       meetingContext,
     } = body as {
@@ -145,6 +146,7 @@ export async function POST(request: NextRequest) {
       emailItemId?: string;
       availableFolders?: { id: string; name: string }[];
       activeConnectionId?: string;
+      activeAccountEmail?: string;
       fileContext?: string;
       meetingContext?: {
         title: string;
@@ -374,16 +376,30 @@ Rules: only emit when explicitly asked; for move match folder name case-insensit
       const folderList = availableFolders?.length
         ? availableFolders.map(f => `- "${f.name}" (id: ${f.id})`).join('\n')
         : '(no custom folders yet)';
+      const accountLabel = activeAccountEmail ? `${activeAccountEmail}` : 'current account';
       systemPrompt += `
 
-FOLDER MANAGEMENT — the user can create and delete folders on their email account.
+ACTIVE ACCOUNT: ${accountLabel} — all folder and bulk email actions target this account only. If the user refers to a different account, ask them to switch accounts in the sidebar first.
+
+FOLDER MANAGEMENT — create and delete folders on ${accountLabel}.
 Current custom folders:
 ${folderList}
 
   ACTION:{"type":"create_folder","connectionId":"${activeConnectionId}","folderName":"<name>","label":"Create folder \\"<name>\\""}
   ACTION:{"type":"delete_folder","connectionId":"${activeConnectionId}","folderId":"<id>","folderName":"<name>","label":"Delete folder \\"<name>\\""}
 
-Rules: only emit when explicitly asked; never delete system folders (Inbox, Sent, Drafts, Trash, Spam, Starred, Important); ask to confirm folder name before deleting.`;
+BULK EMAIL ACTIONS — act on multiple emails at once using itemIds array (IDs from inbox snapshot above).
+  ACTION:{"type":"delete","itemIds":["id1","id2",...],"label":"Delete <N> emails"}
+  ACTION:{"type":"archive","itemIds":["id1","id2",...],"label":"Archive <N> emails"}
+  ACTION:{"type":"move_to_folder","itemIds":["id1","id2",...],"folderId":"<id>","folderName":"<name>","label":"Move <N> emails to <name>"}
+  ACTION:{"type":"mark_read","itemIds":["id1","id2",...],"label":"Mark <N> emails as read"}
+  ACTION:{"type":"mark_unread","itemIds":["id1","id2",...],"label":"Mark <N> emails as unread"}
+
+Rules:
+- Only emit when explicitly asked; only reference item IDs visible in the inbox snapshot above
+- For folder management: never delete system folders (Inbox, Sent, Drafts, Trash, Spam, Starred, Important)
+- Single-email actions may still use itemId (singular); bulk actions use itemIds array
+- Always include a human-readable count in the label (e.g. "Delete 5 emails from Newsletter")`;
     }
 
     if (context === 'meeting') {

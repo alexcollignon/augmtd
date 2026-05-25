@@ -770,38 +770,43 @@ export function InboxPageClient({
   }, []);
 
   const handleChatAction = useCallback(async (type: string, itemId: string, extra?: Record<string, string>) => {
-    if (type === 'archive') {
-      const res = await fetch(`/api/inbox/${itemId}/archive-source`, { method: 'POST' });
-      if (!res.ok) throw new Error('Archive failed');
-      setInboxItems(prev => prev.filter(i => i.id !== itemId));
-      setSelectedItem(prev => (prev?.id === itemId ? null : prev));
-    } else if (type === 'open') {
+    // Support bulk itemIds (comma-separated in extra) or single itemId
+    const ids: string[] = extra?.itemIds
+      ? JSON.parse(extra.itemIds)
+      : itemId ? [itemId] : [];
+
+    if (type === 'open') {
       const item = inboxItems.find(i => i.id === itemId);
       if (item) handleSelectItem(item);
+      return;
+    }
+
+    if (type === 'archive') {
+      await Promise.all(ids.map(id => fetch(`/api/inbox/${id}/archive-source`, { method: 'POST' })));
+      setInboxItems(prev => prev.filter(i => !ids.includes(i.id)));
+      setSelectedItem(prev => (prev && ids.includes(prev.id) ? null : prev));
     } else if (type === 'delete') {
-      const res = await fetch(`/api/inbox/${itemId}/delete-source`, { method: 'POST' });
-      if (!res.ok) throw new Error('Delete failed');
-      setInboxItems(prev => prev.filter(i => i.id !== itemId));
-      setSelectedItem(prev => (prev?.id === itemId ? null : prev));
+      await Promise.all(ids.map(id => fetch(`/api/inbox/${id}/delete-source`, { method: 'POST' })));
+      setInboxItems(prev => prev.filter(i => !ids.includes(i.id)));
+      setSelectedItem(prev => (prev && ids.includes(prev.id) ? null : prev));
     } else if (type === 'move_to_folder') {
       const folderId = extra?.folderId ?? '';
       const folderName = extra?.folderName ?? '';
-      const res = await fetch(`/api/inbox/${itemId}/move-to-folder`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ folderId, folderName }),
-      });
-      if (!res.ok) throw new Error('Move failed');
-      setInboxItems(prev => prev.filter(i => i.id !== itemId));
-      setSelectedItem(prev => (prev?.id === itemId ? null : prev));
+      await Promise.all(ids.map(id =>
+        fetch(`/api/inbox/${id}/move-to-folder`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ folderId, folderName }),
+        })
+      ));
+      setInboxItems(prev => prev.filter(i => !ids.includes(i.id)));
+      setSelectedItem(prev => (prev && ids.includes(prev.id) ? null : prev));
     } else if (type === 'mark_read') {
-      const res = await fetch(`/api/inbox/${itemId}/mark-read`, { method: 'POST' });
-      if (!res.ok) throw new Error('Mark read failed');
-      setInboxItems(prev => prev.map(i => i.id === itemId ? { ...i, is_read: true } : i));
+      await Promise.all(ids.map(id => fetch(`/api/inbox/${id}/mark-read`, { method: 'POST' })));
+      setInboxItems(prev => prev.map(i => ids.includes(i.id) ? { ...i, is_read: true } : i));
     } else if (type === 'mark_unread') {
-      const res = await fetch(`/api/inbox/${itemId}/mark-unread`, { method: 'POST' });
-      if (!res.ok) throw new Error('Mark unread failed');
-      setInboxItems(prev => prev.map(i => i.id === itemId ? { ...i, is_read: false } : i));
+      await Promise.all(ids.map(id => fetch(`/api/inbox/${id}/mark-unread`, { method: 'POST' })));
+      setInboxItems(prev => prev.map(i => ids.includes(i.id) ? { ...i, is_read: false } : i));
     } else if (type === 'create_folder') {
       const connectionId = extra?.connectionId ?? '';
       const folderName = extra?.folderName ?? '';
@@ -820,7 +825,6 @@ export function InboxPageClient({
     } else if (type === 'delete_folder') {
       const connectionId = extra?.connectionId ?? '';
       const folderId = extra?.folderId ?? '';
-      const folderName = extra?.folderName ?? '';
       const res = await fetch(`/api/inbox/folders?connectionId=${encodeURIComponent(connectionId)}&folderId=${encodeURIComponent(folderId)}`, {
         method: 'DELETE',
       });
@@ -931,6 +935,7 @@ export function InboxPageClient({
           ...(emailChipActive && emailChipData ? { emailContext: emailChipData } : {}),
           ...(selectedItem ? { emailItemId: selectedItem.id } : {}),
           activeConnectionId: selectedConnectionId ?? undefined,
+          activeAccountEmail: folderSections?.find(c => c.connectionId === selectedConnectionId)?.email ?? undefined,
           availableFolders: folderSections
             ?.find(c => c.connectionId === selectedConnectionId)
             ?.folders.filter(f => !f.isSystem)

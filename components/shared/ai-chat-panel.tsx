@@ -34,7 +34,8 @@ interface ComposeDraft {
 
 interface ParsedAction {
   type: 'archive' | 'open' | 'delete' | 'move_to_folder' | 'mark_read' | 'mark_unread' | 'create_folder' | 'delete_folder';
-  itemId: string;
+  itemId?: string;
+  itemIds?: string[];
   label: string;
   folderId?: string;
   folderName?: string;
@@ -257,7 +258,8 @@ function parseContent(raw: string) {
       const json = match.slice('ACTION:'.length);
       const parsed = tryParse<ParsedAction>(json);
       const folderMgmt = parsed?.type === 'create_folder' || parsed?.type === 'delete_folder';
-      if (parsed?.type && parsed?.label && (parsed?.itemId || folderMgmt)) actions.push(parsed);
+      const hasSomeId = parsed?.itemId || parsed?.itemIds?.length || folderMgmt;
+      if (parsed?.type && parsed?.label && hasSomeId) actions.push(parsed);
       return '';
     })
     .replace(/\nMEETING_SUGGESTION:\{.+\}/g, '')
@@ -315,7 +317,8 @@ function ActionChip({ action, onAction }: {
       if (action.folderId) extra.folderId = action.folderId;
       if (action.folderName) extra.folderName = action.folderName;
       if (action.connectionId) extra.connectionId = action.connectionId;
-      await onAction(action.type, action.itemId, Object.keys(extra).length ? extra : undefined);
+      if (action.itemIds?.length) extra.itemIds = JSON.stringify(action.itemIds);
+      await onAction(action.type, action.itemId ?? '', Object.keys(extra).length ? extra : undefined);
       setState('done');
     } catch { setState('error'); }
   };
