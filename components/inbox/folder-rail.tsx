@@ -225,22 +225,21 @@ export default function FolderSidebar({
             : 'text-neutral-600 hover:bg-neutral-100'
           }`}
         >
-          <span
-            className={`flex-shrink-0 w-3.5 h-3.5 flex items-center justify-center ${isDragOver || isSelected ? 'text-indigo-400' : 'text-neutral-300'}`}
-            onClick={hasChildren ? (e) => {
-              e.stopPropagation();
-              setExpandedFolderIds(prev => {
-                const next = new Set(prev);
-                next.has(node.id) ? next.delete(node.id) : next.add(node.id);
-                return next;
-              });
-            } : undefined}
-          >
-            {hasChildren
-              ? <ChevronRightIcon className={`w-3 h-3 transition-transform duration-150 ${isExpanded ? 'rotate-90' : ''}`} />
-              : <span className="w-3" />
-            }
-          </span>
+          {hasChildren && (
+            <span
+              className={`flex-shrink-0 w-3.5 h-3.5 flex items-center justify-center ${isDragOver || isSelected ? 'text-indigo-400' : 'text-neutral-300'}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                setExpandedFolderIds(prev => {
+                  const next = new Set(prev);
+                  next.has(node.id) ? next.delete(node.id) : next.add(node.id);
+                  return next;
+                });
+              }}
+            >
+              <ChevronRightIcon className={`w-3 h-3 transition-transform duration-150 ${isExpanded ? 'rotate-90' : ''}`} />
+            </span>
+          )}
           <span className={isDragOver || isSelected ? 'text-indigo-500' : 'text-neutral-400'}>
             <FolderIcon className="w-3.5 h-3.5 flex-shrink-0" />
           </span>
