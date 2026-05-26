@@ -6,6 +6,8 @@ import {
   FolderOpenIcon,
   EllipsisHorizontalIcon,
   ChatBubbleLeftRightIcon,
+  MicrophoneIcon,
+  DocumentTextIcon,
 } from '@heroicons/react/24/outline';
 import type { DriveFolder } from '@/lib/types/drive';
 
@@ -35,17 +37,6 @@ interface FolderDetailViewProps {
   isNew: (t: Transcript) => boolean;
 }
 
-function firstName(attendee: { email: string; name?: string }): string {
-  if (attendee.name) return attendee.name.trim().split(/\s+/)[0];
-  return attendee.email.split('@')[0];
-}
-
-function attendeeLabel(attendees: Array<{ email: string; name?: string }>): string {
-  if (attendees.length === 0) return '';
-  if (attendees.length === 1) return firstName(attendees[0]);
-  if (attendees.length === 2) return `${firstName(attendees[0])} & ${firstName(attendees[1])}`;
-  return `${firstName(attendees[0])}, ${firstName(attendees[1])} & ${attendees.length - 2} other${attendees.length - 2 > 1 ? 's' : ''}`;
-}
 
 type TabType = 'notes' | 'people';
 
@@ -54,6 +45,82 @@ interface PersonAggregate {
   name?: string;
   meetingCount: number;
   lastSeen: string;
+}
+
+const ATTENDEE_COLORS = [
+  'bg-indigo-100 text-indigo-700',
+  'bg-violet-100 text-violet-700',
+  'bg-blue-100 text-blue-700',
+  'bg-emerald-100 text-emerald-700',
+  'bg-amber-100 text-amber-700',
+  'bg-rose-100 text-rose-700',
+];
+
+function attendeeColor(key: string): string {
+  let hash = 0;
+  for (const c of key) hash = (hash * 31 + c.charCodeAt(0)) & 0xffff;
+  return ATTENDEE_COLORS[hash % ATTENDEE_COLORS.length];
+}
+
+function getInitialsFn(name?: string | null, email?: string | null): string {
+  if (name) {
+    const parts = name.trim().split(/\s+/);
+    if (parts.length >= 2) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+    return parts[0][0].toUpperCase();
+  }
+  return (email?.[0] ?? '?').toUpperCase();
+}
+
+function AttendeeAvatars({ attendees }: { attendees: Array<{ email: string; name?: string }> }) {
+  if (!attendees.length) return null;
+  const shown = attendees.slice(0, 5);
+  const extra = attendees.length - shown.length;
+  return (
+    <div className="flex -space-x-1.5">
+      {shown.map((a, i) => {
+        const key = a.email ?? String(i);
+        const color = attendeeColor(key);
+        return (
+          <div
+            key={i}
+            title={a.name ?? a.email}
+            className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-semibold ring-2 ring-white ${color}`}
+          >
+            {getInitialsFn(a.name, a.email)}
+          </div>
+        );
+      })}
+      {extra > 0 && (
+        <div className="w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-semibold ring-2 ring-white bg-neutral-100 text-neutral-500">
+          +{extra}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SourceIcon({ source }: { source: string }) {
+  if (source === 'recording' || source === 'bot' || source === 'upload') {
+    return <MicrophoneIcon className="w-4 h-4 text-red-400" />;
+  }
+  return <DocumentTextIcon className="w-4 h-4 text-blue-400" />;
+}
+
+function SourceBadge({ source }: { source: string }) {
+  if (source === 'recording' || source === 'bot' || source === 'upload') {
+    return (
+      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-red-50 text-[10px] font-medium text-red-500 flex-shrink-0">
+        <MicrophoneIcon className="w-2.5 h-2.5" />
+        Recording
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-blue-50 text-[10px] font-medium text-blue-500 flex-shrink-0">
+      <DocumentTextIcon className="w-2.5 h-2.5" />
+      Note
+    </span>
+  );
 }
 
 function groupByDate(items: Transcript[]): Array<{ label: string; items: Transcript[] }> {
@@ -179,29 +246,6 @@ export default function FolderDetailView({
     }
     return Array.from(map.values()).sort((a, b) => b.meetingCount - a.meetingCount);
   }, [folderTranscripts]);
-
-  const AVATAR_COLORS = [
-    'bg-violet-100 text-violet-700',
-    'bg-blue-100 text-blue-700',
-    'bg-emerald-100 text-emerald-700',
-    'bg-amber-100 text-amber-700',
-    'bg-rose-100 text-rose-700',
-    'bg-cyan-100 text-cyan-700',
-  ];
-
-  function avatarColor(email: string): string {
-    let hash = 0;
-    for (let i = 0; i < email.length; i++) hash = (hash * 31 + email.charCodeAt(i)) >>> 0;
-    return AVATAR_COLORS[hash % AVATAR_COLORS.length];
-  }
-
-  function getInitials(name?: string, email?: string): string {
-    if (name) {
-      const parts = name.trim().split(/\s+/);
-      return parts.length >= 2 ? (parts[0][0] + parts[parts.length - 1][0]).toUpperCase() : parts[0][0].toUpperCase();
-    }
-    return (email?.[0] ?? '?').toUpperCase();
-  }
 
   const handleRename = async () => {
     if (renameName.trim() && renameName.trim() !== folder.name) {
@@ -367,26 +411,28 @@ export default function FolderDetailView({
                   return (
                     <Link key={t.id} href={href}>
                       <div className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-neutral-50 transition-colors cursor-pointer mb-0.5">
+                        <div className="w-8 h-8 rounded-lg bg-neutral-100 flex items-center justify-center flex-shrink-0">
+                          <SourceIcon source={t.source} />
+                        </div>
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-1.5">
                             <p className="text-[13px] font-medium text-neutral-800 truncate">{t.title}</p>
                             {isNew(t) && <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 flex-shrink-0" />}
                           </div>
-                          {(t.attendees?.length ?? 0) > 0 && (
-                            <p className="text-[11px] text-neutral-500 mt-0.5">
-                              {attendeeLabel(t.attendees!)}
-                            </p>
-                          )}
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <SourceBadge source={t.source} />
+                            {(t.attendees?.length ?? 0) > 0 && (
+                              <AttendeeAvatars attendees={t.attendees!} />
+                            )}
+                          </div>
                         </div>
-                        <div className="flex items-center gap-2 flex-shrink-0">
-                          {t.workItemsGenerated > 0 && (
-                            <span className="text-[10px] text-blue-500 font-medium">
-                              {t.workItemsGenerated}
-                            </span>
-                          )}
-                          <span className="text-[11px] text-neutral-400">
+                        <div className="flex-shrink-0 text-right">
+                          <p className="text-[11px] text-neutral-400">
                             {new Date(t.startTime).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
-                          </span>
+                          </p>
+                          {t.workItemsGenerated > 0 && (
+                            <p className="text-[10px] text-blue-500 font-medium">{t.workItemsGenerated} items</p>
+                          )}
                         </div>
                       </div>
                     </Link>
@@ -404,8 +450,8 @@ export default function FolderDetailView({
             )}
             {people.map((person) => (
               <div key={person.email} className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-neutral-50 transition-colors mb-0.5">
-                <div className={`w-8 h-8 rounded-full flex items-center justify-center text-[12px] font-semibold flex-shrink-0 ${avatarColor(person.email)}`}>
-                  {getInitials(person.name, person.email)}
+                <div className={`w-8 h-8 rounded-full flex items-center justify-center text-[12px] font-semibold flex-shrink-0 ${attendeeColor(person.email)}`}>
+                  {getInitialsFn(person.name, person.email)}
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-[13px] font-medium text-neutral-800 truncate">
