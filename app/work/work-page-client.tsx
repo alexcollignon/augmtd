@@ -98,6 +98,10 @@ export function WorkPageClient({
   const [artifactPanelOpen, setArtifactPanelOpen] = useState(false);
   const [activeArtifactId, setActiveArtifactId] = useState<string | null>(null);
   const [artifactViewSignal, setArtifactViewSignal] = useState(0);
+  const [artifactPanelWidth, setArtifactPanelWidth] = useState(500);
+  const artifactResizingRef = useRef(false);
+  const artifactResizeStartXRef = useRef(0);
+  const artifactResizeStartWidthRef = useRef(500);
   const [activeAgentId, setActiveAgentId] = useState<string | null>(initialAgentId);
   const [isTemporaryMode, setIsTemporaryMode] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
@@ -521,13 +525,46 @@ export function WorkPageClient({
         </div>
       </div>
 
+      {/* Artifact panel resize handle */}
+      {artifactPanelOpen && (!activeThread || (activeThread.artifacts?.length ?? 0) > 0) && (
+        <div
+          className="flex-shrink-0 w-1 cursor-col-resize hover:bg-indigo-200 active:bg-indigo-300 transition-colors z-10 group relative"
+          onMouseDown={(e) => {
+            e.preventDefault();
+            artifactResizingRef.current = true;
+            artifactResizeStartXRef.current = e.clientX;
+            artifactResizeStartWidthRef.current = artifactPanelWidth;
+            const onMove = (ev: MouseEvent) => {
+              if (!artifactResizingRef.current) return;
+              const delta = artifactResizeStartXRef.current - ev.clientX;
+              const next = Math.min(800, Math.max(300, artifactResizeStartWidthRef.current + delta));
+              setArtifactPanelWidth(next);
+            };
+            const onUp = () => {
+              artifactResizingRef.current = false;
+              window.removeEventListener('mousemove', onMove);
+              window.removeEventListener('mouseup', onUp);
+            };
+            window.addEventListener('mousemove', onMove);
+            window.addEventListener('mouseup', onUp);
+          }}
+        >
+          <div className="absolute inset-y-0 -left-0.5 -right-0.5 group-hover:bg-indigo-200 transition-colors rounded-full" />
+        </div>
+      )}
+
       {/* Artifact panel */}
       <div
-        className={`flex-shrink-0 overflow-hidden transition-[width] duration-200 ${
+        className={`flex-shrink-0 overflow-hidden ${
           artifactPanelOpen && (!activeThread || (activeThread.artifacts?.length ?? 0) > 0)
-            ? 'w-[400px]'
+            ? ''
             : 'w-0'
         }`}
+        style={
+          artifactPanelOpen && (!activeThread || (activeThread.artifacts?.length ?? 0) > 0)
+            ? { width: artifactPanelWidth }
+            : undefined
+        }
       >
         {artifactPanelOpen && !activeThread && (
           <AllArtifactsPanel
