@@ -130,9 +130,11 @@ function FolderChip({ folderId, folders }: { folderId?: string | null; folders: 
   const folder = folders.find((f) => f.id === folderId);
   if (!folder) return null;
   return (
-    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-indigo-50 text-[10px] font-medium text-indigo-500 flex-shrink-0">
-      <FolderIcon className="w-2.5 h-2.5" />
-      {folder.name}
+    <span className="group/fc inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-indigo-50 text-indigo-500 flex-shrink-0 overflow-hidden">
+      <FolderIcon className="w-2.5 h-2.5 flex-shrink-0" />
+      <span className="text-[10px] font-medium max-w-0 group-hover/fc:max-w-[120px] overflow-hidden whitespace-nowrap transition-[max-width] duration-200 ease-out">
+        {folder.name}
+      </span>
     </span>
   );
 }
@@ -296,7 +298,6 @@ export default function MeetingsHome({
     const seenR = new Map<string, Transcript>();
     for (const t of transcripts.filter((t) =>
       t.processed &&
-      !t.folderId &&
       !(t.source === 'text' && !t.hasDocument && !t.summary && t.botState !== 'failed')
     )) {
       const key = t.calendarEventId ?? t.id;
