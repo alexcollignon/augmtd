@@ -108,11 +108,30 @@ function SourceIcon({ source }: { source: string }) {
   return <DocumentTextIcon className="w-4 h-4 text-blue-400" />;
 }
 
+function SourceBadge({ source }: { source: string }) {
+  if (source === 'recording' || source === 'bot' || source === 'upload') {
+    return (
+      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-red-50 text-[10px] font-medium text-red-500 flex-shrink-0">
+        <MicrophoneIcon className="w-2.5 h-2.5" />
+        Recording
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-blue-50 text-[10px] font-medium text-blue-500 flex-shrink-0">
+      <DocumentTextIcon className="w-2.5 h-2.5" />
+      Note
+    </span>
+  );
+}
+
 function progressStatus(t: Transcript): { label: string; pulse: boolean } {
   if (t.source === 'recording') return { label: 'Transcribing recording…', pulse: true };
   if (t.source === 'text') return { label: 'Processing notes…', pulse: true };
   return { label: 'Processing…', pulse: true };
 }
+
+type CaptureFilter = 'all' | 'recordings' | 'notes';
 
 export default function MeetingsHome({
   upcoming,
@@ -125,6 +144,7 @@ export default function MeetingsHome({
 }: MeetingsHomeProps) {
   const [retryingIds, setRetryingIds] = useState<Set<string>>(new Set());
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [captureFilter, setCaptureFilter] = useState<CaptureFilter>('all');
   const now = new Date();
   const todayStr = now.toDateString();
   const tomorrowStr = new Date(now.getTime() + 86400000).toDateString();
@@ -190,6 +210,11 @@ export default function MeetingsHome({
     if (filterPersonEmail) {
       list = list.filter((t) => t.attendees?.some((a) => a.email === filterPersonEmail));
     }
+    if (captureFilter === 'recordings') {
+      list = list.filter((t) => t.source === 'recording' || t.source === 'bot' || t.source === 'upload');
+    } else if (captureFilter === 'notes') {
+      list = list.filter((t) => t.source === 'text');
+    }
 
     const yesterdayStr = new Date(now.getTime() - 86400000).toDateString();
     const groups = new Map<string, Transcript[]>();
@@ -206,7 +231,7 @@ export default function MeetingsHome({
         : new Date(dateStr).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
       return { label, items: groups.get(dateStr)! };
     });
-  }, [transcripts, filterPersonEmail]); // eslint-disable-line
+  }, [transcripts, filterPersonEmail, captureFilter]); // eslint-disable-line
 
   return (
     <div className="max-w-2xl mx-auto px-6 py-8">
@@ -374,7 +399,24 @@ export default function MeetingsHome({
         </section>
       )}
 
-      {/* ── Recent notes ── */}
+      {/* ── Captured ── */}
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-1 bg-neutral-100 rounded-lg p-0.5">
+          {(['all', 'recordings', 'notes'] as CaptureFilter[]).map((f) => (
+            <button
+              key={f}
+              onClick={() => setCaptureFilter(f)}
+              className={`px-2.5 py-1 rounded-md text-[11.5px] font-medium transition-colors capitalize ${
+                captureFilter === f
+                  ? 'bg-white text-neutral-800 shadow-sm'
+                  : 'text-neutral-500 hover:text-neutral-700'
+              }`}
+            >
+              {f === 'all' ? 'All' : f === 'recordings' ? 'Recordings' : 'Notes'}
+            </button>
+          ))}
+        </div>
+      </div>
       {recentByDate.length === 0 ? (
         inProgress.length === 0 && live.length === 0 && (
           <div className="py-12 text-center">
@@ -466,9 +508,12 @@ export default function MeetingsHome({
                           <p className="text-[13px] font-medium text-neutral-800 truncate">{t.title}</p>
                           {isNew(t) && <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 flex-shrink-0" />}
                         </div>
-                        {(t.attendees?.length ?? 0) > 0 && (
-                          <AttendeeAvatars attendees={t.attendees!} />
-                        )}
+                        <div className="flex items-center gap-2 mt-0.5">
+                          <SourceBadge source={t.source} />
+                          {(t.attendees?.length ?? 0) > 0 && (
+                            <AttendeeAvatars attendees={t.attendees!} />
+                          )}
+                        </div>
                       </div>
                       <div className="flex-shrink-0 text-right">
                         <p className="text-[11px] text-neutral-400">
