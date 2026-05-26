@@ -15,6 +15,10 @@ export { executeDeepResearch } from './deep-research';
 export type { DeepResearchConfig } from './deep-research';
 export { executeWorkflowOutput } from './workflow-output';
 export type { WorkflowOutputConfig } from './workflow-output';
+export { executeGetEmails } from './get-emails';
+export type { GetEmailsConfig } from './get-emails';
+export { executeGetMeetingContext } from './get-meeting-context';
+export type { GetMeetingContextConfig } from './get-meeting-context';
 
 // OpenAI function-calling format converter — used by chat route
 export function toOpenAITool(def: {

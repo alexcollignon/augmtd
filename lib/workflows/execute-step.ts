@@ -7,11 +7,10 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import { getAIClient, aiCreate, getSystemClient } from '@/lib/ai/factory';
 import { buildChatSystemPrompt, detectModelFamily } from '@/lib/work/chat-system-prompt';
 import { buildUserContextBlock } from '@/lib/context/build-user-context';
-import { buildInboxSnapshot } from '@/lib/inbox/chat-context';
 import { getCalendarContext } from '@/lib/calendar/calendar-context';
 import { formatCalendarContextForChat } from '@/lib/calendar/format-calendar-context';
 import { buildKBContext } from '@/lib/knowledge/build-kb-context';
-import { executeWebSearch, executeFetchUrl, executeRssFeed, executeLinkedInPost, executeBrowserFetch, executePtTenders, executeDeepResearch, executeWorkflowOutput } from '@/lib/tools';
+import { executeWebSearch, executeFetchUrl, executeRssFeed, executeLinkedInPost, executeBrowserFetch, executePtTenders, executeDeepResearch, executeWorkflowOutput, executeGetEmails, executeGetMeetingContext } from '@/lib/tools';
 import type { WorkflowStep, StepOutput, ToolStep, AIStep, AgentStep } from './types';
 
 export interface StepContext {
@@ -77,7 +76,9 @@ function formatPreviousOutputs(outputs: StepOutput[]): string {
 
 async function executeToolStep(step: ToolStep, ctx: StepContext): Promise<string> {
   switch (step.tool) {
-    case 'get_urgent_emails': return await toolGetUrgentEmails(step.config, ctx);
+    case 'get_emails':        return await executeGetEmails(step.config, ctx.userId, ctx.supabase);
+    case 'get_urgent_emails': return await executeGetEmails({ mode: 'urgent', ...step.config }, ctx.userId, ctx.supabase);
+    case 'get_meeting_context': return await executeGetMeetingContext(step.config, ctx.userId, ctx.supabase);
     case 'get_calendar':      return await toolGetCalendar(ctx);
     case 'read_kb_file':      return await toolReadKbFile(step.config, ctx);
     case 'web_search':        return await executeWebSearch(step.config);
@@ -103,21 +104,6 @@ async function executeToolStep(step: ToolStep, ctx: StepContext): Promise<string
   }
 }
 
-async function toolGetUrgentEmails(
-  config: Record<string, unknown>,
-  ctx: StepContext,
-): Promise<string> {
-  const snapshot = await buildInboxSnapshot(ctx.userId, null, ctx.supabase);
-  const limit = typeof config.limit === 'number' ? config.limit : 15;
-
-  // Urgency = unread, not dismissed (already filtered by buildInboxSnapshot)
-  const urgent = snapshot.filter(e => !e.isRead).slice(0, limit);
-  if (urgent.length === 0) return 'No urgent unread emails.';
-
-  return urgent.map(e =>
-    `- From: ${e.fromName || e.fromEmail}\n  Subject: ${e.subject}\n  Preview: ${e.snippet?.slice(0, 200) || ''}`
-  ).join('\n\n');
-}
 
 async function toolGetCalendar(ctx: StepContext): Promise<string> {
   const cal = await getCalendarContext(ctx.userId, ctx.supabase);
