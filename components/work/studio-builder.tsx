@@ -93,42 +93,47 @@ const WORKFLOW_COLORS = [
 ];
 
 const AVAILABLE_TOOLS = [
-  { id: 'get_urgent_emails', label: 'Fetch urgent emails',        description: 'Pulls unread items from your inbox with sender, subject, preview.' },
-  { id: 'get_calendar',      label: 'Fetch upcoming calendar',    description: 'Returns your next meetings with attendees and times.' },
-  { id: 'read_kb_file',      label: 'Read a knowledge base file', description: 'Returns the full content of one KB file by id.' },
-  { id: 'web_search',        label: 'Search the web',             description: 'Give it a topic and it finds relevant pages — like asking Google.' },
-  { id: 'fetch_url',         label: 'Read a web page',            description: 'Reads the full current content of a URL every run.' },
-  { id: 'rss_feed',          label: 'Follow a news feed or blog', description: 'Returns only new articles since your last run — no duplicates.' },
-  { id: 'get_pt_tenders',    label: 'Portuguese public tenders',  description: 'Fetches contracts and announcements from Portal Base (Base.gov.pt).' },
-  { id: 'linkedin_post',     label: 'Generate LinkedIn posts',    description: 'Drafts 1–3 LinkedIn post variants from previous step content.' },
-  { id: 'deep_research',    label: 'Deep research',              description: 'Takes topics from the previous step and researches each one in depth using AI + web search. Returns cited findings.' },
-  { id: 'get_workflow_output', label: 'Read workflow output',     description: 'Reads the output of another workflow and passes it as context to the next step. Compose workflows together.' },
+  { id: 'get_emails',          label: 'Fetch emails',              description: 'Pull emails from your inbox — filter by mode, time window, sender, keywords or topic.' },
+  { id: 'get_meeting_context', label: 'Fetch meeting context',     description: 'Returns recent meeting summaries, attendees, notes and action items.' },
+  { id: 'get_calendar',        label: 'Fetch upcoming calendar',   description: 'Returns your next meetings with attendees and times.' },
+  { id: 'read_kb_file',        label: 'Read a knowledge base file',description: 'Returns the full content of one KB file by id.' },
+  { id: 'web_search',          label: 'Search the web',            description: 'Give it a topic and it finds relevant pages — like asking Google.' },
+  { id: 'fetch_url',           label: 'Read a web page',           description: 'Reads the full current content of a URL every run.' },
+  { id: 'rss_feed',            label: 'Follow a news feed or blog',description: 'Returns only new articles since your last run — no duplicates.' },
+  { id: 'get_pt_tenders',      label: 'Portuguese public tenders', description: 'Fetches contracts and announcements from Portal Base (Base.gov.pt).' },
+  { id: 'linkedin_post',       label: 'Generate LinkedIn posts',   description: 'Drafts 1–3 LinkedIn post variants from previous step content.' },
+  { id: 'deep_research',       label: 'Deep research',             description: 'Takes topics from the previous step and researches each one in depth using AI + web search. Returns cited findings.' },
+  { id: 'get_workflow_output', label: 'Read workflow output',      description: 'Reads the output of another workflow and passes it as context to the next step. Compose workflows together.' },
 ];
 
 const TOOL_GROUPS = [
-  { label: 'Your workspace', ids: ['get_urgent_emails', 'get_calendar', 'read_kb_file'] },
+  { label: 'Your workspace', ids: ['get_emails', 'get_meeting_context', 'get_calendar', 'read_kb_file'] },
   { label: 'Web & research', ids: ['web_search', 'fetch_url', 'rss_feed', 'get_pt_tenders', 'deep_research'] },
   { label: 'Social media',   ids: ['linkedin_post'] },
 ];
 
 const TOOL_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
-  get_urgent_emails: EnvelopeIcon,
-  get_calendar:      CalendarDaysIcon,
-  read_kb_file:      DocumentTextIcon,
-  web_search:        MagnifyingGlassIcon,
-  fetch_url:         GlobeAltIcon,
-  browser_fetch:     GlobeAltIcon,
-  rss_feed:          NewspaperIcon,
-  linkedin_post:     MegaphoneIcon,
-  get_pt_tenders:    BuildingOfficeIcon,
+  get_emails:           EnvelopeIcon,
+  get_urgent_emails:    EnvelopeIcon,
+  get_meeting_context:  CalendarDaysIcon,
+  get_calendar:         CalendarDaysIcon,
+  read_kb_file:         DocumentTextIcon,
+  web_search:           MagnifyingGlassIcon,
+  fetch_url:            GlobeAltIcon,
+  browser_fetch:        GlobeAltIcon,
+  rss_feed:             NewspaperIcon,
+  linkedin_post:        MegaphoneIcon,
+  get_pt_tenders:       BuildingOfficeIcon,
   deep_research:        MagnifyingGlassIcon,
   get_workflow_output:  ArrowPathIcon,
 };
 
 const TOOL_STYLES: Record<string, { bg: string; logo?: string }> = {
-  get_urgent_emails: { bg: 'bg-rose-500' },
-  get_calendar:      { bg: 'bg-blue-500' },
-  read_kb_file:      { bg: 'bg-violet-500' },
+  get_emails:           { bg: 'bg-rose-500' },
+  get_urgent_emails:    { bg: 'bg-rose-500' },
+  get_meeting_context:  { bg: 'bg-teal-500' },
+  get_calendar:         { bg: 'bg-blue-500' },
+  read_kb_file:         { bg: 'bg-violet-500' },
   web_search:        { bg: 'bg-amber-500' },
   fetch_url:         { bg: 'bg-sky-500' },
   browser_fetch:     { bg: 'bg-sky-500' },
@@ -239,7 +244,7 @@ export function StudioBuilder({ workflow: initialWorkflow, agents, onClose, onBa
     const id = makeStepId();
     let step: WorkflowStep;
     if (type === 'tool') {
-      step = { id, type: 'tool', label: 'New tool step', tool: 'get_urgent_emails', config: {} } as ToolStep;
+      step = { id, type: 'tool', label: 'New tool step', tool: 'get_emails', config: {} } as ToolStep;
     } else if (type === 'ai') {
       step = { id, type: 'ai', label: 'New AI step', prompt: '', output_format: 'markdown', model_tier: 'fast' } as AIStep;
     } else {
@@ -1462,7 +1467,7 @@ function ToolPicker({ value, onChange }: { value: string; onChange: (toolId: str
   const dropRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
-  const displayId = value === 'browser_fetch' ? 'fetch_url' : value;
+  const displayId = value === 'browser_fetch' ? 'fetch_url' : (value === 'get_urgent_emails' ? 'get_emails' : value);
   const current = AVAILABLE_TOOLS.find(t => t.id === displayId);
   const q = search.toLowerCase();
   const filtered = AVAILABLE_TOOLS.filter(t =>
@@ -1583,10 +1588,10 @@ function KbFilePickerField({ value, onChange }: { value: string; onChange: (id: 
 }
 
 function InlineToolGrid({ value, onChange }: { value: string; onChange: (toolId: string) => void }) {
-  const displayId = value === 'browser_fetch' ? 'fetch_url' : value;
+  const displayId = value === 'browser_fetch' ? 'fetch_url' : (value === 'get_urgent_emails' ? 'get_emails' : value);
   const groups = [
+    { label: 'Your Workspace',  ids: ['get_emails', 'get_meeting_context', 'get_calendar', 'read_kb_file'] },
     { label: 'Web & Research',  ids: ['web_search', 'fetch_url', 'rss_feed', 'get_pt_tenders', 'deep_research'] },
-    { label: 'Your Workspace',  ids: ['get_urgent_emails', 'get_calendar', 'read_kb_file'] },
     { label: 'Social & Output', ids: ['linkedin_post'] },
     { label: 'Pipeline',        ids: ['get_workflow_output'] },
   ];
@@ -1728,12 +1733,128 @@ function ToolStepFields({ step, onUpdate, isEnhancing, isPending, onEnhance, cur
           onChange={id => onUpdate({ config: { ...step.config, file_id: id } })}
         />
       )}
+      {(step.tool === 'get_emails' || step.tool === 'get_urgent_emails') && (
+        <GetEmailsFields step={step} onUpdate={onUpdate} />
+      )}
+      {step.tool === 'get_meeting_context' && <GetMeetingContextFields step={step} onUpdate={onUpdate} />}
       {step.tool === 'linkedin_post' && <LinkedInPostFields step={step} onUpdate={onUpdate} />}
       {step.tool === 'get_pt_tenders' && <PtTendersFields step={step} onUpdate={onUpdate} />}
       {step.tool === 'deep_research' && <DeepResearchFields step={step} onUpdate={onUpdate} />}
       {step.tool === 'get_workflow_output' && (
         <WorkflowOutputFields step={step} onUpdate={onUpdate} currentWorkflowId={currentWorkflowId ?? ''} />
       )}
+    </>
+  );
+}
+
+function GetEmailsFields({ step, onUpdate }: { step: ToolStep; onUpdate: (p: Partial<ToolStep>) => void }) {
+  const cfg = step.config;
+  const set = (k: string, v: unknown) => onUpdate({ config: { ...cfg, [k]: v } });
+  const keywords = Array.isArray(cfg.keywords) ? (cfg.keywords as string[]).join(', ') : (cfg.keywords as string) ?? '';
+  return (
+    <>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Mode">
+          <select value={(cfg.mode as string) ?? 'recent'} onChange={e => set('mode', e.target.value)}
+            className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] bg-white">
+            <option value="recent">Recent</option>
+            <option value="urgent">Urgent (unread)</option>
+            <option value="all">All (no time filter)</option>
+          </select>
+        </Field>
+        <Field label="Time window">
+          <select value={(cfg.since as string) ?? '7d'} onChange={e => set('since', e.target.value)}
+            className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] bg-white"
+            disabled={(cfg.mode as string) === 'all'}>
+            <option value="24h">Last 24 hours</option>
+            <option value="7d">Last 7 days</option>
+            <option value="30d">Last 30 days</option>
+          </select>
+        </Field>
+      </div>
+      <Field label="From (sender filter)" hint="Optional — partial match">
+        <input type="text" value={(cfg.from as string) ?? ''}
+          onChange={e => set('from', e.target.value || undefined)}
+          placeholder="e.g. john@acme.com or Acme Corp"
+          className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px]" />
+      </Field>
+      <Field label="Topic" hint="Optional — free-text">
+        <input type="text" value={(cfg.topic as string) ?? ''}
+          onChange={e => set('topic', e.target.value || undefined)}
+          placeholder="e.g. invoice payment contract"
+          className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px]" />
+      </Field>
+      <Field label="Keywords" hint="Comma-separated, OR logic">
+        <input type="text" value={keywords}
+          onChange={e => {
+            const list = e.target.value.split(',').map(s => s.trim()).filter(Boolean);
+            set('keywords', list.length > 0 ? list : undefined);
+          }}
+          placeholder="e.g. proposal, contract, urgent"
+          className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px]" />
+      </Field>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Max emails">
+          <input type="number" min={1} max={50} value={(cfg.limit as number) ?? 15}
+            onChange={e => set('limit', Number(e.target.value))}
+            className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px]" />
+        </Field>
+        <Field label="Unread only">
+          <label className="flex items-center gap-2 px-3 py-2 border border-neutral-200 rounded-md cursor-pointer h-full">
+            <input type="checkbox" checked={cfg.unread_only === true} onChange={e => set('unread_only', e.target.checked || undefined)}
+              className="rounded border-neutral-300 text-indigo-600 focus:ring-indigo-500" />
+            <span className="text-[13px] text-neutral-700">Yes</span>
+          </label>
+        </Field>
+      </div>
+    </>
+  );
+}
+
+function GetMeetingContextFields({ step, onUpdate }: { step: ToolStep; onUpdate: (p: Partial<ToolStep>) => void }) {
+  const cfg = step.config;
+  const set = (k: string, v: unknown) => onUpdate({ config: { ...cfg, [k]: v } });
+  return (
+    <>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Lookback window">
+          <select value={(cfg.since as string) ?? '30d'} onChange={e => set('since', e.target.value)}
+            className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] bg-white">
+            <option value="7d">Last 7 days</option>
+            <option value="14d">Last 14 days</option>
+            <option value="30d">Last 30 days</option>
+            <option value="90d">Last 90 days</option>
+          </select>
+        </Field>
+        <Field label="Include">
+          <select value={(cfg.include as string) ?? 'summaries'} onChange={e => set('include', e.target.value)}
+            className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] bg-white">
+            <option value="summaries">Summaries</option>
+            <option value="notes">Notes + actions</option>
+            <option value="both">Both</option>
+          </select>
+        </Field>
+      </div>
+      <Field label="With person" hint="Optional — partial name or email">
+        <input type="text" value={(cfg.with_person as string) ?? ''}
+          onChange={e => set('with_person', e.target.value || undefined)}
+          placeholder="e.g. Sarah or sarah@company.com"
+          className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px]" />
+      </Field>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Max meetings">
+          <input type="number" min={1} max={30} value={(cfg.limit as number) ?? 10}
+            onChange={e => set('limit', Number(e.target.value))}
+            className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px]" />
+        </Field>
+        <Field label="Upcoming meetings">
+          <label className="flex items-center gap-2 px-3 py-2 border border-neutral-200 rounded-md cursor-pointer h-full">
+            <input type="checkbox" checked={cfg.include_upcoming === true} onChange={e => set('include_upcoming', e.target.checked || undefined)}
+              className="rounded border-neutral-300 text-indigo-600 focus:ring-indigo-500" />
+            <span className="text-[13px] text-neutral-700">Include</span>
+          </label>
+        </Field>
+      </div>
     </>
   );
 }
