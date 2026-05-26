@@ -233,10 +233,10 @@ export function StudioHomeGrid({
 
         {/* Header */}
         <div className="text-center">
-          <h1 className="text-[28px] font-bold text-neutral-900 tracking-tight leading-tight">
+          <h1 className="text-[22px] font-semibold text-neutral-700 tracking-tight mb-2">
             Build reusable workflows{userFirstName ? `, ${userFirstName}` : ''}.
           </h1>
-          <p className="text-[14px] text-neutral-400 mt-2">
+          <p className="text-[13px] text-neutral-400">
             AUGMTD runs your workflows on schedule, acts on your emails, and prepares work before you ask.
           </p>
         </div>
