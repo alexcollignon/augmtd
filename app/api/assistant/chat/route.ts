@@ -46,7 +46,7 @@ GENERAL RULES:
 - If you used KB content, append exactly one line at the very end: KB_REFS:filename1.pdf|filename2.pdf (pipe-separated). Do not append if KB was not used.
 
 TOKEN RULES — emit only the appropriate token(s) at the very end of your response, after all text.
-Never emit more than one action token per response. Never emit a token mid-response.
+You may emit multiple ACTION tokens in one response (e.g. move + mark read). Never emit other token types more than once. Never emit a token mid-response.
 
 ─── EMAIL TOKENS ──────────────────────────────────────────────────────────────
 
@@ -124,6 +124,10 @@ export async function POST(request: NextRequest) {
       composeDraft,
       replyDraft,
       emailContext,
+      emailItemId,
+      availableFolders,
+      activeConnectionId,
+      activeAccountEmail,
       fileContext,
       meetingContext,
     } = body as {
@@ -139,6 +143,10 @@ export async function POST(request: NextRequest) {
         summary?: string; keyPoints?: string[]; body?: string;
         isRead?: boolean;
       };
+      emailItemId?: string;
+      availableFolders?: { id: string; name: string }[];
+      activeConnectionId?: string;
+      activeAccountEmail?: string;
       fileContext?: string;
       meetingContext?: {
         title: string;
@@ -340,7 +348,58 @@ REPLY MODE — follow exactly:
     }
 
     if (mode === 'inbox' && emailContext) {
-      systemPrompt += `\n\nA specific email is in focus (shown above as FOCUSED EMAIL). When the user asks to draft, write, or suggest a reply — emit REPLY_DRAFT:{"body":"..."} exactly as described above. This automatically opens the reply box and injects the draft. Write a short intro sentence first (e.g. "Here's a draft reply:"), then emit the token on its own next line. EMAIL BODY FORMAT: "Hi [sender name],\\n\\nThank you for reaching out...\\n\\nBest regards,\\n[user name]" — greeting, blank line between paragraphs, sign-off, name. Use \\n for newlines inside JSON. Never emit ACTION, OPEN_COMPOSE, or UPDATE_DRAFT in this case.`;
+      systemPrompt += `\n\nA specific email is in focus (shown above as FOCUSED EMAIL). When the user asks to draft, write, or suggest a reply — emit REPLY_DRAFT:{"body":"..."} exactly as described above. This automatically opens the reply box and injects the draft. Write a short intro sentence first (e.g. "Here's a draft reply:"), then emit the token on its own next line. EMAIL BODY FORMAT: "Hi [sender name],\\n\\nThank you for reaching out...\\n\\nBest regards,\\n[user name]" — greeting, blank line between paragraphs, sign-off, name. Use \\n for newlines inside JSON. Never emit OPEN_COMPOSE or UPDATE_DRAFT in this case.`;
+
+      if (emailItemId) {
+        const folderList = availableFolders?.length
+          ? availableFolders.map(f => `- "${f.name}" (id: ${f.id})`).join('\n')
+          : '(no custom folders)';
+        systemPrompt += `
+
+FOCUSED EMAIL ACTIONS (itemId: ${emailItemId})
+Emit ACTION tokens when the user asks to move, delete, archive, or change the read status of this email.
+
+Available folders to move to:
+${folderList}
+
+  ACTION:{"type":"move_to_folder","itemId":"${emailItemId}","folderId":"<id>","folderName":"<name>","label":"Move to <name>"}
+  ACTION:{"type":"delete","itemId":"${emailItemId}","label":"Delete"}
+  ACTION:{"type":"archive","itemId":"${emailItemId}","label":"Archive"}
+  ACTION:{"type":"mark_read","itemId":"${emailItemId}","label":"Mark as read"}
+  ACTION:{"type":"mark_unread","itemId":"${emailItemId}","label":"Mark as unread"}
+
+Rules: only emit when explicitly asked; for move match folder name case-insensitively; you may emit multiple ACTION tokens.`;
+      }
+    }
+
+    if (context === 'inbox' && activeConnectionId) {
+      const folderList = availableFolders?.length
+        ? availableFolders.map(f => `- "${f.name}" (id: ${f.id})`).join('\n')
+        : '(no custom folders yet)';
+      const accountLabel = activeAccountEmail ? `${activeAccountEmail}` : 'current account';
+      systemPrompt += `
+
+ACTIVE ACCOUNT: ${accountLabel} — all folder and bulk email actions target this account only. If the user refers to a different account, ask them to switch accounts in the sidebar first.
+
+FOLDER MANAGEMENT — create and delete folders on ${accountLabel}.
+Current custom folders:
+${folderList}
+
+  ACTION:{"type":"create_folder","connectionId":"${activeConnectionId}","folderName":"<name>","label":"Create folder \\"<name>\\""}
+  ACTION:{"type":"delete_folder","connectionId":"${activeConnectionId}","folderId":"<id>","folderName":"<name>","label":"Delete folder \\"<name>\\""}
+
+BULK EMAIL ACTIONS — act on multiple emails at once using itemIds array (IDs from inbox snapshot above).
+  ACTION:{"type":"delete","itemIds":["id1","id2",...],"label":"Delete <N> emails"}
+  ACTION:{"type":"archive","itemIds":["id1","id2",...],"label":"Archive <N> emails"}
+  ACTION:{"type":"move_to_folder","itemIds":["id1","id2",...],"folderId":"<id>","folderName":"<name>","label":"Move <N> emails to <name>"}
+  ACTION:{"type":"mark_read","itemIds":["id1","id2",...],"label":"Mark <N> emails as read"}
+  ACTION:{"type":"mark_unread","itemIds":["id1","id2",...],"label":"Mark <N> emails as unread"}
+
+Rules:
+- Only emit when explicitly asked; only reference item IDs visible in the inbox snapshot above
+- For folder management: never delete system folders (Inbox, Sent, Drafts, Trash, Spam, Starred, Important)
+- Single-email actions may still use itemId (singular); bulk actions use itemIds array
+- Always include a human-readable count in the label (e.g. "Delete 5 emails from Newsletter")`;
     }
 
     if (context === 'meeting') {

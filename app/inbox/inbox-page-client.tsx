@@ -769,17 +769,76 @@ export function InboxPageClient({
     }
   }, []);
 
-  const handleChatAction = useCallback(async (type: string, itemId: string) => {
-    if (type === 'archive') {
-      const res = await fetch(`/api/inbox/${itemId}/archive-source`, { method: 'POST' });
-      if (!res.ok) throw new Error('Archive failed');
-      setInboxItems(prev => prev.filter(i => i.id !== itemId));
-      setSelectedItem(prev => (prev?.id === itemId ? null : prev));
-    } else if (type === 'open') {
+  const handleChatAction = useCallback(async (type: string, itemId: string, extra?: Record<string, string>) => {
+    // Support bulk itemIds (comma-separated in extra) or single itemId
+    const ids: string[] = extra?.itemIds
+      ? JSON.parse(extra.itemIds)
+      : itemId ? [itemId] : [];
+
+    if (type === 'open') {
       const item = inboxItems.find(i => i.id === itemId);
       if (item) handleSelectItem(item);
+      return;
     }
-  }, [inboxItems]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    if (type === 'archive') {
+      await Promise.all(ids.map(id => fetch(`/api/inbox/${id}/archive-source`, { method: 'POST' })));
+      setInboxItems(prev => prev.filter(i => !ids.includes(i.id)));
+      setSelectedItem(prev => (prev && ids.includes(prev.id) ? null : prev));
+    } else if (type === 'delete') {
+      await Promise.all(ids.map(id => fetch(`/api/inbox/${id}/delete-source`, { method: 'POST' })));
+      setInboxItems(prev => prev.filter(i => !ids.includes(i.id)));
+      setSelectedItem(prev => (prev && ids.includes(prev.id) ? null : prev));
+    } else if (type === 'move_to_folder') {
+      const folderId = extra?.folderId ?? '';
+      const folderName = extra?.folderName ?? '';
+      await Promise.all(ids.map(id =>
+        fetch(`/api/inbox/${id}/move-to-folder`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ folderId, folderName }),
+        })
+      ));
+      setInboxItems(prev => prev.filter(i => !ids.includes(i.id)));
+      setSelectedItem(prev => (prev && ids.includes(prev.id) ? null : prev));
+    } else if (type === 'mark_read') {
+      await Promise.all(ids.map(id => fetch(`/api/inbox/${id}/mark-read`, { method: 'POST' })));
+      setInboxItems(prev => prev.map(i => ids.includes(i.id) ? { ...i, is_read: true } : i));
+    } else if (type === 'mark_unread') {
+      await Promise.all(ids.map(id => fetch(`/api/inbox/${id}/mark-unread`, { method: 'POST' })));
+      setInboxItems(prev => prev.map(i => ids.includes(i.id) ? { ...i, is_read: false } : i));
+    } else if (type === 'create_folder') {
+      const connectionId = extra?.connectionId ?? '';
+      const folderName = extra?.folderName ?? '';
+      const res = await fetch('/api/inbox/folders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ connectionId, name: folderName }),
+      });
+      if (!res.ok) throw new Error('Create folder failed');
+      const { folder } = await res.json();
+      setFolderSections(prev => prev?.map(c =>
+        c.connectionId === connectionId
+          ? { ...c, folders: [...c.folders, { id: folder.id, name: folder.name, isSystem: false }] }
+          : c
+      ) ?? null);
+    } else if (type === 'delete_folder') {
+      const connectionId = extra?.connectionId ?? '';
+      const folderId = extra?.folderId ?? '';
+      const res = await fetch(`/api/inbox/folders?connectionId=${encodeURIComponent(connectionId)}&folderId=${encodeURIComponent(folderId)}`, {
+        method: 'DELETE',
+      });
+      if (!res.ok) throw new Error('Delete folder failed');
+      setFolderSections(prev => prev?.map(c =>
+        c.connectionId === connectionId
+          ? { ...c, folders: c.folders.filter(f => f.id !== folderId) }
+          : c
+      ) ?? null);
+      if (selectedFolder?.connectionId === connectionId && selectedFolder.folderId === folderId) {
+        setSelectedFolder(null);
+      }
+    }
+  }, [inboxItems, selectedFolder]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleOpenWorkflow = useCallback((itemId: string, skill?: string, prefillTitle?: string) => {
     const params = new URLSearchParams();
@@ -874,6 +933,13 @@ export function InboxPageClient({
           ...(replyIsOpen ? { replyDraft: replyBody } : {}),
           ...(fileContext ? { fileContext } : {}),
           ...(emailChipActive && emailChipData ? { emailContext: emailChipData } : {}),
+          ...(selectedItem ? { emailItemId: selectedItem.id } : {}),
+          activeConnectionId: selectedConnectionId ?? undefined,
+          activeAccountEmail: folderSections?.find(c => c.connectionId === selectedConnectionId)?.email ?? undefined,
+          availableFolders: folderSections
+            ?.find(c => c.connectionId === selectedConnectionId)
+            ?.folders.filter(f => !f.isSystem)
+            .map(f => ({ id: f.id, name: f.name })) ?? [],
         }),
       });
 
@@ -912,7 +978,7 @@ export function InboxPageClient({
       setStreamingContent('');
       setAttachedFiles([]);
     }
-  }, [chatHistory, chatStreaming, chatSources, attachedFiles, composeMode, composeDraft, replyIsOpen, replyBody, emailChipActive, emailChipData]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [chatHistory, chatStreaming, chatSources, attachedFiles, composeMode, composeDraft, replyIsOpen, replyBody, emailChipActive, emailChipData, selectedItem, folderSections, selectedConnectionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="flex-1 flex flex-col min-w-0 overflow-hidden">

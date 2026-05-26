@@ -3,7 +3,6 @@
 import { useState, useRef } from 'react';
 import {
   PlusIcon,
-  PaperAirplaneIcon,
   BoltIcon,
   ClockIcon,
   EnvelopeIcon,
@@ -26,8 +25,8 @@ import {
   UsersIcon,
   StarIcon as StarOutlineIcon,
   UserGroupIcon,
-  ChartPieIcon,
   HeartIcon,
+  LockClosedIcon,
 } from '@heroicons/react/24/outline';
 import { StarIcon as StarSolidIcon } from '@heroicons/react/24/solid';
 import type { Workflow } from '@/lib/workflows/types';
@@ -51,11 +50,6 @@ const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
 const COLOR_MAP: Record<string, string> = {
   indigo: 'bg-indigo-500', violet: 'bg-violet-500', blue: 'bg-blue-500',
   emerald: 'bg-emerald-500', amber: 'bg-amber-500', rose: 'bg-rose-500', neutral: 'bg-neutral-500',
-};
-
-const COLOR_BAR_MAP: Record<string, string> = {
-  indigo: 'bg-indigo-400', violet: 'bg-violet-400', blue: 'bg-blue-400',
-  emerald: 'bg-emerald-400', amber: 'bg-amber-400', rose: 'bg-rose-400', neutral: 'bg-neutral-400',
 };
 
 // ── Templates ─────────────────────────────────────────────────────────────────
@@ -189,9 +183,9 @@ const TEMPLATE_COLORS: Record<string, { bg: string; icon: string }> = {
   'executive-summary':         { bg: 'bg-sky-100',     icon: 'text-sky-600'    },
 };
 
-const SUGGESTIONS = [
-  'Create a weekly client briefing',
-  'Monitor legal AI news',
+const IDEA_SUGGESTIONS = [
+  'Monitor competitor news every morning',
+  'Draft a weekly client status email',
   'Prepare me for tomorrow\'s meetings',
 ];
 
@@ -214,7 +208,7 @@ export function StudioHomeGrid({
   const [description, setDescription] = useState('');
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   async function handleGenerate() {
     if (!description.trim() || generating) return;
@@ -229,294 +223,244 @@ export function StudioHomeGrid({
     }
   }
 
-  function handleSuggestion(text: string) {
-    setDescription(text);
-    inputRef.current?.focus();
-  }
-
-  const headline = userFirstName ? `Good to see you, ${userFirstName}` : 'Automate your work';
-  const pinnedWorkflows = [...myWorkflows, ...teamWorkflows].filter(w => w.pinned);
+  const activeCount = myWorkflows.filter(w => w.status === 'active').length;
   const [featuredWorkflow, ...restWorkflows] = myWorkflows;
+  const randomIdea = IDEA_SUGGESTIONS[0];
 
   return (
-    <div className="flex-1 flex flex-col items-center overflow-y-auto px-4 py-8">
-      <div className="w-full max-w-[1060px] flex flex-col gap-6">
+    <div className="flex-1 flex flex-col items-center overflow-y-auto px-6 py-8 bg-neutral-50/40">
+      <div className="w-full max-w-[900px] flex flex-col gap-8">
 
-        {/* Headline */}
-        <div className="text-center">
-          <h1 className="text-[21px] font-semibold text-neutral-800 tracking-tight">{headline}</h1>
-          <p className="text-[13px] text-neutral-400 mt-1">
-            Pick a workflow, create a new one, or ask AUGMTD to build one for you.
+        {/* Header label */}
+        <div>
+          <div className="flex items-center gap-1.5 mb-3">
+            <BoltIcon className="w-3.5 h-3.5 text-indigo-500" />
+            <span className="text-[10.5px] font-bold text-indigo-500 uppercase tracking-widest">Agent Workflow Studio</span>
+          </div>
+          <h1 className="text-[24px] font-bold text-neutral-900 tracking-tight leading-tight">
+            Build reusable workflows for your team
+          </h1>
+          <p className="text-[13.5px] text-neutral-500 mt-1.5 leading-relaxed">
+            AUGMTD runs your workflows on schedule, acts on your emails, and prepares work before you ask.
           </p>
         </div>
 
-        {/* AI input */}
+        {/* Create input */}
         <div>
-          <div className="rounded-xl border border-neutral-200 bg-white shadow-sm overflow-hidden focus-within:border-indigo-300 focus-within:shadow-md transition-all">
-            {/* Text area */}
-            <textarea
-              ref={inputRef as React.RefObject<HTMLTextAreaElement>}
+          <div className="flex items-center gap-2 rounded-xl border border-neutral-200 bg-white shadow-sm px-4 py-2.5 focus-within:border-indigo-300 focus-within:shadow transition-all">
+            <SparklesIcon className="w-4 h-4 text-neutral-300 flex-shrink-0" />
+            <input
+              ref={inputRef}
+              type="text"
               value={description}
               onChange={e => { setDescription(e.target.value); setError(null); }}
-              onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); handleGenerate(); } }}
+              onKeyDown={e => { if (e.key === 'Enter') handleGenerate(); }}
               disabled={generating}
-              placeholder="Describe a workflow you want to delegate…"
-              rows={3}
-              className="w-full px-4 pt-4 pb-2 text-[13px] resize-none focus:outline-none placeholder:text-neutral-300 disabled:opacity-50 bg-transparent leading-relaxed"
+              placeholder="Describe a workflow to build…"
+              className="flex-1 text-[13px] focus:outline-none placeholder:text-neutral-300 disabled:opacity-50 bg-transparent"
             />
-            {/* Bottom bar: hint + send button */}
-            <div className="flex items-center justify-between px-4 pb-3">
-              <div className="flex items-center gap-1.5">
-                <SparklesIcon className="w-3 h-3 text-indigo-400 flex-shrink-0" />
-                <span className="text-[11.5px] text-neutral-400">AUGMTD will design and explain it before saving.</span>
-              </div>
+            <button
+              onClick={handleGenerate}
+              disabled={!description.trim() || generating}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-[12px] font-medium disabled:opacity-30 hover:bg-indigo-700 transition-colors flex-shrink-0"
+            >
               {generating ? (
-                <div className="w-7 h-7 rounded-full bg-neutral-200 flex items-center justify-center flex-shrink-0">
-                  <span className="w-1.5 h-1.5 bg-neutral-400 rounded-full animate-pulse" />
-                </div>
+                <span className="w-3 h-3 border border-white/40 border-t-white rounded-full animate-spin" />
               ) : (
-                <button onClick={handleGenerate} disabled={!description.trim()}
-                  className="w-7 h-7 rounded-full bg-indigo-600 text-white flex items-center justify-center disabled:opacity-25 hover:bg-indigo-700 transition-colors flex-shrink-0">
-                  <PaperAirplaneIcon className="w-3.5 h-3.5" />
-                </button>
+                <PlusIcon className="w-3.5 h-3.5" />
               )}
-            </div>
+              Create
+            </button>
           </div>
           {error && <p className="mt-1.5 text-[12px] text-red-500">{error}</p>}
-          {/* Suggestion pills */}
-          <div className="flex flex-wrap gap-2 mt-2.5">
-            {SUGGESTIONS.map(s => (
-              <button
-                key={s}
-                onClick={() => handleSuggestion(s)}
-                className="px-3 py-1 rounded-full border border-neutral-200 bg-white text-[12px] text-neutral-500 hover:border-indigo-300 hover:text-indigo-600 transition-colors"
-              >
-                {s}
-              </button>
-            ))}
+
+          {/* An idea for you */}
+          <div className="flex items-center gap-2 mt-2.5">
+            <span className="text-[11.5px] text-neutral-400">An idea for you →</span>
+            <button
+              onClick={() => { setDescription(randomIdea); inputRef.current?.focus(); }}
+              className="text-[11.5px] text-indigo-500 hover:text-indigo-700 transition-colors"
+            >
+              {randomIdea}
+            </button>
           </div>
         </div>
 
-        {/* Favorites strip */}
-        {pinnedWorkflows.length > 0 && (
-          <div>
-            <div className="flex items-center gap-1.5 mb-2.5">
-              <StarSolidIcon className="w-3.5 h-3.5 text-amber-400" />
-              <span className="text-[11px] font-semibold text-neutral-600">Favorites</span>
-              <span className="text-[11px] text-neutral-300">· Pinned for quick access</span>
+        {/* My Workflows section */}
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <span className="text-[13px] font-semibold text-neutral-800">My workflows</span>
+              {activeCount > 0 && (
+                <span className="text-[11px] text-neutral-400">· {activeCount} active</span>
+              )}
             </div>
-            <div className="flex gap-2.5 overflow-x-auto pb-1">
-              {pinnedWorkflows.map(w => (
-                <FavoriteCard
+            <button
+              onClick={onCreate}
+              className="flex items-center gap-1 text-[12px] text-neutral-500 hover:text-indigo-600 transition-colors"
+            >
+              <PlusIcon className="w-3.5 h-3.5" />
+              New workflow
+            </button>
+          </div>
+
+          {myWorkflows.length === 0 ? (
+            <button
+              onClick={onCreate}
+              className="w-full py-8 rounded-xl border border-dashed border-neutral-200 text-[12.5px] text-neutral-400 hover:border-indigo-300 hover:text-indigo-500 transition-colors"
+            >
+              + Create your first workflow
+            </button>
+          ) : (
+            <div className="grid grid-cols-3 gap-3">
+              {featuredWorkflow && (
+                <FeaturedWorkflowCard
+                  workflow={featuredWorkflow}
+                  onClick={() => onSelect(featuredWorkflow.id)}
+                  onPin={() => onPinWorkflow(featuredWorkflow.id, !featuredWorkflow.pinned)}
+                />
+              )}
+              {restWorkflows.map(w => (
+                <WorkflowCard
                   key={w.id}
                   workflow={w}
                   onClick={() => onSelect(w.id)}
-                  onUnpin={() => onPinWorkflow(w.id, false)}
+                  onPin={() => onPinWorkflow(w.id, !w.pinned)}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Shared by team */}
+        {teamWorkflows.length > 0 && (
+          <div>
+            <div className="flex items-center gap-2 mb-3">
+              <UserGroupIcon className="w-4 h-4 text-neutral-400" />
+              <span className="text-[13px] font-semibold text-neutral-800">Shared by team</span>
+              <span className="text-[11px] text-neutral-400">· {teamWorkflows.length} workflow{teamWorkflows.length !== 1 ? 's' : ''}</span>
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              {teamWorkflows.map(w => (
+                <WorkflowCard
+                  key={w.id}
+                  workflow={w}
+                  onClick={() => onSelect(w.id)}
+                  isTeam
                 />
               ))}
             </div>
           </div>
         )}
 
-        {/* Three-column grid: Templates (1/3) | My workflows spanning 2/3 */}
-        <div className="grid grid-cols-3 gap-5 items-start">
-
-          {/* Col 1: Templates */}
-          <div>
-            <div className="h-7 flex items-center mb-2">
-              <span className="text-[11px] font-semibold text-neutral-400 uppercase tracking-widest">Templates</span>
-            </div>
-            <div className="grid grid-cols-2 gap-0.5">
-              {QUICK_TEMPLATES.map(t => {
-                const TIcon = TEMPLATE_ICONS[t.id] ?? BoltIcon;
-                const tColor = TEMPLATE_COLORS[t.id] ?? { bg: 'bg-neutral-100', icon: 'text-neutral-500' };
-                return (
-                  <button key={t.id} onClick={() => onUseTemplate(t)}
-                    className="flex items-start gap-2 px-2 py-2 rounded-lg hover:bg-neutral-50 transition-colors text-left">
-                    <div className={`w-6 h-6 rounded-md ${tColor.bg} flex items-center justify-center flex-shrink-0 mt-0.5`}>
-                      <TIcon className={`w-3.5 h-3.5 ${tColor.icon}`} />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="text-[11.5px] font-medium text-neutral-700 leading-snug">{t.name}</div>
-                      <div className="text-[10px] text-neutral-400 mt-0.5">{t.cadence}</div>
-                    </div>
-                  </button>
-                );
-              })}
+        {/* Templates */}
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <span className="text-[13px] font-semibold text-neutral-800">Start from a template</span>
+              <span className="text-[11px] text-neutral-400 ml-2">· Pre-built blueprints</span>
             </div>
           </div>
-
-          {/* Col 2+3: My Workflows */}
-          <div className="col-span-2">
-            {/* Header — same height as templates header for alignment */}
-            <div className="h-7 flex items-center justify-between mb-2">
-              <div className="flex items-center gap-2">
-                <span className="text-[11px] font-semibold text-neutral-400 uppercase tracking-widest">My workflows</span>
-                <button onClick={onCreate}
-                  className="inline-flex items-center gap-1 text-[11.5px] text-neutral-400 hover:text-neutral-700 transition-colors">
-                  <PlusIcon className="w-3 h-3" />
-                  New
+          <div className="grid grid-cols-4 gap-2">
+            {QUICK_TEMPLATES.map(t => {
+              const TIcon = TEMPLATE_ICONS[t.id] ?? BoltIcon;
+              const tColor = TEMPLATE_COLORS[t.id] ?? { bg: 'bg-neutral-100', icon: 'text-neutral-500' };
+              return (
+                <button key={t.id} onClick={() => onUseTemplate(t)}
+                  className="flex items-start gap-2.5 px-3 py-3 rounded-xl border border-neutral-100 bg-white hover:border-indigo-200 hover:shadow-sm transition-all text-left group">
+                  <div className={`w-7 h-7 rounded-lg ${tColor.bg} flex items-center justify-center flex-shrink-0 mt-0.5`}>
+                    <TIcon className={`w-3.5 h-3.5 ${tColor.icon}`} />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[12px] font-medium text-neutral-700 leading-snug group-hover:text-neutral-900 transition-colors">{t.name}</div>
+                  </div>
                 </button>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <UserGroupIcon className="w-3 h-3 text-neutral-300" />
-                <span className="text-[11px] text-neutral-400">Team</span>
-                <span className="text-[10px] text-neutral-300 mx-0.5">·</span>
-                <span className="text-[11px] text-neutral-400">Shared</span>
-              </div>
-            </div>
-
-            {myWorkflows.length === 0 && teamWorkflows.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-10 text-center">
-                <p className="text-[12.5px] text-neutral-400">No workflows yet</p>
-                <button onClick={onCreate} className="mt-2 text-[12px] text-indigo-500 hover:text-indigo-700 transition-colors">
-                  Create one →
-                </button>
-              </div>
-            ) : (
-              <div className="grid grid-cols-2 gap-4">
-
-                {/* Personal workflows */}
-                <div className="space-y-1.5">
-                  {myWorkflows.length === 0 ? (
-                    <button onClick={onCreate}
-                      className="w-full text-center py-6 rounded-xl border border-dashed border-neutral-200 text-[12px] text-neutral-400 hover:border-indigo-300 hover:text-indigo-500 transition-colors">
-                      + Create workflow
-                    </button>
-                  ) : (
-                    <>
-                      {featuredWorkflow && (
-                        <FeaturedWorkflowCard
-                          workflow={featuredWorkflow}
-                          onClick={() => onSelect(featuredWorkflow.id)}
-                          onPin={() => onPinWorkflow(featuredWorkflow.id, !featuredWorkflow.pinned)}
-                        />
-                      )}
-                      {restWorkflows.map(w => (
-                        <WorkflowRow
-                          key={w.id}
-                          workflow={w}
-                          onClick={() => onSelect(w.id)}
-                          onPin={() => onPinWorkflow(w.id, !w.pinned)}
-                        />
-                      ))}
-                    </>
-                  )}
-                </div>
-
-                {/* Team workflows */}
-                <div className="space-y-1.5">
-                  {teamWorkflows.length === 0 ? (
-                    <p className="text-[12px] text-neutral-300 py-2 px-1">No shared workflows yet</p>
-                  ) : (
-                    teamWorkflows.map(w => (
-                      <TeamWorkflowCard
-                        key={w.id}
-                        workflow={w}
-                        onClick={() => onSelect(w.id)}
-                      />
-                    ))
-                  )}
-                </div>
-
-              </div>
-            )}
+              );
+            })}
           </div>
-
         </div>
+
       </div>
     </div>
   );
 }
 
-// ── Favorite card (pinned strip) ──────────────────────────────────────────────
-
-function FavoriteCard({ workflow: w, onClick, onUnpin }: {
-  workflow: Workflow; onClick: () => void; onUnpin: () => void;
-}) {
-  const colorBg = COLOR_MAP[w.color ?? 'indigo'] ?? 'bg-indigo-500';
-  const WIcon = ICON_MAP[w.icon ?? 'bolt'] ?? BoltIcon;
-  const triggerLabel = w.trigger?.type === 'schedule'
-    ? ('cron' in w.trigger && w.trigger.cron ? cronsToHuman(w.trigger.cron) : 'Scheduled')
-    : 'Manual';
-
-  return (
-    <div
-      className="group relative flex-shrink-0 w-[160px] rounded-xl border border-neutral-100 hover:border-neutral-200 hover:shadow-sm bg-white transition-all cursor-pointer p-3"
-      onClick={onClick}
-    >
-      <div className={`w-8 h-8 rounded-lg ${colorBg} flex items-center justify-center mb-2`}>
-        <WIcon className="w-4 h-4 text-white" />
-      </div>
-      <div className="text-[12.5px] font-medium text-neutral-800 leading-snug line-clamp-2 mb-0.5 pr-4">{w.name}</div>
-      <div className="text-[11px] text-neutral-400">{triggerLabel}</div>
-      <button
-        onClick={e => { e.stopPropagation(); onUnpin(); }}
-        title="Unpin"
-        className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-neutral-100"
-      >
-        <StarSolidIcon className="w-3 h-3 text-amber-400" />
-      </button>
-    </div>
-  );
-}
-
-// ── Featured workflow card (Mine column) ──────────────────────────────────────
+// ── Featured workflow card (spans 2 cols equivalent via min-h) ─────────────────
 
 function FeaturedWorkflowCard({ workflow: w, onClick, onPin }: {
   workflow: Workflow; onClick: () => void; onPin: () => void;
 }) {
   const colorBg = COLOR_MAP[w.color ?? 'indigo'] ?? 'bg-indigo-500';
   const WIcon = ICON_MAP[w.icon ?? 'bolt'] ?? BoltIcon;
-  const triggerLabel = w.trigger?.type === 'schedule'
+  const scheduleLabel = w.trigger?.type === 'schedule'
     ? ('cron' in w.trigger && w.trigger.cron ? cronsToHuman(w.trigger.cron) : 'Scheduled')
     : 'Manual';
+  const { statusDot, statusText } = workflowStatus(w);
+  const lastRun = w.last_run_at ? formatRelative(w.last_run_at) : null;
 
   return (
     <div
-      className="group relative rounded-xl border border-neutral-100 hover:border-neutral-200 hover:shadow-sm bg-white transition-all cursor-pointer p-3.5"
+      className="group relative col-span-1 rounded-xl border border-neutral-150 bg-white shadow-sm hover:shadow-md hover:border-indigo-200 transition-all cursor-pointer p-4 flex flex-col gap-3"
       onClick={onClick}
+      style={{ borderColor: '#e8e8e8' }}
     >
-      <div className="flex items-start gap-3 mb-2.5">
-        <div className={`w-8 h-8 rounded-lg ${colorBg} flex items-center justify-center flex-shrink-0 mt-0.5`}>
-          <WIcon className="w-4 h-4 text-white" />
+      {/* Top row: icon + badges */}
+      <div className="flex items-start justify-between">
+        <div className={`w-9 h-9 rounded-xl ${colorBg} flex items-center justify-center flex-shrink-0`}>
+          <WIcon className="w-[18px] h-[18px] text-white" />
         </div>
-        <div className="flex-1 min-w-0 pr-5">
-          <div className="text-[13px] font-semibold text-neutral-800 leading-snug">{w.name}</div>
-          <div className="text-[11px] text-neutral-400 mt-0.5">{triggerLabel}</div>
+        <div className="flex items-center gap-1.5">
+          {w.sharing_mode == null && (
+            <span className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-neutral-100 text-[10px] font-medium text-neutral-500">
+              <LockClosedIcon className="w-2.5 h-2.5" />
+              Private
+            </span>
+          )}
+          <button
+            onClick={e => { e.stopPropagation(); onPin(); }}
+            title={w.pinned ? 'Unpin' : 'Pin to favorites'}
+            className={`p-1 rounded-md hover:bg-neutral-100 transition-opacity ${w.pinned ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+          >
+            {w.pinned
+              ? <StarSolidIcon className="w-3.5 h-3.5 text-amber-400" />
+              : <StarOutlineIcon className="w-3.5 h-3.5 text-neutral-300" />
+            }
+          </button>
         </div>
       </div>
-      {w.description && (
-        <p className="text-[11.5px] text-neutral-500 leading-relaxed line-clamp-3 mb-2">{w.description}</p>
-      )}
-      <div className="flex items-center gap-1.5">
-        <span className={`w-1.5 h-1.5 rounded-full ${w.status === 'active' ? 'bg-emerald-400' : 'bg-neutral-200'}`} />
-        <span className="text-[10.5px] text-neutral-400">{w.status === 'active' ? 'Active' : w.status === 'paused' ? 'Paused' : 'Draft'}</span>
+
+      {/* Name + schedule */}
+      <div>
+        <div className="text-[13.5px] font-semibold text-neutral-900 leading-snug mb-0.5">{w.name}</div>
+        <div className="text-[11px] text-neutral-400">{scheduleLabel}</div>
       </div>
-      <button
-        onClick={e => { e.stopPropagation(); onPin(); }}
-        title={w.pinned ? 'Unpin from favorites' : 'Pin to favorites'}
-        className={`absolute top-2.5 right-2.5 p-1 rounded-md hover:bg-neutral-100 transition-opacity ${w.pinned ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
-      >
-        {w.pinned
-          ? <StarSolidIcon className="w-3.5 h-3.5 text-amber-400" />
-          : <StarOutlineIcon className="w-3.5 h-3.5 text-neutral-300" />
-        }
-      </button>
+
+      {/* Status row */}
+      <div className="flex items-center justify-between mt-auto pt-2 border-t border-neutral-100">
+        <div className="flex items-center gap-1.5">
+          <span className={`w-1.5 h-1.5 rounded-full ${statusDot}`} />
+          <span className="text-[11px] text-neutral-500">{statusText}</span>
+        </div>
+        {lastRun && (
+          <span className="text-[10.5px] text-neutral-400">{lastRun}</span>
+        )}
+      </div>
     </div>
   );
 }
 
-// ── Workflow row (Mine column — compact) ──────────────────────────────────────
+// ── Standard workflow card ─────────────────────────────────────────────────────
 
-function WorkflowRow({ workflow: w, onClick, onPin }: {
-  workflow: Workflow; onClick: () => void; onPin?: () => void;
+function WorkflowCard({ workflow: w, onClick, onPin, isTeam }: {
+  workflow: Workflow; onClick: () => void; onPin?: () => void; isTeam?: boolean;
 }) {
   const colorBg = COLOR_MAP[w.color ?? 'indigo'] ?? 'bg-indigo-500';
   const WIcon = ICON_MAP[w.icon ?? 'bolt'] ?? BoltIcon;
-  const triggerLabel = w.trigger?.type === 'schedule'
+  const scheduleLabel = w.trigger?.type === 'schedule'
     ? ('cron' in w.trigger && w.trigger.cron ? cronsToHuman(w.trigger.cron) : 'Scheduled')
     : 'Manual';
+  const { statusDot, statusText } = workflowStatus(w);
+  const lastRun = w.last_run_at ? formatRelative(w.last_run_at) : null;
 
   return (
     <div
@@ -524,16 +468,14 @@ function WorkflowRow({ workflow: w, onClick, onPin }: {
       tabIndex={0}
       onClick={onClick}
       onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') onClick(); }}
-      className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg hover:bg-neutral-50 transition-colors text-left group cursor-pointer"
+      className="group relative rounded-xl border bg-white hover:shadow-md hover:border-indigo-200 transition-all cursor-pointer p-3.5 flex flex-col gap-2.5"
+      style={{ borderColor: '#e8e8e8' }}
     >
-      <div className={`w-6 h-6 rounded-md ${colorBg} flex items-center justify-center flex-shrink-0`}>
-        <WIcon className="w-3 h-3 text-white" />
-      </div>
-      <div className="flex-1 min-w-0">
-        <div className="text-[12px] font-medium text-neutral-800 truncate">{w.name}</div>
-        <div className="text-[10.5px] text-neutral-400">{triggerLabel}</div>
-      </div>
-      <div className="flex items-center gap-1 flex-shrink-0">
+      {/* Top row */}
+      <div className="flex items-start justify-between">
+        <div className={`w-8 h-8 rounded-lg ${colorBg} flex items-center justify-center flex-shrink-0`}>
+          <WIcon className="w-4 h-4 text-white" />
+        </div>
         {onPin && (
           <button
             onClick={e => { e.stopPropagation(); onPin(); }}
@@ -541,50 +483,53 @@ function WorkflowRow({ workflow: w, onClick, onPin }: {
             className={`p-0.5 rounded hover:bg-neutral-100 transition-opacity ${w.pinned ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
           >
             {w.pinned
-              ? <StarSolidIcon className="w-2.5 h-2.5 text-amber-400" />
-              : <StarOutlineIcon className="w-2.5 h-2.5 text-neutral-300" />
+              ? <StarSolidIcon className="w-3 h-3 text-amber-400" />
+              : <StarOutlineIcon className="w-3 h-3 text-neutral-300" />
             }
           </button>
         )}
-        <span className={`w-1.5 h-1.5 rounded-full ${w.status === 'active' ? 'bg-emerald-400' : 'bg-neutral-200'}`} />
+      </div>
+
+      {/* Name */}
+      <div>
+        <div className="text-[12.5px] font-semibold text-neutral-800 leading-snug truncate">{w.name}</div>
+        {isTeam && w.owner_name ? (
+          <div className="text-[10.5px] text-neutral-400 mt-0.5">by {w.owner_name}</div>
+        ) : (
+          <div className="text-[10.5px] text-neutral-400 mt-0.5">{scheduleLabel}</div>
+        )}
+      </div>
+
+      {/* Status */}
+      <div className="flex items-center gap-1.5 mt-auto pt-2 border-t border-neutral-100">
+        <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${statusDot}`} />
+        <span className="text-[10.5px] text-neutral-500 truncate">{statusText}</span>
+        {lastRun && (
+          <span className="text-[10px] text-neutral-400 ml-auto flex-shrink-0">{lastRun}</span>
+        )}
       </div>
     </div>
   );
 }
 
-// ── Team workflow card (Team column) ──────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
-function TeamWorkflowCard({ workflow: w, onClick }: {
-  workflow: Workflow; onClick: () => void;
-}) {
-  const colorBg = COLOR_MAP[w.color ?? 'indigo'] ?? 'bg-indigo-500';
-  const WIcon = ICON_MAP[w.icon ?? 'bolt'] ?? BoltIcon;
-  const triggerLabel = w.trigger?.type === 'schedule'
-    ? ('cron' in w.trigger && w.trigger.cron ? cronsToHuman(w.trigger.cron) : 'Scheduled')
-    : 'Manual';
+function workflowStatus(w: Workflow): { statusDot: string; statusText: string } {
+  if (w.status === 'active') return { statusDot: 'bg-emerald-400', statusText: 'Active' };
+  if (w.status === 'paused') return { statusDot: 'bg-amber-400', statusText: 'Paused' };
+  return { statusDot: 'bg-neutral-200', statusText: 'Draft' };
+}
 
-  return (
-    <div
-      className="group relative rounded-xl border border-neutral-100 hover:border-neutral-200 hover:shadow-sm bg-white transition-all cursor-pointer p-3.5"
-      onClick={onClick}
-    >
-      <div className="flex items-start gap-2.5 mb-2">
-        <div className={`w-7 h-7 rounded-lg ${colorBg} flex items-center justify-center flex-shrink-0 mt-0.5`}>
-          <WIcon className="w-3.5 h-3.5 text-white" />
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="text-[12.5px] font-semibold text-neutral-800 leading-snug">{w.name}</div>
-          {w.owner_name && (
-            <div className="text-[10.5px] text-neutral-400 mt-0.5">Shared by {w.owner_name}</div>
-          )}
-        </div>
-      </div>
-      {w.description && (
-        <p className="text-[11px] text-neutral-500 leading-snug line-clamp-2 mb-1.5">{w.description}</p>
-      )}
-      <div className="text-[10.5px] text-neutral-400">{triggerLabel}</div>
-    </div>
-  );
+function formatRelative(isoString: string): string {
+  const diff = Date.now() - new Date(isoString).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 2) return 'Just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Date(isoString).toLocaleDateString('en', { month: 'short', day: 'numeric' });
 }
 
 function cronsToHuman(cron: string): string {

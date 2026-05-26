@@ -33,9 +33,13 @@ interface ComposeDraft {
 }
 
 interface ParsedAction {
-  type: 'archive' | 'open';
-  itemId: string;
+  type: 'archive' | 'open' | 'delete' | 'move_to_folder' | 'mark_read' | 'mark_unread' | 'create_folder' | 'delete_folder';
+  itemId?: string;
+  itemIds?: string[];
   label: string;
+  folderId?: string;
+  folderName?: string;
+  connectionId?: string;
 }
 
 
@@ -103,8 +107,8 @@ export interface AiChatPanelProps {
   replyDraft?: string;
   onUpdateReplyDraft?: (body: string) => void;
 
-  // Inbox action handler (archive, open)
-  onAction?: (type: string, itemId: string) => Promise<void>;
+  // Inbox action handler (archive, open, delete, move, mark read/unread)
+  onAction?: (type: string, itemId: string, extra?: Record<string, string>) => Promise<void>;
 
   // Navigation (both surfaces)
   onOpenWorkflow?: (itemId: string, skill?: string, prefillTitle?: string) => void;
@@ -253,7 +257,9 @@ function parseContent(raw: string) {
     .replace(ACTION_RE, (match) => {
       const json = match.slice('ACTION:'.length);
       const parsed = tryParse<ParsedAction>(json);
-      if (parsed?.type && parsed?.itemId && parsed?.label) actions.push(parsed);
+      const folderMgmt = parsed?.type === 'create_folder' || parsed?.type === 'delete_folder';
+      const hasSomeId = parsed?.itemId || parsed?.itemIds?.length || folderMgmt;
+      if (parsed?.type && parsed?.label && hasSomeId) actions.push(parsed);
       return '';
     })
     .replace(/\nMEETING_SUGGESTION:\{.+\}/g, '')
@@ -287,33 +293,51 @@ function splitOnRefs(text: string): Array<{ type: 'text' | 'item'; value: string
 
 // ── Chip sub-components ───────────────────────────────────────────────────────
 
+const ACTION_CHIP_STYLES: Record<string, { border: string; confirmBtn: string; doItBtn: string }> = {
+  delete:         { border: 'border-red-200 bg-red-50',       confirmBtn: 'text-red-600 hover:text-red-800',       doItBtn: 'text-red-600 hover:text-red-800' },
+  delete_folder:  { border: 'border-red-200 bg-red-50',       confirmBtn: 'text-red-600 hover:text-red-800',       doItBtn: 'text-red-600 hover:text-red-800' },
+  move_to_folder: { border: 'border-indigo-200 bg-indigo-50', confirmBtn: 'text-indigo-600 hover:text-indigo-800', doItBtn: 'text-indigo-600 hover:text-indigo-800' },
+  create_folder:  { border: 'border-emerald-200 bg-emerald-50', confirmBtn: 'text-emerald-700 hover:text-emerald-900', doItBtn: 'text-emerald-700 hover:text-emerald-900' },
+  mark_read:      { border: 'border-neutral-200 bg-neutral-50', confirmBtn: 'text-indigo-600 hover:text-indigo-800', doItBtn: 'text-indigo-600 hover:text-indigo-800' },
+  mark_unread:    { border: 'border-neutral-200 bg-neutral-50', confirmBtn: 'text-indigo-600 hover:text-indigo-800', doItBtn: 'text-indigo-600 hover:text-indigo-800' },
+  default:        { border: 'border-neutral-200 bg-neutral-50', confirmBtn: 'text-indigo-600 hover:text-indigo-800', doItBtn: 'text-indigo-600 hover:text-indigo-800' },
+};
+
 function ActionChip({ action, onAction }: {
   action: ParsedAction;
-  onAction: (type: string, itemId: string) => Promise<void>;
+  onAction: (type: string, itemId: string, extra?: Record<string, string>) => Promise<void>;
 }) {
   const [state, setState] = useState<'idle' | 'confirming' | 'loading' | 'done' | 'error'>('idle');
+  const styles = ACTION_CHIP_STYLES[action.type] ?? ACTION_CHIP_STYLES.default;
 
   const handleConfirm = async () => {
     setState('loading');
-    try { await onAction(action.type, action.itemId); setState('done'); }
-    catch { setState('error'); }
+    try {
+      const extra: Record<string, string> = {};
+      if (action.folderId) extra.folderId = action.folderId;
+      if (action.folderName) extra.folderName = action.folderName;
+      if (action.connectionId) extra.connectionId = action.connectionId;
+      if (action.itemIds?.length) extra.itemIds = JSON.stringify(action.itemIds);
+      await onAction(action.type, action.itemId ?? '', Object.keys(extra).length ? extra : undefined);
+      setState('done');
+    } catch { setState('error'); }
   };
 
   if (state === 'done') return <span className="text-[11px] text-green-600 font-medium">Done ✓</span>;
   if (state === 'error') return <span className="text-[11px] text-red-500">Something went wrong</span>;
 
   return (
-    <div className="inline-flex items-center gap-2 mt-2 px-3 py-1.5 bg-neutral-50 border border-neutral-200 rounded-lg text-[12px]">
+    <div className={`inline-flex items-center gap-2 mt-2 px-3 py-1.5 border rounded-lg text-[12px] ${styles.border}`}>
       <span className="text-neutral-600">{action.label}</span>
       {state === 'loading' ? (
-        <div className="w-3 h-3 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+        <div className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin flex-shrink-0 opacity-50" />
       ) : state === 'confirming' ? (
         <>
-          <button onClick={handleConfirm} className="text-indigo-600 font-semibold hover:text-indigo-800 transition-colors">Confirm</button>
+          <button onClick={handleConfirm} className={`font-semibold transition-colors ${styles.confirmBtn}`}>Confirm</button>
           <button onClick={() => setState('idle')} className="text-neutral-400 hover:text-neutral-600 transition-colors text-[11px]">✕</button>
         </>
       ) : (
-        <button onClick={() => setState('confirming')} className="text-indigo-600 font-semibold hover:text-indigo-800 transition-colors">Do it</button>
+        <button onClick={() => setState('confirming')} className={`font-semibold transition-colors ${styles.doItBtn}`}>Do it</button>
       )}
     </div>
   );
@@ -385,7 +409,7 @@ function MessageContent({
   context: 'inbox';
   inboxItems?: InboxItem[];
   onSelectItem?: (item: InboxItem) => void;
-  onAction?: (type: string, itemId: string) => Promise<void>;
+  onAction?: (type: string, itemId: string, extra?: Record<string, string>) => Promise<void>;
   onUpdateComposeDraft?: (fields: Partial<ComposeDraft>) => void;
   onOpenCompose?: (draft: Partial<ComposeDraft>) => void;
   onUseAsReply?: (body: string, cc?: string, bcc?: string) => void;
