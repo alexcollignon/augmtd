@@ -143,7 +143,7 @@ function progressStatus(t: Transcript): { label: string; pulse: boolean } {
   return { label: 'Processing…', pulse: true };
 }
 
-type CaptureFilter = 'all' | 'recordings' | 'notes' | 'unorganized';
+type CaptureFilter = 'all' | 'recordings' | 'notes';
 
 export default function MeetingsHome({
   upcoming,
@@ -296,6 +296,7 @@ export default function MeetingsHome({
     const seenR = new Map<string, Transcript>();
     for (const t of transcripts.filter((t) =>
       t.processed &&
+      !t.folderId &&
       !(t.source === 'text' && !t.hasDocument && !t.summary && t.botState !== 'failed')
     )) {
       const key = t.calendarEventId ?? t.id;
@@ -313,8 +314,6 @@ export default function MeetingsHome({
       list = list.filter((t) => t.source === 'recording' || t.source === 'bot' || t.source === 'upload');
     } else if (captureFilter === 'notes') {
       list = list.filter((t) => t.source === 'text');
-    } else if (captureFilter === 'unorganized') {
-      list = list.filter((t) => !t.folderId);
     }
 
     const yesterdayStr = new Date(now.getTime() - 86400000).toDateString();
@@ -499,17 +498,17 @@ export default function MeetingsHome({
       {/* ── Captured ── */}
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-1 bg-neutral-100 rounded-lg p-0.5">
-          {(['all', 'recordings', 'notes', 'unorganized'] as CaptureFilter[]).map((f) => (
+          {(['all', 'recordings', 'notes'] as CaptureFilter[]).map((f) => (
             <button
               key={f}
               onClick={() => setCaptureFilter(f)}
-              className={`px-2.5 py-1 rounded-md text-[11.5px] font-medium transition-colors capitalize ${
+              className={`px-2.5 py-1 rounded-md text-[11.5px] font-medium transition-colors ${
                 captureFilter === f
                   ? 'bg-white text-neutral-800 shadow-sm'
                   : 'text-neutral-500 hover:text-neutral-700'
               }`}
             >
-              {f === 'all' ? 'All' : f === 'recordings' ? 'Recordings' : f === 'notes' ? 'Notes' : 'Unorganized'}
+              {f === 'all' ? 'All' : f === 'recordings' ? 'Recordings' : 'Notes'}
             </button>
           ))}
         </div>
