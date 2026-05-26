@@ -222,7 +222,7 @@ export default function FolderDetailView({
       <div className="flex-shrink-0 px-6 pt-6 pb-4">
         <div className="flex items-center justify-between mb-1">
           <div className="flex items-center gap-2">
-            <FolderOpenIcon className="w-5 h-5 text-amber-400" />
+            <FolderOpenIcon className="w-5 h-5 text-indigo-500" />
             {renaming ? (
               <input
                 autoFocus
@@ -249,7 +249,7 @@ export default function FolderDetailView({
             {menuOpen && (
               <>
                 <div className="fixed inset-0 z-20" onClick={() => setMenuOpen(false)} />
-                <div className="absolute right-0 top-full mt-1 w-36 bg-white border border-neutral-200 rounded-lg shadow-lg z-30 py-1">
+                <div className="absolute right-0 top-full mt-1 w-36 bg-white border border-neutral-200 rounded-xl shadow-lg z-30 py-1">
                   <button
                     onClick={() => { setRenaming(true); setRenameName(folder.name); setMenuOpen(false); }}
                     className="w-full text-left px-3 py-1.5 text-[12px] text-neutral-700 hover:bg-neutral-50 transition-colors"
@@ -275,9 +275,9 @@ export default function FolderDetailView({
       </div>
 
       {/* Folder AI chat input */}
-      <div className="mx-6 mb-4 rounded-lg border border-neutral-200 bg-neutral-50 p-3">
-        <div className="flex items-center gap-2 mb-2">
-          <ChatBubbleLeftRightIcon className="w-3.5 h-3.5 text-neutral-400" />
+      <div className="mx-6 mb-4 rounded-2xl bg-white shadow-sm px-4 py-3">
+        <div className="flex items-center gap-2 mb-2.5">
+          <ChatBubbleLeftRightIcon className="w-3.5 h-3.5 text-neutral-400 flex-shrink-0" />
           <input
             type="text"
             value={folderChatQuery}
@@ -296,7 +296,7 @@ export default function FolderDetailView({
             <button
               key={qp.label}
               onClick={() => handleFolderChat(qp.query)}
-              className="text-[10px] font-medium text-neutral-500 bg-white border border-neutral-200 rounded-full px-2.5 py-1 hover:bg-neutral-100 hover:text-neutral-700 transition-colors"
+              className="text-[10.5px] font-medium text-neutral-500 bg-neutral-100 rounded-lg px-2.5 py-1 hover:bg-neutral-200 hover:text-neutral-700 transition-colors"
             >
               {qp.label}
             </button>
@@ -306,7 +306,7 @@ export default function FolderDetailView({
 
       {/* Chat response */}
       {(chatResponse || chatLoading) && (
-        <div className="mx-6 mb-4 rounded-lg border border-neutral-200 bg-white p-4">
+        <div className="mx-6 mb-4 rounded-2xl bg-neutral-50 border border-neutral-100 px-4 py-3">
           {chatLoading && !chatResponse && (
             <div className="flex items-center gap-2">
               <div className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse" />
@@ -324,20 +324,20 @@ export default function FolderDetailView({
 
       {/* Tabs */}
       <div className="flex-shrink-0 px-6 mb-3">
-        <div className="flex gap-4 border-b border-neutral-100">
+        <div className="inline-flex items-center gap-1 bg-neutral-100 rounded-lg p-0.5">
           {(['notes', 'people'] as TabType[]).map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
-              className={`pb-2 text-[12px] font-medium transition-colors border-b-2 ${
+              className={`px-2.5 py-1 rounded-md text-[11.5px] font-medium transition-colors ${
                 activeTab === tab
-                  ? 'text-neutral-900 border-neutral-900'
-                  : 'text-neutral-400 border-transparent hover:text-neutral-600'
+                  ? 'bg-white text-neutral-800 shadow-sm'
+                  : 'text-neutral-500 hover:text-neutral-700'
               }`}
             >
               {tab === 'notes' ? 'Notes' : 'People'}
               {tab === 'people' && people.length > 0 && (
-                <span className="ml-1 text-neutral-400 font-normal">{people.length}</span>
+                <span className={`ml-1 text-[10px] ${activeTab === tab ? 'text-neutral-400' : 'text-neutral-400'}`}>{people.length}</span>
               )}
             </button>
           ))}
