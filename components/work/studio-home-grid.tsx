@@ -231,16 +231,12 @@ export function StudioHomeGrid({
     <div className="flex-1 flex flex-col items-center overflow-y-auto px-6 py-8 bg-neutral-50/40">
       <div className="w-full max-w-[900px] flex flex-col gap-8">
 
-        {/* Header label */}
-        <div>
-          <div className="flex items-center gap-1.5 mb-3">
-            <BoltIcon className="w-3.5 h-3.5 text-indigo-500" />
-            <span className="text-[10.5px] font-bold text-indigo-500 uppercase tracking-widest">Agent Workflow Studio</span>
-          </div>
-          <h1 className="text-[24px] font-bold text-neutral-900 tracking-tight leading-tight">
-            Build reusable workflows for your team
+        {/* Header */}
+        <div className="text-center">
+          <h1 className="text-[22px] font-semibold text-neutral-700 tracking-tight mb-2">
+            Build reusable workflows{userFirstName ? `, ${userFirstName}` : ''}.
           </h1>
-          <p className="text-[13.5px] text-neutral-500 mt-1.5 leading-relaxed">
+          <p className="text-[13px] text-neutral-400">
             AUGMTD runs your workflows on schedule, acts on your emails, and prepares work before you ask.
           </p>
         </div>
