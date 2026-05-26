@@ -15,6 +15,7 @@ import {
   XMarkIcon,
   ClipboardDocumentIcon,
   PaperAirplaneIcon,
+  DocumentTextIcon,
 } from '@heroicons/react/24/outline';
 import type { MeetingChatContext } from '@/components/meetings/meeting-chat-sidebar';
 import { useRecordingContext } from '@/context/recording-context';
@@ -1255,6 +1256,27 @@ const handleRetry = async () => {
         </section>
       )}
 
+      {/* Your notes — raw notes the user typed */}
+      {transcript?.processed && !isDraftNote && (() => {
+        const userNotes = transcript.source === 'text'
+          ? transcript.rawTranscript
+          : transcript.notesStructured?.live_notes;
+        if (!userNotes?.trim()) return null;
+        return (
+          <section className="mb-6 pt-4 border-t border-neutral-100">
+            <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-3 flex items-center gap-1.5">
+              <DocumentTextIcon className="w-3.5 h-3.5" />
+              Your notes
+            </h2>
+            <div className="px-4 py-3 bg-neutral-50 rounded-xl border border-neutral-100">
+              <p className="text-[13px] text-neutral-700 leading-relaxed whitespace-pre-wrap">
+                {userNotes}
+              </p>
+            </div>
+          </section>
+        );
+      })()}
+
       {/* Audio player */}
       {audioUrl && (
         <section className="mb-6">
@@ -1291,8 +1313,8 @@ const handleRetry = async () => {
 
     </div>
 
-    {/* ── AI chat teaser — always at bottom, sticky when content scrolls ── */}
-    {onRequestChat && (
+    {/* ── AI chat teaser — only shown once there's a processed transcript to ask about ── */}
+    {onRequestChat && transcript?.processed && !isDraftNote && (
       <div className={`sticky bottom-0 transition-all duration-200 ${chatIsOpen ? 'opacity-0 pointer-events-none translate-y-2' : 'opacity-100 translate-y-0'}`}>
         <div className="relative px-6 max-w-2xl mx-auto w-full">
           {/* Gradient fade over scrolling content above */}
