@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef } from 'react';
 import {
   MagnifyingGlassIcon,
   FolderIcon,
@@ -41,6 +41,8 @@ interface MeetingsLeftPanelProps {
   // Person filter — state lives in parent, affects Home screen
   filterPersonEmail: string | null;
   onFilterPerson: (email: string | null) => void;
+  // Folder drag-drop
+  onMoveToFolder?: (transcriptId: string, folderId: string | null) => Promise<void>;
   // Note creation
   onNewNote: () => void;
   // Home navigation
@@ -98,6 +100,7 @@ export default function MeetingsLeftPanel({
   onSelectMeeting,
   filterPersonEmail,
   onFilterPerson,
+  onMoveToFolder,
   onNewNote,
   onNavigateHome,
   isHome,
@@ -110,6 +113,8 @@ export default function MeetingsLeftPanel({
   const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
   const [peopleExpanded, setPeopleExpanded] = useState(false);
+  const [dragOverFolderId, setDragOverFolderId] = useState<string | null>(null);
+  const dragCounterRef = useRef<Map<string, number>>(new Map());
 
   const userFolders = folders.filter((f) => !f.is_system);
 
@@ -282,6 +287,7 @@ export default function MeetingsLeftPanel({
                     (t) => t.processed && t.botState !== 'failed' && t.folderId === folder.id
                   ).length;
                   const isSelected = selectedFolderId === folder.id;
+                  const isDragOver = dragOverFolderId === folder.id;
                   return (
                     <button
                       key={folder.id}
@@ -289,17 +295,54 @@ export default function MeetingsLeftPanel({
                         onSelectMeeting(null);
                         onSelectFolder(isSelected ? null : folder.id);
                       }}
-                      className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg transition-colors text-left ${
-                        isSelected ? 'bg-indigo-50 text-indigo-700' : 'text-neutral-700 hover:bg-neutral-50'
+                      onDragOver={(e) => {
+                        if (!onMoveToFolder) return;
+                        e.preventDefault();
+                        e.dataTransfer.dropEffect = 'move';
+                      }}
+                      onDragEnter={(e) => {
+                        if (!onMoveToFolder) return;
+                        e.preventDefault();
+                        const cnt = (dragCounterRef.current.get(folder.id) ?? 0) + 1;
+                        dragCounterRef.current.set(folder.id, cnt);
+                        setDragOverFolderId(folder.id);
+                      }}
+                      onDragLeave={() => {
+                        if (!onMoveToFolder) return;
+                        const cnt = (dragCounterRef.current.get(folder.id) ?? 1) - 1;
+                        dragCounterRef.current.set(folder.id, cnt);
+                        if (cnt <= 0) {
+                          dragCounterRef.current.delete(folder.id);
+                          setDragOverFolderId(null);
+                        }
+                      }}
+                      onDrop={(e) => {
+                        if (!onMoveToFolder) return;
+                        e.preventDefault();
+                        dragCounterRef.current.delete(folder.id);
+                        setDragOverFolderId(null);
+                        const raw = e.dataTransfer.getData('application/x-meetings-items');
+                        if (!raw) return;
+                        try {
+                          const ids: string[] = JSON.parse(raw);
+                          ids.forEach((id) => onMoveToFolder(id, folder.id));
+                        } catch {}
+                      }}
+                      className={`w-full flex items-center gap-2 px-2 rounded-lg transition-all text-left ${
+                        isDragOver
+                          ? 'ring-2 ring-indigo-400 ring-inset pt-2 pb-8 items-start bg-indigo-50'
+                          : isSelected
+                          ? 'bg-indigo-50 text-indigo-700 py-1.5'
+                          : 'text-neutral-700 hover:bg-neutral-50 py-1.5'
                       }`}
                     >
-                      {isSelected ? (
-                        <FolderOpenIcon className="w-3.5 h-3.5 flex-shrink-0" />
+                      {isSelected || isDragOver ? (
+                        <FolderOpenIcon className={`w-3.5 h-3.5 flex-shrink-0 ${isDragOver ? 'text-indigo-500' : ''}`} />
                       ) : (
                         <FolderIcon className="w-3.5 h-3.5 text-neutral-400 flex-shrink-0" />
                       )}
                       <span className="text-[12px] font-medium truncate flex-1">{folder.name}</span>
-                      {count > 0 && (
+                      {count > 0 && !isDragOver && (
                         <span className="text-[10px] text-neutral-400">{count}</span>
                       )}
                     </button>

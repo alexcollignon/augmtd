@@ -184,6 +184,32 @@ export default function MeetingsShell({
     }
   };
 
+  const handleMoveToFolder = async (transcriptId: string, folderId: string | null) => {
+    setTranscripts((prev) => prev.map((t) => t.id === transcriptId ? { ...t, folderId } : t));
+    try {
+      await fetch(`/api/meetings/recording/${transcriptId}/folder`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folderId }),
+      });
+    } catch {
+      fetchAll();
+    }
+  };
+
+  const handleRenameTranscript = async (id: string, title: string) => {
+    setTranscripts((prev) => prev.map((t) => t.id === id ? { ...t, title } : t));
+    try {
+      await fetch(`/api/meetings/notes/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title }),
+      });
+    } catch {
+      fetchAll();
+    }
+  };
+
   const handleDeleteTranscript = async (transcriptId: string) => {
     setTranscripts((prev) => prev.filter((t) => t.id !== transcriptId));
     try {
@@ -236,6 +262,8 @@ export default function MeetingsShell({
     fetchAll,
     handleDeleteTranscript,
     handleRetryFailed,
+    handleMoveToFolder,
+    handleRenameTranscript,
     handleCreateFolder,
     handleRenameFolder,
     handleDeleteFolder,
@@ -274,6 +302,7 @@ export default function MeetingsShell({
             if (id) router.push('/meetings');
           }}
           onCreateFolder={handleCreateFolder}
+          onMoveToFolder={handleMoveToFolder}
           selectedMeetingId={urlMeetingId}
           onSelectMeeting={(id) => {
             setSelectedFolderId(null);

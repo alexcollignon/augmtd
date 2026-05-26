@@ -38,6 +38,8 @@ export interface MeetingsDataContextType {
   fetchAll: () => Promise<void>;
   handleDeleteTranscript: (id: string) => Promise<void>;
   handleRetryFailed: (id: string) => Promise<void>;
+  handleMoveToFolder: (transcriptId: string, folderId: string | null) => Promise<void>;
+  handleRenameTranscript: (id: string, title: string) => Promise<void>;
   handleCreateFolder: (name: string) => Promise<void>;
   handleRenameFolder: (id: string, name: string) => Promise<void>;
   handleDeleteFolder: (id: string) => Promise<void>;
