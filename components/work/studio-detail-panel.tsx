@@ -147,12 +147,14 @@ export function StudioDetailPanel({
   const [savingShareMode, setSavingShareMode] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState(false);
   const moreRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setWorkflow(initialWorkflow);
     setActiveTab(initialTab);
     setConfirmingDelete(false);
+    setPendingDelete(false);
   }, [initialWorkflow.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fetchWorkflow = useCallback(async (wfId: string) => {
@@ -200,7 +202,7 @@ export function StudioDetailPanel({
   useEffect(() => {
     if (!moreOpen && !shareOpen) return;
     const handler = (e: MouseEvent) => {
-      if (!moreRef.current?.contains(e.target as Node)) { setMoreOpen(false); setShareOpen(false); }
+      if (!moreRef.current?.contains(e.target as Node)) { setMoreOpen(false); setShareOpen(false); setPendingDelete(false); }
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
@@ -381,10 +383,23 @@ export function StudioDetailPanel({
                       </div>
                     )}
                     <div className="border-t border-neutral-100" />
-                    <button onClick={() => { setConfirmingDelete(true); setMoreOpen(false); setActiveTab('settings'); }}
-                      className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-[12.5px] text-red-600 hover:bg-red-50 transition-colors">
-                      <TrashIcon className="w-4 h-4" /> Delete
-                    </button>
+                    {pendingDelete ? (
+                      <div className="p-2 flex flex-col gap-1.5">
+                        <button onClick={handleDelete}
+                          className="w-full px-3 py-2 bg-red-600 hover:bg-red-700 text-white text-[12px] font-medium rounded-lg transition-colors">
+                          Confirm delete
+                        </button>
+                        <button onClick={() => setPendingDelete(false)}
+                          className="w-full px-3 py-2 border border-neutral-200 text-neutral-600 text-[12px] font-medium rounded-lg hover:bg-neutral-50 transition-colors">
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <button onClick={() => setPendingDelete(true)}
+                        className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-[12.5px] text-red-600 hover:bg-red-50 transition-colors">
+                        <TrashIcon className="w-4 h-4" /> Delete
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
