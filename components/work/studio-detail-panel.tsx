@@ -7,7 +7,7 @@ import {
   ClipboardDocumentIcon, CheckIcon, DocumentArrowDownIcon,
   DocumentTextIcon, TableCellsIcon, PresentationChartBarIcon, EnvelopeIcon,
   DocumentDuplicateIcon, ChevronDownIcon, LockClosedIcon, UsersIcon,
-  EllipsisVerticalIcon, SparklesIcon,
+  EllipsisVerticalIcon, SparklesIcon, XMarkIcon,
   BoltIcon, CalendarDaysIcon, MagnifyingGlassIcon, NewspaperIcon,
   GlobeAltIcon, MegaphoneIcon, BuildingOfficeIcon,
 } from '@heroicons/react/24/outline';
@@ -148,6 +148,7 @@ export function StudioDetailPanel({
   const [moreOpen, setMoreOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState(false);
+  const [previewRun, setPreviewRun] = useState<WorkflowRun | null>(null);
   const moreRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -295,6 +296,15 @@ export function StudioDetailPanel({
   return (
     <div className="flex flex-col h-full overflow-hidden bg-white">
 
+      {/* ── Artifact preview modal ── */}
+      {previewRun && (
+        <ArtifactRunModal
+          run={previewRun}
+          onClose={() => setPreviewRun(null)}
+          onOpenThread={onOpenThread}
+        />
+      )}
+
       {/* ── Header ── */}
       <header className="px-5 pt-5 pb-0 border-b border-neutral-100 flex-shrink-0">
 
@@ -438,6 +448,7 @@ export function StudioDetailPanel({
           loading={runsLoading}
           onOpenThread={onOpenThread}
           onOpenArtifact={onOpenArtifact}
+          onPreviewRun={setPreviewRun}
           onRunDeleted={runId => setRuns(prev => prev.filter(r => r.id !== runId))}
           workflowId={workflow.id}
           runNow={runNow}
@@ -451,10 +462,11 @@ export function StudioDetailPanel({
 
 // ── Overview ──────────────────────────────────────────────────────────────────
 
-function OverviewPane({ workflow, runs, loading, onOpenThread, onOpenArtifact, onRunDeleted, workflowId, runNow, onActivate, onViewAll }: {
+function OverviewPane({ workflow, runs, loading, onOpenThread, onOpenArtifact, onPreviewRun, onRunDeleted, workflowId, runNow, onActivate, onViewAll }: {
   workflow: Workflow; runs: WorkflowRun[]; loading: boolean;
   onOpenThread?: (id: string) => void;
   onOpenArtifact?: (threadId: string, artifactId: string) => void;
+  onPreviewRun?: (run: WorkflowRun) => void;
   onRunDeleted?: (runId: string) => void;
   workflowId: string;
   runNow: () => void;
@@ -494,6 +506,7 @@ function OverviewPane({ workflow, runs, loading, onOpenThread, onOpenArtifact, o
           runs={runs}
           loading={loading}
           onOpenThread={onOpenThread}
+          onPreviewRun={onPreviewRun}
           onViewAll={onViewAll}
           workflowId={workflowId}
           onRunDeleted={onRunDeleted}
@@ -835,6 +848,81 @@ function AskWorkflowBox({ workflow, onFocusChat }: {
   );
 }
 
+// ── Artifact run modal ────────────────────────────────────────────────────────
+
+function ArtifactRunModal({ run, onClose, onOpenThread }: {
+  run: WorkflowRun;
+  onClose: () => void;
+  onOpenThread?: (threadId: string) => void;
+}) {
+  const artifact = run.artifacts?.[0];
+  const ct = artifact?.content ? contentType(artifact) : 'none';
+
+  const dateStr = run.started_at
+    ? new Date(run.started_at).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' }) +
+      ' · ' + new Date(run.started_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+    : '';
+
+  // Close on Escape
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [onClose]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      {/* Backdrop */}
+      <div className="absolute inset-0 bg-black/30 backdrop-blur-[2px]" />
+
+      {/* Panel */}
+      <div
+        className="relative z-10 bg-white rounded-2xl shadow-2xl flex flex-col w-full max-w-2xl max-h-[85vh]"
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-start gap-3 px-5 pt-4 pb-3 border-b border-neutral-100 flex-shrink-0">
+          <div className="flex-1 min-w-0">
+            {artifact?.title && (
+              <div className="text-[14px] font-semibold text-neutral-900 leading-snug truncate">{artifact.title}</div>
+            )}
+            <div className="text-[11.5px] text-neutral-400 mt-0.5">{dateStr}</div>
+          </div>
+          <button onClick={onClose} className="p-1 rounded-lg hover:bg-neutral-100 transition-colors text-neutral-400 hover:text-neutral-600 flex-shrink-0">
+            <XMarkIcon className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Content */}
+        <div className="flex-1 overflow-y-auto px-5 py-4">
+          {ct === 'doc' && <DocPreview content={artifact!.content as DocContent} />}
+          {ct === 'pptx' && <PptxPreview content={artifact!.content as PptxContent} />}
+          {ct === 'xlsx' && <XlsxPreview content={artifact!.content as XlsxContent} />}
+          {ct === 'email' && run.thread_id && (
+            <EmailPreview content={artifact!.content as EmailContent} artifact={artifact!} threadId={run.thread_id} onSent={onClose} />
+          )}
+          {ct === 'none' && (
+            <div className="text-[13px] text-neutral-500 text-center py-8">No preview available</div>
+          )}
+        </div>
+
+        {/* Footer */}
+        {run.thread_id && onOpenThread && (
+          <div className="px-5 py-3 border-t border-neutral-100 flex justify-end flex-shrink-0">
+            <button
+              onClick={() => { onClose(); onOpenThread(run.thread_id!); }}
+              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-[12.5px] font-medium rounded-lg transition-colors"
+            >
+              <SparklesIcon className="w-3.5 h-3.5" />
+              Chat about this
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Latest briefing card ───────────────────────────────────────────────────────
 
 function LatestBriefingCard({ runs, onOpenArtifact }: {
@@ -1051,10 +1139,11 @@ function WorkflowChatBar({ workflowId, workflow, inputRef }: {
 
 // ── Past runs panel (right column) ────────────────────────────────────────────
 
-function PastRunsPanel({ runs, loading, onOpenThread, onViewAll, workflowId, onRunDeleted }: {
+function PastRunsPanel({ runs, loading, onOpenThread, onPreviewRun, onViewAll, workflowId, onRunDeleted }: {
   runs: WorkflowRun[];
   loading: boolean;
   onOpenThread?: (id: string) => void;
+  onPreviewRun?: (run: WorkflowRun) => void;
   onViewAll: () => void;
   workflowId: string;
   onRunDeleted?: (runId: string) => void;
@@ -1079,7 +1168,7 @@ function PastRunsPanel({ runs, loading, onOpenThread, onViewAll, workflowId, onR
       ) : (
         <div className="space-y-2.5">
           {shown.map(run => (
-            <PastRunRow key={run.id} run={run} workflowId={workflowId} onOpenThread={onOpenThread} onDeleted={onRunDeleted} />
+            <PastRunRow key={run.id} run={run} workflowId={workflowId} onOpenThread={onOpenThread} onPreviewRun={onPreviewRun} onDeleted={onRunDeleted} />
           ))}
         </div>
       )}
@@ -1087,10 +1176,11 @@ function PastRunsPanel({ runs, loading, onOpenThread, onViewAll, workflowId, onR
   );
 }
 
-function PastRunRow({ run, workflowId, onOpenThread, onDeleted }: {
+function PastRunRow({ run, workflowId, onOpenThread, onPreviewRun, onDeleted }: {
   run: WorkflowRun;
   workflowId: string;
   onOpenThread?: (id: string) => void;
+  onPreviewRun?: (run: WorkflowRun) => void;
   onDeleted?: (runId: string) => void;
 }) {
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -1134,7 +1224,11 @@ function PastRunRow({ run, workflowId, onOpenThread, onDeleted }: {
   return (
     <div className="group">
       <button
-        onClick={() => { if (run.thread_id && onOpenThread) onOpenThread(run.thread_id); }}
+        onClick={() => {
+          const hasArtifact = (run.artifacts?.length ?? 0) > 0;
+          if (hasArtifact && onPreviewRun) { onPreviewRun(run); }
+          else if (run.thread_id && onOpenThread) { onOpenThread(run.thread_id); }
+        }}
         className="w-full flex items-start gap-2 text-left hover:bg-neutral-50 rounded-lg px-1.5 py-1.5 transition-colors">
         <span className={`w-2.5 h-2.5 rounded-full ${dotColor} mt-[3px] flex-shrink-0`} />
         <div className="flex-1 min-w-0">
