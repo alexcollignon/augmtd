@@ -134,6 +134,17 @@ export function StudioPageClient({
     await fetch(`/api/workflows/${id}`, { method: 'DELETE' });
   }
 
+  async function handleShareWorkflow(id: string, mode: string | null) {
+    setStudioWorkflows(prev =>
+      prev?.map(w => w.id === id ? { ...w, sharing_mode: mode as any } : w) ?? null
+    );
+    await fetch(`/api/workflows/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sharing_mode: mode }),
+    });
+  }
+
   async function handlePinWorkflow(id: string, pinned: boolean) {
     setStudioWorkflows(prev =>
       prev?.map(w => w.id === id ? { ...w, pinned } : w) ?? null
@@ -227,6 +238,9 @@ export function StudioPageClient({
               onUseTemplate={handleUseTemplate}
               onGenerateFromDescription={handleGenerateWorkflow}
               onPinWorkflow={handlePinWorkflow}
+              onEditWorkflow={(id) => { setSelectedWorkflowId(id); setEditingWorkflowId(id); }}
+              onDeleteWorkflow={handleDeleteWorkflow}
+              onShareWorkflow={handleShareWorkflow}
             />
           )}
         </div>

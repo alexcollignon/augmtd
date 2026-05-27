@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect, useLayoutEffect } from 'react';
 import {
   PlusIcon,
   BoltIcon,
@@ -27,6 +27,10 @@ import {
   UserGroupIcon,
   HeartIcon,
   LockClosedIcon,
+  EllipsisHorizontalIcon,
+  PencilSquareIcon,
+  TrashIcon,
+  ChevronDownIcon,
 } from '@heroicons/react/24/outline';
 import { StarIcon as StarSolidIcon } from '@heroicons/react/24/solid';
 import type { Workflow } from '@/lib/workflows/types';
@@ -200,15 +204,24 @@ interface Props {
   onUseTemplate: (template: WorkflowTemplate) => void;
   onGenerateFromDescription: (description: string) => Promise<void>;
   onPinWorkflow: (id: string, pinned: boolean) => void;
+  onEditWorkflow?: (id: string) => void;
+  onDeleteWorkflow?: (id: string) => void;
+  onShareWorkflow?: (id: string, mode: string | null) => void;
 }
 
 export function StudioHomeGrid({
   myWorkflows, teamWorkflows, userFirstName, onSelect, onCreate, onUseTemplate, onGenerateFromDescription, onPinWorkflow,
+  onEditWorkflow, onDeleteWorkflow, onShareWorkflow,
 }: Props) {
   const [description, setDescription] = useState('');
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [myExpanded, setMyExpanded] = useState(false);
+  const [teamExpanded, setTeamExpanded] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const VISIBLE_ROWS = 2;
+  const COLS = 3;
+  const PAGE = VISIBLE_ROWS * COLS; // 6 cards
 
   async function handleGenerate() {
     if (!description.trim() || generating) return;
@@ -307,25 +320,41 @@ export function StudioHomeGrid({
             >
               + Create your first workflow
             </button>
-          ) : (
-            <div className="grid grid-cols-3 gap-3">
-              {featuredWorkflow && (
-                <FeaturedWorkflowCard
-                  workflow={featuredWorkflow}
-                  onClick={() => onSelect(featuredWorkflow.id)}
-                  onPin={() => onPinWorkflow(featuredWorkflow.id, !featuredWorkflow.pinned)}
-                />
-              )}
-              {restWorkflows.map(w => (
-                <WorkflowCard
-                  key={w.id}
-                  workflow={w}
-                  onClick={() => onSelect(w.id)}
-                  onPin={() => onPinWorkflow(w.id, !w.pinned)}
-                />
-              ))}
-            </div>
-          )}
+          ) : (() => {
+            const allMyCards = [
+              ...(featuredWorkflow ? [featuredWorkflow] : []),
+              ...restWorkflows,
+            ];
+            const firstPage = allMyCards.slice(0, PAGE);
+            const extra = allMyCards.slice(PAGE);
+            const hasMore = extra.length > 0;
+            const cardProps = (w: Workflow) => ({
+              workflow: w,
+              onClick: () => onSelect(w.id),
+              onPin: () => onPinWorkflow(w.id, !w.pinned),
+              onEdit: onEditWorkflow ? () => onEditWorkflow(w.id) : undefined,
+              onDelete: onDeleteWorkflow ? () => onDeleteWorkflow(w.id) : undefined,
+              onToggleShare: onShareWorkflow ? (mode: string | null) => onShareWorkflow(w.id, mode) : undefined,
+            });
+            return (
+              <>
+                <div className="grid grid-cols-3 gap-3">
+                  {firstPage.map((w, i) => i === 0 && featuredWorkflow && w.id === featuredWorkflow.id
+                    ? <FeaturedWorkflowCard key={w.id} {...cardProps(w)} />
+                    : <WorkflowCard key={w.id} {...cardProps(w)} />
+                  )}
+                </div>
+                {hasMore && (
+                  <ExtraCards expanded={myExpanded}>
+                    {extra.map(w => <WorkflowCard key={w.id} {...cardProps(w)} />)}
+                  </ExtraCards>
+                )}
+                {hasMore && (
+                  <SeeMoreLine expanded={myExpanded} total={allMyCards.length} onToggle={() => setMyExpanded(e => !e)} />
+                )}
+              </>
+            );
+          })()}
         </div>
 
         {/* Shared by team */}
@@ -336,16 +365,30 @@ export function StudioHomeGrid({
               <span className="text-[13px] font-semibold text-neutral-800">Shared by team</span>
               <span className="text-[11px] text-neutral-400">· {teamWorkflows.length} workflow{teamWorkflows.length !== 1 ? 's' : ''}</span>
             </div>
-            <div className="grid grid-cols-3 gap-3">
-              {teamWorkflows.map(w => (
-                <WorkflowCard
-                  key={w.id}
-                  workflow={w}
-                  onClick={() => onSelect(w.id)}
-                  isTeam
-                />
-              ))}
-            </div>
+            {(() => {
+              const firstPage = teamWorkflows.slice(0, PAGE);
+              const extra = teamWorkflows.slice(PAGE);
+              const hasMore = extra.length > 0;
+              return (
+                <>
+                  <div className="grid grid-cols-3 gap-3">
+                    {firstPage.map(w => (
+                      <WorkflowCard key={w.id} workflow={w} onClick={() => onSelect(w.id)} isTeam />
+                    ))}
+                  </div>
+                  {hasMore && (
+                    <ExtraCards expanded={teamExpanded}>
+                      {extra.map(w => (
+                        <WorkflowCard key={w.id} workflow={w} onClick={() => onSelect(w.id)} isTeam />
+                      ))}
+                    </ExtraCards>
+                  )}
+                  {hasMore && (
+                    <SeeMoreLine expanded={teamExpanded} total={teamWorkflows.length} onToggle={() => setTeamExpanded(e => !e)} />
+                  )}
+                </>
+              );
+            })()}
           </div>
         )}
 
@@ -381,10 +424,49 @@ export function StudioHomeGrid({
   );
 }
 
+// ── Collapsible extra row ─────────────────────────────────────────────────────
+
+function SeeMoreLine({ expanded, total, onToggle }: { expanded: boolean; total: number; onToggle: () => void }) {
+  return (
+    <button
+      onClick={onToggle}
+      className="flex items-center gap-3 w-full mt-3 group"
+    >
+      <div className="flex-1 h-px bg-neutral-150" />
+      <span className="flex items-center gap-1 text-[11.5px] text-neutral-400 group-hover:text-indigo-500 transition-colors whitespace-nowrap">
+        {expanded ? 'See less' : `See all ${total}`}
+        <ChevronDownIcon className={`w-3 h-3 transition-transform duration-300 ${expanded ? 'rotate-180' : ''}`} />
+      </span>
+      <div className="flex-1 h-px bg-neutral-150" />
+    </button>
+  );
+}
+
+function ExtraCards({ expanded, children }: { expanded: boolean; children: React.ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [height, setHeight] = useState(0);
+
+  useLayoutEffect(() => {
+    if (ref.current) setHeight(ref.current.scrollHeight);
+  });
+
+  return (
+    <div
+      style={{ maxHeight: expanded ? height : 0 }}
+      className="overflow-hidden transition-[max-height] duration-300 ease-in-out"
+    >
+      <div ref={ref} className="pt-3 grid grid-cols-3 gap-3">
+        {children}
+      </div>
+    </div>
+  );
+}
+
 // ── Featured workflow card (spans 2 cols equivalent via min-h) ─────────────────
 
-function FeaturedWorkflowCard({ workflow: w, onClick, onPin }: {
+function FeaturedWorkflowCard({ workflow: w, onClick, onPin, onEdit, onDelete, onToggleShare }: {
   workflow: Workflow; onClick: () => void; onPin: () => void;
+  onEdit?: () => void; onDelete?: () => void; onToggleShare?: (mode: string | null) => void;
 }) {
   const colorBg = COLOR_MAP[w.color ?? 'indigo'] ?? 'bg-indigo-500';
   const WIcon = ICON_MAP[w.icon ?? 'bolt'] ?? BoltIcon;
@@ -393,6 +475,18 @@ function FeaturedWorkflowCard({ workflow: w, onClick, onPin }: {
     : 'Manual';
   const { statusDot, statusText } = workflowStatus(w);
   const lastRun = w.last_run_at ? formatRelative(w.last_run_at) : null;
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (!menuRef.current?.contains(e.target as Node)) { setMenuOpen(false); setPendingDelete(false); }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [menuOpen]);
 
   return (
     <div
@@ -405,7 +499,7 @@ function FeaturedWorkflowCard({ workflow: w, onClick, onPin }: {
         <div className={`w-9 h-9 rounded-xl ${colorBg} flex items-center justify-center flex-shrink-0`}>
           <WIcon className="w-[18px] h-[18px] text-white" />
         </div>
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1">
           {w.sharing_mode == null && (
             <span className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-neutral-100 text-[10px] font-medium text-neutral-500">
               <LockClosedIcon className="w-2.5 h-2.5" />
@@ -415,13 +509,60 @@ function FeaturedWorkflowCard({ workflow: w, onClick, onPin }: {
           <button
             onClick={e => { e.stopPropagation(); onPin(); }}
             title={w.pinned ? 'Unpin' : 'Pin to favorites'}
-            className={`p-1 rounded-md hover:bg-neutral-100 transition-opacity ${w.pinned ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+            className={`p-1 rounded-md hover:bg-neutral-100 transition-opacity ${w.pinned ? 'opacity-100' : 'opacity-30 hover:opacity-70'}`}
           >
             {w.pinned
               ? <StarSolidIcon className="w-3.5 h-3.5 text-amber-400" />
-              : <StarOutlineIcon className="w-3.5 h-3.5 text-neutral-300" />
+              : <StarOutlineIcon className="w-3.5 h-3.5 text-neutral-400" />
             }
           </button>
+          {(onEdit || onDelete) && (
+            <div className="relative" ref={menuRef}>
+              <button
+                onClick={e => { e.stopPropagation(); setMenuOpen(o => !o); }}
+                className={`p-1 rounded-md hover:bg-neutral-100 transition-opacity ${menuOpen ? 'opacity-100' : 'opacity-30 hover:opacity-70'}`}
+              >
+                <EllipsisHorizontalIcon className="w-4 h-4 text-neutral-400" />
+              </button>
+              {menuOpen && (
+                <div className="absolute right-0 top-full mt-1 w-44 bg-white border border-neutral-200 rounded-xl shadow-lg overflow-hidden z-30" onClick={e => e.stopPropagation()}>
+                  {onEdit && (
+                    <button onClick={() => { setMenuOpen(false); onEdit(); }}
+                      className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-[12.5px] text-neutral-700 hover:bg-neutral-50 transition-colors">
+                      <PencilSquareIcon className="w-4 h-4" /> Edit
+                    </button>
+                  )}
+                  {onToggleShare && (
+                    <button onClick={() => { setMenuOpen(false); onToggleShare(w.sharing_mode === 'live' ? null : 'live'); }}
+                      className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-[12.5px] text-neutral-700 hover:bg-neutral-50 transition-colors">
+                      <LockClosedIcon className="w-4 h-4" />
+                      {w.sharing_mode === 'live' ? 'Make private' : 'Share with team'}
+                    </button>
+                  )}
+                  {onDelete && <div className="border-t border-neutral-100" />}
+                  {onDelete && (
+                    pendingDelete ? (
+                      <div className="p-2 flex flex-col gap-1.5">
+                        <button onClick={() => { setMenuOpen(false); onDelete(); }}
+                          className="w-full px-3 py-2 bg-red-600 hover:bg-red-700 text-white text-[12px] font-medium rounded-lg transition-colors">
+                          Confirm delete
+                        </button>
+                        <button onClick={() => setPendingDelete(false)}
+                          className="w-full px-3 py-2 border border-neutral-200 text-neutral-600 text-[12px] font-medium rounded-lg hover:bg-neutral-50 transition-colors">
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <button onClick={() => setPendingDelete(true)}
+                        className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-[12.5px] text-red-600 hover:bg-red-50 transition-colors">
+                        <TrashIcon className="w-4 h-4" /> Delete
+                      </button>
+                    )
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
@@ -447,8 +588,9 @@ function FeaturedWorkflowCard({ workflow: w, onClick, onPin }: {
 
 // ── Standard workflow card ─────────────────────────────────────────────────────
 
-function WorkflowCard({ workflow: w, onClick, onPin, isTeam }: {
+function WorkflowCard({ workflow: w, onClick, onPin, isTeam, onEdit, onDelete, onToggleShare }: {
   workflow: Workflow; onClick: () => void; onPin?: () => void; isTeam?: boolean;
+  onEdit?: () => void; onDelete?: () => void; onToggleShare?: (mode: string | null) => void;
 }) {
   const colorBg = COLOR_MAP[w.color ?? 'indigo'] ?? 'bg-indigo-500';
   const WIcon = ICON_MAP[w.icon ?? 'bolt'] ?? BoltIcon;
@@ -457,6 +599,18 @@ function WorkflowCard({ workflow: w, onClick, onPin, isTeam }: {
     : 'Manual';
   const { statusDot, statusText } = workflowStatus(w);
   const lastRun = w.last_run_at ? formatRelative(w.last_run_at) : null;
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (!menuRef.current?.contains(e.target as Node)) { setMenuOpen(false); setPendingDelete(false); }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [menuOpen]);
 
   return (
     <div
@@ -472,18 +626,67 @@ function WorkflowCard({ workflow: w, onClick, onPin, isTeam }: {
         <div className={`w-8 h-8 rounded-lg ${colorBg} flex items-center justify-center flex-shrink-0`}>
           <WIcon className="w-4 h-4 text-white" />
         </div>
-        {onPin && (
-          <button
-            onClick={e => { e.stopPropagation(); onPin(); }}
-            title={w.pinned ? 'Unpin' : 'Pin to favorites'}
-            className={`p-0.5 rounded hover:bg-neutral-100 transition-opacity ${w.pinned ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
-          >
-            {w.pinned
-              ? <StarSolidIcon className="w-3 h-3 text-amber-400" />
-              : <StarOutlineIcon className="w-3 h-3 text-neutral-300" />
-            }
-          </button>
-        )}
+        <div className="flex items-center gap-1">
+          {onPin && (
+            <button
+              onClick={e => { e.stopPropagation(); onPin(); }}
+              title={w.pinned ? 'Unpin' : 'Pin to favorites'}
+              className={`p-0.5 rounded hover:bg-neutral-100 transition-opacity ${w.pinned ? 'opacity-100' : 'opacity-30 hover:opacity-70'}`}
+            >
+              {w.pinned
+                ? <StarSolidIcon className="w-3 h-3 text-amber-400" />
+                : <StarOutlineIcon className="w-3 h-3 text-neutral-400" />
+              }
+            </button>
+          )}
+          {!isTeam && (onEdit || onDelete) && (
+            <div className="relative" ref={menuRef}>
+              <button
+                onClick={e => { e.stopPropagation(); setMenuOpen(o => !o); }}
+                className={`p-0.5 rounded hover:bg-neutral-100 transition-opacity ${menuOpen ? 'opacity-100' : 'opacity-30 hover:opacity-70'}`}
+              >
+                <EllipsisHorizontalIcon className="w-3.5 h-3.5 text-neutral-400" />
+              </button>
+              {menuOpen && (
+                <div className="absolute right-0 top-full mt-1 w-44 bg-white border border-neutral-200 rounded-xl shadow-lg overflow-hidden z-30" onClick={e => e.stopPropagation()}>
+                  {onEdit && (
+                    <button onClick={() => { setMenuOpen(false); onEdit(); }}
+                      className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-[12.5px] text-neutral-700 hover:bg-neutral-50 transition-colors">
+                      <PencilSquareIcon className="w-4 h-4" /> Edit
+                    </button>
+                  )}
+                  {onToggleShare && (
+                    <button onClick={() => { setMenuOpen(false); onToggleShare(w.sharing_mode === 'live' ? null : 'live'); }}
+                      className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-[12.5px] text-neutral-700 hover:bg-neutral-50 transition-colors">
+                      <LockClosedIcon className="w-4 h-4" />
+                      {w.sharing_mode === 'live' ? 'Make private' : 'Share with team'}
+                    </button>
+                  )}
+                  {onDelete && <div className="border-t border-neutral-100" />}
+                  {onDelete && (
+                    pendingDelete ? (
+                      <div className="p-2 flex flex-col gap-1.5">
+                        <button onClick={() => { setMenuOpen(false); onDelete(); }}
+                          className="w-full px-3 py-2 bg-red-600 hover:bg-red-700 text-white text-[12px] font-medium rounded-lg transition-colors">
+                          Confirm delete
+                        </button>
+                        <button onClick={() => setPendingDelete(false)}
+                          className="w-full px-3 py-2 border border-neutral-200 text-neutral-600 text-[12px] font-medium rounded-lg hover:bg-neutral-50 transition-colors">
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <button onClick={() => setPendingDelete(true)}
+                        className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-[12.5px] text-red-600 hover:bg-red-50 transition-colors">
+                        <TrashIcon className="w-4 h-4" /> Delete
+                      </button>
+                    )
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Name */}
