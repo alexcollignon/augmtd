@@ -40,28 +40,28 @@ export const TIER_DEFAULTS: Record<TierType, Record<TaskType, ModelEndpoint>> = 
     conversation:  { provider: 'azure_openai', model: 'gpt-4o-mini', apiVersion: '2024-02-01' },
   },
 
-  // ── Private shared — Fireworks AI (fully private, no data leaves to OpenAI/Anthropic)
-  // Kimi K2 Instruct for planning/generation/conversation (stronger than DeepSeek V3.2 on agentic/coding).
-  // gpt-oss-120b for classification/summarization/assignment (replaced Llama-3.3-70B, decommissioned May 14 2026).
-  // Qwen3-VL-30B for OCR — real vision model (replaced Together AI's text-only Qwen3.5-9B stopgap).
-  // Embeddings stay on Together AI — switching would require re-indexing all KB content.
+  // ── Private shared — Together AI (fully private, no data leaves to OpenAI/Anthropic)
+  // Kimi K2.6 for planning/generation/conversation (same model as before, now on Together AI).
+  // gpt-oss-120b for classification/summarization/assignment (same model, Together AI host).
+  // Gemma 4 31B for OCR — best available vision model on Together AI.
+  // Embeddings stay on Together AI — already there, no change.
   private_shared: {
-    planning:      { provider: 'fireworks', model: 'accounts/fireworks/models/kimi-k2p6',
-                     baseURL: 'https://api.fireworks.ai/inference/v1' },
-    generation:    { provider: 'fireworks', model: 'accounts/fireworks/models/kimi-k2p6',
-                     baseURL: 'https://api.fireworks.ai/inference/v1' },
-    summarization: { provider: 'fireworks', model: 'accounts/fireworks/models/gpt-oss-120b',
-                     baseURL: 'https://api.fireworks.ai/inference/v1' },
-    classification:{ provider: 'fireworks', model: 'accounts/fireworks/models/gpt-oss-120b',
-                     baseURL: 'https://api.fireworks.ai/inference/v1' },
+    planning:      { provider: 'together', model: 'moonshotai/Kimi-K2.6',
+                     baseURL: 'https://api.together.xyz/v1' },
+    generation:    { provider: 'together', model: 'moonshotai/Kimi-K2.6',
+                     baseURL: 'https://api.together.xyz/v1' },
+    summarization: { provider: 'together', model: 'openai/gpt-oss-120b',
+                     baseURL: 'https://api.together.xyz/v1' },
+    classification:{ provider: 'together', model: 'openai/gpt-oss-120b',
+                     baseURL: 'https://api.together.xyz/v1' },
     embeddings:    { provider: 'openai_compatible', model: 'intfloat/multilingual-e5-large-instruct',
                      baseURL: 'https://api.together.xyz/v1' },
-    ocr:           { provider: 'fireworks', model: 'accounts/fireworks/models/qwen3-vl-30b-a3b-instruct',
-                     baseURL: 'https://api.fireworks.ai/inference/v1' },
-    assignment:    { provider: 'fireworks', model: 'accounts/fireworks/models/gpt-oss-120b',
-                     baseURL: 'https://api.fireworks.ai/inference/v1' },
-    conversation:  { provider: 'fireworks', model: 'accounts/fireworks/models/kimi-k2p6',
-                     baseURL: 'https://api.fireworks.ai/inference/v1' },
+    ocr:           { provider: 'together', model: 'google/gemma-4-31B-it',
+                     baseURL: 'https://api.together.xyz/v1' },
+    assignment:    { provider: 'together', model: 'openai/gpt-oss-120b',
+                     baseURL: 'https://api.together.xyz/v1' },
+    conversation:  { provider: 'together', model: 'moonshotai/Kimi-K2.6',
+                     baseURL: 'https://api.together.xyz/v1' },
   },
 
   // ── Bedrock private — AWS Bedrock + Claude Haiku 4.5 ─────────────────────────
@@ -80,24 +80,24 @@ export const TIER_DEFAULTS: Record<TierType, Record<TaskType, ModelEndpoint>> = 
     conversation:   { provider: 'bedrock', model: 'eu.anthropic.claude-haiku-4-5-20251001-v1:0', maxTokensDefault: 4096 },
   },
 
-  // ── Bedrock optimised — Bedrock for user-facing, Fireworks for background ────
+  // ── Bedrock optimised — Bedrock for user-facing, Together AI for background ───
   // Conversation / generation / OCR stay on AWS Bedrock EU (Claude Haiku 4.5) for
   // quality and data-residency guarantees on interactive work.
-  // Email triage, summarization, assignment → gpt-oss-120b on Fireworks (replaced Llama-3.3-70B, decommissioned May 14 2026).
-  // processEmail (planning task) → Kimi K2 on Fireworks (frontier quality, 46% cheaper).
+  // Email triage, summarization, assignment → gpt-oss-120b on Together AI.
+  // processEmail (planning task) → Kimi K2.6 on Together AI (frontier quality).
   // Embeddings stay on Together AI — same as private_shared, no re-indexing needed.
   bedrock_optimised: {
     conversation:  { provider: 'bedrock',           model: 'eu.anthropic.claude-haiku-4-5-20251001-v1:0', maxTokensDefault: 4096 },
     generation:    { provider: 'bedrock',           model: 'eu.anthropic.claude-haiku-4-5-20251001-v1:0', maxTokensDefault: 4096 },
     ocr:           { provider: 'bedrock',           model: 'eu.anthropic.claude-haiku-4-5-20251001-v1:0', maxTokensDefault: 4096 },
-    planning:      { provider: 'fireworks',         model: 'accounts/fireworks/models/kimi-k2p6',
-                     baseURL: 'https://api.fireworks.ai/inference/v1' },
-    classification:{ provider: 'fireworks',         model: 'accounts/fireworks/models/gpt-oss-120b',
-                     baseURL: 'https://api.fireworks.ai/inference/v1' },
-    summarization: { provider: 'fireworks',         model: 'accounts/fireworks/models/gpt-oss-120b',
-                     baseURL: 'https://api.fireworks.ai/inference/v1' },
-    assignment:    { provider: 'fireworks',         model: 'accounts/fireworks/models/gpt-oss-120b',
-                     baseURL: 'https://api.fireworks.ai/inference/v1' },
+    planning:      { provider: 'together',          model: 'moonshotai/Kimi-K2.6',
+                     baseURL: 'https://api.together.xyz/v1' },
+    classification:{ provider: 'together',          model: 'openai/gpt-oss-120b',
+                     baseURL: 'https://api.together.xyz/v1' },
+    summarization: { provider: 'together',          model: 'openai/gpt-oss-120b',
+                     baseURL: 'https://api.together.xyz/v1' },
+    assignment:    { provider: 'together',          model: 'openai/gpt-oss-120b',
+                     baseURL: 'https://api.together.xyz/v1' },
     embeddings:    { provider: 'openai_compatible', model: 'intfloat/multilingual-e5-large-instruct',
                      baseURL: 'https://api.together.xyz/v1' },
   },

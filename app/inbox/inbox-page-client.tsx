@@ -14,11 +14,12 @@ import type { FolderEmailSummary, MessageDetail } from '@/lib/google/gmail';
 import AiChatPanel from '@/components/shared/ai-chat-panel';
 import WorkflowPanel from '@/components/inbox/workflow-panel';
 import MeetingsColumn from '@/components/inbox/meetings-column';
-import { ArrowPathIcon, ChatBubbleLeftIcon, SparklesIcon, Bars3Icon, QueueListIcon, ArchiveBoxArrowDownIcon, XMarkIcon, MagnifyingGlassIcon, CalendarDaysIcon, TrashIcon, PaperClipIcon, EnvelopeIcon } from '@heroicons/react/24/outline';
+import { ArrowPathIcon, ChatBubbleLeftIcon, SparklesIcon, Bars3Icon, QueueListIcon, ArchiveBoxArrowDownIcon, XMarkIcon, MagnifyingGlassIcon, CalendarDaysIcon, TrashIcon, PaperClipIcon, EnvelopeIcon, Cog6ToothIcon, TagIcon } from '@heroicons/react/24/outline';
 import ComposePanel from '@/components/inbox/compose-panel';
+import ManageCategoriesModal from '@/components/inbox/manage-categories-modal';
 import { toast } from 'sonner';
 import type { CalendarEvent } from '@/lib/types/meetings';
-import type { InboxItem } from '@/lib/types/inbox';
+import type { InboxItem, UserInboxCategory } from '@/lib/types/inbox';
 
 
 type ViewMode = 'chronological' | 'smart';
@@ -200,7 +201,79 @@ export function InboxPageClient({
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
   const [bulkDeleteConfirmPending, setBulkDeleteConfirmPending] = useState(false);
   const [bulkArchiveConfirmPending, setBulkArchiveConfirmPending] = useState(false);
+  const [bulkCategoryPickerOpen, setBulkCategoryPickerOpen] = useState(false);
+  const [isBulkCategorizing, setIsBulkCategorizing] = useState(false);
 
+
+  // Custom inbox categories + section order
+  const [userCategories, setUserCategories] = useState<UserInboxCategory[]>([]);
+  const [sectionOrder, setSectionOrder] = useState<string[]>([]);
+  const [showCategoriesModal, setShowCategoriesModal] = useState(false);
+
+  useEffect(() => {
+    fetch('/api/inbox/categories').then(r => r.json()).then(d => {
+      if (d.categories) setUserCategories(d.categories);
+      if (d.sectionOrder) setSectionOrder(d.sectionOrder);
+    });
+  }, []);
+
+  const handleReorderDefaults = async (order: string[]) => {
+    setSectionOrder(order);
+    await fetch('/api/inbox/categories', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sectionOrder: order }) });
+  };
+
+  const handleCreateCategory = async (cat: Omit<UserInboxCategory, 'id'>) => {
+    const r = await fetch('/api/inbox/categories', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cat) });
+    const d = await r.json();
+    if (d.category) {
+      setUserCategories(prev => [...prev, d.category]);
+      // Fire backfill without blocking — Realtime will surface updated items
+      fetch('/api/inbox/categories/backfill', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ categoryName: d.category.name, categoryDescription: d.category.description }),
+      }).catch(() => {});
+    }
+  };
+
+  const handleUpdateCategory = async (id: string, fields: Partial<Omit<UserInboxCategory, 'id'>>) => {
+    await fetch('/api/inbox/categories', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, ...fields }) });
+    setUserCategories(prev => prev.map(c => c.id === id ? { ...c, ...fields } : c));
+  };
+
+  const handleDeleteCategory = async (id: string) => {
+    const deleted = userCategories.find(c => c.id === id);
+    await fetch(`/api/inbox/categories?id=${id}`, { method: 'DELETE' });
+    setUserCategories(prev => prev.filter(c => c.id !== id));
+    // Clear from local inbox state immediately (server also clears in DB)
+    if (deleted?.name) {
+      setInboxItems(prev => prev.map(i => i.custom_category === deleted.name ? { ...i, custom_category: null } : i));
+    }
+  };
+
+  const handleCategorizeItem = useCallback(async (itemId: string, category: string | null) => {
+    setInboxItems(prev => prev.map(i => i.id === itemId ? { ...i, custom_category: category } : i));
+    await fetch(`/api/inbox/${itemId}/categorize`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ category }) });
+  }, []);
+
+  // Resizable panel widths
+  const [folderRailWidth, setFolderRailWidth] = useState(196);
+  const [emailListWidth, setEmailListWidth] = useState(240);
+  const folderRailResizingRef = useRef(false);
+  const folderRailStartXRef = useRef(0);
+  const folderRailStartWidthRef = useRef(196);
+  const folderRailLiveWidthRef = useRef(196);
+  const emailListResizingRef = useRef(false);
+  const emailListStartXRef = useRef(0);
+  const emailListStartWidthRef = useRef(240);
+  const emailListLiveWidthRef = useRef(240);
+
+  useEffect(() => {
+    const savedRailWidth = localStorage.getItem('inbox_folder_rail_width');
+    const savedListWidth = localStorage.getItem('inbox_email_list_width');
+    if (savedRailWidth) { const w = Number(savedRailWidth); setFolderRailWidth(w); folderRailLiveWidthRef.current = w; }
+    if (savedListWidth) { const w = Number(savedListWidth); setEmailListWidth(w); emailListLiveWidthRef.current = w; }
+  }, []);
 
   // Search state (client-side filter on left list)
   const [searchQuery, setSearchQuery] = useState('');
@@ -660,7 +733,19 @@ export function InboxPageClient({
     });
   };
 
-  const clearSelection = () => { setSelectedIds(new Set()); setBulkArchiveConfirmPending(false); setBulkDeleteConfirmPending(false); };
+  const clearSelection = () => { setSelectedIds(new Set()); setBulkArchiveConfirmPending(false); setBulkDeleteConfirmPending(false); setBulkCategoryPickerOpen(false); };
+
+  const handleBulkCategorize = async (category: string | null) => {
+    const ids = Array.from(selectedIds);
+    setIsBulkCategorizing(true);
+    setBulkCategoryPickerOpen(false);
+    try {
+      await Promise.all(ids.map(id => handleCategorizeItem(id, category)));
+    } finally {
+      setIsBulkCategorizing(false);
+      clearSelection();
+    }
+  };
 
   const handleBulkArchive = async () => {
     const ids = Array.from(selectedIds);
@@ -741,6 +826,12 @@ export function InboxPageClient({
     setInboxItems(prev => prev.filter(i => i.id !== itemId));
     setSelectedItem(prev => (prev?.id === itemId ? null : prev));
     await fetch(`/api/inbox/${itemId}/archive-source`, { method: 'POST' });
+  }, []);
+
+  const handleFlagItem = useCallback(async (itemId: string) => {
+    setInboxItems(prev => prev.map(i => i.id === itemId ? { ...i, is_flagged: !i.is_flagged } : i));
+    setSelectedItem(prev => prev?.id === itemId ? { ...prev, is_flagged: !prev.is_flagged } : prev);
+    await fetch(`/api/inbox/${itemId}/flag`, { method: 'POST' });
   }, []);
 
   const handleDropToFolder = useCallback(async (folder: SelectedFolder, itemIds: string[]) => {
@@ -983,6 +1074,19 @@ export function InboxPageClient({
   return (
     <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
 
+        {/* Manage categories modal */}
+        {showCategoriesModal && (
+          <ManageCategoriesModal
+            categories={userCategories}
+            onClose={() => setShowCategoriesModal(false)}
+            onCreate={handleCreateCategory}
+            onUpdate={handleUpdateCategory}
+            onDelete={handleDeleteCategory}
+            defaultOrder={sectionOrder.length > 0 ? sectionOrder : undefined}
+            onReorderDefaults={handleReorderDefaults}
+          />
+        )}
+
         {/* No connection */}
         {!hasConnection && (
           <div className="flex-1 flex items-center justify-center">
@@ -1030,11 +1134,39 @@ export function InboxPageClient({
                 onSelectConnection={handleSelectConnection}
                 onRenameFolder={handleRenameFolder}
                 onDeleteFolder={handleDeleteFolder}
+                width={folderRailWidth}
+              />
+            )}
+
+            {/* Folder rail resize handle */}
+            {folderSections && folderSections.length > 0 && !folderSidebarCollapsed && (
+              <div
+                className="flex-shrink-0 w-1 cursor-col-resize hover:bg-indigo-200 active:bg-indigo-300 transition-colors z-10"
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  folderRailResizingRef.current = true;
+                  folderRailStartXRef.current = e.clientX;
+                  folderRailStartWidthRef.current = folderRailWidth;
+                  const onMove = (ev: MouseEvent) => {
+                    if (!folderRailResizingRef.current) return;
+                    const next = Math.min(320, Math.max(140, folderRailStartWidthRef.current + ev.clientX - folderRailStartXRef.current));
+                    folderRailLiveWidthRef.current = next;
+                    setFolderRailWidth(next);
+                  };
+                  const onUp = () => {
+                    folderRailResizingRef.current = false;
+                    localStorage.setItem('inbox_folder_rail_width', String(folderRailLiveWidthRef.current));
+                    window.removeEventListener('mousemove', onMove);
+                    window.removeEventListener('mouseup', onUp);
+                  };
+                  window.addEventListener('mousemove', onMove);
+                  window.addEventListener('mouseup', onUp);
+                }}
               />
             )}
 
             {/* Left: email list */}
-            <div className="w-[240px] flex-shrink-0 flex flex-col bg-neutral-50 p-2">
+            <div className="flex-shrink-0 flex flex-col bg-neutral-50 p-2" style={{ width: emailListWidth }}>
               <div className="flex-1 flex flex-col rounded-2xl bg-white shadow-sm overflow-hidden">
 
               {/* View + density toggles / search — animated crossfade */}
@@ -1057,11 +1189,17 @@ export function InboxPageClient({
                         <button
                           key={key}
                           onClick={() => handleViewMode(key)}
-                          className={`relative z-10 px-2.5 py-0.5 text-[11px] font-medium rounded-full text-center transition-colors duration-180 ${
+                          className={`relative z-10 px-2.5 py-0.5 text-[11px] font-medium rounded-full text-center transition-colors duration-180 flex items-center justify-center gap-1 ${
                             viewMode === key ? 'text-neutral-800' : 'text-neutral-500 hover:text-neutral-700'
                           }`}
                         >
                           {labels[key]}
+                          {key === 'smart' && (
+                            <Cog6ToothIcon
+                              onClick={viewMode === 'smart' ? (e) => { e.stopPropagation(); setShowCategoriesModal(true); } : undefined}
+                              className={`w-3 h-3 flex-shrink-0 transition-opacity ${viewMode === 'smart' ? 'opacity-60 hover:opacity-100 cursor-pointer' : 'opacity-0'}`}
+                            />
+                          )}
                         </button>
                       );
                     })}
@@ -1149,6 +1287,11 @@ export function InboxPageClient({
                       <div className="w-3 h-3 border-2 border-red-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
                       <span className="text-[11px] font-semibold text-red-700">Deleting…</span>
                     </div>
+                  ) : isBulkCategorizing ? (
+                    <div className="flex items-center gap-2 flex-1">
+                      <div className="w-3 h-3 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+                      <span className="text-[11px] font-semibold text-indigo-700">Categorizing…</span>
+                    </div>
                   ) : bulkArchiveConfirmPending ? (
                     <>
                       <ArchiveBoxArrowDownIcon className="w-3.5 h-3.5 text-indigo-500 flex-shrink-0" />
@@ -1180,6 +1323,40 @@ export function InboxPageClient({
                       <span className="text-[11px] font-semibold text-indigo-700 flex-1">
                         {selectedIds.size} selected
                       </span>
+                      {userCategories.length > 0 && (
+                        <div className="relative">
+                          <button
+                            onClick={() => setBulkCategoryPickerOpen(v => !v)}
+                            className="flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-indigo-700 border border-indigo-200 bg-white rounded-md hover:bg-indigo-50 transition-colors"
+                          >
+                            <TagIcon className="w-3 h-3" />
+                            Categorize
+                          </button>
+                          {bulkCategoryPickerOpen && (
+                            <div className="absolute bottom-full mb-1 left-0 w-44 bg-white rounded-xl shadow-lg border border-neutral-100 py-1 z-50 text-[12px]">
+                              <div className="px-3 py-1.5 text-[11px] font-semibold text-neutral-400 uppercase tracking-wide border-b border-neutral-100">Assign category</div>
+                              {userCategories.map(cat => (
+                                <button
+                                  key={cat.id}
+                                  onClick={() => handleBulkCategorize(cat.name)}
+                                  className="w-full text-left px-3 py-1.5 hover:bg-neutral-50 flex items-center gap-2 text-neutral-700"
+                                >
+                                  {cat.emoji && <span>{cat.emoji}</span>}
+                                  <span className="truncate">{cat.name}</span>
+                                </button>
+                              ))}
+                              <div className="border-t border-neutral-100 mt-1">
+                                <button
+                                  onClick={() => handleBulkCategorize(null)}
+                                  className="w-full text-left px-3 py-1.5 hover:bg-neutral-50 text-neutral-400"
+                                >
+                                  Remove category
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
                       <button
                         onClick={() => setBulkArchiveConfirmPending(true)}
                         className="flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-indigo-700 border border-indigo-200 bg-white rounded-md hover:bg-indigo-50 transition-colors"
@@ -1235,6 +1412,7 @@ export function InboxPageClient({
                     onToggleSelect={handleToggleSelect}
                     onDelete={handleDeleteItem}
                     onArchive={handleArchiveItem}
+                    onFlag={handleFlagItem}
                   />
                 ) : (
                   <EmailListSections
@@ -1246,11 +1424,41 @@ export function InboxPageClient({
                     onToggleSelect={handleToggleSelect}
                     onDelete={handleDeleteItem}
                     onArchive={handleArchiveItem}
+                    onFlag={handleFlagItem}
+                    onCategorize={handleCategorizeItem}
+                    userCategories={userCategories}
+                    sectionOrder={sectionOrder.length > 0 ? sectionOrder : undefined}
                   />
                 )}
               </div>
               </div>
             </div>
+
+            {/* Email list resize handle */}
+            <div
+              className="flex-shrink-0 w-1 cursor-col-resize hover:bg-indigo-200 active:bg-indigo-300 transition-colors z-10"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                emailListResizingRef.current = true;
+                emailListStartXRef.current = e.clientX;
+                emailListStartWidthRef.current = emailListWidth;
+                emailListLiveWidthRef.current = emailListWidth;
+                const onMove = (ev: MouseEvent) => {
+                  if (!emailListResizingRef.current) return;
+                  const next = Math.min(420, Math.max(180, emailListStartWidthRef.current + ev.clientX - emailListStartXRef.current));
+                  emailListLiveWidthRef.current = next;
+                  setEmailListWidth(next);
+                };
+                const onUp = () => {
+                  emailListResizingRef.current = false;
+                  localStorage.setItem('inbox_email_list_width', String(emailListLiveWidthRef.current));
+                  window.removeEventListener('mousemove', onMove);
+                  window.removeEventListener('mouseup', onUp);
+                };
+                window.addEventListener('mousemove', onMove);
+                window.addEventListener('mouseup', onUp);
+              }}
+            />
 
             {/* Middle: detail/compose */}
             <div className="flex-1 min-w-0 overflow-hidden flex flex-col bg-neutral-50 pl-2 pt-2 pb-2">

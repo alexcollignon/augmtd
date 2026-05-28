@@ -820,10 +820,9 @@ export async function assembleArtifactFromSteps(params: {
 
   // Enable JSON mode for providers that support it — eliminates parsing failures
   // from unquoted keys, trailing commas, and other LLM JSON issues.
-  const supportsJsonMode = ['openai', 'azure_openai', 'fireworks'].includes(endpoint.provider);
+  const supportsJsonMode = ['openai', 'azure_openai', 'together'].includes(endpoint.provider);
 
-  // Fireworks non-streaming API rejects max_tokens > 4096. Cap it.
-  const effectiveMaxTokens = endpoint.provider === 'fireworks' ? Math.min(maxTokens, 4096) : maxTokens;
+  const effectiveMaxTokens = maxTokens;
 
   const completion = await aiCreate(client, {
     model,

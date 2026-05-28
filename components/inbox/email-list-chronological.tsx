@@ -13,6 +13,7 @@ interface EmailListChronologicalProps {
   onToggleSelect?: (id: string) => void;
   onDelete?: (id: string) => void;
   onArchive?: (id: string) => void;
+  onFlag?: (id: string) => void;
 }
 
 function getDateLabel(dateStr: string): string {
@@ -28,7 +29,7 @@ function getDateLabel(dateStr: string): string {
   return date.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
 }
 
-export default function EmailListChronological({ items, selectedId, onSelect, compact = false, selectedIds, onToggleSelect, onDelete, onArchive }: EmailListChronologicalProps) {
+export default function EmailListChronological({ items, selectedId, onSelect, compact = false, selectedIds, onToggleSelect, onDelete, onArchive, onFlag }: EmailListChronologicalProps) {
   const hasAnySelected = (selectedIds?.size ?? 0) > 0;
   const groups = useMemo(() => {
     const sorted = [...items].sort((a, b) => {
@@ -75,6 +76,7 @@ export default function EmailListChronological({ items, selectedId, onSelect, co
                 hasAnySelected={hasAnySelected}
                 onDelete={onDelete}
                 onArchive={onArchive}
+                onFlag={onFlag}
                 selectedIds={selectedIds}
               />
             ))}

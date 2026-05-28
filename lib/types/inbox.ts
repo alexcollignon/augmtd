@@ -11,6 +11,14 @@ export type VisualSection = 'prepared' | 'suggested' | 'awareness'; // @deprecat
 
 export type ItemType = 'reply' | 'decision' | 'meeting' | 'review' | 'fyi' | 'notification';
 
+export interface UserInboxCategory {
+  id: string;
+  name: string;
+  description: string;
+  emoji?: string;
+  color?: string;
+}
+
 /** Item types shown in Smart view (require action or awareness from user) */
 export const SMART_VIEW_TYPES: ItemType[] = ['reply', 'decision', 'meeting', 'review', 'fyi'];
 
@@ -252,6 +260,8 @@ export interface InboxItem {
   status: string;
   needs_review: boolean;
   is_read: boolean;
+  is_flagged?: boolean;
+  custom_category?: string | null;
 
   // Linked work thread (set when user opens item in Workflows)
   work_thread_id?: string | null;

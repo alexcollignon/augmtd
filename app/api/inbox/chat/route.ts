@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { getAIClient } from '@/lib/ai/factory';
 import { buildInboxSnapshot, formatSnapshotForPrompt } from '@/lib/inbox/chat-context';
+import { searchInboxForContext, formatSearchResultsForPrompt } from '@/lib/inbox/chat-search';
 import { buildKBContext } from '@/lib/knowledge/build-kb-context';
 import { getCalendarContext } from '@/lib/calendar/calendar-context';
 import { formatCalendarContextForChat } from '@/lib/calendar/format-calendar-context';
@@ -36,7 +37,7 @@ You help users search and understand their emails, answer questions using their 
 
 {{FOCUSED_EMAIL}}
 
-Here is the user's current inbox (most recent first):
+{{TARGETED_RESULTS}}Here is the user's current inbox (most recent first):
 {{INBOX_SNAPSHOT}}
 
 Rules:
@@ -105,7 +106,7 @@ export async function POST(request: NextRequest) {
     const { client: openaiClient, model: chatModel } = await getAIClient(user.id, 'conversation', supabase);
 
     const body = await request.json();
-    const { message, history = [], sources, fileContext, mode, composeDraft, emailContext, replyDraft } = body as {
+    const { message, history = [], sources, fileContext, mode, composeDraft, emailContext, replyDraft, activeConnectionId } = body as {
       message: string;
       history: Array<{ role: 'user' | 'assistant'; content: string }>;
       sources?: string[];
@@ -113,6 +114,7 @@ export async function POST(request: NextRequest) {
       mode?: 'inbox' | 'compose' | 'reply';
       composeDraft?: { to: string; cc: string; subject: string; body: string };
       replyDraft?: string;
+      activeConnectionId?: string | null;
       emailContext?: {
         subject?: string;
         from?: string;
@@ -134,9 +136,12 @@ export async function POST(request: NextRequest) {
 
     const activeSources = sources?.length ? sources : ['inbox', 'kb', 'calendar'];
 
-    const [snapshot, kbContext, calendarCtx, userContextBlock, indexedFilesResult] = await Promise.all([
+    const [snapshot, targetedResults, kbContext, calendarCtx, userContextBlock, indexedFilesResult] = await Promise.all([
       activeSources.includes('inbox') && mode !== 'reply'
-        ? buildInboxSnapshot(user.id, message, supabase)
+        ? buildInboxSnapshot(user.id, message, supabase, activeConnectionId)
+        : Promise.resolve([]),
+      activeSources.includes('inbox') && mode !== 'reply'
+        ? searchInboxForContext(message, user.id, activeConnectionId, supabase)
         : Promise.resolve([]),
       activeSources.includes('kb')
         ? buildKBContext(user.id, message, adminClient, { fileLimit: 6, maxChunksPerFile: 3, threshold: 0.2, maxTotalChars: 12000 })
@@ -149,7 +154,11 @@ export async function POST(request: NextRequest) {
         ? supabase.from('knowledge_files').select('filename').eq('user_id', user.id)
         : Promise.resolve({ data: [] }),
     ]);
-    const snapshotText = formatSnapshotForPrompt(snapshot);
+    // Remove from snapshot any items already surfaced by targeted search to avoid duplication
+    const targetedIds = new Set(targetedResults.map((r: any) => r.id))
+    const deduplicatedSnapshot = (snapshot as any[]).filter((i: any) => !targetedIds.has(i.id))
+    const snapshotText = formatSnapshotForPrompt(deduplicatedSnapshot)
+    const targetedText = formatSearchResultsForPrompt(targetedResults)
     const calendarText = formatCalendarContextForChat(calendarCtx);
     const today = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 
@@ -167,9 +176,14 @@ From: ${emailContext.fromName ? `${emailContext.fromName} <${emailContext.from}>
 Subject: ${emailContext.subject || '(no subject)'}${emailContext.summary ? `\nSummary: ${emailContext.summary}` : ''}${emailContext.keyPoints?.length ? `\nKey points:\n${emailContext.keyPoints.map(p => `- ${p}`).join('\n')}` : ''}${emailContext.body ? `\nBody:\n${emailContext.body.slice(0, 2000)}${emailContext.body.length > 2000 ? '\n[...truncated]' : ''}` : ''}`
       : '';
 
+    const targetedSection = targetedText
+      ? `TARGETED SEARCH RESULTS (matched your query — may go beyond the recent snapshot below):\n${targetedText}\n\n`
+      : ''
+
     let systemPrompt = SYSTEM_PROMPT
       .replace('{{USER_CONTEXT}}', userContextBlock || '')
       .replace('{{INBOX_SNAPSHOT}}', snapshotText || 'No active inbox items.')
+      .replace('{{TARGETED_RESULTS}}', targetedSection)
       .replace('{{FOCUSED_EMAIL}}', focusedEmailBlock)
       .replace('{{TODAY}}', today)
       .replace('{{KB_CONTEXT}}', kbSection)
