@@ -26,7 +26,7 @@ export default function RootLayout({
         <RecordingProvider>
           {children}
         </RecordingProvider>
-        <Toaster position="bottom-right" richColors />
+        <Toaster position="bottom-left" richColors />
       </body>
     </html>
   );
