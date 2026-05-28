@@ -1,8 +1,9 @@
 'use client';
 
-import { useState } from 'react';
-import { PaperClipIcon, CheckIcon, TrashIcon, XMarkIcon, ArchiveBoxArrowDownIcon } from '@heroicons/react/24/outline';
-import type { InboxItem } from '@/lib/types/inbox';
+import { useState, useRef, useEffect } from 'react';
+import { PaperClipIcon, CheckIcon, TrashIcon, XMarkIcon, ArchiveBoxArrowDownIcon, EllipsisHorizontalIcon, TagIcon } from '@heroicons/react/24/outline';
+import { FlagIcon } from '@heroicons/react/24/solid';
+import type { InboxItem, UserInboxCategory } from '@/lib/types/inbox';
 
 
 interface EmailListCardProps {
@@ -15,6 +16,9 @@ interface EmailListCardProps {
   hasAnySelected?: boolean;
   onDelete?: (id: string) => void;
   onArchive?: (id: string) => void;
+  onFlag?: (id: string) => void;
+  onCategorize?: (id: string, category: string | null) => void;
+  userCategories?: UserInboxCategory[];
   selectedIds?: Set<string>;
 }
 
@@ -27,9 +31,26 @@ function formatTime(dateStr: string): string {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
-export default function EmailListCard({ item, isSelected, onSelect, compact = false, isChecked = false, onToggleCheck, hasAnySelected = false, onDelete, onArchive, selectedIds }: EmailListCardProps) {
+export default function EmailListCard({ item, isSelected, onSelect, compact = false, isChecked = false, onToggleCheck, hasAnySelected = false, onDelete, onArchive, onFlag, onCategorize, userCategories = [], selectedIds }: EmailListCardProps) {
   const [pendingAction, setPendingAction] = useState<'delete' | 'archive' | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [showCategoryPicker, setShowCategoryPicker] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
   const sourceData = item.source_data;
+  const isFlagged = item.is_flagged === true;
+  const hasCategories = onCategorize && userCategories.length > 0;
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const handle = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+        setShowCategoryPicker(false);
+      }
+    };
+    document.addEventListener('mousedown', handle);
+    return () => document.removeEventListener('mousedown', handle);
+  }, [menuOpen]);
 
   const fromDisplay = sourceData?.from_name || sourceData?.from || '';
   const subjectDisplay = sourceData?.subject || '';
@@ -87,23 +108,111 @@ export default function EmailListCard({ item, isSelected, onSelect, compact = fa
       <div
         draggable
         onDragStart={handleDragStart}
-        onClick={() => onSelect(item)}
+        onClick={() => { if (!pendingAction) onSelect(item); }}
         className={`w-full text-left relative rounded-md transition-colors cursor-pointer group ${
           isChecked ? 'bg-indigo-50/60' : isSelected ? 'bg-indigo-50' : 'bg-white hover:bg-neutral-50'
         }`}
       >
         {Checkbox}
-        <div className="pl-8 pr-3 py-1.5">
-          <div className="flex items-baseline justify-between gap-2 mb-0.5">
-            <div className="flex items-center gap-1.5 min-w-0">
-              {isUnread && <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 flex-shrink-0 mb-0.5" />}
+        <div className="pl-8 pr-2 py-1.5">
+          <div className="flex items-center justify-between gap-2 mb-0.5">
+            <div className="flex items-center gap-1.5 min-w-0 flex-1">
+              {isUnread && <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 flex-shrink-0" />}
               <span className={`text-[12px] truncate ${isUnread ? 'font-bold' : 'font-semibold'} ${isSelected ? 'text-indigo-900' : 'text-neutral-900'}`}>
                 {fromDisplay}
               </span>
             </div>
-            {timeDisplay && (
-              <span className="text-[10px] text-neutral-400 flex-shrink-0">{timeDisplay}</span>
-            )}
+            {/* Right slot: time + 3-dot menu */}
+            <div className="relative flex items-center flex-shrink-0 gap-0.5" ref={menuRef}>
+              {pendingAction ? (
+                <div className="flex items-center gap-0.5">
+                  <span className="text-[10px] text-neutral-500 mr-0.5">
+                    {pendingAction === 'delete' ? 'Delete?' : 'Archive?'}
+                  </span>
+                  <button onClick={handleConfirm} className={`p-0.5 rounded ${pendingAction === 'delete' ? 'text-red-500' : 'text-neutral-500'}`} title="Confirm">
+                    <CheckIcon className="w-3 h-3" strokeWidth={2.5} />
+                  </button>
+                  <button onClick={(e) => { e.stopPropagation(); setPendingAction(null); }} className="p-0.5 rounded text-neutral-400" title="Cancel">
+                    <XMarkIcon className="w-3 h-3" />
+                  </button>
+                </div>
+              ) : (
+                <>
+                  {onFlag && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onFlag(item.id); }}
+                      title={isFlagged ? 'Unflag' : 'Flag'}
+                      className={`p-0.5 rounded transition-colors ${isFlagged ? 'text-amber-400 hover:text-amber-500' : 'text-neutral-300 hover:text-amber-400 opacity-0 group-hover:opacity-100'}`}
+                    >
+                      <FlagIcon className="w-2.5 h-2.5" />
+                    </button>
+                  )}
+                  {timeDisplay && (
+                    <span className={`text-[10px] ${isUnread ? 'text-indigo-500 font-medium' : 'text-neutral-400'} ${menuOpen ? 'invisible' : 'group-hover:invisible'}`}>{timeDisplay}</span>
+                  )}
+                  <div className={`absolute right-0 transition-opacity ${menuOpen ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setMenuOpen(v => !v); setShowCategoryPicker(false); }}
+                      className="p-0.5 rounded text-neutral-400 hover:text-neutral-600"
+                      title="More actions"
+                    >
+                      <EllipsisHorizontalIcon className="w-3.5 h-3.5" />
+                    </button>
+                    {menuOpen && (
+                      <div className="absolute right-0 top-full mt-1 w-44 bg-white rounded-xl shadow-lg border border-neutral-100 py-1 z-50 text-[12px]" onClick={e => e.stopPropagation()}>
+                        {showCategoryPicker ? (
+                          <>
+                            <div className="px-3 py-1.5 text-[11px] font-semibold text-neutral-400 uppercase tracking-wide border-b border-neutral-100 flex items-center justify-between">
+                              <span>Assign category</span>
+                              <button onClick={() => setShowCategoryPicker(false)} className="text-neutral-400 hover:text-neutral-600"><XMarkIcon className="w-3 h-3" /></button>
+                            </div>
+                            {userCategories.map(cat => (
+                              <button key={cat.id} onClick={() => { onCategorize!(item.id, item.custom_category === cat.name ? null : cat.name); setMenuOpen(false); setShowCategoryPicker(false); }} className={`w-full text-left px-3 py-1.5 hover:bg-neutral-50 flex items-center gap-2 ${item.custom_category === cat.name ? 'text-indigo-600 font-medium' : 'text-neutral-700'}`}>
+                                {cat.emoji && <span>{cat.emoji}</span>}
+                                <span className="truncate">{cat.name}</span>
+                                {item.custom_category === cat.name && <CheckIcon className="w-3 h-3 ml-auto flex-shrink-0" />}
+                              </button>
+                            ))}
+                            {item.custom_category && (
+                              <button onClick={() => { onCategorize!(item.id, null); setMenuOpen(false); setShowCategoryPicker(false); }} className="w-full text-left px-3 py-1.5 hover:bg-neutral-50 text-neutral-400 border-t border-neutral-100">Remove category</button>
+                            )}
+                          </>
+                        ) : (
+                          <>
+                            {hasCategories && (
+                              <button onClick={() => setShowCategoryPicker(true)} className="w-full text-left px-3 py-1.5 hover:bg-neutral-50 text-neutral-700 flex items-center gap-2">
+                                <TagIcon className="w-3.5 h-3.5 text-neutral-400" />
+                                <span>Assign category</span>
+                                {item.custom_category && <span className="ml-auto text-[10px] text-indigo-500 font-medium truncate max-w-[60px]">{item.custom_category}</span>}
+                              </button>
+                            )}
+                            {onFlag && (
+                              <button onClick={() => { onFlag(item.id); setMenuOpen(false); }} className="w-full text-left px-3 py-1.5 hover:bg-neutral-50 flex items-center gap-2 text-neutral-700">
+                                <FlagIcon className={`w-3.5 h-3.5 ${isFlagged ? 'text-amber-400' : 'text-neutral-400'}`} />
+                                <span>{isFlagged ? 'Unflag' : 'Flag'}</span>
+                              </button>
+                            )}
+                            {(hasCategories || onFlag) && (onArchive || onDelete) && <div className="border-t border-neutral-100 my-1" />}
+                            {onArchive && (
+                              <button onClick={() => { setPendingAction('archive'); setMenuOpen(false); }} className="w-full text-left px-3 py-1.5 hover:bg-neutral-50 flex items-center gap-2 text-neutral-700">
+                                <ArchiveBoxArrowDownIcon className="w-3.5 h-3.5 text-neutral-400" />
+                                <span>Archive</span>
+                              </button>
+                            )}
+                            {onDelete && (
+                              <button onClick={() => { setPendingAction('delete'); setMenuOpen(false); }} className="w-full text-left px-3 py-1.5 hover:bg-neutral-50 flex items-center gap-2 text-red-500">
+                                <TrashIcon className="w-3.5 h-3.5" />
+                                <span>Delete</span>
+                              </button>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <p className={`text-[11px] truncate flex-1 ${isSelected ? 'text-indigo-700 font-medium' : 'text-neutral-500'}`}>
@@ -135,8 +244,8 @@ export default function EmailListCard({ item, isSelected, onSelect, compact = fa
             </span>
           </div>
 
-          {/* Right slot — timestamp stays pinned right; icons overlay it on hover */}
-          <div className="relative flex items-center flex-shrink-0">
+          {/* Right slot */}
+          <div className="relative flex items-center flex-shrink-0 gap-0.5" ref={menuRef}>
             {pendingAction ? (
               <div className="flex items-center gap-0.5">
                 <span className="text-[10px] text-neutral-500 mr-0.5">
@@ -159,27 +268,99 @@ export default function EmailListCard({ item, isSelected, onSelect, compact = fa
               </div>
             ) : (
               <>
-                {timeDisplay && (
-                  <span className={`text-[10px] ${isUnread ? 'text-indigo-500 font-medium' : 'text-neutral-400'} group-hover:invisible`}>{timeDisplay}</span>
+                {/* Flag — always visible when flagged, hover-only otherwise */}
+                {onFlag && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onFlag(item.id); }}
+                    title={isFlagged ? 'Unflag' : 'Flag'}
+                    className={`p-0.5 rounded transition-colors ${isFlagged ? 'text-amber-400 hover:text-amber-500' : 'text-neutral-300 hover:text-amber-400 opacity-0 group-hover:opacity-100'}`}
+                  >
+                    <FlagIcon className="w-3 h-3" />
+                  </button>
                 )}
-                <div className="absolute right-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                  {onArchive && (
-                    <button
-                      onClick={(e) => { e.stopPropagation(); setPendingAction('archive'); }}
-                      className="p-0.5 rounded text-neutral-400 hover:text-neutral-600"
-                      title="Archive"
-                    >
-                      <ArchiveBoxArrowDownIcon className="w-3.5 h-3.5" />
-                    </button>
-                  )}
-                  {onDelete && (
-                    <button
-                      onClick={(e) => { e.stopPropagation(); setPendingAction('delete'); }}
-                      className="p-0.5 rounded text-neutral-400 hover:text-red-500"
-                      title="Delete"
-                    >
-                      <TrashIcon className="w-3.5 h-3.5" />
-                    </button>
+                {timeDisplay && (
+                  <span className={`text-[10px] ${isUnread ? 'text-indigo-500 font-medium' : 'text-neutral-400'} ${menuOpen ? 'invisible' : 'group-hover:invisible'}`}>{timeDisplay}</span>
+                )}
+                {/* 3-dot menu button */}
+                <div className={`absolute right-0 transition-opacity ${menuOpen ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setMenuOpen(v => !v); setShowCategoryPicker(false); }}
+                    className="p-0.5 rounded text-neutral-400 hover:text-neutral-600"
+                    title="More actions"
+                  >
+                    <EllipsisHorizontalIcon className="w-3.5 h-3.5" />
+                  </button>
+                  {menuOpen && (
+                    <div className="absolute right-0 top-full mt-1 w-44 bg-white rounded-xl shadow-lg border border-neutral-100 py-1 z-50 text-[12px]" onClick={e => e.stopPropagation()}>
+                      {showCategoryPicker ? (
+                        <>
+                          <div className="px-3 py-1.5 text-[11px] font-semibold text-neutral-400 uppercase tracking-wide border-b border-neutral-100 flex items-center justify-between">
+                            <span>Assign category</span>
+                            <button onClick={() => setShowCategoryPicker(false)} className="text-neutral-400 hover:text-neutral-600"><XMarkIcon className="w-3 h-3" /></button>
+                          </div>
+                          {userCategories.map(cat => (
+                            <button
+                              key={cat.id}
+                              onClick={() => { onCategorize!(item.id, item.custom_category === cat.name ? null : cat.name); setMenuOpen(false); setShowCategoryPicker(false); }}
+                              className={`w-full text-left px-3 py-1.5 hover:bg-neutral-50 flex items-center gap-2 ${item.custom_category === cat.name ? 'text-indigo-600 font-medium' : 'text-neutral-700'}`}
+                            >
+                              {cat.emoji && <span>{cat.emoji}</span>}
+                              <span className="truncate">{cat.name}</span>
+                              {item.custom_category === cat.name && <CheckIcon className="w-3 h-3 ml-auto flex-shrink-0" />}
+                            </button>
+                          ))}
+                          {item.custom_category && (
+                            <button
+                              onClick={() => { onCategorize!(item.id, null); setMenuOpen(false); setShowCategoryPicker(false); }}
+                              className="w-full text-left px-3 py-1.5 hover:bg-neutral-50 text-neutral-400 border-t border-neutral-100"
+                            >
+                              Remove category
+                            </button>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          {hasCategories && (
+                            <button
+                              onClick={() => setShowCategoryPicker(true)}
+                              className="w-full text-left px-3 py-1.5 hover:bg-neutral-50 text-neutral-700 flex items-center gap-2"
+                            >
+                              <TagIcon className="w-3.5 h-3.5 text-neutral-400" />
+                              <span>Assign category</span>
+                              {item.custom_category && <span className="ml-auto text-[10px] text-indigo-500 font-medium truncate max-w-[60px]">{item.custom_category}</span>}
+                            </button>
+                          )}
+                          {onFlag && (
+                            <button
+                              onClick={() => { onFlag(item.id); setMenuOpen(false); }}
+                              className="w-full text-left px-3 py-1.5 hover:bg-neutral-50 flex items-center gap-2 text-neutral-700"
+                            >
+                              <FlagIcon className={`w-3.5 h-3.5 ${isFlagged ? 'text-amber-400' : 'text-neutral-400'}`} />
+                              <span>{isFlagged ? 'Unflag' : 'Flag'}</span>
+                            </button>
+                          )}
+                          {(hasCategories || onFlag) && (onArchive || onDelete) && <div className="border-t border-neutral-100 my-1" />}
+                          {onArchive && (
+                            <button
+                              onClick={() => { setPendingAction('archive'); setMenuOpen(false); }}
+                              className="w-full text-left px-3 py-1.5 hover:bg-neutral-50 flex items-center gap-2 text-neutral-700"
+                            >
+                              <ArchiveBoxArrowDownIcon className="w-3.5 h-3.5 text-neutral-400" />
+                              <span>Archive</span>
+                            </button>
+                          )}
+                          {onDelete && (
+                            <button
+                              onClick={() => { setPendingAction('delete'); setMenuOpen(false); }}
+                              className="w-full text-left px-3 py-1.5 hover:bg-neutral-50 flex items-center gap-2 text-red-500"
+                            >
+                              <TrashIcon className="w-3.5 h-3.5" />
+                              <span>Delete</span>
+                            </button>
+                          )}
+                        </>
+                      )}
+                    </div>
                   )}
                 </div>
               </>
@@ -200,12 +381,22 @@ export default function EmailListCard({ item, isSelected, onSelect, compact = fa
         )}
 
         {/* Badges */}
-        {sourceData?.attachments?.length > 0 && (
-          <div className="flex items-center gap-2 mt-1.5">
-            <span className="inline-flex items-center gap-0.5 text-neutral-400">
-              <PaperClipIcon className="w-2.5 h-2.5" />
-              <span className="text-[10px]">{sourceData.attachments.length}</span>
-            </span>
+        {(item.custom_category || sourceData?.attachments?.length > 0) && (
+          <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+            {item.custom_category && (
+              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-indigo-50 text-indigo-600 text-[10px] font-medium">
+                {userCategories.find(c => c.name === item.custom_category)?.emoji && (
+                  <span>{userCategories.find(c => c.name === item.custom_category)!.emoji}</span>
+                )}
+                {item.custom_category}
+              </span>
+            )}
+            {sourceData?.attachments?.length > 0 && (
+              <span className="inline-flex items-center gap-0.5 text-neutral-400">
+                <PaperClipIcon className="w-2.5 h-2.5" />
+                <span className="text-[10px]">{sourceData.attachments.length}</span>
+              </span>
+            )}
           </div>
         )}
       </div>

@@ -85,6 +85,7 @@ interface Props {
   onSelectConnection: (id: string) => void;
   onRenameFolder?: (connectionId: string, folderId: string, newName: string) => Promise<void>;
   onDeleteFolder?: (connectionId: string, folderId: string) => Promise<void>;
+  width?: number;
 }
 
 function formatEmail(email: string): string {
@@ -157,6 +158,7 @@ export default function FolderSidebar({
   onSelectConnection,
   onRenameFolder,
   onDeleteFolder,
+  width,
 }: Props) {
   const [newFolderConnectionId, setNewFolderConnectionId] = useState<string | null>(null);
   const [newFolderName, setNewFolderName] = useState('');
@@ -329,9 +331,8 @@ export default function FolderSidebar({
 
   return (
     <div
-      className={`flex-shrink-0 bg-neutral-50 pt-2 pb-2 pl-2 transition-[width] duration-200 overflow-hidden ${
-        collapsed ? 'w-[52px]' : 'w-[196px]'
-      }`}
+      className={`flex-shrink-0 bg-neutral-50 pt-2 pb-2 pl-2 overflow-hidden ${collapsed ? 'transition-[width] duration-200' : ''}`}
+      style={{ width: collapsed ? 52 : (width ?? 196) }}
     >
     <div className="h-full flex flex-col rounded-2xl bg-white shadow-sm overflow-hidden">
 

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { getAIClient } from '@/lib/ai/factory';
 import { buildInboxSnapshot, formatSnapshotForPrompt } from '@/lib/inbox/chat-context';
+import { searchInboxForContext, formatSearchResultsForPrompt } from '@/lib/inbox/chat-search';
 import { buildKBContext } from '@/lib/knowledge/build-kb-context';
 import { getCalendarContext } from '@/lib/calendar/calendar-context';
 import { formatCalendarContextForChat } from '@/lib/calendar/format-calendar-context';
@@ -186,6 +187,7 @@ export async function POST(request: NextRequest) {
 
     const [
       snapshot,
+      targetedResults,
       kbContext,
       calendarCtx,
       userContextBlock,
@@ -194,7 +196,10 @@ export async function POST(request: NextRequest) {
       contactsResult,
     ] = await Promise.all([
       fetchInbox
-        ? buildInboxSnapshot(user.id, message, supabase)
+        ? buildInboxSnapshot(user.id, message, supabase, activeConnectionId)
+        : Promise.resolve([]),
+      fetchInbox
+        ? searchInboxForContext(message, user.id, activeConnectionId, supabase)
         : Promise.resolve([]),
       fetchKB && adminClient
         ? buildKBContext(user.id, message, adminClient, { fileLimit: 6, maxChunksPerFile: 3, threshold: 0.2, maxTotalChars: 12000 })
@@ -226,7 +231,10 @@ export async function POST(request: NextRequest) {
         : Promise.resolve({ data: [] }),
     ]);
 
-    const snapshotText = formatSnapshotForPrompt(snapshot);
+    const targetedIds = new Set((targetedResults as any[]).map((r: any) => r.id))
+    const deduplicatedSnapshot = (snapshot as any[]).filter((i: any) => !targetedIds.has(i.id))
+    const snapshotText = formatSnapshotForPrompt(deduplicatedSnapshot)
+    const targetedText = formatSearchResultsForPrompt(targetedResults as any[])
     const calendarText = formatCalendarContextForChat(calendarCtx);
     const today = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 
@@ -301,11 +309,12 @@ Read status: ${emailContext.isRead === false ? 'unread (the user has not yet rea
     }
 
     // Inbox snapshot section
-    const inboxSnapshotSection = fetchInbox && snapshotText
-      ? `Here is the user's current inbox (most recent first):\n${snapshotText}`
-      : fetchInbox
-        ? 'Here is the user\'s current inbox: No active inbox items.'
-        : '';
+    const targetedSection = targetedText
+      ? `TARGETED SEARCH RESULTS (matched your query — may go beyond the recent snapshot below):\n${targetedText}\n\n`
+      : ''
+    const inboxSnapshotSection = fetchInbox
+      ? `${targetedSection}Here is the user's current inbox (most recent first):\n${snapshotText || 'No active inbox items.'}`
+      : '';
 
     let systemPrompt = BASE_SYSTEM_PROMPT
       .replace('{{USER_CONTEXT}}', userContextBlock || '')
