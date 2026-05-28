@@ -8,6 +8,7 @@ import { buildChatSystemPrompt, detectModelFamily } from '@/lib/work/chat-system
 import { buildUserContextBlock } from '@/lib/context/build-user-context';
 import { buildKBContext } from '@/lib/knowledge/build-kb-context';
 import { buildInboxSnapshot, formatSnapshotForPrompt } from '@/lib/inbox/chat-context';
+import { searchInboxForContext, formatSearchResultsForPrompt } from '@/lib/inbox/chat-search';
 import { getCalendarContext } from '@/lib/calendar/calendar-context';
 import { formatCalendarContextForChat } from '@/lib/calendar/format-calendar-context';
 import { runFullPipeline } from '@/lib/work/generate-pipeline';
@@ -989,12 +990,12 @@ function buildChatTools(sources: string[], _provider: string, _modelFamily: stri
   if (sources.includes('inbox')) {
     neutral.push({
       name: 'get_recent_emails',
-      description: "Search recent emails and inbox items by topic, person, or keyword. Returns a list with IDs, senders, subjects, and short previews. Use get_email_body to read the full content of a specific email.",
+      description: "Search emails by topic, sender, or keyword. Performs a targeted search — not limited to recent items, can find older emails too. Pass the most specific filter you can extract from the user's request (e.g. 'personal assistant application', 'invoice', 'board meeting'). Searches subject lines and email previews. If you need the full content of a specific email after finding it, call get_email_body with its ID.",
       input_schema: {
         type: 'object',
         properties: {
-          filter: { type: 'string', description: 'Topic or keyword to search for' },
-          from: { type: 'string', description: 'Sender name or email to filter by' },
+          filter: { type: 'string', description: 'Topic, subject keyword, or concept to search for. Be specific — e.g. "job application personal assistant" not just "email".' },
+          from: { type: 'string', description: 'Sender name or email address to filter by. Only use when the user is asking about a specific person.' },
           date_range: { type: 'string', enum: ['today', 'this_week', 'this_month', 'all'], description: 'Time range. Default: all.' },
         },
         required: [],
@@ -1302,12 +1303,24 @@ async function executeChatTool(
       const filter = (input.filter as string) || '';
       const fromFilter = (input.from as string | undefined);
       const emailDateRange = (input.date_range as string | undefined);
-      // Build combined query: topic + sender
       const queryParts = [filter, fromFilter].filter(Boolean).join(' ');
-      const snapshot = await buildInboxSnapshot(ctx.userId, queryParts || null, ctx.supabase);
 
-      // Apply date_range filter on results
-      let filtered = snapshot;
+      // Run targeted DB search and broad snapshot in parallel.
+      // Targeted search uses ilike queries on subject/snippet/sender — not limited to recent items.
+      // Snapshot fetches last 200 items with client-side filtering as a complement.
+      const [snapshot, targeted] = await Promise.all([
+        buildInboxSnapshot(ctx.userId, queryParts || null, ctx.supabase, undefined, 200),
+        queryParts ? searchInboxForContext(queryParts, ctx.userId, null, ctx.supabase) : Promise.resolve([]),
+      ]);
+
+      // Deduplicate: snapshot drops any ID already surfaced by targeted search
+      const targetedIds = new Set(targeted.map((r: any) => r.id));
+      const deduplicatedSnapshot = snapshot.filter((i: any) => !targetedIds.has(i.id));
+
+      // Merge for date_range + from filtering
+      const combined = [...targeted, ...deduplicatedSnapshot];
+
+      let filtered = combined;
       if (emailDateRange && emailDateRange !== 'all') {
         const now = new Date();
         let cutoff: Date;
@@ -1317,10 +1330,9 @@ async function executeChatTool(
           case 'this_month': cutoff = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000); break;
           default: cutoff = new Date(0);
         }
-        filtered = snapshot.filter(item => new Date(item.createdAt) >= cutoff);
+        filtered = combined.filter(item => new Date(item.createdAt) >= cutoff);
       }
 
-      // Apply from filter more precisely (buildInboxSnapshot does substring, but we refine)
       if (fromFilter) {
         const fLower = fromFilter.toLowerCase();
         filtered = filtered.filter(item =>
@@ -1329,9 +1341,19 @@ async function executeChatTool(
         );
       }
 
-      const result = formatSnapshotForPrompt(filtered) || 'No matching emails found.';
-      const count = filtered?.length ?? 0;
-      const summary = count > 0 ? `Found ${count} email${count > 1 ? 's' : ''}` : 'No matching emails found';
+      // Format with clear sections so the model knows which results were targeted matches
+      const filteredTargeted = filtered.filter((i: any) => targetedIds.has(i.id));
+      const filteredSnapshot = filtered.filter((i: any) => !targetedIds.has(i.id));
+      const targetedText = formatSearchResultsForPrompt(filteredTargeted);
+      const snapshotText = formatSnapshotForPrompt(filteredSnapshot);
+
+      const result = [
+        targetedText ? `TARGETED RESULTS (matched your query):\n${targetedText}` : '',
+        snapshotText ? `RECENT INBOX:\n${snapshotText}` : '',
+      ].filter(Boolean).join('\n\n') || 'No matching emails found.';
+
+      const count = filtered.length;
+      const summary = count > 0 ? `Found ${count} email${count !== 1 ? 's' : ''}` : 'No matching emails found';
       return { result, summary };
     }
 
