@@ -19,7 +19,8 @@ export async function buildInboxSnapshot(
   userId: string,
   query: string | null,
   supabase: SupabaseClient,
-  connectionId?: string | null
+  connectionId?: string | null,
+  limit = 80,
 ): Promise<InboxSnapshot[]> {
   let q = supabase
     .from('inbox_items')
@@ -27,7 +28,7 @@ export async function buildInboxSnapshot(
     .eq('user_id', userId)
     .neq('status', 'dismissed')
     .order('created_at', { ascending: false })
-    .limit(80)
+    .limit(limit)
 
   if (connectionId) q = q.eq('connection_id', connectionId)
 
@@ -62,7 +63,7 @@ export async function buildInboxSnapshot(
 
 export function formatSnapshotForPrompt(items: InboxSnapshot[]): string {
   return items
-    .slice(0, 40)
+    .slice(0, 60)
     .map(i => {
       const section =
         i.visualSection === 'prepared' ? 'prepared'

@@ -59,13 +59,16 @@ function extractEntities(message: string): ExtractedEntities {
     }
   }
 
-  // Extract capitalized proper noun pairs not at sentence starts
+  // Extract capitalized proper noun pairs not at sentence starts.
+  // Push to keywords (not senderNames) — topic concepts like "Personal Assistant",
+  // "Marketing Director", "Job Application" should be searched in subject/snippet,
+  // not in from_name/from_address where they'll never match.
   const properNouns = message.match(/(?<![.!?]\s)(?<!\n)\b([A-Z][a-z]{1,20}(?:\s+[A-Z][a-z]{1,20})+)\b/g)
   if (properNouns) {
     for (const noun of properNouns) {
       const words = noun.split(' ')
       if (words.every(w => !STOPWORDS.has(w.toLowerCase()))) {
-        senderNames.push(noun)
+        keywords.push(noun)
       }
     }
   }
@@ -179,11 +182,11 @@ export async function searchInboxForContext(
     )
   }
 
-  // Search by keyword in subject
-  for (const kw of entities.keywords.slice(0, 3)) {
+  // Search by keyword in subject or snippet
+  for (const kw of entities.keywords.slice(0, 5)) {
     queries.push(
       baseQuery()
-        .filter('source_data->>subject', 'ilike', `%${kw}%`)
+        .or(`source_data->>subject.ilike.%${kw}%,source_data->>snippet.ilike.%${kw}%`)
         .then(r => r.data)
     )
   }
