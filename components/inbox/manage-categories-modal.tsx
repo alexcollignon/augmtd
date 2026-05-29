@@ -31,7 +31,7 @@ function buildDisplayList(orderedKeys: string[], categories: UserInboxCategory[]
   const customMap = Object.fromEntries(categories.map(c => [c.name, c]));
   return orderedKeys
     .map(key => {
-      if (key in builtinMap) return { type: 'builtin' as const, key, ...builtinMap[key] };
+      if (key in builtinMap) return { type: 'builtin' as const, ...builtinMap[key] };
       if (key in customMap) return { type: 'custom' as const, key, cat: customMap[key] };
       return null;
     })
