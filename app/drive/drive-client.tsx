@@ -791,7 +791,7 @@ function DriveFileList({ rows, onRowClick, sources, folders, onMove, onNewFolder
         const connectedSource = row.kind === 'kb' ? sources.find((s) => s.id === row.file.source_id) : null;
         const sourceKey = row.kind === 'augmtd' ? row.file.source : (row.file.storage_path ? 'upload' : (connectedSource?.provider ?? 'upload'));
         const isAugmtdIndexed = row.kind === 'augmtd' && row.file.is_indexed;
-        const isSelectable = row.kind === 'kb' || isAugmtdIndexed;
+        const isSelectable = row.kind === 'kb' || row.kind === 'augmtd';
         const isSelected = row.kind === 'kb' ? selectedKbIds.has(id) : selectedAugmtdIds.has(id);
 
         return (

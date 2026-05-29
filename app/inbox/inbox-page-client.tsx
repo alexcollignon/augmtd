@@ -178,6 +178,7 @@ export function InboxPageClient({
   const [inboxItems, setInboxItems] = useState<InboxItem[]>(initialInboxItems);
   const [selectedItem, setSelectedItem] = useState<InboxItem | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isBackfilling, setIsBackfilling] = useState(false);
   const [meetings, setMeetings] = useState<CalendarEvent[]>([]);
   const [meetingsLoading, setMeetingsLoading] = useState(true);
   const [viewMode, setViewMode] = useState<ViewMode>('chronological');
@@ -213,7 +214,7 @@ export function InboxPageClient({
   useEffect(() => {
     fetch('/api/inbox/categories').then(r => r.json()).then(d => {
       if (d.categories) setUserCategories(d.categories);
-      if (d.sectionOrder) setSectionOrder(d.sectionOrder);
+      if (d.sectionOrder) setSectionOrder([...new Set(d.sectionOrder as string[])]);
     });
   }, []);
 
@@ -227,26 +228,65 @@ export function InboxPageClient({
     const d = await r.json();
     if (d.category) {
       setUserCategories(prev => [...prev, d.category]);
-      // Fire backfill without blocking — Realtime will surface updated items
+      // Add to section order (deduplicate in case of stale DB state)
+      setSectionOrder(prev => {
+        const next = prev.includes(d.category.name) ? prev : [...prev, d.category.name];
+        fetch('/api/inbox/categories', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sectionOrder: next }) }).catch(() => {});
+        return next;
+      });
+      // Fire backfill — show loading bar, update UI and toast when done
+      const categoryName = d.category.name;
+      const categoryDescription = d.category.description;
+      setIsBackfilling(true);
       fetch('/api/inbox/categories/backfill', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ categoryName: d.category.name, categoryDescription: d.category.description }),
-      }).catch(() => {});
+        body: JSON.stringify({ categoryName, categoryDescription }),
+      }).then(async res => {
+        const result = await res.json().catch(() => ({}));
+        const count: number = result.updated ?? 0;
+        const ids: string[] = result.ids ?? [];
+        if (count > 0 && ids.length > 0) {
+          // Merge updated custom_category into local state immediately
+          setInboxItems(prev => prev.map(i =>
+            ids.includes(i.id) ? { ...i, custom_category: categoryName } : i
+          ));
+          toast.success(`${count} email${count !== 1 ? 's' : ''} added to "${categoryName}"`);
+        } else {
+          toast.info(`No existing emails matched "${categoryName}" — new ones will be auto-assigned`);
+        }
+      }).catch(() => {
+        toast.error('Categorization failed');
+      }).finally(() => setIsBackfilling(false));
     }
   };
 
   const handleUpdateCategory = async (id: string, fields: Partial<Omit<UserInboxCategory, 'id'>>) => {
+    const old = userCategories.find(c => c.id === id);
     await fetch('/api/inbox/categories', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, ...fields }) });
     setUserCategories(prev => prev.map(c => c.id === id ? { ...c, ...fields } : c));
+    // If name changed, update sectionOrder key too
+    if (fields.name && old?.name && fields.name !== old.name) {
+      setSectionOrder(prev => {
+        const next = prev.map(k => k === old.name ? fields.name! : k);
+        fetch('/api/inbox/categories', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sectionOrder: next }) }).catch(() => {});
+        return next;
+      });
+    }
   };
 
   const handleDeleteCategory = async (id: string) => {
     const deleted = userCategories.find(c => c.id === id);
     await fetch(`/api/inbox/categories?id=${id}`, { method: 'DELETE' });
     setUserCategories(prev => prev.filter(c => c.id !== id));
-    // Clear from local inbox state immediately (server also clears in DB)
+    // Remove from section order and persist to server
     if (deleted?.name) {
+      setSectionOrder(prev => {
+        const next = prev.filter(k => k !== deleted.name);
+        fetch('/api/inbox/categories', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sectionOrder: next }) }).catch(() => {});
+        return next;
+      });
+      // Clear from local inbox state immediately (server also clears in DB)
       setInboxItems(prev => prev.map(i => i.custom_category === deleted.name ? { ...i, custom_category: null } : i));
     }
   };
@@ -1257,12 +1297,12 @@ export function InboxPageClient({
 
               </div>
 
-              {/* Sync bar */}
-              {isSyncing && (
+              {/* Sync / backfill bar */}
+              {(isSyncing || isBackfilling) && (
                 <div className="flex-shrink-0 flex items-center justify-center gap-1.5 py-1.5 bg-neutral-50 border-b border-neutral-100">
                   <ArrowPathIcon className="w-3 h-3 text-neutral-400 animate-spin flex-shrink-0" />
                   <span className="text-[11.5px] text-neutral-400">
-                    {(() => {
+                    {isBackfilling ? 'Categorizing emails…' : (() => {
                       const delta = preSyncCountRef.current !== null
                         ? inboxItems.length - preSyncCountRef.current
                         : 0;

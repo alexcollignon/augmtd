@@ -1,4 +1,8 @@
--- Flag emails + custom smart categories
+-- Flag emails + custom smart categories + per-user settings store
+
+-- Per-user settings (custom categories, section order, preferences)
+ALTER TABLE profiles
+  ADD COLUMN IF NOT EXISTS settings JSONB NOT NULL DEFAULT '{}';
 
 ALTER TABLE inbox_items
   ADD COLUMN IF NOT EXISTS is_flagged BOOLEAN DEFAULT FALSE,
