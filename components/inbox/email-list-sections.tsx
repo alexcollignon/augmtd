@@ -30,13 +30,6 @@ const SECTIONS: Array<{ key: ItemType; label: string; dim?: boolean }> = [
 ];
 
 export default function EmailListSections({ items, selectedId, onSelect, compact = false, selectedIds, onToggleSelect, onDelete, onArchive, onFlag, onCategorize, userCategories = [], sectionOrder }: EmailListSectionsProps) {
-  const orderedSections = sectionOrder
-    ? [...SECTIONS].sort((a, b) => {
-        const ai = sectionOrder.indexOf(a.key);
-        const bi = sectionOrder.indexOf(b.key);
-        return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
-      })
-    : SECTIONS;
   const hasAnySelected = (selectedIds?.size ?? 0) > 0;
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [flaggedCollapsed, setFlaggedCollapsed] = useState(false);
@@ -45,15 +38,16 @@ export default function EmailListSections({ items, selectedId, onSelect, compact
 
   const bySection = useMemo(() => {
     const acc = items.reduce((acc, item) => {
+      // Custom category takes priority — don't show in built-in sections
+      if (item.custom_category) return acc;
       const t = item.item_type as ItemType;
       if (!SMART_VIEW_TYPES.includes(t)) return acc;
       const sd = item.source_data;
-      if (!sd?.from_name && !sd?.from && !sd?.subject) return acc; // skip ghost rows
+      if (!sd?.from_name && !sd?.from && !sd?.subject) return acc;
       if (!acc[t]) acc[t] = [];
       acc[t].push(item);
       return acc;
     }, {} as Record<ItemType, InboxItem[]>);
-    // Sort each bucket newest first
     for (const key of Object.keys(acc) as ItemType[]) {
       acc[key].sort((a, b) => {
         const aTime = a.source_data?.received_at ? new Date(a.source_data.received_at as string).getTime() : new Date(a.created_at).getTime();
@@ -63,6 +57,28 @@ export default function EmailListSections({ items, selectedId, onSelect, compact
     }
     return acc;
   }, [items]);
+
+  // Build a unified ordered list: built-ins + custom categories merged by sectionOrder.
+  // sectionOrder may contain built-in keys ('reply','decision',...) and custom category names.
+  const allSections = useMemo(() => {
+    const builtinMap = Object.fromEntries(SECTIONS.map(s => [s.key, s]));
+    const customMap = Object.fromEntries(userCategories.map(c => [c.name, c]));
+    const defaultKeys = [...SECTIONS.map(s => s.key), ...userCategories.map(c => c.name)];
+    const orderedKeys = sectionOrder
+      ? [
+          ...sectionOrder.filter(k => k in builtinMap || k in customMap),
+          ...defaultKeys.filter(k => !sectionOrder.includes(k)),
+        ]
+      : defaultKeys;
+    return orderedKeys.map(key => {
+      if (key in builtinMap) return { type: 'builtin' as const, key, label: builtinMap[key].label, dim: builtinMap[key].dim };
+      if (key in customMap) return { type: 'custom' as const, key, cat: customMap[key] };
+      return null;
+    }).filter(Boolean) as Array<
+      | { type: 'builtin'; key: string; label: string; dim?: boolean }
+      | { type: 'custom'; key: string; cat: UserInboxCategory }
+    >;
+  }, [sectionOrder, userCategories]);
 
   const toggle = (s: string) => {
     setCollapsed(prev => {
@@ -91,46 +107,9 @@ export default function EmailListSections({ items, selectedId, onSelect, compact
     />
   );
 
-  // Custom category sections (user-defined, shown above built-in sections)
-  const customSections = useMemo(() =>
-    userCategories.map(cat => ({
-      cat,
-      items: items.filter(i => i.custom_category === cat.name),
-    })).filter(s => s.items.length > 0),
-  [userCategories, items]);
-
   return (
     <div className="pt-1">
-      {/* Custom user-defined sections — at top, above built-ins */}
-      {customSections.map(({ cat, items: catItems }) => {
-        const key = `custom:${cat.id}`;
-        const isCollapsed = collapsed.has(key);
-        return (
-          <div key={key}>
-            <button
-              onClick={() => toggle(key)}
-              className="w-full h-8 flex items-center justify-between px-3 bg-indigo-50 border-b border-indigo-100 hover:bg-indigo-100 transition-colors sticky top-0 z-10"
-            >
-              <div className="flex items-center gap-1.5">
-                {cat.emoji && <span className="text-[13px]">{cat.emoji}</span>}
-                <span className="text-[11px] font-semibold uppercase tracking-wide text-indigo-600">{cat.name}</span>
-                <span className="text-[10px] text-indigo-400">({catItems.length})</span>
-              </div>
-              {isCollapsed
-                ? <ChevronDownIcon className="w-3.5 h-3.5 text-indigo-400" />
-                : <ChevronUpIcon className="w-3.5 h-3.5 text-indigo-400" />
-              }
-            </button>
-            {!isCollapsed && (
-              <div className="px-1 py-0.5 space-y-0.5">
-                {catItems.map(renderCard)}
-              </div>
-            )}
-          </div>
-        );
-      })}
-
-      {/* Flagged section — always at top */}
+      {/* Flagged — always pinned at top */}
       {flaggedItems.length > 0 && (
         <div>
           <button
@@ -154,29 +133,38 @@ export default function EmailListSections({ items, selectedId, onSelect, compact
         </div>
       )}
 
-      {orderedSections.map(section => {
-        const sectionItems = bySection[section.key] || [];
+      {/* Unified ordered sections — built-ins and custom categories interleaved */}
+      {allSections.map(entry => {
+        const sectionItems = entry.type === 'builtin'
+          ? (bySection[entry.key as ItemType] || [])
+          : items.filter(i => i.custom_category === entry.cat.name);
         if (sectionItems.length === 0) return null;
-        const isCollapsed = collapsed.has(section.key);
+        const isCollapsed = collapsed.has(entry.key);
+        const isCustom = entry.type === 'custom';
 
         return (
-          <div key={section.key}>
+          <div key={entry.key}>
             <button
-              onClick={() => toggle(section.key)}
-              className="w-full h-8 flex items-center justify-between px-3 bg-neutral-50 border-b border-neutral-100 hover:bg-neutral-100 transition-colors sticky top-0 z-10"
+              onClick={() => toggle(entry.key)}
+              className={`w-full h-8 flex items-center justify-between px-3 border-b transition-colors sticky top-0 z-10 ${
+                isCustom
+                  ? 'bg-indigo-50 border-indigo-100 hover:bg-indigo-100'
+                  : 'bg-neutral-50 border-neutral-100 hover:bg-neutral-100'
+              }`}
             >
-              <div className="flex items-center gap-2">
-                <span className={`text-[11px] font-semibold uppercase tracking-wide ${section.dim ? 'text-neutral-400' : 'text-neutral-600'}`}>
-                  {section.label}
+              <div className="flex items-center gap-1.5">
+                <span className={`text-[11px] font-semibold uppercase tracking-wide ${
+                  isCustom ? 'text-indigo-600' : (entry.type === 'builtin' && entry.dim) ? 'text-neutral-400' : 'text-neutral-600'
+                }`}>
+                  {entry.type === 'builtin' ? entry.label : entry.cat.name}
                 </span>
-                <span className="text-[10px] text-neutral-400">({sectionItems.length})</span>
+                <span className={`text-[10px] ${isCustom ? 'text-indigo-400' : 'text-neutral-400'}`}>({sectionItems.length})</span>
               </div>
               {isCollapsed
-                ? <ChevronDownIcon className="w-3.5 h-3.5 text-neutral-400" />
-                : <ChevronUpIcon className="w-3.5 h-3.5 text-neutral-400" />
+                ? <ChevronDownIcon className={`w-3.5 h-3.5 ${isCustom ? 'text-indigo-400' : 'text-neutral-400'}`} />
+                : <ChevronUpIcon className={`w-3.5 h-3.5 ${isCustom ? 'text-indigo-400' : 'text-neutral-400'}`} />
               }
             </button>
-
             {!isCollapsed && (
               <div className="px-1 py-0.5 space-y-0.5">
                 {sectionItems.map(renderCard)}

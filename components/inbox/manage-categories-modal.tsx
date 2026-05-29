@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useRef } from 'react';
-import { XMarkIcon, PlusIcon, TrashIcon, PencilIcon, CheckIcon, Bars2Icon, LockClosedIcon } from '@heroicons/react/24/outline';
+import { useState, useRef, useEffect } from 'react';
+import { XMarkIcon, PlusIcon, TrashIcon, PencilIcon, Bars2Icon } from '@heroicons/react/24/outline';
 import type { UserInboxCategory } from '@/lib/types/inbox';
 
 interface Props {
@@ -14,7 +14,7 @@ interface Props {
   onReorderDefaults?: (order: string[]) => Promise<void>;
 }
 
-const ALL_DEFAULT_SECTIONS: Array<{ key: string; name: string; description: string; dim?: boolean }> = [
+const BUILTIN_SECTIONS: Array<{ key: string; name: string; description: string; dim?: boolean }> = [
   { key: 'reply',    name: 'Reply Needed', description: 'Emails where a reply is expected from you' },
   { key: 'decision', name: 'Decision',     description: 'Emails requiring a choice or approval' },
   { key: 'meeting',  name: 'Meeting',      description: 'Meeting invites or scheduling requests' },
@@ -22,16 +22,44 @@ const ALL_DEFAULT_SECTIONS: Array<{ key: string; name: string; description: stri
   { key: 'fyi',      name: 'Noted',        description: 'FYI emails — no action required', dim: true },
 ];
 
-export default function ManageCategoriesModal({ categories, onClose, onCreate, onUpdate, onDelete, defaultOrder, onReorderDefaults }: Props) {
-  const orderedDefaults = defaultOrder
-    ? [...ALL_DEFAULT_SECTIONS].sort((a, b) => {
-        const ai = defaultOrder.indexOf(a.key);
-        const bi = defaultOrder.indexOf(b.key);
-        return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
-      })
-    : ALL_DEFAULT_SECTIONS;
+type ListEntry =
+  | { type: 'builtin'; key: string; name: string; description: string; dim?: boolean }
+  | { type: 'custom'; key: string; cat: UserInboxCategory };
 
-  const [localOrder, setLocalOrder] = useState(orderedDefaults);
+function buildDisplayList(orderedKeys: string[], categories: UserInboxCategory[]): ListEntry[] {
+  const builtinMap = Object.fromEntries(BUILTIN_SECTIONS.map(s => [s.key, s]));
+  const customMap = Object.fromEntries(categories.map(c => [c.name, c]));
+  return orderedKeys
+    .map(key => {
+      if (key in builtinMap) return { type: 'builtin' as const, ...builtinMap[key] };
+      if (key in customMap) return { type: 'custom' as const, key, cat: customMap[key] };
+      return null;
+    })
+    .filter(Boolean) as ListEntry[];
+}
+
+export default function ManageCategoriesModal({ categories, onClose, onCreate, onUpdate, onDelete, defaultOrder, onReorderDefaults }: Props) {
+  // Unified ordered keys: both built-in keys and custom category names in one array
+  const [localOrder, setLocalOrder] = useState<string[]>(() => {
+    const all = [...BUILTIN_SECTIONS.map(s => s.key), ...categories.map(c => c.name)];
+    if (!defaultOrder) return all;
+    return [...defaultOrder.filter(k => all.includes(k)), ...all.filter(k => !defaultOrder.includes(k))];
+  });
+
+  // Sync when categories change (new ones added or deleted while modal is open)
+  useEffect(() => {
+    const validKeys = new Set([
+      ...BUILTIN_SECTIONS.map(s => s.key),
+      ...categories.map(c => c.name),
+    ]);
+    setLocalOrder(prev => {
+      const filtered = prev.filter(k => validKeys.has(k));
+      const newKeys = categories.map(c => c.name).filter(k => !prev.includes(k));
+      if (filtered.length === prev.length && newKeys.length === 0) return prev;
+      return [...filtered, ...newKeys];
+    });
+  }, [categories]);
+
   const dragKeyRef = useRef<string | null>(null);
   const [dragOverKey, setDragOverKey] = useState<string | null>(null);
 
@@ -41,36 +69,34 @@ export default function ManageCategoriesModal({ categories, onClose, onCreate, o
     const from = dragKeyRef.current;
     if (!from || from === targetKey) { setDragOverKey(null); return; }
     const next = [...localOrder];
-    const fromIdx = next.findIndex(s => s.key === from);
-    const toIdx = next.findIndex(s => s.key === targetKey);
+    const fromIdx = next.indexOf(from);
+    const toIdx = next.indexOf(targetKey);
+    if (fromIdx === -1 || toIdx === -1) { setDragOverKey(null); return; }
     next.splice(toIdx, 0, next.splice(fromIdx, 1)[0]);
     setLocalOrder(next);
     setDragOverKey(null);
     dragKeyRef.current = null;
-    onReorderDefaults?.(next.map(s => s.key));
+    onReorderDefaults?.(next);
   };
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [editDesc, setEditDesc] = useState('');
-  const [editEmoji, setEditEmoji] = useState('');
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
   const [newDesc, setNewDesc] = useState('');
-  const [newEmoji, setNewEmoji] = useState('');
   const [saving, setSaving] = useState(false);
 
   const startEdit = (cat: UserInboxCategory) => {
     setEditingId(cat.id);
     setEditName(cat.name);
     setEditDesc(cat.description);
-    setEditEmoji(cat.emoji ?? '');
   };
 
   const submitEdit = async () => {
     if (!editingId || !editName.trim()) return;
     setSaving(true);
-    await onUpdate(editingId, { name: editName.trim(), description: editDesc.trim(), emoji: editEmoji.trim() || undefined });
+    await onUpdate(editingId, { name: editName.trim(), description: editDesc.trim() });
     setSaving(false);
     setEditingId(null);
   };
@@ -78,13 +104,14 @@ export default function ManageCategoriesModal({ categories, onClose, onCreate, o
   const submitCreate = async () => {
     if (!newName.trim() || !newDesc.trim()) return;
     setSaving(true);
-    await onCreate({ name: newName.trim(), description: newDesc.trim(), emoji: newEmoji.trim() || undefined });
+    await onCreate({ name: newName.trim(), description: newDesc.trim() });
     setSaving(false);
     setNewName('');
     setNewDesc('');
-    setNewEmoji('');
     setCreating(false);
   };
+
+  const displayList = buildDisplayList(localOrder, categories);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm" onClick={onClose}>
@@ -93,117 +120,91 @@ export default function ManageCategoriesModal({ categories, onClose, onCreate, o
         <div className="flex items-center justify-between px-5 py-4 border-b border-neutral-100">
           <div>
             <h2 className="text-[15px] font-semibold text-neutral-800">Smart Categories</h2>
-            <p className="text-[12px] text-neutral-400 mt-0.5">AI will auto-assign emails to your custom categories</p>
+            <p className="text-[12px] text-neutral-400 mt-0.5">Drag to reorder · AI will auto-assign emails to your custom categories</p>
           </div>
           <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-neutral-100 text-neutral-400"><XMarkIcon className="w-4 h-4" /></button>
         </div>
 
-        {/* Built-in (read-only) categories */}
-        <div className="px-5 pt-3 pb-1">
-          <div className="flex items-center gap-1.5 mb-2">
-            <LockClosedIcon className="w-3 h-3 text-neutral-300" />
-            <span className="text-[10px] font-semibold uppercase tracking-wide text-neutral-300">Built-in</span>
-          </div>
-          <div className="space-y-0.5">
-            {localOrder.map(cat => (
+        {/* Unified drag list */}
+        <div className="max-h-[360px] overflow-y-auto px-4 py-3 space-y-0.5">
+          {displayList.map(entry => {
+            const isCustom = entry.type === 'custom';
+            const key = entry.key;
+            const isEditing = isCustom && editingId === entry.cat.id;
+
+            return (
               <div
-                key={cat.key}
-                draggable
-                onDragStart={() => handleDragStart(cat.key)}
-                onDragOver={(e) => handleDragOver(e, cat.key)}
-                onDrop={() => handleDrop(cat.key)}
+                key={key}
+                draggable={!isEditing}
+                onDragStart={() => !isEditing && handleDragStart(key)}
+                onDragOver={(e) => handleDragOver(e, key)}
+                onDrop={() => handleDrop(key)}
                 onDragLeave={() => setDragOverKey(null)}
-                className={`flex items-center gap-2.5 py-1.5 px-2 rounded-lg transition-colors ${dragOverKey === cat.key ? 'bg-indigo-50 border border-indigo-200' : 'bg-neutral-50'}`}
+                className={`flex items-center gap-2.5 py-1.5 px-2 rounded-lg transition-colors ${
+                  dragOverKey === key ? 'bg-indigo-50 ring-1 ring-indigo-200' : 'bg-neutral-50 hover:bg-neutral-100'
+                }`}
               >
                 <Bars2Icon className="w-3.5 h-3.5 text-neutral-300 cursor-grab flex-shrink-0" />
-                <span className={`text-[11px] font-semibold uppercase tracking-wide flex-shrink-0 w-24 ${cat.dim ? 'text-neutral-400' : 'text-neutral-600'}`}>{cat.name}</span>
-                <span className="text-[11px] text-neutral-400">{cat.description}</span>
-              </div>
-            ))}
-          </div>
-        </div>
 
-        {/* Divider + custom section label */}
-        <div className="flex items-center gap-2 px-5 pt-3 pb-1">
-          <span className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">Your categories</span>
-          <div className="flex-1 h-px bg-neutral-100" />
-        </div>
-
-        {/* Custom category list */}
-        <div className="max-h-[200px] overflow-y-auto divide-y divide-neutral-50">
-          {categories.length === 0 && !creating && (
-            <p className="px-5 py-4 text-[12px] text-neutral-400 text-center">No custom categories yet. Create one below.</p>
-          )}
-          {categories.map(cat => (
-            <div key={cat.id} className="px-5 py-3">
-              {editingId === cat.id ? (
-                <div className="space-y-2">
-                  <div className="flex gap-2">
-                    <input
-                      value={editEmoji}
-                      onChange={e => setEditEmoji(e.target.value)}
-                      placeholder="😀"
-                      className="w-10 text-center border border-neutral-200 rounded-lg px-2 py-1.5 text-[13px] focus:outline-none focus:border-indigo-400"
-                    />
+                {isEditing ? (
+                  <div className="flex-1 space-y-1.5">
                     <input
                       value={editName}
                       onChange={e => setEditName(e.target.value)}
                       placeholder="Category name"
-                      className="flex-1 border border-neutral-200 rounded-lg px-2.5 py-1.5 text-[13px] focus:outline-none focus:border-indigo-400"
+                      autoFocus
+                      className="w-full border border-neutral-200 rounded-lg px-2.5 py-1 text-[13px] focus:outline-none focus:border-indigo-400"
                     />
+                    <textarea
+                      value={editDesc}
+                      onChange={e => setEditDesc(e.target.value)}
+                      placeholder="Describe when the AI should assign this category…"
+                      rows={2}
+                      className="w-full border border-neutral-200 rounded-lg px-2.5 py-1 text-[12px] resize-none focus:outline-none focus:border-indigo-400 text-neutral-700"
+                    />
+                    <div className="flex gap-2 justify-end">
+                      <button onClick={() => setEditingId(null)} className="px-2.5 py-1 text-[11px] text-neutral-500 hover:text-neutral-700">Cancel</button>
+                      <button onClick={submitEdit} disabled={saving} className="px-2.5 py-1 text-[11px] bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50">Save</button>
+                    </div>
                   </div>
-                  <textarea
-                    value={editDesc}
-                    onChange={e => setEditDesc(e.target.value)}
-                    placeholder="Describe when the AI should assign this category…"
-                    rows={2}
-                    className="w-full border border-neutral-200 rounded-lg px-2.5 py-1.5 text-[12px] resize-none focus:outline-none focus:border-indigo-400 text-neutral-700"
-                  />
-                  <div className="flex gap-2 justify-end">
-                    <button onClick={() => setEditingId(null)} className="px-3 py-1.5 text-[12px] text-neutral-500 hover:text-neutral-700">Cancel</button>
-                    <button onClick={submitEdit} disabled={saving} className="px-3 py-1.5 text-[12px] bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50">Save</button>
-                  </div>
-                </div>
-              ) : (
-                <div className="flex items-start gap-3">
-                  {cat.emoji && <span className="text-[18px] flex-shrink-0 mt-0.5">{cat.emoji}</span>}
-                  <div className="flex-1 min-w-0">
-                    <p className="text-[13px] font-medium text-neutral-800">{cat.name}</p>
-                    <p className="text-[11px] text-neutral-400 mt-0.5 line-clamp-2">{cat.description}</p>
-                  </div>
-                  <div className="flex items-center gap-1 flex-shrink-0">
-                    <button onClick={() => startEdit(cat)} className="p-1 rounded hover:bg-neutral-100 text-neutral-400 hover:text-neutral-600"><PencilIcon className="w-3.5 h-3.5" /></button>
-                    <button onClick={() => onDelete(cat.id)} className="p-1 rounded hover:bg-red-50 text-neutral-400 hover:text-red-500"><TrashIcon className="w-3.5 h-3.5" /></button>
-                  </div>
-                </div>
-              )}
-            </div>
-          ))}
+                ) : (
+                  <>
+                    <span className={`text-[11px] font-semibold uppercase tracking-wide flex-shrink-0 w-[100px] ${
+                      isCustom ? 'text-indigo-600' : entry.dim ? 'text-neutral-400' : 'text-neutral-600'
+                    }`}>
+                      {entry.type === 'builtin' ? entry.name : entry.cat.name}
+                    </span>
+                    <span className="text-[11px] text-neutral-400 flex-1 min-w-0 truncate">
+                      {entry.type === 'builtin' ? entry.description : entry.cat.description}
+                    </span>
+                    {isCustom && (
+                      <div className="flex items-center gap-0.5 flex-shrink-0">
+                        <button onClick={() => startEdit(entry.cat)} className="p-1 rounded hover:bg-white text-neutral-400 hover:text-neutral-600"><PencilIcon className="w-3.5 h-3.5" /></button>
+                        <button onClick={() => onDelete(entry.cat.id)} className="p-1 rounded hover:bg-red-50 text-neutral-400 hover:text-red-500"><TrashIcon className="w-3.5 h-3.5" /></button>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            );
+          })}
 
           {/* Create form */}
           {creating && (
-            <div className="px-5 py-3 space-y-2">
-              <div className="flex gap-2">
-                <input
-                  value={newEmoji}
-                  onChange={e => setNewEmoji(e.target.value)}
-                  placeholder="😀"
-                  className="w-10 text-center border border-neutral-200 rounded-lg px-2 py-1.5 text-[13px] focus:outline-none focus:border-indigo-400"
-                  autoFocus
-                />
-                <input
-                  value={newName}
-                  onChange={e => setNewName(e.target.value)}
-                  placeholder="Category name (e.g. VIP Partners)"
-                  className="flex-1 border border-neutral-200 rounded-lg px-2.5 py-1.5 text-[13px] focus:outline-none focus:border-indigo-400"
-                />
-              </div>
+            <div className="mt-1 border border-dashed border-indigo-200 rounded-lg px-3 py-2.5 space-y-1.5 bg-indigo-50/30">
+              <input
+                value={newName}
+                onChange={e => setNewName(e.target.value)}
+                placeholder="Category name (e.g. VIP Partners)"
+                autoFocus
+                className="w-full border border-neutral-200 rounded-lg px-2.5 py-1.5 text-[13px] focus:outline-none focus:border-indigo-400 bg-white"
+              />
               <textarea
                 value={newDesc}
                 onChange={e => setNewDesc(e.target.value)}
-                placeholder="Describe when the AI should assign this — e.g. 'Emails from key clients or partners needing personal attention'"
+                placeholder="Describe when the AI should assign this — e.g. 'Emails from key clients needing personal attention'"
                 rows={2}
-                className="w-full border border-neutral-200 rounded-lg px-2.5 py-1.5 text-[12px] resize-none focus:outline-none focus:border-indigo-400 text-neutral-700"
+                className="w-full border border-neutral-200 rounded-lg px-2.5 py-1.5 text-[12px] resize-none focus:outline-none focus:border-indigo-400 text-neutral-700 bg-white"
               />
               <div className="flex gap-2 justify-end">
                 <button onClick={() => setCreating(false)} className="px-3 py-1.5 text-[12px] text-neutral-500 hover:text-neutral-700">Cancel</button>
