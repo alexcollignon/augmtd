@@ -1,6 +1,6 @@
 'use client';
 
-import { MicrophoneIcon, StopIcon } from '@heroicons/react/24/solid';
+import { MicrophoneIcon, StopIcon, PauseIcon, PlayIcon } from '@heroicons/react/24/solid';
 import type { RecordingState } from '@/hooks/useRecording';
 
 interface MeetingRecorderProps {
@@ -10,6 +10,8 @@ interface MeetingRecorderProps {
   uploadProgress: number;
   errorMessage: string;
   onStart: () => void;
+  onPause: () => void;
+  onResume: () => void;
   onStop: () => void;
   onReset: () => void;
 }
@@ -26,6 +28,8 @@ export default function MeetingRecorder({
   uploadProgress,
   errorMessage,
   onStart,
+  onPause,
+  onResume,
   onStop,
   onReset,
 }: MeetingRecorderProps) {
@@ -50,11 +54,43 @@ export default function MeetingRecorder({
             </span>
           </div>
           <button
+            onClick={onPause}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium bg-neutral-100 text-neutral-700 hover:bg-neutral-200 transition-colors"
+          >
+            <PauseIcon className="w-4 h-4" />
+            Pause
+          </button>
+          <button
             onClick={onStop}
             className="inline-flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium bg-neutral-900 text-white hover:bg-neutral-700 transition-colors"
           >
             <StopIcon className="w-4 h-4" />
-            Stop &amp; Transcribe
+            Finish
+          </button>
+        </div>
+      )}
+
+      {state === 'paused' && (
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-amber-50 border border-amber-200">
+            <span className="w-2 h-2 rounded-full bg-amber-400" />
+            <span className="text-sm font-mono font-medium text-amber-700">
+              {formatElapsed(elapsed)}
+            </span>
+          </div>
+          <button
+            onClick={onResume}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium bg-amber-500 text-white hover:bg-amber-600 transition-colors"
+          >
+            <PlayIcon className="w-4 h-4" />
+            Resume
+          </button>
+          <button
+            onClick={onStop}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium bg-neutral-900 text-white hover:bg-neutral-700 transition-colors"
+          >
+            <StopIcon className="w-4 h-4" />
+            Finish
           </button>
         </div>
       )}
