@@ -3,7 +3,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import fixWebmDuration from 'fix-webm-duration';
 
-export type RecordingState = 'idle' | 'recording' | 'uploading' | 'processing' | 'done' | 'error';
+export type RecordingState = 'idle' | 'recording' | 'paused' | 'uploading' | 'processing' | 'done' | 'error';
 
 export interface UseRecordingReturn {
   state: RecordingState;
@@ -14,6 +14,8 @@ export interface UseRecordingReturn {
   setLiveNotes: (notes: string) => void;
   startRecording: (title: string, calendarEventId?: string, existingNoteId?: string) => Promise<void>;
   setRecordingNoteId: (noteId: string) => void;
+  pauseRecording: () => void;
+  resumeRecording: () => void;
   stopAndUpload: () => Promise<void>;
   reset: () => void;
   /** Title of the current/last recording */
@@ -40,6 +42,8 @@ export function useRecording(
   const mimeTypeRef = useRef<string>('audio/webm');
   const chunksRef = useRef<Blob[]>([]);
   const startTimeRef = useRef<number>(0);
+  // Tracks accumulated elapsed ms before the most recent pause
+  const elapsedBeforePauseRef = useRef<number>(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const titleRef = useRef('');
   const eventIdRef = useRef<string | undefined>(undefined);
@@ -63,6 +67,8 @@ export function useRecording(
   useEffect(() => {
     if (state === 'recording') {
       document.title = `● Recording (${formatElapsed(elapsed)}) — AUGMTD`;
+    } else if (state === 'paused') {
+      document.title = `⏸ Paused (${formatElapsed(elapsed)}) — AUGMTD`;
     } else if (state === 'uploading') {
       document.title = `↑ Uploading recording — AUGMTD`;
     } else if (state === 'processing') {
@@ -79,9 +85,9 @@ export function useRecording(
     };
   }, []);
 
-  // beforeunload guard while recording
+  // beforeunload guard while recording or paused
   useEffect(() => {
-    if (state !== 'recording') return;
+    if (state !== 'recording' && state !== 'paused') return;
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
       e.preventDefault();
     };
@@ -116,17 +122,52 @@ export function useRecording(
 
       recorder.start(1000);
       startTimeRef.current = Date.now();
+      elapsedBeforePauseRef.current = 0;
       setState('recording');
       setElapsed(0);
 
       timerRef.current = setInterval(() => {
-        setElapsed(Math.floor((Date.now() - startTimeRef.current) / 1000));
+        setElapsed(Math.floor(elapsedBeforePauseRef.current / 1000 + (Date.now() - startTimeRef.current) / 1000));
       }, 1000);
     } catch (err: any) {
       setErrorMessage(err.message ?? 'Microphone access denied');
       setState('error');
     }
   }, []);
+
+  const pauseRecording = useCallback(() => {
+    const recorder = mediaRecorderRef.current;
+    if (!recorder || recorder.state !== 'recording') return;
+    recorder.pause();
+    // Accumulate elapsed before pausing the timer
+    elapsedBeforePauseRef.current += Date.now() - startTimeRef.current;
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+    setState('paused');
+  }, []);
+
+  const resumeRecording = useCallback(() => {
+    const recorder = mediaRecorderRef.current;
+    if (!recorder || recorder.state !== 'paused') return;
+    recorder.resume();
+    startTimeRef.current = Date.now();
+    timerRef.current = setInterval(() => {
+      setElapsed(Math.floor(elapsedBeforePauseRef.current / 1000 + (Date.now() - startTimeRef.current) / 1000));
+    }, 1000);
+    setState('recording');
+  }, []);
+
+  // Auto-pause when tab is hidden (laptop sleep, screen lock, tab switch)
+  useEffect(() => {
+    if (state !== 'recording') return;
+    const handleVisibilityChange = () => {
+      if (document.hidden) pauseRecording();
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [state, pauseRecording]);
 
   const stopAndUpload = useCallback(async () => {
     const recorder = mediaRecorderRef.current;
@@ -138,7 +179,7 @@ export function useRecording(
       timerRef.current = null;
     }
 
-    // Stop recorder and collect final chunks
+    // Stop recorder and collect final chunks (works from both 'recording' and 'paused' states)
     await new Promise<void>((resolve) => {
       recorder.onstop = () => resolve();
       recorder.stop();
@@ -236,6 +277,7 @@ export function useRecording(
       clearInterval(timerRef.current);
       timerRef.current = null;
     }
+    elapsedBeforePauseRef.current = 0;
     setState('idle');
     setElapsed(0);
     setUploadProgress(0);
@@ -253,6 +295,8 @@ export function useRecording(
     liveNotes,
     setLiveNotes,
     startRecording,
+    pauseRecording,
+    resumeRecording,
     stopAndUpload,
     reset,
     recordingTitle,

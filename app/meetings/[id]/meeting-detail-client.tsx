@@ -539,6 +539,8 @@ export default function MeetingDetailClient({
                 uploadProgress={detailRecording.uploadProgress}
                 errorMessage={detailRecording.errorMessage}
                 onStart={() => detailRecording.startRecording(event.title, event.id)}
+                onPause={detailRecording.pauseRecording}
+                onResume={detailRecording.resumeRecording}
                 onStop={detailRecording.stopAndUpload}
                 onReset={detailRecording.reset}
               />

@@ -88,6 +88,8 @@ export default function CaptureModal({
                 uploadProgress={recording.uploadProgress}
                 errorMessage={recording.errorMessage}
                 onStart={() => recording.startRecording(title || 'Untitled meeting', calendarEventId)}
+                onPause={recording.pauseRecording}
+                onResume={recording.resumeRecording}
                 onStop={recording.stopAndUpload}
                 onReset={recording.reset}
               />

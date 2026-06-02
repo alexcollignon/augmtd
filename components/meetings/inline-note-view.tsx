@@ -248,7 +248,6 @@ export default function InlineNoteView({
   const noteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const noteIdRef = useRef<string | null>(null);      // mirrors noteId, updated synchronously
   const creatingNoteRef = useRef(false);              // guard: only one POST ever in-flight
-  const createOnOpenFiredRef = useRef(false);         // guard: survives StrictMode fake-unmount
   // Capture state
   const [linkCopied, setLinkCopied] = useState(false);
 
@@ -389,28 +388,6 @@ export default function InlineNoteView({
     };
   }, []);
 
-  // Create-on-open for ad-hoc notes: immediately create a DB row so every keystroke is a PATCH,
-  // eliminating the race condition where rapid typing fired multiple POSTs.
-  // The row appears in the "Live" section straight away via onNoteRowCreated → fetchAll.
-  // createOnOpenFiredRef (a ref, not state) survives React StrictMode's fake-unmount so only
-  // one POST fires even though the effect runs twice in development.
-  useEffect(() => {
-    if (!isAdHoc || createOnOpenFiredRef.current) return;
-    createOnOpenFiredRef.current = true;
-    fetch('/api/meetings/notes', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: '', body: '' }),
-    })
-      .then((r) => r.ok ? r.json() : null)
-      .then((data) => {
-        if (!data?.id) return;
-        noteIdRef.current = data.id;
-        setNoteId(data.id);
-        onNoteRowCreated?.();
-      })
-      .catch(() => {});
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
 
   // handleBack: for ad-hoc notes, delete the row if user navigated away without writing anything.
@@ -499,6 +476,7 @@ export default function InlineNoteView({
               setNoteId(data.id);
               // Keep recording hook in sync so stopAndUpload merges into this row
               recording.setRecordingNoteId(data.id);
+              onNoteRowCreated?.();
             }
           } finally {
             creatingNoteRef.current = false;
@@ -515,7 +493,7 @@ export default function InlineNoteView({
         }
       } catch {} finally { setNoteSaving(false); }
     }, delay);
-  }, [eventId, adHocTitle, event?.title]);
+  }, [eventId, adHocTitle, event?.title, onNoteRowCreated]);
 
   const handleProcessNote = async () => {
     if (!noteBody.trim() && !adHocTitle.trim()) return;
@@ -678,7 +656,7 @@ const handleRetry = async () => {
   // Gates recording/upload/processing bars so they don't bleed into unrelated open notes.
   const isThisNoteRecording = (() => {
     const { state, recordingEventId, recordingNoteId } = recording;
-    if (state !== 'recording' && state !== 'uploading' && state !== 'processing') return false;
+    if (state !== 'recording' && state !== 'paused' && state !== 'uploading' && state !== 'processing') return false;
     // Calendar-event-linked recording
     if (recordingEventId) return recordingEventId === eventId;
     // Note-linked recording (ad-hoc, or note was created during recording)
@@ -935,10 +913,36 @@ const handleRetry = async () => {
           <span className="text-[12px] font-semibold text-red-600 tabular-nums">{fmtDuration(recording.elapsed)}</span>
           <span className="flex-1 text-[12px] text-red-400">Recording in progress</span>
           <button
+            onClick={recording.pauseRecording}
+            className="px-3 py-1 text-[12px] font-semibold text-neutral-600 bg-white border border-neutral-200 hover:bg-neutral-50 rounded-lg transition-colors flex-shrink-0"
+          >
+            Pause
+          </button>
+          <button
             onClick={recording.stopAndUpload}
             className="px-3 py-1 text-[12px] font-semibold text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors flex-shrink-0"
           >
-            Stop & transcribe
+            Finish
+          </button>
+        </div>
+      )}
+
+      {isThisNoteRecording && recording.state === 'paused' && (
+        <div className="flex items-center gap-3 mb-4 px-3 py-2.5 bg-amber-50 rounded-xl border border-amber-100">
+          <span className="w-2 h-2 bg-amber-400 rounded-full flex-shrink-0" />
+          <span className="text-[12px] font-semibold text-amber-600 tabular-nums">{fmtDuration(recording.elapsed)}</span>
+          <span className="flex-1 text-[12px] text-amber-500">Recording paused</span>
+          <button
+            onClick={recording.resumeRecording}
+            className="px-3 py-1 text-[12px] font-semibold text-white bg-amber-500 hover:bg-amber-600 rounded-lg transition-colors flex-shrink-0"
+          >
+            Resume
+          </button>
+          <button
+            onClick={recording.stopAndUpload}
+            className="px-3 py-1 text-[12px] font-semibold text-neutral-600 bg-white border border-neutral-200 hover:bg-neutral-50 rounded-lg transition-colors flex-shrink-0"
+          >
+            Finish
           </button>
         </div>
       )}
@@ -985,7 +989,7 @@ const handleRetry = async () => {
         </div>
       )}
 
-      {(!transcript || isDraftNote) && !noteProcessing && recording.state !== 'recording' && recording.state !== 'uploading' && recording.state !== 'processing' && (
+      {(!transcript || isDraftNote) && !noteProcessing && recording.state !== 'recording' && recording.state !== 'paused' && recording.state !== 'uploading' && recording.state !== 'processing' && (
         <div className="flex items-center gap-2 mb-4 flex-wrap">
           {/* Time until (scheduled only) */}
           {!isAdHoc && (

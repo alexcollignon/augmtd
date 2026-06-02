@@ -293,6 +293,8 @@ export default function MeetingDetailPanel({
                             uploadProgress={panelRecording.uploadProgress}
                             errorMessage={panelRecording.errorMessage}
                             onStart={() => panelRecording.startRecording(event.title, event.id)}
+                            onPause={panelRecording.pauseRecording}
+                            onResume={panelRecording.resumeRecording}
                             onStop={panelRecording.stopAndUpload}
                             onReset={panelRecording.reset}
                           />

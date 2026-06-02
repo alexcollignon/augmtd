@@ -170,6 +170,8 @@ export default function CaptureClient() {
                   uploadProgress={captureRecording.uploadProgress}
                   errorMessage={captureRecording.errorMessage}
                   onStart={() => captureRecording.startRecording(title || 'Untitled meeting', prefilledEventId)}
+                  onPause={captureRecording.pauseRecording}
+                  onResume={captureRecording.resumeRecording}
                   onStop={captureRecording.stopAndUpload}
                   onReset={captureRecording.reset}
                 />
