@@ -2,7 +2,6 @@ import { getAIClient } from '@/lib/ai/factory';
 import { parseModelJSON } from '@/lib/ai/parse-json';
 import { SupabaseClient } from '@supabase/supabase-js';
 import type { UserContextProfile } from '@/lib/types/user-context';
-import type { UserInboxCategory } from '@/lib/types/inbox';
 
 /**
  * Calendar context for email processing
@@ -148,9 +147,6 @@ export interface ProcessedEmail {
 
   // SEMANTIC TYPE — drives Smart view filtering
   itemType: string; // 'reply' | 'decision' | 'meeting' | 'review' | 'fyi' | 'notification'
-
-  // USER-DEFINED CUSTOM CATEGORY (optional)
-  customCategory?: string | null;
 
   // METADATA
   summary: string; // One-line summary
@@ -379,7 +375,7 @@ function formatCalendarContext(calendarContext: CalendarContext | undefined): st
 /**
  * Main processing function - detects signals and determines work state
  */
-export async function processEmail(email: EmailData, supabase: SupabaseClient, userCategories?: UserInboxCategory[]): Promise<ProcessedEmail> {
+export async function processEmail(email: EmailData, supabase: SupabaseClient): Promise<ProcessedEmail> {
   const { client: openai, model: defaultModel, endpoint } = await getAIClient(email.user_id!, 'planning', supabase);
 
   // Format thread context if available
@@ -408,17 +404,9 @@ export async function processEmail(email: EmailData, supabase: SupabaseClient, u
     ? `${email.user_context_block}\n\nCRITICAL: You are preparing work FOR the person described above.${email.recipient_email ? ` Their email is <${email.recipient_email}>.` : ''}\nWhen drafting replies, always write AS them and sign with their name.\nNEVER adopt any other name found in the email thread as the sender or signatory.\n\n`
     : `IDENTITY: You are preparing work on behalf of the user${email.recipient_email ? ` <${email.recipient_email}>` : ''}.\nWhen drafting a reply, always write AS this person.\nNEVER adopt or use any other name found in the email thread as the sender or signatory.\n\n`;
 
-  const customCategoriesSection = userCategories && userCategories.length > 0
-    ? `USER-DEFINED PRIORITY CATEGORIES (check these FIRST — they override built-in classification):
-${userCategories.map(c => `- "${c.name}": ${c.description}`).join('\n')}
-If the email clearly fits one of these categories, include "customCategory": "<name>" in your response. Otherwise "customCategory": null.
-
-`
-    : '';
-
   const prompt = `You are a work preparation AI. Your job is to detect OBLIGATIONS and prepare WORK, not classify emails.
 
-${contextBlockSection}${calendarContextSection}${customCategoriesSection}${forwardedNote}${ccNote}${threadContextSection}CURRENT EMAIL (the one requiring your response):
+${contextBlockSection}${calendarContextSection}${forwardedNote}${ccNote}${threadContextSection}CURRENT EMAIL (the one requiring your response):
 From: ${email.from_name} <${email.from_address}>
 Subject: ${email.subject}
 Received: ${new Date(email.received_at).toLocaleString()}
@@ -983,7 +971,11 @@ Respond ONLY with valid JSON matching the structure above.`;
           content: prompt
         }
       ],
-      ...(endpoint.provider === 'openai' || endpoint.provider === 'azure_openai' ? { response_format: { type: 'json_object' as const } } : {}),
+      // Apply json_object mode for all providers — Bedrock adapter translates it to a system
+      // prompt instruction; Together AI / OpenAI-compatible APIs support it natively.
+      // Without this, Together AI (Kimi K2.6) returns unstructured text → parse fails → fallback fires.
+      response_format: { type: 'json_object' as const },
+      max_tokens: 2048,
       temperature: 0.4,
     });
 
@@ -1030,7 +1022,6 @@ Respond ONLY with valid JSON matching the structure above.`;
       confidence: Math.min(100, Math.max(0, result.confidence || 50)),
       priority: Math.min(100, Math.max(0, result.priority || 50)),
       reasoning: result.reasoning || 'No specific reasoning provided',
-      customCategory: result.customCategory ?? null,
     };
   } catch (error) {
     console.error('Error processing email with AI:', error);

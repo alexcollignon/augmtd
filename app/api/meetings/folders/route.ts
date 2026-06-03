@@ -8,16 +8,15 @@ export async function GET() {
     if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const { data, error } = await supabase
-      .from('drive_folders')
-      .select('id, name, parent_id, is_system, system_key, created_at')
+      .from('meeting_folders')
+      .select('id, name, created_at')
       .eq('user_id', user.id)
-      .order('is_system', { ascending: false })
       .order('name', { ascending: true });
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     return NextResponse.json(data ?? []);
-  } catch (error) {
-    console.error('[Drive/Folders GET] Error:', error);
+  } catch (err) {
+    console.error('[meetings/folders GET]', err);
     return NextResponse.json({ error: 'Failed to fetch folders' }, { status: 500 });
   }
 }
@@ -28,19 +27,19 @@ export async function POST(request: NextRequest) {
     const { data: { user }, error: userError } = await supabase.auth.getUser();
     if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { name, parentId } = await request.json() as { name: string; parentId?: string };
+    const { name } = await request.json() as { name: string };
     if (!name?.trim()) return NextResponse.json({ error: 'name is required' }, { status: 400 });
 
     const { data, error } = await supabase
-      .from('drive_folders')
-      .insert({ user_id: user.id, name: name.trim(), parent_id: parentId ?? null })
-      .select('id, name, parent_id, is_system, system_key, created_at')
+      .from('meeting_folders')
+      .insert({ user_id: user.id, name: name.trim() })
+      .select('id, name, created_at')
       .single();
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     return NextResponse.json(data);
-  } catch (error) {
-    console.error('[Drive/Folders POST] Error:', error);
+  } catch (err) {
+    console.error('[meetings/folders POST]', err);
     return NextResponse.json({ error: 'Failed to create folder' }, { status: 500 });
   }
 }

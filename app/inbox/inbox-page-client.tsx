@@ -14,12 +14,11 @@ import type { FolderEmailSummary, MessageDetail } from '@/lib/google/gmail';
 import AiChatPanel from '@/components/shared/ai-chat-panel';
 import WorkflowPanel from '@/components/inbox/workflow-panel';
 import MeetingsColumn from '@/components/inbox/meetings-column';
-import { ArrowPathIcon, ChatBubbleLeftIcon, SparklesIcon, Bars3Icon, QueueListIcon, ArchiveBoxArrowDownIcon, XMarkIcon, MagnifyingGlassIcon, CalendarDaysIcon, TrashIcon, PaperClipIcon, EnvelopeIcon, Cog6ToothIcon, TagIcon } from '@heroicons/react/24/outline';
+import { ArrowPathIcon, ChatBubbleLeftIcon, SparklesIcon, Bars3Icon, QueueListIcon, ArchiveBoxArrowDownIcon, XMarkIcon, MagnifyingGlassIcon, CalendarDaysIcon, TrashIcon, PaperClipIcon, EnvelopeIcon } from '@heroicons/react/24/outline';
 import ComposePanel from '@/components/inbox/compose-panel';
-import ManageCategoriesModal from '@/components/inbox/manage-categories-modal';
 import { toast } from 'sonner';
 import type { CalendarEvent } from '@/lib/types/meetings';
-import type { InboxItem, UserInboxCategory } from '@/lib/types/inbox';
+import type { InboxItem } from '@/lib/types/inbox';
 
 
 type ViewMode = 'chronological' | 'smart';
@@ -178,7 +177,6 @@ export function InboxPageClient({
   const [inboxItems, setInboxItems] = useState<InboxItem[]>(initialInboxItems);
   const [selectedItem, setSelectedItem] = useState<InboxItem | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
-  const [isBackfilling, setIsBackfilling] = useState(false);
   const [meetings, setMeetings] = useState<CalendarEvent[]>([]);
   const [meetingsLoading, setMeetingsLoading] = useState(true);
   const [viewMode, setViewMode] = useState<ViewMode>('chronological');
@@ -202,99 +200,6 @@ export function InboxPageClient({
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
   const [bulkDeleteConfirmPending, setBulkDeleteConfirmPending] = useState(false);
   const [bulkArchiveConfirmPending, setBulkArchiveConfirmPending] = useState(false);
-  const [bulkCategoryPickerOpen, setBulkCategoryPickerOpen] = useState(false);
-  const [isBulkCategorizing, setIsBulkCategorizing] = useState(false);
-
-
-  // Custom inbox categories + section order
-  const [userCategories, setUserCategories] = useState<UserInboxCategory[]>([]);
-  const [sectionOrder, setSectionOrder] = useState<string[]>([]);
-  const [showCategoriesModal, setShowCategoriesModal] = useState(false);
-
-  useEffect(() => {
-    fetch('/api/inbox/categories').then(r => r.json()).then(d => {
-      if (d.categories) setUserCategories(d.categories);
-      if (d.sectionOrder) setSectionOrder([...new Set(d.sectionOrder as string[])]);
-    });
-  }, []);
-
-  const handleReorderDefaults = async (order: string[]) => {
-    setSectionOrder(order);
-    await fetch('/api/inbox/categories', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sectionOrder: order }) });
-  };
-
-  const handleCreateCategory = async (cat: Omit<UserInboxCategory, 'id'>) => {
-    const r = await fetch('/api/inbox/categories', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cat) });
-    const d = await r.json();
-    if (d.category) {
-      setUserCategories(prev => [...prev, d.category]);
-      // Add to section order (deduplicate in case of stale DB state)
-      setSectionOrder(prev => {
-        const next = prev.includes(d.category.name) ? prev : [...prev, d.category.name];
-        fetch('/api/inbox/categories', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sectionOrder: next }) }).catch(() => {});
-        return next;
-      });
-      // Fire backfill — show loading bar, update UI and toast when done
-      const categoryName = d.category.name;
-      const categoryDescription = d.category.description;
-      setIsBackfilling(true);
-      fetch('/api/inbox/categories/backfill', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ categoryName, categoryDescription }),
-      }).then(async res => {
-        const result = await res.json().catch(() => ({}));
-        const count: number = result.updated ?? 0;
-        const ids: string[] = result.ids ?? [];
-        if (count > 0 && ids.length > 0) {
-          // Merge updated custom_category into local state immediately
-          setInboxItems(prev => prev.map(i =>
-            ids.includes(i.id) ? { ...i, custom_category: categoryName } : i
-          ));
-          toast.success(`${count} email${count !== 1 ? 's' : ''} added to "${categoryName}"`);
-        } else {
-          toast.info(`No existing emails matched "${categoryName}" — new ones will be auto-assigned`);
-        }
-      }).catch(() => {
-        toast.error('Categorization failed');
-      }).finally(() => setIsBackfilling(false));
-    }
-  };
-
-  const handleUpdateCategory = async (id: string, fields: Partial<Omit<UserInboxCategory, 'id'>>) => {
-    const old = userCategories.find(c => c.id === id);
-    await fetch('/api/inbox/categories', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, ...fields }) });
-    setUserCategories(prev => prev.map(c => c.id === id ? { ...c, ...fields } : c));
-    // If name changed, update sectionOrder key too
-    if (fields.name && old?.name && fields.name !== old.name) {
-      setSectionOrder(prev => {
-        const next = prev.map(k => k === old.name ? fields.name! : k);
-        fetch('/api/inbox/categories', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sectionOrder: next }) }).catch(() => {});
-        return next;
-      });
-    }
-  };
-
-  const handleDeleteCategory = async (id: string) => {
-    const deleted = userCategories.find(c => c.id === id);
-    await fetch(`/api/inbox/categories?id=${id}`, { method: 'DELETE' });
-    setUserCategories(prev => prev.filter(c => c.id !== id));
-    // Remove from section order and persist to server
-    if (deleted?.name) {
-      setSectionOrder(prev => {
-        const next = prev.filter(k => k !== deleted.name);
-        fetch('/api/inbox/categories', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sectionOrder: next }) }).catch(() => {});
-        return next;
-      });
-      // Clear from local inbox state immediately (server also clears in DB)
-      setInboxItems(prev => prev.map(i => i.custom_category === deleted.name ? { ...i, custom_category: null } : i));
-    }
-  };
-
-  const handleCategorizeItem = useCallback(async (itemId: string, category: string | null) => {
-    setInboxItems(prev => prev.map(i => i.id === itemId ? { ...i, custom_category: category } : i));
-    await fetch(`/api/inbox/${itemId}/categorize`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ category }) });
-  }, []);
 
   // Resizable panel widths
   const [folderRailWidth, setFolderRailWidth] = useState(196);
@@ -773,19 +678,7 @@ export function InboxPageClient({
     });
   };
 
-  const clearSelection = () => { setSelectedIds(new Set()); setBulkArchiveConfirmPending(false); setBulkDeleteConfirmPending(false); setBulkCategoryPickerOpen(false); };
-
-  const handleBulkCategorize = async (category: string | null) => {
-    const ids = Array.from(selectedIds);
-    setIsBulkCategorizing(true);
-    setBulkCategoryPickerOpen(false);
-    try {
-      await Promise.all(ids.map(id => handleCategorizeItem(id, category)));
-    } finally {
-      setIsBulkCategorizing(false);
-      clearSelection();
-    }
-  };
+  const clearSelection = () => { setSelectedIds(new Set()); setBulkArchiveConfirmPending(false); setBulkDeleteConfirmPending(false); };
 
   const handleBulkArchive = async () => {
     const ids = Array.from(selectedIds);
@@ -1114,19 +1007,6 @@ export function InboxPageClient({
   return (
     <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
 
-        {/* Manage categories modal */}
-        {showCategoriesModal && (
-          <ManageCategoriesModal
-            categories={userCategories}
-            onClose={() => setShowCategoriesModal(false)}
-            onCreate={handleCreateCategory}
-            onUpdate={handleUpdateCategory}
-            onDelete={handleDeleteCategory}
-            defaultOrder={sectionOrder.length > 0 ? sectionOrder : undefined}
-            onReorderDefaults={handleReorderDefaults}
-          />
-        )}
-
         {/* No connection */}
         {!hasConnection && (
           <div className="flex-1 flex items-center justify-center">
@@ -1234,12 +1114,6 @@ export function InboxPageClient({
                           }`}
                         >
                           {labels[key]}
-                          {key === 'smart' && (
-                            <Cog6ToothIcon
-                              onClick={viewMode === 'smart' ? (e) => { e.stopPropagation(); setShowCategoriesModal(true); } : undefined}
-                              className={`w-3 h-3 flex-shrink-0 transition-opacity ${viewMode === 'smart' ? 'opacity-60 hover:opacity-100 cursor-pointer' : 'opacity-0'}`}
-                            />
-                          )}
                         </button>
                       );
                     })}
@@ -1297,12 +1171,12 @@ export function InboxPageClient({
 
               </div>
 
-              {/* Sync / backfill bar */}
-              {(isSyncing || isBackfilling) && (
+              {/* Sync bar */}
+              {isSyncing && (
                 <div className="flex-shrink-0 flex items-center justify-center gap-1.5 py-1.5 bg-neutral-50 border-b border-neutral-100">
                   <ArrowPathIcon className="w-3 h-3 text-neutral-400 animate-spin flex-shrink-0" />
                   <span className="text-[11.5px] text-neutral-400">
-                    {isBackfilling ? 'Categorizing emails…' : (() => {
+                    {(() => {
                       const delta = preSyncCountRef.current !== null
                         ? inboxItems.length - preSyncCountRef.current
                         : 0;
@@ -1326,11 +1200,6 @@ export function InboxPageClient({
                     <div className="flex items-center gap-2 flex-1">
                       <div className="w-3 h-3 border-2 border-red-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
                       <span className="text-[11px] font-semibold text-red-700">Deleting…</span>
-                    </div>
-                  ) : isBulkCategorizing ? (
-                    <div className="flex items-center gap-2 flex-1">
-                      <div className="w-3 h-3 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
-                      <span className="text-[11px] font-semibold text-indigo-700">Categorizing…</span>
                     </div>
                   ) : bulkArchiveConfirmPending ? (
                     <>
@@ -1363,40 +1232,6 @@ export function InboxPageClient({
                       <span className="text-[11px] font-semibold text-indigo-700 flex-1">
                         {selectedIds.size} selected
                       </span>
-                      {userCategories.length > 0 && (
-                        <div className="relative">
-                          <button
-                            onClick={() => setBulkCategoryPickerOpen(v => !v)}
-                            className="flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-indigo-700 border border-indigo-200 bg-white rounded-md hover:bg-indigo-50 transition-colors"
-                          >
-                            <TagIcon className="w-3 h-3" />
-                            Categorize
-                          </button>
-                          {bulkCategoryPickerOpen && (
-                            <div className="absolute bottom-full mb-1 left-0 w-44 bg-white rounded-xl shadow-lg border border-neutral-100 py-1 z-50 text-[12px]">
-                              <div className="px-3 py-1.5 text-[11px] font-semibold text-neutral-400 uppercase tracking-wide border-b border-neutral-100">Assign category</div>
-                              {userCategories.map(cat => (
-                                <button
-                                  key={cat.id}
-                                  onClick={() => handleBulkCategorize(cat.name)}
-                                  className="w-full text-left px-3 py-1.5 hover:bg-neutral-50 flex items-center gap-2 text-neutral-700"
-                                >
-                                  {cat.emoji && <span>{cat.emoji}</span>}
-                                  <span className="truncate">{cat.name}</span>
-                                </button>
-                              ))}
-                              <div className="border-t border-neutral-100 mt-1">
-                                <button
-                                  onClick={() => handleBulkCategorize(null)}
-                                  className="w-full text-left px-3 py-1.5 hover:bg-neutral-50 text-neutral-400"
-                                >
-                                  Remove category
-                                </button>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      )}
                       <button
                         onClick={() => setBulkArchiveConfirmPending(true)}
                         className="flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-indigo-700 border border-indigo-200 bg-white rounded-md hover:bg-indigo-50 transition-colors"
@@ -1465,9 +1300,6 @@ export function InboxPageClient({
                     onDelete={handleDeleteItem}
                     onArchive={handleArchiveItem}
                     onFlag={handleFlagItem}
-                    onCategorize={handleCategorizeItem}
-                    userCategories={userCategories}
-                    sectionOrder={sectionOrder.length > 0 ? sectionOrder : undefined}
                   />
                 )}
               </div>

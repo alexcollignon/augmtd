@@ -2,7 +2,7 @@
 
 import { useState, useMemo } from 'react';
 import { ChevronDownIcon, ChevronUpIcon } from '@heroicons/react/24/outline';
-import type { InboxItem, ItemType, UserInboxCategory } from '@/lib/types/inbox';
+import type { InboxItem, ItemType } from '@/lib/types/inbox';
 import { SMART_VIEW_TYPES } from '@/lib/types/inbox';
 import EmailListCard from './email-list-card';
 
@@ -16,9 +16,6 @@ interface EmailListSectionsProps {
   onDelete?: (id: string) => void;
   onArchive?: (id: string) => void;
   onFlag?: (id: string) => void;
-  onCategorize?: (id: string, category: string | null) => void;
-  userCategories?: UserInboxCategory[];
-  sectionOrder?: string[];
 }
 
 const SECTIONS: Array<{ key: ItemType; label: string; dim?: boolean }> = [
@@ -29,7 +26,7 @@ const SECTIONS: Array<{ key: ItemType; label: string; dim?: boolean }> = [
   { key: 'fyi',      label: 'Noted', dim: true },
 ];
 
-export default function EmailListSections({ items, selectedId, onSelect, compact = false, selectedIds, onToggleSelect, onDelete, onArchive, onFlag, onCategorize, userCategories = [], sectionOrder }: EmailListSectionsProps) {
+export default function EmailListSections({ items, selectedId, onSelect, compact = false, selectedIds, onToggleSelect, onDelete, onArchive, onFlag }: EmailListSectionsProps) {
   const hasAnySelected = (selectedIds?.size ?? 0) > 0;
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [flaggedCollapsed, setFlaggedCollapsed] = useState(false);
@@ -38,8 +35,6 @@ export default function EmailListSections({ items, selectedId, onSelect, compact
 
   const bySection = useMemo(() => {
     const acc = items.reduce((acc, item) => {
-      // Custom category takes priority — don't show in built-in sections
-      if (item.custom_category) return acc;
       const t = item.item_type as ItemType;
       if (!SMART_VIEW_TYPES.includes(t)) return acc;
       const sd = item.source_data;
@@ -57,28 +52,6 @@ export default function EmailListSections({ items, selectedId, onSelect, compact
     }
     return acc;
   }, [items]);
-
-  // Build a unified ordered list: built-ins + custom categories merged by sectionOrder.
-  // sectionOrder may contain built-in keys ('reply','decision',...) and custom category names.
-  const allSections = useMemo(() => {
-    const builtinMap = Object.fromEntries(SECTIONS.map(s => [s.key, s]));
-    const customMap = Object.fromEntries(userCategories.map(c => [c.name, c]));
-    const defaultKeys = [...SECTIONS.map(s => s.key), ...userCategories.map(c => c.name)];
-    const orderedKeys = sectionOrder
-      ? [
-          ...sectionOrder.filter(k => k in builtinMap || k in customMap),
-          ...defaultKeys.filter(k => !sectionOrder.includes(k)),
-        ]
-      : defaultKeys;
-    return orderedKeys.map(key => {
-      if (key in builtinMap) return { type: 'builtin' as const, key, label: builtinMap[key].label, dim: builtinMap[key].dim };
-      if (key in customMap) return { type: 'custom' as const, key, cat: customMap[key] };
-      return null;
-    }).filter(Boolean) as Array<
-      | { type: 'builtin'; key: string; label: string; dim?: boolean }
-      | { type: 'custom'; key: string; cat: UserInboxCategory }
-    >;
-  }, [sectionOrder, userCategories]);
 
   const toggle = (s: string) => {
     setCollapsed(prev => {
@@ -101,8 +74,6 @@ export default function EmailListSections({ items, selectedId, onSelect, compact
       onDelete={onDelete}
       onArchive={onArchive}
       onFlag={onFlag}
-      onCategorize={onCategorize}
-      userCategories={userCategories}
       selectedIds={selectedIds}
     />
   );
@@ -133,36 +104,26 @@ export default function EmailListSections({ items, selectedId, onSelect, compact
         </div>
       )}
 
-      {/* Unified ordered sections — built-ins and custom categories interleaved */}
-      {allSections.map(entry => {
-        const sectionItems = entry.type === 'builtin'
-          ? (bySection[entry.key as ItemType] || [])
-          : items.filter(i => i.custom_category === entry.cat.name);
+      {SECTIONS.map(section => {
+        const sectionItems = bySection[section.key] || [];
         if (sectionItems.length === 0) return null;
-        const isCollapsed = collapsed.has(entry.key);
-        const isCustom = entry.type === 'custom';
+        const isCollapsed = collapsed.has(section.key);
 
         return (
-          <div key={entry.key}>
+          <div key={section.key}>
             <button
-              onClick={() => toggle(entry.key)}
-              className={`w-full h-8 flex items-center justify-between px-3 border-b transition-colors sticky top-0 z-10 ${
-                isCustom
-                  ? 'bg-indigo-50 border-indigo-100 hover:bg-indigo-100'
-                  : 'bg-neutral-50 border-neutral-100 hover:bg-neutral-100'
-              }`}
+              onClick={() => toggle(section.key)}
+              className="w-full h-8 flex items-center justify-between px-3 bg-neutral-50 border-b border-neutral-100 hover:bg-neutral-100 transition-colors sticky top-0 z-10"
             >
               <div className="flex items-center gap-1.5">
-                <span className={`text-[11px] font-semibold uppercase tracking-wide ${
-                  isCustom ? 'text-indigo-600' : (entry.type === 'builtin' && entry.dim) ? 'text-neutral-400' : 'text-neutral-600'
-                }`}>
-                  {entry.type === 'builtin' ? entry.label : entry.cat.name}
+                <span className={`text-[11px] font-semibold uppercase tracking-wide ${section.dim ? 'text-neutral-400' : 'text-neutral-600'}`}>
+                  {section.label}
                 </span>
-                <span className={`text-[10px] ${isCustom ? 'text-indigo-400' : 'text-neutral-400'}`}>({sectionItems.length})</span>
+                <span className="text-[10px] text-neutral-400">({sectionItems.length})</span>
               </div>
               {isCollapsed
-                ? <ChevronDownIcon className={`w-3.5 h-3.5 ${isCustom ? 'text-indigo-400' : 'text-neutral-400'}`} />
-                : <ChevronUpIcon className={`w-3.5 h-3.5 ${isCustom ? 'text-indigo-400' : 'text-neutral-400'}`} />
+                ? <ChevronDownIcon className="w-3.5 h-3.5 text-neutral-400" />
+                : <ChevronUpIcon className="w-3.5 h-3.5 text-neutral-400" />
               }
             </button>
             {!isCollapsed && (

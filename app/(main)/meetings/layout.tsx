@@ -35,7 +35,7 @@ export default async function MeetingsLayout({
       .order('start_time', { ascending: false })
       .limit(50),
     supabase
-      .from('drive_folders')
+      .from('meeting_folders')
       .select('*')
       .eq('user_id', user.id)
       .order('created_at', { ascending: false }),

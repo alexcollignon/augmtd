@@ -467,15 +467,12 @@ export async function syncEmailsForConnection(
 
     console.log(`Fetched ${messages.length} ${connection.provider} emails for user ${connection.user_id}`);
 
-    // Fetch user context, calendar context, identity block, and custom categories in parallel
-    const [userContext, calendarContext, userContextBlock, userCategoriesRow] = await Promise.all([
+    // Fetch user context, calendar context, identity block in parallel
+    const [userContext, calendarContext, userContextBlock] = await Promise.all([
       getUserContext(connection.user_id, adminSupabase),
       getCalendarContext(connection.user_id, adminSupabase),
       buildUserContextBlock(connection.user_id, adminSupabase),
-      adminSupabase.from('profiles').select('settings').eq('id', connection.user_id).single(),
     ]);
-    const userCategories: import('@/lib/types/inbox').UserInboxCategory[] =
-      (userCategoriesRow.data?.settings as any)?.custom_inbox_categories ?? [];
 
     if (userContext) {
       const confidence = Math.round(userContext.confidenceMetrics.overallScore * 100);
@@ -1181,7 +1178,7 @@ export async function syncEmailsForConnection(
               recipient_position: recipient.position === 'to' || recipient.position === 'cc' ? recipient.position : undefined,
               recipient_email: recipient.email,
               user_context_block: userContextBlock || undefined,
-            }, adminSupabase, userCategories);
+            }, adminSupabase);
 
             // Update existing inbox item with recipient context
             const { error: updateError } = await adminSupabase
@@ -1189,7 +1186,6 @@ export async function syncEmailsForConnection(
               .update(stripNulls({
                 connection_id: connection.id,
                 work_state: recipient.inferredWorkState,
-                custom_category: processed.customCategory ?? null,
                 work_title: processed.workTitle,
                 what_i_prepared: processed.whatIPrepared,
                 why_matters: processed.whyMatters,
@@ -1286,7 +1282,7 @@ export async function syncEmailsForConnection(
             recipient_position: recipient.position === 'to' || recipient.position === 'cc' ? recipient.position : undefined,
             recipient_email: recipient.email,
             user_context_block: userContextBlock || undefined,
-          }, adminSupabase, userCategories);
+          }, adminSupabase);
 
           // Create inbox item for this recipient
           const { data: newInboxItem, error: inboxError } = await adminSupabase
@@ -1364,7 +1360,6 @@ export async function syncEmailsForConnection(
               is_read: deriveIsRead(storedEmail),
               status: 'pending',
               needs_review: true,
-              custom_category: processed.customCategory ?? null,
             }) as Record<string, unknown>)
             .select('id')
             .single();

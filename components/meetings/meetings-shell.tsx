@@ -120,7 +120,7 @@ export default function MeetingsShell({
 
   useEffect(() => {
     if (initialFolders) return;
-    fetch('/api/drive/folders')
+    fetch('/api/meetings/folders')
       .then((r) => r.json())
       .then((data) => setFolders(Array.isArray(data) ? data : (data.folders ?? [])));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -153,7 +153,7 @@ export default function MeetingsShell({
 
   // ── Handlers ─────────────────────────────────────────────────────────────
   const handleCreateFolder = async (name: string) => {
-    const res = await fetch('/api/drive/folders', {
+    const res = await fetch('/api/meetings/folders', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name }),
@@ -165,7 +165,7 @@ export default function MeetingsShell({
   };
 
   const handleRenameFolder = async (id: string, name: string) => {
-    const res = await fetch(`/api/drive/folders/${id}`, {
+    const res = await fetch(`/api/meetings/folders/${id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name }),
@@ -177,7 +177,7 @@ export default function MeetingsShell({
   };
 
   const handleDeleteFolder = async (id: string) => {
-    const res = await fetch(`/api/drive/folders/${id}`, { method: 'DELETE' });
+    const res = await fetch(`/api/meetings/folders/${id}`, { method: 'DELETE' });
     if (res.ok) {
       setFolders((prev) => prev.filter((f) => f.id !== id));
       if (selectedFolderId === id) setSelectedFolderId(null);
