@@ -1,9 +1,9 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { PaperClipIcon, CheckIcon, TrashIcon, XMarkIcon, ArchiveBoxArrowDownIcon, EllipsisHorizontalIcon, TagIcon } from '@heroicons/react/24/outline';
+import { PaperClipIcon, CheckIcon, TrashIcon, XMarkIcon, ArchiveBoxArrowDownIcon, EllipsisHorizontalIcon } from '@heroicons/react/24/outline';
 import { FlagIcon } from '@heroicons/react/24/solid';
-import type { InboxItem, UserInboxCategory } from '@/lib/types/inbox';
+import type { InboxItem } from '@/lib/types/inbox';
 
 
 interface EmailListCardProps {
@@ -17,8 +17,6 @@ interface EmailListCardProps {
   onDelete?: (id: string) => void;
   onArchive?: (id: string) => void;
   onFlag?: (id: string) => void;
-  onCategorize?: (id: string, category: string | null) => void;
-  userCategories?: UserInboxCategory[];
   selectedIds?: Set<string>;
 }
 
@@ -31,21 +29,18 @@ function formatTime(dateStr: string): string {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
-export default function EmailListCard({ item, isSelected, onSelect, compact = false, isChecked = false, onToggleCheck, hasAnySelected = false, onDelete, onArchive, onFlag, onCategorize, userCategories = [], selectedIds }: EmailListCardProps) {
+export default function EmailListCard({ item, isSelected, onSelect, compact = false, isChecked = false, onToggleCheck, hasAnySelected = false, onDelete, onArchive, onFlag, selectedIds }: EmailListCardProps) {
   const [pendingAction, setPendingAction] = useState<'delete' | 'archive' | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [showCategoryPicker, setShowCategoryPicker] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const sourceData = item.source_data;
   const isFlagged = item.is_flagged === true;
-  const hasCategories = onCategorize && userCategories.length > 0;
 
   useEffect(() => {
     if (!menuOpen) return;
     const handle = (e: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         setMenuOpen(false);
-        setShowCategoryPicker(false);
       }
     };
     document.addEventListener('mousedown', handle);
@@ -152,7 +147,7 @@ export default function EmailListCard({ item, isSelected, onSelect, compact = fa
                   )}
                   <div className={`absolute right-0 transition-opacity ${menuOpen ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
                     <button
-                      onClick={(e) => { e.stopPropagation(); setMenuOpen(v => !v); setShowCategoryPicker(false); }}
+                      onClick={(e) => { e.stopPropagation(); setMenuOpen(v => !v); }}
                       className="p-0.5 rounded text-neutral-400 hover:text-neutral-600"
                       title="More actions"
                     >
@@ -160,52 +155,24 @@ export default function EmailListCard({ item, isSelected, onSelect, compact = fa
                     </button>
                     {menuOpen && (
                       <div className="absolute right-0 top-full mt-1 w-44 bg-white rounded-xl shadow-lg border border-neutral-100 py-1 z-50 text-[12px]" onClick={e => e.stopPropagation()}>
-                        {showCategoryPicker ? (
-                          <>
-                            <div className="px-3 py-1.5 text-[11px] font-semibold text-neutral-400 uppercase tracking-wide border-b border-neutral-100 flex items-center justify-between">
-                              <span>Assign category</span>
-                              <button onClick={() => setShowCategoryPicker(false)} className="text-neutral-400 hover:text-neutral-600"><XMarkIcon className="w-3 h-3" /></button>
-                            </div>
-                            {userCategories.map(cat => (
-                              <button key={cat.id} onClick={() => { onCategorize!(item.id, item.custom_category === cat.name ? null : cat.name); setMenuOpen(false); setShowCategoryPicker(false); }} className={`w-full text-left px-3 py-1.5 hover:bg-neutral-50 flex items-center gap-2 ${item.custom_category === cat.name ? 'text-indigo-600 font-medium' : 'text-neutral-700'}`}>
-                                {cat.emoji && <span>{cat.emoji}</span>}
-                                <span className="truncate">{cat.name}</span>
-                                {item.custom_category === cat.name && <CheckIcon className="w-3 h-3 ml-auto flex-shrink-0" />}
-                              </button>
-                            ))}
-                            {item.custom_category && (
-                              <button onClick={() => { onCategorize!(item.id, null); setMenuOpen(false); setShowCategoryPicker(false); }} className="w-full text-left px-3 py-1.5 hover:bg-neutral-50 text-neutral-400 border-t border-neutral-100">Remove category</button>
-                            )}
-                          </>
-                        ) : (
-                          <>
-                            {hasCategories && (
-                              <button onClick={() => setShowCategoryPicker(true)} className="w-full text-left px-3 py-1.5 hover:bg-neutral-50 text-neutral-700 flex items-center gap-2">
-                                <TagIcon className="w-3.5 h-3.5 text-neutral-400" />
-                                <span>Assign category</span>
-                                {item.custom_category && <span className="ml-auto text-[10px] text-indigo-500 font-medium truncate max-w-[60px]">{item.custom_category}</span>}
-                              </button>
-                            )}
-                            {onFlag && (
-                              <button onClick={() => { onFlag(item.id); setMenuOpen(false); }} className="w-full text-left px-3 py-1.5 hover:bg-neutral-50 flex items-center gap-2 text-neutral-700">
-                                <FlagIcon className={`w-3.5 h-3.5 ${isFlagged ? 'text-amber-400' : 'text-neutral-400'}`} />
-                                <span>{isFlagged ? 'Unflag' : 'Flag'}</span>
-                              </button>
-                            )}
-                            {(hasCategories || onFlag) && (onArchive || onDelete) && <div className="border-t border-neutral-100 my-1" />}
-                            {onArchive && (
-                              <button onClick={() => { setPendingAction('archive'); setMenuOpen(false); }} className="w-full text-left px-3 py-1.5 hover:bg-neutral-50 flex items-center gap-2 text-neutral-700">
-                                <ArchiveBoxArrowDownIcon className="w-3.5 h-3.5 text-neutral-400" />
-                                <span>Archive</span>
-                              </button>
-                            )}
-                            {onDelete && (
-                              <button onClick={() => { setPendingAction('delete'); setMenuOpen(false); }} className="w-full text-left px-3 py-1.5 hover:bg-neutral-50 flex items-center gap-2 text-red-500">
-                                <TrashIcon className="w-3.5 h-3.5" />
-                                <span>Delete</span>
-                              </button>
-                            )}
-                          </>
+                        {onFlag && (
+                          <button onClick={() => { onFlag(item.id); setMenuOpen(false); }} className="w-full text-left px-3 py-1.5 hover:bg-neutral-50 flex items-center gap-2 text-neutral-700">
+                            <FlagIcon className={`w-3.5 h-3.5 ${isFlagged ? 'text-amber-400' : 'text-neutral-400'}`} />
+                            <span>{isFlagged ? 'Unflag' : 'Flag'}</span>
+                          </button>
+                        )}
+                        {onFlag && (onArchive || onDelete) && <div className="border-t border-neutral-100 my-1" />}
+                        {onArchive && (
+                          <button onClick={() => { setPendingAction('archive'); setMenuOpen(false); }} className="w-full text-left px-3 py-1.5 hover:bg-neutral-50 flex items-center gap-2 text-neutral-700">
+                            <ArchiveBoxArrowDownIcon className="w-3.5 h-3.5 text-neutral-400" />
+                            <span>Archive</span>
+                          </button>
+                        )}
+                        {onDelete && (
+                          <button onClick={() => { setPendingAction('delete'); setMenuOpen(false); }} className="w-full text-left px-3 py-1.5 hover:bg-neutral-50 flex items-center gap-2 text-red-500">
+                            <TrashIcon className="w-3.5 h-3.5" />
+                            <span>Delete</span>
+                          </button>
                         )}
                       </div>
                     )}
@@ -284,7 +251,7 @@ export default function EmailListCard({ item, isSelected, onSelect, compact = fa
                 {/* 3-dot menu button */}
                 <div className={`absolute right-0 transition-opacity ${menuOpen ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
                   <button
-                    onClick={(e) => { e.stopPropagation(); setMenuOpen(v => !v); setShowCategoryPicker(false); }}
+                    onClick={(e) => { e.stopPropagation(); setMenuOpen(v => !v); }}
                     className="p-0.5 rounded text-neutral-400 hover:text-neutral-600"
                     title="More actions"
                   >
@@ -292,73 +259,33 @@ export default function EmailListCard({ item, isSelected, onSelect, compact = fa
                   </button>
                   {menuOpen && (
                     <div className="absolute right-0 top-full mt-1 w-44 bg-white rounded-xl shadow-lg border border-neutral-100 py-1 z-50 text-[12px]" onClick={e => e.stopPropagation()}>
-                      {showCategoryPicker ? (
-                        <>
-                          <div className="px-3 py-1.5 text-[11px] font-semibold text-neutral-400 uppercase tracking-wide border-b border-neutral-100 flex items-center justify-between">
-                            <span>Assign category</span>
-                            <button onClick={() => setShowCategoryPicker(false)} className="text-neutral-400 hover:text-neutral-600"><XMarkIcon className="w-3 h-3" /></button>
-                          </div>
-                          {userCategories.map(cat => (
-                            <button
-                              key={cat.id}
-                              onClick={() => { onCategorize!(item.id, item.custom_category === cat.name ? null : cat.name); setMenuOpen(false); setShowCategoryPicker(false); }}
-                              className={`w-full text-left px-3 py-1.5 hover:bg-neutral-50 flex items-center gap-2 ${item.custom_category === cat.name ? 'text-indigo-600 font-medium' : 'text-neutral-700'}`}
-                            >
-                              {cat.emoji && <span>{cat.emoji}</span>}
-                              <span className="truncate">{cat.name}</span>
-                              {item.custom_category === cat.name && <CheckIcon className="w-3 h-3 ml-auto flex-shrink-0" />}
-                            </button>
-                          ))}
-                          {item.custom_category && (
-                            <button
-                              onClick={() => { onCategorize!(item.id, null); setMenuOpen(false); setShowCategoryPicker(false); }}
-                              className="w-full text-left px-3 py-1.5 hover:bg-neutral-50 text-neutral-400 border-t border-neutral-100"
-                            >
-                              Remove category
-                            </button>
-                          )}
-                        </>
-                      ) : (
-                        <>
-                          {hasCategories && (
-                            <button
-                              onClick={() => setShowCategoryPicker(true)}
-                              className="w-full text-left px-3 py-1.5 hover:bg-neutral-50 text-neutral-700 flex items-center gap-2"
-                            >
-                              <TagIcon className="w-3.5 h-3.5 text-neutral-400" />
-                              <span>Assign category</span>
-                              {item.custom_category && <span className="ml-auto text-[10px] text-indigo-500 font-medium truncate max-w-[60px]">{item.custom_category}</span>}
-                            </button>
-                          )}
-                          {onFlag && (
-                            <button
-                              onClick={() => { onFlag(item.id); setMenuOpen(false); }}
-                              className="w-full text-left px-3 py-1.5 hover:bg-neutral-50 flex items-center gap-2 text-neutral-700"
-                            >
-                              <FlagIcon className={`w-3.5 h-3.5 ${isFlagged ? 'text-amber-400' : 'text-neutral-400'}`} />
-                              <span>{isFlagged ? 'Unflag' : 'Flag'}</span>
-                            </button>
-                          )}
-                          {(hasCategories || onFlag) && (onArchive || onDelete) && <div className="border-t border-neutral-100 my-1" />}
-                          {onArchive && (
-                            <button
-                              onClick={() => { setPendingAction('archive'); setMenuOpen(false); }}
-                              className="w-full text-left px-3 py-1.5 hover:bg-neutral-50 flex items-center gap-2 text-neutral-700"
-                            >
-                              <ArchiveBoxArrowDownIcon className="w-3.5 h-3.5 text-neutral-400" />
-                              <span>Archive</span>
-                            </button>
-                          )}
-                          {onDelete && (
-                            <button
-                              onClick={() => { setPendingAction('delete'); setMenuOpen(false); }}
-                              className="w-full text-left px-3 py-1.5 hover:bg-neutral-50 flex items-center gap-2 text-red-500"
-                            >
-                              <TrashIcon className="w-3.5 h-3.5" />
-                              <span>Delete</span>
-                            </button>
-                          )}
-                        </>
+                      {onFlag && (
+                        <button
+                          onClick={() => { onFlag(item.id); setMenuOpen(false); }}
+                          className="w-full text-left px-3 py-1.5 hover:bg-neutral-50 flex items-center gap-2 text-neutral-700"
+                        >
+                          <FlagIcon className={`w-3.5 h-3.5 ${isFlagged ? 'text-amber-400' : 'text-neutral-400'}`} />
+                          <span>{isFlagged ? 'Unflag' : 'Flag'}</span>
+                        </button>
+                      )}
+                      {onFlag && (onArchive || onDelete) && <div className="border-t border-neutral-100 my-1" />}
+                      {onArchive && (
+                        <button
+                          onClick={() => { setPendingAction('archive'); setMenuOpen(false); }}
+                          className="w-full text-left px-3 py-1.5 hover:bg-neutral-50 flex items-center gap-2 text-neutral-700"
+                        >
+                          <ArchiveBoxArrowDownIcon className="w-3.5 h-3.5 text-neutral-400" />
+                          <span>Archive</span>
+                        </button>
+                      )}
+                      {onDelete && (
+                        <button
+                          onClick={() => { setPendingAction('delete'); setMenuOpen(false); }}
+                          className="w-full text-left px-3 py-1.5 hover:bg-neutral-50 flex items-center gap-2 text-red-500"
+                        >
+                          <TrashIcon className="w-3.5 h-3.5" />
+                          <span>Delete</span>
+                        </button>
                       )}
                     </div>
                   )}
@@ -381,22 +308,12 @@ export default function EmailListCard({ item, isSelected, onSelect, compact = fa
         )}
 
         {/* Badges */}
-        {(item.custom_category || sourceData?.attachments?.length > 0) && (
-          <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
-            {item.custom_category && (
-              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-indigo-50 text-indigo-600 text-[10px] font-medium">
-                {userCategories.find(c => c.name === item.custom_category)?.emoji && (
-                  <span>{userCategories.find(c => c.name === item.custom_category)!.emoji}</span>
-                )}
-                {item.custom_category}
-              </span>
-            )}
-            {sourceData?.attachments?.length > 0 && (
-              <span className="inline-flex items-center gap-0.5 text-neutral-400">
-                <PaperClipIcon className="w-2.5 h-2.5" />
-                <span className="text-[10px]">{sourceData.attachments.length}</span>
-              </span>
-            )}
+        {sourceData?.attachments?.length > 0 && (
+          <div className="flex items-center gap-1.5 mt-1.5">
+            <span className="inline-flex items-center gap-0.5 text-neutral-400">
+              <PaperClipIcon className="w-2.5 h-2.5" />
+              <span className="text-[10px]">{sourceData.attachments.length}</span>
+            </span>
           </div>
         )}
       </div>
