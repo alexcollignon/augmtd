@@ -618,11 +618,12 @@ interface DriveFileListProps {
   folders: DriveFolder[];
   onMove: (kind: 'augmtd' | 'kb', id: string, folderId: string | null) => Promise<void>;
   onNewFolderAndMove: (kind: 'augmtd' | 'kb', id: string, name: string) => Promise<DriveFolder>;
+  onCreateFolder: (name: string) => Promise<DriveFolder>;
   onDeleteKbFile: (ids: string[]) => void;
   onDeindexAugmtdFiles: (providerFileIds: string[]) => void;
 }
 
-function DriveFileList({ rows, onRowClick, sources, folders, onMove, onNewFolderAndMove, onDeleteKbFile, onDeindexAugmtdFiles }: DriveFileListProps) {
+function DriveFileList({ rows, onRowClick, sources, folders, onMove, onNewFolderAndMove, onCreateFolder, onDeleteKbFile, onDeindexAugmtdFiles }: DriveFileListProps) {
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
   const [moveDropdownFor, setMoveDropdownFor] = useState<string | null>(null);
   // Track KB (UUID) and augmtd (providerFileId) selections separately
@@ -633,10 +634,34 @@ function DriveFileList({ rows, onRowClick, sources, folders, onMove, onNewFolder
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
   const [showBulkMoveDropdown, setShowBulkMoveDropdown] = useState(false);
   const [bulkMoving, setBulkMoving] = useState(false);
+  const [bulkMoveNewFolderName, setBulkMoveNewFolderName] = useState('');
+  const [bulkMoveCreatingFolder, setBulkMoveCreatingFolder] = useState(false);
   const userFolders = folders.filter((f) => !f.is_system);
 
   const totalSelected = selectedKbIds.size + selectedAugmtdIds.size;
   const hasSelection = totalSelected > 0;
+
+  const fileRows = rows.filter((r): r is FileRow => r.kind !== 'separator');
+  const allSelected = fileRows.length > 0 && fileRows.every((r) =>
+    r.kind === 'kb' ? selectedKbIds.has(r.file.id) : selectedAugmtdIds.has(r.file.id)
+  );
+  const someSelected = hasSelection && !allSelected;
+
+  function selectAll() {
+    const kbIds = new Set<string>();
+    const augmtdIds = new Set<string>();
+    for (const row of fileRows) {
+      if (row.kind === 'kb') kbIds.add(row.file.id);
+      else augmtdIds.add(row.file.id);
+    }
+    setSelectedKbIds(kbIds);
+    setSelectedAugmtdIds(augmtdIds);
+  }
+
+  function toggleSelectAll() {
+    if (allSelected) clearSelection();
+    else selectAll();
+  }
 
   function toggleSelectKb(id: string) {
     setSelectedKbIds((prev) => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
@@ -672,6 +697,17 @@ function DriveFileList({ rows, onRowClick, sources, folders, onMove, onNewFolder
       else toast.success(`${totalSelected} ${totalSelected === 1 ? 'file' : 'files'} moved`);
       clearSelection();
     } catch { toast.error('Failed to move files'); } finally { setBulkMoving(false); }
+  }
+
+  async function handleBulkMoveNewFolder() {
+    if (!bulkMoveNewFolderName.trim()) return;
+    setBulkMoveCreatingFolder(true);
+    try {
+      const folder = await onCreateFolder(bulkMoveNewFolderName.trim());
+      setBulkMoveNewFolderName('');
+      setShowBulkMoveDropdown(false);
+      await handleBulkMove(folder.id);
+    } catch { toast.error('Failed to create folder'); } finally { setBulkMoveCreatingFolder(false); }
   }
 
   async function handleBatchDelete() {
@@ -714,8 +750,8 @@ function DriveFileList({ rows, onRowClick, sources, folders, onMove, onNewFolder
             </button>
             {showBulkMoveDropdown && (
               <>
-                <div className="fixed inset-0 z-20" onClick={() => setShowBulkMoveDropdown(false)} />
-                <div className="absolute right-0 top-full mt-1 w-48 bg-white border border-neutral-200 shadow-lg z-30 py-1 rounded-lg">
+                <div className="fixed inset-0 z-20" onClick={() => { setShowBulkMoveDropdown(false); setBulkMoveNewFolderName(''); setBulkMoveCreatingFolder(false); }} />
+                <div className="absolute right-0 top-full mt-1 w-52 bg-white border border-neutral-200 shadow-lg z-30 py-1 rounded-lg">
                   <button
                     onClick={() => handleBulkMove(null)}
                     className="w-full text-left px-3 py-1.5 text-[12.5px] text-neutral-600 hover:bg-neutral-50 italic"
@@ -732,6 +768,26 @@ function DriveFileList({ rows, onRowClick, sources, folders, onMove, onNewFolder
                       <span className="truncate">{f.name}</span>
                     </button>
                   ))}
+                  <div className="border-t border-neutral-100 mt-1 pt-1 px-2 pb-1">
+                    <div className="flex gap-1">
+                      <input
+                        value={bulkMoveNewFolderName}
+                        onChange={(e) => setBulkMoveNewFolderName(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') handleBulkMoveNewFolder(); e.stopPropagation(); }}
+                        onClick={(e) => e.stopPropagation()}
+                        placeholder="New folder…"
+                        disabled={bulkMoveCreatingFolder}
+                        className="flex-1 text-[12px] border border-neutral-200 rounded-md px-2 py-1 focus:outline-none focus:border-indigo-300 disabled:opacity-50"
+                      />
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleBulkMoveNewFolder(); }}
+                        disabled={!bulkMoveNewFolderName.trim() || bulkMoveCreatingFolder}
+                        className="px-2 py-1 bg-indigo-600 text-white text-[11px] rounded-md disabled:opacity-40"
+                      >
+                        {bulkMoveCreatingFolder ? '…' : '+'}
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </>
             )}
@@ -758,6 +814,22 @@ function DriveFileList({ rows, onRowClick, sources, folders, onMove, onNewFolder
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Select-all header */}
+      {fileRows.length > 0 && (
+        <div className="flex items-center gap-3 px-4 py-2 border-b border-neutral-100">
+          <input
+            type="checkbox"
+            checked={allSelected}
+            ref={(el) => { if (el) el.indeterminate = someSelected; }}
+            onChange={toggleSelectAll}
+            className="w-3.5 h-3.5 rounded border-neutral-300 text-indigo-600 cursor-pointer flex-shrink-0"
+          />
+          <span className="text-[11.5px] text-neutral-400 select-none">
+            {allSelected ? 'Deselect all' : someSelected ? `${totalSelected} of ${fileRows.length} selected` : 'Select all'}
+          </span>
         </div>
       )}
 
@@ -794,10 +866,29 @@ function DriveFileList({ rows, onRowClick, sources, folders, onMove, onNewFolder
         const isSelectable = row.kind === 'kb' || row.kind === 'augmtd';
         const isSelected = row.kind === 'kb' ? selectedKbIds.has(id) : selectedAugmtdIds.has(id);
 
+        function handleDragStart(e: React.DragEvent<HTMLDivElement>) {
+          // Drag the selected set if this file is in it, otherwise just this file
+          const kbIds = row.kind === 'kb' && selectedKbIds.has(id)
+            ? Array.from(selectedKbIds)
+            : row.kind === 'kb' ? [id] : Array.from(selectedKbIds);
+          const augmtdIds = row.kind === 'augmtd' && selectedAugmtdIds.has(id)
+            ? Array.from(selectedAugmtdIds)
+            : row.kind === 'augmtd' ? [id] : Array.from(selectedAugmtdIds);
+          e.dataTransfer.setData('application/x-drive-items', JSON.stringify({ kbIds, augmtdIds }));
+          e.dataTransfer.effectAllowed = 'move';
+          const ghost = (e.currentTarget as HTMLElement).cloneNode(true) as HTMLElement;
+          ghost.style.cssText = 'position:fixed;top:-9999px;left:0;opacity:0.45;pointer-events:none;width:320px;background:white;border-radius:8px;';
+          document.body.appendChild(ghost);
+          e.dataTransfer.setDragImage(ghost, 20, 20);
+          requestAnimationFrame(() => document.body.removeChild(ghost));
+        }
+
         return (
           <div key={id} className="relative">
             {menuOpenId === id && <div className="fixed inset-0 z-20" onClick={() => setMenuOpenId(null)} />}
             <div
+              draggable
+              onDragStart={handleDragStart}
               onClick={() => {
                 if (isSelectable && hasSelection) {
                   row.kind === 'kb' ? toggleSelectKb(id) : toggleSelectAugmtd(id);
@@ -814,7 +905,7 @@ function DriveFileList({ rows, onRowClick, sources, folders, onMove, onNewFolder
                   checked={isSelected}
                   onChange={() => row.kind === 'kb' ? toggleSelectKb(id) : toggleSelectAugmtd(id)}
                   onClick={(e) => e.stopPropagation()}
-                  className={`w-3.5 h-3.5 rounded border-neutral-300 text-indigo-600 flex-shrink-0 cursor-pointer transition-opacity ${hasSelection ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+                  className={`w-3.5 h-3.5 rounded border-neutral-300 text-indigo-600 flex-shrink-0 cursor-pointer transition-opacity ${isSelected || hasSelection ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
                 />
               ) : (
                 <DocumentIcon className="w-4 h-4 text-neutral-300 flex-shrink-0" />
@@ -1046,6 +1137,7 @@ interface DriveSidebarProps {
   onCreateFolder: () => void;
   onRenameFolder: (id: string, name: string) => void;
   onDeleteFolder: (id: string) => void;
+  onDropFiles: (kbIds: string[], augmtdIds: string[], folderId: string | null) => Promise<void>;
 }
 
 function DriveSidebar({
@@ -1054,12 +1146,49 @@ function DriveSidebar({
   folders, augmtdFiles, kbFiles, sources,
   onOpenUpload, onOpenAddFromDrive,
   newFolderOpen, setNewFolderOpen, newFolderName, setNewFolderName, onCreateFolder,
-  onRenameFolder, onDeleteFolder,
+  onRenameFolder, onDeleteFolder, onDropFiles,
 }: DriveSidebarProps) {
   const [menuFolderId, setMenuFolderId] = useState<string | null>(null);
   const [renamingFolderId, setRenamingFolderId] = useState<string | null>(null);
   const [renameFolderName, setRenameFolderName] = useState('');
   const [confirmingDeleteFolderId, setConfirmingDeleteFolderId] = useState<string | null>(null);
+  const [dragOverKey, setDragOverKey] = useState<string | null>(null);
+  const dragCounters = useRef<Map<string, number>>(new Map());
+
+  function parseDragData(e: React.DragEvent): { kbIds: string[]; augmtdIds: string[] } | null {
+    try {
+      return JSON.parse(e.dataTransfer.getData('application/x-drive-items'));
+    } catch { return null; }
+  }
+
+  function makeDragHandlers(key: string, folderId: string | null) {
+    return {
+      onDragOver: (e: React.DragEvent) => {
+        if (!e.dataTransfer.types.includes('application/x-drive-items')) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+      },
+      onDragEnter: (e: React.DragEvent) => {
+        if (!e.dataTransfer.types.includes('application/x-drive-items')) return;
+        e.preventDefault();
+        const count = (dragCounters.current.get(key) ?? 0) + 1;
+        dragCounters.current.set(key, count);
+        if (count === 1) setDragOverKey(key);
+      },
+      onDragLeave: () => {
+        const count = Math.max(0, (dragCounters.current.get(key) ?? 0) - 1);
+        dragCounters.current.set(key, count);
+        if (count === 0) setDragOverKey(null);
+      },
+      onDrop: (e: React.DragEvent) => {
+        e.preventDefault();
+        dragCounters.current.set(key, 0);
+        setDragOverKey(null);
+        const data = parseDragData(e);
+        if (data) onDropFiles(data.kbIds, data.augmtdIds, folderId);
+      },
+    };
+  }
 
   const userFolders = folders.filter((f) => !f.is_system);
   const connectedSourceCount = sources.filter((s) => s.provider !== 'upload').length;
@@ -1085,24 +1214,30 @@ function DriveSidebar({
 
       {/* Body */}
       <div className="flex-1 overflow-y-auto p-2">
-        {/* All Files */}
-        <NavRow
-          icon={DocumentIcon}
-          label="All Files"
-          count={augmtdFiles.length + kbFiles.length}
-          active={isActiveView(sidebarView, { kind: 'all' })}
-          onClick={() => nav({ kind: 'all' })}
-        />
+        {/* All Files — also a drop target (move to root) */}
+        <div {...makeDragHandlers('__root__', null)} className={`rounded-lg transition-colors ${dragOverKey === '__root__' ? 'ring-2 ring-indigo-400 ring-inset' : ''}`}>
+          <NavRow
+            icon={DocumentIcon}
+            label="All Files"
+            count={augmtdFiles.length + kbFiles.length}
+            active={isActiveView(sidebarView, { kind: 'all' })}
+            onClick={() => nav({ kind: 'all' })}
+          />
+        </div>
 
         {/* Folders */}
         <SectionLabel label="Folders" />
 
         {userFolders.map((folder) => {
           const isActive = isActiveView(sidebarView, { kind: 'folder', folderId: folder.id });
+          const isDragOver = dragOverKey === folder.id;
           return (
             <div key={folder.id} className="relative group/folder">
               {menuFolderId === folder.id && <div className="fixed inset-0 z-20" onClick={() => setMenuFolderId(null)} />}
-              <div className={`w-full px-2 py-1.5 rounded-lg flex items-center gap-2 text-[12.5px] transition-colors ${isActive ? 'bg-indigo-50 text-indigo-700' : 'text-neutral-600 hover:bg-neutral-50'}`}>
+              <div
+                {...makeDragHandlers(folder.id, folder.id)}
+                className={`w-full px-2 rounded-lg flex items-center gap-2 text-[12.5px] transition-colors ${isActive ? 'bg-indigo-50 text-indigo-700' : 'text-neutral-600 hover:bg-neutral-50'} ${isDragOver ? 'ring-2 ring-indigo-400 ring-inset pt-2 pb-8 items-start' : 'py-1.5'}`}
+              >
                 <button className="flex items-center gap-2 flex-1 min-w-0" onClick={() => nav({ kind: 'folder', folderId: folder.id })}>
                   <FolderOpenIcon className="w-3.5 h-3.5 flex-shrink-0 text-amber-400" />
                   {renamingFolderId === folder.id ? (
@@ -1210,6 +1345,7 @@ interface DriveCenterProps {
   onOpenAddFromDrive: () => void;
   onMove: (kind: 'augmtd' | 'kb', id: string, folderId: string | null) => Promise<void>;
   onNewFolderAndMove: (kind: 'augmtd' | 'kb', id: string, name: string) => Promise<DriveFolder>;
+  onCreateFolder: (name: string) => Promise<DriveFolder>;
   onDeleteKbFile: (ids: string[]) => void;
   onDeindexAugmtdFiles: (providerFileIds: string[]) => void;
 }
@@ -1218,7 +1354,7 @@ function DriveCenter({
   sidebarView, selectedFile, setSelectedFile,
   searchQuery, augmtdFiles, kbFiles, sources, folders,
   onOpenUpload, onOpenAddFromDrive,
-  onMove, onNewFolderAndMove, onDeleteKbFile, onDeindexAugmtdFiles,
+  onMove, onNewFolderAndMove, onCreateFolder, onDeleteKbFile, onDeindexAugmtdFiles,
 }: DriveCenterProps) {
   const title = searchQuery.trim() ? `Search results` : sidebarViewTitle(sidebarView, folders);
 
@@ -1296,6 +1432,7 @@ function DriveCenter({
               folders={folders}
               onMove={onMove}
               onNewFolderAndMove={onNewFolderAndMove}
+              onCreateFolder={onCreateFolder}
               onDeleteKbFile={onDeleteKbFile}
               onDeindexAugmtdFiles={onDeindexAugmtdFiles}
             />
@@ -1350,13 +1487,18 @@ export default function DriveClient({ initialSources, connections }: DriveClient
     return () => clearInterval(interval);
   }, [sources]);
 
+  async function createFolder(name: string): Promise<DriveFolder> {
+    const res = await fetch('/api/drive/folders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
+    if (!res.ok) throw new Error('Failed to create folder');
+    const folder: DriveFolder = await res.json();
+    setFolders((prev) => [...prev, folder]);
+    return folder;
+  }
+
   async function handleCreateFolder() {
     if (!newFolderName.trim()) return;
     try {
-      const res = await fetch('/api/drive/folders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: newFolderName.trim() }) });
-      if (!res.ok) { toast.error('Failed to create folder'); return; }
-      const folder: DriveFolder = await res.json();
-      setFolders((prev) => [...prev, folder]);
+      await createFolder(newFolderName.trim());
       setNewFolderName('');
       setNewFolderOpen(false);
     } catch { toast.error('Failed to create folder'); }
@@ -1381,7 +1523,7 @@ export default function DriveClient({ initialSources, connections }: DriveClient
     } catch { toast.error('Failed to delete folder'); }
   }
 
-  async function handleMove(kind: 'augmtd' | 'kb', id: string, newFolderId: string | null) {
+  async function handleMove(kind: 'augmtd' | 'kb', id: string, newFolderId: string | null, silent = false) {
     if (kind === 'augmtd') {
       const file = augmtdFiles.find((f) => f.id === id);
       if (!file) return;
@@ -1393,13 +1535,23 @@ export default function DriveClient({ initialSources, connections }: DriveClient
       if (!res.ok) { toast.error('Failed to move file'); return; }
       setKbFiles((prev) => prev.map((f) => (f.id === id ? { ...f, folder_id: newFolderId } : f)));
     }
-    toast.success('Moved');
+    if (!silent) toast.success('Moved');
+  }
+
+  async function handleDropFiles(kbIds: string[], augmtdIds: string[], folderId: string | null) {
+    const moves = [
+      ...kbIds.map((id) => handleMove('kb', id, folderId, true)),
+      ...augmtdIds.map((id) => handleMove('augmtd', id, folderId, true)),
+    ];
+    const results = await Promise.allSettled(moves);
+    const failed = results.filter((r) => r.status === 'rejected').length;
+    const total = kbIds.length + augmtdIds.length;
+    if (failed > 0) toast.error(`${failed} file${failed > 1 ? 's' : ''} could not be moved`);
+    else toast.success(`${total} ${total === 1 ? 'file' : 'files'} moved`);
   }
 
   async function handleNewFolderAndMove(kind: 'augmtd' | 'kb', id: string, name: string): Promise<DriveFolder> {
-    const res = await fetch('/api/drive/folders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
-    const folder: DriveFolder = await res.json();
-    setFolders((prev) => [...prev, folder]);
+    const folder = await createFolder(name);
     await handleMove(kind, id, folder.id);
     return folder;
   }
@@ -1440,6 +1592,7 @@ export default function DriveClient({ initialSources, connections }: DriveClient
               onCreateFolder={handleCreateFolder}
               onRenameFolder={handleRenameFolder}
               onDeleteFolder={handleDeleteFolder}
+              onDropFiles={handleDropFiles}
             />
           </div>
         </div>
@@ -1460,6 +1613,7 @@ export default function DriveClient({ initialSources, connections }: DriveClient
               onOpenAddFromDrive={() => setShowAddFromDrive(true)}
               onMove={handleMove}
               onNewFolderAndMove={handleNewFolderAndMove}
+              onCreateFolder={createFolder}
               onDeleteKbFile={handleDeleteKbFile}
               onDeindexAugmtdFiles={handleDeindexAugmtdFiles}
             />

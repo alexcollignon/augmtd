@@ -66,7 +66,7 @@ export default function MeetingFolderBrowser({
   async function handleCreateFolder() {
     if (!newFolderName.trim()) { setNewFolderOpen(false); return; }
     try {
-      const res = await fetch('/api/drive/folders', {
+      const res = await fetch('/api/meetings/folders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: newFolderName.trim(), parentId: currentFolderId ?? undefined }),
@@ -84,7 +84,7 @@ export default function MeetingFolderBrowser({
   async function handleRename(id: string, name: string) {
     if (!name.trim()) { setRenameId(null); return; }
     try {
-      const res = await fetch(`/api/drive/folders/${id}`, {
+      const res = await fetch(`/api/meetings/folders/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: name.trim() }),
@@ -100,7 +100,7 @@ export default function MeetingFolderBrowser({
 
   async function handleDeleteFolder(id: string) {
     try {
-      const res = await fetch(`/api/drive/folders/${id}`, { method: 'DELETE' });
+      const res = await fetch(`/api/meetings/folders/${id}`, { method: 'DELETE' });
       if (!res.ok) { toast.error('Failed to delete folder'); return; }
       onFoldersChange(folders.filter((f) => f.id !== id));
       if (currentFolderId === id) setCurrentFolderId(null);
@@ -136,7 +136,7 @@ export default function MeetingFolderBrowser({
     if (!name.trim()) return;
     setMovingId(transcriptId);
     try {
-      const fRes = await fetch('/api/drive/folders', {
+      const fRes = await fetch('/api/meetings/folders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: name.trim() }),
