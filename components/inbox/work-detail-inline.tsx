@@ -172,84 +172,20 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
     setThreadEmails(null);
   }, [item?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Live thread fetch — query emails table by thread_id so we always see the complete thread.
-  // After the primary query, stitches in emails from other providers using RFC References headers.
+  // Live thread fetch via server-side API route (bypasses browser RLS on emails table).
   useEffect(() => {
     const sd = item?.source_data as any;
     if (!sd) return;
-    const supabase = createClient();
     const threadId = sd.thread_id;
+    const emailId = sd.email_id;
     if (threadId) {
-      supabase
-        .from('emails')
-        .select('id, message_id, in_reply_to, references_ids, from_address, from_name, to_addresses, cc_addresses, subject, body, html_body, received_at, is_from_user, metadata')
-        .eq('thread_id', threadId)
-        .order('received_at', { ascending: true })
-        .then(async ({ data: primary }) => {
-          const primaryEmails = primary ?? [];
-
-          // Cross-provider stitching via RFC threading headers:
-          // 1. Find emails whose references_ids overlap with our thread's message_ids
-          // 2. Find emails whose message_id appears in our thread's references_ids
-          const primaryMessageIds = primaryEmails.map((e: any) => e.message_id).filter(Boolean);
-          const allReferencedIds = primaryEmails.flatMap((e: any) => e.references_ids || []).filter(Boolean);
-
-          const stitchQueries: Promise<{ data: any[] | null }>[] = [];
-
-          if (primaryMessageIds.length > 0) {
-            // Other-provider emails that reference any message in our thread
-            stitchQueries.push(
-              Promise.resolve(
-                supabase
-                  .from('emails')
-                  .select('id, message_id, in_reply_to, references_ids, from_address, from_name, to_addresses, cc_addresses, subject, body, html_body, received_at, is_from_user, metadata')
-                  .overlaps('references_ids', primaryMessageIds)
-                  .neq('thread_id', threadId)
-              ).then(r => ({ data: r.data }))
-            );
-          }
-
-          if (allReferencedIds.length > 0) {
-            // Emails that our thread references but have a different thread_id (sent from other provider)
-            stitchQueries.push(
-              Promise.resolve(
-                supabase
-                  .from('emails')
-                  .select('id, message_id, in_reply_to, references_ids, from_address, from_name, to_addresses, cc_addresses, subject, body, html_body, received_at, is_from_user, metadata')
-                  .in('message_id', allReferencedIds)
-                  .neq('thread_id', threadId)
-              ).then(r => ({ data: r.data }))
-            );
-          }
-
-          if (stitchQueries.length > 0) {
-            const stitchResults = await Promise.all(stitchQueries);
-            const seen = new Set(primaryEmails.map((e: any) => e.message_id).filter(Boolean));
-            const merged = [...primaryEmails];
-            for (const { data: extra } of stitchResults) {
-              for (const e of (extra || [])) {
-                if (!e.message_id || !seen.has(e.message_id)) {
-                  merged.push(e);
-                  if (e.message_id) seen.add(e.message_id);
-                }
-              }
-            }
-            merged.sort((a, b) => new Date(a.received_at).getTime() - new Date(b.received_at).getTime());
-            setThreadEmails(merged);
-          } else {
-            setThreadEmails(primaryEmails);
-          }
-        });
-    } else if (sd.email_id) {
-      // Single email — no thread
-      supabase
-        .from('emails')
-        .select('id, message_id, in_reply_to, references_ids, from_address, from_name, to_addresses, cc_addresses, subject, body, html_body, received_at, is_from_user, metadata')
-        .eq('id', sd.email_id)
-        .maybeSingle()
-        .then(({ data }) => {
-          setThreadEmails(data ? [data] : []);
-        });
+      fetch(`/api/inbox/thread?thread_id=${encodeURIComponent(threadId)}`)
+        .then(r => r.json())
+        .then(({ emails }) => setThreadEmails(emails ?? []));
+    } else if (emailId) {
+      fetch(`/api/inbox/thread?email_id=${encodeURIComponent(emailId)}`)
+        .then(r => r.json())
+        .then(({ emails }) => setThreadEmails(emails ?? []));
     } else {
       setThreadEmails([]);
     }
