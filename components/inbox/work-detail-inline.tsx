@@ -173,23 +173,35 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
   }, [item?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Live thread fetch via server-side API route (bypasses browser RLS on emails table).
-  useEffect(() => {
+  // connection_id scopes the thread to the selected account — prevents mixing emails across accounts.
+  const fetchThread = useCallback(() => {
     const sd = item?.source_data as any;
     if (!sd) return;
     const threadId = sd.thread_id;
     const emailId = sd.email_id;
+    const connId = (item as any)?.connection_id;
+    const connParam = connId ? `&connection_id=${encodeURIComponent(connId)}` : '';
     if (threadId) {
-      fetch(`/api/inbox/thread?thread_id=${encodeURIComponent(threadId)}`)
+      fetch(`/api/inbox/thread?thread_id=${encodeURIComponent(threadId)}${connParam}`)
         .then(r => r.json())
         .then(({ emails }) => setThreadEmails(emails ?? []));
     } else if (emailId) {
-      fetch(`/api/inbox/thread?email_id=${encodeURIComponent(emailId)}`)
+      fetch(`/api/inbox/thread?email_id=${encodeURIComponent(emailId)}${connParam}`)
         .then(r => r.json())
         .then(({ emails }) => setThreadEmails(emails ?? []));
     } else {
       setThreadEmails([]);
     }
   }, [item?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => { fetchThread(); }, [fetchThread]);
+
+  // Re-fetch thread after sync completes — backfill may have added historical messages
+  useEffect(() => {
+    const ch = new BroadcastChannel('sync-completed');
+    ch.onmessage = () => fetchThread();
+    return () => ch.close();
+  }, [fetchThread]);
 
   // Look up matching calendar event — by time range first, then by title from invite subject
   useEffect(() => {
