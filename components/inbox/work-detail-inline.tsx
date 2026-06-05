@@ -105,6 +105,11 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
   const [showReplyBcc, setShowReplyBcc] = useState(false);
   const [ccChips, setCcChips] = useState<AttendeeChip[]>([]);
   const [bccChips, setBccChips] = useState<AttendeeChip[]>([]);
+  const [toChips, setToChips] = useState<AttendeeChip[]>([]);
+  const [replyTo, setReplyTo] = useState('');
+  const [draggedChip, setDraggedChip] = useState<{ chip: AttendeeChip; from: 'to' | 'cc' | 'bcc' } | null>(null);
+  const [dragOverField, setDragOverField] = useState<'to' | 'cc' | 'bcc' | null>(null);
+  const [showAllRecipients, setShowAllRecipients] = useState(false);
   const [showAttachMenu, setShowAttachMenu] = useState(false);
   const [kbPickerOpen, setKbPickerOpen] = useState(false);
   const [showSignature, setShowSignature] = useState(true);
@@ -181,14 +186,24 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
     const emailId = sd.email_id;
     const connId = (item as any)?.connection_id;
     const connParam = connId ? `&connection_id=${encodeURIComponent(connId)}` : '';
+    // Only replace threadEmails if the fetched data has at least as many rows,
+    // so an in-progress optimistic sent entry isn't wiped by a stale sync response.
+    const applyIfGrown = (emails: any[]) => {
+      setThreadEmails(prev => {
+        const realCount = emails.filter((e: any) => !e.id?.startsWith('optimistic-')).length;
+        const prevRealCount = (prev ?? []).filter((e: any) => !e.id?.startsWith('optimistic-')).length;
+        // Accept update if it adds real rows, or if there's nothing to lose
+        return realCount >= prevRealCount ? emails : prev;
+      });
+    };
     if (threadId) {
       fetch(`/api/inbox/thread?thread_id=${encodeURIComponent(threadId)}${connParam}`)
         .then(r => r.json())
-        .then(({ emails }) => setThreadEmails(emails ?? []));
+        .then(({ emails }) => applyIfGrown(emails ?? []));
     } else if (emailId) {
       fetch(`/api/inbox/thread?email_id=${encodeURIComponent(emailId)}${connParam}`)
         .then(r => r.json())
-        .then(({ emails }) => setThreadEmails(emails ?? []));
+        .then(({ emails }) => applyIfGrown(emails ?? []));
     } else {
       setThreadEmails([]);
     }
@@ -305,6 +320,9 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
     setShowSignature(true);
     onReplyBodyChange('');
     onReplyOpenChange?.(false);
+    setToChips([]);
+    setReplyTo('');
+    setShowAllRecipients(false);
   }, [item?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Open + fill reply box when a pending draft arrives from chat (Use as reply path)
@@ -346,6 +364,41 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
     lastExternalReplyBody.current = html;
     onReplyBodyChange(html);
   }, [showSignature, signatureHtml, replyOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Auto-populate To (sender) and CC (original cc) when reply opens.
+  // Depends on threadEmails too — CC lives in the emails table, not always in source_data.
+  useEffect(() => {
+    if (!replyOpen || !item) return;
+    const sd = item.source_data as any;
+
+    // To: always the original sender
+    const senderEmail = sd?.from || sd?.from_address;
+    if (senderEmail && toChips.length === 0) {
+      const chips: AttendeeChip[] = [{ email: senderEmail, name: sd?.from_name || undefined }];
+      setToChips(chips);
+      setReplyTo(senderEmail);
+    }
+
+    // CC: prefer thread email row (proper array), fall back to source_data
+    if (ccChips.length === 0) {
+      const emailId: string = sd?.email_id ?? '';
+      const latestEmail = threadEmails?.length
+        ? (threadEmails.find((e: any) => e.id === emailId) ?? threadEmails[threadEmails.length - 1])
+        : null;
+      const rawCc = latestEmail?.cc_addresses ?? sd?.cc_addresses;
+      let ccArr: string[] = [];
+      if (Array.isArray(rawCc)) ccArr = rawCc;
+      else if (typeof rawCc === 'string' && rawCc) ccArr = rawCc.split(',');
+      const chips: AttendeeChip[] = ccArr
+        .map((a: string) => ({ email: a.trim() }))
+        .filter((c: AttendeeChip) => c.email.includes('@'));
+      if (chips.length) {
+        setCcChips(chips);
+        setReplyCc(chips.map(c => c.email).join(', '));
+        setShowReplyCc(true);
+      }
+    }
+  }, [replyOpen, threadEmails]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Sync externally-set replyBody (AI draft) into the contenteditable, preserving sig
   useEffect(() => {
@@ -436,6 +489,11 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
     onReplyBodyChange(html);
   }, [onReplyBodyChange]);
 
+  const handleToChips = (chips: AttendeeChip[]) => {
+    setToChips(chips);
+    setReplyTo(chips.map(c => c.email).join(', '));
+  };
+
   const handleCcChips = (chips: AttendeeChip[]) => {
     setCcChips(chips);
     setReplyCc(chips.map(c => c.email).join(', '));
@@ -444,6 +502,24 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
   const handleBccChips = (chips: AttendeeChip[]) => {
     setBccChips(chips);
     setReplyBcc(chips.map(c => c.email).join(', '));
+  };
+
+  const handleDrop = (targetField: 'to' | 'cc' | 'bcc') => {
+    setDragOverField(null);
+    if (!draggedChip || draggedChip.from === targetField) { setDraggedChip(null); return; }
+    const { chip, from } = draggedChip;
+    const newTo = from === 'to' ? toChips.filter(c => c.email !== chip.email) : [...toChips];
+    const newCc = from === 'cc' ? ccChips.filter(c => c.email !== chip.email) : [...ccChips];
+    const newBcc = from === 'bcc' ? bccChips.filter(c => c.email !== chip.email) : [...bccChips];
+    if (targetField === 'to' && !newTo.some(c => c.email === chip.email)) newTo.push(chip);
+    if (targetField === 'cc' && !newCc.some(c => c.email === chip.email)) newCc.push(chip);
+    if (targetField === 'bcc' && !newBcc.some(c => c.email === chip.email)) newBcc.push(chip);
+    handleToChips(newTo);
+    handleCcChips(newCc);
+    handleBccChips(newBcc);
+    if (targetField === 'cc') setShowReplyCc(true);
+    if (targetField === 'bcc') setShowReplyBcc(true);
+    setDraggedChip(null);
   };
 
   const handleSendReply = async () => {
@@ -456,12 +532,30 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
         body: JSON.stringify({
           customMessage: replyBody,
           attachments: replyAttachments,
+          to: replyTo.trim() || undefined,
           cc: replyCc.trim() || undefined,
           bcc: replyBcc.trim() || undefined,
         }),
       });
       if (!res.ok) throw new Error('Send failed');
       toast.success('Reply sent');
+
+      // Optimistically append sent message to thread so it shows immediately,
+      // before the next sync cycle picks it up from Gmail/Outlook.
+      const sentEntry = {
+        id: `optimistic-sent-${Date.now()}`,
+        is_from_user: true,
+        from_name: 'You',
+        from_address: '',
+        to_addresses: toChips.map(c => c.email),
+        cc_addresses: ccChips.map(c => c.email),
+        subject: (item.source_data as any)?.subject ?? '',
+        body: replyBody.replace(/<[^>]*>/g, '').trim(),
+        html_body: replyBody,
+        received_at: new Date().toISOString(),
+      };
+      setThreadEmails(prev => (prev ? [...prev, sentEntry] : [sentEntry]));
+
       setReplyOpen(false);
       onReplyOpenChange?.(false);
       onReplyBodyChange('');
@@ -472,6 +566,8 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
       setShowReplyBcc(false);
       setCcChips([]);
       setBccChips([]);
+      setToChips([]);
+      setReplyTo('');
       onReplySent?.(item.id);
     } catch {
       toast.error('Could not send reply');
@@ -772,8 +868,8 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
           };
 
           const latestName = latest ? (latest.is_from_user ? 'You' : (latest.from_name || latest.from_address || 'Unknown')) : (sd?.from_name || sd?.from || 'Unknown');
-          const toStr = latest ? formatRecipients(latest.to_addresses) : formatRecipients(sd?.to_addresses);
-          const ccStr = latest ? formatRecipients(latest.cc_addresses) : formatRecipients(sd?.cc_addresses);
+          const toAddrs: string[] = (latest?.to_addresses ?? sd?.to_addresses ?? []) as string[];
+          const ccAddrs: string[] = (latest?.cc_addresses ?? sd?.cc_addresses ?? []) as string[];
 
           return (
             <div className="space-y-1.5">
@@ -804,12 +900,47 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="text-[13px] font-semibold text-neutral-800 truncate">{latestName}</div>
-                      {toStr && (
-                        <div className="text-[11px] text-neutral-400 truncate">
-                          <span className="font-medium">To:</span> {toStr}
-                          {ccStr && <><span className="ml-2 font-medium">CC:</span> {ccStr}</>}
-                        </div>
-                      )}
+                      {(toAddrs.length > 0 || ccAddrs.length > 0) && (() => {
+                        const hiddenTo = Math.max(0, toAddrs.length - 2);
+                        const hiddenCc = Math.max(0, ccAddrs.length - 2);
+                        const totalHidden = hiddenTo + hiddenCc;
+                        if (!showAllRecipients) {
+                          return (
+                            <div className="text-[11px] text-neutral-400 flex items-baseline gap-1 min-w-0">
+                              <span className="truncate flex-1">
+                                {toAddrs.length > 0 && <><span className="font-medium">To:</span>{' '}{toAddrs.slice(0, 2).map(parseName).join(', ')}{hiddenTo > 0 ? ` +${hiddenTo}` : ''}</>}
+                                {ccAddrs.length > 0 && <><span className="ml-2 font-medium">CC:</span>{' '}{ccAddrs.slice(0, 2).map(parseName).join(', ')}{hiddenCc > 0 ? ` +${hiddenCc}` : ''}</>}
+                              </span>
+                              {totalHidden > 0 && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => { e.stopPropagation(); setShowAllRecipients(true); }}
+                                  className="flex-shrink-0 text-indigo-500 hover:text-indigo-700 text-[10px] font-medium whitespace-nowrap"
+                                >
+                                  +{totalHidden} more
+                                </button>
+                              )}
+                            </div>
+                          );
+                        }
+                        return (
+                          <div className="text-[11px] text-neutral-400 space-y-0.5 mt-0.5">
+                            {toAddrs.length > 0 && (
+                              <div className="break-all"><span className="font-medium">To:</span>{' '}{toAddrs.join(', ')}</div>
+                            )}
+                            {ccAddrs.length > 0 && (
+                              <div className="break-all"><span className="font-medium">CC:</span>{' '}{ccAddrs.join(', ')}</div>
+                            )}
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); setShowAllRecipients(false); }}
+                              className="text-indigo-500 hover:text-indigo-700 text-[10px] font-medium"
+                            >
+                              Show less
+                            </button>
+                          </div>
+                        );
+                      })()}
                     </div>
                     {(latest?.received_at || sd?.received_at) && (
                       <span className="text-[11px] text-neutral-400 flex-shrink-0">
@@ -855,46 +986,100 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
         {/* Inline reply composer */}
         {replyOpen && item.source === 'email' && (
           <div ref={replyBoxRef} className="border border-neutral-200 bg-white">
+            {/* Header */}
             <div className="flex items-center justify-between px-4 pt-3 pb-2 border-b border-neutral-100">
               <span className="text-[12px] font-semibold text-neutral-600 flex items-center gap-1.5">
                 <ArrowUturnLeftIcon className="w-3.5 h-3.5" />
-                Reply to {sourceData?.from_name || sourceData?.from || 'sender'}
+                Reply
               </span>
-              <div className="flex items-center gap-2">
-                {!showReplyCc && (
-                  <button
-                    onClick={() => setShowReplyCc(true)}
-                    className="text-[11px] text-neutral-400 hover:text-neutral-600 transition-colors"
-                  >
-                    CC
-                  </button>
-                )}
-                {!showReplyBcc && (
-                  <button
-                    onClick={() => setShowReplyBcc(true)}
-                    className="text-[11px] text-neutral-400 hover:text-neutral-600 transition-colors"
-                  >
-                    BCC
-                  </button>
-                )}
+              <button
+                onClick={() => { setReplyOpen(false); onReplyOpenChange?.(false); onReplyBodyChange(''); setReplyCc(''); setReplyBcc(''); setShowReplyCc(false); setShowReplyBcc(false); setCcChips([]); setBccChips([]); setToChips([]); setReplyTo(''); }}
+                className="text-neutral-400 hover:text-neutral-600 transition-colors"
+              >
+                <XMarkIcon className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* To row */}
+            <div
+              className="flex items-center gap-2 px-4 py-2 border-b border-neutral-100"
+              onDragOver={(e) => { e.preventDefault(); setDragOverField('to'); }}
+              onDragLeave={() => setDragOverField(null)}
+              onDrop={() => handleDrop('to')}
+            >
+              <span className="text-[11px] font-semibold text-neutral-400 w-8 flex-shrink-0">To</span>
+              <div className="flex-1 min-w-0">
+                <AttendeeInput
+                  value={toChips}
+                  onChange={handleToChips}
+                  noBorder
+                  compact
+                  placeholder="recipient@example.com"
+                  onChipDragStart={(chip) => setDraggedChip({ chip, from: 'to' })}
+                  isDragOver={dragOverField === 'to'}
+                />
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0 ml-auto">
                 <button
-                  onClick={() => { setReplyOpen(false); onReplyOpenChange?.(false); onReplyBodyChange(''); setReplyCc(''); setReplyBcc(''); setShowReplyCc(false); setShowReplyBcc(false); setCcChips([]); setBccChips([]); }}
-                  className="text-neutral-400 hover:text-neutral-600 transition-colors"
+                  type="button"
+                  onClick={() => setShowReplyCc(v => !v)}
+                  className={`text-[11px] font-medium transition-colors ${showReplyCc ? 'text-indigo-600' : 'text-neutral-400 hover:text-neutral-600'}`}
                 >
-                  <XMarkIcon className="w-4 h-4" />
+                  CC
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowReplyBcc(v => !v)}
+                  className={`text-[11px] font-medium transition-colors ${showReplyBcc ? 'text-indigo-600' : 'text-neutral-400 hover:text-neutral-600'}`}
+                >
+                  BCC
                 </button>
               </div>
             </div>
+
+            {/* CC row (conditional) */}
             {showReplyCc && (
-              <div className="flex items-center gap-2 px-4 py-2 border-b border-neutral-100 relative">
+              <div
+                className="flex items-center gap-2 px-4 py-2 border-b border-neutral-100"
+                onDragOver={(e) => { e.preventDefault(); setDragOverField('cc'); }}
+                onDragLeave={() => setDragOverField(null)}
+                onDrop={() => handleDrop('cc')}
+              >
                 <span className="text-[11px] font-semibold text-neutral-400 w-8 flex-shrink-0">CC</span>
-                <AttendeeInput value={ccChips} onChange={handleCcChips} noBorder compact placeholder="cc@example.com" />
+                <div className="flex-1 min-w-0">
+                  <AttendeeInput
+                    value={ccChips}
+                    onChange={handleCcChips}
+                    noBorder
+                    compact
+                    placeholder="cc@example.com"
+                    onChipDragStart={(chip) => setDraggedChip({ chip, from: 'cc' })}
+                    isDragOver={dragOverField === 'cc'}
+                  />
+                </div>
               </div>
             )}
+
+            {/* BCC row (conditional) */}
             {showReplyBcc && (
-              <div className="flex items-center gap-2 px-4 py-2 border-b border-neutral-100 relative">
+              <div
+                className="flex items-center gap-2 px-4 py-2 border-b border-neutral-100"
+                onDragOver={(e) => { e.preventDefault(); setDragOverField('bcc'); }}
+                onDragLeave={() => setDragOverField(null)}
+                onDrop={() => handleDrop('bcc')}
+              >
                 <span className="text-[11px] font-semibold text-neutral-400 w-8 flex-shrink-0">BCC</span>
-                <AttendeeInput value={bccChips} onChange={handleBccChips} noBorder compact placeholder="bcc@example.com" />
+                <div className="flex-1 min-w-0">
+                  <AttendeeInput
+                    value={bccChips}
+                    onChange={handleBccChips}
+                    noBorder
+                    compact
+                    placeholder="bcc@example.com"
+                    onChipDragStart={(chip) => setDraggedChip({ chip, from: 'bcc' })}
+                    isDragOver={dragOverField === 'bcc'}
+                  />
+                </div>
               </div>
             )}
             <div className="px-4 pt-3 pb-2">
@@ -987,7 +1172,7 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
 
               <div className="flex items-center gap-2 flex-shrink-0">
                 <button
-                  onClick={() => { setReplyOpen(false); onReplyOpenChange?.(false); onReplyBodyChange(''); setReplyAttachments([]); setReplyCc(''); setReplyBcc(''); setShowReplyCc(false); setShowReplyBcc(false); setCcChips([]); setBccChips([]); }}
+                  onClick={() => { setReplyOpen(false); onReplyOpenChange?.(false); onReplyBodyChange(''); setReplyAttachments([]); setReplyCc(''); setReplyBcc(''); setShowReplyCc(false); setShowReplyBcc(false); setCcChips([]); setBccChips([]); setToChips([]); setReplyTo(''); }}
                   disabled={isSendingReply}
                   className="px-3 py-1.5 text-[12px] font-medium text-neutral-500 hover:text-neutral-700 disabled:opacity-50 transition-colors"
                 >

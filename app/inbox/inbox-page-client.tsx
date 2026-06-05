@@ -1356,11 +1356,10 @@ export function InboxPageClient({
                       onItemConfirmed={handleItemConfirmed}
                       onRefreshMeetings={fetchMeetings}
                       pendingReplyDraft={pendingReplyDraft}
-                      onReplySent={(itemId) => {
+                      onReplySent={(_itemId) => {
                         setPendingReplyDraft(null);
                         setReplyBody('');
                         setReplyIsOpen(false);
-                        handleItemConfirmed([itemId], 'not_my_task');
                       }}
                       replyBody={replyBody}
                       onReplyBodyChange={setReplyBody}
