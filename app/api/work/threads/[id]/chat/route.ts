@@ -345,6 +345,34 @@ export async function POST(
       storagePath?: string;
       extractedText: string | null;
     }>;
+
+    // Re-extract text for PDFs that failed at upload time (pdf-parse returned empty string → stored as null).
+    // Run against ALL thread attachments — not gated on the current message's attachment IDs — so
+    // the text context path works even when the client didn't send attachment IDs in the request body.
+    const needsExtraction = userAttachments.filter(ua =>
+      !ua.extractedText && ua.mimeType === 'application/pdf' && ua.storagePath
+    );
+    if (needsExtraction.length > 0) {
+      const { extractTextFromAttachment } = await import('@/lib/attachments/text-extractor');
+      await Promise.all(needsExtraction.map(async (ua) => {
+        try {
+          const { data } = await adminClient.storage.from('email-attachments').download(ua.storagePath!);
+          if (!data) return;
+          const buf = Buffer.from(await data.arrayBuffer());
+          const text = await extractTextFromAttachment(buf, 'application/pdf', ua.filename);
+          if (!text?.trim()) return;
+          ua.extractedText = text.trim().replace(/\u0000/g, '').slice(0, 4000);
+        } catch { /* leave null — native-PDF path still handles Bedrock/Anthropic */ }
+      }));
+      // Persist any newly extracted text so future messages don't re-download
+      if (needsExtraction.some(ua => ua.extractedText)) {
+        adminClient.from('work_threads')
+          .update({ user_attachments: userAttachments })
+          .eq('id', threadId)
+          .catch(() => {});
+      }
+    }
+
     if (userAttachments.some(a => a.extractedText)) {
       const attachCtx = userAttachments
         .filter(a => a.extractedText)
@@ -470,15 +498,13 @@ export async function POST(
     // PDF attachments: for Anthropic/Bedrock providers, inject as native document blocks.
     // Handles PDFs where text extraction returned nothing (truly scanned, no text layer).
     // The Bedrock adapter passes { type: 'document' } blocks through to Anthropic Messages API unchanged.
-    if (
-      attachments.length > 0 &&
-      (chatEndpoint.provider === 'bedrock' || chatEndpoint.provider === 'anthropic')
-    ) {
+    // Not gated on attachments[] IDs — reads user_attachments directly so files are visible
+    // even when the client didn't send attachment IDs in the request body.
+    if (chatEndpoint.provider === 'bedrock' || chatEndpoint.provider === 'anthropic') {
       const pdfAttachRecords = userAttachments.filter((ua: any) =>
         ua.mimeType === 'application/pdf' &&
         !ua.extractedText &&
-        ua.storagePath &&
-        attachments.some((a: { id: string }) => a.id === ua.chatAttachId)
+        ua.storagePath
       );
       if (pdfAttachRecords.length > 0) {
         const pdfResults = await Promise.all(

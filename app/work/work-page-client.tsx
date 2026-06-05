@@ -22,8 +22,11 @@ import { DocumentArtifact, ExecutionPlan } from '@/lib/types/inbox';
 import { AgentsSidebarSection, SidebarAgent } from '@/components/agents/agents-sidebar-section';
 import { AgentIcon } from '@/components/agents/agent-icons';
 import { useWorkspace } from '@/context/workspace-context';
+import { toast } from 'sonner';
 
 // ─── Shared constants ─────────────────────────────────────────────────────────
+
+const MAX_ATTACHMENTS = 10;
 
 const AGENT_COLOR_MAP: Record<string, { bg: string; icon: string }> = {
   indigo:  { bg: 'bg-indigo-500',  icon: 'text-white' },
@@ -246,7 +249,13 @@ export function WorkPageClient({
   // ── Thread CRUD ──────────────────────────────────────────────────────────
 
   function handlePreAttach(files: File[]) {
-    setPendingFiles(prev => [...prev, ...files.map(f => ({ id: crypto.randomUUID(), file: f }))]);
+    setPendingFiles(prev => {
+      const remaining = MAX_ATTACHMENTS - prev.length;
+      if (remaining <= 0) { toast.error(`You can attach up to ${MAX_ATTACHMENTS} files per message`); return prev; }
+      const toAdd = files.slice(0, remaining);
+      if (toAdd.length < files.length) toast.error(`You can attach up to ${MAX_ATTACHMENTS} files per message`);
+      return [...prev, ...toAdd.map(f => ({ id: crypto.randomUUID(), file: f }))];
+    });
   }
 
   function handlePreRemoveAttachment(chipId: string) {
@@ -300,7 +309,8 @@ export function WorkPageClient({
       }
 
       if (filesToUpload.length > 0 && id) {
-        // Upload in background; block auto-send until metadata is ready
+        // Show chips instantly using original filenames — replaced with real server IDs on success
+        setPendingAttachmentMeta(filesToUpload.map(({ id: fid, file }) => ({ id: fid, name: file.name })));
         setIsAttachUploading(true);
         const formData = new FormData();
         for (const { file } of filesToUpload) formData.append('file', file);
@@ -310,10 +320,12 @@ export function WorkPageClient({
               const { attachments } = await uploadRes.json();
               const meta = (attachments as Array<{ chatAttachId: string; filename: string }>).map(a => ({ id: a.chatAttachId, name: a.filename }));
               setPendingAttachmentMeta(meta);
+            } else {
+              setPendingAttachmentMeta([]);
             }
             setIsAttachUploading(false);
           })
-          .catch(() => { setIsAttachUploading(false); });
+          .catch(() => { setPendingAttachmentMeta([]); setIsAttachUploading(false); });
       }
     } catch (err) {
       console.error(err);
@@ -729,6 +741,12 @@ function ActiveChatView({
 
   // Attachment handlers
   async function handleAttach(files: File[]) {
+    const remaining = MAX_ATTACHMENTS - chatAttachments.length;
+    if (remaining <= 0) { toast.error(`You can attach up to ${MAX_ATTACHMENTS} files per message`); return; }
+    const toAdd = files.slice(0, remaining);
+    if (toAdd.length < files.length) toast.error(`You can attach up to ${MAX_ATTACHMENTS} files per message`);
+    files = toAdd;
+
     // Add chips immediately with a loading spinner — don't wait for upload
     const tempChips = files.map(f => ({
       id: `uploading-${crypto.randomUUID()}`,
