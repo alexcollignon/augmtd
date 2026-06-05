@@ -1,11 +1,12 @@
 'use client';
 
 import Link from 'next/link';
-import { UserIcon, BuildingOffice2Icon } from '@heroicons/react/24/outline';
+import { UserIcon, BuildingOffice2Icon, SparklesIcon } from '@heroicons/react/24/outline';
 
 const NAV_ITEMS = [
   { id: 'account', label: 'Account', icon: UserIcon },
   { id: 'company', label: 'Company', icon: BuildingOffice2Icon },
+  { id: 'memory', label: 'Memory', icon: SparklesIcon },
 ];
 
 export default function SettingsLeftPanel({ activeTab }: { activeTab: string }) {
