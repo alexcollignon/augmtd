@@ -9,6 +9,7 @@ import SettingsLeftPanel from '@/components/settings/settings-left-panel';
 import SettingsPageClient from '@/app/settings/settings-page-client';
 import CompanyPageClient from '@/app/company/company-page-client';
 import CompanyPending from '@/app/company/company-pending';
+import MemorySection from '@/components/settings/memory-section';
 import { getMyCompany } from '@/lib/company/get-my-company';
 
 interface Props {
@@ -177,6 +178,10 @@ export default async function SettingsPage({ searchParams }: Props) {
                   <DataManagementSection connections={connections} userEmail={user.email ?? ''} />
                 </section>
               </div>
+            )}
+
+            {tab === 'memory' && (
+              <MemorySection />
             )}
 
             {tab === 'company' && (

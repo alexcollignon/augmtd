@@ -1,0 +1,3 @@
+ALTER TABLE context_profiles
+  ADD COLUMN IF NOT EXISTS rendered_text TEXT,
+  ADD COLUMN IF NOT EXISTS rendered_at TIMESTAMPTZ;
