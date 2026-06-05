@@ -16,7 +16,7 @@ export async function POST(
     }
 
     const { id } = await params;
-    const { customMessage, attachments: rawAttachments, cc, bcc } = await request.json();
+    const { customMessage, attachments: rawAttachments, cc, bcc, to } = await request.json();
     const attachments: EmailAttachment[] = (rawAttachments || []).map((a: { filename: string; content: string; mimeType: string }) => ({
       filename: a.filename,
       content: Buffer.from(a.content, 'base64'),
@@ -67,7 +67,7 @@ export async function POST(
         encryptedTokens: connection.metadata.tokens,
         threadId: sourceData.thread_id,
         messageId: sourceData.message_id,
-        to: sourceData.from,
+        to: to || sourceData.from,
         subject: sourceData.subject,
         body: messageBody,
         inReplyTo: sourceData.message_id,
@@ -95,6 +95,7 @@ export async function POST(
         messageId: outlookMessageId,
         body: messageBody,
         attachments,
+        to: to || undefined,
         cc: cc || undefined,
         bcc: bcc || undefined,
       });
@@ -103,20 +104,6 @@ export async function POST(
         { error: 'Unsupported provider' },
         { status: 400 }
       );
-    }
-
-    // Mark item as completed
-    const { error: updateError } = await supabase
-      .from('inbox_items')
-      .update({
-        status: 'completed',
-      })
-      .eq('id', id)
-      .eq('user_id', user.id);
-
-    if (updateError) {
-      console.error('Error updating inbox item:', updateError);
-      // Don't fail the request - reply was sent successfully
     }
 
     // Log learning signal

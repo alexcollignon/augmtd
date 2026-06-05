@@ -16,6 +16,9 @@ import {
   CodeBracketIcon,
   GlobeAltIcon,
 } from '@heroicons/react/24/outline';
+import { toast } from 'sonner';
+
+const MAX_ATTACHMENTS = 10;
 
 export const CHAT_SOURCES = [
   { id: 'kb', label: 'Knowledge base' },
@@ -364,7 +367,16 @@ export function ChatInputBar({
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files || []);
-    if (files.length > 0) onAttach?.(files);
+    if (files.length === 0) { e.target.value = ''; return; }
+    const remaining = MAX_ATTACHMENTS - attachments.length;
+    if (remaining <= 0) {
+      toast.error(`You can attach up to ${MAX_ATTACHMENTS} files per message`);
+      e.target.value = '';
+      return;
+    }
+    const toAdd = files.slice(0, remaining);
+    if (toAdd.length < files.length) toast.error(`You can attach up to ${MAX_ATTACHMENTS} files per message`);
+    onAttach?.(toAdd);
     e.target.value = '';
   }
 

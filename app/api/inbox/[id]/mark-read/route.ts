@@ -25,6 +25,10 @@ export async function POST(
     if (!item) return NextResponse.json({ error: 'Not found' }, { status: 404 });
     if (item.is_read) return NextResponse.json({ ok: true }); // already read
 
+    // Always update our DB first — never let provider issues block the local state change
+    await supabase.from('inbox_items').update({ is_read: true }).eq('id', id).eq('user_id', user.id);
+
+    // Best-effort: also mark read on the provider (fire-and-forget style, non-fatal)
     const { data: connection } = await supabase
       .from('connections')
       .select('id, provider, metadata')
@@ -32,10 +36,10 @@ export async function POST(
       .eq('user_id', user.id)
       .single();
 
-    if (!connection) return NextResponse.json({ error: 'Connection not found' }, { status: 404 });
+    if (!connection) return NextResponse.json({ ok: true }); // no connection — DB already updated
 
     const encryptedTokens: string = connection.metadata?.tokens;
-    if (!encryptedTokens) return NextResponse.json({ error: 'No tokens' }, { status: 400 });
+    if (!encryptedTokens) return NextResponse.json({ ok: true }); // no tokens — DB already updated
 
     // Fetch the email row to get the provider-internal ID from metadata
     const { data: email } = await supabase
@@ -45,7 +49,6 @@ export async function POST(
       .eq('user_id', user.id)
       .single();
 
-    // Mark read on the provider
     if (connection.provider === 'gmail') {
       const gmailId = (email?.metadata as any)?.gmail_id;
       if (gmailId) {
@@ -67,11 +70,9 @@ export async function POST(
           });
         } catch (err) {
           console.error('[mark-read] Gmail modify failed:', err);
-          // Non-fatal — still mark read in our DB
         }
       }
     } else {
-      // Outlook
       const outlookId = (email?.metadata as any)?.outlook_id;
       if (outlookId) {
         try {
@@ -83,13 +84,9 @@ export async function POST(
           await graphClient.api(`/me/messages/${outlookId}`).patch({ isRead: true });
         } catch (err) {
           console.error('[mark-read] Outlook patch failed:', err);
-          // Non-fatal
         }
       }
     }
-
-    // Update our DB
-    await supabase.from('inbox_items').update({ is_read: true }).eq('id', id).eq('user_id', user.id);
 
     return NextResponse.json({ ok: true });
   } catch (err) {

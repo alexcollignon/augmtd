@@ -581,6 +581,8 @@ export function InboxPageClient({
             setInboxItems(freshItems);
             setSelectedItem(prev => prev ? (freshItems.find(i => i.id === prev.id) ?? prev) : (freshItems[0] ?? null));
           }
+          // Notify detail views to re-fetch threads (backfill may have added historical messages)
+          new BroadcastChannel('sync-completed').postMessage('done');
           const newCount = (freshItems || []).length;
           const prevCount = preSyncCountRef.current ?? newCount;
           const delta = newCount - prevCount;
@@ -1354,11 +1356,10 @@ export function InboxPageClient({
                       onItemConfirmed={handleItemConfirmed}
                       onRefreshMeetings={fetchMeetings}
                       pendingReplyDraft={pendingReplyDraft}
-                      onReplySent={(itemId) => {
+                      onReplySent={(_itemId) => {
                         setPendingReplyDraft(null);
                         setReplyBody('');
                         setReplyIsOpen(false);
-                        handleItemConfirmed([itemId], 'not_my_task');
                       }}
                       replyBody={replyBody}
                       onReplyBodyChange={setReplyBody}

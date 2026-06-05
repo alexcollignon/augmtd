@@ -19,6 +19,11 @@ interface AttendeeInputProps {
   compact?: boolean;
   placeholder?: string;
   noBorder?: boolean;
+  onChipDragStart?: (chip: AttendeeChip) => void;
+  isDragOver?: boolean;
+  onDragOverContainer?: (e: React.DragEvent) => void;
+  onDragLeaveContainer?: () => void;
+  onDropContainer?: (e: React.DragEvent) => void;
 }
 
 function avatarLetter(chip: AttendeeChip) {
@@ -39,7 +44,7 @@ function avatarColor(email: string) {
   return colors[hash % colors.length];
 }
 
-export default function AttendeeInput({ value, onChange, compact = false, placeholder = 'Add attendees…', noBorder = false }: AttendeeInputProps) {
+export default function AttendeeInput({ value, onChange, compact = false, placeholder = 'Add attendees…', noBorder = false, onChipDragStart, isDragOver, onDragOverContainer, onDragLeaveContainer, onDropContainer }: AttendeeInputProps) {
   const [input, setInput] = useState('');
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [activeIdx, setActiveIdx] = useState(-1);
@@ -117,14 +122,19 @@ export default function AttendeeInput({ value, onChange, compact = false, placeh
     <div ref={containerRef} className="relative">
       <div
         className={noBorder
-          ? `flex flex-wrap items-center gap-1 cursor-text min-h-[28px] flex-1`
-          : `flex flex-wrap gap-1 ${compact ? 'p-1.5' : 'p-2'} border border-neutral-200 rounded-md cursor-text focus-within:border-indigo-400 transition-colors bg-white min-h-[36px]`}
+          ? `flex flex-wrap items-center gap-1 cursor-text min-h-[28px] flex-1${isDragOver ? ' ring-2 ring-inset ring-indigo-400 rounded-md bg-indigo-50/40' : ''}`
+          : `flex flex-wrap gap-1 ${compact ? 'p-1.5' : 'p-2'} border border-neutral-200 rounded-md cursor-text focus-within:border-indigo-400 transition-colors bg-white min-h-[36px]${isDragOver ? ' ring-2 ring-inset ring-indigo-400 bg-indigo-50/40' : ''}`}
         onClick={() => inputRef.current?.focus()}
+        onDragOver={onDragOverContainer ? (e) => { e.preventDefault(); onDragOverContainer(e); } : undefined}
+        onDragLeave={onDragLeaveContainer}
+        onDrop={onDropContainer}
       >
         {value.map((chip, idx) => (
           <span
             key={idx}
-            className={`inline-flex items-center ${chipSize} rounded-full bg-neutral-100 text-neutral-700 font-medium max-w-[180px]`}
+            draggable={!!onChipDragStart}
+            onDragStart={onChipDragStart ? (e) => { e.stopPropagation(); onChipDragStart(chip); } : undefined}
+            className={`inline-flex items-center ${chipSize} rounded-full bg-neutral-100 text-neutral-700 font-medium max-w-[180px]${onChipDragStart ? ' cursor-grab active:cursor-grabbing' : ''}`}
           >
             <span className={`inline-flex items-center justify-center rounded-full font-semibold flex-shrink-0 ${avatarSize} ${avatarColor(chip.email)}`}>
               {avatarLetter(chip)}

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { extractTextFromAttachment } from '@/lib/attachments/text-extractor';
-import { indexUploadedFile, extractTextFromFile } from '@/lib/knowledge/indexer';
+import { indexUploadedFile } from '@/lib/knowledge/indexer';
 
 export const maxDuration = 60;
 
@@ -134,18 +134,15 @@ export async function POST(
         .from('email-attachments')
         .upload(storagePath, cf.buffer, { contentType: cf.mimeType, upsert: true });
 
-      // Extract text for inline AI context.
-      // PDFs go straight to extractTextFromFile which owns the full pipeline:
-      // pdf-parse fast path → isLikelyScanned heuristic → binary JPEG extraction → vision OCR.
-      // All other types use the lighter extractTextFromAttachment.
-      const extracted = cf.mimeType === 'application/pdf'
-        ? await extractTextFromFile(cf.buffer, cf.mimeType, cf.name, user.id, adminClient)
-        : await extractTextFromAttachment(cf.buffer, cf.mimeType, cf.name);
-      const extractedText = extracted ? extracted.slice(0, 4000) : null;
+      // Extract text for inline AI context using the fast path only (no OCR).
+      // For scanned PDFs with no extractable text, extractedText will be null and the
+      // chat route's native PDF document block path handles them for Bedrock/Anthropic.
+      // Full OCR + KB indexing runs fire-and-forget below via indexUploadedFile.
+      const extracted = await extractTextFromAttachment(cf.buffer, cf.mimeType, cf.name);
+      const extractedText = extracted?.trim() ? extracted.trim().replace(/\u0000/g, "").slice(0, 4000) : null;
 
-      // Fire-and-forget: index into KB so this file is searchable across threads.
-      // OCR was already run above for scanned PDFs, but indexUploadedFile also handles
-      // embeddings, chunking, and summarization — still needed for KB search.
+      // Fire-and-forget: index into KB (includes full OCR pipeline for scanned PDFs)
+      // + embeddings + chunking + summarization.
       indexUploadedFile({
         buffer: cf.buffer,
         filename: cf.name,
@@ -167,13 +164,14 @@ export async function POST(
     const existing = ((thread as any).user_attachments || []) as unknown[];
     const updatedAttachments = [...existing, ...newAttachments];
 
-    await adminClient
+    const { error: updateError } = await adminClient
       .from('work_threads')
       .update({
         user_attachments: updatedAttachments,
         updated_at: new Date().toISOString(),
       })
       .eq('id', threadId);
+    if (updateError) console.error('[ChatAttach] user_attachments update failed:', updateError);
 
     return NextResponse.json({
       attachments: newAttachments.map(({ chatAttachId, filename, size }) => ({
