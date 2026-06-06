@@ -1674,11 +1674,26 @@ function ToolStepFields({ step, onUpdate, isEnhancing, isPending, onEnhance, cur
   const isFetchBased = step.tool === 'fetch_url' || step.tool === 'browser_fetch';
   const auth = step.config.auth as { username: string; password: string } | undefined;
 
+  const [changingTool, setChangingTool] = useState(false);
+  const selectedTool = AVAILABLE_TOOLS.find(t => t.id === (step.tool === 'browser_fetch' ? 'fetch_url' : step.tool === 'get_urgent_emails' ? 'get_emails' : step.tool));
+
   return (
     <>
-      <Field label="Choose a tool">
-        <InlineToolGrid value={step.tool} onChange={toolId => onUpdate({ tool: toolId, config: {} })} />
-      </Field>
+      {/* Tool selector — full grid when picking, compact chip when configured */}
+      {changingTool || !selectedTool ? (
+        <Field label="Choose a tool">
+          <InlineToolGrid value={step.tool} onChange={toolId => { onUpdate({ tool: toolId, config: {} }); setChangingTool(false); }} />
+        </Field>
+      ) : (
+        <div className="flex items-center gap-2 px-2.5 py-2 rounded-lg border border-neutral-200 bg-neutral-50">
+          <ToolPickerIcon toolId={selectedTool.id} size="sm" />
+          <span className="text-[12.5px] font-medium text-neutral-700 flex-1 truncate">{selectedTool.label}</span>
+          <button type="button" onClick={() => setChangingTool(true)}
+            className="text-[11px] text-neutral-400 hover:text-indigo-600 transition-colors flex-shrink-0">
+            Change
+          </button>
+        </div>
+      )}
       {step.tool === 'web_search' && (
         <div>
           <div className="flex items-center justify-between mb-1">
