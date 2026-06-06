@@ -38,6 +38,7 @@ import {
   PlusIcon,
   EllipsisVerticalIcon,
   PaperAirplaneIcon,
+  XMarkIcon,
 } from '@heroicons/react/24/outline';
 import type {
   Workflow, WorkflowStep, WorkflowTrigger, OutputConfig,
@@ -1376,12 +1377,85 @@ function LinkedInPostFields({ step, onUpdate }: { step: ToolStep; onUpdate: (p: 
   }, []);
   const cfg = step.config;
   const set = (k: string, v: unknown) => onUpdate({ config: { ...cfg, [k]: v } });
+
+  const frameworks = (cfg.frameworks as Array<{ name: string; description: string }>) ?? [];
+
+  const addFramework = () => set('frameworks', [...frameworks, { name: '', description: '' }]);
+  const removeFramework = (i: number) => set('frameworks', frameworks.filter((_, idx) => idx !== i));
+  const updateFramework = (i: number, field: 'name' | 'description', value: string) => {
+    const next = frameworks.map((f, idx) => idx === i ? { ...f, [field]: value } : f);
+    set('frameworks', next);
+  };
+
   return (
     <>
+      {/* Instructions */}
+      <Field label="Instructions" hint="optional">
+        <textarea
+          value={(cfg.instructions as string) ?? ''}
+          onChange={e => set('instructions', e.target.value || undefined)}
+          rows={3}
+          placeholder="Voice, audience, rules… e.g. Write from a hiring manager's perspective. No LinkedIn clichés. Short sentences."
+          className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] bg-white resize-none focus:outline-none focus:ring-2 focus:ring-indigo-300"
+        />
+      </Field>
+
+      {/* Vocabulary */}
+      <Field label="Vocabulary to seed" hint="optional">
+        <input
+          type="text"
+          value={(cfg.vocabulary as string) ?? ''}
+          onChange={e => set('vocabulary', e.target.value || undefined)}
+          placeholder="data sovereignty, unified context, context-switching cost…"
+          className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300"
+        />
+      </Field>
+
+      {/* Content frameworks */}
+      <div>
+        <div className="flex items-center justify-between mb-1.5">
+          <span className="text-[12px] font-medium text-neutral-500">Content frameworks <span className="font-normal text-neutral-400">(optional)</span></span>
+        </div>
+        <div className="space-y-2">
+          {frameworks.map((f, i) => (
+            <div key={i} className="flex gap-2 items-start">
+              <input
+                type="text"
+                value={f.name}
+                onChange={e => updateFramework(i, 'name', e.target.value)}
+                placeholder="Name"
+                className="w-28 flex-shrink-0 px-2.5 py-2 border border-neutral-200 rounded-md text-[13px] bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300"
+              />
+              <input
+                type="text"
+                value={f.description}
+                onChange={e => updateFramework(i, 'description', e.target.value)}
+                placeholder="Description of structure or angle…"
+                className="flex-1 px-2.5 py-2 border border-neutral-200 rounded-md text-[13px] bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300"
+              />
+              <button
+                onClick={() => removeFramework(i)}
+                className="mt-2 text-neutral-300 hover:text-neutral-500 transition-colors flex-shrink-0"
+              >
+                <XMarkIcon className="w-4 h-4" />
+              </button>
+            </div>
+          ))}
+          <button
+            onClick={addFramework}
+            className="text-[12px] text-indigo-500 hover:text-indigo-700 transition-colors"
+          >
+            + Add framework
+          </button>
+        </div>
+      </div>
+
+      {/* Quick parameters */}
       <div className="grid grid-cols-2 gap-3">
-        <Field label="Tone">
-          <select value={(cfg.tone as string) ?? 'thought_leadership'} onChange={e => set('tone', e.target.value)}
+        <Field label="Tone" hint="optional">
+          <select value={(cfg.tone as string) ?? ''} onChange={e => set('tone', e.target.value || undefined)}
             className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] bg-white">
+            <option value="">Default</option>
             <option value="thought_leadership">Thought leadership</option>
             <option value="conversational">Conversational</option>
             <option value="data_driven">Data-driven</option>
@@ -1395,15 +1469,6 @@ function LinkedInPostFields({ step, onUpdate }: { step: ToolStep; onUpdate: (p: 
             <option value="long">Long ~350w</option>
           </select>
         </Field>
-        <Field label="Format">
-          <select value={(cfg.format as string) ?? 'insight'} onChange={e => set('format', e.target.value)}
-            className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] bg-white">
-            <option value="story">Story</option>
-            <option value="insight">Insight</option>
-            <option value="question">Question</option>
-            <option value="list">List</option>
-          </select>
-        </Field>
         <Field label="Language">
           <select value={(cfg.language as string) ?? 'en'} onChange={e => set('language', e.target.value)}
             className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] bg-white">
@@ -1412,7 +1477,7 @@ function LinkedInPostFields({ step, onUpdate }: { step: ToolStep; onUpdate: (p: 
             <option value="pt">Portuguese</option>
           </select>
         </Field>
-        <Field label="Variants">
+        <Field label="Drafts">
           <select value={String(cfg.variants ?? 1)} onChange={e => set('variants', Number(e.target.value))}
             className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] bg-white">
             <option value="1">1 draft</option>
@@ -1428,8 +1493,9 @@ function LinkedInPostFields({ step, onUpdate }: { step: ToolStep; onUpdate: (p: 
           </label>
         </Field>
       </div>
+
       {kbFiles.length > 0 && (
-        <Field label="Voice reference">
+        <Field label="Voice reference" hint="optional">
           <select value={(cfg.voice_kb_file_id as string) ?? ''} onChange={e => set('voice_kb_file_id', e.target.value || undefined)}
             className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] bg-white">
             <option value="">No voice reference</option>
