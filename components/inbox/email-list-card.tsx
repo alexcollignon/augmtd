@@ -94,7 +94,7 @@ export default function EmailListCard({ item, isSelected, onSelect, compact = fa
     const ghost = el.cloneNode(true) as HTMLElement;
     ghost.style.cssText = `position:fixed;top:-9999px;left:-9999px;width:${el.offsetWidth}px;opacity:0.45;pointer-events:none;`;
     document.body.appendChild(ghost);
-    e.dataTransfer.setDragImage(ghost, el.offsetWidth / 2, el.offsetHeight / 2);
+    e.dataTransfer.setDragImage(ghost, -16, el.offsetHeight / 2);
     requestAnimationFrame(() => document.body.removeChild(ghost));
   };
 
