@@ -856,73 +856,84 @@ export async function syncEmailsForConnection(
         }).catch(err => console.warn(`[ThreadBackfill] Non-fatal error for thread ${storedEmail.thread_id}:`, err));
 
         // ==== BATCH AI FAST-PATH (before attachments — noise/fyi skip attachment fetching entirely) ====
-        if (emailClass === 'noise') {
-          console.log(`    ⊘ Classified as noise — creating minimal inbox item`);
-          const { error: noiseErr } = await adminSupabase.from('inbox_items').insert(stripNulls({
-            user_id: connection.user_id,
-            connection_id: connection.id,
-            workspace_id: connection.workspace_id ?? null,
-            source: 'email',
-            source_id: storedEmail.id,
-            work_state: 'noise',
-            work_title: parsed.subject || 'Email',
-            why_matters: null,
-            what_i_prepared: null,
-            item_type: 'notification',
-            source_data: {
-              email_id: storedEmail.id,
-              message_id: storedEmail.message_id,
-              thread_id: storedEmail.thread_id || storedEmail.message_id,
-              from: storedEmail.from_address,
-              from_address: storedEmail.from_address,
-              from_name: storedEmail.from_name,
-              subject: storedEmail.subject,
-              body: storedEmail.body,
-              html_body: (parsed as any).html_body?.slice(0, 15000) || null,
-              received_at: storedEmail.received_at,
-              provider: connection.provider,
-            },
-            is_read: deriveIsRead(storedEmail),
-            status: 'pending',
-            needs_review: false,
-          }) as Record<string, unknown>);
-          if (noiseErr) console.error(`    ✗ Failed to insert noise inbox item:`, noiseErr.message);
-          else result.inboxItemsCreated++;
-          continue;
-        }
+        if (emailClass === 'noise' || emailClass === 'fyi_only') {
+          const fastThreadId = storedEmail.thread_id || storedEmail.message_id;
+          const { data: fastExisting } = await adminSupabase
+            .from('inbox_items')
+            .select('id, status')
+            .eq('user_id', connection.user_id)
+            .eq('source', 'email')
+            .eq('source_data->>thread_id', fastThreadId)
+            .maybeSingle();
 
-        if (emailClass === 'fyi_only') {
-          console.log(`    ℹ Classified as FYI — creating minimal inbox item`);
-          const { error: fyiErr } = await adminSupabase.from('inbox_items').insert(stripNulls({
-            user_id: connection.user_id,
-            connection_id: connection.id,
-            workspace_id: connection.workspace_id ?? null,
-            source: 'email',
-            source_id: storedEmail.id,
-            work_state: 'noted',
-            work_title: parsed.subject || 'Email',
-            why_matters: null,
-            what_i_prepared: null,
-            item_type: 'fyi',
-            source_data: {
-              email_id: storedEmail.id,
-              message_id: storedEmail.message_id,
-              thread_id: storedEmail.thread_id || storedEmail.message_id,
-              from: storedEmail.from_address,
-              from_address: storedEmail.from_address,
-              from_name: storedEmail.from_name,
-              subject: storedEmail.subject,
-              body: storedEmail.body,
-              html_body: (parsed as any).html_body?.slice(0, 15000) || null,
-              received_at: storedEmail.received_at,
-              provider: connection.provider,
-            },
-            is_read: deriveIsRead(storedEmail),
-            status: 'pending',
-            needs_review: false,
-          }) as Record<string, unknown>);
-          if (fyiErr) console.error(`    ✗ Failed to insert fyi inbox item:`, fyiErr.message);
-          else result.inboxItemsCreated++;
+          const fastSourceData = stripNulls({
+            email_id: storedEmail.id,
+            message_id: storedEmail.message_id,
+            thread_id: fastThreadId,
+            from: storedEmail.from_address,
+            from_address: storedEmail.from_address,
+            from_name: storedEmail.from_name,
+            subject: storedEmail.subject,
+            body: storedEmail.body,
+            html_body: (parsed as any).html_body?.slice(0, 15000) || null,
+            received_at: storedEmail.received_at,
+            provider: connection.provider,
+          });
+
+          if (fastExisting) {
+            // Thread already has an inbox item — update source_data so the card reflects the latest email.
+            // Only update if item is still pending (don't re-surface dismissed/completed items).
+            if (fastExisting.status === 'pending') {
+              const label = emailClass === 'noise' ? 'noise' : 'FYI';
+              console.log(`    ♻️  ${label} email — updating existing thread item`);
+              await adminSupabase
+                .from('inbox_items')
+                .update(stripNulls({ source_data: fastSourceData, source_id: storedEmail.id }) as Record<string, unknown>)
+                .eq('id', fastExisting.id);
+            } else {
+              console.log(`    ⏭️  Thread item already ${fastExisting.status}, skipping`);
+            }
+          } else if (emailClass === 'noise') {
+            console.log(`    ⊘ Classified as noise — creating minimal inbox item`);
+            const { error: noiseErr } = await adminSupabase.from('inbox_items').insert(stripNulls({
+              user_id: connection.user_id,
+              connection_id: connection.id,
+              workspace_id: connection.workspace_id ?? null,
+              source: 'email',
+              source_id: storedEmail.id,
+              work_state: 'noise',
+              work_title: parsed.subject || 'Email',
+              why_matters: null,
+              what_i_prepared: null,
+              item_type: 'notification',
+              source_data: fastSourceData,
+              is_read: deriveIsRead(storedEmail),
+              status: 'pending',
+              needs_review: false,
+            }) as Record<string, unknown>);
+            if (noiseErr) console.error(`    ✗ Failed to insert noise inbox item:`, noiseErr.message);
+            else result.inboxItemsCreated++;
+          } else {
+            console.log(`    ℹ Classified as FYI — creating minimal inbox item`);
+            const { error: fyiErr } = await adminSupabase.from('inbox_items').insert(stripNulls({
+              user_id: connection.user_id,
+              connection_id: connection.id,
+              workspace_id: connection.workspace_id ?? null,
+              source: 'email',
+              source_id: storedEmail.id,
+              work_state: 'noted',
+              work_title: parsed.subject || 'Email',
+              why_matters: null,
+              what_i_prepared: null,
+              item_type: 'fyi',
+              source_data: fastSourceData,
+              is_read: deriveIsRead(storedEmail),
+              status: 'pending',
+              needs_review: false,
+            }) as Record<string, unknown>);
+            if (fyiErr) console.error(`    ✗ Failed to insert fyi inbox item:`, fyiErr.message);
+            else result.inboxItemsCreated++;
+          }
           continue;
         }
         // ==== END BATCH AI FAST-PATH ====
@@ -1088,7 +1099,9 @@ export async function syncEmailsForConnection(
             .eq('user_id', recipient.userId)
             .eq('source', 'email')
             .eq('source_data->>thread_id', storedEmail.thread_id || storedEmail.message_id)
-            .single();
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
 
           // If already completed (e.g. user RSVPed or dismissed), don't re-surface it
           if (existingInboxItem && existingInboxItem.status !== 'pending') {

@@ -103,8 +103,11 @@ export async function fetchUnreadEmails(
   const client = await getGraphClient(encryptedTokens, onTokenRefresh);
 
   // Use last sync timestamp when available; fall back to syncWindowDays on first sync.
+  // Subtract a 3-minute overlap buffer from lastSync so emails that arrived during the
+  // previous sync's processing window (between API call and last_sync write) are caught.
+  // Duplicates are safe — the existingEmail check in sync-emails.ts deduplicates by message_id.
   const dateString = lastSync
-    ? new Date(lastSync).toISOString()
+    ? (() => { const d = new Date(lastSync); d.setMinutes(d.getMinutes() - 3); return d.toISOString(); })()
     : (() => { const d = new Date(); d.setDate(d.getDate() - syncWindowDays); return d.toISOString(); })();
 
   const messages = await client
