@@ -64,9 +64,11 @@ export async function fetchUnreadEmails(
 
     // Use last sync timestamp when available so we only fetch emails received
     // since the previous sync, not a fixed window from now.
+    // Subtract a 3-minute overlap buffer so emails that arrived during the previous
+    // sync's processing window are not missed. Duplicates handled by message_id dedup.
     // Fall back to newer_than:Xd on first sync (no last_sync recorded yet).
     const timeFilter = lastSync
-      ? `after:${Math.floor(new Date(lastSync).getTime() / 1000)}`
+      ? `after:${Math.floor((new Date(lastSync).getTime() - 3 * 60 * 1000) / 1000)}`
       : `newer_than:${syncWindowDays}d`;
 
     const query = `${timeFilter} ${inboxFilter} -is:spam`;

@@ -58,12 +58,17 @@ export default function MemorySection() {
   const [importing, setImporting] = useState(false);
 
   const fetchMemory = useCallback(async () => {
-    const res = await fetch('/api/settings/memory');
-    if (res.ok) {
-      const { sections: data } = await res.json();
-      setSections(data);
+    try {
+      const res = await fetch('/api/settings/memory');
+      if (res.ok) {
+        const { sections: data } = await res.json();
+        setSections(data);
+      }
+    } catch {
+      // non-fatal — show whatever sections loaded (or empty state)
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }, []);
 
   useEffect(() => { fetchMemory(); }, [fetchMemory]);
