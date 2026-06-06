@@ -1,12 +1,25 @@
 'use client';
 
 import Link from 'next/link';
-import { UserIcon, BuildingOffice2Icon, SparklesIcon } from '@heroicons/react/24/outline';
+import { UserIcon, BuildingOffice2Icon } from '@heroicons/react/24/outline';
+
+function BrainIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 5c0-1.1-.9-2-2-2a2 2 0 0 0-2 2c-.6 0-2 .4-2 2.5C4.5 8 3 9.2 3 11c0 1.4.8 2.6 2 3.2V15a3 3 0 0 0 3 3h4" />
+      <path d="M12 5c0-1.1.9-2 2-2a2 2 0 0 1 2 2c.6 0 2 .4 2 2.5 1.5.5 3 1.7 3 3.5 0 1.4-.8 2.6-2 3.2V15a3 3 0 0 1-3 3h-4" />
+      <path d="M12 5v13" />
+      <path d="M7 10c0 1 .5 2 1.5 2.5" />
+      <path d="M17 10c0 1-.5 2-1.5 2.5" />
+      <path d="M9 18a3 3 0 0 0 6 0" />
+    </svg>
+  );
+}
 
 const NAV_ITEMS = [
-  { id: 'account', label: 'Account', icon: UserIcon },
-  { id: 'company', label: 'Company', icon: BuildingOffice2Icon },
-  { id: 'memory', label: 'Memory', icon: SparklesIcon },
+  { id: 'account', label: 'Account', Icon: UserIcon },
+  { id: 'company', label: 'Company', Icon: BuildingOffice2Icon },
+  { id: 'memory', label: 'Memory', Icon: BrainIcon },
 ];
 
 export default function SettingsLeftPanel({ activeTab }: { activeTab: string }) {
@@ -29,7 +42,7 @@ export default function SettingsLeftPanel({ activeTab }: { activeTab: string }) 
                     : 'text-neutral-500 hover:bg-neutral-50 hover:text-neutral-900'
                 }`}
               >
-                <item.icon className={`w-4 h-4 flex-shrink-0 ${isActive ? 'text-indigo-500' : 'text-neutral-400'}`} />
+                <item.Icon className={`w-4 h-4 flex-shrink-0 ${isActive ? 'text-indigo-500' : 'text-neutral-400'}`} />
                 {item.label}
               </Link>
             );

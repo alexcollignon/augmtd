@@ -432,7 +432,7 @@ export function WorkPageClient({
                 <span className="text-[10.5px] font-semibold text-neutral-400 uppercase tracking-wider">Chat history</span>
                 <button
                   onClick={() => { setActiveThreadId(null); setActiveAgentId(null); setWebEnabled(false); setPendingInput(null); setPendingMentions([]); setPendingFiles([]); setPendingAttachmentMeta([]); setIsAttachUploading(false); }}
-                  className="p-0.5 rounded hover:bg-neutral-100 text-neutral-400 hover:text-neutral-600 transition-colors"
+                  className="p-1 rounded-md text-neutral-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors"
                   title="New chat"
                 >
                   <PlusIcon className="w-3.5 h-3.5" />

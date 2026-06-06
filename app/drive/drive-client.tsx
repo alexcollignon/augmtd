@@ -1412,10 +1412,10 @@ function DriveCenter({
                 </p>
                 {sidebarView.kind === 'all' && (
                   <div className="flex items-center justify-center gap-2 mt-4">
-                    <button onClick={onOpenUpload} className="flex items-center gap-1.5 px-3.5 py-1.5 bg-neutral-900 hover:bg-neutral-800 text-white text-[12.5px] font-medium rounded-md transition-colors">
+                    <button onClick={onOpenUpload} className="flex items-center gap-1.5 px-3.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 text-[12.5px] font-medium rounded-lg transition-colors">
                       <ArrowUpTrayIcon className="w-3.5 h-3.5" />Upload a file
                     </button>
-                    <button onClick={onOpenAddFromDrive} className="flex items-center gap-1.5 px-3.5 py-1.5 border border-neutral-200 text-[12.5px] text-neutral-600 rounded-md hover:bg-neutral-50 transition-colors">
+                    <button onClick={onOpenAddFromDrive} className="flex items-center gap-1.5 px-3.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 text-[12.5px] font-medium rounded-lg transition-colors">
                       <FolderOpenIcon className="w-3.5 h-3.5" />Add from Drive
                     </button>
                   </div>

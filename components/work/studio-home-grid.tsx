@@ -306,7 +306,7 @@ export function StudioHomeGrid({
             </div>
             <button
               onClick={onCreate}
-              className="flex items-center gap-1 text-[12px] text-neutral-500 hover:text-indigo-600 transition-colors"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-600 text-[12px] font-medium transition-colors"
             >
               <PlusIcon className="w-3.5 h-3.5" />
               New workflow
