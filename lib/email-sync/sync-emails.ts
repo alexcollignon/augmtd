@@ -830,6 +830,69 @@ export async function syncEmailsForConnection(
           continue; // Skip to next email (already stored for context)
         }
 
+        // ── SAFETY NET ──────────────────────────────────────────────────────────────
+        // Create a basic inbox item BEFORE any AI processing so the email is always
+        // visible even if classification, recipient analysis, or processEmail throws.
+        // AI steps UPDATE this item — they never need to CREATE it.
+        // Only creates if this thread has no item yet; if an item exists and is pending
+        // we only update source_data when this email is newer (emails are fetched
+        // newest-first, so the first email processed for a thread is already the latest).
+        {
+          const _snThreadId = storedEmail.thread_id || storedEmail.message_id;
+          const { data: _snExisting } = await adminSupabase
+            .from('inbox_items')
+            .select('id, status, source_data')
+            .eq('user_id', connection.user_id)
+            .eq('source', 'email')
+            .eq('source_data->>thread_id', _snThreadId)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          const _snSourceData = stripNulls({
+            email_id: storedEmail.id,
+            message_id: storedEmail.message_id,
+            thread_id: _snThreadId,
+            from: storedEmail.from_address,
+            from_address: storedEmail.from_address,
+            from_name: storedEmail.from_name,
+            subject: storedEmail.subject,
+            body: storedEmail.body,
+            html_body: (parsed as any).html_body?.slice(0, 15000) || null,
+            received_at: storedEmail.received_at,
+            provider: connection.provider,
+          });
+
+          if (!_snExisting) {
+            const { error: _snErr } = await adminSupabase.from('inbox_items').insert(stripNulls({
+              user_id: connection.user_id,
+              connection_id: connection.id,
+              workspace_id: connection.workspace_id ?? null,
+              source: 'email',
+              source_id: storedEmail.id,
+              work_state: 'noted',
+              work_title: parsed.subject || 'Email',
+              item_type: 'fyi',
+              source_data: _snSourceData,
+              is_read: deriveIsRead(storedEmail),
+              status: 'pending',
+              needs_review: false,
+            }) as Record<string, unknown>);
+            if (_snErr) console.error(`    ✗ Safety net insert failed:`, _snErr.message);
+            else { console.log(`    🛡 Safety net: created placeholder inbox item`); result.inboxItemsCreated++; }
+          } else if (_snExisting.status === 'pending') {
+            // Only update source_data if this email is newer than what's displayed
+            const _existingReceived = (_snExisting as any).source_data?.received_at;
+            if (!_existingReceived || new Date(storedEmail.received_at) > new Date(_existingReceived)) {
+              await adminSupabase
+                .from('inbox_items')
+                .update(stripNulls({ source_data: _snSourceData, source_id: storedEmail.id }) as Record<string, unknown>)
+                .eq('id', _snExisting.id);
+            }
+          }
+        }
+        // ── END SAFETY NET ───────────────────────────────────────────────────────────
+
         // Backfill full thread history so AI sees complete context (non-fatal)
         await backfillThreadHistory({
           connection,
@@ -860,10 +923,12 @@ export async function syncEmailsForConnection(
           const fastThreadId = storedEmail.thread_id || storedEmail.message_id;
           const { data: fastExisting } = await adminSupabase
             .from('inbox_items')
-            .select('id, status')
+            .select('id, status, source_data')
             .eq('user_id', connection.user_id)
             .eq('source', 'email')
             .eq('source_data->>thread_id', fastThreadId)
+            .order('created_at', { ascending: false })
+            .limit(1)
             .maybeSingle();
 
           const fastSourceData = stripNulls({
@@ -881,15 +946,27 @@ export async function syncEmailsForConnection(
           });
 
           if (fastExisting) {
-            // Thread already has an inbox item — update source_data so the card reflects the latest email.
-            // Only update if item is still pending (don't re-surface dismissed/completed items).
+            // Thread already has an inbox item — update work_state/item_type and source_data
+            // only when this email is newer than what is currently displayed (emails are fetched
+            // newest-first, so we should never overwrite a newer email's data with an older one).
             if (fastExisting.status === 'pending') {
-              const label = emailClass === 'noise' ? 'noise' : 'FYI';
-              console.log(`    ♻️  ${label} email — updating existing thread item`);
-              await adminSupabase
-                .from('inbox_items')
-                .update(stripNulls({ source_data: fastSourceData, source_id: storedEmail.id }) as Record<string, unknown>)
-                .eq('id', fastExisting.id);
+              const _existingReceivedAt = (fastExisting as any).source_data?.received_at;
+              const _isNewer = !_existingReceivedAt || new Date(storedEmail.received_at) > new Date(_existingReceivedAt);
+              if (_isNewer) {
+                const label = emailClass === 'noise' ? 'noise' : 'FYI';
+                console.log(`    ♻️  ${label} email — updating existing thread item`);
+                await adminSupabase
+                  .from('inbox_items')
+                  .update(stripNulls({
+                    work_state: emailClass === 'noise' ? 'noise' : 'noted',
+                    item_type: emailClass === 'noise' ? 'notification' : 'fyi',
+                    source_data: fastSourceData,
+                    source_id: storedEmail.id,
+                  }) as Record<string, unknown>)
+                  .eq('id', fastExisting.id);
+              } else {
+                console.log(`    ⏩ ${emailClass} email older than current thread item — skipping source_data update`);
+              }
             } else {
               console.log(`    ⏭️  Thread item already ${fastExisting.status}, skipping`);
             }
