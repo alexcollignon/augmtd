@@ -169,7 +169,7 @@ export function StudioBuilder({ workflow: initialWorkflow, agents, onClose, onBa
   const [enhancingStepId, setEnhancingStepId] = useState<string | null>(null);
   const [enhancePendingStepId, setEnhancePendingStepId] = useState<string | null>(null);
   const [testRunId, setTestRunId] = useState<string | null>(null);
-  const [showAssistant, setShowAssistant] = useState(false);
+  const [showAssistant, setShowAssistant] = useState(true);
 
   const resolvedPanel: ActivePanel = (() => {
     if (typeof activePanel === 'object') {

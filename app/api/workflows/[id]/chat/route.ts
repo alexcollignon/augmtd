@@ -6,17 +6,20 @@ import { createClient } from '@/lib/supabase/server';
 import { getAIClient } from '@/lib/ai/factory';
 import { requireFeature, handleWorkspaceError } from '@/lib/workspace/require-feature';
 import type { Workflow } from '@/lib/workflows/types';
+import { LINKEDIN_FRAMEWORKS } from '@/lib/tools/linkedin-post';
 
 interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
 }
 
+const LINKEDIN_FRAMEWORK_IDS = LINKEDIN_FRAMEWORKS.map(f => `${f.id} ("${f.name}")`).join(', ');
+
 const SYSTEM = `You are an AI assistant embedded in a workflow builder called Studio. You help users build, understand, and improve their automation workflows.
 
 You can:
 1. Answer questions about how the workflow works
-2. Make changes by returning a patch object
+2. Make targeted changes to any step or workflow field by returning a patch object
 
 Always respond with valid JSON (no markdown wrapper) in this exact shape:
 {
@@ -29,8 +32,26 @@ Patch rules:
 - For step changes, return the COMPLETE updated "steps" array (preserve all existing steps with their ids unless removing one)
 - Step ids must be preserved. New steps get an id of "step_" + 8 random alphanumeric chars
 - For name, description, trigger, output_config — return only the changed keys
-- Available tool names: web_search, fetch_url, browser_fetch, rss_feed, get_urgent_emails, get_calendar, read_kb_file, linkedin_post, get_pt_tenders, deep_research, get_workflow_output
-- Keep reply concise (1-2 sentences)`;
+- When patching a tool step's config, merge with existing config — only change the specific fields the user asked about
+- Keep reply concise (1-2 sentences)
+
+Available tool names: web_search, fetch_url, browser_fetch, rss_feed, get_urgent_emails, get_calendar, read_kb_file, linkedin_post, get_pt_tenders, deep_research, get_workflow_output
+
+LINKEDIN POST step config fields (all optional — only include keys you're changing):
+- instructions: string — freeform voice, audience, and writing rules directive
+- vocabulary: string — comma-separated terms to seed naturally in the post
+- framework: one of ${LINKEDIN_FRAMEWORK_IDS} — structural template for the post; omit or null for no framework
+- tone: "thought_leadership" | "conversational" | "data_driven" — omit for default
+- length: "short" | "standard" | "long"
+- language: "en" | "de" | "pt"
+- variants: 1 | 2 | 3 — number of drafts to produce
+- include_image_prompt: boolean — whether to append a Canva/Midjourney visual prompt
+
+AI step fields:
+- prompt: string — the full system/user prompt for the reasoning step
+- model_tier: "planning" | "classification" | "conversation" | "generation" | "summarization"
+
+When the user asks to change a specific field (e.g. "set the framework to contrarian take", "add vocabulary terms", "update the instructions"), patch only that field in the relevant step's config, leaving all other config fields unchanged.`;
 
 export async function POST(
   request: NextRequest,
@@ -46,13 +67,15 @@ export async function POST(
   const messages: ChatMessage[] = (body.messages ?? []).slice(-20); // last 20 turns
   const workflow: Partial<Workflow> = body.workflow ?? {};
 
-  // Summarise steps to avoid blowing the context window with long prompts
+  // Include full config for tool steps so the AI can make targeted field-level edits.
+  // AI step prompts are truncated to avoid blowing the context window.
   const stepSummaries = (workflow.steps ?? []).map((s, i: number) => {
     const r = s as unknown as Record<string, unknown>;
-    if (r.type === 'tool') return { index: i + 1, id: r.id, type: 'tool', label: r.label, tool: r.tool };
-    if (r.type === 'ai')   return { index: i + 1, id: r.id, type: 'ai',   label: r.label, model_tier: r.model_tier, prompt_preview: String(r.prompt ?? '').slice(0, 120) + '…' };
+    if (r.type === 'tool') return { index: i + 1, id: r.id, type: 'tool', label: r.label, tool: r.tool, config: r.config ?? {} };
+    if (r.type === 'ai')   return { index: i + 1, id: r.id, type: 'ai',   label: r.label, model_tier: r.model_tier, prompt_preview: String(r.prompt ?? '').slice(0, 200) };
     return { index: i + 1, id: r.id, type: r.type, label: r.label };
   });
+
   const contextMsg = `Current workflow:\n${JSON.stringify({
     name: workflow.name,
     description: workflow.description,
@@ -77,25 +100,18 @@ export async function POST(
     const raw = (response.choices[0]?.message?.content ?? '').trim();
 
     let result: { reply?: string; patch?: Partial<Workflow> } = {};
-    // 1. Strip markdown fences
-    let clean = raw.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim();
-    // 2. Try direct parse
+    const clean = raw.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim();
     try {
       result = JSON.parse(clean);
     } catch {
-      // 3. Extract first {...} block (handles extra prose before/after JSON)
       const match = clean.match(/\{[\s\S]*\}/);
       if (match) {
         try { result = JSON.parse(match[0]); } catch { /* still failed */ }
       }
     }
-    // 4. If still no reply, use raw text as the reply (better than a hardcoded error)
     const reply = result.reply ?? (raw.length > 0 ? raw.replace(/^```[\s\S]*?```\n?/g, '').trim() : "I couldn't process that. Try rephrasing.");
 
-    return NextResponse.json({
-      reply,
-      patch: result.patch ?? null,
-    });
+    return NextResponse.json({ reply, patch: result.patch ?? null });
   } catch {
     return NextResponse.json({ reply: 'Something went wrong. Please try again.', patch: null });
   }
