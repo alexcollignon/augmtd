@@ -1,20 +1,15 @@
 // ─── LinkedIn post generator ──────────────────────────────────────────────────
 // Generative tool step: produces 1–3 LinkedIn post drafts from previous step
-// content. Config supports freeform instructions, vocabulary seeding, content
-// frameworks, and optional tone/length/language overrides.
+// content. Config supports freeform instructions, vocabulary seeding, a
+// predefined content framework, and optional tone/length/language overrides.
 
 import { SupabaseClient } from '@supabase/supabase-js';
 import { getAIClient, aiCreate } from '@/lib/ai/factory';
 
-export interface LinkedInPostFramework {
-  name: string;
-  description: string;
-}
-
 export interface LinkedInPostConfig {
   instructions?: string;
   vocabulary?: string;
-  frameworks?: LinkedInPostFramework[];
+  framework?: string;
   tone?: 'thought_leadership' | 'conversational' | 'data_driven';
   length?: 'short' | 'standard' | 'long';
   language?: 'en' | 'de' | 'pt';
@@ -28,6 +23,61 @@ export interface LinkedInPostContext {
   supabase: SupabaseClient;
   previousContent: string;
 }
+
+export const LINKEDIN_FRAMEWORKS: Array<{ id: string; name: string; description: string }> = [
+  {
+    id: 'contrarian_take',
+    name: 'Contrarian take',
+    description: 'Open with a claim most people disagree with. Build the case in 2–3 tight points. End with a direct challenge to conventional thinking — no hedge.',
+  },
+  {
+    id: 'behind_the_scenes',
+    name: 'Behind the scenes',
+    description: 'Share what actually happened internally — a decision, a mistake, a process. Extract the lesson. Close with what you would do differently.',
+  },
+  {
+    id: 'market_signal',
+    name: 'Market signal',
+    description: 'Spot something shifting in the market or industry. Explain what it means for practitioners right now. Name the implication others are missing.',
+  },
+  {
+    id: 'personal_story',
+    name: 'Personal story',
+    description: 'Open with a specific scene or moment. Bridge it to a business or professional insight. Close with a forward-looking observation.',
+  },
+  {
+    id: 'data_point',
+    name: 'Data point',
+    description: 'Lead with a surprising or counterintuitive stat. Unpack the mechanism behind it. End with the practical so-what for your audience.',
+  },
+  {
+    id: 'build_in_public',
+    name: 'Build in public',
+    description: 'Share something you shipped, tested, or learned this week. Be specific and honest. No spin — just what happened and what it means.',
+  },
+  {
+    id: 'client_proof',
+    name: 'Client proof',
+    description: 'Ground the post in a real outcome (anonymized if needed). Show the before/after or the decision that mattered. Extract the transferable lesson.',
+  },
+  {
+    id: 'hot_take',
+    name: 'Hot take',
+    description: 'One strong opinion in the first line. Two or three sentences of supporting logic. No softening, no "it depends". Short and direct.',
+  },
+  {
+    id: 'lesson_learned',
+    name: 'Lesson learned',
+    description: 'What you got wrong, what changed your mind, and what you would tell your past self. Vulnerable but grounded — not self-flagellation.',
+  },
+  {
+    id: 'provocative_question',
+    name: 'Provocative question',
+    description: 'Open with a question that challenges an assumption your audience holds. Explore two sides briefly. End by inviting the reader\'s view.',
+  },
+];
+
+const FRAMEWORK_MAP = Object.fromEntries(LINKEDIN_FRAMEWORKS.map(f => [f.id, f]));
 
 const TONE_LABELS: Record<string, string> = {
   thought_leadership: 'thought leadership — position the author as a domain expert sharing a meaningful perspective',
@@ -47,7 +97,6 @@ const LANGUAGE_LABELS: Record<string, string> = {
   pt: 'Portuguese (Português)',
 };
 
-// Fallback format guide used only when no frameworks are configured
 const DEFAULT_FORMAT = 'Lead with the core insight, support with 2–3 concrete points, close with implications or a question.';
 
 async function fetchVoiceExamples(
@@ -86,8 +135,8 @@ async function fetchAuthorContext(
   for (const p of profiles) {
     const d = p.profile_data as Record<string, unknown>;
     if (p.profile_type === 'identity') {
-      if (d.fullName)        lines.push(`Name: ${d.fullName}`);
-      if (d.role)            lines.push(`Role: ${d.role}`);
+      if (d.fullName) lines.push(`Name: ${d.fullName}`);
+      if (d.role) lines.push(`Role: ${d.role}`);
       if (Array.isArray(d.responsibilities) && d.responsibilities.length)
         lines.push(`Responsibilities: ${(d.responsibilities as string[]).join(', ')}`);
     }
@@ -112,9 +161,8 @@ export async function executeLinkedInPost(
     ? config.instructions.trim() : null;
   const vocabulary   = typeof config.vocabulary === 'string' && config.vocabulary.trim()
     ? config.vocabulary.trim() : null;
-  const frameworks   = Array.isArray(config.frameworks)
-    ? (config.frameworks as LinkedInPostFramework[]).filter(f => f.name && f.description)
-    : [];
+  const framework    = typeof config.framework === 'string' && config.framework
+    ? FRAMEWORK_MAP[config.framework] ?? null : null;
   const tone         = (config.tone as string) || null;
   const length       = (config.length as string) || 'standard';
   const language     = (config.language as string) || 'en';
@@ -132,27 +180,22 @@ export async function executeLinkedInPost(
 
   const blocks: (string | null)[] = [];
 
-  // Role
   blocks.push(
     `You are an expert LinkedIn ghostwriter. Write ${variants === 1 ? 'one LinkedIn post' : `${variants} LinkedIn post drafts`} as the author described below, in their voice.`
   );
 
-  // Author identity (auto-injected)
   if (authorContext) {
     blocks.push(`AUTHOR CONTEXT — write as this person, from their perspective:\n${authorContext}`);
   }
 
-  // Voice reference from KB
   if (voiceExamples) {
     blocks.push(`VOICE REFERENCE — study these past posts to match the author's style, vocabulary, and rhythm:\n\n${voiceExamples}`);
   }
 
-  // Freeform instructions (highest priority)
   if (instructions) {
     blocks.push(`INSTRUCTIONS — follow these above all else:\n${instructions}`);
   }
 
-  // Vocabulary seeding
   if (vocabulary) {
     const terms = vocabulary.split(',').map(t => t.trim()).filter(Boolean);
     if (terms.length) {
@@ -160,17 +203,12 @@ export async function executeLinkedInPost(
     }
   }
 
-  // Content frameworks
-  if (frameworks.length > 0) {
-    const frameworkBlock = frameworks.length === 1
-      ? `CONTENT FRAMEWORK — structure the post using this framework:\n**${frameworks[0].name}**: ${frameworks[0].description}`
-      : `CONTENT FRAMEWORKS — assign each draft to the most fitting framework:\n${frameworks.map(f => `**${f.name}**: ${f.description}`).join('\n')}`;
-    blocks.push(frameworkBlock);
+  if (framework) {
+    blocks.push(`CONTENT FRAMEWORK — structure the post using this framework:\n**${framework.name}**: ${framework.description}`);
   } else {
     blocks.push(`FORMAT: ${DEFAULT_FORMAT}`);
   }
 
-  // Writing parameters
   const params: string[] = [
     `Target length: ${LENGTH_TARGETS[length] ?? length}`,
     `Language: ${LANGUAGE_LABELS[language] ?? language}`,
@@ -178,7 +216,6 @@ export async function executeLinkedInPost(
   if (tone) params.push(`Tone: ${TONE_LABELS[tone] ?? tone}`);
   blocks.push(`WRITING PARAMETERS:\n${params.map(p => `- ${p}`).join('\n')}`);
 
-  // Rules
   blocks.push(
     `RULES — apply to every draft:
 - First line is the hook. Make the reader stop scrolling. No "I am pleased to announce", "Exciting news", or "In today's world".
@@ -191,11 +228,6 @@ export async function executeLinkedInPost(
 
   if (imagePrompt) {
     blocks.push(`IMAGE PROMPT — after each draft, add a "**Visual prompt:**" line with a specific prompt for Canva or Midjourney matching the post's theme and mood.`);
-  }
-
-  // Label frameworks in output when multiple drafts + multiple frameworks
-  if (variants > 1 && frameworks.length > 0) {
-    blocks.push(`Label each draft with its framework name.`);
   }
 
   const systemPrompt = blocks.filter(Boolean).join('\n\n');

@@ -38,7 +38,6 @@ import {
   PlusIcon,
   EllipsisVerticalIcon,
   PaperAirplaneIcon,
-  XMarkIcon,
 } from '@heroicons/react/24/outline';
 import type {
   Workflow, WorkflowStep, WorkflowTrigger, OutputConfig,
@@ -46,6 +45,7 @@ import type {
 } from '@/lib/workflows/types';
 import { makeStepId } from '@/lib/workflows/types';
 import { SharingModeSelector } from '@/components/work/sharing-mode-selector';
+import { LINKEDIN_FRAMEWORKS } from '@/lib/tools/linkedin-post';
 
 interface AgentOption {
   id: string;
@@ -1378,15 +1378,6 @@ function LinkedInPostFields({ step, onUpdate }: { step: ToolStep; onUpdate: (p: 
   const cfg = step.config;
   const set = (k: string, v: unknown) => onUpdate({ config: { ...cfg, [k]: v } });
 
-  const frameworks = (cfg.frameworks as Array<{ name: string; description: string }>) ?? [];
-
-  const addFramework = () => set('frameworks', [...frameworks, { name: '', description: '' }]);
-  const removeFramework = (i: number) => set('frameworks', frameworks.filter((_, idx) => idx !== i));
-  const updateFramework = (i: number, field: 'name' | 'description', value: string) => {
-    const next = frameworks.map((f, idx) => idx === i ? { ...f, [field]: value } : f);
-    set('frameworks', next);
-  };
-
   return (
     <>
       {/* Instructions */}
@@ -1411,44 +1402,23 @@ function LinkedInPostFields({ step, onUpdate }: { step: ToolStep; onUpdate: (p: 
         />
       </Field>
 
-      {/* Content frameworks */}
-      <div>
-        <div className="flex items-center justify-between mb-1.5">
-          <span className="text-[12px] font-medium text-neutral-500">Content frameworks <span className="font-normal text-neutral-400">(optional)</span></span>
-        </div>
-        <div className="space-y-2">
-          {frameworks.map((f, i) => (
-            <div key={i} className="flex gap-2 items-start">
-              <input
-                type="text"
-                value={f.name}
-                onChange={e => updateFramework(i, 'name', e.target.value)}
-                placeholder="Name"
-                className="w-28 flex-shrink-0 px-2.5 py-2 border border-neutral-200 rounded-md text-[13px] bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300"
-              />
-              <input
-                type="text"
-                value={f.description}
-                onChange={e => updateFramework(i, 'description', e.target.value)}
-                placeholder="Description of structure or angle…"
-                className="flex-1 px-2.5 py-2 border border-neutral-200 rounded-md text-[13px] bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300"
-              />
-              <button
-                onClick={() => removeFramework(i)}
-                className="mt-2 text-neutral-300 hover:text-neutral-500 transition-colors flex-shrink-0"
-              >
-                <XMarkIcon className="w-4 h-4" />
-              </button>
-            </div>
+      {/* Content framework */}
+      <Field label="Content framework" hint="optional">
+        <select
+          value={(cfg.framework as string) ?? ''}
+          onChange={e => set('framework', e.target.value || undefined)}
+          className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] bg-white"
+        >
+          <option value="">No framework</option>
+          {LINKEDIN_FRAMEWORKS.map(f => (
+            <option key={f.id} value={f.id}>{f.name}</option>
           ))}
-          <button
-            onClick={addFramework}
-            className="text-[12px] text-indigo-500 hover:text-indigo-700 transition-colors"
-          >
-            + Add framework
-          </button>
-        </div>
-      </div>
+        </select>
+        {(() => {
+          const fw = LINKEDIN_FRAMEWORKS.find(f => f.id === (cfg.framework as string));
+          return fw ? <p className="mt-1.5 text-[11px] text-neutral-400 leading-relaxed">{fw.description}</p> : null;
+        })()}
+      </Field>
 
       {/* Quick parameters */}
       <div className="grid grid-cols-2 gap-3">
