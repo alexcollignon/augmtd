@@ -7,67 +7,73 @@ import { renderAllProfiles } from '@/lib/context/render-memory';
 const PROFILE_ORDER = ['identity', 'email_communication', 'domain_knowledge', 'relationships', 'meeting_behavior'];
 
 export async function GET() {
-  const supabase = await createClient();
-  const { data: { user }, error } = await supabase.auth.getUser();
-  if (error || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  try {
+    const supabase = await createClient();
+    const { data: { user }, error } = await supabase.auth.getUser();
+    if (error || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  let { data: profiles } = await supabase
-    .from('context_profiles')
-    .select('profile_type, rendered_text, confidence_score, learned_from_count, rendered_at, last_updated, profile_data')
-    .eq('user_id', user.id);
-
-  // Render on-demand if any eligible profiles have no rendered text yet
-  const needsRender = (profiles ?? []).some(
-    p => p.confidence_score >= 10 && !p.rendered_text
-  );
-  if (needsRender) {
-    await renderAllProfiles(user.id, supabase);
-    const { data: fresh } = await supabase
+    let { data: profiles } = await supabase
       .from('context_profiles')
       .select('profile_type, rendered_text, confidence_score, learned_from_count, rendered_at, last_updated, profile_data')
       .eq('user_id', user.id);
-    profiles = fresh;
-  }
 
-  const [{ count: contactsCount }, { data: topContacts }] = await Promise.all([
-    supabase.from('relationship_graph').select('*', { count: 'exact', head: true }).eq('user_id', user.id),
-    supabase.from('relationship_graph').select('contact_name, contact_email, relationship_type').eq('user_id', user.id).order('importance', { ascending: false }).limit(3),
-  ]);
+    // Render on-demand if any eligible profiles have no rendered text yet
+    const needsRender = (profiles ?? []).some(
+      p => p.confidence_score >= 10 && !p.rendered_text
+    );
+    if (needsRender) {
+      await renderAllProfiles(user.id, supabase).catch(err => {
+        console.error('[Memory] renderAllProfiles failed:', err);
+      });
+      const { data: fresh } = await supabase
+        .from('context_profiles')
+        .select('profile_type, rendered_text, confidence_score, learned_from_count, rendered_at, last_updated, profile_data')
+        .eq('user_id', user.id);
+      profiles = fresh;
+    }
 
-  const profileMap: Record<string, any> = {};
-  for (const p of profiles ?? []) {
-    profileMap[p.profile_type] = p;
-  }
+    const [{ count: contactsCount }, { data: topContacts }] = await Promise.all([
+      supabase.from('relationship_graph').select('*', { count: 'exact', head: true }).eq('user_id', user.id),
+      supabase.from('relationship_graph').select('contact_name, contact_email, relationship_type').eq('user_id', user.id).order('importance', { ascending: false }).limit(3),
+    ]);
 
-  // Build a readable summary for relationships from the graph data
-  const relationshipsText = (() => {
-    const count = contactsCount ?? 0;
-    if (count === 0) return null;
-    const names = (topContacts ?? []).map(c => c.contact_name || c.contact_email).filter(Boolean);
-    const preview = names.length > 0 ? ` including ${names.slice(0, 2).join(' and ')}${names.length > 2 ? ` and ${count - 2} others` : ''}` : '';
-    return `${count} contact${count !== 1 ? 's' : ''} tracked${preview}.`;
-  })();
+    const profileMap: Record<string, any> = {};
+    for (const p of profiles ?? []) {
+      profileMap[p.profile_type] = p;
+    }
 
-  const sections = PROFILE_ORDER.map(type => {
-    if (type === 'relationships') {
+    const relationshipsText = (() => {
+      const count = contactsCount ?? 0;
+      if (count === 0) return null;
+      const names = (topContacts ?? []).map(c => c.contact_name || c.contact_email).filter(Boolean);
+      const preview = names.length > 0 ? ` including ${names.slice(0, 2).join(' and ')}${names.length > 2 ? ` and ${count - 2} others` : ''}` : '';
+      return `${count} contact${count !== 1 ? 's' : ''} tracked${preview}.`;
+    })();
+
+    const sections = PROFILE_ORDER.map(type => {
+      if (type === 'relationships') {
+        return {
+          profile_type: type,
+          rendered_text: relationshipsText,
+          confidence_score: Math.min((contactsCount ?? 0) * 10, 100),
+          learned_from_count: contactsCount ?? 0,
+          rendered_at: null,
+        };
+      }
       return {
         profile_type: type,
-        rendered_text: relationshipsText,
-        confidence_score: Math.min((contactsCount ?? 0) * 10, 100),
-        learned_from_count: contactsCount ?? 0,
-        rendered_at: null,
+        rendered_text: profileMap[type]?.rendered_text ?? null,
+        confidence_score: profileMap[type]?.confidence_score ?? 0,
+        learned_from_count: profileMap[type]?.learned_from_count ?? 0,
+        rendered_at: profileMap[type]?.rendered_at ?? null,
       };
-    }
-    return {
-      profile_type: type,
-      rendered_text: profileMap[type]?.rendered_text ?? null,
-      confidence_score: profileMap[type]?.confidence_score ?? 0,
-      learned_from_count: profileMap[type]?.learned_from_count ?? 0,
-      rendered_at: profileMap[type]?.rendered_at ?? null,
-    };
-  });
+    });
 
-  return NextResponse.json({ sections });
+    return NextResponse.json({ sections });
+  } catch (err) {
+    console.error('[Memory] GET failed:', err);
+    return NextResponse.json({ sections: [] });
+  }
 }
 
 export async function POST(request: NextRequest) {
