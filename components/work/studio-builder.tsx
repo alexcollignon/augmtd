@@ -1694,6 +1694,7 @@ function ToolStepFields({ step, onUpdate, isEnhancing, isPending, onEnhance, cur
           </button>
         </div>
       )}
+      {!changingTool && (<>
       {step.tool === 'web_search' && (
         <div>
           <div className="flex items-center justify-between mb-1">
@@ -1794,6 +1795,7 @@ function ToolStepFields({ step, onUpdate, isEnhancing, isPending, onEnhance, cur
       {step.tool === 'get_workflow_output' && (
         <WorkflowOutputFields step={step} onUpdate={onUpdate} currentWorkflowId={currentWorkflowId ?? ''} />
       )}
+      </>)}
     </>
   );
 }
