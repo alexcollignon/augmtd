@@ -428,10 +428,10 @@ export default function MeetingsLeftPanel({
               <div className="px-2 pb-2">
                 <button
                   onClick={onNewNote}
-                  className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-[12px] text-neutral-600 hover:bg-neutral-50 transition-colors"
+                  className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-600 text-[12px] font-medium transition-colors"
                 >
-                  <PlusIcon className="w-3.5 h-3.5 text-neutral-400 flex-shrink-0" />
-                  New Meeting
+                  <PlusIcon className="w-3.5 h-3.5 flex-shrink-0" />
+                  New note
                 </button>
               </div>
             </>

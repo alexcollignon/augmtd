@@ -80,7 +80,7 @@ export function AgentsSidebarSection({ agents, activeAgentId, onSelect }: Props)
         <span className="text-[10.5px] font-semibold text-neutral-400 uppercase tracking-wider">Agents</span>
         <Link
           href="/agents/new"
-          className="p-0.5 rounded hover:bg-neutral-100 text-neutral-400 hover:text-neutral-600 transition-colors"
+          className="p-1 rounded-md text-neutral-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors"
           title="New agent"
         >
           <PlusIcon className="w-3.5 h-3.5" />

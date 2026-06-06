@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ChatBubbleLeftIcon,
   CalendarDaysIcon,
+  PlusIcon,
 } from '@heroicons/react/24/outline';
 import { usePathname, useRouter } from 'next/navigation';
 import type { DriveFolder } from '@/lib/types/drive';
@@ -353,7 +354,13 @@ export default function MeetingsShell({
                   {selectedFolder ? selectedFolder.name : 'Meetings'}
                 </h2>
               </div>
-              <div className="flex items-center gap-1.5" />
+              <button
+                onClick={() => router.push('/meetings/new')}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-600 text-[12px] font-medium transition-colors"
+              >
+                <PlusIcon className="w-3.5 h-3.5" />
+                New note
+              </button>
             </div>
 
             {/* Body — folder view takes priority over URL-routed children */}
