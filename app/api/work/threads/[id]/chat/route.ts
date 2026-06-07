@@ -7,8 +7,6 @@ import { buildChatSystemPrompt, detectModelFamily } from '@/lib/work/chat-system
 // import { classifyIntent } from '@/lib/work/intent-classifier';
 import { buildUserContextBlock } from '@/lib/context/build-user-context';
 import { buildKBContext } from '@/lib/knowledge/build-kb-context';
-import { buildInboxSnapshot, formatSnapshotForPrompt } from '@/lib/inbox/chat-context';
-import { searchInboxForContext, formatSearchResultsForPrompt } from '@/lib/inbox/chat-search';
 import { getCalendarContext } from '@/lib/calendar/calendar-context';
 import { formatCalendarContextForChat } from '@/lib/calendar/format-calendar-context';
 import { runFullPipeline } from '@/lib/work/generate-pipeline';
@@ -19,7 +17,12 @@ import { getMimeType, getFileExt } from '@/lib/artifacts/builders';
 import { createClient as createAdminClient } from '@supabase/supabase-js';
 import { getMyWorkspace } from '@/lib/workspace/features';
 import { DEFAULT_FEATURES, type WorkspaceFeatures } from '@/lib/workspace/types';
-import { webSearchDefinition, fetchUrlDefinition, executeWebSearch, executeFetchUrl } from '@/lib/tools';
+import {
+  webSearchDefinition, fetchUrlDefinition, executeWebSearch, executeFetchUrl,
+  getEmailsDefinition, executeGetEmails,
+  getMeetingContextDefinition, executeGetMeetingContext,
+  deepResearchDefinition, executeDeepResearch,
+} from '@/lib/tools';
 import { checkRateLimit } from '@/lib/utils/rate-limit';
 
 export const maxDuration = 60;
@@ -1014,26 +1017,14 @@ function buildChatTools(sources: string[], _provider: string, _modelFamily: stri
   }
 
   if (sources.includes('inbox')) {
-    neutral.push({
-      name: 'get_recent_emails',
-      description: "Search emails by topic, sender, or keyword. Performs a targeted search — not limited to recent items, can find older emails too. Pass the most specific filter you can extract from the user's request (e.g. 'personal assistant application', 'invoice', 'board meeting'). Searches subject lines and email previews. If you need the full content of a specific email after finding it, call get_email_body with its ID.",
-      input_schema: {
-        type: 'object',
-        properties: {
-          filter: { type: 'string', description: 'Topic, subject keyword, or concept to search for. Be specific — e.g. "job application personal assistant" not just "email".' },
-          from: { type: 'string', description: 'Sender name or email address to filter by. Only use when the user is asking about a specific person.' },
-          date_range: { type: 'string', enum: ['today', 'this_week', 'this_month', 'all'], description: 'Time range. Default: all.' },
-        },
-        required: [],
-      },
-    });
+    neutral.push(getEmailsDefinition);
     neutral.push({
       name: 'get_email_body',
-      description: "Read the full body of a specific email by ID. Call after get_recent_emails identifies the email you need.",
+      description: "Read the full body of a specific email by ID. Call after get_emails identifies the email you need.",
       input_schema: {
         type: 'object',
         properties: {
-          email_id: { type: 'string', description: 'The email ID from get_recent_emails results' },
+          email_id: { type: 'string', description: 'The email ID from get_emails results' },
         },
         required: ['email_id'],
       },
@@ -1041,18 +1032,11 @@ function buildChatTools(sources: string[], _provider: string, _modelFamily: stri
   }
 
   if (sources.includes('calendar')) {
-    neutral.push({
-      name: 'get_calendar_context',
-      description: "Get meetings and calendar availability. Defaults to this week if no range specified.",
-      input_schema: {
-        type: 'object',
-        properties: {
-          date_range: { type: 'string', enum: ['today', 'tomorrow', 'this_week', 'next_week'], description: 'Time range to fetch. Default: this_week.' },
-          person: { type: 'string', description: 'Filter to meetings involving this person (name or email)' },
-        },
-        required: [],
-      },
-    });
+    neutral.push(getMeetingContextDefinition);
+  }
+
+  if (sources.includes('research')) {
+    neutral.push(deepResearchDefinition);
   }
 
   // ── Web tools — available when user enables web search ─────────────────────
@@ -1136,9 +1120,10 @@ function toolLabel(name: string): string {
   const labels: Record<string, string> = {
     search_knowledge_base: 'Searching knowledge base',
     read_document: 'Reading document',
-    get_recent_emails: 'Checking recent emails',
+    get_emails: 'Checking emails',
     get_email_body: 'Reading email',
-    get_calendar_context: 'Checking calendar',
+    get_meeting_context: 'Checking meetings & calendar',
+    deep_research: 'Researching…',
     web_search: 'Searching the web',
     fetch_url: 'Reading page',
     request_clarification: 'Preparing options',
@@ -1319,67 +1304,19 @@ async function executeChatTool(
       return { result: fullText, summary: `Read "${filename}" (${chunks.length} sections)`, citations: [filename] };
     }
 
-    case 'get_recent_emails': {
+    case 'get_emails': {
       if (!ctx.features.email) {
         return {
           result: 'Email access is not enabled for this workspace.',
           summary: 'Email module disabled',
         };
       }
-      const filter = (input.filter as string) || '';
-      const fromFilter = (input.from as string | undefined);
-      const emailDateRange = (input.date_range as string | undefined);
-      const queryParts = [filter, fromFilter].filter(Boolean).join(' ');
-
-      // Run targeted DB search and broad snapshot in parallel.
-      // Targeted search uses ilike queries on subject/snippet/sender — not limited to recent items.
-      // Snapshot fetches last 200 items with client-side filtering as a complement.
-      const [snapshot, targeted] = await Promise.all([
-        buildInboxSnapshot(ctx.userId, queryParts || null, ctx.supabase, undefined, 200),
-        queryParts ? searchInboxForContext(queryParts, ctx.userId, null, ctx.supabase) : Promise.resolve([]),
-      ]);
-
-      // Deduplicate: snapshot drops any ID already surfaced by targeted search
-      const targetedIds = new Set(targeted.map((r: any) => r.id));
-      const deduplicatedSnapshot = snapshot.filter((i: any) => !targetedIds.has(i.id));
-
-      // Merge for date_range + from filtering
-      const combined = [...targeted, ...deduplicatedSnapshot];
-
-      let filtered = combined;
-      if (emailDateRange && emailDateRange !== 'all') {
-        const now = new Date();
-        let cutoff: Date;
-        switch (emailDateRange) {
-          case 'today': cutoff = new Date(now.getFullYear(), now.getMonth(), now.getDate()); break;
-          case 'this_week': cutoff = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000); break;
-          case 'this_month': cutoff = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000); break;
-          default: cutoff = new Date(0);
-        }
-        filtered = combined.filter(item => new Date(item.createdAt) >= cutoff);
-      }
-
-      if (fromFilter) {
-        const fLower = fromFilter.toLowerCase();
-        filtered = filtered.filter(item =>
-          item.fromName.toLowerCase().includes(fLower) ||
-          item.fromEmail.toLowerCase().includes(fLower)
-        );
-      }
-
-      // Format with clear sections so the model knows which results were targeted matches
-      const filteredTargeted = filtered.filter((i: any) => targetedIds.has(i.id));
-      const filteredSnapshot = filtered.filter((i: any) => !targetedIds.has(i.id));
-      const targetedText = formatSearchResultsForPrompt(filteredTargeted);
-      const snapshotText = formatSnapshotForPrompt(filteredSnapshot);
-
-      const result = [
-        targetedText ? `TARGETED RESULTS (matched your query):\n${targetedText}` : '',
-        snapshotText ? `RECENT INBOX:\n${snapshotText}` : '',
-      ].filter(Boolean).join('\n\n') || 'No matching emails found.';
-
-      const count = filtered.length;
-      const summary = count > 0 ? `Found ${count} email${count !== 1 ? 's' : ''}` : 'No matching emails found';
+      // Map 'filter' (AI schema name) → 'topic' (executor param)
+      const emailConfig: Record<string, unknown> = { ...input };
+      if (typeof input.filter === 'string') emailConfig.topic = input.filter;
+      const result = await executeGetEmails(emailConfig, ctx.userId, ctx.supabase);
+      const lineCount = result.split('\n\n').length - 1;
+      const summary = result.startsWith('No emails') ? 'No matching emails found' : `Found ${lineCount} email${lineCount !== 1 ? 's' : ''}`;
       return { result, summary };
     }
 
@@ -1409,50 +1346,31 @@ async function executeChatTool(
       return { result, summary: `Read email: "${subject}"` };
     }
 
-    case 'get_calendar_context': {
+    case 'get_meeting_context': {
       if (!ctx.features.meetings) {
         return {
           result: 'Calendar and meetings access is not enabled for this workspace.',
           summary: 'Meetings module disabled',
         };
       }
-      const calCtx = await getCalendarContext(ctx.userId, ctx.supabase);
-      let meetings = calCtx?.upcomingMeetings ?? [];
-
-      // Apply date_range filter
-      const dateRange = (input.date_range as string | undefined) ?? 'this_week';
-      const now = new Date();
-      const rangeEnd = new Date(now);
-      switch (dateRange) {
-        case 'today': rangeEnd.setHours(23, 59, 59, 999); break;
-        case 'tomorrow': rangeEnd.setDate(now.getDate() + 1); rangeEnd.setHours(23, 59, 59, 999); break;
-        case 'next_week': rangeEnd.setDate(now.getDate() + 14); break;
-        default: rangeEnd.setDate(now.getDate() + 7); break; // this_week
-      }
-      const rangeStart = dateRange === 'tomorrow'
-        ? new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1)
-        : now;
-      meetings = meetings.filter((m: any) => {
-        const start = new Date(m.start_time);
-        return start >= rangeStart && start <= rangeEnd;
-      });
-
-      // Apply person filter
-      const personFilter = (input.person as string | undefined);
-      if (personFilter) {
-        const pLower = personFilter.toLowerCase();
-        meetings = meetings.filter((m: any) => {
-          const attendees = (m.attendees ?? []) as string[];
-          return attendees.some((a: string) => a.toLowerCase().includes(pLower)) ||
-            (m.title ?? '').toLowerCase().includes(pLower);
-        });
-      }
-
-      const filteredCtx = { ...calCtx, upcomingMeetings: meetings };
-      const result = formatCalendarContextForChat(filteredCtx) || 'No calendar events found for that range.';
-      const eventCount = meetings.length;
-      const summary = eventCount > 0 ? `Found ${eventCount} event${eventCount > 1 ? 's' : ''}` : 'No events found';
+      // Default include_upcoming=true for work chat (calendar awareness is the primary use case)
+      const meetingConfig: Record<string, unknown> = { include_upcoming: true, ...input };
+      const result = await executeGetMeetingContext(meetingConfig, ctx.userId, ctx.supabase);
+      const summary = result.startsWith('No processed') ? 'No meetings found' : 'Meeting context retrieved';
       return { result, summary };
+    }
+
+    case 'deep_research': {
+      const researchConfig = {
+        focus: (input.focus as string) || '',
+        language: (input.language as string | undefined),
+        model: 'fast' as const,
+      };
+      if (!researchConfig.focus) {
+        return { result: 'No research topic provided.', summary: 'Research skipped' };
+      }
+      const result = await executeDeepResearch(researchConfig, '');
+      return { result, summary: `Research complete: ${researchConfig.focus.slice(0, 60)}` };
     }
 
     case 'generate_document': {
@@ -1884,7 +1802,7 @@ function hasSpecificSubject(message: string): boolean {
 // tool_calls deltas when using OpenAI-compatible wrappers. These helpers detect
 // and parse them so we can execute the tools correctly.
 
-const XML_TOOL_NAMES = ['search_knowledge_base', 'get_recent_emails', 'get_email_body', 'get_calendar_context', 'request_clarification', 'generate_document'];
+const XML_TOOL_NAMES = ['search_knowledge_base', 'get_emails', 'get_email_body', 'get_meeting_context', 'deep_research', 'request_clarification', 'generate_document'];
 
 function parseXmlToolCalls(text: string): Array<{ name: string; args: Record<string, unknown> }> | null {
   if (!text.includes('<')) return null;

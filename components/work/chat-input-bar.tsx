@@ -15,6 +15,7 @@ import {
   UserIcon,
   CodeBracketIcon,
   GlobeAltIcon,
+  MagnifyingGlassIcon,
 } from '@heroicons/react/24/outline';
 import { toast } from 'sonner';
 
@@ -25,6 +26,7 @@ export const CHAT_SOURCES = [
   { id: 'inbox', label: 'Inbox & emails' },
   { id: 'calendar', label: 'Calendar' },
   { id: 'web', label: 'Web search' },
+  { id: 'research', label: 'Deep research' },
 ] as const;
 
 export type SourceId = (typeof CHAT_SOURCES)[number]['id'];
@@ -107,6 +109,9 @@ interface Props {
   /** Controlled web toggle — when provided, parent owns the state */
   webEnabled?: boolean;
   onWebToggle?: (enabled: boolean) => void;
+  /** Controlled deep research toggle */
+  researchEnabled?: boolean;
+  onResearchToggle?: (enabled: boolean) => void;
 }
 
 export function ChatInputBar({
@@ -124,9 +129,12 @@ export function ChatInputBar({
   threadId,
   webEnabled: controlledWebEnabled,
   onWebToggle,
+  researchEnabled: controlledResearchEnabled,
+  onResearchToggle,
 }: Props) {
   const [value, setValue] = useState(defaultValue);
   const [localWebEnabled, setLocalWebEnabled] = useState(false);
+  const [localResearchEnabled, setLocalResearchEnabled] = useState(false);
   // Controlled mode when parent passes webEnabled; otherwise self-managed
   const isControlled = controlledWebEnabled !== undefined;
   const webEnabled = isControlled ? controlledWebEnabled : localWebEnabled;
@@ -135,6 +143,15 @@ export function ChatInputBar({
       onWebToggle?.(!controlledWebEnabled);
     } else {
       setLocalWebEnabled(v => !v);
+    }
+  };
+  const isResearchControlled = controlledResearchEnabled !== undefined;
+  const researchEnabled = isResearchControlled ? controlledResearchEnabled : localResearchEnabled;
+  const toggleResearch = () => {
+    if (isResearchControlled) {
+      onResearchToggle?.(!controlledResearchEnabled);
+    } else {
+      setLocalResearchEnabled(v => !v);
     }
   };
 
@@ -362,6 +379,7 @@ export function ChatInputBar({
     setSelectedCategory(null);
     const sources: SourceId[] = ['kb', 'inbox', 'calendar'];
     if (webEnabled) sources.push('web');
+    if (researchEnabled) sources.push('research');
     onSubmit?.(msg, sources, submitMentions);
   }
 
@@ -631,6 +649,20 @@ export function ChatInputBar({
           >
             <GlobeAltIcon className="w-3.5 h-3.5" />
             Web
+          </button>
+
+          {/* Deep research toggle */}
+          <button
+            onClick={toggleResearch}
+            title="Deep research — slower but thorough (30–60s)"
+            className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[12px] transition-colors ${
+              researchEnabled
+                ? 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100'
+                : 'text-neutral-500 hover:bg-neutral-100 hover:text-neutral-700'
+            }`}
+          >
+            <MagnifyingGlassIcon className="w-3.5 h-3.5" />
+            Research
           </button>
 
           {/* Send */}

@@ -34,6 +34,19 @@ export interface DeepResearchConfig {
   model?: 'fast' | 'thorough';
 }
 
+export const deepResearchDefinition = {
+  name: 'deep_research',
+  description: "Run a thorough multi-step web research on a topic. Slower (30–60s) but comprehensive — uses multiple searches and synthesises cited findings. Only call when the user explicitly asks to research something in depth.",
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      focus: { type: 'string', description: 'The research question or topic to investigate thoroughly.' },
+      language: { type: 'string', description: 'Output language as BCP-47 code (e.g. en, de, pt). Default: en.' },
+    },
+    required: ['focus'],
+  },
+};
+
 interface ResearchResult {
   topic: string;
   summary: string;
