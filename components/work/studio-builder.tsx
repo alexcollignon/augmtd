@@ -45,6 +45,7 @@ import type {
 } from '@/lib/workflows/types';
 import { makeStepId } from '@/lib/workflows/types';
 import { SharingModeSelector } from '@/components/work/sharing-mode-selector';
+import { LINKEDIN_FRAMEWORKS } from '@/lib/tools/linkedin-post';
 
 interface AgentOption {
   id: string;
@@ -168,7 +169,7 @@ export function StudioBuilder({ workflow: initialWorkflow, agents, onClose, onBa
   const [enhancingStepId, setEnhancingStepId] = useState<string | null>(null);
   const [enhancePendingStepId, setEnhancePendingStepId] = useState<string | null>(null);
   const [testRunId, setTestRunId] = useState<string | null>(null);
-  const [showAssistant, setShowAssistant] = useState(false);
+  const [showAssistant, setShowAssistant] = useState(true);
 
   const resolvedPanel: ActivePanel = (() => {
     if (typeof activePanel === 'object') {
@@ -1376,12 +1377,55 @@ function LinkedInPostFields({ step, onUpdate }: { step: ToolStep; onUpdate: (p: 
   }, []);
   const cfg = step.config;
   const set = (k: string, v: unknown) => onUpdate({ config: { ...cfg, [k]: v } });
+
   return (
     <>
+      {/* Instructions */}
+      <Field label="Instructions" hint="optional">
+        <textarea
+          value={(cfg.instructions as string) ?? ''}
+          onChange={e => set('instructions', e.target.value || undefined)}
+          rows={3}
+          placeholder="Voice, audience, rules… e.g. Write from a hiring manager's perspective. No LinkedIn clichés. Short sentences."
+          className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] bg-white resize-none focus:outline-none focus:ring-2 focus:ring-indigo-300"
+        />
+      </Field>
+
+      {/* Vocabulary */}
+      <Field label="Vocabulary to seed" hint="optional">
+        <input
+          type="text"
+          value={(cfg.vocabulary as string) ?? ''}
+          onChange={e => set('vocabulary', e.target.value || undefined)}
+          placeholder="data sovereignty, unified context, context-switching cost…"
+          className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300"
+        />
+      </Field>
+
+      {/* Content framework */}
+      <Field label="Content framework" hint="optional">
+        <select
+          value={(cfg.framework as string) ?? ''}
+          onChange={e => set('framework', e.target.value || undefined)}
+          className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] bg-white"
+        >
+          <option value="">No framework</option>
+          {LINKEDIN_FRAMEWORKS.map(f => (
+            <option key={f.id} value={f.id}>{f.name}</option>
+          ))}
+        </select>
+        {(() => {
+          const fw = LINKEDIN_FRAMEWORKS.find(f => f.id === (cfg.framework as string));
+          return fw ? <p className="mt-1.5 text-[11px] text-neutral-400 leading-relaxed">{fw.description}</p> : null;
+        })()}
+      </Field>
+
+      {/* Quick parameters */}
       <div className="grid grid-cols-2 gap-3">
-        <Field label="Tone">
-          <select value={(cfg.tone as string) ?? 'thought_leadership'} onChange={e => set('tone', e.target.value)}
+        <Field label="Tone" hint="optional">
+          <select value={(cfg.tone as string) ?? ''} onChange={e => set('tone', e.target.value || undefined)}
             className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] bg-white">
+            <option value="">Default</option>
             <option value="thought_leadership">Thought leadership</option>
             <option value="conversational">Conversational</option>
             <option value="data_driven">Data-driven</option>
@@ -1395,15 +1439,6 @@ function LinkedInPostFields({ step, onUpdate }: { step: ToolStep; onUpdate: (p: 
             <option value="long">Long ~350w</option>
           </select>
         </Field>
-        <Field label="Format">
-          <select value={(cfg.format as string) ?? 'insight'} onChange={e => set('format', e.target.value)}
-            className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] bg-white">
-            <option value="story">Story</option>
-            <option value="insight">Insight</option>
-            <option value="question">Question</option>
-            <option value="list">List</option>
-          </select>
-        </Field>
         <Field label="Language">
           <select value={(cfg.language as string) ?? 'en'} onChange={e => set('language', e.target.value)}
             className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] bg-white">
@@ -1412,7 +1447,7 @@ function LinkedInPostFields({ step, onUpdate }: { step: ToolStep; onUpdate: (p: 
             <option value="pt">Portuguese</option>
           </select>
         </Field>
-        <Field label="Variants">
+        <Field label="Drafts">
           <select value={String(cfg.variants ?? 1)} onChange={e => set('variants', Number(e.target.value))}
             className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] bg-white">
             <option value="1">1 draft</option>
@@ -1428,8 +1463,9 @@ function LinkedInPostFields({ step, onUpdate }: { step: ToolStep; onUpdate: (p: 
           </label>
         </Field>
       </div>
+
       {kbFiles.length > 0 && (
-        <Field label="Voice reference">
+        <Field label="Voice reference" hint="optional">
           <select value={(cfg.voice_kb_file_id as string) ?? ''} onChange={e => set('voice_kb_file_id', e.target.value || undefined)}
             className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] bg-white">
             <option value="">No voice reference</option>
@@ -1638,11 +1674,27 @@ function ToolStepFields({ step, onUpdate, isEnhancing, isPending, onEnhance, cur
   const isFetchBased = step.tool === 'fetch_url' || step.tool === 'browser_fetch';
   const auth = step.config.auth as { username: string; password: string } | undefined;
 
+  const [changingTool, setChangingTool] = useState(false);
+  const selectedTool = AVAILABLE_TOOLS.find(t => t.id === (step.tool === 'browser_fetch' ? 'fetch_url' : step.tool === 'get_urgent_emails' ? 'get_emails' : step.tool));
+
   return (
     <>
-      <Field label="Choose a tool">
-        <InlineToolGrid value={step.tool} onChange={toolId => onUpdate({ tool: toolId, config: {} })} />
-      </Field>
+      {/* Tool selector — full grid when picking, compact chip when configured */}
+      {changingTool || !selectedTool ? (
+        <Field label="Choose a tool">
+          <InlineToolGrid value={step.tool} onChange={toolId => { onUpdate({ tool: toolId, config: {} }); setChangingTool(false); }} />
+        </Field>
+      ) : (
+        <div className="flex items-center gap-2 px-2.5 py-2 rounded-lg border border-neutral-200 bg-neutral-50">
+          <ToolPickerIcon toolId={selectedTool.id} size="sm" />
+          <span className="text-[12.5px] font-medium text-neutral-700 flex-1 truncate">{selectedTool.label}</span>
+          <button type="button" onClick={() => setChangingTool(true)}
+            className="text-[11px] text-neutral-400 hover:text-indigo-600 transition-colors flex-shrink-0">
+            Change
+          </button>
+        </div>
+      )}
+      {!changingTool && (<>
       {step.tool === 'web_search' && (
         <div>
           <div className="flex items-center justify-between mb-1">
@@ -1743,6 +1795,7 @@ function ToolStepFields({ step, onUpdate, isEnhancing, isPending, onEnhance, cur
       {step.tool === 'get_workflow_output' && (
         <WorkflowOutputFields step={step} onUpdate={onUpdate} currentWorkflowId={currentWorkflowId ?? ''} />
       )}
+      </>)}
     </>
   );
 }

@@ -17,6 +17,21 @@ export interface GetMeetingContextConfig {
   include_upcoming?: boolean;
 }
 
+export const getMeetingContextDefinition = {
+  name: 'get_meeting_context',
+  description: "Get recent meeting summaries, notes, action items, and upcoming calendar events. Use when the user asks about meetings, what happened in calls, follow-ups, or their calendar.",
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      since: { type: 'string', enum: ['7d', '14d', '30d'], description: 'How far back to look for past meetings. Default: 7d.' },
+      include: { type: 'string', enum: ['summaries', 'notes', 'both'], description: "What to include per meeting. 'summaries' = AI summary, 'notes' = live notes + action items, 'both' = everything. Default: both." },
+      with_person: { type: 'string', description: 'Filter to meetings involving this person (name or email).' },
+      include_upcoming: { type: 'boolean', description: 'Also include upcoming calendar events for the next 7 days. Default: true.' },
+    },
+    required: [],
+  },
+};
+
 function parseSince(since: string): Date {
   if (since === '7d')  return new Date(Date.now() - 7  * 24 * 60 * 60 * 1000);
   if (since === '14d') return new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);

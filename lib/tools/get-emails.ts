@@ -21,6 +21,22 @@ export interface GetEmailsConfig {
   limit?: number;
 }
 
+export const getEmailsDefinition = {
+  name: 'get_emails',
+  description: "Search the user's inbox by topic, sender, keyword or time window. Use when the user asks about specific emails, conversations, or wants to find something in their inbox. Pass the most specific filter you can extract from the request.",
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      filter: { type: 'string', description: "Topic, subject keyword, or concept to search for. Be specific — e.g. 'job application personal assistant' not just 'email'." },
+      from: { type: 'string', description: 'Sender name or email address. Only use when the user is asking about a specific person.' },
+      since: { type: 'string', enum: ['24h', '7d', '30d'], description: 'How far back to look. Default: 7d.' },
+      unread_only: { type: 'boolean', description: 'Only return unread emails.' },
+      limit: { type: 'number', description: 'Max results to return. Default 15.' },
+    },
+    required: [],
+  },
+};
+
 function parseSince(since: string): Date | null {
   if (since === '24h') return new Date(Date.now() - 24 * 60 * 60 * 1000);
   if (since === '7d')  return new Date(Date.now() - 7  * 24 * 60 * 60 * 1000);
