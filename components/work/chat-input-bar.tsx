@@ -139,19 +139,31 @@ export function ChatInputBar({
   const isControlled = controlledWebEnabled !== undefined;
   const webEnabled = isControlled ? controlledWebEnabled : localWebEnabled;
   const toggleWeb = () => {
+    const next = isControlled ? !controlledWebEnabled : !localWebEnabled;
     if (isControlled) {
-      onWebToggle?.(!controlledWebEnabled);
+      onWebToggle?.(next);
     } else {
-      setLocalWebEnabled(v => !v);
+      setLocalWebEnabled(next);
+    }
+    // mutually exclusive with deep research
+    if (next) {
+      if (isResearchControlled) onResearchToggle?.(false);
+      else setLocalResearchEnabled(false);
     }
   };
   const isResearchControlled = controlledResearchEnabled !== undefined;
   const researchEnabled = isResearchControlled ? controlledResearchEnabled : localResearchEnabled;
   const toggleResearch = () => {
+    const next = isResearchControlled ? !controlledResearchEnabled : !localResearchEnabled;
     if (isResearchControlled) {
-      onResearchToggle?.(!controlledResearchEnabled);
+      onResearchToggle?.(next);
     } else {
-      setLocalResearchEnabled(v => !v);
+      setLocalResearchEnabled(next);
+    }
+    // mutually exclusive with web search
+    if (next) {
+      if (isControlled) onWebToggle?.(false);
+      else setLocalWebEnabled(false);
     }
   };
 
@@ -654,7 +666,7 @@ export function ChatInputBar({
           {/* Deep research toggle */}
           <button
             onClick={toggleResearch}
-            title="Deep research — slower but thorough (30–60s)"
+            title="Deep research — thorough multi-step research (30–60s)"
             className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[12px] transition-colors ${
               researchEnabled
                 ? 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100'
@@ -662,7 +674,7 @@ export function ChatInputBar({
             }`}
           >
             <MagnifyingGlassIcon className="w-3.5 h-3.5" />
-            Research
+            Deep research
           </button>
 
           {/* Send */}

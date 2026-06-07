@@ -384,7 +384,6 @@ export async function POST(
       contextParts.push(`ATTACHED FILES:\n${attachCtx}`);
     }
 
-    const system = contextParts.join('\n\n');
 
     // Mention context — fetched AFTER system is built; injected into the last user message
     // so the model reads it as user-attached context, not system instructions.
@@ -428,9 +427,30 @@ export async function POST(
         };
       }
     }
-    const systemFinal = tools.length === 0
-      ? system + '\n\nNo tools are available. Do not output any XML, function calls, or <function_calls> blocks. Answer directly from the context above.'
-      : system;
+    // ── Deep research: execute before messages are built so findings go into system context ──
+    let preResearchCitations: string[] = [];
+    let ranPreResearch = false;
+    if (sources.includes('research') && content?.trim()) {
+      try {
+        const researchOut = await executeDeepResearch(
+          { focus: content.trim(), queries: [content.trim()], model: 'fast' },
+          ''
+        );
+        const urlMatches = [...researchOut.matchAll(/https?:\/\/[^\s)\]]+/g)];
+        preResearchCitations = [...new Set(urlMatches.map(m => m[0]))].slice(0, 10);
+        ranPreResearch = true;
+        // Append findings to system so AI synthesises from them
+        contextParts.push(
+          'DEEP RESEARCH FINDINGS (use these as the primary source — cite specific facts and sources):\n\n' + researchOut
+        );
+      } catch (err) {
+        console.error('[deep_research] pre-stream failed:', err);
+      }
+    }
+
+    let systemFinal = tools.length === 0
+      ? contextParts.join('\n\n') + '\n\nNo tools are available. Do not output any XML, function calls, or <function_calls> blocks. Answer directly from the context above.'
+      : contextParts.join('\n\n');
 
     // Token budget management — prevent silent context overflow on smaller models.
     // ~4 chars per token is a rough heuristic. Trim oldest history messages if over budget.
@@ -585,6 +605,34 @@ export async function POST(
         // Send an early chip so the user sees feedback immediately during the <think> phase.
         if (routeMode === 'force_generate') {
           send({ type: 'tool_start', name: 'generate_document', id: 'pre-generate', label: 'Generating document' });
+        }
+
+        // Research ran before the stream — emit UI events now so the step chip appears
+        if (ranPreResearch) {
+          send({ type: 'tool_start', name: 'deep_research', id: 'pre-research', label: 'Deep research' });
+          send({ type: 'tool_result', name: 'deep_research', id: 'pre-research', summary: 'Research complete', ...(preResearchCitations.length ? { citations: preResearchCitations } : {}) });
+        }
+
+        // ── Deep research: run directly before AI loop, don't rely on model to invoke it ──
+        if (sources.includes('research') && content?.trim()) {
+          send({ type: 'tool_start', name: 'deep_research', id: 'pre-research', label: 'Researching…' });
+          try {
+            const researchResult = await executeDeepResearch(
+              { focus: content.trim(), model: 'fast' },
+              ''
+            );
+            // Parse source URLs from the result to show as citations
+            const citationMatches = [...researchResult.matchAll(/https?:\/\/[^\s)\]]+/g)];
+            const citations = [...new Set(citationMatches.map(m => m[0]))].slice(0, 10);
+            send({ type: 'tool_result', name: 'deep_research', id: 'pre-research', summary: 'Research complete', ...(citations.length ? { citations } : {}) });
+            // Inject research findings into the system context so AI synthesises from them
+            systemFinal = systemFinal + '\n\n' +
+              'DEEP RESEARCH FINDINGS (use these as the primary source for your answer — cite specific facts):\n\n' +
+              researchResult;
+          } catch (err) {
+            send({ type: 'tool_result', name: 'deep_research', id: 'pre-research', summary: 'Research unavailable' });
+            console.error('[deep_research] pre-loop execution failed:', err);
+          }
         }
 
         try {
@@ -1035,9 +1083,8 @@ function buildChatTools(sources: string[], _provider: string, _modelFamily: stri
     neutral.push(getMeetingContextDefinition);
   }
 
-  if (sources.includes('research')) {
-    neutral.push(deepResearchDefinition);
-  }
+  // deep_research is executed directly before the AI loop (not as a model-invoked tool)
+  // so it is intentionally omitted from the tool list here.
 
   // ── Web tools — available when user enables web search ─────────────────────
   if (sources.includes('web')) {
@@ -1361,16 +1408,15 @@ async function executeChatTool(
     }
 
     case 'deep_research': {
-      const researchConfig = {
-        focus: (input.focus as string) || '',
-        language: (input.language as string | undefined),
-        model: 'fast' as const,
-      };
-      if (!researchConfig.focus) {
+      const focus = (input.focus as string) || '';
+      if (!focus) {
         return { result: 'No research topic provided.', summary: 'Research skipped' };
       }
-      const result = await executeDeepResearch(researchConfig, '');
-      return { result, summary: `Research complete: ${researchConfig.focus.slice(0, 60)}` };
+      const result = await executeDeepResearch(
+        { focus, queries: [focus], language: (input.language as string | undefined), model: 'fast' },
+        ''
+      );
+      return { result, summary: `Research complete: ${focus.slice(0, 60)}` };
     }
 
     case 'generate_document': {
