@@ -94,6 +94,7 @@ export function WorkPageClient({
   const [webEnabled, setWebEnabled] = useState(() =>
     initialAgentId ? (initialAgents.find(a => a.id === initialAgentId)?.web_enabled ?? false) : false
   );
+  const [researchEnabled, setResearchEnabled] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<Array<{ id: string; file: File }>>([]);
   const [pendingAttachmentMeta, setPendingAttachmentMeta] = useState<Array<{ id: string; name: string }>>([]);
   const [isAttachUploading, setIsAttachUploading] = useState(false);
@@ -306,6 +307,7 @@ export function WorkPageClient({
       if (sources?.length) {
         setPendingSources(sources);
         setWebEnabled(sources.includes('web'));
+        setResearchEnabled(sources.includes('research'));
       }
 
       if (filesToUpload.length > 0 && id) {
@@ -359,6 +361,7 @@ export function WorkPageClient({
     const thread = threads.find(t => t.id === id);
     const threadAgent = thread?.agent_id ? initialAgents.find(a => a.id === thread.agent_id) : null;
     setWebEnabled(threadAgent?.web_enabled ?? false);
+    setResearchEnabled(false);
     setPendingInput(null);
     setPendingMentions([]);
     setPendingFiles([]);
@@ -508,6 +511,8 @@ export function WorkPageClient({
               }}
               webEnabled={webEnabled}
               onWebToggle={setWebEnabled}
+              researchEnabled={researchEnabled}
+              onResearchToggle={setResearchEnabled}
               externalDroppedFiles={droppedFiles}
               onDropConsumed={() => setDroppedFiles([])}
               externalSnippet={droppedSnippet}
@@ -649,6 +654,8 @@ interface ActiveChatViewProps {
   onBackToWorkflow?: (workflowId: string) => void;
   webEnabled?: boolean;
   onWebToggle?: (enabled: boolean) => void;
+  researchEnabled?: boolean;
+  onResearchToggle?: (enabled: boolean) => void;
   externalDroppedFiles?: File[];
   onDropConsumed?: () => void;
   externalSnippet?: { id: string; name: string; snippetContent: string } | null;
@@ -675,6 +682,8 @@ function ActiveChatView({
   onBackToWorkflow,
   webEnabled,
   onWebToggle,
+  researchEnabled,
+  onResearchToggle,
   externalDroppedFiles,
   onDropConsumed,
   externalSnippet,
@@ -1339,6 +1348,8 @@ function ActiveChatView({
             threadId={thread.id}
             webEnabled={webEnabled}
             onWebToggle={onWebToggle}
+            researchEnabled={researchEnabled}
+            onResearchToggle={onResearchToggle}
           />
 
         </div>

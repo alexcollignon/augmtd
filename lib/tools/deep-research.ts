@@ -36,7 +36,7 @@ export interface DeepResearchConfig {
 
 export const deepResearchDefinition = {
   name: 'deep_research',
-  description: "Run a thorough multi-step web research on a topic. Slower (30–60s) but comprehensive — uses multiple searches and synthesises cited findings. Only call when the user explicitly asks to research something in depth.",
+  description: "Run a thorough multi-step web research on a topic. Slower (30–60s) but comprehensive — uses multiple searches and synthesises cited findings. Use this whenever the user asks about current events, facts, companies, people, or anything that benefits from up-to-date web information.",
   input_schema: {
     type: 'object' as const,
     properties: {
