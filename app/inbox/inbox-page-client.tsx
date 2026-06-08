@@ -9,6 +9,7 @@ import EmailListChronological from '@/components/inbox/email-list-chronological'
 import { type SentEmail } from '@/components/inbox/sent-email-list';
 import FolderSidebar, { type ConnectionFolders, type SelectedFolder } from '@/components/inbox/folder-rail';
 import FolderEmailList from '@/components/inbox/folder-email-list';
+import EmailSearchResults, { type EmailSearchResult } from '@/components/inbox/email-search-results';
 import WorkDetailInline from '@/components/inbox/work-detail-inline';
 import type { FolderEmailSummary, MessageDetail } from '@/lib/google/gmail';
 import AiChatPanel from '@/components/shared/ai-chat-panel';
@@ -220,14 +221,43 @@ export function InboxPageClient({
     if (savedListWidth) { const w = Number(savedListWidth); setEmailListWidth(w); emailListLiveWidthRef.current = w; }
   }, []);
 
-  // Search state (client-side filter on left list)
+  // Search state — global search across all folders via emails table
   const [searchQuery, setSearchQuery] = useState('');
   const [showSearch, setShowSearch] = useState(false);
+  const [searchResults, setSearchResults] = useState<EmailSearchResult[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchResultConnectionId, setSearchResultConnectionId] = useState<string | null>(null);
 
   useEffect(() => {
     if (showSearch) searchInputRef.current?.focus();
-    else setSearchQuery('');
+    else {
+      setSearchQuery('');
+      setSearchResults([]);
+      setSearchResultConnectionId(null);
+      setSelectedFolderEmail(null);
+      setSelectedFolderEmailId(null);
+    }
   }, [showSearch]);
+
+  useEffect(() => {
+    const q = searchQuery.trim();
+    if (!q) { setSearchResults([]); return; }
+    const timer = setTimeout(async () => {
+      setSearchLoading(true);
+      try {
+        const params = new URLSearchParams({ q });
+        if (selectedConnectionId) params.set('connectionId', selectedConnectionId);
+        const res = await fetch(`/api/inbox/search?${params}`);
+        if (res.ok) {
+          const data = await res.json();
+          setSearchResults(data.results ?? []);
+        }
+      } catch { /* non-fatal */ } finally {
+        setSearchLoading(false);
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery, selectedConnectionId]);
 
   // Right panel + compose state
   const [rightPanel, setRightPanel] = useState<'calendar' | 'chat' | 'workflow' | null>('calendar');
@@ -380,6 +410,16 @@ export function InboxPageClient({
       if (res.ok) setSelectedFolderEmail(await res.json());
     } catch { /* non-fatal */ }
   }, [selectedFolder]);
+
+  const handleSelectSearchResult = useCallback(async (result: EmailSearchResult) => {
+    setSelectedFolderEmailId(result.message_id);
+    setSelectedFolderEmail(null);
+    setSearchResultConnectionId(result.connection_id);
+    try {
+      const res = await fetch(`/api/inbox/folder-email-detail?connectionId=${result.connection_id}&messageId=${encodeURIComponent(result.message_id)}`);
+      if (res.ok) setSelectedFolderEmail(await res.json());
+    } catch { /* non-fatal */ }
+  }, []);
 
   const handleCreateFolder = useCallback(async (connectionId: string, name: string) => {
     await fetch('/api/inbox/folders', {
@@ -1258,7 +1298,16 @@ export function InboxPageClient({
 
               {/* Email list */}
               <div key={density} className="flex-1 overflow-y-auto animate-[fadeIn_120ms_ease-out]">
-                {selectedFolder ? (
+                {searchQuery.trim() ? (
+                  <EmailSearchResults
+                    results={searchResults}
+                    folderSections={folderSections ?? []}
+                    selectedId={selectedFolderEmailId}
+                    onSelect={handleSelectSearchResult}
+                    loading={searchLoading}
+                    query={searchQuery.trim()}
+                  />
+                ) : selectedFolder ? (
                   <FolderEmailList
                     folderName={selectedFolder.folderName}
                     emails={folderEmails}
@@ -1273,11 +1322,6 @@ export function InboxPageClient({
                     <p className="text-[12px] text-neutral-400">
                       New items will appear here after the next sync.
                     </p>
-                  </div>
-                ) : filteredItems.length === 0 && searchQuery ? (
-                  <div className="flex flex-col items-center justify-center h-full py-16 px-4 text-center">
-                    <p className="text-[13px] text-neutral-500 font-medium mb-1">No results</p>
-                    <p className="text-[12px] text-neutral-400">Try a different search term</p>
                   </div>
                 ) : viewMode === 'chronological' ? (
                   <EmailListChronological
@@ -1348,7 +1392,19 @@ export function InboxPageClient({
                       connectionId={(selectedItem as any)?.connection_id ?? undefined}
                     />
                   ) : selectedFolderEmail ? (
-                    <FolderEmailDetail email={selectedFolderEmail} connectionId={selectedFolder?.connectionId ?? ''} folderSections={folderSections ?? []} onMoved={() => { handleSelectFolder(selectedFolder); }} />
+                    <FolderEmailDetail
+                      email={selectedFolderEmail}
+                      connectionId={searchQuery.trim() ? (searchResultConnectionId ?? '') : (selectedFolder?.connectionId ?? '')}
+                      folderSections={folderSections ?? []}
+                      onMoved={() => {
+                        if (searchQuery.trim()) {
+                          setSelectedFolderEmail(null);
+                          setSelectedFolderEmailId(null);
+                        } else {
+                          handleSelectFolder(selectedFolder);
+                        }
+                      }}
+                    />
                   ) : (
                     <WorkDetailInline
                       key={selectedItem?.id ?? 'empty'}
