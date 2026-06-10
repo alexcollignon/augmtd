@@ -95,48 +95,6 @@ export function useRecording(
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [state]);
 
-  // Auto-pause on laptop sleep / screen lock — but NOT on tab or app switches.
-  //
-  // Primary: the Page Lifecycle `freeze` event fires when the OS suspends the
-  // browser (sleep, screen lock). It does not fire on tab/app switches.
-  //
-  // Fallback (Firefox/Safari): `visibilitychange` + a 60-second timer. A normal
-  // tab switch brings the user back in seconds; sleep keeps it hidden for minutes.
-  // Only pause if still hidden after the threshold.
-  useEffect(() => {
-    if (state !== 'recording') return;
-
-    const SLEEP_THRESHOLD_MS = 60_000;
-    let sleepTimer: ReturnType<typeof setTimeout> | null = null;
-
-    const clearSleepTimer = () => {
-      if (sleepTimer !== null) {
-        clearTimeout(sleepTimer);
-        sleepTimer = null;
-      }
-    };
-
-    // Primary: freeze event (Chrome/Edge — precise, no false positives)
-    const handleFreeze = () => pauseRecording();
-
-    // Fallback: visibilitychange with delay (Firefox/Safari)
-    const handleVisibilityChange = () => {
-      if (document.hidden) {
-        sleepTimer = setTimeout(() => pauseRecording(), SLEEP_THRESHOLD_MS);
-      } else {
-        clearSleepTimer();
-      }
-    };
-
-    document.addEventListener('freeze', handleFreeze);
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    return () => {
-      document.removeEventListener('freeze', handleFreeze);
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      clearSleepTimer();
-    };
-  }, [state, pauseRecording]);
-
   const startRecording = useCallback(async (title: string, calendarEventId?: string, existingNoteId?: string) => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -189,6 +147,46 @@ export function useRecording(
     }
     setState('paused');
   }, []);
+
+  // Auto-pause on laptop sleep / screen lock — but NOT on tab or app switches.
+  //
+  // Primary: the Page Lifecycle `freeze` event fires when the OS suspends the
+  // browser (sleep, screen lock). It does not fire on tab/app switches.
+  //
+  // Fallback (Firefox/Safari): `visibilitychange` + a 60-second timer. A normal
+  // tab switch brings the user back in seconds; sleep keeps it hidden for minutes.
+  // Only pause if still hidden after the threshold.
+  useEffect(() => {
+    if (state !== 'recording') return;
+
+    const SLEEP_THRESHOLD_MS = 60_000;
+    let sleepTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const clearSleepTimer = () => {
+      if (sleepTimer !== null) {
+        clearTimeout(sleepTimer);
+        sleepTimer = null;
+      }
+    };
+
+    const handleFreeze = () => pauseRecording();
+
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        sleepTimer = setTimeout(() => pauseRecording(), SLEEP_THRESHOLD_MS);
+      } else {
+        clearSleepTimer();
+      }
+    };
+
+    document.addEventListener('freeze', handleFreeze);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      document.removeEventListener('freeze', handleFreeze);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      clearSleepTimer();
+    };
+  }, [state, pauseRecording]);
 
   const resumeRecording = useCallback(() => {
     const recorder = mediaRecorderRef.current;
