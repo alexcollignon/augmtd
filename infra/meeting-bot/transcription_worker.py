@@ -232,21 +232,37 @@ async def run_transcription(
                     pass
 
         # 4. Call local Whisper — no timeout risk (localhost)
+        # Retry on connection-level errors (RemoteProtocolError / ConnectError) which
+        # happen on the very first request when faster-whisper-server is loading the
+        # model lazily. Second attempt always succeeds once the model is warm.
+        import asyncio as _asyncio
         filename = storage_path.split('/')[-1]
-        async with httpx.AsyncClient(timeout=3600.0) as client:
-            whisper_resp = await client.post(
-                f'{WHISPER_URL}/v1/audio/transcriptions',
-                files={'file': (filename, audio_bytes, 'audio/webm')},
-                data={
-                    'model': 'Systran/faster-whisper-medium',
-                    'response_format': 'verbose_json',
-                    'language': 'en',
-                    'vad_filter': 'true',           # skip silent segments → prevents hallucination loops
-                    'condition_on_previous_text': 'false',  # don't feed prior output back → stops repetition
-                },
-            )
-            whisper_resp.raise_for_status()
-            whisper_data = whisper_resp.json()
+        _MAX_WHISPER_RETRIES = 3
+        whisper_data = None
+        for _attempt in range(1, _MAX_WHISPER_RETRIES + 1):
+            try:
+                async with httpx.AsyncClient(timeout=3600.0) as client:
+                    whisper_resp = await client.post(
+                        f'{WHISPER_URL}/v1/audio/transcriptions',
+                        files={'file': (filename, audio_bytes, 'audio/webm')},
+                        data={
+                            'model': 'Systran/faster-whisper-medium',
+                            'response_format': 'verbose_json',
+                            'language': 'en',
+                            'vad_filter': 'true',
+                            'condition_on_previous_text': 'false',
+                        },
+                    )
+                    whisper_resp.raise_for_status()
+                    whisper_data = whisper_resp.json()
+                    break
+            except (httpx.RemoteProtocolError, httpx.ConnectError, httpx.ReadError) as _e:
+                if _attempt == _MAX_WHISPER_RETRIES:
+                    raise
+                logger.warning(f'[Transcription] Whisper attempt {_attempt} failed ({_e}) — retrying in 5s')
+                await _asyncio.sleep(5)
+        if whisper_data is None:
+            raise RuntimeError('Whisper returned no data after retries')
 
         raw_segments = whisper_data.get('segments', [])
         normalized = [
@@ -343,7 +359,7 @@ async def run_transcription(
 
         # 7. Call Vercel generate-insights (fast — no Whisper)
         if AUGMTD_BASE_URL and BOT_SECRET:
-            async with httpx.AsyncClient(timeout=120.0) as client:
+            async with httpx.AsyncClient(timeout=300.0) as client:
                 ins_resp = await client.post(
                     f'{AUGMTD_BASE_URL}/api/meetings/recording/{transcript_id}/generate-insights',
                     headers={
