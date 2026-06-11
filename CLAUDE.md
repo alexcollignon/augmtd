@@ -23,6 +23,10 @@ scp infra/meeting-bot/transcription_worker.py root@46.224.176.245:/root/augmtd-i
 ssh root@46.224.176.245 "cd /root/augmtd-infra/infra/hetzner && docker build -t hetzner_meeting-bot:latest ../meeting-bot"
 
 # 3. Replace running container (.env is at /root/augmtd/.env)
+# IMPORTANT: docker-compose.yml maps env var names (e.g. NEXT_PUBLIC_SUPABASE_URL → SUPABASE_URL,
+# MEETING_BOT_SECRET → BOT_SECRET). The manual docker run must pass these explicitly or they must
+# exist under their Python names in /root/augmtd/.env. As of June 2026, /root/augmtd/.env has
+# BOT_SECRET and SUPABASE_URL appended directly — do not remove them.
 ssh root@46.224.176.245 "docker stop hetzner_meeting-bot_1; docker rm hetzner_meeting-bot_1; docker run -d --name hetzner_meeting-bot_1 --restart unless-stopped --shm-size=2gb --dns 8.8.8.8 --dns 8.8.4.4 -p 3001:3001 -v hetzner_bot-scheduler:/data -v /root/augmtd-infra/google-auth.json:/app/google-auth.json:ro --env-file /root/augmtd/.env -e AUGMTD_WEBHOOK_BASE_URL=https://app.augmtd.ai -e MAX_CONCURRENT_BOTS=4 -e WHISPER_SERVICE_URL=http://172.19.0.1:8000 hetzner_meeting-bot:latest"
 
 # 4. Verify
