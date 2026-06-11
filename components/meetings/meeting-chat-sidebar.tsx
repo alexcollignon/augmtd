@@ -48,9 +48,9 @@ interface MeetingChatSidebarProps {
 }
 
 const QUICK_PROMPTS = [
-  "What were the key decisions?",
+  "Update notes and action items",
   "Draft a follow-up email to attendees",
-  "What action items need my attention?",
+  "What were the key decisions?",
   "Start a workflow based on this meeting",
 ];
 

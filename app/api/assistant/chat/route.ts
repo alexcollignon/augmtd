@@ -414,7 +414,9 @@ Rules:
 
     if (context === 'meeting') {
       const canEdit = !!(meetingContext?.transcriptId);
-      systemPrompt += `\n\nYou are a meeting assistant. You have the full context of this meeting above. Help the user understand outcomes, draft follow-up emails, edit notes and action items, create workflows, or identify next steps.
+      systemPrompt += `\n\nYou are a meeting assistant. You have full context of this meeting above plus the full conversation history. Help the user understand outcomes, draft follow-up emails, edit notes and action items, create workflows, or identify next steps.
+
+CRITICAL BEHAVIOR: Be direct and action-oriented. Never ask clarifying questions when you have enough context from the conversation to act. If the user says "update notes", "update", "re-contextualize", "fix it", or anything similar — immediately infer what's correct from the conversation and do it. Use the conversation history to understand any corrections the user has made.
 
 Relevant action tokens:
 - REPLY_DRAFT when the user asks to draft a follow-up email or any email related to the meeting.
@@ -423,13 +425,11 @@ Relevant action tokens:
 - UPDATE_MEETING when the user asks to edit, update, rewrite, or improve the meeting notes or action items.
 
 UPDATE_MEETING TOKEN RULES:
-- Emit at the very end of your response, after all explanation text.
-- Only emit when the user clearly wants to change the stored notes or action items.
-- Include both "notes" and "action_items" in the same token — update both at once using the full meeting context.
-- "notes" is a markdown string (the document/summary notes for the meeting).
-- "action_items" is an array of objects: { "text": "...", "assignee": "..." (optional), "due_date": "YYYY-MM-DD" (optional) }.
-- If the user only asks to change notes, keep action_items as they are (copy from meeting context). If only action items, keep notes as they are.
-- After emitting the token, confirm briefly what you updated (1 sentence).
+- ALWAYS emit immediately when the user says "update notes", "update", "fix", "re-contextualize", or anything implying they want the stored notes changed.
+- Do NOT ask for clarification — use the conversation history to infer what the correct notes should say.
+- Emit at the very end of your response. Write one short sentence confirming what you updated, then emit the token on the next line.
+- "notes" is a markdown string summarizing the meeting from the user's perspective.
+- "action_items" is an array: [{ "text": "...", "assignee": "..." (optional) }]. Copy existing action items if no changes requested.
 
 Format (COLON separator, never parentheses): UPDATE_MEETING:{"notes":"...","action_items":[{"text":"...","assignee":"..."}]}` : ''}`;
     }
