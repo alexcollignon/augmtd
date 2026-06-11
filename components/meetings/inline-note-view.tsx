@@ -1028,6 +1028,8 @@ const handleRetry = async () => {
             Record in person
           </button>
 
+          <span className="text-[11px] text-neutral-300 ml-0.5">· may pause if screen locks or 1h away</span>
+
           {/* Finish — triggers AI analysis */}
           {(noteBody.trim() || adHocTitle.trim() || (isDraftNote && event?.id === transcript?.id)) && (
             <button
