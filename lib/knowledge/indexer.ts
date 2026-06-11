@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { getAIClient, aiCreate } from '@/lib/ai/factory';
 import { parseModelJSON } from '@/lib/ai/parse-json';
 import Anthropic from '@anthropic-ai/sdk';
@@ -461,6 +462,16 @@ export interface IndexUploadParams {
 export async function indexUploadedFile(params: IndexUploadParams, adminClient: SupabaseClient): Promise<string> {
   const { buffer, filename, mimeType, userId, storagePathInBucket, folderId } = params;
 
+  // Skip all expensive processing if this exact file content is already indexed
+  const contentHash = createHash('sha256').update(buffer).digest('hex');
+  const { data: existingFile } = await adminClient
+    .from('knowledge_files')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('content_hash', contentHash)
+    .maybeSingle();
+  if (existingFile) return existingFile.id;
+
   const sourceId = await getOrCreateUploadSource(userId, adminClient);
 
   const extractedText = await extractTextFromFile(buffer, mimeType, filename, userId, adminClient);
@@ -489,6 +500,7 @@ export async function indexUploadedFile(params: IndexUploadParams, adminClient: 
         last_modified_at: new Date().toISOString(),
         indexed_at: new Date().toISOString(),
         storage_path: storagePathInBucket,
+        content_hash: contentHash,
         ...(folderId ? { folder_id: folderId } : {}),
       },
       { onConflict: 'user_id,provider_file_id' }
