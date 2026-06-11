@@ -16,6 +16,7 @@ import {
   ClipboardDocumentIcon,
   PaperAirplaneIcon,
   DocumentTextIcon,
+  UserGroupIcon,
 } from '@heroicons/react/24/outline';
 import type { MeetingChatContext } from '@/components/meetings/meeting-chat-sidebar';
 import { useRecordingContext } from '@/context/recording-context';
@@ -258,7 +259,6 @@ export default function InlineNoteView({
     recentEmails: Array<{ subject: string; from: string; date: string; snippet: string }>;
     relevantDocs: Array<{ title: string; snippet: string }>;
     relationships: Array<{ name: string; email: string; type: string; lastInteraction: string | null; topics: string[] }>;
-    agenda: string | null;
     aiSummary: string | null;
   } | null>(null);
   const [prepLoading, setPrepLoading] = useState(false);
@@ -1086,10 +1086,16 @@ const handleRetry = async () => {
         <div className="mb-6">
           <button
             onClick={() => setPrepExpanded((v) => !v)}
-            className="flex items-center gap-1.5 text-[11px] font-semibold text-neutral-400 uppercase tracking-wide hover:text-neutral-600 transition-colors"
+            className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 transition-colors group"
           >
-            <ChevronRightIcon className={`w-3 h-3 transition-transform duration-150 ${prepExpanded ? 'rotate-90' : ''}`} />
-            Meeting prep
+            <div className="flex items-center gap-2">
+              <UserGroupIcon className="w-3.5 h-3.5 text-indigo-500 flex-shrink-0" />
+              <span className="text-[12px] font-medium text-indigo-700">Meeting prep</span>
+              {prepLoading && (
+                <span className="text-[11px] text-indigo-400">Loading…</span>
+              )}
+            </div>
+            <ChevronDownIcon className={`w-3.5 h-3.5 text-indigo-400 transition-transform duration-150 ${prepExpanded ? 'rotate-180' : ''}`} />
           </button>
 
           {prepExpanded && (
@@ -1109,14 +1115,6 @@ const handleRetry = async () => {
                     <div className="px-3 py-2.5 bg-indigo-50 rounded-lg border border-indigo-100">
                       <p className="text-[12px] text-indigo-800 leading-relaxed">{prepBrief.aiSummary}</p>
                     </div>
-                  )}
-
-                  {/* Agenda from calendar invite */}
-                  {prepBrief.agenda && (
-                    <section>
-                      <h2 className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wide mb-2">Agenda</h2>
-                      <p className="text-[12px] text-neutral-600 leading-relaxed whitespace-pre-line px-1">{prepBrief.agenda}</p>
-                    </section>
                   )}
 
                   {/* Attendee relationships */}
@@ -1227,7 +1225,7 @@ const handleRetry = async () => {
                   )}
 
                   {/* Empty state */}
-                  {!prepBrief.aiSummary && !prepBrief.agenda && prepBrief.relationships.length === 0 && prepBrief.pastMeetings.length === 0 && prepBrief.recentEmails.length === 0 && (
+                  {!prepBrief.aiSummary && prepBrief.relationships.length === 0 && prepBrief.pastMeetings.length === 0 && prepBrief.recentEmails.length === 0 && (
                     <p className="text-[12px] text-neutral-400 px-1">No prior context found for these attendees.</p>
                   )}
                 </>
