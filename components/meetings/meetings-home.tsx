@@ -252,10 +252,16 @@ export default function MeetingsHome({
     setRenamingId(null);
   }
 
-  // Find the nearest day (from now) that has non-completed events
+  // Find the nearest day (from now) that has non-completed events.
+  // Keep a meeting visible until its end_time (or start + 1h as fallback) so
+  // users arriving a few minutes late can still tap into it.
   const nearestDay = useMemo(() => {
     const future = upcoming
-      .filter((m) => m.meeting_status !== 'completed' && new Date(m.start_time) > now)
+      .filter((m) => {
+        if (m.meeting_status === 'completed') return false;
+        const end = m.end_time ? new Date(m.end_time) : new Date(new Date(m.start_time).getTime() + 60 * 60 * 1000);
+        return end > now;
+      })
       .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
     if (future.length === 0) return null;
     const nearestDateStr = new Date(future[0].start_time).toDateString();
