@@ -103,7 +103,7 @@ Recording path for in-person audio:
 
 The meeting bot (`bot_runner.py`) uses Playwright + PulseAudio to join Google Meet, scrape captions, and record audio. Bot is currently disabled for users (`DEFAULT_FEATURES.meetings = false`); in-person recording remains active.
 
-**Recording pause behaviour:** tab/app switches do not pause. Laptop sleep/screen lock auto-pauses via the Page Lifecycle `freeze` event (Chrome/Edge) or a `visibilitychange` + 60s timer fallback (Firefox/Safari). `transcription_worker.py` retries the Whisper POST up to 3× on connection errors (cold-start resilience) and uses a 300s timeout for the generate-insights callback (matching Vercel's `maxDuration`).
+**Recording pause behaviour:** tab/app switches do not pause. Laptop sleep/screen lock auto-pauses via the Page Lifecycle `freeze` event (Chrome/Edge — immediate) or a `visibilitychange` + **1-hour** timer (all browsers — universal safety net). `awaySeconds` counter ticks while tab is hidden; document title shows countdown warnings at 45 min and 55 min away. Pre-recording hint near "Record in person" button reads "may pause if screen locks or 1h away". `transcription_worker.py` retries the Whisper POST up to 3× on connection errors (cold-start resilience) and uses a 300s timeout for the generate-insights callback (matching Vercel's `maxDuration`).
 
 ### Context profiles (user memory)
 

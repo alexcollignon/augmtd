@@ -29,6 +29,8 @@ export interface MeetingChatContext {
   actionItems?: Array<{ text: string; assignee?: string; status?: string }>;
   risks?: Array<{ description: string; severity: string }>;
   suggestedNextStep?: string;
+  /** Transcript ID — set when a processed recording is open, enables AI note editing */
+  transcriptId?: string;
 }
 
 interface MeetingChatSidebarProps {
@@ -46,9 +48,9 @@ interface MeetingChatSidebarProps {
 }
 
 const QUICK_PROMPTS = [
-  "What were the key decisions?",
+  "Update notes and action items",
   "Draft a follow-up email to attendees",
-  "What action items need my attention?",
+  "What were the key decisions?",
   "Start a workflow based on this meeting",
 ];
 
@@ -58,6 +60,9 @@ const OPEN_WORKFLOW_RE = /OPEN_WORKFLOW:(\{[\s\S]+?\})/;
 const OPEN_PROCESS_RE = /OPEN_PROCESS:(\{[\s\S]+?\})/;
 const REPLY_DRAFT_RE = /REPLY_DRAFT:(\{[\s\S]+?\})/;
 const MEETING_RE = /MEETING_SUGGESTION:(\{.+\})/;
+// Accept both UPDATE_MEETING:{ and UPDATE_MEETING({ (model sometimes uses parens)
+// Greedy inner match so we capture the full JSON object, not just up to the first }
+const UPDATE_MEETING_RE = /UPDATE_MEETING[:(]\s*(\{[\s\S]+\})\)?\s*$/;
 
 function tryParse<T>(s: string): T | null {
   try { return JSON.parse(s) as T; } catch { return null; }
@@ -67,6 +72,7 @@ function parseMessage(raw: string) {
   let openWorkflow: ParsedOpenWorkflow | null = null;
   let openProcess: ParsedOpenProcess | null = null;
   let replyDraft: { body: string } | null = null;
+  let updateMeeting: { notes?: string; action_items?: Array<{ text: string; assignee?: string; due_date?: string }> } | null = null;
 
   const workflowMatch = raw.match(OPEN_WORKFLOW_RE);
   if (workflowMatch) openWorkflow = tryParse(workflowMatch[1]);
@@ -77,10 +83,14 @@ function parseMessage(raw: string) {
   const replyMatch = raw.match(REPLY_DRAFT_RE);
   if (replyMatch) replyDraft = tryParse(replyMatch[1]);
 
+  const updateMatch = raw.match(UPDATE_MEETING_RE);
+  if (updateMatch) updateMeeting = tryParse(updateMatch[1]);
+
   const text = raw
     .replace(OPEN_WORKFLOW_RE, '')
     .replace(OPEN_PROCESS_RE, '')
     .replace(REPLY_DRAFT_RE, '')
+    .replace(UPDATE_MEETING_RE, '')
     .replace(/\nMEETING_SUGGESTION:\{.+\}/g, '')
     .replace(MEETING_RE, '')
     .replace(/\nKB_REFS:[^\n]*/g, '')
@@ -89,7 +99,7 @@ function parseMessage(raw: string) {
     .replace(/\nACTION:\{[\s\S]+?\}/g, '')
     .trim();
 
-  return { text, openWorkflow, openProcess, replyDraft };
+  return { text, openWorkflow, openProcess, replyDraft, updateMeeting };
 }
 
 // ── Markdown renderer ─────────────────────────────────────────────────────────
@@ -276,6 +286,21 @@ export default function MeetingChatSidebar({
           updated[updated.length - 1] = { role: 'assistant', content: accumulated };
           return updated;
         });
+      }
+
+      // Apply UPDATE_MEETING token if present and we have a transcript ID
+      const { updateMeeting } = parseMessage(accumulated);
+      if (updateMeeting && meetingContext.transcriptId) {
+        fetch(`/api/meetings/${meetingContext.transcriptId}/notes`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ...(updateMeeting.notes !== undefined ? { document: updateMeeting.notes } : {}),
+            ...(updateMeeting.action_items !== undefined ? { action_items: updateMeeting.action_items } : {}),
+          }),
+        }).then(() => {
+          new BroadcastChannel('meeting-updates').postMessage('updated');
+        }).catch(() => {});
       }
     } catch {
       setMessages((prev) => {

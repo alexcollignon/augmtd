@@ -339,6 +339,7 @@ export default function InlineNoteView({
           })) : [],
           risks: processed ? (data.transcript!.risks ?? []).map((r: any) => ({ description: r.text, severity: r.severity })) : [],
           suggestedNextStep: processed ? (data.transcript!.suggestedNextStep ?? undefined) : undefined,
+          transcriptId: data.transcript?.id,
         });
       }
     } catch {
@@ -409,6 +410,14 @@ export default function InlineNoteView({
     ch.onmessage = () => onBack();
     return () => ch.close();
   }, [isAdHoc, onBack]);
+
+  // Refresh when AI chat edits notes or action items
+  useEffect(() => {
+    if (!eventId) return;
+    const ch = new BroadcastChannel('meeting-updates');
+    ch.onmessage = () => fetchData();
+    return () => ch.close();
+  }, [eventId, fetchData]);
 
   // ── Handlers ──────────────────────────────────────────────────────────────
 

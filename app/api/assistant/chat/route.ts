@@ -159,6 +159,7 @@ export async function POST(request: NextRequest) {
         actionItems?: Array<{ text: string; assignee?: string; status?: string }>;
         risks?: Array<{ description: string; severity: string }>;
         suggestedNextStep?: string;
+        transcriptId?: string;
       };
     };
 
@@ -412,7 +413,25 @@ Rules:
     }
 
     if (context === 'meeting') {
-      systemPrompt += `\n\nYou are a meeting assistant. You have the full context of this meeting above. Help the user understand outcomes, draft follow-up emails, create workflows, or identify next steps.\nRelevant action tokens:\n- REPLY_DRAFT when the user asks to draft a follow-up email or any email related to the meeting.\n- OPEN_WORKFLOW when the user wants to start a workflow or generate a document based on meeting outcomes.\n- OPEN_PROCESS when the user wants to navigate to a specific active process referenced in the meeting.`;
+      const canEdit = !!(meetingContext?.transcriptId);
+      systemPrompt += `\n\nYou are a meeting assistant. You have full context of this meeting above plus the full conversation history. Help the user understand outcomes, draft follow-up emails, edit notes and action items, create workflows, or identify next steps.
+
+CRITICAL BEHAVIOR: Be direct and action-oriented. Never ask clarifying questions when you have enough context from the conversation to act. If the user says "update notes", "update", "re-contextualize", "fix it", or anything similar — immediately infer what's correct from the conversation and do it. Use the conversation history to understand any corrections the user has made.
+
+Relevant action tokens:
+- REPLY_DRAFT when the user asks to draft a follow-up email or any email related to the meeting.
+- OPEN_WORKFLOW when the user wants to start a workflow or generate a document based on meeting outcomes.
+- OPEN_PROCESS when the user wants to navigate to a specific active process referenced in the meeting.${canEdit ? `
+- UPDATE_MEETING when the user asks to edit, update, rewrite, or improve the meeting notes or action items.
+
+UPDATE_MEETING TOKEN RULES:
+- ALWAYS emit immediately when the user says "update notes", "update", "fix", "re-contextualize", or anything implying they want the stored notes changed.
+- Do NOT ask for clarification — use the conversation history to infer what the correct notes should say.
+- Emit at the very end of your response. Write one short sentence confirming what you updated, then emit the token on the next line.
+- "notes" is a markdown string summarizing the meeting from the user's perspective.
+- "action_items" is an array: [{ "text": "...", "assignee": "..." (optional) }]. Copy existing action items if no changes requested.
+
+Format (COLON separator, never parentheses): UPDATE_MEETING:{"notes":"...","action_items":[{"text":"...","assignee":"..."}]}` : ''}`;
     }
 
     if (context === 'drive') {
