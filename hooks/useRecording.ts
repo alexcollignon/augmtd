@@ -24,6 +24,8 @@ export interface UseRecordingReturn {
   recordingEventId: string | undefined;
   /** Transcript/note ID created for this recording (reactive — updated via setRecordingNoteId) */
   recordingNoteId: string | undefined;
+  /** Seconds the tab has been hidden while recording (resets to 0 on return). Used for away-time warnings. */
+  awaySeconds: number;
 }
 
 export function useRecording(
@@ -38,6 +40,8 @@ export function useRecording(
   const [recordingEventId, setRecordingEventId] = useState<string | undefined>();
   const [recordingNoteId, setRecordingNoteIdState] = useState<string | undefined>();
 
+  const [awaySeconds, setAwaySeconds] = useState(0);
+
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mimeTypeRef = useRef<string>('audio/webm');
   const chunksRef = useRef<Blob[]>([]);
@@ -45,6 +49,7 @@ export function useRecording(
   // Tracks accumulated elapsed ms before the most recent pause
   const elapsedBeforePauseRef = useRef<number>(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const awayTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const titleRef = useRef('');
   const eventIdRef = useRef<string | undefined>(undefined);
   const noteIdRef = useRef<string | undefined>(undefined);
@@ -63,10 +68,20 @@ export function useRecording(
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
-  // Update document title while recording
+  // Update document title while recording — includes away-time countdown so the user
+  // can see the warning even from another tab.
   useEffect(() => {
     if (state === 'recording') {
-      document.title = `● Recording (${formatElapsed(elapsed)}) — AUGMTD`;
+      const remainingSecs = 3600 - awaySeconds;
+      if (awaySeconds >= 55 * 60) {
+        const minsLeft = Math.ceil(remainingSecs / 60);
+        document.title = `⚠ ${minsLeft}min left before pause — AUGMTD`;
+      } else if (awaySeconds >= 45 * 60) {
+        const minsLeft = Math.ceil(remainingSecs / 60);
+        document.title = `⏱ Recording away — ${minsLeft}min left — AUGMTD`;
+      } else {
+        document.title = `● Recording (${formatElapsed(elapsed)}) — AUGMTD`;
+      }
     } else if (state === 'paused') {
       document.title = `⏸ Paused (${formatElapsed(elapsed)}) — AUGMTD`;
     } else if (state === 'uploading') {
@@ -76,7 +91,7 @@ export function useRecording(
     } else {
       document.title = originalTitleRef.current;
     }
-  }, [state, elapsed]);
+  }, [state, elapsed, awaySeconds]);
 
   // Restore title on unmount
   useEffect(() => {
@@ -148,18 +163,19 @@ export function useRecording(
     setState('paused');
   }, []);
 
-  // Auto-pause on laptop sleep / screen lock — but NOT on tab or app switches.
+  // Auto-pause behaviour:
   //
-  // Primary: the Page Lifecycle `freeze` event fires when the OS suspends the
-  // browser (sleep, screen lock). It does not fire on tab/app switches.
+  // 1. `freeze` event (Chrome/Edge): fires immediately when the OS suspends the
+  //    browser (sleep, screen lock). Never fires on tab/app switches.
   //
-  // Fallback (Firefox/Safari): `visibilitychange` + a 60-second timer. A normal
-  // tab switch brings the user back in seconds; sleep keeps it hidden for minutes.
-  // Only pause if still hidden after the threshold.
+  // 2. `visibilitychange` + 1-hour timer (all browsers): universal safety net so
+  //    a recording never runs unattended indefinitely. Normal tab switches are
+  //    unaffected — the user just needs to return within the hour. The away-time
+  //    counter (`awaySeconds`) drives UI warnings at 15 min and 5 min remaining.
   useEffect(() => {
     if (state !== 'recording') return;
 
-    const SLEEP_THRESHOLD_MS = 60_000;
+    const SLEEP_THRESHOLD_MS = 60 * 60 * 1000; // 1 hour
     let sleepTimer: ReturnType<typeof setTimeout> | null = null;
 
     const clearSleepTimer = () => {
@@ -169,13 +185,24 @@ export function useRecording(
       }
     };
 
+    const clearAwayTimer = () => {
+      if (awayTimerRef.current !== null) {
+        clearInterval(awayTimerRef.current);
+        awayTimerRef.current = null;
+      }
+    };
+
     const handleFreeze = () => pauseRecording();
 
     const handleVisibilityChange = () => {
       if (document.hidden) {
         sleepTimer = setTimeout(() => pauseRecording(), SLEEP_THRESHOLD_MS);
+        // Tick awaySeconds every second so the UI can show countdown warnings
+        awayTimerRef.current = setInterval(() => setAwaySeconds((s) => s + 1), 1000);
       } else {
         clearSleepTimer();
+        clearAwayTimer();
+        setAwaySeconds(0);
       }
     };
 
@@ -185,6 +212,8 @@ export function useRecording(
       document.removeEventListener('freeze', handleFreeze);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       clearSleepTimer();
+      clearAwayTimer();
+      setAwaySeconds(0);
     };
   }, [state, pauseRecording]);
 
@@ -333,5 +362,6 @@ export function useRecording(
     recordingEventId,
     recordingNoteId,
     setRecordingNoteId,
+    awaySeconds,
   };
 }

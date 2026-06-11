@@ -908,22 +908,38 @@ const handleRetry = async () => {
 
       {/* ── ZONE C — Recording bar or capture pills ── */}
       {isThisNoteRecording && recording.state === 'recording' && (
-        <div className="flex items-center gap-3 mb-4 px-3 py-2.5 bg-red-50 rounded-xl">
-          <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse flex-shrink-0" />
-          <span className="text-[12px] font-semibold text-red-600 tabular-nums">{fmtDuration(recording.elapsed)}</span>
-          <span className="flex-1 text-[12px] text-red-400">Recording in progress</span>
-          <button
-            onClick={recording.pauseRecording}
-            className="px-3 py-1 text-[12px] font-semibold text-neutral-600 bg-white border border-neutral-200 hover:bg-neutral-50 rounded-lg transition-colors flex-shrink-0"
-          >
-            Pause
-          </button>
-          <button
-            onClick={recording.stopAndUpload}
-            className="px-3 py-1 text-[12px] font-semibold text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors flex-shrink-0"
-          >
-            Finish
-          </button>
+        <div className="flex flex-col gap-1.5 mb-4">
+          <div className="flex items-center gap-3 px-3 py-2.5 bg-red-50 rounded-xl">
+            <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse flex-shrink-0" />
+            <span className="text-[12px] font-semibold text-red-600 tabular-nums">{fmtDuration(recording.elapsed)}</span>
+            <span className="flex-1 text-[12px] text-red-400">Recording in progress</span>
+            <button
+              onClick={recording.pauseRecording}
+              className="px-3 py-1 text-[12px] font-semibold text-neutral-600 bg-white border border-neutral-200 hover:bg-neutral-50 rounded-lg transition-colors flex-shrink-0"
+            >
+              Pause
+            </button>
+            <button
+              onClick={recording.stopAndUpload}
+              className="px-3 py-1 text-[12px] font-semibold text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors flex-shrink-0"
+            >
+              Finish
+            </button>
+          </div>
+          {/* Away-time warnings — visible on return to tab */}
+          {recording.awaySeconds >= 55 * 60 ? (
+            <p className="px-3 py-1.5 text-[11px] text-red-600 bg-red-50 border border-red-200 rounded-lg">
+              ⚠ You&apos;ve been away {Math.floor(recording.awaySeconds / 60)} min — recording pauses in {Math.ceil((3600 - recording.awaySeconds) / 60)} min. Return to this tab to continue.
+            </p>
+          ) : recording.awaySeconds >= 45 * 60 ? (
+            <p className="px-3 py-1.5 text-[11px] text-amber-600 bg-amber-50 border border-amber-200 rounded-lg">
+              ⏱ You&apos;ve been away {Math.floor(recording.awaySeconds / 60)} min — recording auto-pauses after 1 hour away.
+            </p>
+          ) : (
+            <p className="px-3 text-[11px] text-neutral-400">
+              Recording continues when you switch tabs — auto-pauses after 1 hour away.
+            </p>
+          )}
         </div>
       )}
 
@@ -1011,6 +1027,8 @@ const handleRetry = async () => {
             <MicrophoneIcon className="w-3 h-3" />
             Record in person
           </button>
+
+          <span className="text-[11px] text-neutral-300 ml-0.5">· may pause if screen locks or 1h away</span>
 
           {/* Finish — triggers AI analysis */}
           {(noteBody.trim() || adHocTitle.trim() || (isDraftNote && event?.id === transcript?.id)) && (
