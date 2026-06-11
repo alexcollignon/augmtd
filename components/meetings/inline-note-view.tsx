@@ -416,12 +416,13 @@ export default function InlineNoteView({
   // Called before starting a recording to ensure noteId is populated.
   const flushNoteSave = useCallback(async (): Promise<string | null> => {
     if (noteTimerRef.current) { clearTimeout(noteTimerRef.current); noteTimerRef.current = null; }
-    if (!noteBody.trim()) return noteId;
+    const titleVal = adHocTitle || event?.title || '';
+    if (!noteBody.trim() && !titleVal.trim()) return noteId;
     if (noteId) {
       await fetch(`/api/meetings/notes/${noteId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ body: noteBody }),
+        body: JSON.stringify({ title: titleVal || 'Untitled note', body: noteBody }),
       }).catch(() => {});
       return noteId;
     }
@@ -448,8 +449,8 @@ export default function InlineNoteView({
   const debouncedNoteBodySave = useCallback((body: string) => {
     if (noteTimerRef.current) clearTimeout(noteTimerRef.current);
     // First save (no existing row): fire immediately so navigating away doesn't lose the note.
-    // Subsequent saves (PATCH): debounce 2s to avoid hammering the API while typing.
-    const delay = noteIdRef.current ? 2000 : 0;
+    // Subsequent saves (PATCH): short debounce — fast enough to feel instant for title edits.
+    const delay = noteIdRef.current ? 400 : 0;
     noteTimerRef.current = setTimeout(async () => {
       // Skip only if both body and title are empty — don't skip a title-only save
       if (!body.trim() && !(adHocTitle || event?.title)) return;
@@ -693,9 +694,9 @@ const handleRetry = async () => {
               value={adHocTitle}
               onChange={(e) => {
                 setAdHocTitle(e.target.value);
-                // Trigger debounced save so title is persisted even without body changes
                 debouncedNoteBodySave(noteBody);
               }}
+              onBlur={() => debouncedNoteBodySave(noteBody)}
               placeholder="Meeting title"
               className="w-full text-xl font-semibold text-neutral-900 outline-none placeholder:text-neutral-300 bg-transparent"
             />
