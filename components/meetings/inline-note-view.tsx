@@ -253,10 +253,13 @@ export default function InlineNoteView({
 
   // Prep brief
   const [prepBrief, setPrepBrief] = useState<{
-    pastMeetings: Array<{ title: string; date: string; summary: string }>;
+    pastMeetings: Array<{ id: string; title: string; date: string; summary: string; decisions: string[] }>;
     openActionItems: Array<{ title: string; fromMeeting: string }>;
     recentEmails: Array<{ subject: string; from: string; date: string; snippet: string }>;
     relevantDocs: Array<{ title: string; snippet: string }>;
+    relationships: Array<{ name: string; email: string; type: string; lastInteraction: string | null; topics: string[] }>;
+    agenda: string | null;
+    aiSummary: string | null;
   } | null>(null);
   const [prepLoading, setPrepLoading] = useState(false);
   const [prepExpanded, setPrepExpanded] = useState(false);
@@ -370,7 +373,7 @@ export default function InlineNoteView({
     setPrepLoading(true);
     fetch(`/api/meetings/${eventId}/prep`)
       .then((r) => r.ok ? r.json() : null)
-      .then((data) => { if (data) setPrepBrief(data); })
+      .then((data) => { if (data) { setPrepBrief(data); setPrepExpanded(true); } })
       .catch(() => {})
       .finally(() => setPrepLoading(false));
   }, [eventId, transcript, loading]);
@@ -1095,31 +1098,87 @@ const handleRetry = async () => {
                 <div className="animate-pulse space-y-2">
                   <div className="h-3 bg-neutral-100 rounded w-1/3" />
                   <div className="h-14 bg-neutral-100 rounded" />
+                  <div className="h-10 bg-neutral-100 rounded w-2/3" />
                 </div>
               )}
 
               {prepBrief && !prepLoading && (
                 <>
-                  {prepBrief.pastMeetings.length > 0 && (
+                  {/* AI brief — always shown first if available */}
+                  {prepBrief.aiSummary && (
+                    <div className="px-3 py-2.5 bg-indigo-50 rounded-lg border border-indigo-100">
+                      <p className="text-[12px] text-indigo-800 leading-relaxed">{prepBrief.aiSummary}</p>
+                    </div>
+                  )}
+
+                  {/* Agenda from calendar invite */}
+                  {prepBrief.agenda && (
                     <section>
-                      <h2 className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wide mb-2">Previous meetings</h2>
-                      <div className="space-y-2">
-                        {prepBrief.pastMeetings.map((pm, i) => (
-                          <div key={i} className="px-3 py-2 bg-neutral-50 rounded-lg">
-                            <p className="text-[12px] font-medium text-neutral-700">{pm.title}</p>
-                            <p className="text-[10px] text-neutral-400 mt-0.5">
-                              {new Date(pm.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
-                            </p>
-                            {pm.summary && <p className="text-[11px] text-neutral-500 mt-1 leading-relaxed">{pm.summary}</p>}
+                      <h2 className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wide mb-2">Agenda</h2>
+                      <p className="text-[12px] text-neutral-600 leading-relaxed whitespace-pre-line px-1">{prepBrief.agenda}</p>
+                    </section>
+                  )}
+
+                  {/* Attendee relationships */}
+                  {prepBrief.relationships.length > 0 && (
+                    <section>
+                      <h2 className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wide mb-2">Who's attending</h2>
+                      <div className="space-y-1.5">
+                        {prepBrief.relationships.map((r, i) => (
+                          <div key={i} className="flex items-start gap-2 px-3 py-1.5 bg-neutral-50 rounded-lg">
+                            <div className="w-6 h-6 rounded-full bg-indigo-100 flex items-center justify-center flex-shrink-0 text-[10px] font-semibold text-indigo-600 mt-0.5">
+                              {r.name?.[0]?.toUpperCase() ?? '?'}
+                            </div>
+                            <div className="min-w-0">
+                              <p className="text-[12px] font-medium text-neutral-700">{r.name}</p>
+                              <p className="text-[10px] text-neutral-400">
+                                {r.type || r.email}
+                                {r.lastInteraction && ` · last contact ${new Date(r.lastInteraction).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}`}
+                              </p>
+                              {r.topics.length > 0 && (
+                                <p className="text-[10px] text-neutral-400 mt-0.5">Topics: {r.topics.join(', ')}</p>
+                              )}
+                            </div>
                           </div>
                         ))}
                       </div>
                     </section>
                   )}
 
+                  {/* Previous meetings */}
+                  {prepBrief.pastMeetings.length > 0 && (
+                    <section>
+                      <h2 className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wide mb-2">Previous meetings</h2>
+                      <div className="space-y-2">
+                        {prepBrief.pastMeetings.map((pm, i) => (
+                          <div key={i} className="px-3 py-2 bg-neutral-50 rounded-lg">
+                            <div className="flex items-baseline justify-between gap-2">
+                              <p className="text-[12px] font-medium text-neutral-700 truncate">{pm.title}</p>
+                              <p className="text-[10px] text-neutral-400 flex-shrink-0">
+                                {new Date(pm.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                              </p>
+                            </div>
+                            {pm.summary && <p className="text-[11px] text-neutral-500 mt-1 leading-relaxed">{pm.summary}</p>}
+                            {pm.decisions.length > 0 && (
+                              <div className="mt-1.5 space-y-0.5">
+                                {pm.decisions.slice(0, 3).map((d, j) => (
+                                  <div key={j} className="flex items-start gap-1.5">
+                                    <span className="w-1 h-1 rounded-full bg-blue-400 flex-shrink-0 mt-1.5" />
+                                    <p className="text-[10px] text-blue-700">{d}</p>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </section>
+                  )}
+
+                  {/* Open action items */}
                   {prepBrief.openActionItems.length > 0 && (
                     <section>
-                      <h2 className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wide mb-2">Open action items</h2>
+                      <h2 className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wide mb-2">Still open</h2>
                       <div className="space-y-1">
                         {prepBrief.openActionItems.map((item, i) => (
                           <div key={i} className="flex items-start gap-2 px-3 py-1.5">
@@ -1134,6 +1193,7 @@ const handleRetry = async () => {
                     </section>
                   )}
 
+                  {/* Recent relevant emails */}
                   {prepBrief.recentEmails.length > 0 && (
                     <section>
                       <h2 className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wide mb-2">Recent emails</h2>
@@ -1144,12 +1204,14 @@ const handleRetry = async () => {
                             <p className="text-[10px] text-neutral-400">
                               {email.from} · {new Date(email.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
                             </p>
+                            {email.snippet && <p className="text-[10px] text-neutral-400 mt-0.5 line-clamp-1">{email.snippet}</p>}
                           </div>
                         ))}
                       </div>
                     </section>
                   )}
 
+                  {/* Relevant KB docs */}
                   {prepBrief.relevantDocs.length > 0 && (
                     <section>
                       <h2 className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wide mb-2">Relevant documents</h2>
@@ -1157,11 +1219,16 @@ const handleRetry = async () => {
                         {prepBrief.relevantDocs.map((doc, i) => (
                           <div key={i} className="px-3 py-1.5 bg-neutral-50 rounded-lg">
                             <p className="text-[12px] font-medium text-neutral-700 truncate">{doc.title}</p>
-                            {doc.snippet && <p className="text-[10px] text-neutral-400 truncate mt-0.5">{doc.snippet}</p>}
+                            {doc.snippet && <p className="text-[10px] text-neutral-400 line-clamp-2 mt-0.5">{doc.snippet}</p>}
                           </div>
                         ))}
                       </div>
                     </section>
+                  )}
+
+                  {/* Empty state */}
+                  {!prepBrief.aiSummary && !prepBrief.agenda && prepBrief.relationships.length === 0 && prepBrief.pastMeetings.length === 0 && prepBrief.recentEmails.length === 0 && (
+                    <p className="text-[12px] text-neutral-400 px-1">No prior context found for these attendees.</p>
                   )}
                 </>
               )}
