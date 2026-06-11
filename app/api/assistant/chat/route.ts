@@ -159,6 +159,7 @@ export async function POST(request: NextRequest) {
         actionItems?: Array<{ text: string; assignee?: string; status?: string }>;
         risks?: Array<{ description: string; severity: string }>;
         suggestedNextStep?: string;
+        transcriptId?: string;
       };
     };
 
@@ -412,7 +413,25 @@ Rules:
     }
 
     if (context === 'meeting') {
-      systemPrompt += `\n\nYou are a meeting assistant. You have the full context of this meeting above. Help the user understand outcomes, draft follow-up emails, create workflows, or identify next steps.\nRelevant action tokens:\n- REPLY_DRAFT when the user asks to draft a follow-up email or any email related to the meeting.\n- OPEN_WORKFLOW when the user wants to start a workflow or generate a document based on meeting outcomes.\n- OPEN_PROCESS when the user wants to navigate to a specific active process referenced in the meeting.`;
+      const canEdit = !!(meetingContext?.transcriptId);
+      systemPrompt += `\n\nYou are a meeting assistant. You have the full context of this meeting above. Help the user understand outcomes, draft follow-up emails, edit notes and action items, create workflows, or identify next steps.
+
+Relevant action tokens:
+- REPLY_DRAFT when the user asks to draft a follow-up email or any email related to the meeting.
+- OPEN_WORKFLOW when the user wants to start a workflow or generate a document based on meeting outcomes.
+- OPEN_PROCESS when the user wants to navigate to a specific active process referenced in the meeting.${canEdit ? `
+- UPDATE_MEETING when the user asks to edit, update, rewrite, or improve the meeting notes or action items.
+
+UPDATE_MEETING TOKEN RULES:
+- Emit at the very end of your response, after all explanation text.
+- Only emit when the user clearly wants to change the stored notes or action items.
+- Include both "notes" and "action_items" in the same token — update both at once using the full meeting context.
+- "notes" is a markdown string (the document/summary notes for the meeting).
+- "action_items" is an array of objects: { "text": "...", "assignee": "..." (optional), "due_date": "YYYY-MM-DD" (optional) }.
+- If the user only asks to change notes, keep action_items as they are (copy from meeting context). If only action items, keep notes as they are.
+- After emitting the token, confirm briefly what you updated (1 sentence).
+
+Format (COLON separator, never parentheses): UPDATE_MEETING:{"notes":"...","action_items":[{"text":"...","assignee":"..."}]}` : ''}`;
     }
 
     if (context === 'drive') {
