@@ -338,7 +338,7 @@ export default function MeetingsShell({
           recordingElapsed={recording.elapsed}
           recordingTitle={recording.recordingTitle}
           onNavigateToRecording={() => {
-            const id = recording.recordingNoteId ?? recording.recordingEventId;
+            const id = recording.recordingEventId ?? recording.recordingNoteId;
             if (id) router.push(`/meetings/${id}`);
             else router.push('/meetings/new');
           }}
