@@ -668,8 +668,6 @@ export async function syncEmailsForConnection(
               source_id: existingEmail.id,
               work_state: 'noise',
               work_title: existingEmail.subject || 'Email',
-              why_matters: null,
-              what_i_prepared: null,
               item_type: 'notification',
               source_data: {
                 email_id: existingEmail.id,
@@ -700,8 +698,6 @@ export async function syncEmailsForConnection(
               source_id: existingEmail.id,
               work_state: 'noted',
               work_title: existingEmail.subject || 'Email',
-              why_matters: null,
-              what_i_prepared: null,
               item_type: 'fyi',
               source_data: {
                 email_id: existingEmail.id,
@@ -980,8 +976,6 @@ export async function syncEmailsForConnection(
               source_id: storedEmail.id,
               work_state: 'noise',
               work_title: parsed.subject || 'Email',
-              why_matters: null,
-              what_i_prepared: null,
               item_type: 'notification',
               source_data: fastSourceData,
               is_read: deriveIsRead(storedEmail),
@@ -1000,8 +994,6 @@ export async function syncEmailsForConnection(
               source_id: storedEmail.id,
               work_state: 'noted',
               work_title: parsed.subject || 'Email',
-              why_matters: null,
-              what_i_prepared: null,
               item_type: 'fyi',
               source_data: fastSourceData,
               is_read: deriveIsRead(storedEmail),
@@ -1277,8 +1269,6 @@ export async function syncEmailsForConnection(
                 connection_id: connection.id,
                 work_state: recipient.inferredWorkState,
                 work_title: processed.workTitle,
-                what_i_prepared: processed.whatIPrepared,
-                why_matters: processed.whyMatters,
                 item_type: processed.itemType,
 
                 // NEW: Recipient context
@@ -1321,16 +1311,10 @@ export async function syncEmailsForConnection(
                     received_at: e.received_at,
                     snippet: e.body.substring(0, 2500)
                   })),
-                  summary: processed.summary,
-                  keyPoints: processed.keyPoints,
-                  urgency: processed.urgency,
                   signals: processed.signals,
                   attachments: processedAttachments.length > 0 ? processedAttachments : undefined,
-                  ...processed.preparedOutput
                 },
                 ai_suggestion_type: recipient.inferredWorkState,
-                ai_suggestion_content: processed.summary,
-                ai_suggestion_reasoning: recipient.reasoning,
                 confidence_score: Math.round(recipient.responsibilityConfidence * 100),
                 priority: processed.priority,
                 needs_review: true,
@@ -1388,8 +1372,6 @@ export async function syncEmailsForConnection(
               // visible but low-priority, not treated as noise
               work_state: recipient.detectedRole === 'irrelevant' ? 'noted' : recipient.inferredWorkState,
               work_title: processed.workTitle,
-              what_i_prepared: processed.whatIPrepared,
-              why_matters: processed.whyMatters,
               item_type: processed.itemType,
 
               // NEW: Recipient context
@@ -1433,18 +1415,11 @@ export async function syncEmailsForConnection(
                   received_at: e.received_at,
                   snippet: e.body.substring(0, 2500)
                 })),
-                summary: processed.summary,
-                keyPoints: processed.keyPoints,
-                urgency: processed.urgency,
                 signals: processed.signals,
                 attachments: processedAttachments.length > 0 ? processedAttachments : undefined,
-                ...processed.preparedOutput
               },
 
-              // Legacy fields
               ai_suggestion_type: recipient.inferredWorkState,
-              ai_suggestion_content: processed.summary,
-              ai_suggestion_reasoning: recipient.reasoning,
               confidence_score: Math.round(recipient.responsibilityConfidence * 100),
               priority: processed.priority,
               is_read: deriveIsRead(storedEmail),

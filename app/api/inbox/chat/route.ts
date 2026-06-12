@@ -119,8 +119,6 @@ export async function POST(request: NextRequest) {
         subject?: string;
         from?: string;
         fromName?: string;
-        summary?: string;
-        keyPoints?: string[];
         body?: string;
       };
     };
@@ -173,7 +171,7 @@ export async function POST(request: NextRequest) {
     const focusedEmailBlock = emailContext
       ? `FOCUSED EMAIL — the user is currently working on this email. When they say "this email", "it", "them", or "draft a reply", refer to this:
 From: ${emailContext.fromName ? `${emailContext.fromName} <${emailContext.from}>` : emailContext.from}
-Subject: ${emailContext.subject || '(no subject)'}${emailContext.summary ? `\nSummary: ${emailContext.summary}` : ''}${emailContext.keyPoints?.length ? `\nKey points:\n${emailContext.keyPoints.map(p => `- ${p}`).join('\n')}` : ''}${emailContext.body ? `\nBody:\n${emailContext.body.slice(0, 2000)}${emailContext.body.length > 2000 ? '\n[...truncated]' : ''}` : ''}`
+Subject: ${emailContext.subject || '(no subject)'}${emailContext.body ? `\nBody:\n${emailContext.body.slice(0, 2000)}${emailContext.body.length > 2000 ? '\n[...truncated]' : ''}` : ''}`
       : '';
 
     const targetedSection = targetedText

@@ -46,7 +46,6 @@ export default function SmartTaskCard({
 
   // Action badge — derived from draft presence + detected role
   const actionBadge = (() => {
-    if (sourceData?.draft) return { label: 'Reply', color: 'bg-violet-100 text-violet-700' };
     const role = (item.recipient_context as any)?.detectedRole;
     if (role === 'reviewer') return { label: 'Review', color: 'bg-blue-100 text-blue-700' };
     if (role === 'approver') return { label: 'Approve', color: 'bg-orange-100 text-orange-700' };
@@ -56,7 +55,6 @@ export default function SmartTaskCard({
 
   // Status chip — shown when action badge alone isn't enough context
   const statusChip = (() => {
-    if (sourceData?.draft) return null;
     if (item.visual_section === 'awareness') return { label: 'FYI', color: 'text-neutral-400' };
     return null;
   })();

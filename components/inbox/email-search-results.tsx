@@ -5,6 +5,7 @@ import type { ConnectionFolders } from '@/components/inbox/folder-rail';
 export type EmailSearchResult = {
   id: string;
   message_id: string;
+  provider_message_id: string;
   from_address: string;
   from_name: string;
   subject: string;

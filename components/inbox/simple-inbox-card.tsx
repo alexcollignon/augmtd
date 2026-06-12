@@ -60,8 +60,8 @@ export default function SimpleInboxCard({ item, onClick }: SimpleInboxCardProps)
   const { icon: Icon, color, bgColor } = getWorkStateDisplay(item.work_state || 'work_prepared');
 
   // Get priority indicator
-  const showPriorityDot = item.priority >= 75 || sourceData?.urgency === 'high' || sourceData?.urgency === 'critical';
-  const priorityColor = sourceData?.urgency === 'critical' ? 'bg-red-500' : 'bg-orange-500';
+  const showPriorityDot = item.priority >= 75;
+  const priorityColor = 'bg-orange-500';
 
   // Get recipient role display
   const getRecipientRoleDisplay = (role: string) => {
@@ -87,11 +87,9 @@ export default function SimpleInboxCard({ item, onClick }: SimpleInboxCardProps)
 
   // Get CTA based on work state and prepared output
   const getCTA = () => {
-    const preparedOutput = sourceData?.draft || sourceData?.analysis || sourceData?.nextSteps;
-
     switch (item.work_state) {
       case 'work_prepared':
-        if (sourceData?.draft) {
+        if (false) {
           return {
             text: 'Send reply',
             icon: PaperAirplaneIcon,
@@ -212,16 +210,6 @@ export default function SimpleInboxCard({ item, onClick }: SimpleInboxCardProps)
           </div>
         </div>
 
-        {/* What I Prepared */}
-        <p className="text-xs text-gray-600 font-medium mb-1.5 truncate">
-          {item.what_i_prepared || 'Summary and analysis'}
-        </p>
-
-        {/* Why Matters - context */}
-        <p className="text-xs text-gray-500 line-clamp-1 leading-relaxed mb-2">
-          {item.why_matters || sourceData?.summary || 'Needs your attention'}
-        </p>
-
         {/* Metadata Row */}
         <div className="flex items-center flex-wrap gap-x-2 gap-y-1 text-xs text-gray-400">
           {/* Recipient Role Badge (NEW) */}
@@ -275,17 +263,6 @@ export default function SimpleInboxCard({ item, onClick }: SimpleInboxCardProps)
             </>
           )}
 
-          {/* Urgency if high */}
-          {(sourceData?.urgency === 'high' || sourceData?.urgency === 'critical') && (
-            <>
-              <span>•</span>
-              <span className={`text-[10px] uppercase font-medium ${
-                sourceData.urgency === 'critical' ? 'text-red-600' : 'text-orange-600'
-              }`}>
-                {sourceData.urgency}
-              </span>
-            </>
-          )}
         </div>
       </div>
 

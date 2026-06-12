@@ -110,51 +110,17 @@ export type WorkState = 'work_prepared' | 'action_required' | 'decision_required
 export interface ProcessedEmail {
   // WORK STATE (core)
   workState: WorkState;
-  workTitle: string; // OUTCOME-CENTRIC: "Schedule exhibition call" (not "Reply to Tea" or "Email from Tea")
-  whatIPrepared: string; // "Draft to schedule exhibition call"
-  whyMatters: string; // "High-value opportunity at 4YFN26"
+  workTitle: string; // OUTCOME-CENTRIC: "Schedule exhibition call"
 
   // DETECTED SIGNALS
   signals: EmailSignals;
 
-  // PREPARED OUTPUT (conditional on work state)
-  preparedOutput: {
-    analysis?: {
-      options: string[];
-      risks: string[];
-      recommendation: string;
-    };
-    nextSteps?: Array<{
-      description: string;
-      deadline?: string;
-      estimatedTime?: string;
-      preparedLink?: string;
-    }>;
-    calendarEvent?: {
-      title: string;
-      date?: string;
-      duration?: string;
-      description: string;
-    };
-    extractedData?: {
-      people?: string[];
-      companies?: string[];
-      amounts?: string[];
-      dates?: string[];
-      links?: string[];
-    };
-  };
-
   // SEMANTIC TYPE — drives Smart view filtering
   itemType: string; // 'reply' | 'decision' | 'meeting' | 'review' | 'fyi' | 'notification'
 
-  // METADATA
-  summary: string; // One-line summary
-  keyPoints: string[]; // 2-4 bullet points
-  urgency: 'low' | 'medium' | 'high' | 'critical';
+  // SCORING
   confidence: number; // 0-100
   priority: number; // 0-100
-  reasoning: string; // Why we determined this work state
 }
 
 /**
@@ -163,83 +129,6 @@ export interface ProcessedEmail {
 function truncateText(text: string, maxLength: number): string {
   if (text.length <= maxLength) return text;
   return text.substring(0, maxLength) + '\n\n[... truncated for length ...]';
-}
-
-/**
- * @deprecated No longer used — draft generation removed
- */
-function _formatUserContext(
-  userContext: UserContextProfile | undefined,
-  senderEmail: string
-): string {
-  if (!userContext) {
-    return '';
-  }
-
-  const style = userContext.communicationStyle;
-  const relationship = userContext.relationshipGraph[senderEmail];
-
-  // Format tone preferences
-  const toneDescriptions: string[] = [];
-  if (style.toneVector.formal > 0.6) toneDescriptions.push('formal');
-  if (style.toneVector.casual > 0.6) toneDescriptions.push('casual');
-  if (style.toneVector.friendly > 0.6) toneDescriptions.push('friendly');
-  if (style.toneVector.technical > 0.6) toneDescriptions.push('technical');
-  if (style.toneVector.direct > 0.6) toneDescriptions.push('direct');
-
-  const toneDescription = toneDescriptions.length > 0
-    ? toneDescriptions.join(', ')
-    : 'neutral';
-
-  // Format formality
-  let formalityDescription = 'neutral';
-  if (style.formalityScore > 0.7) formalityDescription = 'very formal';
-  else if (style.formalityScore > 0.55) formalityDescription = 'somewhat formal';
-  else if (style.formalityScore < 0.3) formalityDescription = 'very casual';
-  else if (style.formalityScore < 0.45) formalityDescription = 'somewhat casual';
-
-  // Build context section
-  let contextSection = `
-USER'S COMMUNICATION STYLE (learned from their past emails):
-- Typical email length: ${style.avgLength > 0 ? `${Math.round(style.avgLength)} characters` : 'varies'}
-- Formality level: ${formalityDescription}
-- Tone preferences: ${toneDescription}
-- Emoji usage: ${style.emojiUsage > 0.3 ? 'frequently uses emojis' : style.emojiUsage > 0.1 ? 'occasionally uses emojis' : 'rarely uses emojis'}`;
-
-  if (style.greetingPatterns.length > 0) {
-    contextSection += `\n- Common greetings: ${style.greetingPatterns.slice(-3).join(', ')}`;
-  }
-
-  if (style.signatureStyle) {
-    contextSection += `\n- Signature style: "${style.signatureStyle}"`;
-  }
-
-  if (style.commonPhrases.length > 0) {
-    contextSection += `\n- Frequently uses phrases like: ${style.commonPhrases.slice(-5).map(p => `"${p}"`).join(', ')}`;
-  }
-
-  // Add relationship context if available
-  if (relationship) {
-    contextSection += `\n\nRELATIONSHIP WITH SENDER:
-- Interaction frequency: ${relationship.interactionCount} previous emails
-- Response rate: ${Math.round(relationship.responseRate * 100)}%
-- Importance score: ${Math.round(relationship.importance * 100)}%
-- Typical tone with this person: ${relationship.typicalTone}`;
-
-    if (relationship.topics.length > 0) {
-      contextSection += `\n- Common topics: ${relationship.topics.slice(-3).join(', ')}`;
-    }
-  }
-
-  // Add confidence context
-  const confidence = userContext.confidenceMetrics;
-  if (confidence.overallScore > 0.5) {
-    contextSection += `\n\nSTYLE LEARNING CONFIDENCE: ${Math.round(confidence.overallScore * 100)}% (${confidence.signalCount} interactions analyzed)`;
-  }
-
-  contextSection += `\n\nIMPORTANT: Match the user's established communication style when drafting replies. Use their typical greetings, tone, formality level, and common phrases.\n`;
-
-  return contextSection;
 }
 
 /**
@@ -677,48 +566,6 @@ Create user-facing text (OUTCOME-CENTRIC, NOT EMAIL-CENTRIC):
   BAD: "Reply to John" | "Respond to Sarah" | "Email back to client"
   Pattern: [Verb] + [Object/Topic] (the actual work to be done)
 
-- whatIPrepared: ACTIONABLE GUIDANCE - What the user should do next
-  CRITICAL: Be specific and action-oriented, not just descriptive
-
-  For WORK_PREPARED:
-    GOOD: "Reply confirming availability — use chat to draft your response"
-    GOOD: "Respond to the pricing question — context loaded in chat"
-    BAD: "Reply needed" | "Draft reply"
-    Pattern: "[What to reply about] — use chat to draft your response"
-
-  For ACTION_REQUIRED (no draft):
-    GOOD: "Click the verification link in the email to activate your account"
-    GOOD: "Go to Stripe dashboard and update your payment method to avoid service suspension"
-    GOOD: "Visit the billing portal and add a valid payment card before Friday"
-    BAD: "Action needed" | "Click link" | "Reply to this email"
-    Pattern: "[Specific action] to [outcome]" OR "[Action] before [deadline/consequence]"
-
-    Tip: For automated/no-reply senders, specify WHERE to go (portal, settings, website) since they can't receive replies
-
-  For DECISION_REQUIRED:
-    GOOD: "Review the 3 vendor options and choose the best fit for budget and timeline"
-    BAD: "Make a decision" | "Choose an option"
-    Pattern: "Review [options] and decide based on [criteria]"
-
-  For NOTED:
-    GOOD: "Read the update and mark as complete - no response needed"
-    BAD: "FYI" | "For awareness"
-    Pattern: "[What to review] and mark complete - no action needed"
-
-  Examples by state:
-  - work_prepared: "Reply to their scheduling request — use chat to draft your response"
-  - action_required (mechanical): "Click the confirmation link to verify your email address"
-  - action_required (operational): "Update your payment method in Stripe to avoid service suspension"
-  - decision_required: "Review the budget proposal and approve or request changes by Friday"
-  - noted: "Read the shipment notification - your package arrives Thursday"
-
-- whyMatters: One sentence explaining WHY this is important (context, urgency, consequences)
-  GOOD: "VIP client request with tight deadline - delay could impact partnership"
-  GOOD: "Account will be suspended in 48 hours without payment update"
-  GOOD: "FYI only - shipment is on schedule, no action needed"
-  BAD: "Important" | "From client" | "Needs attention"
-  Pattern: [Stakes/Consequence] + [Context/Timing]
-
 ---
 
 OUTPUT FORMAT (JSON):
@@ -726,8 +573,6 @@ OUTPUT FORMAT (JSON):
 {
   "workState": "work_prepared",
   "workTitle": "Schedule exhibition call for 4YFN26",
-  "whatIPrepared": "Draft proposing call times",
-  "whyMatters": "High-value meeting opportunity - first contact from potential partner",
 
   "signals": {
     "hasDirectQuestion": true,
@@ -753,42 +598,9 @@ OUTPUT FORMAT (JSON):
     "isTimebound": true
   },
 
-  "preparedOutput": {
-    "nextSteps": [
-      {
-        "description": "Send reply to schedule call",
-        "deadline": null,
-        "estimatedTime": "2 min",
-        "preparedLink": null
-      }
-    ],
-    "calendarEvent": {
-      "title": "Call with Tea Vrcic - 4YFN26 Exhibition",
-      "date": null,
-      "duration": "30 min",
-      "description": "Discuss exhibition opportunities"
-    },
-    "extractedData": {
-      "people": ["Tea Vrcic"],
-      "companies": ["4YFN26"],
-      "amounts": [],
-      "dates": [],
-      "links": ["https://..."]
-    }
-  },
-
   "itemType": "meeting",
-
-  "summary": "Tea wants to discuss exhibiting at 4YFN26",
-  "keyPoints": [
-    "Exhibition opportunity at 4YFN26",
-    "First contact - high potential value",
-    "Needs scheduling confirmation"
-  ],
-  "urgency": "medium",
   "confidence": 85,
-  "priority": 70,
-  "reasoning": "Detected meeting request + can prepare draft = work_prepared state. High priority due to business opportunity signal."
+  "priority": 70
 }
 
 EXAMPLE 2 - Mechanical Confirmation (ACTION_REQUIRED):
@@ -796,8 +608,6 @@ EXAMPLE 2 - Mechanical Confirmation (ACTION_REQUIRED):
 {
   "workState": "action_required",
   "workTitle": "Confirm Your Signup",
-  "whatIPrepared": "Instructions to confirm email address",
-  "whyMatters": "Required to activate your account and access features",
 
   "signals": {
     "hasDirectQuestion": false,
@@ -823,26 +633,9 @@ EXAMPLE 2 - Mechanical Confirmation (ACTION_REQUIRED):
     "isTimebound": false
   },
 
-  "preparedOutput": {
-    "nextSteps": [
-      {
-        "description": "Click confirmation link in email to activate account",
-        "deadline": null,
-        "estimatedTime": "1 minute"
-      }
-    ]
-  },
-
-  "summary": "Automated account confirmation email",
-  "keyPoints": [
-    "Single click to verify email address",
-    "Required for account activation",
-    "Low friction mechanical action"
-  ],
-  "urgency": "low",
+  "itemType": "notification",
   "confidence": 95,
-  "priority": 40,
-  "reasoning": "Mechanical confirmation: executionTarget='external' + hasOneObviousAction + isMechanicalConfirmation=true. Low priority (can be batched) but has consequences (ACTION_REQUIRED not NOTED)."
+  "priority": 40
 }
 
 EXAMPLE 3 - Payment Failure (ACTION_REQUIRED - Operational):
@@ -850,8 +643,6 @@ EXAMPLE 3 - Payment Failure (ACTION_REQUIRED - Operational):
 {
   "workState": "action_required",
   "workTitle": "Update payment method",
-  "whatIPrepared": "Go to Stripe billing dashboard and add a valid payment card before service suspension on March 15",
-  "whyMatters": "Payment failed - account will be suspended in 48 hours without updated payment method",
 
   "signals": {
     "hasDirectQuestion": false,
@@ -878,27 +669,9 @@ EXAMPLE 3 - Payment Failure (ACTION_REQUIRED - Operational):
     "isTimebound": true
   },
 
-  "preparedOutput": {
-    "nextSteps": [
-      {
-        "description": "Visit Stripe billing dashboard and update payment method",
-        "deadline": "2024-03-15",
-        "estimatedTime": "5 minutes",
-        "preparedLink": "https://billing.stripe.com/settings"
-      }
-    ]
-  },
-
-  "summary": "Payment failure - card declined, account at risk",
-  "keyPoints": [
-    "Payment method declined by bank",
-    "Service suspension in 48 hours",
-    "Action required: Update card in billing portal"
-  ],
-  "urgency": "high",
+  "itemType": "fyi",
   "confidence": 95,
-  "priority": 85,
-  "reasoning": "ACTION_REQUIRED (operational): executionTarget='external' (must go to billing portal, not reply). High consequences and clear deadline. Automated sender context considered but not sole determiner."
+  "priority": 85
 }
 
 CRITICAL RULES:
@@ -987,8 +760,6 @@ Respond ONLY with valid JSON matching the structure above.`;
       itemType: result.itemType || deriveItemType(result),
       workState: result.workState || 'noted',
       workTitle: result.workTitle || email.subject || 'Review email',
-      whatIPrepared: result.whatIPrepared || 'Summary for awareness',
-      whyMatters: result.whyMatters || result.summary || 'For your awareness',
 
       signals: result.signals || {
         hasDirectQuestion: false,
@@ -1014,14 +785,8 @@ Respond ONLY with valid JSON matching the structure above.`;
         isTimebound: false
       },
 
-      preparedOutput: result.preparedOutput || {},
-
-      summary: result.summary || 'Email received',
-      keyPoints: result.keyPoints || [],
-      urgency: result.urgency || 'medium',
       confidence: Math.min(100, Math.max(0, result.confidence || 50)),
       priority: Math.min(100, Math.max(0, result.priority || 50)),
-      reasoning: result.reasoning || 'No specific reasoning provided',
     };
   } catch (error) {
     console.error('Error processing email with AI:', error);
@@ -1029,24 +794,3 @@ Respond ONLY with valid JSON matching the structure above.`;
   }
 }
 
-/**
- * Legacy function for backward compatibility - now just calls processEmail
- * TODO: Remove after migration
- */
-export async function checkIfActionable(email: EmailData, supabase: SupabaseClient): Promise<{ isActionable: boolean; reasoning: string }> {
-  try {
-    const processed = await processEmail(email, supabase);
-    return {
-      isActionable: processed.workState === 'work_prepared' ||
-                    processed.workState === 'action_required' ||
-                    processed.workState === 'decision_required',
-      reasoning: processed.reasoning
-    };
-  } catch (error) {
-    console.error('Error in checkIfActionable:', error);
-    return {
-      isActionable: false,
-      reasoning: 'Pre-filter check failed, defaulting to not actionable'
-    };
-  }
-}

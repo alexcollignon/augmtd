@@ -79,6 +79,8 @@ Emails flow in via two paths:
 
 Both paths call `syncEmails()` in `lib/email-sync/` which calls `processEmail()` in `lib/ai/email-processor.ts`. This produces an `inbox_items` row with cognitive-cost classification (`action_required | suggested | fyi`).
 
+`ProcessedEmail` interface (as of Phase 187): `workState`, `workTitle`, `signals`, `confidence`, `priority`. Fields removed: `summary`, `keyPoints`, `urgency`, `reasoning`, `preparedOutput`, `whatIPrepared`, `whyMatters`, `draft`. DB columns `what_i_prepared` and `why_matters` are kept but no longer written (new rows get null).
+
 Gmail and Outlook integrations live in `lib/google/` and `lib/microsoft/` respectively. Token refresh is handled inline in each — pass an `onTokenRefresh` callback when you need the new token persisted.
 
 ### Studio workflows

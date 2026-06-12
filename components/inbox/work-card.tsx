@@ -98,12 +98,6 @@ export default function WorkCard({ item }: WorkCardProps) {
             )}
           </div>
 
-          {/* What was prepared - single line */}
-          {item.what_i_prepared && (
-            <p className="text-[13px] text-neutral-700 line-clamp-1 leading-tight mb-1">
-              {item.what_i_prepared}
-            </p>
-          )}
 
           {/* Footer metadata */}
           <div className="flex items-center gap-2 text-[11px] text-neutral-500">

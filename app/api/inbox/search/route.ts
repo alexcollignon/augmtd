@@ -20,11 +20,11 @@ export async function GET(request: NextRequest) {
 
     let query = supabase
       .from('emails')
-      .select('id, message_id, from_address, from_name, subject, body, received_at, labels, is_from_user, connection_id')
+      .select('id, message_id, thread_id, from_address, from_name, subject, body, received_at, labels, is_from_user, connection_id, metadata')
       .eq('user_id', user.id)
       .or(`from_address.ilike.%${q}%,from_name.ilike.%${q}%,subject.ilike.%${q}%,body.ilike.%${q}%`)
       .order('received_at', { ascending: false })
-      .limit(30);
+      .limit(60);
 
     if (connectionId) {
       query = query.eq('connection_id', connectionId);
@@ -33,18 +33,32 @@ export async function GET(request: NextRequest) {
     const { data, error } = await query;
     if (error) throw error;
 
-    const results = (data ?? []).map(row => ({
-      id: row.id,
-      message_id: row.message_id,
-      from_address: row.from_address ?? '',
-      from_name: row.from_name ?? '',
-      subject: row.subject ?? '',
-      snippet: row.body ? stripHtml(row.body).slice(0, 200) : '',
-      received_at: row.received_at,
-      labels: row.labels ?? [],
-      is_from_user: row.is_from_user ?? false,
-      connection_id: row.connection_id,
-    }));
+    // Deduplicate by thread_id — keep only the most recent email per thread
+    const seen = new Set<string>();
+    const deduped = (data ?? []).filter(row => {
+      const key = row.thread_id ?? row.message_id;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    const results = deduped.slice(0, 30).map(row => {
+      const meta = (row.metadata ?? {}) as Record<string, string>;
+      const provider_message_id = meta.gmail_id ?? meta.outlook_id ?? row.message_id;
+      return {
+        id: row.id,
+        message_id: row.message_id,
+        provider_message_id,
+        from_address: row.from_address ?? '',
+        from_name: row.from_name ?? '',
+        subject: row.subject ?? '',
+        snippet: row.body ? stripHtml(row.body).slice(0, 200) : '',
+        received_at: row.received_at,
+        labels: row.labels ?? [],
+        is_from_user: row.is_from_user ?? false,
+        connection_id: row.connection_id,
+      };
+    });
 
     return NextResponse.json({ results });
   } catch (error) {
