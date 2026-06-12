@@ -237,7 +237,8 @@ export function StudioHomeGrid({
   }
 
   const activeCount = myWorkflows.filter(w => w.status === 'active').length;
-  const [featuredWorkflow, ...restWorkflows] = myWorkflows;
+  const sortedWorkflows = [...myWorkflows].sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0));
+  const [featuredWorkflow, ...restWorkflows] = sortedWorkflows;
   const randomIdea = IDEA_SUGGESTIONS[0];
 
   return (
@@ -500,10 +501,15 @@ function FeaturedWorkflowCard({ workflow: w, onClick, onPin, onEdit, onDelete, o
           <WIcon className="w-[18px] h-[18px] text-white" />
         </div>
         <div className="flex items-center gap-1">
-          {w.sharing_mode == null && (
+          {w.sharing_mode == null ? (
             <span className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-neutral-100 text-[10px] font-medium text-neutral-500">
               <LockClosedIcon className="w-2.5 h-2.5" />
               Private
+            </span>
+          ) : (
+            <span className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-indigo-50 text-[10px] font-medium text-indigo-500">
+              <UsersIcon className="w-2.5 h-2.5" />
+              Shared
             </span>
           )}
           <button
@@ -627,6 +633,17 @@ function WorkflowCard({ workflow: w, onClick, onPin, isTeam, onEdit, onDelete, o
           <WIcon className="w-4 h-4 text-white" />
         </div>
         <div className="flex items-center gap-1">
+          {!isTeam && (w.sharing_mode == null ? (
+            <span className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-neutral-100 text-[10px] font-medium text-neutral-500">
+              <LockClosedIcon className="w-2.5 h-2.5" />
+              Private
+            </span>
+          ) : (
+            <span className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-indigo-50 text-[10px] font-medium text-indigo-500">
+              <UsersIcon className="w-2.5 h-2.5" />
+              Shared
+            </span>
+          ))}
           {onPin && (
             <button
               onClick={e => { e.stopPropagation(); onPin(); }}
