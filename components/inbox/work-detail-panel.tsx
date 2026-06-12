@@ -197,7 +197,6 @@ export default function WorkDetailPanel({ item, isOpen, onClose, batchItems }: W
 
   // Get suggested action
   const getSuggestedAction = () => {
-    if (sourceData?.draft) return 'Send reply';
     if (item.work_state === 'decision_required') return 'Provide decision';
     if (item.work_state === 'action_required') return 'Take action';
     return 'Review details';
@@ -477,11 +476,6 @@ export default function WorkDetailPanel({ item, isOpen, onClose, batchItems }: W
                                 <p className="text-[13px] text-neutral-600 mb-2">
                                   From: {batchItem.source_data?.from_name || batchItem.source_data?.from || 'Unknown'}
                                 </p>
-                                {batchItem.what_i_prepared && (
-                                  <p className="text-[12px] text-neutral-700 line-clamp-2 mt-2">
-                                    {batchItem.what_i_prepared}
-                                  </p>
-                                )}
                                 <p className="text-[11px] text-neutral-500 mt-2">
                                   {new Date(batchItem.created_at).toLocaleString()}
                                 </p>
@@ -491,17 +485,6 @@ export default function WorkDetailPanel({ item, isOpen, onClose, batchItems }: W
                         </div>
                       )}
 
-                      {/* What Was Prepared - Only for non-executable items */}
-                      {!isBatch && !isExecutable(item) && item.what_i_prepared && (
-                        <div>
-                          <h3 className="text-[11px] font-semibold text-neutral-600 uppercase tracking-wide mb-2">
-                            What Was Prepared
-                          </h3>
-                          <p className="text-[14px] text-neutral-900 leading-relaxed">
-                            {item.what_i_prepared}
-                          </p>
-                        </div>
-                      )}
 
                       {/* Meeting Details - Show calendar/meeting info if available */}
                       {!isBatch && hasMeetingData() && (
@@ -643,39 +626,6 @@ export default function WorkDetailPanel({ item, isOpen, onClose, batchItems }: W
                         </div>
                       )}
 
-                      {/* Key Points */}
-                      {!isBatch && sourceData?.keyPoints && sourceData.keyPoints.length > 0 && (
-                        <div>
-                          <h3 className="text-[11px] font-semibold text-neutral-600 uppercase tracking-wide mb-2">
-                            Key Points
-                          </h3>
-                          <ul className="space-y-2">
-                            {sourceData.keyPoints.map((point: string, i: number) => (
-                              <li key={i} className="flex items-start text-[13px] text-neutral-700">
-                                <span className="text-indigo-600 mr-2 font-bold">•</span>
-                                <span>{point}</span>
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-
-                      {/* Draft Reply */}
-                      {!isBatch && sourceData?.draft && (
-                        <div>
-                          <h3 className="text-[11px] font-semibold text-neutral-600 uppercase tracking-wide mb-2">
-                            Prepared Reply
-                          </h3>
-                          <div className="relative bg-gradient-to-br from-indigo-50 to-violet-50 border border-indigo-200 p-4">
-                            <div className="absolute left-0 top-0 bottom-0 w-[2px] bg-indigo-500" />
-                            <div className="pl-3">
-                              <p className="text-[13px] text-neutral-800 leading-relaxed whitespace-pre-wrap">
-                                {typeof sourceData.draft === 'string' ? sourceData.draft : sourceData.draft.body}
-                              </p>
-                            </div>
-                          </div>
-                        </div>
-                      )}
 
                       {/* Involved Parties */}
                       {!isBatch && recipientContext?.otherRecipients && recipientContext.otherRecipients.length > 0 && (
@@ -868,16 +818,14 @@ export default function WorkDetailPanel({ item, isOpen, onClose, batchItems }: W
                           {/* Regular work actions */}
                           {!isExecutable(item) && (
                             <>
-                              {!sourceData?.draft && (
-                                <button
-                                  onClick={handleComplete}
-                                  disabled={isCompleting}
-                                  className="flex-1 inline-flex items-center justify-center px-4 py-2.5 text-[13px] font-semibold bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm hover:shadow"
-                                >
-                                  <CheckIcon className="w-4 h-4 mr-2" />
-                                  {isCompleting ? 'Completing...' : 'Mark Complete'}
-                                </button>
-                              )}
+                              <button
+                                onClick={handleComplete}
+                                disabled={isCompleting}
+                                className="flex-1 inline-flex items-center justify-center px-4 py-2.5 text-[13px] font-semibold bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm hover:shadow"
+                              >
+                                <CheckIcon className="w-4 h-4 mr-2" />
+                                {isCompleting ? 'Completing...' : 'Mark Complete'}
+                              </button>
                             </>
                           )}
 

@@ -56,8 +56,7 @@ export async function POST(
       return NextResponse.json({ error: 'Email connection not found' }, { status: 404 });
     }
 
-    // Use custom message if provided, otherwise use AI draft body
-    const messageBody = customMessage || sourceData.draft?.body || sourceData.draft;
+    const messageBody = customMessage;
 
     // Send reply based on provider
     let sentMessageId: string;

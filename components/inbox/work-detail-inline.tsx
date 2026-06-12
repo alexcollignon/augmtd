@@ -766,34 +766,6 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
           </div>
         )}
 
-        {/* Summary + Key Points — 2-column layout */}
-        {item.what_i_prepared || (sourceData?.keyPoints?.length > 0) ? (
-          <div className="grid grid-cols-2 gap-3">
-            {item.what_i_prepared && (
-              <div className="bg-white border border-neutral-200 rounded-lg shadow-sm p-4">
-                <h3 className="text-[11px] font-medium text-neutral-400 uppercase tracking-wide mb-2">
-                  Summary
-                </h3>
-                <p className="text-[13px] text-neutral-700 leading-relaxed">{item.what_i_prepared}</p>
-              </div>
-            )}
-            {sourceData?.keyPoints && sourceData.keyPoints.length > 0 && (
-              <div className="bg-white border border-neutral-200 rounded-lg shadow-sm p-4">
-                <h3 className="text-[11px] font-medium text-neutral-400 uppercase tracking-wide mb-2">
-                  Key Points
-                </h3>
-                <ul className="space-y-1.5">
-                  {sourceData.keyPoints.map((point: string, i: number) => (
-                    <li key={i} className="flex items-start text-[13px] text-neutral-700">
-                      <span className="text-indigo-500 mr-2 font-bold flex-shrink-0">·</span>
-                      <span>{point}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </div>
-        ) : null}
 
         {/* Conversation thread stack — live from emails table, oldest first, latest expanded */}
         {(() => {
@@ -985,7 +957,7 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
 
         {/* Inline reply composer */}
         {replyOpen && item.source === 'email' && (
-          <div ref={replyBoxRef} className="border border-neutral-200 bg-white">
+          <div ref={replyBoxRef} className="border border-neutral-200 bg-white rounded-xl overflow-hidden mx-4 mb-4 shadow-sm">
             {/* Header */}
             <div className="flex items-center justify-between px-4 pt-3 pb-2 border-b border-neutral-100">
               <span className="text-[12px] font-semibold text-neutral-600 flex items-center gap-1.5">

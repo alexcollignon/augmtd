@@ -177,6 +177,11 @@ export function InboxPageClient({
   const [hasConnection, setHasConnection] = useState(initialHasConnection);
   const [inboxItems, setInboxItems] = useState<InboxItem[]>(initialInboxItems);
   const [selectedItem, setSelectedItem] = useState<InboxItem | null>(null);
+  const selectedItemRef = useRef<InboxItem | null>(null);
+  // Keep ref current so async callbacks (sync poll, post-sync refetch) can read latest selectedItem
+  // without stale closure issues. Updated on every render — intentionally no deps.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { selectedItemRef.current = selectedItem; });
   const [isSyncing, setIsSyncing] = useState(false);
   const [meetings, setMeetings] = useState<CalendarEvent[]>([]);
   const [meetingsLoading, setMeetingsLoading] = useState(true);
@@ -416,7 +421,7 @@ export function InboxPageClient({
     setSelectedFolderEmail(null);
     setSearchResultConnectionId(result.connection_id);
     try {
-      const res = await fetch(`/api/inbox/folder-email-detail?connectionId=${result.connection_id}&messageId=${encodeURIComponent(result.message_id)}`);
+      const res = await fetch(`/api/inbox/folder-email-detail?connectionId=${result.connection_id}&messageId=${encodeURIComponent(result.provider_message_id)}`);
       if (res.ok) setSelectedFolderEmail(await res.json());
     } catch { /* non-fatal */ }
   }, []);
@@ -517,7 +522,16 @@ export function InboxPageClient({
               setSelectedItem(prev => prev ?? item);
             }
           } else if (payload.eventType === 'UPDATE') {
-            setInboxItems(prev => prev.map(i => i.id === (payload.new as any).id ? payload.new as InboxItem : i));
+            const incoming = payload.new as any;
+            setInboxItems(prev => prev.map(i => {
+              if (i.id !== incoming.id) return i;
+              // Don't let background AI reclassification silently remove a visible item —
+              // preserve work_state if it's being flipped to 'noise' without user action.
+              if ((i as any).work_state !== 'noise' && incoming.work_state === 'noise') {
+                return { ...incoming, work_state: (i as any).work_state };
+              }
+              return incoming as InboxItem;
+            }));
           } else if (payload.eventType === 'DELETE') {
             setInboxItems(prev => prev.filter(i => i.id !== (payload.old as any).id));
           }
@@ -602,7 +616,15 @@ export function InboxPageClient({
             .eq('status', 'pending')
             .order('created_at', { ascending: false });
           if (syncItems) {
-            setInboxItems(syncItems);
+            // Merge new items in rather than replacing — avoids evicting items whose status
+            // was transiently changed by background AI processing mid-sync.
+            setInboxItems(prev => {
+              const map = new Map(prev.map(i => [i.id, i]));
+              syncItems.forEach(i => map.set(i.id, i));
+              return Array.from(map.values()).sort((a, b) =>
+                new Date((b as any).created_at).getTime() - new Date((a as any).created_at).getTime()
+              );
+            });
             setSelectedItem(prev =>
               prev ? (syncItems.find(i => i.id === prev.id) ?? prev) : (syncItems[0] ?? null)
             );
@@ -618,7 +640,14 @@ export function InboxPageClient({
             .eq('status', 'pending')
             .order('created_at', { ascending: false });
           if (freshItems) {
-            setInboxItems(freshItems);
+            // Preserve the currently open item even if its status changed during sync —
+            // the user is actively reading it and shouldn't see it vanish mid-session.
+            const pinnedId = selectedItemRef.current?.id;
+            setInboxItems(prev => {
+              if (!pinnedId || freshItems.some(i => i.id === pinnedId)) return freshItems;
+              const pinned = prev.find(i => i.id === pinnedId);
+              return pinned ? [pinned, ...freshItems.filter(i => i.id !== pinnedId)] : freshItems;
+            });
             setSelectedItem(prev => prev ? (freshItems.find(i => i.id === prev.id) ?? prev) : (freshItems[0] ?? null));
           }
           // Notify detail views to re-fetch threads (backfill may have added historical messages)
@@ -783,8 +812,6 @@ export function InboxPageClient({
     subject: (selectedItem as any).source_data?.subject,
     from: (selectedItem as any).source_data?.from_address || (selectedItem as any).source_data?.from,
     fromName: (selectedItem as any).source_data?.from_name,
-    summary: (selectedItem as any).source_data?.summary,
-    keyPoints: (selectedItem as any).source_data?.keyPoints,
     body: (selectedItem as any).source_data?.body,
     itemType: (selectedItem as any).item_type ?? null,
     connectionId: (selectedItem as any).connection_id ?? null,
