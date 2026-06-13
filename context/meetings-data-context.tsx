@@ -21,6 +21,9 @@ export interface Transcript {
   hasRecording: boolean;
   hasDocument?: boolean;
   attendees?: Array<{ email: string; name?: string }>;
+  sharingMode?: 'live' | null;
+  isSharedWithMe?: boolean;
+  sharedByName?: string | null;
 }
 
 export interface MeetingsDataContextType {
@@ -82,5 +85,8 @@ export function mapTranscripts(raw: any[]): Transcript[] {
     hasRecording: !!t.recording_storage_path,
     hasDocument: !!t.has_document,
     attendees: (t.attendees as any[]) ?? [],
+    sharingMode: t.sharing_mode ?? null,
+    isSharedWithMe: t.is_shared_with_me ?? false,
+    sharedByName: t.shared_by_name ?? null,
   }));
 }
