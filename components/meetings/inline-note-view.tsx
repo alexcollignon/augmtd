@@ -82,7 +82,7 @@ interface MeetingTranscript {
   notesStructured?: NotesStructured | null;
   templateId?: string;
   rawTranscript?: string | null;
-  sharingMode?: 'live' | null;
+  sharingMode?: 'live' | 'specific' | null;
   isOwner?: boolean;
   sharedByName?: string | null;
 }
