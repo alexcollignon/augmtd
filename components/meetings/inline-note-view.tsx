@@ -17,6 +17,8 @@ import {
   PaperAirplaneIcon,
   DocumentTextIcon,
   UserGroupIcon,
+  UsersIcon,
+  CheckIcon,
 } from '@heroicons/react/24/outline';
 import type { MeetingChatContext } from '@/components/meetings/meeting-chat-sidebar';
 import { useRecordingContext } from '@/context/recording-context';
@@ -80,6 +82,9 @@ interface MeetingTranscript {
   notesStructured?: NotesStructured | null;
   templateId?: string;
   rawTranscript?: string | null;
+  sharingMode?: 'live' | null;
+  isOwner?: boolean;
+  sharedByName?: string | null;
 }
 
 interface InlineNoteViewProps {
@@ -278,6 +283,13 @@ export default function InlineNoteView({
   const [teaserValue, setTeaserValue] = useState('');
   const [showAttendees, setShowAttendees] = useState(false);
 
+  // Share popover
+  const [showSharePopover, setShowSharePopover] = useState(false);
+  const [sharingLoading, setSharingLoading] = useState(false);
+  const sharePopoverRef = useRef<HTMLDivElement>(null);
+  const [teammates, setTeammates] = useState<Array<{ userId: string; name: string; email: string }>>([]);
+  const [sharedWithIds, setSharedWithIds] = useState<Set<string>>(new Set());
+
   const recording = useRecordingContext();
 
 
@@ -342,7 +354,7 @@ export default function InlineNoteView({
           })) : [],
           risks: processed ? (data.transcript!.risks ?? []).map((r: any) => ({ description: r.text, severity: r.severity })) : [],
           suggestedNextStep: processed ? (data.transcript!.suggestedNextStep ?? undefined) : undefined,
-          transcriptId: data.transcript?.id,
+          transcriptId: (data.transcript?.isOwner ?? true) ? data.transcript?.id : undefined,
         });
       }
     } catch {
@@ -385,6 +397,17 @@ export default function InlineNoteView({
     return () => clearInterval(interval);
   }, [transcript?.processed, transcript?.botState, fetchData]);
 
+  // When the recording finishes uploading, fetch immediately so the transcript row
+  // is loaded — without this, the polling loop above never starts (it bails when
+  // transcript is null) and the page stays stale until the user navigates away.
+  const prevRecordingStateRef = useRef<string>('');
+  useEffect(() => {
+    if (prevRecordingStateRef.current !== 'done' && recording.state === 'done' && eventId) {
+      fetchData();
+    }
+    prevRecordingStateRef.current = recording.state;
+  }, [recording.state, eventId, fetchData]);
+
   // Cleanup debounce timers on unmount
   useEffect(() => {
     return () => {
@@ -421,6 +444,35 @@ export default function InlineNoteView({
     ch.onmessage = () => fetchData();
     return () => ch.close();
   }, [eventId, fetchData]);
+
+  // Close share popover on outside click
+  useEffect(() => {
+    if (!showSharePopover) return;
+    const handleOutside = (e: MouseEvent) => {
+      if (sharePopoverRef.current && !sharePopoverRef.current.contains(e.target as Node)) {
+        setShowSharePopover(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutside);
+    return () => document.removeEventListener('mousedown', handleOutside);
+  }, [showSharePopover]);
+
+  // Load teammates + current sharing state when popover opens
+  useEffect(() => {
+    if (!showSharePopover || !transcript) return;
+    // Fetch teammates list (once)
+    if (teammates.length === 0) {
+      fetch('/api/meetings/teammates')
+        .then((r) => r.json())
+        .then((d) => setTeammates(d.teammates ?? []))
+        .catch(() => {});
+    }
+    // Fetch current shared-with list
+    fetch(`/api/meetings/${transcript.id}/sharing`)
+      .then((r) => r.json())
+      .then((d) => setSharedWithIds(new Set(d.sharedWithUserIds ?? [])))
+      .catch(() => {});
+  }, [showSharePopover, transcript]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Handlers ──────────────────────────────────────────────────────────────
 
@@ -619,6 +671,33 @@ const handleRetry = async () => {
     } finally { setDeleting(false); }
   };
 
+  const handleShareChange = async (mode: 'live' | 'specific' | null, newSharedIds?: Set<string>) => {
+    if (!transcript) return;
+    setSharingLoading(true);
+    setTranscript((prev) => prev ? { ...prev, sharingMode: mode } : prev);
+    const ids = newSharedIds ?? sharedWithIds;
+    try {
+      await fetch(`/api/meetings/${transcript.id}/sharing`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sharingMode: mode, sharedWithUserIds: mode === 'specific' ? Array.from(ids) : undefined }),
+      });
+      new BroadcastChannel('meetings-updated').postMessage('sharing-changed');
+    } catch {
+      await fetchData();
+    } finally {
+      setSharingLoading(false);
+    }
+  };
+
+  const handleToggleTeammate = async (userId: string) => {
+    if (!transcript || sharingMode !== 'specific') return;
+    const next = new Set(sharedWithIds);
+    if (next.has(userId)) next.delete(userId); else next.add(userId);
+    setSharedWithIds(next);
+    await handleShareChange('specific', next);
+  };
+
   // ── Render ─────────────────────────────────────────────────────────────────
 
   if (loading) {
@@ -647,6 +726,8 @@ const handleRetry = async () => {
   }
 
   // Derived
+  const isOwner = transcript?.isOwner ?? true;
+  const sharingMode = transcript?.sharingMode ?? null;
   const isAfterStart = event ? new Date(event.start_time).getTime() <= Date.now() : true;
   const hasGoogleMeetLink = !!event?.meeting_link?.includes('meet.google.com');
   const { primary } = !isAdHoc && event ? formatMeetingTime(event.start_time, event.end_time) : { primary: '' };
@@ -739,15 +820,71 @@ const handleRetry = async () => {
               />
             ) : (
               <h1
-                className="text-xl font-semibold text-neutral-900 cursor-text hover:text-neutral-700 transition-colors"
-                onClick={() => { setTitleDraft(event!.title); setEditingTitle(true); }}
-                title="Click to edit title"
+                className={`text-xl font-semibold text-neutral-900 transition-colors ${isOwner ? 'cursor-text hover:text-neutral-700' : ''}`}
+                onClick={() => { if (isOwner) { setTitleDraft(event!.title); setEditingTitle(true); } }}
+                title={isOwner ? 'Click to edit title' : undefined}
               >
                 {event!.title}
               </h1>
             )}
               <div className="flex items-center gap-1.5 flex-shrink-0">
-                {transcript && !confirmDelete && (
+                {/* Share button — owner only */}
+                {transcript && isOwner && !confirmDelete && (
+                  <div className="relative" ref={sharePopoverRef}>
+                    <button
+                      onClick={() => setShowSharePopover((v) => !v)}
+                      className={`p-1.5 rounded transition-colors ${sharingMode ? 'text-indigo-500 bg-indigo-50 hover:bg-indigo-100' : 'text-neutral-400 hover:text-indigo-500 hover:bg-indigo-50'}`}
+                      title={sharingMode ? 'Shared' : 'Share note'}
+                    >
+                      <UsersIcon className="w-4 h-4" />
+                    </button>
+                    {showSharePopover && (
+                      <div className="absolute right-0 top-full mt-1.5 z-50 bg-white border border-neutral-200 rounded-xl shadow-lg p-3 w-56">
+                        <p className="text-[11px] font-medium text-neutral-500 mb-2">Share with</p>
+                        {([
+                          { value: null, label: 'Private', sub: 'Only you' },
+                          { value: 'live', label: 'Whole team', sub: 'All teammates' },
+                          { value: 'specific', label: 'Specific people', sub: '' },
+                        ] as const).map((opt) => (
+                          <button
+                            key={String(opt.value)}
+                            disabled={sharingLoading}
+                            onClick={() => { if (sharingMode !== opt.value) { if (opt.value === 'specific') setSharedWithIds(new Set()); handleShareChange(opt.value); } }}
+                            className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-left mb-0.5 transition-colors disabled:opacity-50 ${sharingMode === opt.value ? 'bg-indigo-50' : 'hover:bg-neutral-50'}`}
+                          >
+                            <div className={`w-3 h-3 rounded-full border-2 flex-shrink-0 transition-colors ${sharingMode === opt.value ? 'border-indigo-500 bg-indigo-500' : 'border-neutral-300'}`} />
+                            <span className="text-[12px] font-medium text-neutral-700">{opt.label}</span>
+                            {opt.sub && <span className="text-[10px] text-neutral-400 ml-auto">{opt.sub}</span>}
+                          </button>
+                        ))}
+                        {sharingMode === 'specific' && (
+                          <div className="mt-2 pt-2 border-t border-neutral-100">
+                            {teammates.length === 0 ? (
+                              <p className="text-[11px] text-neutral-400 px-2">No teammates found</p>
+                            ) : teammates.map((tm) => {
+                              const selected = sharedWithIds.has(tm.userId);
+                              const initial = (tm.name || tm.email)[0].toUpperCase();
+                              return (
+                                <button
+                                  key={tm.userId}
+                                  disabled={sharingLoading}
+                                  onClick={() => handleToggleTeammate(tm.userId)}
+                                  className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg mb-0.5 transition-colors disabled:opacity-50 ${selected ? 'bg-indigo-50' : 'hover:bg-neutral-50'}`}
+                                >
+                                  <div className="w-5 h-5 rounded-full bg-indigo-100 text-indigo-700 text-[10px] font-semibold flex items-center justify-center flex-shrink-0">{initial}</div>
+                                  <span className="text-[12px] text-neutral-700 truncate">{tm.name}</span>
+                                  {selected && <CheckIcon className="w-3 h-3 text-indigo-500 ml-auto flex-shrink-0" />}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+                {/* Delete — owner only */}
+                {transcript && isOwner && !confirmDelete && (
                   <button
                     onClick={() => setConfirmDelete(true)}
                     className="p-1.5 text-neutral-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
@@ -756,7 +893,7 @@ const handleRetry = async () => {
                     <TrashIcon className="w-4 h-4" />
                   </button>
                 )}
-                {transcript && confirmDelete && (
+                {transcript && isOwner && confirmDelete && (
                   <div className="flex items-center gap-2">
                     <span className="text-[11px] text-neutral-500">Delete?</span>
                     <button onClick={handleDelete} disabled={deleting} className="text-[11px] font-medium text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 px-2.5 py-1 rounded transition-colors">
@@ -767,6 +904,13 @@ const handleRetry = async () => {
                 )}
               </div>
             </div>
+            {/* Shared-with-me indicator */}
+            {!isOwner && transcript?.sharedByName && (
+              <p className="text-[11px] text-neutral-400 flex items-center gap-1 mb-1">
+                <UsersIcon className="w-3 h-3" />
+                Shared by {transcript.sharedByName}
+              </p>
+            )}
 
             {/* Meta */}
             <div className="flex flex-wrap items-center gap-3 text-[12px] text-neutral-500">
@@ -1018,7 +1162,7 @@ const handleRetry = async () => {
         </div>
       )}
 
-      {(!transcript || isDraftNote) && !noteProcessing && recording.state !== 'recording' && recording.state !== 'paused' && recording.state !== 'uploading' && recording.state !== 'processing' && (
+      {isOwner && (!transcript || isDraftNote) && !noteProcessing && recording.state !== 'recording' && recording.state !== 'paused' && recording.state !== 'uploading' && recording.state !== 'processing' && (
         <div className="flex items-center gap-2 mb-4 flex-wrap">
           {/* Time until (scheduled only) */}
           {!isAdHoc && (
@@ -1060,7 +1204,7 @@ const handleRetry = async () => {
 
       {/* ── ZONE B — Note textarea (below pills) ── */}
       {/* Also shown for draft text notes (saved but not yet AI-processed) so the user can keep editing */}
-      {(!transcript || isDraftNote) && recording.state !== 'uploading' && recording.state !== 'processing' && (
+      {isOwner && (!transcript || isDraftNote) && recording.state !== 'uploading' && recording.state !== 'processing' && (
         <div className="mb-5">
           <textarea
             value={noteBody}
@@ -1243,7 +1387,7 @@ const handleRetry = async () => {
           <MeetingDocument
             document={transcript.notesStructured?.document || transcript.summary || ''}
             eventId={eventId ?? null}
-            editable
+            editable={isOwner}
           />
           {!transcript.notesStructured?.document && !transcript.summary && (
             <button

@@ -6,6 +6,8 @@ import { createClient } from '@/lib/supabase/server';
  * Returns all data needed for inline meeting note view:
  * calendar event, transcript, action items, signed audio URL.
  */
+const TRANSCRIPT_SELECT = 'id, title, start_time, duration_minutes, summary, decisions, risks, suggested_next_step, key_moments, transcript_segments, work_items_generated, source, recording_storage_path, bot_state, processed, notes_structured, template_id, transcript, sharing_mode, user_id';
+
 export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -14,6 +16,11 @@ export async function GET(
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const adminClient = (await import('@supabase/supabase-js')).createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+  );
 
   // Load calendar event
   const { data: event } = await supabase
@@ -24,21 +31,81 @@ export async function GET(
     .single();
 
   // Load transcript — either by calendar_event_id (normal) or directly by transcript id (ad-hoc)
-  const { data: transcriptRaw } = event
-    ? await supabase
-        .from('meeting_transcripts')
-        .select('id, title, start_time, duration_minutes, summary, decisions, risks, suggested_next_step, key_moments, transcript_segments, work_items_generated, source, recording_storage_path, bot_state, processed, notes_structured, template_id, transcript')
-        .eq('calendar_event_id', id)
+  let transcriptRaw: any = null;
+  let isOwner = true;
+  let sharedByName: string | null = null;
+
+  if (event) {
+    const { data } = await supabase
+      .from('meeting_transcripts')
+      .select(TRANSCRIPT_SELECT)
+      .eq('calendar_event_id', id)
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    transcriptRaw = data;
+  } else {
+    // Try as owner first
+    const { data: owned } = await supabase
+      .from('meeting_transcripts')
+      .select(TRANSCRIPT_SELECT)
+      .eq('id', id)
+      .eq('user_id', user.id)
+      .maybeSingle();
+    transcriptRaw = owned;
+
+    // If not found as owner, check shared access (live or specific)
+    if (!transcriptRaw) {
+      const { data: memberships } = await supabase
+        .from('company_members')
+        .select('company_id')
         .eq('user_id', user.id)
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle()
-    : await supabase
-        .from('meeting_transcripts')
-        .select('id, title, start_time, duration_minutes, summary, decisions, risks, suggested_next_step, key_moments, transcript_segments, work_items_generated, source, recording_storage_path, bot_state, processed, notes_structured, template_id, transcript')
-        .eq('id', id)
-        .eq('user_id', user.id)
-        .maybeSingle();
+        .eq('status', 'active');
+      const companyIds = (memberships ?? []).map((m: any) => m.company_id);
+
+      if (companyIds.length > 0) {
+        // Try 'live' first
+        const { data: live } = await adminClient
+          .from('meeting_transcripts')
+          .select(`${TRANSCRIPT_SELECT}, profiles!meeting_transcripts_user_id_fkey(full_name)`)
+          .eq('id', id)
+          .eq('sharing_mode', 'live')
+          .in('company_id', companyIds)
+          .maybeSingle();
+
+        if (live) {
+          transcriptRaw = live;
+          isOwner = false;
+          sharedByName = (live as any).profiles?.full_name ?? null;
+        } else {
+          // Try 'specific' — must have a receipt row
+          const { data: receipt } = await adminClient
+            .from('shared_note_receipts')
+            .select('transcript_id')
+            .eq('transcript_id', id)
+            .eq('user_id', user.id)
+            .maybeSingle();
+
+          if (receipt) {
+            const { data: specific } = await adminClient
+              .from('meeting_transcripts')
+              .select(`${TRANSCRIPT_SELECT}, profiles!meeting_transcripts_user_id_fkey(full_name)`)
+              .eq('id', id)
+              .eq('sharing_mode', 'specific')
+              .in('company_id', companyIds)
+              .maybeSingle();
+
+            if (specific) {
+              transcriptRaw = specific;
+              isOwner = false;
+              sharedByName = (specific as any).profiles?.full_name ?? null;
+            }
+          }
+        }
+      }
+    }
+  }
 
   // For ad-hoc transcripts (no calendar event), synthesize a minimal event object
   const resolvedEvent = event ?? (transcriptRaw ? {
@@ -62,11 +129,6 @@ export async function GET(
   // Generate signed URL for audio playback if recording exists
   let audioUrl: string | null = null;
   if (transcriptRaw?.recording_storage_path) {
-    const { createClient: createAdmin } = await import('@supabase/supabase-js');
-    const adminClient = createAdmin(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    );
     const { data: signed } = await adminClient.storage
       .from('meeting-recordings')
       .createSignedUrl(transcriptRaw.recording_storage_path, 3600);
@@ -90,6 +152,9 @@ export async function GET(
         notesStructured: (transcriptRaw as any).notes_structured ?? null,
         templateId: (transcriptRaw as any).template_id ?? 'default',
         rawTranscript: (transcriptRaw as any).transcript ?? null,
+        sharingMode: (transcriptRaw as any).sharing_mode ?? null,
+        isOwner,
+        sharedByName,
       }
     : null;
 

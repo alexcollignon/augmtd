@@ -113,6 +113,24 @@ The meeting bot (`bot_runner.py`) uses Playwright + PulseAudio to join Google Me
 
 Profiles are read-only from the UI — they update automatically from usage signals via `lib/context/`. `lib/context/render-memory.ts` generates human-readable prose from raw profile data on demand.
 
+### Meeting note sharing
+
+`meeting_transcripts` has two sharing columns: `sharing_mode TEXT ('live'|'specific'|NULL)` and `company_id UUID`. `shared_note_receipts` is a join table — dual purpose: (1) access control list for `specific` mode, (2) per-recipient folder assignment.
+
+- **`live`** — all company members can read
+- **`specific`** — only users with a `shared_note_receipts` row can read
+- `sharing_mode = NULL` — private (default)
+
+Key APIs:
+- `PATCH /api/meetings/[id]/sharing` — owner toggles mode + syncs receipt rows
+- `GET /api/meetings/teammates` — returns company members (two-query pattern: fetch `company_members` user_ids first, then join `profiles` separately — FK join alias is unreliable)
+- `GET /api/meetings/[id]/full` — returns `isOwner: bool` + `sharedByName`; shared access fallback tries `live` then `specific`
+- `PATCH /api/meetings/recording/[id]/folder` — routes to `meeting_transcripts.folder_id` for owners or `shared_note_receipts.folder_id` for recipients
+
+Recipients see notes read-only: `MeetingDocument` gets `editable={isOwner}`, plain-text textarea gated by `{isOwner && ...}`, no delete/share/record controls, AI chat `UPDATE_MEETING` blocked (transcriptId omitted from context).
+
+Migrations applied: `20260613_meeting_transcripts_sharing.sql`, `20260613b_sharing_mode_specific.sql`.
+
 ### Key data model relationships
 
 ```
@@ -122,6 +140,7 @@ users → context_profiles
       → workflows → workflow_runs → work_threads → work_messages
       → custom_agents
       → meeting_transcripts → transcript_segments
+                            ↳ shared_note_receipts (sharing access + per-recipient folder)
       → calendar_events
       → knowledge_sources → kb_files (Drive + uploads)
 ```

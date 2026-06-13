@@ -8,6 +8,7 @@ import {
   ChatBubbleLeftRightIcon,
   MicrophoneIcon,
   DocumentTextIcon,
+  UsersIcon,
 } from '@heroicons/react/24/outline';
 import type { DriveFolder } from '@/lib/types/drive';
 
@@ -26,6 +27,9 @@ interface Transcript {
   folderId?: string | null;
   hasRecording: boolean;
   attendees?: Array<{ email: string; name?: string }>;
+  sharingMode?: 'live' | null;
+  isSharedWithMe?: boolean;
+  sharedByName?: string | null;
 }
 
 interface FolderDetailViewProps {
@@ -103,9 +107,9 @@ function SourceIcon({ source }: { source: string }) {
 function SourceBadge({ source }: { source: string }) {
   if (source === 'recording' || source === 'bot' || source === 'upload') {
     return (
-      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-red-50 text-[10px] font-medium text-red-500 flex-shrink-0">
+      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-emerald-50 text-[10px] font-medium text-emerald-600 flex-shrink-0">
         <MicrophoneIcon className="w-2.5 h-2.5" />
-        Recording
+        Recorded
       </span>
     );
   }
@@ -391,8 +395,20 @@ export default function FolderDetailView({
                         <p className="text-[13px] font-medium text-neutral-800 truncate">{t.title}</p>
                         {isNew(t) && <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 flex-shrink-0" />}
                       </div>
-                      <div className="flex items-center gap-2 mt-0.5">
+                      <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                         <SourceBadge source={t.source} />
+                        {t.sharingMode && !t.isSharedWithMe && (
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-indigo-50 text-[10px] font-medium text-indigo-600 flex-shrink-0">
+                            <UsersIcon className="w-2.5 h-2.5" />
+                            Shared
+                          </span>
+                        )}
+                        {t.isSharedWithMe && (
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-neutral-100 text-[10px] font-medium text-neutral-500 flex-shrink-0">
+                            <UsersIcon className="w-2.5 h-2.5" />
+                            {t.sharedByName ? `from ${t.sharedByName.split(' ')[0]}` : 'Shared'}
+                          </span>
+                        )}
                         {(t.attendees?.length ?? 0) > 0 && (
                           <AttendeeAvatars attendees={t.attendees!} />
                         )}
