@@ -262,6 +262,40 @@ export async function POST(
     const isWorker = agentRaw?.is_worker ?? false;
     const routeMode = isWorker ? 'all_tools' : heuristicRoute(content, mentions, (thread as any).artifacts);
 
+    // ── Fetch active routines for workers ─────────────────────────────────────
+    // Injected into the system prompt so the worker is aware of its scheduled
+    // tasks and can respond to "run my briefing" / "what do you have scheduled?".
+    let routinesBrief = '';
+    if (isWorker && agentId) {
+      const { data: activeRoutines } = await adminClient
+        .from('workflows')
+        .select('name, trigger, last_run_at, next_run_at')
+        .eq('agent_id', agentId)
+        .eq('user_id', user.id)
+        .eq('status', 'active')
+        .order('created_at', { ascending: true })
+        .limit(10);
+
+      if (activeRoutines && activeRoutines.length > 0) {
+        const lines = (activeRoutines as Array<{ name: string; trigger: { type: string; label?: string; cron?: string }; last_run_at: string | null; next_run_at: string | null }>)
+          .map(r => {
+            const schedule = r.trigger.label
+              ?? (r.trigger.type === 'schedule' ? (r.trigger.cron ?? 'scheduled') : 'manual trigger');
+            const lastRun = r.last_run_at
+              ? (() => {
+                  const diff = Date.now() - new Date(r.last_run_at!).getTime();
+                  const h = Math.floor(diff / 3_600_000);
+                  if (h < 1) return 'ran < 1h ago';
+                  if (h < 24) return `ran ${h}h ago`;
+                  return `ran ${Math.floor(h / 24)}d ago`;
+                })()
+              : 'never run yet';
+            return `- ${r.name} · ${schedule} · ${lastRun}`;
+          });
+        routinesBrief = `[YOUR ACTIVE ROUTINES]\n${lines.join('\n')}\nIf the user asks to run one, says "run [name]", or asks what you have scheduled, reference these directly. You can also suggest running a relevant routine when it fits the conversation.`;
+      }
+    }
+
     // Format context blocks
     // When an agent is active, its identity takes top priority — injected BEFORE the base prompt.
     // This ensures the model adopts the agent's role rather than treating instructions as an addendum.
@@ -269,12 +303,13 @@ export async function POST(
 
     if (agent) {
       const agentHeader = isWorker
-        // Worker: system layer (locked) + user preferences (injected separately)
+        // Worker: system layer (locked) + user preferences + active routines
         ? [
             agent.instructions?.trim() ?? `You are ${agent.name}, a dedicated AI colleague.`,
             (agent as typeof agent & { user_preferences?: string | null }).user_preferences?.trim()
               ? `[USER CONTEXT — personal preferences set by this user]\n${(agent as typeof agent & { user_preferences?: string | null }).user_preferences!.trim()}`
               : '',
+            routinesBrief || '',
             `You have access to: email inbox (get_emails), calendar & meetings (get_meeting_context), web search (web_search, fetch_url), and deep research (deep_research). Use them proactively — retrieve real context before answering rather than relying on memory.`,
             `Act, don't hedge. When a task is clear, do it and show your work briefly. One focused question maximum if truly blocked.`,
           ].filter(Boolean).join('\n\n')
