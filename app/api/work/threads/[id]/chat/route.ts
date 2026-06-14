@@ -229,13 +229,13 @@ export async function POST(
       agentId
         ? adminClient
             .from('custom_agents')
-            .select('id, user_id, name, instructions, memory_text, web_enabled, agent_knowledge_sources(knowledge_file_id)')
+            .select('id, user_id, name, instructions, memory_text, web_enabled, is_worker, agent_knowledge_sources(knowledge_file_id)')
             .eq('id', agentId)
             .single()
         : Promise.resolve({ data: null }),
     ]);
 
-    const agentRaw = (agentResult as { data: { id: string; user_id: string; name: string; instructions: string | null; memory_text: string | null; web_enabled: boolean | null; agent_knowledge_sources: Array<{ knowledge_file_id: string | null }> } | null }).data ?? null;
+    const agentRaw = (agentResult as { data: { id: string; user_id: string; name: string; instructions: string | null; memory_text: string | null; web_enabled: boolean | null; is_worker?: boolean; agent_knowledge_sources: Array<{ knowledge_file_id: string | null }> } | null }).data ?? null;
 
     // For shared agents used by non-owners, load personal memory from agent_memories
     let agentMemoryText = agentRaw?.memory_text ?? null;
@@ -258,7 +258,9 @@ export async function POST(
 
     // ── Heuristic router — replaces the AI intent classifier ─────────────────
     // Zero AI calls, <1ms. Decides tool availability based on simple patterns.
-    const routeMode = heuristicRoute(content, mentions, (thread as any).artifacts);
+    // Workers always get all_tools — they decide internally which to use.
+    const isWorker = agentRaw?.is_worker ?? false;
+    const routeMode = isWorker ? 'all_tools' : heuristicRoute(content, mentions, (thread as any).artifacts);
 
     // Format context blocks
     // When an agent is active, its identity takes top priority — injected BEFORE the base prompt.
@@ -266,18 +268,26 @@ export async function POST(
     const contextParts: string[] = [];
 
     if (agent) {
-      // Agent-first system prompt: role + instructions + memory, then base capabilities below
-      const agentHeader = [
-        `You are "${agent.name}", a custom AI assistant with a specific role.`,
-        agent.instructions?.trim()
-          ? `Your instructions:\n${agent.instructions.trim()}`
-          : '',
-        `Stay in this role for the entire conversation. Do not describe yourself as a general-purpose assistant.`,
-        `Approach: when context is incomplete, make a reasonable assumption, state it briefly, and attempt the task. The user wants output. If you must ask, ask ONE focused question — never a list of questions.`,
-        agent.web_enabled
-          ? `You have access to web_search and fetch_url tools. Use them proactively — do not answer from memory when fresh information is available online.`
-          : '',
-      ].filter(Boolean).join('\n\n');
+      const agentHeader = isWorker
+        // Worker-quality prompt: role is the primary identity, instructions are the mandate
+        ? [
+            agent.instructions?.trim() ?? `You are ${agent.name}, a dedicated AI colleague.`,
+            `You have access to: email inbox (get_emails), calendar & meetings (get_meeting_context), web search (web_search, fetch_url), and deep research (deep_research). Use them proactively — retrieve real context before answering rather than relying on memory.`,
+            `Act, don't hedge. When a task is clear, do it and show your work briefly. One focused question maximum if truly blocked.`,
+          ].filter(Boolean).join('\n\n')
+        // Standard agent prompt
+        : [
+            `You are "${agent.name}", a custom AI assistant with a specific role.`,
+            agent.instructions?.trim()
+              ? `Your instructions:\n${agent.instructions.trim()}`
+              : '',
+            `Stay in this role for the entire conversation. Do not describe yourself as a general-purpose assistant.`,
+            `Approach: when context is incomplete, make a reasonable assumption, state it briefly, and attempt the task. The user wants output. If you must ask, ask ONE focused question — never a list of questions.`,
+            agent.web_enabled
+              ? `You have access to web_search and fetch_url tools. Use them proactively — do not answer from memory when fresh information is available online.`
+              : '',
+          ].filter(Boolean).join('\n\n');
+
       contextParts.push(agentHeader);
 
       if (agent.memory_text?.trim()) {

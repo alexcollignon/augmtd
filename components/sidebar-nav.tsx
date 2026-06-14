@@ -7,7 +7,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import {
   EnvelopeIcon,
   ChatBubbleLeftEllipsisIcon,
-  BoltIcon,
+  UserGroupIcon,
   VideoCameraIcon,
   FolderIcon,
   ClockIcon,
@@ -47,29 +47,14 @@ export default function SidebarNav({
   const menuRef = useRef<HTMLDivElement>(null);
 
   const [isSuperAdmin] = useState(isSuperAdminProp);
-  const [workflowNotifCount, setWorkflowNotifCount] = useState(0);
-
   const navigation = [
-    ...(features.email    ? [{ name: 'Inbox',    href: '/inbox',    icon: EnvelopeIcon }]    : []),
-    { name: 'Chat', href: '/work', icon: ChatBubbleLeftEllipsisIcon },
-    ...(features.studio !== false ? [{ name: 'Studio', href: '/studio', icon: BoltIcon, badgeCount: workflowNotifCount }] : []),
+    ...(features.email    ? [{ name: 'Inbox',    href: '/inbox',    icon: EnvelopeIcon }]              : []),
+    { name: 'Workers', href: '/workers', icon: UserGroupIcon },
+    { name: 'Chat',    href: '/work',    icon: ChatBubbleLeftEllipsisIcon },
     ...(features.meetings ? [{ name: 'Meetings', href: '/meetings', icon: VideoCameraIcon }] : []),
     ...(features.drive    ? [{ name: 'Drive',    href: '/drive',    icon: FolderIcon }]      : []),
     ...(isSuperAdmin ? [{ name: 'Platform Admin', href: '/platform-admin', icon: ShieldCheckIcon }] : []),
   ];
-
-  // Poll workflow notifications every 30s
-  useEffect(() => {
-    const fetchCount = () => {
-      fetch('/api/notifications/workflows')
-        .then((r) => r.json())
-        .then((d) => setWorkflowNotifCount(d.count ?? 0))
-        .catch(() => {});
-    };
-    fetchCount();
-    const interval = setInterval(fetchCount, 30000);
-    return () => clearInterval(interval);
-  }, []);
 
   // Close popover on outside click
   useEffect(() => {
@@ -104,7 +89,6 @@ export default function SidebarNav({
       <nav className="flex-1 py-2 px-1.5">
         {navigation.map((item) => {
           const isActive = pathname.startsWith(item.href);
-          const badgeCount = 'badgeCount' in item ? item.badgeCount : 0;
           return (
             <div key={item.name}>
               <Link
@@ -119,9 +103,6 @@ export default function SidebarNav({
                 `}
               >
                 <item.icon className="w-[18px] h-[18px] flex-shrink-0" />
-                {badgeCount && badgeCount > 0 ? (
-                  <span className="absolute top-1.5 right-2.5 w-1.5 h-1.5 rounded-full bg-indigo-500" />
-                ) : null}
               </Link>
             </div>
           );

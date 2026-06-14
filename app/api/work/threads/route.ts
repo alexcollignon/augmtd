@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 
 // GET /api/work/threads — list user's work threads
-export async function GET() {
+// Optional ?agent_id=<uuid> filters to threads for a specific worker/agent
+export async function GET(request: NextRequest) {
   try {
     const supabase = await createClient();
     const { data: { user }, error: userError } = await supabase.auth.getUser();
@@ -10,15 +11,23 @@ export async function GET() {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { data: threads, error } = await supabase
+    const agentId = request.nextUrl.searchParams.get('agent_id');
+
+    let query = supabase
       .from('work_threads')
-      .select('id, title, plan, status, created_at, updated_at')
+      .select('id, title, plan, status, created_at, updated_at, agent_id')
       .eq('user_id', user.id)
       .eq('status', 'active')
       .or('is_temporary.eq.false,is_temporary.is.null')
       .is('workflow_id', null)
       .order('updated_at', { ascending: false })
       .limit(50);
+
+    if (agentId) {
+      query = query.eq('agent_id', agentId);
+    }
+
+    const { data: threads, error } = await query;
 
     if (error) throw error;
     return NextResponse.json({ threads: threads ?? [] });
