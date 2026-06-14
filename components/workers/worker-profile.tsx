@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { WorkerChatTab } from '@/components/workers/tabs/worker-chat-tab';
 import { WorkerKnowledgeTab } from '@/components/workers/tabs/worker-knowledge-tab';
 import { WorkerActivityTab } from '@/components/workers/tabs/worker-activity-tab';
@@ -39,8 +39,19 @@ interface WorkerProfileProps {
 
 export function WorkerProfile({ worker, initialThreads }: WorkerProfileProps) {
   const [activeTab, setActiveTab] = useState<Tab>('chat');
+  const [jumpThreadId, setJumpThreadId] = useState<string | null>(null);
+
   const colors = COLOR_MAP[worker.color] ?? COLOR_MAP.neutral;
   const roleLabel = worker.worker_role ? (ROLE_LABELS[worker.worker_role] ?? worker.worker_role) : null;
+
+  const handleOpenInChat = useCallback((threadId: string) => {
+    setJumpThreadId(threadId);
+    setActiveTab('chat');
+  }, []);
+
+  const handleJumpConsumed = useCallback(() => {
+    setJumpThreadId(null);
+  }, []);
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden rounded-2xl bg-white shadow-sm">
@@ -48,12 +59,9 @@ export function WorkerProfile({ worker, initialThreads }: WorkerProfileProps) {
       {/* Profile header */}
       <div className="flex-shrink-0 px-6 pt-6 pb-0 border-b border-neutral-100">
         <div className="flex items-start gap-4 mb-5">
-          {/* Avatar */}
           <div className={`w-12 h-12 rounded-2xl ${colors.bg} flex items-center justify-center flex-shrink-0 shadow-sm`}>
             <span className="text-white text-[20px] select-none leading-none">{worker.icon}</span>
           </div>
-
-          {/* Name + meta */}
           <div className="min-w-0 flex-1 pt-0.5">
             <div className="flex items-center gap-2.5">
               <h1 className="text-[16px] font-semibold text-neutral-900 leading-tight">{worker.name}</h1>
@@ -96,6 +104,8 @@ export function WorkerProfile({ worker, initialThreads }: WorkerProfileProps) {
             key={`chat-${worker.id}`}
             worker={worker}
             initialThreads={initialThreads}
+            jumpThreadId={jumpThreadId}
+            onJumpConsumed={handleJumpConsumed}
           />
         )}
         {activeTab === 'knowledge' && (
@@ -117,6 +127,7 @@ export function WorkerProfile({ worker, initialThreads }: WorkerProfileProps) {
             key={`activity-${worker.id}`}
             workerId={worker.id}
             workerName={worker.name}
+            onOpenInChat={handleOpenInChat}
           />
         )}
       </div>

@@ -10,12 +10,28 @@ import type { Worker, WorkerThread } from '@/app/workers/workers-page-client';
 interface WorkerChatTabProps {
   worker: Worker;
   initialThreads: WorkerThread[];
+  jumpThreadId?: string | null;
+  onJumpConsumed?: () => void;
 }
 
-export function WorkerChatTab({ worker, initialThreads }: WorkerChatTabProps) {
+export function WorkerChatTab({ worker, initialThreads, jumpThreadId, onJumpConsumed }: WorkerChatTabProps) {
   const [threads, setThreads] = useState<WorkerThread[]>(initialThreads);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const [pendingMessage, setPendingMessage] = useState<string | null>(null);
+
+  // When a jump is requested from outside (e.g. Activity tab "Open in chat"),
+  // open that thread — even if it's not in the sidebar list (routine output threads).
+  useEffect(() => {
+    if (!jumpThreadId) return;
+    setActiveThreadId(jumpThreadId);
+    setPendingMessage(null);
+    // If the thread isn't in the list (it's a routine output thread), add a placeholder
+    setThreads(prev => {
+      if (prev.some(t => t.id === jumpThreadId)) return prev;
+      return [{ id: jumpThreadId, title: 'Routine output', created_at: new Date().toISOString(), updated_at: new Date().toISOString(), agent_id: worker.id }, ...prev];
+    });
+    onJumpConsumed?.();
+  }, [jumpThreadId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const activeThread = threads.find(t => t.id === activeThreadId) ?? null;
   const starters = (worker.conversation_starters ?? []).filter(Boolean);

@@ -1,29 +1,30 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { ChatBubbleLeftIcon, WrenchIcon } from '@heroicons/react/24/outline';
-import type { WorkerThread } from '@/app/workers/workers-page-client';
+import { useState, useEffect, useCallback } from 'react';
+import { ChatBubbleLeftIcon, BoltIcon, ArrowRightIcon, CheckCircleIcon, ExclamationCircleIcon, ClockIcon } from '@heroicons/react/24/outline';
 
-interface MessageSummary {
-  thread_id: string;
-  thread_title: string;
-  tool_names: string[];
-  updated_at: string;
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+interface ChatEntry {
+  kind: 'chat';
+  threadId: string;
+  title: string;
+  timestamp: string;
 }
 
-const TOOL_LABELS: Record<string, string> = {
-  get_emails: 'Read emails',
-  get_meeting_context: 'Checked calendar',
-  web_search: 'Searched the web',
-  fetch_url: 'Fetched a page',
-  deep_research: 'Deep research',
-  create_draft: 'Drafted email',
-  send_email: 'Sent email',
-};
-
-function toolLabel(name: string): string {
-  return TOOL_LABELS[name] ?? name;
+interface RoutineEntry {
+  kind: 'routine';
+  routineId: string;
+  routineName: string;
+  runStatus: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+  triggeredBy: string;
+  threadId: string | null;
+  timestamp: string;
 }
+
+type HeartbeatEntry = ChatEntry | RoutineEntry;
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function relativeTime(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
@@ -37,61 +38,109 @@ function relativeTime(iso: string): string {
   return new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
 }
 
+function RunStatusChip({ status }: { status: RoutineEntry['runStatus'] }) {
+  if (status === 'succeeded') return (
+    <span className="flex items-center gap-1 text-[10.5px] text-emerald-600">
+      <CheckCircleIcon className="w-3 h-3" /> Completed
+    </span>
+  );
+  if (status === 'failed') return (
+    <span className="flex items-center gap-1 text-[10.5px] text-red-500">
+      <ExclamationCircleIcon className="w-3 h-3" /> Failed
+    </span>
+  );
+  if (status === 'running' || status === 'queued') return (
+    <span className="flex items-center gap-1 text-[10.5px] text-indigo-500">
+      <ClockIcon className="w-3 h-3" /> Running
+    </span>
+  );
+  return null;
+}
+
+// ─── Main component ───────────────────────────────────────────────────────────
+
 interface WorkerActivityTabProps {
   workerId: string;
   workerName: string;
+  onOpenInChat: (threadId: string) => void;
 }
 
-export function WorkerActivityTab({ workerId, workerName }: WorkerActivityTabProps) {
-  const [threads, setThreads] = useState<WorkerThread[]>([]);
-  const [toolActivity, setToolActivity] = useState<MessageSummary[]>([]);
+export function WorkerActivityTab({ workerId, workerName, onOpenInChat }: WorkerActivityTabProps) {
+  const [entries, setEntries] = useState<HeartbeatEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  useEffect(() => {
+  const load = useCallback(async () => {
     setIsLoading(true);
-    fetch(`/api/work/threads?agent_id=${workerId}`)
-      .then(r => r.json())
-      .then(data => {
-        const t: WorkerThread[] = data.threads ?? [];
-        setThreads(t);
+    try {
+      // Fetch chat threads and routines in parallel
+      const [threadsRes, routinesRes] = await Promise.all([
+        fetch(`/api/work/threads?agent_id=${workerId}`),
+        fetch(`/api/workflows?agent_id=${workerId}`),
+      ]);
 
-        // Fetch messages with tool calls for recent threads (up to 10)
-        const recent = t.slice(0, 10);
-        if (recent.length === 0) { setIsLoading(false); return; }
+      const [threadsData, routinesData] = await Promise.all([
+        threadsRes.ok ? threadsRes.json() : { threads: [] },
+        routinesRes.ok ? routinesRes.json() : { workflows: [] },
+      ]);
 
-        Promise.all(
-          recent.map(thread =>
-            fetch(`/api/work/threads/${thread.id}/chat`)
-              .then(r => r.json())
-              .then(d => {
-                const msgs: Array<{ role: string; metadata?: Record<string, unknown> | null }> = d.messages ?? [];
-                const toolNames = msgs
-                  .filter(m => m.role === 'assistant' && Array.isArray((m.metadata as Record<string, unknown>)?.tool_calls))
-                  .flatMap(m => ((m.metadata as Record<string, unknown>).tool_calls as Array<{ name: string }>).map(tc => tc.name));
-                const unique = [...new Set(toolNames)];
-                return unique.length > 0
-                  ? { thread_id: thread.id, thread_title: thread.title, tool_names: unique, updated_at: thread.updated_at }
-                  : null;
-              })
-              .catch(() => null)
+      const chatThreads: ChatEntry[] = (threadsData.threads ?? []).map((t: { id: string; title: string; updated_at: string }) => ({
+        kind: 'chat' as const,
+        threadId: t.id,
+        title: t.title,
+        timestamp: t.updated_at,
+      }));
+
+      // Fetch recent runs for each routine (up to 5 routines, 3 runs each)
+      const routines: Array<{ id: string; name: string }> = (routinesData.workflows ?? []).slice(0, 5);
+      const routineEntries: RoutineEntry[] = [];
+
+      if (routines.length > 0) {
+        const runResults = await Promise.all(
+          routines.map(r =>
+            fetch(`/api/workflows/${r.id}/runs?limit=3`)
+              .then(res => res.ok ? res.json() : { runs: [] })
+              .then(data => ({ routineId: r.id, routineName: r.name, runs: data.runs ?? [] }))
+              .catch(() => ({ routineId: r.id, routineName: r.name, runs: [] }))
           )
-        ).then(results => {
-          setToolActivity(results.filter((r): r is MessageSummary => r !== null));
-          setIsLoading(false);
-        });
-      })
-      .catch(() => setIsLoading(false));
+        );
+
+        for (const { routineId, routineName, runs } of runResults) {
+          for (const run of runs) {
+            routineEntries.push({
+              kind: 'routine',
+              routineId,
+              routineName,
+              runStatus: run.status,
+              triggeredBy: run.triggered_by,
+              threadId: run.thread_id ?? null,
+              timestamp: run.completed_at ?? run.started_at ?? run.created_at,
+            });
+          }
+        }
+      }
+
+      // Merge and sort by timestamp descending
+      const all: HeartbeatEntry[] = [...chatThreads, ...routineEntries].sort(
+        (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+      );
+
+      setEntries(all);
+    } finally {
+      setIsLoading(false);
+    }
   }, [workerId]);
+
+  useEffect(() => { load(); }, [load]);
 
   if (isLoading) {
     return (
       <div className="flex-1 p-6 space-y-4 animate-pulse">
-        {[1, 2, 3].map(i => (
-          <div key={i} className="flex gap-3">
-            <div className="w-8 h-8 bg-neutral-100 rounded-full flex-shrink-0" />
-            <div className="flex-1 space-y-2 pt-1">
+        {[1, 2, 3, 4].map(i => (
+          <div key={i} className="flex gap-3 items-start">
+            <div className="w-7 h-7 rounded-lg bg-neutral-100 flex-shrink-0" />
+            <div className="flex-1 space-y-1.5 pt-0.5">
               <div className="h-3 bg-neutral-100 rounded w-2/3" />
-              <div className="h-3 bg-neutral-100 rounded w-1/3" />
+              <div className="h-2.5 bg-neutral-100 rounded w-1/3" />
             </div>
           </div>
         ))}
@@ -99,11 +148,12 @@ export function WorkerActivityTab({ workerId, workerName }: WorkerActivityTabPro
     );
   }
 
-  if (threads.length === 0) {
+  if (entries.length === 0) {
     return (
-      <div className="flex-1 flex items-center justify-center">
-        <p className="text-[13px] text-neutral-400">
-          {workerName}&apos;s activity will appear here after your first conversation
+      <div className="flex-1 flex flex-col items-center justify-center gap-2">
+        <p className="text-[13px] text-neutral-500 font-medium">Nothing yet</p>
+        <p className="text-[12px] text-neutral-400 text-center max-w-[280px]">
+          {workerName}&apos;s activity — conversations, routine runs, and actions — will appear here.
         </p>
       </div>
     );
@@ -111,63 +161,104 @@ export function WorkerActivityTab({ workerId, workerName }: WorkerActivityTabPro
 
   return (
     <div className="flex-1 overflow-y-auto">
-      <div className="max-w-[680px] mx-auto px-6 py-8 space-y-10">
+      <div className="max-w-[680px] mx-auto px-6 py-6">
+        <div className="flex items-center justify-between mb-5">
+          <h2 className="text-[11px] font-semibold text-neutral-400 uppercase tracking-wider">
+            Activity
+          </h2>
+          <button
+            onClick={load}
+            className="text-[11.5px] text-neutral-400 hover:text-neutral-600 transition-colors"
+          >
+            Refresh
+          </button>
+        </div>
 
-        {/* Tool actions */}
-        {toolActivity.length > 0 && (
-          <section>
-            <div className="flex items-center gap-1.5 mb-4">
-              <WrenchIcon className="w-3.5 h-3.5 text-neutral-400" />
-              <h2 className="text-[13px] font-semibold text-neutral-800">Actions taken</h2>
-            </div>
-            <div className="rounded-xl border border-neutral-200 overflow-hidden divide-y divide-neutral-100">
-              {toolActivity.map(item => (
-                <div key={item.thread_id} className="flex items-start gap-3 px-4 py-3">
-                  <div className="min-w-0 flex-1">
-                    <p className="text-[12.5px] font-medium text-neutral-700 truncate">
-                      {item.thread_title}
-                    </p>
-                    <div className="flex flex-wrap gap-1.5 mt-1.5">
-                      {item.tool_names.map(name => (
-                        <span
-                          key={name}
-                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-neutral-100 text-[11px] text-neutral-500"
-                        >
-                          {toolLabel(name)}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                  <span className="text-[11px] text-neutral-400 flex-shrink-0 pt-0.5">
-                    {relativeTime(item.updated_at)}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
+        {/* Timeline */}
+        <div className="relative">
+          {/* Vertical line */}
+          <div className="absolute left-[13px] top-0 bottom-0 w-px bg-neutral-100" />
 
-        {/* Recent conversations */}
-        <section>
-          <div className="flex items-center gap-1.5 mb-4">
-            <ChatBubbleLeftIcon className="w-3.5 h-3.5 text-neutral-400" />
-            <h2 className="text-[13px] font-semibold text-neutral-800">Recent conversations</h2>
-          </div>
-          <div className="rounded-xl border border-neutral-200 overflow-hidden divide-y divide-neutral-100">
-            {threads.map(thread => (
-              <div key={thread.id} className="flex items-center gap-3 px-4 py-3">
-                <div className="min-w-0 flex-1">
-                  <p className="text-[12.5px] text-neutral-700 truncate">{thread.title}</p>
-                </div>
-                <span className="text-[11px] text-neutral-400 flex-shrink-0">
-                  {relativeTime(thread.updated_at)}
-                </span>
-              </div>
+          <div className="space-y-1">
+            {entries.map((entry, i) => (
+              entry.kind === 'chat'
+                ? <ChatEntryRow key={`chat-${entry.threadId}-${i}`} entry={entry} onOpen={() => onOpenInChat(entry.threadId)} />
+                : <RoutineEntryRow key={`routine-${entry.routineId}-${i}`} entry={entry} onOpen={entry.threadId ? () => onOpenInChat(entry.threadId!) : undefined} />
             ))}
           </div>
-        </section>
-
+        </div>
       </div>
+    </div>
+  );
+}
+
+// ─── Chat entry row ───────────────────────────────────────────────────────────
+
+function ChatEntryRow({ entry, onOpen }: { entry: ChatEntry; onOpen: () => void }) {
+  return (
+    <div className="group flex items-start gap-3 py-3 pl-1 pr-0">
+      {/* Icon dot */}
+      <div className="w-6 h-6 rounded-lg bg-neutral-100 flex items-center justify-center flex-shrink-0 mt-0.5 z-10">
+        <ChatBubbleLeftIcon className="w-3 h-3 text-neutral-400" />
+      </div>
+
+      {/* Content */}
+      <div className="min-w-0 flex-1">
+        <p className="text-[13px] text-neutral-700 leading-snug truncate">{entry.title}</p>
+        <p className="text-[11px] text-neutral-400 mt-0.5">{relativeTime(entry.timestamp)}</p>
+      </div>
+
+      {/* Open button */}
+      <button
+        onClick={onOpen}
+        className="flex items-center gap-1 text-[11.5px] text-neutral-400 hover:text-indigo-600 transition-colors opacity-0 group-hover:opacity-100 flex-shrink-0 mt-0.5"
+      >
+        Open <ArrowRightIcon className="w-3 h-3" />
+      </button>
+    </div>
+  );
+}
+
+// ─── Routine entry row ────────────────────────────────────────────────────────
+
+function RoutineEntryRow({ entry, onOpen }: { entry: RoutineEntry; onOpen?: () => void }) {
+  const canOpen = !!onOpen;
+
+  return (
+    <div className="group flex items-start gap-3 py-3 pl-1 pr-0">
+      {/* Icon dot */}
+      <div className={`w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5 z-10 ${
+        entry.runStatus === 'succeeded' ? 'bg-emerald-50' :
+        entry.runStatus === 'failed' ? 'bg-red-50' :
+        'bg-indigo-50'
+      }`}>
+        <BoltIcon className={`w-3 h-3 ${
+          entry.runStatus === 'succeeded' ? 'text-emerald-500' :
+          entry.runStatus === 'failed' ? 'text-red-400' :
+          'text-indigo-400'
+        }`} />
+      </div>
+
+      {/* Content */}
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2 flex-wrap">
+          <p className="text-[13px] text-neutral-700 leading-snug truncate">{entry.routineName}</p>
+          <RunStatusChip status={entry.runStatus} />
+        </div>
+        <p className="text-[11px] text-neutral-400 mt-0.5">
+          {entry.triggeredBy === 'schedule' ? 'Scheduled run' : 'Manual run'} · {relativeTime(entry.timestamp)}
+        </p>
+      </div>
+
+      {/* Open output button */}
+      {canOpen && (
+        <button
+          onClick={onOpen}
+          className="flex items-center gap-1 text-[11.5px] text-neutral-400 hover:text-indigo-600 transition-colors opacity-0 group-hover:opacity-100 flex-shrink-0 mt-0.5"
+        >
+          Open output <ArrowRightIcon className="w-3 h-3" />
+        </button>
+      )}
     </div>
   );
 }
