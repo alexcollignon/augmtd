@@ -16,6 +16,7 @@ interface StudioPageClientProps {
   initialWorkflowId?: string | null;
   initialAgents?: SidebarAgent[];
   initialWorkflows?: Workflow[];
+  assignWorkerId?: string | null;
 }
 
 export function StudioPageClient({
@@ -24,6 +25,7 @@ export function StudioPageClient({
   initialWorkflowId = null,
   initialAgents = [],
   initialWorkflows = [],
+  assignWorkerId = null,
 }: StudioPageClientProps) {
   const router = useRouter();
 
@@ -77,7 +79,10 @@ export function StudioPageClient({
     const res = await fetch('/api/workflows', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: 'Untitled workflow' }),
+      body: JSON.stringify({
+        name: 'Untitled routine',
+        ...(assignWorkerId ? { agent_id: assignWorkerId } : {}),
+      }),
     });
     if (res.ok) {
       const { workflow } = await res.json();

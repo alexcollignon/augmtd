@@ -4,9 +4,10 @@ import { useState } from 'react';
 import { WorkerChatTab } from '@/components/workers/tabs/worker-chat-tab';
 import { WorkerKnowledgeTab } from '@/components/workers/tabs/worker-knowledge-tab';
 import { WorkerActivityTab } from '@/components/workers/tabs/worker-activity-tab';
+import { WorkerRoutinesTab } from '@/components/workers/tabs/worker-routines-tab';
 import type { Worker, WorkerThread } from '@/app/workers/workers-page-client';
 
-type Tab = 'chat' | 'knowledge' | 'activity';
+type Tab = 'chat' | 'knowledge' | 'routines' | 'activity';
 
 const COLOR_MAP: Record<string, { bg: string; text: string }> = {
   indigo:  { bg: 'bg-indigo-500',  text: 'text-indigo-600' },
@@ -27,6 +28,7 @@ const ROLE_LABELS: Record<string, string> = {
 const TABS: { id: Tab; label: string }[] = [
   { id: 'chat',      label: 'Chat' },
   { id: 'knowledge', label: 'Knowledge' },
+  { id: 'routines',  label: 'Routines' },
   { id: 'activity',  label: 'Activity' },
 ];
 
@@ -99,6 +101,13 @@ export function WorkerProfile({ worker, initialThreads }: WorkerProfileProps) {
         {activeTab === 'knowledge' && (
           <WorkerKnowledgeTab
             key={`knowledge-${worker.id}`}
+            workerId={worker.id}
+            workerName={worker.name}
+          />
+        )}
+        {activeTab === 'routines' && (
+          <WorkerRoutinesTab
+            key={`routines-${worker.id}`}
             workerId={worker.id}
             workerName={worker.name}
           />
