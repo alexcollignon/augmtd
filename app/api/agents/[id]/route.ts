@@ -15,7 +15,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
     const { data: agent, error } = await supabase
       .from('custom_agents')
       .select(`
-        id, user_id, name, description, instructions, memory_text, color, icon, is_active, created_at, updated_at,
+        id, user_id, name, description, instructions, user_preferences, memory_text, color, icon, is_active, created_at, updated_at,
         conversation_starters, web_enabled, shared_with_company,
         agent_knowledge_sources (id, name, knowledge_file_id, created_at)
       `)
@@ -39,7 +39,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const body = await request.json();
-    const allowed = ['name', 'description', 'instructions', 'color', 'icon', 'memory_text', 'conversation_starters', 'web_enabled', 'shared_with_company', 'sharing_mode'] as const;
+    const allowed = ['name', 'description', 'instructions', 'user_preferences', 'color', 'icon', 'memory_text', 'conversation_starters', 'web_enabled', 'shared_with_company', 'sharing_mode'] as const;
     const updates: Record<string, unknown> = {};
     for (const key of allowed) {
       if (key in body) updates[key] = body[key];

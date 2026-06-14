@@ -15,7 +15,7 @@ interface WorkerKnowledgeTabProps {
 }
 
 export function WorkerKnowledgeTab({ workerId, workerName }: WorkerKnowledgeTabProps) {
-  const [instructions, setInstructions] = useState('');
+  const [userPreferences, setUserPreferences] = useState('');
   const [memoryText, setMemoryText] = useState<string | null>(null);
   const [kbFiles, setKbFiles] = useState<KBFile[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -25,13 +25,15 @@ export function WorkerKnowledgeTab({ workerId, workerName }: WorkerKnowledgeTabP
 
   useEffect(() => {
     setIsLoading(true);
+    setIsDirty(false);
+    setSavedAt(null);
     Promise.all([
       fetch(`/api/agents/${workerId}`).then(r => r.json()),
       fetch(`/api/agents/${workerId}/knowledge`).then(r => r.json()),
-    ]).then(([agent, knowledge]) => {
-      setInstructions(agent.instructions ?? '');
-      setMemoryText(agent.memory_text ?? null);
-      setKbFiles(knowledge.sources ?? []);
+    ]).then(([{ agent }, { sources }]) => {
+      setUserPreferences(agent?.user_preferences ?? '');
+      setMemoryText(agent?.memory_text ?? null);
+      setKbFiles(sources ?? []);
       setIsLoading(false);
     }).catch(() => setIsLoading(false));
   }, [workerId]);
@@ -43,7 +45,7 @@ export function WorkerKnowledgeTab({ workerId, workerName }: WorkerKnowledgeTabP
       await fetch(`/api/agents/${workerId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ instructions }),
+        body: JSON.stringify({ user_preferences: userPreferences }),
       });
       setSavedAt(new Date());
       setIsDirty(false);
@@ -52,8 +54,8 @@ export function WorkerKnowledgeTab({ workerId, workerName }: WorkerKnowledgeTabP
     }
   }
 
-  function handleInstructionsChange(val: string) {
-    setInstructions(val);
+  function handlePreferencesChange(val: string) {
+    setUserPreferences(val);
     setIsDirty(true);
     setSavedAt(null);
   }
@@ -73,16 +75,16 @@ export function WorkerKnowledgeTab({ workerId, workerName }: WorkerKnowledgeTabP
     <div className="flex-1 overflow-y-auto">
       <div className="max-w-[680px] mx-auto px-6 py-8 space-y-10">
 
-        {/* Policy */}
+        {/* Your preferences */}
         <section>
-          <div className="flex items-center justify-between mb-3">
+          <div className="flex items-start justify-between mb-3">
             <div>
-              <h2 className="text-[13px] font-semibold text-neutral-800">Policy</h2>
-              <p className="text-[11.5px] text-neutral-400 mt-0.5">
-                Rules and behaviour {workerName} always follows
+              <h2 className="text-[13px] font-semibold text-neutral-800">Your preferences</h2>
+              <p className="text-[11.5px] text-neutral-400 mt-0.5 max-w-[420px]">
+                Tell {workerName} what matters to you — communication style, priorities, what to ignore, working hours. This is your personal context, only visible to your worker.
               </p>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-shrink-0 ml-4">
               {savedAt && !isDirty && (
                 <span className="text-[11px] text-neutral-400">Saved</span>
               )}
@@ -96,12 +98,15 @@ export function WorkerKnowledgeTab({ workerId, workerName }: WorkerKnowledgeTabP
             </div>
           </div>
           <textarea
-            value={instructions}
-            onChange={e => handleInstructionsChange(e.target.value)}
-            rows={14}
+            value={userPreferences}
+            onChange={e => handlePreferencesChange(e.target.value)}
+            rows={10}
             className="w-full rounded-xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-[13px] text-neutral-700 leading-relaxed resize-none outline-none focus:border-neutral-300 focus:bg-white transition-colors placeholder:text-neutral-400"
-            placeholder={`Describe how ${workerName} should behave, what it should prioritise, and any rules it should follow…`}
+            placeholder={`e.g. I prefer concise emails, no bullet points. Flag anything from clients as urgent. I work 9–6 CET. Don't bother me with newsletters or automated notifications…`}
           />
+          <p className="mt-2 text-[11px] text-neutral-400">
+            Changes apply to future conversations — {workerName}&apos;s core behaviour is managed by the product.
+          </p>
         </section>
 
         {/* Memory */}
@@ -112,7 +117,7 @@ export function WorkerKnowledgeTab({ workerId, workerName }: WorkerKnowledgeTabP
               <h2 className="text-[13px] font-semibold text-neutral-800">Memory</h2>
             </div>
             <p className="text-[11.5px] text-neutral-400 mt-0.5">
-              What {workerName} has learned about you from your interactions
+              What {workerName} has learned about you automatically from your interactions
             </p>
           </div>
           {memoryText ? (

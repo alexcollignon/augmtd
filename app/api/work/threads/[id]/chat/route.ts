@@ -229,13 +229,13 @@ export async function POST(
       agentId
         ? adminClient
             .from('custom_agents')
-            .select('id, user_id, name, instructions, memory_text, web_enabled, is_worker, agent_knowledge_sources(knowledge_file_id)')
+            .select('id, user_id, name, instructions, user_preferences, memory_text, web_enabled, is_worker, agent_knowledge_sources(knowledge_file_id)')
             .eq('id', agentId)
             .single()
         : Promise.resolve({ data: null }),
     ]);
 
-    const agentRaw = (agentResult as { data: { id: string; user_id: string; name: string; instructions: string | null; memory_text: string | null; web_enabled: boolean | null; is_worker?: boolean; agent_knowledge_sources: Array<{ knowledge_file_id: string | null }> } | null }).data ?? null;
+    const agentRaw = (agentResult as { data: { id: string; user_id: string; name: string; instructions: string | null; user_preferences: string | null; memory_text: string | null; web_enabled: boolean | null; is_worker?: boolean; agent_knowledge_sources: Array<{ knowledge_file_id: string | null }> } | null }).data ?? null;
 
     // For shared agents used by non-owners, load personal memory from agent_memories
     let agentMemoryText = agentRaw?.memory_text ?? null;
@@ -269,9 +269,12 @@ export async function POST(
 
     if (agent) {
       const agentHeader = isWorker
-        // Worker-quality prompt: role is the primary identity, instructions are the mandate
+        // Worker: system layer (locked) + user preferences (injected separately)
         ? [
             agent.instructions?.trim() ?? `You are ${agent.name}, a dedicated AI colleague.`,
+            (agent as typeof agent & { user_preferences?: string | null }).user_preferences?.trim()
+              ? `[USER CONTEXT — personal preferences set by this user]\n${(agent as typeof agent & { user_preferences?: string | null }).user_preferences!.trim()}`
+              : '',
             `You have access to: email inbox (get_emails), calendar & meetings (get_meeting_context), web search (web_search, fetch_url), and deep research (deep_research). Use them proactively — retrieve real context before answering rather than relying on memory.`,
             `Act, don't hedge. When a task is clear, do it and show your work briefly. One focused question maximum if truly blocked.`,
           ].filter(Boolean).join('\n\n')
