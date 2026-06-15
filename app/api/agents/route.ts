@@ -10,11 +10,13 @@ export async function GET() {
     const { data: { user }, error: userError } = await supabase.auth.getUser();
     if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    // RLS returns own active agents + shared company agents
+    // RLS returns own active agents + shared company agents — exclude workers (they live in /workers)
     const { data: rows, error } = await supabase
       .from('custom_agents')
       .select('id, user_id, name, description, instructions, memory_text, color, icon, is_active, created_at, updated_at, conversation_starters, web_enabled, shared_with_company, sharing_mode')
       .eq('is_active', true)
+      .or('is_worker.is.null,is_worker.eq.false')
+      .is('worker_role', null)
       .order('created_at', { ascending: true });
 
     if (error) throw error;

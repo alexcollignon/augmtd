@@ -9,7 +9,7 @@ export async function GET() {
 
   const { data, error } = await supabase
     .from('custom_agents')
-    .select('id, name, description, instructions, memory_text, color, icon, worker_role, is_worker, web_enabled, conversation_starters')
+    .select('id, name, description, color, icon, worker_role, is_enabled, conversation_starters')
     .eq('user_id', user.id)
     .eq('is_worker', true)
     .eq('is_active', true)

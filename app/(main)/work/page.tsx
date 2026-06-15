@@ -30,7 +30,7 @@ export default async function WorkPage({
 
   const THREAD_COLS = 'id, title, plan, artifact, artifacts, status, auto_generated, saved_workflow_id, is_generating, created_at, updated_at, agent_id, workflow_id';
 
-  const [{ data: threads }, { data: savedWorkflowsData }, { data: agentsData }, initialThreadResult] = await Promise.all([
+  const [{ data: threads }, { data: savedWorkflowsData }, { data: agentsData }, { data: workerRows }, initialThreadResult] = await Promise.all([
     supabase
       .from('work_threads')
       .select(THREAD_COLS)
@@ -50,7 +50,15 @@ export default async function WorkPage({
       .from('custom_agents')
       .select('id, user_id, name, description, color, icon, conversation_starters, web_enabled, shared_with_company')
       .eq('is_active', true)
+      .or('is_worker.is.null,is_worker.eq.false')
+      .is('worker_role', null)
       .order('created_at', { ascending: true }),
+    // Fetch worker IDs to filter them out of chat history
+    supabase
+      .from('custom_agents')
+      .select('id')
+      .eq('user_id', user.id)
+      .not('worker_role', 'is', null),
     // If opening a specific thread (e.g. workflow run thread), fetch it directly
     // — it won't appear in the main query which excludes workflow_id threads.
     initialThreadId
@@ -95,9 +103,13 @@ export default async function WorkPage({
     owner_name: (a.user_id !== user.id ? (agentOwnerNames[a.user_id] ?? 'Teammate') : null) as string | null,
   }));
 
+  // Filter out worker threads from chat history
+  const workerAgentIds = new Set((workerRows ?? []).map((w: { id: string }) => w.id));
+  const nonWorkerThreads = (threads ?? []).filter(t => !t.agent_id || !workerAgentIds.has(t.agent_id));
+
   // Merge the directly-fetched thread (e.g. a workflow run thread) into the list
   // if it isn't already there (workflow run threads are excluded from the main query).
-  const baseThreads = threads ?? [];
+  const baseThreads = nonWorkerThreads;
   const extraThread = initialThreadResult?.data ?? null;
   const mergedThreads = extraThread && !baseThreads.find(t => t.id === extraThread.id)
     ? [extraThread, ...baseThreads]

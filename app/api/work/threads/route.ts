@@ -28,8 +28,24 @@ export async function GET(request: NextRequest) {
     }
 
     const { data: threads, error } = await query;
-
     if (error) throw error;
+
+    // When not filtering by a specific agent, exclude threads that belong to workers —
+    // those live in the Workers section and shouldn't bleed into Chat history.
+    if (!agentId) {
+      const { data: workerRows } = await supabase
+        .from('custom_agents')
+        .select('id')
+        .eq('user_id', user.id)
+        .not('worker_role', 'is', null);
+
+      if (workerRows && workerRows.length > 0) {
+        const workerIds = new Set(workerRows.map((w: { id: string }) => w.id));
+        const filtered = (threads ?? []).filter(t => !t.agent_id || !workerIds.has(t.agent_id));
+        return NextResponse.json({ threads: filtered });
+      }
+    }
+
     return NextResponse.json({ threads: threads ?? [] });
   } catch (error) {
     console.error('[WorkThreads] GET error:', error);
