@@ -191,6 +191,8 @@ export interface RunWorkflowOptions {
   runnerId?: string;
   /** Test mode: skip notifications, skip updating last_run_at/next_run_at. */
   isTest?: boolean;
+  /** If triggered from a chat thread, post a completion message back into this thread. */
+  sourceThreadId?: string;
 }
 
 export interface RunWorkflowResult {
@@ -251,6 +253,7 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
       user_id: runnerId,
       title: threadTitle,
       workflow_id: workflow.id,
+      agent_id: (workflow as Workflow & { agent_id?: string }).agent_id ?? null,
       status: 'active',
     })
     .select('id')
@@ -385,6 +388,26 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
       last_run_at: completedAt.toISOString(),
       next_run_at: nextRun ? nextRun.toISOString() : null,
     }).eq('id', workflow.id);
+  }
+
+  // Proactive completion message — post back into the source chat thread if triggered from one
+  if (opts.sourceThreadId) {
+    const artifact = materialised.artifact;
+    // Build a short prose intro + structured artifact reference the chat UI can render
+    const completionContent = artifact
+      ? `**${artifact.title}** is ready.\n\n${materialised.messageContent.replace(/\*\*.*?\*\* ready\./, '').trim()}`
+      : materialised.messageContent;
+
+    try {
+      await admin.from('work_messages').insert({
+        thread_id: opts.sourceThreadId,
+        role: 'assistant',
+        content: completionContent,
+        metadata: artifact
+          ? { artifact_ids: [artifact.id], completion_thread_id: threadId }
+          : { completion_thread_id: threadId },
+      });
+    } catch { /* non-critical */ }
   }
 
   return { runId, status: 'succeeded', threadId };

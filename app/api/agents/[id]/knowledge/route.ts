@@ -3,6 +3,36 @@ import { createClient } from '@/lib/supabase/server';
 
 type Params = { params: Promise<{ id: string }> };
 
+// GET /api/agents/[id]/knowledge — list knowledge sources attached to this agent
+export async function GET(_req: NextRequest, { params }: Params) {
+  const { id: agentId } = await params;
+  try {
+    const supabase = await createClient();
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
+    if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+    const { data: agent } = await supabase
+      .from('custom_agents')
+      .select('id')
+      .eq('id', agentId)
+      .eq('user_id', user.id)
+      .single();
+    if (!agent) return NextResponse.json({ error: 'Agent not found' }, { status: 404 });
+
+    const { data: sources, error } = await supabase
+      .from('agent_knowledge_sources')
+      .select('id, name, knowledge_file_id')
+      .eq('agent_id', agentId)
+      .order('created_at', { ascending: true });
+
+    if (error) throw error;
+    return NextResponse.json({ sources: sources ?? [] });
+  } catch (err) {
+    console.error('[Agents/knowledge] GET error:', err);
+    return NextResponse.json({ error: 'Failed to load knowledge sources' }, { status: 500 });
+  }
+}
+
 // POST /api/agents/[id]/knowledge
 // Body: { knowledge_file_id, name }
 // Attaches an already-indexed knowledge_files row to this agent.

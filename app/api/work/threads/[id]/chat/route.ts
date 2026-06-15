@@ -23,6 +23,12 @@ import {
   getMeetingContextDefinition, executeGetMeetingContext,
   deepResearchDefinition, executeDeepResearch,
 } from '@/lib/tools';
+import {
+  listTasksDefinition, createTaskDefinition, updateTaskDefinition, deleteTaskDefinition, runTaskDefinition,
+  listWorkerDocumentsDefinition, getWorkerDocumentDefinition,
+  executeListTasks, executeCreateTask, executeUpdateTask, executeDeleteTask, executeRunTask,
+  executeListWorkerDocuments, executeGetWorkerDocument,
+} from '@/lib/tools/worker-tasks';
 import { checkRateLimit } from '@/lib/utils/rate-limit';
 
 export const maxDuration = 60;
@@ -229,13 +235,13 @@ export async function POST(
       agentId
         ? adminClient
             .from('custom_agents')
-            .select('id, user_id, name, instructions, memory_text, web_enabled, agent_knowledge_sources(knowledge_file_id)')
+            .select('id, user_id, name, instructions, user_preferences, memory_text, web_enabled, is_worker, agent_knowledge_sources(knowledge_file_id)')
             .eq('id', agentId)
             .single()
         : Promise.resolve({ data: null }),
     ]);
 
-    const agentRaw = (agentResult as { data: { id: string; user_id: string; name: string; instructions: string | null; memory_text: string | null; web_enabled: boolean | null; agent_knowledge_sources: Array<{ knowledge_file_id: string | null }> } | null }).data ?? null;
+    const agentRaw = (agentResult as { data: { id: string; user_id: string; name: string; instructions: string | null; user_preferences: string | null; memory_text: string | null; web_enabled: boolean | null; is_worker?: boolean; agent_knowledge_sources: Array<{ knowledge_file_id: string | null }> } | null }).data ?? null;
 
     // For shared agents used by non-owners, load personal memory from agent_memories
     let agentMemoryText = agentRaw?.memory_text ?? null;
@@ -258,7 +264,95 @@ export async function POST(
 
     // ── Heuristic router — replaces the AI intent classifier ─────────────────
     // Zero AI calls, <1ms. Decides tool availability based on simple patterns.
-    const routeMode = heuristicRoute(content, mentions, (thread as any).artifacts);
+    // Workers always get all_tools — they decide internally which to use.
+    const isWorker = agentRaw?.is_worker ?? false;
+    const routeMode = isWorker ? 'all_tools' : heuristicRoute(content, mentions, (thread as any).artifacts);
+
+    // ── Fetch active routines + document history for workers ──────────────────
+    let routinesBrief = '';
+    let documentHistoryBrief = '';
+
+    if (isWorker && agentId) {
+      const [routinesResult, workflowsResult] = await Promise.all([
+        adminClient
+          .from('workflows')
+          .select('name, trigger, last_run_at, next_run_at')
+          .eq('agent_id', agentId)
+          .eq('user_id', user.id)
+          .eq('status', 'active')
+          .order('created_at', { ascending: true })
+          .limit(10),
+        adminClient
+          .from('workflows')
+          .select('id, name')
+          .eq('agent_id', agentId)
+          .eq('user_id', user.id),
+      ]);
+
+      const activeRoutines = routinesResult.data;
+      if (activeRoutines && activeRoutines.length > 0) {
+        const lines = (activeRoutines as Array<{ name: string; trigger: { type: string; label?: string; cron?: string }; last_run_at: string | null; next_run_at: string | null }>)
+          .map(r => {
+            const schedule = r.trigger.label
+              ?? (r.trigger.type === 'schedule' ? (r.trigger.cron ?? 'scheduled') : 'manual trigger');
+            const lastRun = r.last_run_at
+              ? (() => {
+                  const diff = Date.now() - new Date(r.last_run_at!).getTime();
+                  const h = Math.floor(diff / 3_600_000);
+                  if (h < 1) return 'ran < 1h ago';
+                  if (h < 24) return `ran ${h}h ago`;
+                  return `ran ${Math.floor(h / 24)}d ago`;
+                })()
+              : 'never run yet';
+            return `- ${r.name} · ${schedule} · ${lastRun}`;
+          });
+        routinesBrief = `[YOUR ACTIVE ROUTINES]\n${lines.join('\n')}\nIf the user asks to run one, says "run [name]", or asks what you have scheduled, reference these directly. You can also suggest running a relevant routine when it fits the conversation.`;
+      }
+
+      // Inject recent document history so the worker knows what it has produced
+      const wfRows = workflowsResult.data;
+      if (wfRows && wfRows.length > 0) {
+        const wfIds = (wfRows as Array<{ id: string; name: string }>).map(w => w.id);
+        const nameMap: Record<string, string> = Object.fromEntries(
+          (wfRows as Array<{ id: string; name: string }>).map(w => [w.id, w.name])
+        );
+        const { data: recentThreads } = await adminClient
+          .from('work_threads')
+          .select('id, artifacts, workflow_id, created_at')
+          .eq('user_id', user.id)
+          .in('workflow_id', wfIds)
+          .not('artifacts', 'is', null)
+          .order('created_at', { ascending: false })
+          .limit(20);
+
+        if (recentThreads && recentThreads.length > 0) {
+          type ArtRow = { id?: string; title: string; type: string };
+          const docs = (recentThreads as Array<{ id: string; artifacts: ArtRow[] | null; workflow_id: string | null; created_at: string }>)
+            .flatMap(t => {
+              const arts: ArtRow[] = Array.isArray(t.artifacts) ? t.artifacts : [];
+              return arts.filter(a => a.id).map(a => ({
+                artifactId: a.id!,
+                title: a.title,
+                taskName: t.workflow_id ? (nameMap[t.workflow_id] ?? 'Task') : 'Task',
+                age: (() => {
+                  const diff = Date.now() - new Date(t.created_at).getTime();
+                  const h = Math.floor(diff / 3_600_000);
+                  if (h < 1) return 'just now';
+                  if (h < 24) return `${h}h ago`;
+                  return `${Math.floor(h / 24)}d ago`;
+                })(),
+              }));
+            });
+
+          if (docs.length > 0) {
+            const lines = docs.slice(0, 15).map(d =>
+              `- "${d.title}" · ${d.taskName} · ${d.age} · artifact_id: ${d.artifactId}`
+            );
+            documentHistoryBrief = `[YOUR RECENT DOCUMENTS]\n${lines.join('\n')}\nWhen the user asks to see, share, or work with any of these, call get_worker_document with the artifact_id. This attaches the document inline and lets you reference its content.`;
+          }
+        }
+      }
+    }
 
     // Format context blocks
     // When an agent is active, its identity takes top priority — injected BEFORE the base prompt.
@@ -266,18 +360,33 @@ export async function POST(
     const contextParts: string[] = [];
 
     if (agent) {
-      // Agent-first system prompt: role + instructions + memory, then base capabilities below
-      const agentHeader = [
-        `You are "${agent.name}", a custom AI assistant with a specific role.`,
-        agent.instructions?.trim()
-          ? `Your instructions:\n${agent.instructions.trim()}`
-          : '',
-        `Stay in this role for the entire conversation. Do not describe yourself as a general-purpose assistant.`,
-        `Approach: when context is incomplete, make a reasonable assumption, state it briefly, and attempt the task. The user wants output. If you must ask, ask ONE focused question — never a list of questions.`,
-        agent.web_enabled
-          ? `You have access to web_search and fetch_url tools. Use them proactively — do not answer from memory when fresh information is available online.`
-          : '',
-      ].filter(Boolean).join('\n\n');
+      const agentHeader = isWorker
+        // Worker: system layer (locked) + user preferences + active routines
+        ? [
+            agent.instructions?.trim() ?? `You are ${agent.name}, a dedicated AI colleague.`,
+            (agent as typeof agent & { user_preferences?: string | null }).user_preferences?.trim()
+              ? `[USER CONTEXT — personal preferences set by this user]\n${(agent as typeof agent & { user_preferences?: string | null }).user_preferences!.trim()}`
+              : '',
+            routinesBrief || '',
+            documentHistoryBrief || '',
+            `You have access to: email inbox (get_emails), calendar & meetings (get_meeting_context), web search (web_search, fetch_url), and deep research (deep_research). Use them proactively — retrieve real context before answering rather than relying on memory.`,
+            `[TASK MANAGEMENT]\nYou can create and manage your own scheduled automations via: list_tasks (see what's running), create_task (set up a new recurring automation — describe it in plain language, the system builds the full pipeline), update_task (pause or resume), delete_task (remove permanently), run_task (trigger an immediate manual run right now). When the user asks to automate something, run a task now, or manage existing tasks, use these tools directly.`,
+            `[DOCUMENT ACCESS]\nYou can access documents you've previously produced via: list_worker_documents (see all outputs with artifact IDs), get_worker_document (retrieve full content + attach as chat chip). When the user asks to see, share, revise, or reference something you produced, call get_worker_document immediately — don't say you can't retrieve it.`,
+            `Act, don't hedge. When a task is clear, do it and show your work briefly. One focused question maximum if truly blocked.`,
+          ].filter(Boolean).join('\n\n')
+        // Standard agent prompt
+        : [
+            `You are "${agent.name}", a custom AI assistant with a specific role.`,
+            agent.instructions?.trim()
+              ? `Your instructions:\n${agent.instructions.trim()}`
+              : '',
+            `Stay in this role for the entire conversation. Do not describe yourself as a general-purpose assistant.`,
+            `Approach: when context is incomplete, make a reasonable assumption, state it briefly, and attempt the task. The user wants output. If you must ask, ask ONE focused question — never a list of questions.`,
+            agent.web_enabled
+              ? `You have access to web_search and fetch_url tools. Use them proactively — do not answer from memory when fresh information is available online.`
+              : '',
+          ].filter(Boolean).join('\n\n');
+
       contextParts.push(agentHeader);
 
       if (agent.memory_text?.trim()) {
@@ -405,7 +514,7 @@ export async function POST(
     // Build tools based on heuristic route — model gets full tool set unless trivially conversational
     const tools = routeMode === 'no_tools'
       ? []
-      : buildChatTools(sources, chatEndpoint.provider, modelFamily);
+      : buildChatTools(sources, chatEndpoint.provider, modelFamily, isWorker);
 
     // Build message history — system goes first, then conversation.
     // The last user message is augmented with mention context so "what is this about?"
@@ -580,6 +689,7 @@ export async function POST(
       kbContext: mentionKbContext,
       agentFileIds: agentFileIds.length > 0 ? agentFileIds : undefined,
       agentId: agentId || undefined,
+      isWorker,
       isTemporary: !!(thread as any).is_temporary,
       features,
     };
@@ -588,6 +698,7 @@ export async function POST(
     let fullAssistantText = '';
     const allToolCalls: Array<{ name: string; summary: string; citations?: string[]; clarification?: object }> = [];
     const allArtifactIds: string[] = [];
+    const allArtifactMeta: Record<string, { title: string; type: string }> = {};
 
     const readable = new ReadableStream({
       async start(controller) {
@@ -768,7 +879,7 @@ export async function POST(
                     send({ type: 'tool_result', name: tc.function.name, id: tc.id, summary, ...(citations?.length ? { citations } : {}) });
                     allToolCalls.push({ name: tc.function.name, summary, ...(citations?.length ? { citations } : {}) });
                     if (clarification) send({ type: 'clarification_request', ...(clarification as object) });
-                    if (artifact?.id) { allArtifactIds.push(artifact.id); send({ type: 'artifact_ready', artifact: { id: artifact.id, type: artifact.type, title: artifact.title } }); }
+                    if (artifact?.id) { allArtifactIds.push(artifact.id); allArtifactMeta[artifact.id] = { title: artifact.title, type: artifact.type }; send({ type: 'artifact_ready', artifact: { id: artifact.id, type: artifact.type, title: artifact.title } }); }
                     toolResultMessages.push({ role: 'tool', tool_call_id: tc.id, content: result });
                     toolResultCache.set(dedupeKey, result);
                     if (stopStream) { continueLoop = false; break; }
@@ -861,6 +972,7 @@ export async function POST(
 
                   if (artifact?.id) {
                     allArtifactIds.push(artifact.id);
+                    allArtifactMeta[artifact.id] = { title: artifact.title, type: artifact.type };
                     send({ type: 'artifact_ready', artifact: { id: artifact.id, type: artifact.type, title: artifact.title } });
                   }
 
@@ -979,6 +1091,7 @@ export async function POST(
               metadata: {
                 tool_calls: allToolCalls,
                 artifact_ids: allArtifactIds,
+                ...(Object.keys(allArtifactMeta).length > 0 ? { artifact_meta: allArtifactMeta } : {}),
                 ...(clarificationCall?.clarification ? { clarification: clarificationCall.clarification } : {}),
               },
             });
@@ -1031,7 +1144,7 @@ function deriveToolChoice(
   return 'auto';
 }
 
-function buildChatTools(sources: string[], _provider: string, _modelFamily: string): OpenAI.Chat.ChatCompletionTool[] {
+function buildChatTools(sources: string[], _provider: string, _modelFamily: string, isWorker = false): OpenAI.Chat.ChatCompletionTool[] {
   const neutral: NeutralTool[] = [];
 
   // ── Search tools ──────────────────────────────────────────────────────────
@@ -1152,6 +1265,14 @@ function buildChatTools(sources: string[], _provider: string, _modelFamily: stri
     },
   );
 
+  // Worker-only tools — task management + document access
+  if (isWorker) {
+    neutral.push(
+      listTasksDefinition, createTaskDefinition, updateTaskDefinition, deleteTaskDefinition, runTaskDefinition,
+      listWorkerDocumentsDefinition, getWorkerDocumentDefinition,
+    );
+  }
+
   // Convert neutral schema to OpenAI function-calling format
   return neutral.map(t => ({
     type: 'function' as const,
@@ -1175,6 +1296,13 @@ function toolLabel(name: string): string {
     fetch_url: 'Reading page',
     request_clarification: 'Preparing options',
     generate_document: 'Generating document',
+    list_tasks: 'Checking tasks',
+    create_task: 'Building task pipeline…',
+    update_task: 'Updating task',
+    delete_task: 'Deleting task',
+    run_task: 'Running task…',
+    list_worker_documents: 'Checking documents',
+    get_worker_document: 'Retrieving document…',
   };
   return labels[name] ?? name;
 }
@@ -1196,6 +1324,8 @@ interface RunContext {
   agentFileIds?: string[];
   /** Agent ID — used to trigger memory extraction after conversation */
   agentId?: string;
+  /** True when the agent is a worker — enables task management tools */
+  isWorker?: boolean;
   isTemporary?: boolean;
   /** Workspace feature flags — drives graceful degradation of context tools */
   features: WorkspaceFeatures;
@@ -1576,6 +1706,65 @@ async function executeChatTool(
       const result = await executeFetchUrl(input);
       const urls = Array.isArray(input.urls) ? input.urls : [];
       return { result, summary: `Read ${urls.length} page${urls.length !== 1 ? 's' : ''}` };
+    }
+
+    // ── Worker task management tools ────────────────────────────────────────────
+    case 'list_tasks': {
+      if (!ctx.agentId) return { result: 'No worker context available.', summary: 'No worker' };
+      const result = await executeListTasks(ctx.agentId, ctx.userId, ctx.adminClient);
+      const count = (result.match(/^\S/gm) ?? []).length;
+      return { result, summary: count > 0 ? `Found ${count} task${count !== 1 ? 's' : ''}` : 'No tasks found' };
+    }
+
+    case 'create_task': {
+      if (!ctx.agentId) return { result: 'No worker context available.', summary: 'No worker' };
+      const description = typeof input.description === 'string' ? input.description : '';
+      const result = await executeCreateTask(description, ctx.agentId, ctx.userId, ctx.supabase, ctx.adminClient);
+      return { result, summary: result.startsWith('Task created') ? 'Task created' : 'Task creation failed' };
+    }
+
+    case 'update_task': {
+      const taskId = typeof input.task_id === 'string' ? input.task_id : '';
+      const status = (input.status === 'active' || input.status === 'paused') ? input.status : 'paused';
+      const result = await executeUpdateTask(taskId, status, ctx.userId, ctx.adminClient);
+      return { result, summary: `Task ${status}` };
+    }
+
+    case 'delete_task': {
+      const taskId = typeof input.task_id === 'string' ? input.task_id : '';
+      const result = await executeDeleteTask(taskId, ctx.userId, ctx.adminClient);
+      return { result, summary: 'Task deleted' };
+    }
+
+    case 'run_task': {
+      const taskId = typeof input.task_id === 'string' ? input.task_id : '';
+      const result = await executeRunTask(taskId, ctx.userId, ctx.adminClient, ctx.threadId);
+      return { result, summary: 'Task started' };
+    }
+
+    case 'list_worker_documents': {
+      if (!ctx.agentId) return { result: 'No worker context available.', summary: 'No documents' };
+      const result = await executeListWorkerDocuments(ctx.agentId, ctx.userId, ctx.adminClient);
+      return { result, summary: 'Documents listed' };
+    }
+
+    case 'get_worker_document': {
+      if (!ctx.agentId) return { result: 'No worker context available.', summary: 'Cannot retrieve' };
+      const artifactId = typeof input.artifact_id === 'string' ? input.artifact_id : '';
+      const { content, artifact } = await executeGetWorkerDocument(artifactId, ctx.agentId, ctx.userId, ctx.adminClient);
+      if (!artifact) return { result: content, summary: 'Document not found' };
+      const docArtifact: DocumentArtifact = {
+        id: artifact.id,
+        title: artifact.title,
+        type: artifact.type as import('@/lib/types/inbox').DeliverableType,
+        generated_at: artifact.generated_at,
+        storage_path: artifact.storage_path,
+      };
+      return {
+        result: content,
+        summary: `Retrieved "${artifact.title}"`,
+        artifact: docArtifact,
+      };
     }
 
     default:

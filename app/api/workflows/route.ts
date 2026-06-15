@@ -10,17 +10,23 @@ import type { WorkflowTrigger, WorkflowStep, OutputConfig, WorkflowStatus } from
 import { requireFeature, handleWorkspaceError } from '@/lib/workspace/require-feature';
 import { sanitizeError } from '@/lib/utils/api-error';
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   try { await requireFeature('studio', supabase, user.id); } catch (err) { return handleWorkspaceError(err); }
 
+  const agentId = request.nextUrl.searchParams.get('agent_id');
+
   // RLS returns own workflows + shared company workflows automatically
-  const { data, error } = await supabase
+  let query = supabase
     .from('workflows')
-    .select('id, user_id, name, description, icon, color, status, trigger, steps, output_config, last_run_at, next_run_at, created_at, updated_at, shared_with_company, sharing_mode, company_id, pinned')
+    .select('id, user_id, name, description, icon, color, status, trigger, steps, output_config, last_run_at, next_run_at, created_at, updated_at, shared_with_company, sharing_mode, company_id, pinned, agent_id')
     .order('updated_at', { ascending: false });
+
+  if (agentId) query = query.eq('agent_id', agentId);
+
+  const { data, error } = await query;
 
   if (error) return NextResponse.json({ error: sanitizeError(error) }, { status: 500 });
 
@@ -75,6 +81,7 @@ export async function POST(request: NextRequest) {
     trigger?: WorkflowTrigger;
     steps?: WorkflowStep[];
     output_config?: OutputConfig;
+    agent_id?: string | null;
   };
   try { body = await request.json(); } catch { return NextResponse.json({ error: 'Invalid body' }, { status: 400 }); }
 
@@ -114,6 +121,7 @@ export async function POST(request: NextRequest) {
       steps: body.steps ?? [],
       output_config: body.output_config ?? DEFAULT_OUTPUT_CONFIG,
       next_run_at: nextRunAt,
+      ...(body.agent_id !== undefined ? { agent_id: body.agent_id } : {}),
     })
     .select('*')
     .single();
