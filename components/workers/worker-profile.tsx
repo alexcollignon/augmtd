@@ -1,48 +1,49 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
+import type { ChatMessage } from '@/components/work/chat-message';
+import {
+  ChatBubbleLeftRightIcon,
+  BookOpenIcon,
+  BoltIcon,
+  DocumentTextIcon,
+  ClockIcon,
+} from '@heroicons/react/24/outline';
 import { WorkerChatTab } from '@/components/workers/tabs/worker-chat-tab';
 import { WorkerKnowledgeTab } from '@/components/workers/tabs/worker-knowledge-tab';
 import { WorkerActivityTab } from '@/components/workers/tabs/worker-activity-tab';
-import { WorkerRoutinesTab } from '@/components/workers/tabs/worker-routines-tab';
+import { WorkerTasksTab } from '@/components/workers/tabs/worker-tasks-tab';
+import { WorkerDocumentsTab } from '@/components/workers/tabs/worker-documents-tab';
 import type { Worker, WorkerThread } from '@/app/workers/workers-page-client';
 
-type Tab = 'chat' | 'knowledge' | 'routines' | 'activity';
+type Tab = 'chat' | 'knowledge' | 'tasks' | 'documents' | 'activity';
 
-const COLOR_MAP: Record<string, { bg: string; text: string }> = {
-  indigo:  { bg: 'bg-indigo-500',  text: 'text-indigo-600' },
-  violet:  { bg: 'bg-violet-500',  text: 'text-violet-600' },
-  blue:    { bg: 'bg-blue-500',    text: 'text-blue-600' },
-  emerald: { bg: 'bg-emerald-500', text: 'text-emerald-600' },
-  amber:   { bg: 'bg-amber-500',   text: 'text-amber-600' },
-  rose:    { bg: 'bg-rose-500',    text: 'text-rose-600' },
-  neutral: { bg: 'bg-neutral-400', text: 'text-neutral-600' },
-};
-
-const ROLE_LABELS: Record<string, string> = {
-  personal_assistant: 'Personal Assistant',
-  content_manager: 'Content Manager',
-  custom: 'Custom',
-};
-
-const TABS: { id: Tab; label: string }[] = [
-  { id: 'chat',      label: 'Chat' },
-  { id: 'knowledge', label: 'Knowledge' },
-  { id: 'routines',  label: 'Routines' },
-  { id: 'activity',  label: 'Activity' },
+const TABS: { id: Tab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
+  { id: 'chat',      label: 'Chat',      icon: ChatBubbleLeftRightIcon },
+  { id: 'knowledge', label: 'Knowledge', icon: BookOpenIcon },
+  { id: 'tasks',     label: 'Tasks',     icon: BoltIcon },
+  { id: 'documents', label: 'Documents', icon: DocumentTextIcon },
+  { id: 'activity',  label: 'Activity',  icon: ClockIcon },
 ];
 
 interface WorkerProfileProps {
   worker: Worker;
   initialThreads: WorkerThread[];
+  initialMessages?: ChatMessage[];
+  onThreadCreated?: (thread: WorkerThread) => void;
 }
 
-export function WorkerProfile({ worker, initialThreads }: WorkerProfileProps) {
+export function WorkerProfile({ worker, initialThreads, initialMessages, onThreadCreated }: WorkerProfileProps) {
   const [activeTab, setActiveTab] = useState<Tab>('chat');
+  // Track which tabs have been visited so they stay mounted (lazy-mount, keep-alive)
+  const [mountedTabs, setMountedTabs] = useState<Set<Tab>>(new Set(['chat']));
   const [jumpThreadId, setJumpThreadId] = useState<string | null>(null);
+  const [chatPrefill, setChatPrefill] = useState<string | null>(null);
 
-  const colors = COLOR_MAP[worker.color] ?? COLOR_MAP.neutral;
-  const roleLabel = worker.worker_role ? (ROLE_LABELS[worker.worker_role] ?? worker.worker_role) : null;
+  function handleTabChange(tab: Tab) {
+    setActiveTab(tab);
+    setMountedTabs(prev => prev.has(tab) ? prev : new Set([...prev, tab]));
+  }
 
   const handleOpenInChat = useCallback((threadId: string) => {
     setJumpThreadId(threadId);
@@ -53,82 +54,90 @@ export function WorkerProfile({ worker, initialThreads }: WorkerProfileProps) {
     setJumpThreadId(null);
   }, []);
 
+  const handleNewVersion = useCallback((title: string) => {
+    setChatPrefill(`Revise "${title}": `);
+    setActiveTab('chat');
+  }, []);
+
   return (
     <div className="flex-1 flex flex-col overflow-hidden rounded-2xl bg-white shadow-sm">
 
-      {/* Profile header */}
-      <div className="flex-shrink-0 px-6 pt-6 pb-0 border-b border-neutral-100">
-        <div className="flex items-start gap-4 mb-5">
-          <div className={`w-12 h-12 rounded-2xl ${colors.bg} flex items-center justify-center flex-shrink-0 shadow-sm`}>
-            <span className="text-white text-[20px] select-none leading-none">{worker.icon}</span>
-          </div>
-          <div className="min-w-0 flex-1 pt-0.5">
-            <div className="flex items-center gap-2.5">
-              <h1 className="text-[16px] font-semibold text-neutral-900 leading-tight">{worker.name}</h1>
-              {roleLabel && (
-                <span className={`text-[10.5px] font-medium px-2 py-0.5 rounded-full bg-neutral-100 ${colors.text}`}>
-                  {roleLabel}
-                </span>
-              )}
-            </div>
-            {worker.description && (
-              <p className="text-[12.5px] text-neutral-500 mt-1 leading-snug line-clamp-2">
-                {worker.description}
-              </p>
-            )}
-          </div>
-        </div>
-
-        {/* Tab bar */}
+      {/* Tab bar */}
+      <div className="flex-shrink-0 border-b border-neutral-100 px-2 pt-1">
         <div className="flex gap-0">
           {TABS.map(tab => (
             <button
               key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`px-4 py-2.5 text-[12.5px] font-medium border-b-2 transition-colors -mb-px ${
+              onClick={() => handleTabChange(tab.id)}
+              className={`flex items-center gap-1.5 px-3.5 py-2.5 text-[12.5px] font-medium border-b-2 transition-colors -mb-px ${
                 activeTab === tab.id
                   ? 'border-indigo-500 text-indigo-600'
                   : 'border-transparent text-neutral-400 hover:text-neutral-600'
               }`}
             >
+              <tab.icon className="w-3.5 h-3.5 flex-shrink-0" />
               {tab.label}
             </button>
           ))}
         </div>
       </div>
 
-      {/* Tab content */}
+      {/* Tab content — lazy-mount on first visit, then keep alive with CSS hide */}
       <div className="flex-1 overflow-hidden flex flex-col">
-        {activeTab === 'chat' && (
-          <WorkerChatTab
-            key={`chat-${worker.id}`}
-            worker={worker}
-            initialThreads={initialThreads}
-            jumpThreadId={jumpThreadId}
-            onJumpConsumed={handleJumpConsumed}
-          />
+        {mountedTabs.has('chat') && (
+          <div className={activeTab === 'chat' ? 'flex flex-col flex-1 overflow-hidden' : 'hidden'}>
+            <WorkerChatTab
+              key={`chat-${worker.id}`}
+              worker={worker}
+              initialThreads={initialThreads}
+              initialMessages={initialMessages}
+              jumpThreadId={jumpThreadId}
+              onJumpConsumed={handleJumpConsumed}
+              onThreadCreated={onThreadCreated}
+              initialInputValue={chatPrefill}
+              onInitialInputConsumed={() => setChatPrefill(null)}
+            />
+          </div>
         )}
-        {activeTab === 'knowledge' && (
-          <WorkerKnowledgeTab
-            key={`knowledge-${worker.id}`}
-            workerId={worker.id}
-            workerName={worker.name}
-          />
+        {mountedTabs.has('knowledge') && (
+          <div className={activeTab === 'knowledge' ? 'flex flex-col flex-1 overflow-hidden' : 'hidden'}>
+            <WorkerKnowledgeTab
+              key={`knowledge-${worker.id}`}
+              workerId={worker.id}
+              workerName={worker.name}
+            />
+          </div>
         )}
-        {activeTab === 'routines' && (
-          <WorkerRoutinesTab
-            key={`routines-${worker.id}`}
-            workerId={worker.id}
-            workerName={worker.name}
-          />
+        {mountedTabs.has('tasks') && (
+          <div className={activeTab === 'tasks' ? 'flex flex-col flex-1 overflow-hidden' : 'hidden'}>
+            <WorkerTasksTab
+              key={`tasks-${worker.id}`}
+              workerId={worker.id}
+              workerName={worker.name}
+              onOpenInChat={handleOpenInChat}
+            />
+          </div>
         )}
-        {activeTab === 'activity' && (
-          <WorkerActivityTab
-            key={`activity-${worker.id}`}
-            workerId={worker.id}
-            workerName={worker.name}
-            onOpenInChat={handleOpenInChat}
-          />
+        {mountedTabs.has('documents') && (
+          <div className={activeTab === 'documents' ? 'flex flex-col flex-1 overflow-hidden' : 'hidden'}>
+            <WorkerDocumentsTab
+              key={`documents-${worker.id}`}
+              workerId={worker.id}
+              workerName={worker.name}
+              onOpenInChat={handleOpenInChat}
+              onNewVersion={handleNewVersion}
+            />
+          </div>
+        )}
+        {mountedTabs.has('activity') && (
+          <div className={activeTab === 'activity' ? 'flex flex-col flex-1 overflow-hidden' : 'hidden'}>
+            <WorkerActivityTab
+              key={`activity-${worker.id}`}
+              workerId={worker.id}
+              workerName={worker.name}
+              onOpenInChat={handleOpenInChat}
+            />
+          </div>
         )}
       </div>
     </div>

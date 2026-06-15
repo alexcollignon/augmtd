@@ -62,7 +62,7 @@ export function WorkerKnowledgeTab({ workerId, workerName }: WorkerKnowledgeTabP
 
   if (isLoading) {
     return (
-      <div className="flex-1 p-6 space-y-6 animate-pulse">
+      <div className="flex-1 px-8 py-8 space-y-6 animate-pulse">
         <div className="h-5 bg-neutral-100 rounded w-32" />
         <div className="space-y-2">
           {[1, 2, 3, 4].map(i => <div key={i} className="h-3 bg-neutral-100 rounded" />)}
@@ -73,7 +73,7 @@ export function WorkerKnowledgeTab({ workerId, workerName }: WorkerKnowledgeTabP
 
   return (
     <div className="flex-1 overflow-y-auto">
-      <div className="max-w-[680px] mx-auto px-6 py-8 space-y-10">
+      <div className="px-8 py-8 space-y-10">
 
         {/* Your preferences */}
         <section>

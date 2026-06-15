@@ -134,7 +134,7 @@ export function WorkerActivityTab({ workerId, workerName, onOpenInChat }: Worker
 
   if (isLoading) {
     return (
-      <div className="flex-1 p-6 space-y-4 animate-pulse">
+      <div className="flex-1 px-8 py-8 space-y-4 animate-pulse">
         {[1, 2, 3, 4].map(i => (
           <div key={i} className="flex gap-3 items-start">
             <div className="w-7 h-7 rounded-lg bg-neutral-100 flex-shrink-0" />
@@ -161,7 +161,7 @@ export function WorkerActivityTab({ workerId, workerName, onOpenInChat }: Worker
 
   return (
     <div className="flex-1 overflow-y-auto">
-      <div className="max-w-[680px] mx-auto px-6 py-6">
+      <div className="px-8 py-6">
         <div className="flex items-center justify-between mb-5">
           <h2 className="text-[11px] font-semibold text-neutral-400 uppercase tracking-wider">
             Activity

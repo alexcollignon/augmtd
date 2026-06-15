@@ -73,7 +73,7 @@ export function WorkerThreadList({ threads, activeThreadId, onSelect, onDelete }
             </div>
 
             {/* Delete button (shows on hover) */}
-            {isHovered && !isActive && (
+            {isHovered && (
               <button
                 onClick={(e) => handleDelete(e, thread.id)}
                 className="p-1 rounded-md text-neutral-300 hover:text-red-400 hover:bg-red-50 transition-colors flex-shrink-0"
