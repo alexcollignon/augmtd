@@ -398,14 +398,16 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
       ? `**${artifact.title}** is ready.\n\n${materialised.messageContent.replace(/\*\*.*?\*\* ready\./, '').trim()}`
       : materialised.messageContent;
 
-    await admin.from('work_messages').insert({
-      thread_id: opts.sourceThreadId,
-      role: 'assistant',
-      content: completionContent,
-      metadata: artifact
-        ? { artifact_ids: [artifact.id], completion_thread_id: threadId }
-        : { completion_thread_id: threadId },
-    }).catch(() => {/* non-critical */});
+    try {
+      await admin.from('work_messages').insert({
+        thread_id: opts.sourceThreadId,
+        role: 'assistant',
+        content: completionContent,
+        metadata: artifact
+          ? { artifact_ids: [artifact.id], completion_thread_id: threadId }
+          : { completion_thread_id: threadId },
+      });
+    } catch { /* non-critical */ }
   }
 
   return { runId, status: 'succeeded', threadId };
