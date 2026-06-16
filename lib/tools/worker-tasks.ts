@@ -116,6 +116,41 @@ export const duplicateTaskDefinition = {
   },
 };
 
+export const shareTaskDefinition = {
+  name: 'share_task',
+  description: "Share one of your tasks with your team (or stop sharing it). Shared tasks appear in teammates' workers under 'From the team' — they can copy them. Call when the user says 'share this task', 'let the team use it', 'make it available', or 'stop sharing'.",
+  input_schema: {
+    type: 'object',
+    properties: {
+      task_id: { type: 'string', description: 'ID of the task to share (use list_tasks to get IDs)' },
+      action: { type: 'string', enum: ['share', 'unshare'], description: '"share" makes it visible to the team; "unshare" makes it private again' },
+    },
+    required: ['task_id', 'action'],
+  },
+};
+
+export const listTeamTasksDefinition = {
+  name: 'list_team_tasks',
+  description: "List tasks shared by your teammates that you can copy to your own task list. Call when the user asks what the team has shared, wants to see team tasks, or wants to use a task from a colleague.",
+  input_schema: {
+    type: 'object',
+    properties: {} as Record<string, unknown>,
+    required: [] as string[],
+  },
+};
+
+export const useTaskDefinition = {
+  name: 'use_task',
+  description: "Copy a shared team task to your own task list. Call after list_team_tasks to get the task ID. Creates a paused copy under this worker that the user can then activate or edit.",
+  input_schema: {
+    type: 'object',
+    properties: {
+      task_id: { type: 'string', description: 'ID of the shared team task to copy (use list_team_tasks to get IDs)' },
+    },
+    required: ['task_id'],
+  },
+};
+
 export const deleteTaskDefinition = {
   name: 'delete_task',
   description: 'Permanently delete a task. Call only when the user explicitly asks to delete or remove a task. Irreversible — confirm the task name before proceeding.',
@@ -667,6 +702,128 @@ export async function executeDuplicateTask(
 
   const c = copy as { id: string; name: string };
   return `Duplicated as **"${c.name}"** (ID: ${c.id}) — paused. Tell me what to change and I'll update it right away.`;
+}
+
+export async function executeShareTask(
+  taskId: string,
+  action: 'share' | 'unshare',
+  userId: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  adminClient: any,
+): Promise<string> {
+  const { data: task } = await adminClient
+    .from('workflows')
+    .select('name')
+    .eq('id', taskId)
+    .eq('user_id', userId)
+    .single();
+
+  if (!task) return 'Task not found or you do not own this task.';
+  const name = (task as { name: string }).name;
+
+  if (action === 'share') {
+    const { data: membership } = await adminClient
+      .from('company_members')
+      .select('company_id')
+      .eq('user_id', userId)
+      .eq('status', 'active')
+      .single();
+
+    if (!membership?.company_id) {
+      return 'You are not part of a company workspace. Task sharing requires a team account.';
+    }
+
+    const { error } = await adminClient
+      .from('workflows')
+      .update({ sharing_mode: 'live', company_id: membership.company_id, shared_with_company: true })
+      .eq('id', taskId)
+      .eq('user_id', userId);
+
+    if (error) return `Failed to share "${name}": ${error.message}`;
+    return `"${name}" is now shared with your team. They can find it in their Tasks tab under "From the team" and copy it to their workers.`;
+  } else {
+    const { error } = await adminClient
+      .from('workflows')
+      .update({ sharing_mode: null, shared_with_company: false })
+      .eq('id', taskId)
+      .eq('user_id', userId);
+
+    if (error) return `Failed to unshare "${name}": ${error.message}`;
+    return `"${name}" is now private. It will no longer appear for teammates.`;
+  }
+}
+
+export async function executeListTeamTasks(
+  userId: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  adminClient: any,
+): Promise<string> {
+  const { data: membership } = await adminClient
+    .from('company_members')
+    .select('company_id')
+    .eq('user_id', userId)
+    .eq('status', 'active')
+    .single();
+
+  if (!membership?.company_id) {
+    return 'You are not part of a company workspace. Team task sharing requires a team account.';
+  }
+
+  const { data, error } = await adminClient
+    .from('workflows')
+    .select('id, name, trigger, user_id')
+    .eq('sharing_mode', 'live')
+    .eq('company_id', membership.company_id)
+    .neq('user_id', userId)
+    .order('created_at', { ascending: true });
+
+  if (error || !data || data.length === 0) {
+    return 'No team tasks are shared yet. Teammates can share their own tasks with the team from the Tasks tab (three-dot menu → Share with team).';
+  }
+
+  const userIds = [...new Set((data as Array<{ user_id: string }>).map(t => t.user_id))];
+  const { data: profiles } = await adminClient
+    .from('profiles')
+    .select('id, full_name')
+    .in('id', userIds);
+  const nameMap: Record<string, string> = {};
+  (profiles ?? []).forEach((p: { id: string; full_name: string | null }) => {
+    nameMap[p.id] = p.full_name ?? 'Teammate';
+  });
+
+  const rows = data as Array<{ id: string; name: string; trigger: { type: string; label?: string; cron?: string }; user_id: string }>;
+  const lines = rows.map(t => {
+    const schedule = t.trigger.label ?? (t.trigger.type === 'schedule' ? (t.trigger.cron ?? 'scheduled') : 'manual');
+    return `- [${t.id}] ${t.name} — ${schedule} — shared by ${nameMap[t.user_id] ?? 'Teammate'}`;
+  });
+
+  return `Team tasks (${rows.length}):\n${lines.join('\n')}\n\nCall use_task with a task ID to copy it to your own list.`;
+}
+
+export async function executeUseTask(
+  sourceTaskId: string,
+  agentId: string,
+  userId: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  adminClient: any,
+): Promise<string> {
+  const { forkTaskForWorker } = await import('@/lib/workflows/clone-workflow');
+
+  let clonedId: string;
+  try {
+    clonedId = await forkTaskForWorker(adminClient, sourceTaskId, userId, agentId);
+  } catch (err) {
+    return `Could not use task: ${(err as Error).message}`;
+  }
+
+  const { data: copy } = await adminClient
+    .from('workflows')
+    .select('name')
+    .eq('id', clonedId)
+    .single();
+
+  const name = (copy as { name: string } | null)?.name ?? 'task';
+  return `Added **"${name}"** to your tasks (ID: ${clonedId}) — paused. Tell me what to adjust or say "resume" to activate it.`;
 }
 
 export async function executeDeleteTask(

@@ -25,8 +25,10 @@ import {
 } from '@/lib/tools';
 import {
   listTasksDefinition, createTaskDefinition, getTaskDefinition, updateTaskDefinition, duplicateTaskDefinition, deleteTaskDefinition, runTaskDefinition,
+  shareTaskDefinition, listTeamTasksDefinition, useTaskDefinition,
   listWorkerDocumentsDefinition, getWorkerDocumentDefinition,
   executeListTasks, executeCreateTask, executeGetTask, executeUpdateTask, executeDuplicateTask, executeDeleteTask, executeRunTask,
+  executeShareTask, executeListTeamTasks, executeUseTask,
   executeListWorkerDocuments, executeGetWorkerDocument,
 } from '@/lib/tools/worker-tasks';
 import { checkRateLimit } from '@/lib/utils/rate-limit';
@@ -370,7 +372,7 @@ export async function POST(
             routinesBrief || '',
             documentHistoryBrief || '',
             `[TOOLS YOU HAVE RIGHT NOW — use them, never claim otherwise]\n- web_search: search the live web for any news, data, or information. Call it immediately when the user asks about anything current.\n- fetch_url: read the full content of any URL.\n- deep_research: multi-source research synthesis for complex topics.\n- get_emails: read the user's inbox.\n- get_meeting_context: read their calendar and meetings.\nNEVER say you cannot access the web, live data, news sources, or current information. You can. Call web_search and do it.`,
-            `[RECURRING TASKS]\nYou can set up and manage work you do regularly on their behalf.\n- list_tasks — see what's already running\n- create_task — set up something new from a plain description\n- get_task — read the full config of a task (steps, schedule, language, instructions)\n- update_task — edit any aspect: name, schedule, output language, task instructions, step prompts, status\n- duplicate_task — copy a task (useful for variants: same pipeline, different language or audience)\n- run_task — trigger a task right now\n- delete_task — remove a task permanently\n\nWhen the user asks you to change, update, fix, or adjust a task — YOU MUST COMPLETE THE FULL TOOL SEQUENCE before saying anything. Do not say "Done" or "Updated" until the final action tool has returned a result.\n\nRequired sequences (complete every step, no skipping):\n- Change language / schedule / name / status → list_tasks (get ID) → update_task → say one sentence confirming\n- Change a step prompt → list_tasks (get ID) → get_task (read steps) → update_task with step_patch → confirm\n- Duplicate a task → list_tasks (get ID) → duplicate_task → confirm\n- Run a task → list_tasks (get ID) → run_task → confirm\n\nNEVER report success after only calling list_tasks. list_tasks only finds the ID — the action hasn't happened yet. A colleague who said "Done, changed to Portuguese" without actually changing it would be fired. Don't be that colleague.`,
+            `[RECURRING TASKS]\nYou can set up and manage work you do regularly on their behalf.\n- list_tasks — see what's already running\n- create_task — set up something new from a plain description\n- get_task — read the full config of a task (steps, schedule, language, instructions)\n- update_task — edit any aspect: name, schedule, output language, task instructions, step prompts, status\n- duplicate_task — copy a task (useful for variants: same pipeline, different language or audience)\n- run_task — trigger a task right now\n- delete_task — remove a task permanently\n- share_task — share a task with the team so teammates can copy it (or stop sharing)\n- list_team_tasks — see tasks shared by teammates\n- use_task — copy a shared team task to your own list\n\nWhen the user asks you to change, update, fix, or adjust a task — YOU MUST COMPLETE THE FULL TOOL SEQUENCE before saying anything. Do not say "Done" or "Updated" until the final action tool has returned a result.\n\nRequired sequences (complete every step, no skipping):\n- Change language / schedule / name / status → list_tasks (get ID) → update_task → say one sentence confirming\n- Change a step prompt → list_tasks (get ID) → get_task (read steps) → update_task with step_patch → confirm\n- Duplicate a task → list_tasks (get ID) → duplicate_task → confirm\n- Run a task → list_tasks (get ID) → run_task → confirm\n- Share a task → list_tasks (get ID) → share_task → confirm\n- Use a team task → list_team_tasks (get ID) → use_task → confirm\n\nNEVER report success after only calling list_tasks. list_tasks only finds the ID — the action hasn't happened yet. A colleague who said "Done, changed to Portuguese" without actually changing it would be fired. Don't be that colleague.`,
             `[YOUR DOCUMENTS]\nlist_worker_documents shows everything you've produced. get_worker_document retrieves the full content. When the user asks to see, revise, or reference something you made, call get_worker_document — don't say you can't retrieve it.`,
             `Understand intent before acting. "Prepare a weekly X" or "every Monday do Y" or "set up X for me" = the user wants a recurring task — call create_task immediately, confirm the schedule, done. "What's X?" or "find me X" or "draft X" = do it now with your tools. Never confuse the two. A human colleague would know the difference instantly.`,
             `Speak like a capable colleague, not a software system. Say "Got it, I'll have that ready every Monday" not "I can create a scheduled automation task." Say "I'm on it" not "I don't have direct access to." When a task is clear, do it. One focused question maximum if truly blocked.`,
@@ -1302,6 +1304,7 @@ function buildChatTools(sources: string[], _provider: string, _modelFamily: stri
   if (isWorker) {
     neutral.push(
       listTasksDefinition, createTaskDefinition, getTaskDefinition, updateTaskDefinition, duplicateTaskDefinition, deleteTaskDefinition, runTaskDefinition,
+      shareTaskDefinition, listTeamTasksDefinition, useTaskDefinition,
       listWorkerDocumentsDefinition, getWorkerDocumentDefinition,
     );
   }
@@ -1335,6 +1338,9 @@ function toolLabel(name: string): string {
     update_task: 'Updating task',
     delete_task: 'Deleting task',
     run_task: 'Running task…',
+    share_task: 'Sharing task with team',
+    list_team_tasks: 'Checking team tasks',
+    use_task: 'Adding task from team…',
     list_worker_documents: 'Checking documents',
     get_worker_document: 'Retrieving document…',
   };
@@ -1795,6 +1801,25 @@ async function executeChatTool(
       const taskId = typeof input.task_id === 'string' ? input.task_id : '';
       const result = await executeDeleteTask(taskId, ctx.userId, ctx.adminClient);
       return { result, summary: 'Task deleted' };
+    }
+
+    case 'share_task': {
+      const taskId = typeof input.task_id === 'string' ? input.task_id : '';
+      const action = input.action === 'unshare' ? 'unshare' : 'share';
+      const result = await executeShareTask(taskId, action, ctx.userId, ctx.adminClient);
+      return { result, summary: action === 'share' ? 'Task shared with team' : 'Task made private' };
+    }
+
+    case 'list_team_tasks': {
+      const result = await executeListTeamTasks(ctx.userId, ctx.adminClient);
+      return { result, summary: 'Team tasks listed' };
+    }
+
+    case 'use_task': {
+      if (!ctx.agentId) return { result: 'No worker context available.', summary: 'No worker' };
+      const taskId = typeof input.task_id === 'string' ? input.task_id : '';
+      const result = await executeUseTask(taskId, ctx.agentId, ctx.userId, ctx.adminClient);
+      return { result, summary: 'Task added from team' };
     }
 
     case 'run_task': {
