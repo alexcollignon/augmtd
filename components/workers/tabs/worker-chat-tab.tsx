@@ -89,11 +89,12 @@ interface WorkerChatTabProps {
   onJumpConsumed?: () => void;
   onActiveThreadChange?: (threadId: string | null) => void;
   onThreadCreated?: (thread: WorkerThread) => void;
+  onThreadDeleted?: (threadId: string) => void;
   initialInputValue?: string | null;
   onInitialInputConsumed?: () => void;
 }
 
-export function WorkerChatTab({ worker, initialThreads, initialMessages, initialThreadId, jumpThreadId, onJumpConsumed, onActiveThreadChange, onThreadCreated, initialInputValue, onInitialInputConsumed }: WorkerChatTabProps) {
+export function WorkerChatTab({ worker, initialThreads, initialMessages, initialThreadId, jumpThreadId, onJumpConsumed, onActiveThreadChange, onThreadCreated, onThreadDeleted, initialInputValue, onInitialInputConsumed }: WorkerChatTabProps) {
   const [threads, setThreads] = useState<WorkerThread[]>(initialThreads);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(
     initialThreadId ?? initialThreads[0]?.id ?? null
@@ -170,6 +171,7 @@ export function WorkerChatTab({ worker, initialThreads, initialMessages, initial
   async function handleDeleteThread(id: string) {
     setThreads(prev => prev.filter(t => t.id !== id));
     if (activeThreadId === id) setActiveThreadId(null);
+    onThreadDeleted?.(id);
     await fetch(`/api/work/threads/${id}`, { method: 'DELETE' }).catch(() => {});
   }
 

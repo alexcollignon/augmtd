@@ -142,6 +142,13 @@ export function WorkersPageClient({
     }));
   }
 
+  function handleThreadDeleted(workerId: string, threadId: string) {
+    setThreadsByWorker(prev => ({
+      ...prev,
+      [workerId]: (prev[workerId] ?? []).filter(t => t.id !== threadId),
+    }));
+  }
+
   // ── Setup view ────────────────────────────────────────────────────────────
 
   if (view === 'setup') {
@@ -191,6 +198,7 @@ export function WorkersPageClient({
             onTabChange={handleTabChange}
             onActiveThreadChange={handleActiveThreadChange}
             onThreadCreated={(thread) => handleThreadCreated(activeWorker.id, thread)}
+            onThreadDeleted={(threadId) => handleThreadDeleted(activeWorker.id, threadId)}
           />
         ) : (
           <div className="flex-1 flex items-center justify-center rounded-2xl bg-white shadow-sm">

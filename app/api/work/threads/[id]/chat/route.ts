@@ -194,37 +194,35 @@ export async function POST(
       return NextResponse.json({ error: 'Content is required' }, { status: 400 });
     }
 
-    // ── Resolve AI client via factory ────────────────────────────────────────
+    // ── Resolve AI client + all context in one parallel round-trip ───────────
     const adminClient = getAdminClient();
+    const requestTime = new Date().toISOString(); // snapshot before insert — used to exclude current msg from history
 
-    const { client: aiClient, model: chatModel, endpoint: chatEndpoint } = await getAIClient(user.id, 'conversation', supabase);
-    const modelFamily = detectModelFamily(chatModel);
-
-    // Save user message — capture ID so we can update metadata with mention_context later
-    const { data: savedMsg } = await adminClient.from('work_messages').insert({
-      thread_id: threadId,
-      role: 'user',
-      content: content.trim(),
-      metadata: (mentions.length > 0 || attachments.length > 0) ? { mentions: mentions.length > 0 ? mentions : undefined, attachments: attachments.length > 0 ? attachments : undefined } : null,
-    }).select('id').single();
-
-    // Check if this is the first message (for auto-rename)
-    const { count: msgCount } = await adminClient
-      .from('work_messages')
-      .select('id', { count: 'exact', head: true })
-      .eq('thread_id', threadId);
-    const isFirstMessage = (msgCount ?? 0) <= 1;
-
-    // Load conversation history — include metadata so mention_context is re-injected
-    const { data: history } = await adminClient
-      .from('work_messages')
-      .select('role, content, metadata')
-      .eq('thread_id', threadId)
-      .order('created_at', { ascending: true })
-      .limit(40);
-
-    // Build static context + smart pre-fetch in parallel (no AI calls)
-    const [userContextBlock, contactsResult, prefetchedContext, agentResult] = await Promise.all([
+    const [
+      aiClientResult,
+      savedMsgResult,
+      historyResult,
+      userContextBlock,
+      contactsResult,
+      prefetchedContext,
+      agentResult,
+      routinesResult,
+    ] = await Promise.all([
+      getAIClient(user.id, 'conversation', supabase),
+      adminClient.from('work_messages').insert({
+        thread_id: threadId,
+        role: 'user',
+        content: content.trim(),
+        metadata: (mentions.length > 0 || attachments.length > 0) ? { mentions: mentions.length > 0 ? mentions : undefined, attachments: attachments.length > 0 ? attachments : undefined } : null,
+      }).select('id').single(),
+      // Load prior history only — exclude current message (inserted in parallel above)
+      adminClient
+        .from('work_messages')
+        .select('role, content, metadata')
+        .eq('thread_id', threadId)
+        .lt('created_at', requestTime)
+        .order('created_at', { ascending: true })
+        .limit(40),
       buildUserContextBlock(user.id, supabase),
       adminClient
         .from('relationship_graph')
@@ -241,7 +239,24 @@ export async function POST(
             .eq('id', agentId)
             .single()
         : Promise.resolve({ data: null }),
+      // Prefetch active routines when agentId present (filtered by isWorker after)
+      agentId
+        ? adminClient
+            .from('workflows')
+            .select('name, trigger, last_run_at, next_run_at')
+            .eq('agent_id', agentId)
+            .eq('user_id', user.id)
+            .eq('status', 'active')
+            .order('created_at', { ascending: true })
+            .limit(10)
+        : Promise.resolve({ data: null }),
     ]);
+
+    const { client: aiClient, model: chatModel, endpoint: chatEndpoint } = aiClientResult;
+    const modelFamily = detectModelFamily(chatModel);
+    const savedMsg = savedMsgResult.data;
+    const history = historyResult.data ?? [];
+    const isFirstMessage = history.length === 0; // no prior messages = this is the first
 
     const agentRaw = (agentResult as { data: { id: string; user_id: string; name: string; instructions: string | null; user_preferences: string | null; memory_text: string | null; web_enabled: boolean | null; is_worker?: boolean; agent_knowledge_sources: Array<{ knowledge_file_id: string | null }> } | null }).data ?? null;
 
@@ -272,26 +287,9 @@ export async function POST(
 
     // ── Fetch active routines + document history for workers ──────────────────
     let routinesBrief = '';
-    let documentHistoryBrief = '';
 
     if (isWorker && agentId) {
-      const [routinesResult, workflowsResult] = await Promise.all([
-        adminClient
-          .from('workflows')
-          .select('name, trigger, last_run_at, next_run_at')
-          .eq('agent_id', agentId)
-          .eq('user_id', user.id)
-          .eq('status', 'active')
-          .order('created_at', { ascending: true })
-          .limit(10),
-        adminClient
-          .from('workflows')
-          .select('id, name')
-          .eq('agent_id', agentId)
-          .eq('user_id', user.id),
-      ]);
-
-      const activeRoutines = routinesResult.data;
+      const activeRoutines = routinesResult?.data;
       if (activeRoutines && activeRoutines.length > 0) {
         const lines = (activeRoutines as Array<{ name: string; trigger: { type: string; label?: string; cron?: string }; last_run_at: string | null; next_run_at: string | null }>)
           .map(r => {
@@ -311,49 +309,6 @@ export async function POST(
         routinesBrief = `[YOUR ACTIVE ROUTINES]\n${lines.join('\n')}\nIf the user asks to run one, says "run [name]", or asks what you have scheduled, reference these directly. You can also suggest running a relevant routine when it fits the conversation.`;
       }
 
-      // Inject recent document history so the worker knows what it has produced
-      const wfRows = workflowsResult.data;
-      if (wfRows && wfRows.length > 0) {
-        const wfIds = (wfRows as Array<{ id: string; name: string }>).map(w => w.id);
-        const nameMap: Record<string, string> = Object.fromEntries(
-          (wfRows as Array<{ id: string; name: string }>).map(w => [w.id, w.name])
-        );
-        const { data: recentThreads } = await adminClient
-          .from('work_threads')
-          .select('id, artifacts, workflow_id, created_at')
-          .eq('user_id', user.id)
-          .in('workflow_id', wfIds)
-          .not('artifacts', 'is', null)
-          .order('created_at', { ascending: false })
-          .limit(20);
-
-        if (recentThreads && recentThreads.length > 0) {
-          type ArtRow = { id?: string; title: string; type: string };
-          const docs = (recentThreads as Array<{ id: string; artifacts: ArtRow[] | null; workflow_id: string | null; created_at: string }>)
-            .flatMap(t => {
-              const arts: ArtRow[] = Array.isArray(t.artifacts) ? t.artifacts : [];
-              return arts.filter(a => a.id).map(a => ({
-                artifactId: a.id!,
-                title: a.title,
-                taskName: t.workflow_id ? (nameMap[t.workflow_id] ?? 'Task') : 'Task',
-                age: (() => {
-                  const diff = Date.now() - new Date(t.created_at).getTime();
-                  const h = Math.floor(diff / 3_600_000);
-                  if (h < 1) return 'just now';
-                  if (h < 24) return `${h}h ago`;
-                  return `${Math.floor(h / 24)}d ago`;
-                })(),
-              }));
-            });
-
-          if (docs.length > 0) {
-            const lines = docs.slice(0, 15).map(d =>
-              `- "${d.title}" · ${d.taskName} · ${d.age} · artifact_id: ${d.artifactId}`
-            );
-            documentHistoryBrief = `[YOUR RECENT DOCUMENTS]\n${lines.join('\n')}\nWhen the user asks to see, share, or work with any of these, call get_worker_document with the artifact_id. This attaches the document inline and lets you reference its content.`;
-          }
-        }
-      }
     }
 
     // Format context blocks
@@ -370,7 +325,6 @@ export async function POST(
               ? `[USER CONTEXT — personal preferences set by this user]\n${(agent as typeof agent & { user_preferences?: string | null }).user_preferences!.trim()}`
               : '',
             routinesBrief || '',
-            documentHistoryBrief || '',
             `[TOOLS YOU HAVE RIGHT NOW — use them, never claim otherwise]\n- web_search: search the live web for any news, data, or information. Call it immediately when the user asks about anything current.\n- fetch_url: read the full content of any URL.\n- deep_research: multi-source research synthesis for complex topics.\n- get_emails: read the user's inbox.\n- get_meeting_context: read their calendar and meetings.\nNEVER say you cannot access the web, live data, news sources, or current information. You can. Call web_search and do it.`,
             `[RECURRING TASKS]\nYou can set up and manage work you do regularly on their behalf.\n- list_tasks — see what's already running\n- create_task — set up something new from a plain description\n- get_task — read the full config of a task (steps, schedule, language, instructions)\n- update_task — edit any aspect: name, schedule, output language, task instructions, step prompts, status\n- duplicate_task — copy a task (useful for variants: same pipeline, different language or audience)\n- run_task — trigger a task right now\n- delete_task — remove a task permanently\n- share_task — share a task with the team so teammates can copy it (or stop sharing)\n- list_team_tasks — see tasks shared by teammates\n- use_task — copy a shared team task to your own list\n\nWhen the user asks you to change, update, fix, or adjust a task — YOU MUST COMPLETE THE FULL TOOL SEQUENCE before saying anything. Do not say "Done" or "Updated" until the final action tool has returned a result.\n\nRequired sequences (complete every step, no skipping):\n- Change language / schedule / name / status → list_tasks (get ID) → update_task → say one sentence confirming\n- Change a step prompt → list_tasks (get ID) → get_task (read steps) → update_task with step_patch → confirm\n- Duplicate a task → list_tasks (get ID) → duplicate_task → confirm\n- Run a task → list_tasks (get ID) → run_task → confirm\n- Share a task → list_tasks (get ID) → share_task → confirm\n- Use a team task → list_team_tasks (get ID) → use_task → confirm\n\nNEVER report success after only calling list_tasks. list_tasks only finds the ID — the action hasn't happened yet. A colleague who said "Done, changed to Portuguese" without actually changing it would be fired. Don't be that colleague.`,
             `[YOUR DOCUMENTS]\nlist_worker_documents shows everything you've produced. get_worker_document retrieves the full content. When the user asks to see, revise, or reference something you made, call get_worker_document — don't say you can't retrieve it.`,
@@ -520,8 +474,8 @@ export async function POST(
       : buildChatTools(sources, chatEndpoint.provider, modelFamily, isWorker);
 
     // Build message history — system goes first, then conversation.
-    // The last user message is augmented with mention context so "what is this about?"
-    // unambiguously refers to the mentioned item rather than the system prompt.
+    // History was loaded in parallel with the insert so excludes the current message;
+    // we append it explicitly here, augmented with mentionContext if present.
     const rawHistory = (history || []).map((m: { role: string; content: string; metadata?: unknown }) => {
       const meta = m.metadata as Record<string, unknown> | null;
       const savedMentionCtx = meta?.mention_context as string | undefined;
@@ -530,15 +484,11 @@ export async function POST(
         content: savedMentionCtx ? `${m.content}\n\n${savedMentionCtx}` : m.content,
       };
     });
-    if (mentionContext && rawHistory.length > 0) {
-      const last = rawHistory[rawHistory.length - 1];
-      if (last.role === 'user') {
-        rawHistory[rawHistory.length - 1] = {
-          ...last,
-          content: `${last.content}\n\n${mentionContext}`,
-        };
-      }
-    }
+    // Append current user message (not in history — loaded before insert completed)
+    rawHistory.push({
+      role: 'user' as const,
+      content: mentionContext ? `${content.trim()}\n\n${mentionContext}` : content.trim(),
+    });
     // ── Deep research: execute before messages are built so findings go into system context ──
     let preResearchCitations: string[] = [];
     let ranPreResearch = false;
