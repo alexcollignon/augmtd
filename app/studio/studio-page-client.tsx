@@ -63,6 +63,14 @@ export function StudioPageClient({
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // When opened from the Workers tasks tab (?assign_worker=...), skip the grid
+  // and go straight to a new blank pipeline builder.
+  useEffect(() => {
+    if (assignWorkerId && !initialWorkflowId) {
+      handleCreateWorkflow();
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   const selectedWorkflow = studioWorkflows?.find(w => w.id === selectedWorkflowId) ?? null;
   const isBuilding = !!editingWorkflowId && editingWorkflowId === selectedWorkflow?.id;
 
