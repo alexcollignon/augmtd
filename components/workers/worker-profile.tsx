@@ -35,9 +35,10 @@ interface WorkerProfileProps {
   onTabChange?: (tab: string) => void;
   onActiveThreadChange?: (threadId: string | null) => void;
   onThreadCreated?: (thread: WorkerThread) => void;
+  onThreadDeleted?: (threadId: string) => void;
 }
 
-export function WorkerProfile({ worker, initialThreads, initialMessages, initialTab, initialThreadId, onTabChange, onActiveThreadChange, onThreadCreated }: WorkerProfileProps) {
+export function WorkerProfile({ worker, initialThreads, initialMessages, initialTab, initialThreadId, onTabChange, onActiveThreadChange, onThreadCreated, onThreadDeleted }: WorkerProfileProps) {
   const validInitialTab = initialTab && ['chat','knowledge','tasks','documents','activity'].includes(initialTab) ? initialTab : 'chat';
   const [activeTab, setActiveTab] = useState<Tab>(validInitialTab);
   // Track which tabs have been visited so they stay mounted (lazy-mount, keep-alive)
@@ -102,6 +103,7 @@ export function WorkerProfile({ worker, initialThreads, initialMessages, initial
               onJumpConsumed={handleJumpConsumed}
               onActiveThreadChange={onActiveThreadChange}
               onThreadCreated={onThreadCreated}
+              onThreadDeleted={onThreadDeleted}
               initialInputValue={chatPrefill}
               onInitialInputConsumed={() => setChatPrefill(null)}
             />

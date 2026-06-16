@@ -5,9 +5,17 @@
  * Provides convenient functions for logging signals and updating context.
  */
 
-import { createClient } from '@/lib/supabase/server';
+import { createClient as createAdminClient } from '@supabase/supabase-js';
 import { UserContextEngine } from './user-context-engine';
 import { LearningSignal, SignalType } from '@/lib/types/user-context';
+
+function getAdminClient() {
+  return createAdminClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { auth: { autoRefreshToken: false, persistSession: false } }
+  );
+}
 
 export class ContextService {
   /**
@@ -19,7 +27,7 @@ export class ContextService {
     signalData: Record<string, any>,
     inboxItemId?: string
   ): Promise<void> {
-    const supabase = await createClient();
+    const supabase = getAdminClient();
 
     // Insert learning signal
     const { data, error } = await supabase
@@ -154,7 +162,7 @@ export class ContextService {
    * Process all pending signals for a user (useful for backfill)
    */
   static async processAllSignals(userId: string): Promise<void> {
-    const supabase = await createClient();
+    const supabase = getAdminClient();
 
     // Get all unprocessed signals
     const { data: signals, error } = await supabase

@@ -5,7 +5,15 @@
  * Each profile type is stored separately and loaded on demand.
  */
 
-import { createClient } from '@/lib/supabase/server';
+import { createClient as createAdminClient } from '@supabase/supabase-js';
+
+function getAdminClient() {
+  return createAdminClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { auth: { autoRefreshToken: false, persistSession: false } }
+  );
+}
 
 // ============= PROFILE TYPES =============
 
@@ -138,7 +146,7 @@ export class ProfileLoader {
     userId: string,
     profileTypes: T[]
   ): Promise<Partial<{ [K in T]: LoadedProfile<ProfileDataMap[K]> }>> {
-    const supabase = await createClient();
+    const supabase = getAdminClient();
 
     // Separate relationships from other profiles
     const regularProfiles = profileTypes.filter(t => t !== 'relationships');
@@ -219,7 +227,7 @@ export class ProfileLoader {
     confidenceScore?: number,
     incrementSignalCount: boolean = false
   ): Promise<void> {
-    const supabase = await createClient();
+    const supabase = getAdminClient();
 
     // Handle relationships separately (different table)
     if (profileType === 'relationships') {
@@ -270,7 +278,7 @@ export class ProfileLoader {
     userId: string,
     profileType: ProfileType
   ): Promise<{ confidence: number; signalCount: number } | null> {
-    const supabase = await createClient();
+    const supabase = getAdminClient();
 
     // Handle relationships separately
     if (profileType === 'relationships') {
@@ -313,7 +321,7 @@ export class ProfileLoader {
       lastUpdated: string;
     }[]
   > {
-    const supabase = await createClient();
+    const supabase = getAdminClient();
 
     // Get regular profiles
     const { data: profiles } = await supabase
@@ -358,7 +366,7 @@ export class ProfileLoader {
     role: string,
     email: string
   ): Promise<void> {
-    const supabase = await createClient();
+    const supabase = getAdminClient();
 
     // Infer authority level from role
     const authority = inferAuthorityFromRole(role);
