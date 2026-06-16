@@ -13,6 +13,7 @@ import {
   XMarkIcon,
   Cog6ToothIcon,
   TrashIcon,
+  DocumentDuplicateIcon,
 } from '@heroicons/react/24/outline';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -80,6 +81,7 @@ export function WorkerTasksTab({ workerId, workerName, isActive, onOpenInChat }:
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [openingId, setOpeningId] = useState<string | null>(null);
   const [runningId, setRunningId] = useState<string | null>(null);
+  const [duplicatingId, setDuplicatingId] = useState<string | null>(null);
   const [showNewTask, setShowNewTask] = useState(false);
 
   const load = useCallback(() => {
@@ -92,9 +94,10 @@ export function WorkerTasksTab({ workerId, workerName, isActive, onOpenInChat }:
 
   useEffect(() => { load(); }, [load]);
 
-  // Reload whenever the tab becomes visible so tasks created via chat appear immediately
-  const prevActiveRef = useRef(false);
+  // Reload when tab becomes active after being hidden — skip first render (initial load covers it)
+  const prevActiveRef = useRef<boolean | null>(null);
   useEffect(() => {
+    if (prevActiveRef.current === null) { prevActiveRef.current = !!isActive; return; }
     if (isActive && !prevActiveRef.current) load();
     prevActiveRef.current = !!isActive;
   }, [isActive, load]);
@@ -102,6 +105,38 @@ export function WorkerTasksTab({ workerId, workerName, isActive, onOpenInChat }:
   async function handleDelete(taskId: string) {
     setTasks(prev => prev.filter(t => t.id !== taskId));
     await fetch(`/api/workflows/${taskId}`, { method: 'DELETE' }).catch(() => {});
+  }
+
+  async function handleDuplicate(taskId: string) {
+    if (duplicatingId) return;
+    setDuplicatingId(taskId);
+    try {
+      const res = await fetch(`/api/workflows/${taskId}`);
+      if (!res.ok) return;
+      const { workflow: src } = await res.json();
+      const createRes = await fetch('/api/workflows', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: `Copy of ${src.name}`,
+          description: src.description,
+          icon: src.icon,
+          color: src.color,
+          trigger: src.trigger,
+          steps: src.steps,
+          output_config: src.output_config,
+          worker_instructions: src.worker_instructions ?? null,
+          agent_id: workerId,
+          status: 'paused',
+        }),
+      });
+      if (createRes.ok) {
+        const { workflow } = await createRes.json();
+        setTasks(prev => [workflow, ...prev]);
+      }
+    } finally {
+      setDuplicatingId(null);
+    }
   }
 
   async function handleToggle(task: Task) {
@@ -211,9 +246,11 @@ export function WorkerTasksTab({ workerId, workerName, isActive, onOpenInChat }:
                   isToggling={togglingId === task.id}
                   isOpening={openingId === task.id}
                   isRunning={runningId === task.id}
+                  isDuplicating={duplicatingId === task.id}
                   onToggle={() => handleToggle(task)}
                   onOpenLatestRun={() => handleOpenLatestRun(task.id)}
                   onRunNow={() => handleRunNow(task.id)}
+                  onDuplicate={() => handleDuplicate(task.id)}
                   onDelete={() => handleDelete(task.id)}
                 />
               ))}
@@ -251,13 +288,15 @@ interface TaskRowProps {
   isToggling: boolean;
   isOpening: boolean;
   isRunning: boolean;
+  isDuplicating: boolean;
   onToggle: () => void;
   onOpenLatestRun: () => void;
   onRunNow: () => void;
+  onDuplicate: () => void;
   onDelete: () => void;
 }
 
-function TaskRow({ task, isToggling, isOpening, isRunning, onToggle, onOpenLatestRun, onRunNow, onDelete }: TaskRowProps) {
+function TaskRow({ task, isToggling, isOpening, isRunning, isDuplicating, onToggle, onOpenLatestRun, onRunNow, onDuplicate, onDelete }: TaskRowProps) {
   const isActive = task.status === 'active';
   const isDraft = task.status === 'draft';
   const [showMenu, setShowMenu] = useState(false);
@@ -293,28 +332,29 @@ function TaskRow({ task, isToggling, isOpening, isRunning, onToggle, onOpenLates
         </div>
       </button>
 
-      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+      <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
         {!isDraft && (
           <>
             <button
               onClick={onRunNow}
               disabled={isRunning}
-              title="Run now"
-              className="p-1.5 rounded-lg text-neutral-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors disabled:opacity-40"
+              className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11.5px] font-medium text-neutral-500 hover:text-indigo-600 hover:bg-indigo-50 transition-colors disabled:opacity-40"
             >
-              <PlayIcon className={`w-3.5 h-3.5 ${isRunning ? 'text-amber-400' : ''}`} />
+              <BoltIcon className={`w-3 h-3 ${isRunning ? 'text-amber-400' : ''}`} />
+              {isRunning ? 'Running…' : 'Run now'}
             </button>
             <button
               onClick={onToggle}
               disabled={isToggling}
-              title={isActive ? 'Pause schedule' : 'Resume schedule'}
-              className={`p-1.5 rounded-lg transition-colors ${
+              className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[11.5px] font-medium transition-colors disabled:opacity-40 ${
                 isActive
-                  ? 'text-neutral-400 hover:text-amber-500 hover:bg-amber-50'
-                  : 'text-neutral-400 hover:text-emerald-600 hover:bg-emerald-50'
-              } disabled:opacity-40`}
+                  ? 'text-neutral-500 hover:text-amber-600 hover:bg-amber-50'
+                  : 'text-neutral-500 hover:text-emerald-600 hover:bg-emerald-50'
+              }`}
             >
-              {isActive ? <PauseIcon className="w-3.5 h-3.5" /> : <PlayIcon className="w-3.5 h-3.5" />}
+              {isActive
+                ? <><PauseIcon className="w-3 h-3" />Pause</>
+                : <><PlayIcon className="w-3 h-3" />Resume</>}
             </button>
           </>
         )}
@@ -338,6 +378,14 @@ function TaskRow({ task, isToggling, isOpening, isRunning, onToggle, onOpenLates
                   <Cog6ToothIcon className="w-3.5 h-3.5 text-neutral-400" />
                   Advanced settings
                 </Link>
+                <button
+                  onClick={() => { setShowMenu(false); onDuplicate(); }}
+                  disabled={isDuplicating}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900 transition-colors disabled:opacity-40"
+                >
+                  <DocumentDuplicateIcon className="w-3.5 h-3.5 text-neutral-400" />
+                  {isDuplicating ? 'Duplicating…' : 'Duplicate task'}
+                </button>
                 <div className="border-t border-neutral-100 my-1" />
                 {confirmDelete ? (
                   <div className="px-3 py-2 space-y-1.5">

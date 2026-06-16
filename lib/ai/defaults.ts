@@ -87,7 +87,7 @@ export const TIER_DEFAULTS: Record<TierType, Record<TaskType, ModelEndpoint>> = 
   // processEmail (planning task) → Kimi K2.6 on Together AI (frontier quality).
   // Embeddings stay on Together AI — same as private_shared, no re-indexing needed.
   bedrock_optimised: {
-    conversation:  { provider: 'bedrock',           model: 'eu.anthropic.claude-haiku-4-5-20251001-v1:0', maxTokensDefault: 4096 },
+    conversation:  { provider: 'bedrock',           model: 'eu.anthropic.claude-sonnet-4-6-20250514-v1:0', maxTokensDefault: 8192 },
     generation:    { provider: 'bedrock',           model: 'eu.anthropic.claude-haiku-4-5-20251001-v1:0', maxTokensDefault: 4096 },
     ocr:           { provider: 'bedrock',           model: 'eu.anthropic.claude-haiku-4-5-20251001-v1:0', maxTokensDefault: 4096 },
     planning:      { provider: 'together',          model: 'moonshotai/Kimi-K2.6',

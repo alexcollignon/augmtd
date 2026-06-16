@@ -83,7 +83,7 @@ const WORKFLOW_COLOR_MAP: Record<string, string> = {
 
 function fmtDate(iso: string | null): string {
   if (!iso) return '—';
-  return new Date(iso).toLocaleString(undefined, {
+  return new Date(iso).toLocaleString('en-GB', {
     month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
   });
 }
@@ -116,7 +116,7 @@ function groupByDate(runs: WorkflowRun[]): Array<{ label: string; runs: Workflow
     let label: string;
     if (d.getTime() === today.getTime()) label = 'Today';
     else if (d.getTime() === yesterday.getTime()) label = 'Yesterday';
-    else label = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    else label = d.toLocaleDateString('en-GB', { month: 'short', day: 'numeric' });
     if (!groups[label]) groups[label] = [];
     groups[label].push(run);
   }

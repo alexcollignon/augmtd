@@ -24,9 +24,9 @@ import {
   deepResearchDefinition, executeDeepResearch,
 } from '@/lib/tools';
 import {
-  listTasksDefinition, createTaskDefinition, getTaskDefinition, updateTaskDefinition, deleteTaskDefinition, runTaskDefinition,
+  listTasksDefinition, createTaskDefinition, getTaskDefinition, updateTaskDefinition, duplicateTaskDefinition, deleteTaskDefinition, runTaskDefinition,
   listWorkerDocumentsDefinition, getWorkerDocumentDefinition,
-  executeListTasks, executeCreateTask, executeGetTask, executeUpdateTask, executeDeleteTask, executeRunTask,
+  executeListTasks, executeCreateTask, executeGetTask, executeUpdateTask, executeDuplicateTask, executeDeleteTask, executeRunTask,
   executeListWorkerDocuments, executeGetWorkerDocument,
 } from '@/lib/tools/worker-tasks';
 import { checkRateLimit } from '@/lib/utils/rate-limit';
@@ -370,7 +370,7 @@ export async function POST(
             routinesBrief || '',
             documentHistoryBrief || '',
             `[TOOLS YOU HAVE RIGHT NOW — use them, never claim otherwise]\n- web_search: search the live web for any news, data, or information. Call it immediately when the user asks about anything current.\n- fetch_url: read the full content of any URL.\n- deep_research: multi-source research synthesis for complex topics.\n- get_emails: read the user's inbox.\n- get_meeting_context: read their calendar and meetings.\nNEVER say you cannot access the web, live data, news sources, or current information. You can. Call web_search and do it.`,
-            `[RECURRING TASKS]\nYou can set up and manage work you do regularly on their behalf.\n- list_tasks — see what's already running\n- create_task — set up something new from a plain description\n- get_task — read the full config of a task (steps, schedule, language, instructions)\n- update_task — edit any aspect: name, schedule, output language, task instructions, step prompts, status\n- run_task — trigger a task right now\n- delete_task — remove a task permanently\n\nWhen the user gives feedback on a task output — "too long", "more concise", "write in German", "change to Tuesdays", "make it more formal" — act on it immediately: call get_task to read the current config, identify what to change, call update_task. Then respond in one sentence confirming what you did. Never describe what you're about to change before doing it. Never ask for confirmation. A colleague just fixes it.`,
+            `[RECURRING TASKS]\nYou can set up and manage work you do regularly on their behalf.\n- list_tasks — see what's already running\n- create_task — set up something new from a plain description\n- get_task — read the full config of a task (steps, schedule, language, instructions)\n- update_task — edit any aspect: name, schedule, output language, task instructions, step prompts, status\n- duplicate_task — copy a task (useful for variants: same pipeline, different language or audience)\n- run_task — trigger a task right now\n- delete_task — remove a task permanently\n\nWhen the user asks you to change, update, fix, or adjust a task — YOU MUST COMPLETE THE FULL TOOL SEQUENCE before saying anything. Do not say "Done" or "Updated" until the final action tool has returned a result.\n\nRequired sequences (complete every step, no skipping):\n- Change language / schedule / name / status → list_tasks (get ID) → update_task → say one sentence confirming\n- Change a step prompt → list_tasks (get ID) → get_task (read steps) → update_task with step_patch → confirm\n- Duplicate a task → list_tasks (get ID) → duplicate_task → confirm\n- Run a task → list_tasks (get ID) → run_task → confirm\n\nNEVER report success after only calling list_tasks. list_tasks only finds the ID — the action hasn't happened yet. A colleague who said "Done, changed to Portuguese" without actually changing it would be fired. Don't be that colleague.`,
             `[YOUR DOCUMENTS]\nlist_worker_documents shows everything you've produced. get_worker_document retrieves the full content. When the user asks to see, revise, or reference something you made, call get_worker_document — don't say you can't retrieve it.`,
             `Understand intent before acting. "Prepare a weekly X" or "every Monday do Y" or "set up X for me" = the user wants a recurring task — call create_task immediately, confirm the schedule, done. "What's X?" or "find me X" or "draft X" = do it now with your tools. Never confuse the two. A human colleague would know the difference instantly.`,
             `Speak like a capable colleague, not a software system. Say "Got it, I'll have that ready every Monday" not "I can create a scheduled automation task." Say "I'm on it" not "I don't have direct access to." When a task is clear, do it. One focused question maximum if truly blocked.`,
@@ -1301,7 +1301,7 @@ function buildChatTools(sources: string[], _provider: string, _modelFamily: stri
   // Worker-only tools — task management + document access
   if (isWorker) {
     neutral.push(
-      listTasksDefinition, createTaskDefinition, getTaskDefinition, updateTaskDefinition, deleteTaskDefinition, runTaskDefinition,
+      listTasksDefinition, createTaskDefinition, getTaskDefinition, updateTaskDefinition, duplicateTaskDefinition, deleteTaskDefinition, runTaskDefinition,
       listWorkerDocumentsDefinition, getWorkerDocumentDefinition,
     );
   }
@@ -1772,10 +1772,23 @@ async function executeChatTool(
         ...(input.status === 'active' || input.status === 'paused' ? { status: input.status } : {}),
         ...(input.trigger && typeof input.trigger === 'object' ? { trigger: input.trigger as import('@/lib/workflows/types').WorkflowTrigger } : {}),
         ...(typeof input.output_language === 'string' ? { output_language: input.output_language } : {}),
+        ...(typeof input.output_destination === 'string' ? { output_destination: input.output_destination } : {}),
+        ...(typeof input.output_artifact_type === 'string' ? { output_artifact_type: input.output_artifact_type } : {}),
+        ...(typeof input.output_title === 'string' ? { output_title: input.output_title } : {}),
+        ...(typeof input.output_notification === 'string' ? { output_notification: input.output_notification } : {}),
         ...(typeof input.worker_instructions === 'string' ? { worker_instructions: input.worker_instructions } : {}),
+        ...(input.step_patch && typeof input.step_patch === 'object' && typeof (input.step_patch as Record<string, unknown>).step_id === 'string' ? { step_patch: input.step_patch as { step_id: string; label?: string; prompt?: string; config?: Record<string, unknown> } } : {}),
         ...(Array.isArray(input.steps) ? { steps: input.steps as import('@/lib/workflows/types').WorkflowStep[] } : {}),
       }, ctx.userId, ctx.adminClient);
       return { result, summary: 'Task updated' };
+    }
+
+    case 'duplicate_task': {
+      if (!ctx.agentId) return { result: 'No worker context available.', summary: 'No worker' };
+      const taskId = typeof input.task_id === 'string' ? input.task_id : '';
+      const newName = typeof input.name === 'string' ? input.name : undefined;
+      const result = await executeDuplicateTask(taskId, ctx.agentId, ctx.userId, newName, ctx.adminClient);
+      return { result, summary: 'Task duplicated' };
     }
 
     case 'delete_task': {
