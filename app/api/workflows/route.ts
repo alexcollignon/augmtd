@@ -17,6 +17,7 @@ export async function GET(request: NextRequest) {
   try { await requireFeature('studio', supabase, user.id); } catch (err) { return handleWorkspaceError(err); }
 
   const agentId = request.nextUrl.searchParams.get('agent_id');
+  const companyTasks = request.nextUrl.searchParams.get('company_tasks') === 'true';
 
   // RLS returns own workflows + shared company workflows automatically
   let query = supabase
@@ -24,7 +25,12 @@ export async function GET(request: NextRequest) {
     .select('id, user_id, name, description, icon, color, status, trigger, steps, output_config, last_run_at, next_run_at, created_at, updated_at, shared_with_company, sharing_mode, company_id, pinned, agent_id')
     .order('updated_at', { ascending: false });
 
-  if (agentId) query = query.eq('agent_id', agentId);
+  if (companyTasks) {
+    // Return only shared tasks from teammates (not owned by the current user)
+    query = query.neq('user_id', user.id).eq('sharing_mode', 'live');
+  } else if (agentId) {
+    query = query.eq('agent_id', agentId);
+  }
 
   const { data, error } = await query;
 

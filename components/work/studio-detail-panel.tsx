@@ -61,7 +61,7 @@ function artifactTypeIcon(type: string | undefined) {
 
 function fmtDateTime(iso: string | null): string {
   if (!iso) return '—';
-  return new Date(iso).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  return new Date(iso).toLocaleString('en-GB', { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
 function fmtDuration(start: string | null, end: string | null): string | null {
@@ -89,7 +89,7 @@ function groupByDate(runs: WorkflowRun[]): Array<{ label: string; runs: Workflow
     let label: string;
     if (d.getTime() === today.getTime()) label = 'Today';
     else if (d.getTime() === yesterday.getTime()) label = 'Yesterday';
-    else label = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    else label = d.toLocaleDateString('en-GB', { month: 'short', day: 'numeric' });
     if (!groups[label]) groups[label] = [];
     groups[label].push(run);
   }
@@ -527,14 +527,14 @@ const TOOL_LABEL_MAP: Record<string, string> = {
 
 function formatSince(since: string, lastRunAt?: string | null): string {
   if (since === 'last_run') {
-    if (lastRunAt) return new Date(lastRunAt).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+    if (lastRunAt) return new Date(lastRunAt).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
     return 'Last run';
   }
   const days = since.match(/^(\d+)d$/);
   if (days) return `Last ${days[1]} day${days[1] === '1' ? '' : 's'}`;
   const hours = since.match(/^(\d+)h$/);
   if (hours) return `Last ${hours[1]} hour${hours[1] === '1' ? '' : 's'}`;
-  try { return new Date(since).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }); } catch { return since; }
+  try { return new Date(since).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }); } catch { return since; }
 }
 
 function getSourceDetail(step: ToolStep): string {
@@ -707,7 +707,7 @@ function NextRunCard({ workflow, onActivate }: { workflow: Workflow; onActivate:
   })();
 
   const nextRunDate = workflow.next_run_at && workflow.status === 'active'
-    ? new Date(workflow.next_run_at).toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+    ? new Date(workflow.next_run_at).toLocaleString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
     : null;
 
   const value = workflow.trigger.type !== 'schedule'
@@ -859,8 +859,8 @@ function ArtifactRunModal({ run, onClose, onOpenThread }: {
   const ct = artifact?.content ? contentType(artifact) : 'none';
 
   const dateStr = run.started_at
-    ? new Date(run.started_at).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' }) +
-      ' · ' + new Date(run.started_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+    ? new Date(run.started_at).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }) +
+      ' · ' + new Date(run.started_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
     : '';
 
   // Close on Escape
@@ -942,7 +942,7 @@ function LatestBriefingCard({ runs, onOpenArtifact }: {
   const ct = artifact?.content ? contentType(artifact) : 'none';
   const hasInlineArtifact = ct !== 'none';
 
-  const dateChip = new Date(lastSucceeded.created_at).toLocaleDateString(undefined, {
+  const dateChip = new Date(lastSucceeded.created_at).toLocaleDateString('en-GB', {
     weekday: 'short', day: 'numeric', month: 'short',
   });
 
@@ -1199,8 +1199,8 @@ function PastRunRow({ run, workflowId, onOpenThread, onPreviewRun, onDeleted }: 
     : 'Running…';
 
   const dateStr = run.started_at
-    ? new Date(run.started_at).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' }) +
-      ', ' + new Date(run.started_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+    ? new Date(run.started_at).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }) +
+      ', ' + new Date(run.started_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
     : fmtDateTime(run.created_at);
 
   const duration = fmtDuration(run.started_at, run.completed_at);

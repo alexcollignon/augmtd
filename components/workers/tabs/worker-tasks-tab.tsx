@@ -13,6 +13,9 @@ import {
   XMarkIcon,
   Cog6ToothIcon,
   TrashIcon,
+  DocumentDuplicateIcon,
+  UsersIcon,
+  LockClosedIcon,
 } from '@heroicons/react/24/outline';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -31,15 +34,30 @@ interface Task {
   last_run_at: string | null;
   next_run_at: string | null;
   agent_id: string | null;
+  sharing_mode: string | null;
+  is_owned_by_me?: boolean;
+  owner_name?: string | null;
 }
 
+interface TeamTask {
+  id: string;
+  name: string;
+  description: string | null;
+  status: string;
+  trigger: {
+    type: 'schedule' | 'manual';
+    cron?: string;
+    label?: string;
+  };
+  owner_name: string | null;
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function scheduleLabel(task: Task): string {
-  if (task.trigger.type === 'manual') return 'Manual trigger';
-  if (task.trigger.label) return task.trigger.label;
-  if (task.trigger.cron) return task.trigger.cron;
+function scheduleLabel(trigger: Task['trigger'] | TeamTask['trigger']): string {
+  if (trigger.type === 'manual') return 'Manual trigger';
+  if (trigger.label) return trigger.label;
+  if (trigger.cron) return trigger.cron;
   return 'Scheduled';
 }
 
@@ -75,39 +93,121 @@ interface WorkerTasksTabProps {
 }
 
 export function WorkerTasksTab({ workerId, workerName, isActive, onOpenInChat }: WorkerTasksTabProps) {
-  const [tasks, setTasks] = useState<Task[]>([]);
+  const [myTasks, setMyTasks] = useState<Task[]>([]);
+  const [teamTasks, setTeamTasks] = useState<TeamTask[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [openingId, setOpeningId] = useState<string | null>(null);
   const [runningId, setRunningId] = useState<string | null>(null);
+  const [duplicatingId, setDuplicatingId] = useState<string | null>(null);
+  const [sharingId, setSharingId] = useState<string | null>(null);
+  const [usingTaskId, setUsingTaskId] = useState<string | null>(null);
   const [showNewTask, setShowNewTask] = useState(false);
 
   const load = useCallback(() => {
     setIsLoading(true);
-    fetch(`/api/workflows?agent_id=${workerId}`)
-      .then(r => r.json())
-      .then(data => { setTasks(data.workflows ?? []); setIsLoading(false); })
+    Promise.all([
+      fetch(`/api/workflows?agent_id=${workerId}`).then(r => r.json()),
+      fetch('/api/workflows?company_tasks=true').then(r => r.json()),
+    ])
+      .then(([myData, teamData]) => {
+        setMyTasks(myData.workflows ?? []);
+        setTeamTasks(teamData.workflows ?? []);
+        setIsLoading(false);
+      })
       .catch(() => setIsLoading(false));
   }, [workerId]);
 
   useEffect(() => { load(); }, [load]);
 
-  // Reload whenever the tab becomes visible so tasks created via chat appear immediately
-  const prevActiveRef = useRef(false);
+  // Reload when tab becomes active after being hidden — skip first render
+  const prevActiveRef = useRef<boolean | null>(null);
   useEffect(() => {
+    if (prevActiveRef.current === null) { prevActiveRef.current = !!isActive; return; }
     if (isActive && !prevActiveRef.current) load();
     prevActiveRef.current = !!isActive;
   }, [isActive, load]);
 
   async function handleDelete(taskId: string) {
-    setTasks(prev => prev.filter(t => t.id !== taskId));
+    setMyTasks(prev => prev.filter(t => t.id !== taskId));
     await fetch(`/api/workflows/${taskId}`, { method: 'DELETE' }).catch(() => {});
+  }
+
+  async function handleDuplicate(taskId: string) {
+    if (duplicatingId) return;
+    setDuplicatingId(taskId);
+    try {
+      const res = await fetch(`/api/workflows/${taskId}`);
+      if (!res.ok) return;
+      const { workflow: src } = await res.json();
+      const createRes = await fetch('/api/workflows', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: `Copy of ${src.name}`,
+          description: src.description,
+          icon: src.icon,
+          color: src.color,
+          trigger: src.trigger,
+          steps: src.steps,
+          output_config: src.output_config,
+          worker_instructions: src.worker_instructions ?? null,
+          agent_id: workerId,
+          status: 'paused',
+        }),
+      });
+      if (createRes.ok) {
+        const { workflow } = await createRes.json();
+        setMyTasks(prev => [{ ...workflow, sharing_mode: null, is_owned_by_me: true }, ...prev]);
+      }
+    } finally {
+      setDuplicatingId(null);
+    }
+  }
+
+  async function handleToggleShare(taskId: string, currentMode: string | null) {
+    if (sharingId) return;
+    setSharingId(taskId);
+    const nextMode = currentMode ? null : 'live';
+    setMyTasks(prev => prev.map(t => t.id === taskId ? { ...t, sharing_mode: nextMode } : t));
+    try {
+      await fetch(`/api/workflows/${taskId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sharing_mode: nextMode }),
+      });
+    } catch {
+      setMyTasks(prev => prev.map(t => t.id === taskId ? { ...t, sharing_mode: currentMode } : t));
+    } finally {
+      setSharingId(null);
+    }
+  }
+
+  async function handleUseTask(sourceId: string) {
+    if (usingTaskId) return;
+    setUsingTaskId(sourceId);
+    try {
+      const res = await fetch(`/api/workflows/${sourceId}/clone`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agent_id: workerId }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const workflow = data.workflow;
+        if (workflow) {
+          setMyTasks(prev => [{ ...workflow, sharing_mode: null, is_owned_by_me: true }, ...prev]);
+        }
+      }
+    } finally {
+      setUsingTaskId(null);
+    }
   }
 
   async function handleToggle(task: Task) {
     if (togglingId) return;
     const next = task.status === 'active' ? 'paused' : 'active';
-    setTasks(prev => prev.map(t => t.id === task.id ? { ...t, status: next } : t));
+    setMyTasks(prev => prev.map(t => t.id === task.id ? { ...t, status: next } : t));
     setTogglingId(task.id);
     try {
       await fetch(`/api/workflows/${task.id}`, {
@@ -116,7 +216,7 @@ export function WorkerTasksTab({ workerId, workerName, isActive, onOpenInChat }:
         body: JSON.stringify({ status: next }),
       });
     } catch {
-      setTasks(prev => prev.map(t => t.id === task.id ? { ...t, status: task.status } : t));
+      setMyTasks(prev => prev.map(t => t.id === task.id ? { ...t, status: task.status } : t));
     } finally {
       setTogglingId(null);
     }
@@ -142,22 +242,12 @@ export function WorkerTasksTab({ workerId, workerName, isActive, onOpenInChat }:
     try {
       const res = await fetch(`/api/workflows/${taskId}/run`, { method: 'POST' });
       if (res.ok) {
-        const { runId } = await res.json();
-        // Poll briefly then open the run thread
         await new Promise(r => setTimeout(r, 1500));
         const runsRes = await fetch(`/api/workflows/${taskId}/runs?limit=1`);
         if (runsRes.ok) {
           const { runs } = await runsRes.json();
           const threadId = runs?.[0]?.thread_id;
           if (threadId) onOpenInChat(threadId);
-          else if (runId) {
-            // Run still in progress — open the run page when ready
-            const pollRes = await fetch(`/api/workflows/${taskId}/runs?limit=1`);
-            if (pollRes.ok) {
-              const { runs: polled } = await pollRes.json();
-              if (polled?.[0]?.thread_id) onOpenInChat(polled[0].thread_id);
-            }
-          }
         }
       }
     } finally {
@@ -166,7 +256,7 @@ export function WorkerTasksTab({ workerId, workerName, isActive, onOpenInChat }:
   }
 
   function handleTaskCreated(task: Task) {
-    setTasks(prev => [task, ...prev]);
+    setMyTasks(prev => [{ ...task, sharing_mode: null, is_owned_by_me: true }, ...prev]);
     setShowNewTask(false);
   }
 
@@ -200,23 +290,48 @@ export function WorkerTasksTab({ workerId, workerName, isActive, onOpenInChat }:
             </button>
           </div>
 
-          {tasks.length === 0 ? (
+          {/* My tasks */}
+          {myTasks.length === 0 ? (
             <EmptyTasks workerName={workerName} workerId={workerId} onNew={() => setShowNewTask(true)} />
           ) : (
-            <div className="rounded-xl border border-neutral-200 divide-y divide-neutral-100">
-              {tasks.map(task => (
+            <div className="rounded-xl border border-neutral-200 divide-y divide-neutral-100 mb-6">
+              {myTasks.map(task => (
                 <TaskRow
                   key={task.id}
                   task={task}
                   isToggling={togglingId === task.id}
                   isOpening={openingId === task.id}
                   isRunning={runningId === task.id}
+                  isDuplicating={duplicatingId === task.id}
+                  isSharing={sharingId === task.id}
                   onToggle={() => handleToggle(task)}
                   onOpenLatestRun={() => handleOpenLatestRun(task.id)}
                   onRunNow={() => handleRunNow(task.id)}
+                  onDuplicate={() => handleDuplicate(task.id)}
                   onDelete={() => handleDelete(task.id)}
+                  onToggleShare={() => handleToggleShare(task.id, task.sharing_mode ?? null)}
                 />
               ))}
+            </div>
+          )}
+
+          {/* From the team */}
+          {teamTasks.length > 0 && (
+            <div className="mt-6">
+              <div className="flex items-center gap-2 mb-3">
+                <UsersIcon className="w-3.5 h-3.5 text-neutral-400" />
+                <h3 className="text-[11.5px] font-semibold text-neutral-500 uppercase tracking-wide">From the team</h3>
+              </div>
+              <div className="rounded-xl border border-neutral-200 divide-y divide-neutral-100">
+                {teamTasks.map(task => (
+                  <TeamTaskRow
+                    key={task.id}
+                    task={task}
+                    isUsing={usingTaskId === task.id}
+                    onUse={() => handleUseTask(task.id)}
+                  />
+                ))}
+              </div>
             </div>
           )}
 
@@ -244,22 +359,27 @@ export function WorkerTasksTab({ workerId, workerName, isActive, onOpenInChat }:
   );
 }
 
-// ─── Task row ─────────────────────────────────────────────────────────────────
+// ─── My task row ──────────────────────────────────────────────────────────────
 
 interface TaskRowProps {
   task: Task;
   isToggling: boolean;
   isOpening: boolean;
   isRunning: boolean;
+  isDuplicating: boolean;
+  isSharing: boolean;
   onToggle: () => void;
   onOpenLatestRun: () => void;
   onRunNow: () => void;
+  onDuplicate: () => void;
   onDelete: () => void;
+  onToggleShare: () => void;
 }
 
-function TaskRow({ task, isToggling, isOpening, isRunning, onToggle, onOpenLatestRun, onRunNow, onDelete }: TaskRowProps) {
+function TaskRow({ task, isToggling, isOpening, isRunning, isDuplicating, isSharing, onToggle, onOpenLatestRun, onRunNow, onDuplicate, onDelete, onToggleShare }: TaskRowProps) {
   const isActive = task.status === 'active';
   const isDraft = task.status === 'draft';
+  const isShared = task.sharing_mode === 'live';
   const [showMenu, setShowMenu] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
@@ -268,15 +388,23 @@ function TaskRow({ task, isToggling, isOpening, isRunning, onToggle, onOpenLates
       <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isRunning ? 'bg-amber-400 animate-pulse' : isActive ? 'bg-emerald-400' : 'bg-neutral-300'}`} />
 
       <button className="min-w-0 flex-1 text-left" onClick={onOpenLatestRun} disabled={isOpening}>
-        <p className={`text-[13px] font-medium truncate transition-colors ${
-          isOpening ? 'text-neutral-400' : 'text-neutral-700 group-hover:text-indigo-600'
-        }`}>
-          {isOpening ? 'Opening…' : task.name}
-        </p>
+        <div className="flex items-center gap-1.5">
+          <p className={`text-[13px] font-medium truncate transition-colors ${
+            isOpening ? 'text-neutral-400' : 'text-neutral-700 group-hover:text-indigo-600'
+          }`}>
+            {isOpening ? 'Opening…' : task.name}
+          </p>
+          {isShared && (
+            <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-500 text-[9.5px] font-medium flex-shrink-0">
+              <UsersIcon className="w-2.5 h-2.5" />
+              Shared
+            </span>
+          )}
+        </div>
         <div className="flex items-center gap-3 mt-0.5 flex-wrap">
           <span className="flex items-center gap-1 text-[11px] text-neutral-400">
             <ClockIcon className="w-3 h-3" />
-            {scheduleLabel(task)}
+            {scheduleLabel(task.trigger)}
           </span>
           {task.last_run_at && (
             <span className="flex items-center gap-1 text-[11px] text-neutral-400">
@@ -293,28 +421,29 @@ function TaskRow({ task, isToggling, isOpening, isRunning, onToggle, onOpenLates
         </div>
       </button>
 
-      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+      <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
         {!isDraft && (
           <>
             <button
               onClick={onRunNow}
               disabled={isRunning}
-              title="Run now"
-              className="p-1.5 rounded-lg text-neutral-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors disabled:opacity-40"
+              className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11.5px] font-medium text-neutral-500 hover:text-indigo-600 hover:bg-indigo-50 transition-colors disabled:opacity-40"
             >
-              <PlayIcon className={`w-3.5 h-3.5 ${isRunning ? 'text-amber-400' : ''}`} />
+              <BoltIcon className={`w-3 h-3 ${isRunning ? 'text-amber-400' : ''}`} />
+              {isRunning ? 'Running…' : 'Run now'}
             </button>
             <button
               onClick={onToggle}
               disabled={isToggling}
-              title={isActive ? 'Pause schedule' : 'Resume schedule'}
-              className={`p-1.5 rounded-lg transition-colors ${
+              className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[11.5px] font-medium transition-colors disabled:opacity-40 ${
                 isActive
-                  ? 'text-neutral-400 hover:text-amber-500 hover:bg-amber-50'
-                  : 'text-neutral-400 hover:text-emerald-600 hover:bg-emerald-50'
-              } disabled:opacity-40`}
+                  ? 'text-neutral-500 hover:text-amber-600 hover:bg-amber-50'
+                  : 'text-neutral-500 hover:text-emerald-600 hover:bg-emerald-50'
+              }`}
             >
-              {isActive ? <PauseIcon className="w-3.5 h-3.5" /> : <PlayIcon className="w-3.5 h-3.5" />}
+              {isActive
+                ? <><PauseIcon className="w-3 h-3" />Pause</>
+                : <><PlayIcon className="w-3 h-3" />Resume</>}
             </button>
           </>
         )}
@@ -329,7 +458,7 @@ function TaskRow({ task, isToggling, isOpening, isRunning, onToggle, onOpenLates
           {showMenu && (
             <>
               <div className="fixed inset-0 z-10" onClick={() => setShowMenu(false)} />
-              <div className="absolute right-0 top-full mt-1 w-44 bg-white rounded-xl shadow-lg border border-neutral-200 py-1 z-50 text-[12.5px]">
+              <div className="absolute right-0 top-full mt-1 w-48 bg-white rounded-xl shadow-lg border border-neutral-200 py-1 z-50 text-[12.5px]">
                 <Link
                   href={`/studio?workflow=${task.id}`}
                   className="flex items-center gap-2 px-3 py-2 text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900 transition-colors"
@@ -338,6 +467,23 @@ function TaskRow({ task, isToggling, isOpening, isRunning, onToggle, onOpenLates
                   <Cog6ToothIcon className="w-3.5 h-3.5 text-neutral-400" />
                   Advanced settings
                 </Link>
+                <button
+                  onClick={() => { setShowMenu(false); onDuplicate(); }}
+                  disabled={isDuplicating}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900 transition-colors disabled:opacity-40"
+                >
+                  <DocumentDuplicateIcon className="w-3.5 h-3.5 text-neutral-400" />
+                  {isDuplicating ? 'Duplicating…' : 'Duplicate task'}
+                </button>
+                <button
+                  onClick={() => { setShowMenu(false); onToggleShare(); }}
+                  disabled={isSharing}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900 transition-colors disabled:opacity-40"
+                >
+                  {isShared
+                    ? <><LockClosedIcon className="w-3.5 h-3.5 text-neutral-400" />Stop sharing</>
+                    : <><UsersIcon className="w-3.5 h-3.5 text-neutral-400" />Share with team</>}
+                </button>
                 <div className="border-t border-neutral-100 my-1" />
                 {confirmDelete ? (
                   <div className="px-3 py-2 space-y-1.5">
@@ -375,6 +521,40 @@ function TaskRow({ task, isToggling, isOpening, isRunning, onToggle, onOpenLates
   );
 }
 
+// ─── Team task row ────────────────────────────────────────────────────────────
+
+function TeamTaskRow({ task, isUsing, onUse }: { task: TeamTask; isUsing: boolean; onUse: () => void }) {
+  return (
+    <div className="flex items-center gap-3 px-4 py-3.5 hover:bg-neutral-50 transition-colors group">
+      <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-indigo-200" />
+
+      <div className="min-w-0 flex-1">
+        <p className="text-[13px] font-medium text-neutral-700 truncate">{task.name}</p>
+        <div className="flex items-center gap-3 mt-0.5 flex-wrap">
+          <span className="flex items-center gap-1 text-[11px] text-neutral-400">
+            <ClockIcon className="w-3 h-3" />
+            {scheduleLabel(task.trigger)}
+          </span>
+          {task.owner_name && (
+            <span className="text-[11px] text-neutral-400">from {task.owner_name}</span>
+          )}
+        </div>
+      </div>
+
+      <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+        <button
+          onClick={onUse}
+          disabled={isUsing}
+          className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11.5px] font-medium text-neutral-500 hover:text-indigo-600 hover:bg-indigo-50 transition-colors disabled:opacity-40"
+        >
+          <PlusIcon className="w-3 h-3" />
+          {isUsing ? 'Adding…' : 'Use task'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── New task modal ───────────────────────────────────────────────────────────
 
 interface NewTaskModalProps {
@@ -399,7 +579,6 @@ function NewTaskModal({ workerId, workerName, onClose, onCreated }: NewTaskModal
     setStatus('generating');
 
     try {
-      // 1. Generate full pipeline from natural language description
       const genRes = await fetch('/api/workflows/generate-from-description', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -417,7 +596,6 @@ function NewTaskModal({ workerId, workerName, onClose, onCreated }: NewTaskModal
 
       setStatus('creating');
 
-      // 2. Persist it, associated with this worker
       const createRes = await fetch('/api/workflows', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -447,7 +625,6 @@ function NewTaskModal({ workerId, workerName, onClose, onCreated }: NewTaskModal
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 backdrop-blur-sm p-4">
       <div className="w-full max-w-[520px] bg-white rounded-2xl shadow-xl border border-neutral-200 overflow-hidden">
 
-        {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-neutral-100">
           <div>
             <h2 className="text-[14px] font-semibold text-neutral-800">New task</h2>
@@ -472,7 +649,6 @@ function NewTaskModal({ workerId, workerName, onClose, onCreated }: NewTaskModal
             className="w-full px-3 py-2.5 rounded-xl border border-neutral-200 text-[13px] text-neutral-800 placeholder:text-neutral-400 focus:outline-none focus:border-indigo-300 focus:shadow-sm transition-all resize-none leading-relaxed disabled:opacity-50"
           />
 
-          {/* Optional task instructions toggle */}
           {!showInstructions ? (
             <button
               type="button"
@@ -503,7 +679,6 @@ function NewTaskModal({ workerId, workerName, onClose, onCreated }: NewTaskModal
           {error && <p className="text-[12px] text-red-500">{error}</p>}
         </div>
 
-        {/* Footer */}
         <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-neutral-100">
           <button
             onClick={onClose}

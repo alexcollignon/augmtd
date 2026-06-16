@@ -20,22 +20,27 @@ const ROLE_LABELS: Record<string, string> = {
 };
 // ─── Resize handle ───────────────────────────────────────────────────────────
 
-function ResizeHandle({ onResize, disabled }: { onResize: (delta: number) => void; disabled?: boolean }) {
-  const isResizingRef = useRef(false);
-
+function ResizeHandle({ panelRef, onResizeEnd, disabled }: {
+  panelRef: React.RefObject<HTMLDivElement | null>;
+  onResizeEnd: (width: number) => void;
+  disabled?: boolean;
+}) {
   function handleMouseDown(e: React.MouseEvent) {
-    if (disabled) return;
+    if (disabled || !panelRef.current) return;
     e.preventDefault();
-    isResizingRef.current = true;
-    let lastX = e.clientX;
+    const panel = panelRef.current;
+    const startX = e.clientX;
+    const startWidth = panel.offsetWidth;
+    panel.style.transition = 'none';
 
     function onMove(ev: MouseEvent) {
-      if (!isResizingRef.current) return;
-      onResize(ev.clientX - lastX);
-      lastX = ev.clientX;
+      const next = Math.min(540, Math.max(280, startWidth - (ev.clientX - startX)));
+      panel.style.width = `${next}px`;
     }
-    function onUp() {
-      isResizingRef.current = false;
+    function onUp(ev: MouseEvent) {
+      const finalWidth = Math.min(540, Math.max(280, startWidth - (ev.clientX - startX)));
+      panel.style.transition = '';
+      onResizeEnd(finalWidth);
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
     }
@@ -425,10 +430,7 @@ function ActiveWorkerChat({
   // Artifact panel state
   const [openArtifact, setOpenArtifact] = useState<{ artifactId: string; threadId: string } | null>(null);
   const [panelWidth, setPanelWidth] = useState(360);
-
-  function handlePanelResize(delta: number) {
-    setPanelWidth(prev => Math.min(540, Math.max(280, prev - delta)));
-  }
+  const panelRef = useRef<HTMLDivElement>(null);
   const [artifactThreadMap, setArtifactThreadMap] = useState<Map<string, string>>(cached?.artifactThreadMap ?? new Map());
   const [threadArtifacts, setThreadArtifacts] = useState<DocumentArtifact[]>(cached?.artifacts ?? []);
   // Ref tracks extra artifact metadata from streaming (artifact_ready events) synchronously,
@@ -868,11 +870,12 @@ function ActiveWorkerChat({
       </div>
 
       {/* Artifact panel resize handle */}
-      {openArtifact && <ResizeHandle onResize={handlePanelResize} />}
+      {openArtifact && <ResizeHandle panelRef={panelRef} onResizeEnd={setPanelWidth} />}
 
       {/* Artifact side panel — slides in/out smoothly */}
       <div
-        className="flex-shrink-0 overflow-hidden transition-[width] duration-300 ease-in-out"
+        ref={panelRef}
+        className="flex-shrink-0 overflow-x-hidden transition-[width] duration-300 ease-in-out"
         style={{ width: openArtifact ? panelWidth : 0 }}
       >
         {openArtifact && (

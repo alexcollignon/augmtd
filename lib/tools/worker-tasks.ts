@@ -45,7 +45,7 @@ export const getTaskDefinition = {
 
 export const updateTaskDefinition = {
   name: 'update_task',
-  description: "Edit any aspect of an existing task in response to user feedback. Use for: renaming, changing schedule, output language, task instructions (tone/persona), status (pause/resume), or updating step prompts when the user gives content/style feedback. Always call get_task first to read the current config. Act immediately — do not ask the user to confirm first.",
+  description: "Edit any aspect of an existing task in response to user feedback. Use for: renaming, changing schedule, output settings, task instructions (tone/persona), status (pause/resume), or updating step content when the user gives feedback. Always call get_task first to read the current config. Use step_patch to edit a single step by its id — identify the right step from the labels and prompts you read. Act immediately — do not ask the user to confirm first.",
   input_schema: {
     type: 'object',
     properties: {
@@ -65,10 +65,25 @@ export const updateTaskDefinition = {
         required: ['type'],
       },
       output_language: { type: 'string', description: 'BCP-47 language code for output. Examples: "de" (German), "pt" (Portuguese), "fr" (French), "es" (Spanish)' },
+      output_destination: { type: 'string', enum: ['thread_message', 'artifact', 'multiple_artifacts'], description: 'Where the final output goes. thread_message = message in the run thread; artifact = saved document/spreadsheet/etc; multiple_artifacts = one artifact per output item' },
+      output_artifact_type: { type: 'string', enum: ['document', 'spreadsheet', 'presentation', 'email'], description: 'Type of artifact to create. Only relevant when output_destination is artifact or multiple_artifacts' },
+      output_title: { type: 'string', description: 'Title template for the output artifact. Use {{date}} for the run date, {{week_of}} for the week. Example: "AHK Briefing — {{week_of}}"' },
+      output_notification: { type: 'string', enum: ['inbox_card', 'silent', 'email_digest'], description: 'How to notify when the task completes. inbox_card = appears in inbox; silent = no notification; email_digest = send by email' },
       worker_instructions: { type: 'string', description: 'Task-specific tone or persona instructions that override the worker default for this task only' },
+      step_patch: {
+        type: 'object',
+        description: 'Edit a single step by its id. Read the step ids from get_task, identify the right step from its label and prompt, then patch only what needs to change. Safer than replacing the full steps array.',
+        properties: {
+          step_id: { type: 'string', description: 'The id field of the step to patch (from get_task output)' },
+          label: { type: 'string', description: 'New label for this step' },
+          prompt: { type: 'string', description: 'New prompt for ai or agent steps' },
+          config: { type: 'object', description: 'New config fields for tool steps — merged into existing config' },
+        },
+        required: ['step_id'],
+      },
       steps: {
         type: 'array',
-        description: 'Full replacement steps array. Only use when adjusting step prompts in response to content/style feedback. Pass the complete steps array from get_task with the relevant prompts changed.',
+        description: 'Full replacement steps array. Use only when restructuring the entire pipeline (adding/removing/reordering steps). For editing a single step prompt or config, use step_patch instead.',
         items: { type: 'object' },
       },
     },
@@ -83,6 +98,54 @@ export const runTaskDefinition = {
     type: 'object',
     properties: {
       task_id: { type: 'string', description: 'ID of the task to run (use list_tasks to get IDs)' },
+    },
+    required: ['task_id'],
+  },
+};
+
+export const duplicateTaskDefinition = {
+  name: 'duplicate_task',
+  description: 'Duplicate an existing task. Creates a copy with "Copy of" prefix, paused by default. Use when the user wants to create a variant of an existing task — e.g. same pipeline for a different language, audience, or schedule.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      task_id: { type: 'string', description: 'ID of the task to duplicate (use list_tasks to get IDs)' },
+      name: { type: 'string', description: 'Name for the duplicate. Defaults to "Copy of [original name]"' },
+    },
+    required: ['task_id'],
+  },
+};
+
+export const shareTaskDefinition = {
+  name: 'share_task',
+  description: "Share one of your tasks with your team (or stop sharing it). Shared tasks appear in teammates' workers under 'From the team' — they can copy them. Call when the user says 'share this task', 'let the team use it', 'make it available', or 'stop sharing'.",
+  input_schema: {
+    type: 'object',
+    properties: {
+      task_id: { type: 'string', description: 'ID of the task to share (use list_tasks to get IDs)' },
+      action: { type: 'string', enum: ['share', 'unshare'], description: '"share" makes it visible to the team; "unshare" makes it private again' },
+    },
+    required: ['task_id', 'action'],
+  },
+};
+
+export const listTeamTasksDefinition = {
+  name: 'list_team_tasks',
+  description: "List tasks shared by your teammates that you can copy to your own task list. Call when the user asks what the team has shared, wants to see team tasks, or wants to use a task from a colleague.",
+  input_schema: {
+    type: 'object',
+    properties: {} as Record<string, unknown>,
+    required: [] as string[],
+  },
+};
+
+export const useTaskDefinition = {
+  name: 'use_task',
+  description: "Copy a shared team task to your own task list. Call after list_team_tasks to get the task ID. Creates a paused copy under this worker that the user can then activate or edit.",
+  input_schema: {
+    type: 'object',
+    properties: {
+      task_id: { type: 'string', description: 'ID of the shared team task to copy (use list_team_tasks to get IDs)' },
     },
     required: ['task_id'],
   },
@@ -279,25 +342,27 @@ export async function executeGetTask(
     : `schedule: ${(t.trigger as { label?: string; cron?: string }).label ?? (t.trigger as { cron?: string }).cron ?? 'scheduled'}`;
 
   const stepsText = (t.steps ?? []).map((s, i) => {
-    if (s.type === 'tool') return `  ${i + 1}. [tool] ${s.label} — ${s.tool}`;
-    if (s.type === 'ai') return `  ${i + 1}. [ai] ${s.label}\n     prompt: ${s.prompt.slice(0, 200)}${s.prompt.length > 200 ? '…' : ''}`;
-    if (s.type === 'agent') return `  ${i + 1}. [agent] ${s.label} — agent_id: ${s.agent_id}`;
+    if (s.type === 'tool') return `  ${i + 1}. [tool] id:${s.id} label:"${s.label}" tool:${s.tool}\n     config: ${JSON.stringify(s.config ?? {})}`;
+    if (s.type === 'ai') return `  ${i + 1}. [ai] id:${s.id} label:"${s.label}"\n     prompt: ${s.prompt}`;
+    if (s.type === 'agent') return `  ${i + 1}. [agent] id:${s.id} label:"${s.label}" agent_id:${s.agent_id}\n     prompt: ${s.prompt}`;
     return `  ${i + 1}. [unknown]`;
-  }).join('\n');
+  }).join('\n\n');
 
   const oc = t.output_config ?? {};
-  const outputInfo = [
-    `destination: ${oc.destination ?? 'thread_message'}`,
-    oc.output_language ? `language: ${oc.output_language}` : null,
-    oc.title_template ? `title: ${oc.title_template}` : null,
-  ].filter(Boolean).join(', ');
+  const outputLines = [
+    `  destination: ${oc.destination ?? 'thread_message'}`,
+    oc.artifact_type ? `  artifact_type: ${oc.artifact_type}` : null,
+    oc.title_template ? `  title_template: ${oc.title_template}` : null,
+    `  notification: ${oc.notification_mode ?? 'inbox_card'}`,
+    oc.output_language ? `  language: ${oc.output_language}` : null,
+  ].filter(Boolean).join('\n');
 
   return [
     `Task: ${t.name} [${t.id}]`,
     t.description ? `Description: ${t.description}` : null,
     `Status: ${t.status}`,
     `Schedule: ${trigger}`,
-    `Output: ${outputInfo}`,
+    `Output:\n${outputLines}`,
     t.worker_instructions ? `Task instructions: ${t.worker_instructions}` : null,
     `Steps (${(t.steps ?? []).length}):\n${stepsText || '  (no steps)'}`,
   ].filter(Boolean).join('\n');
@@ -311,7 +376,12 @@ export async function executeUpdateTask(
     status?: 'active' | 'paused';
     trigger?: WorkflowTrigger;
     output_language?: string;
+    output_destination?: string;
+    output_artifact_type?: string;
+    output_title?: string;
+    output_notification?: string;
     worker_instructions?: string;
+    step_patch?: { step_id: string; label?: string; prompt?: string; config?: Record<string, unknown> };
     steps?: WorkflowStep[];
   },
   userId: string,
@@ -320,21 +390,20 @@ export async function executeUpdateTask(
 ): Promise<string> {
   const { data: existing } = await adminClient
     .from('workflows')
-    .select('name, status, trigger, output_config')
+    .select('name, status, trigger, output_config, steps')
     .eq('id', taskId)
     .eq('user_id', userId)
     .single();
 
   if (!existing) return 'Task not found or you do not have permission to modify it.';
 
-  const row = existing as { name: string; status: string; trigger: WorkflowTrigger; output_config: OutputConfig };
+  const row = existing as { name: string; status: string; trigger: WorkflowTrigger; output_config: OutputConfig; steps: WorkflowStep[] };
   const update: Record<string, unknown> = {};
   const changes: string[] = [];
 
   if (fields.name !== undefined) { update.name = fields.name; changes.push(`renamed to "${fields.name}"`); }
   if (fields.description !== undefined) { update.description = fields.description; changes.push('description updated'); }
   if (fields.status !== undefined) { update.status = fields.status; changes.push(fields.status === 'active' ? 'resumed' : 'paused'); }
-  if (fields.steps !== undefined) { update.steps = fields.steps; changes.push('steps updated'); }
   if (fields.worker_instructions !== undefined) { update.worker_instructions = fields.worker_instructions; changes.push('task instructions updated'); }
 
   if (fields.trigger !== undefined) {
@@ -348,10 +417,39 @@ export async function executeUpdateTask(
     changes.push('schedule updated');
   }
 
-  if (fields.output_language !== undefined) {
-    update.output_config = { ...(row.output_config ?? {}), output_language: fields.output_language };
-    changes.push(`output language set to ${fields.output_language}`);
+  // output_config — merge all output fields together in one patch
+  const hasOutputChange = fields.output_language !== undefined
+    || fields.output_destination !== undefined
+    || fields.output_artifact_type !== undefined
+    || fields.output_title !== undefined
+    || fields.output_notification !== undefined;
+
+  if (hasOutputChange) {
+    const oc = { ...(row.output_config ?? {}) };
+    if (fields.output_language !== undefined) { oc.output_language = fields.output_language; changes.push(`language → ${fields.output_language}`); }
+    if (fields.output_destination !== undefined) { oc.destination = fields.output_destination as OutputConfig['destination']; changes.push(`destination → ${fields.output_destination}`); }
+    if (fields.output_artifact_type !== undefined) { oc.artifact_type = fields.output_artifact_type as OutputConfig['artifact_type']; changes.push(`artifact type → ${fields.output_artifact_type}`); }
+    if (fields.output_title !== undefined) { oc.title_template = fields.output_title; changes.push(`title → "${fields.output_title}"`); }
+    if (fields.output_notification !== undefined) { oc.notification_mode = fields.output_notification as OutputConfig['notification_mode']; changes.push(`notification → ${fields.output_notification}`); }
+    update.output_config = oc;
   }
+
+  // step_patch — targeted single-step edit by id
+  if (fields.step_patch !== undefined) {
+    const { step_id, label, prompt, config } = fields.step_patch;
+    const steps = [...(row.steps ?? [])];
+    const idx = steps.findIndex(s => s.id === step_id);
+    if (idx === -1) return `Step "${step_id}" not found. Call get_task to see current step ids.`;
+    const step = { ...steps[idx] } as WorkflowStep & Record<string, unknown>;
+    if (label !== undefined) step.label = label;
+    if (prompt !== undefined && (step.type === 'ai' || step.type === 'agent')) step.prompt = prompt;
+    if (config !== undefined && step.type === 'tool') step.config = { ...(step.config as Record<string, unknown> ?? {}), ...config };
+    steps[idx] = step as WorkflowStep;
+    update.steps = steps;
+    changes.push(`step "${steps[idx].label}" updated`);
+  }
+
+  if (fields.steps !== undefined) { update.steps = fields.steps; changes.push('pipeline steps replaced'); }
 
   if (Object.keys(update).length === 0) return 'Nothing to update — no fields provided.';
 
@@ -553,6 +651,179 @@ export async function executeGetWorkerDocument(
   }
 
   return { content: `Document with artifact_id "${artifactId}" not found. Call list_worker_documents to see available documents.`, artifact: null };
+}
+
+export async function executeDuplicateTask(
+  taskId: string,
+  agentId: string,
+  userId: string,
+  newName: string | undefined,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  adminClient: any,
+): Promise<string> {
+  const { data: src } = await adminClient
+    .from('workflows')
+    .select('name, description, icon, color, trigger, steps, output_config, worker_instructions')
+    .eq('id', taskId)
+    .eq('user_id', userId)
+    .single();
+
+  if (!src) return 'Task not found or you do not have permission to duplicate it.';
+
+  const row = src as { name: string; description: string | null; icon: string; color: string; trigger: WorkflowTrigger; steps: WorkflowStep[]; output_config: OutputConfig; worker_instructions: string | null };
+
+  let nextRunAt: string | null = null;
+  const trigger = row.trigger as { type: string; cron?: string; timezone?: string };
+  if (trigger.type === 'schedule' && trigger.cron) {
+    const d = computeNextRun(trigger.cron, trigger.timezone);
+    if (d) nextRunAt = d.toISOString();
+  }
+
+  const { data: copy, error } = await adminClient
+    .from('workflows')
+    .insert({
+      user_id: userId,
+      agent_id: agentId,
+      name: newName ?? `Copy of ${row.name}`,
+      description: row.description,
+      icon: row.icon,
+      color: row.color,
+      trigger: row.trigger,
+      steps: row.steps,
+      output_config: row.output_config,
+      worker_instructions: row.worker_instructions,
+      status: 'paused',
+      next_run_at: nextRunAt,
+    })
+    .select('id, name')
+    .single();
+
+  if (error || !copy) return `Failed to duplicate "${row.name}": ${error?.message ?? 'unknown error'}`;
+
+  const c = copy as { id: string; name: string };
+  return `Duplicated as **"${c.name}"** (ID: ${c.id}) — paused. Tell me what to change and I'll update it right away.`;
+}
+
+export async function executeShareTask(
+  taskId: string,
+  action: 'share' | 'unshare',
+  userId: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  adminClient: any,
+): Promise<string> {
+  const { data: task } = await adminClient
+    .from('workflows')
+    .select('name')
+    .eq('id', taskId)
+    .eq('user_id', userId)
+    .single();
+
+  if (!task) return 'Task not found or you do not own this task.';
+  const name = (task as { name: string }).name;
+
+  if (action === 'share') {
+    const { data: membership } = await adminClient
+      .from('company_members')
+      .select('company_id')
+      .eq('user_id', userId)
+      .eq('status', 'active')
+      .single();
+
+    if (!membership?.company_id) {
+      return 'You are not part of a company workspace. Task sharing requires a team account.';
+    }
+
+    const { error } = await adminClient
+      .from('workflows')
+      .update({ sharing_mode: 'live', company_id: membership.company_id, shared_with_company: true })
+      .eq('id', taskId)
+      .eq('user_id', userId);
+
+    if (error) return `Failed to share "${name}": ${error.message}`;
+    return `"${name}" is now shared with your team. They can find it in their Tasks tab under "From the team" and copy it to their workers.`;
+  } else {
+    const { error } = await adminClient
+      .from('workflows')
+      .update({ sharing_mode: null, shared_with_company: false })
+      .eq('id', taskId)
+      .eq('user_id', userId);
+
+    if (error) return `Failed to unshare "${name}": ${error.message}`;
+    return `"${name}" is now private. It will no longer appear for teammates.`;
+  }
+}
+
+export async function executeListTeamTasks(
+  userId: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  adminClient: any,
+): Promise<string> {
+  const { data: membership } = await adminClient
+    .from('company_members')
+    .select('company_id')
+    .eq('user_id', userId)
+    .eq('status', 'active')
+    .single();
+
+  if (!membership?.company_id) {
+    return 'You are not part of a company workspace. Team task sharing requires a team account.';
+  }
+
+  const { data, error } = await adminClient
+    .from('workflows')
+    .select('id, name, trigger, user_id')
+    .eq('sharing_mode', 'live')
+    .eq('company_id', membership.company_id)
+    .neq('user_id', userId)
+    .order('created_at', { ascending: true });
+
+  if (error || !data || data.length === 0) {
+    return 'No team tasks are shared yet. Teammates can share their own tasks with the team from the Tasks tab (three-dot menu → Share with team).';
+  }
+
+  const userIds = [...new Set((data as Array<{ user_id: string }>).map(t => t.user_id))];
+  const { data: profiles } = await adminClient
+    .from('profiles')
+    .select('id, full_name')
+    .in('id', userIds);
+  const nameMap: Record<string, string> = {};
+  (profiles ?? []).forEach((p: { id: string; full_name: string | null }) => {
+    nameMap[p.id] = p.full_name ?? 'Teammate';
+  });
+
+  const rows = data as Array<{ id: string; name: string; trigger: { type: string; label?: string; cron?: string }; user_id: string }>;
+  const lines = rows.map(t => {
+    const schedule = t.trigger.label ?? (t.trigger.type === 'schedule' ? (t.trigger.cron ?? 'scheduled') : 'manual');
+    return `- [${t.id}] ${t.name} — ${schedule} — shared by ${nameMap[t.user_id] ?? 'Teammate'}`;
+  });
+
+  return `Team tasks (${rows.length}):\n${lines.join('\n')}\n\nCall use_task with a task ID to copy it to your own list.`;
+}
+
+export async function executeUseTask(
+  sourceTaskId: string,
+  agentId: string,
+  userId: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  adminClient: any,
+): Promise<string> {
+  const { forkTaskForWorker } = await import('@/lib/workflows/clone-workflow');
+
+  let clonedId: string;
+  try {
+    clonedId = await forkTaskForWorker(adminClient, sourceTaskId, userId, agentId);
+  } catch (err) {
+    return `Could not use task: ${(err as Error).message}`;
+  }
+
+  const { data: copy } = await adminClient
+    .from('workflows')
+    .select('name')
+    .eq('id', clonedId)
+    .single();
+
+  const name = (copy as { name: string } | null)?.name ?? 'task';
+  return `Added **"${name}"** to your tasks (ID: ${clonedId}) — paused. Tell me what to adjust or say "resume" to activate it.`;
 }
 
 export async function executeDeleteTask(
