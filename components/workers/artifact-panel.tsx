@@ -84,7 +84,7 @@ export function ArtifactPanel({ artifactId, threadId, onClose }: ArtifactPanelPr
     : DocumentTextIcon;
 
   return (
-    <div className="w-[360px] flex-shrink-0 border-l border-neutral-100 flex flex-col bg-white overflow-hidden">
+    <div className="w-full flex-shrink-0 border-l border-neutral-100 flex flex-col bg-white overflow-hidden">
       {/* Panel header */}
       <div className="flex-shrink-0 flex items-center gap-2 px-4 py-3 border-b border-neutral-100">
         <div className="w-6 h-6 rounded-md bg-indigo-50 flex items-center justify-center flex-shrink-0">
