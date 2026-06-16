@@ -53,6 +53,7 @@ interface AgentOption {
   description?: string | null;
   color: string;
   icon: string;
+  is_worker?: boolean;
 }
 
 interface Props {
@@ -205,6 +206,8 @@ export function StudioBuilder({ workflow: initialWorkflow, agents, onClose, onBa
           steps: workflow.steps,
           output_config: workflow.output_config,
           status: workflow.status,
+          agent_id: workflow.agent_id ?? null,
+          worker_instructions: workflow.worker_instructions ?? null,
         }),
       });
       if (res.ok) {
@@ -415,7 +418,7 @@ export function StudioBuilder({ workflow: initialWorkflow, agents, onClose, onBa
         <div className="flex-none w-[36%] min-w-[260px] max-w-[420px] border-l border-neutral-100 bg-white overflow-y-auto relative">
           <div className="px-4 py-5 space-y-5">
             {resolvedPanel === 'identity' && (
-              <IdentitySection workflow={workflow} patch={patch} />
+              <IdentitySection workflow={workflow} patch={patch} agents={agents} />
             )}
             {resolvedPanel === 'trigger' && (
               <div className="space-y-6">
@@ -902,8 +905,8 @@ function StepFlowCard({ step, index: _index, active, onClick }: {
   step: WorkflowStep; index: number; active: boolean;
   onClick: () => void;
 }) {
-  const colors = STEP_TYPE_COLORS[step.type];
-  const TypeIcon = STEP_TYPE_ICONS[step.type];
+  const colors = STEP_TYPE_COLORS[step.type as keyof typeof STEP_TYPE_COLORS] ?? STEP_TYPE_COLORS.tool;
+  const TypeIcon = STEP_TYPE_ICONS[step.type as keyof typeof STEP_TYPE_ICONS] ?? STEP_TYPE_ICONS.tool;
   const toolId = step.type === 'tool' ? (step as ToolStep).tool : null;
   const toolStyle = toolId ? (TOOL_STYLES[toolId] ?? null) : null;
   const bgClass = toolStyle ? toolStyle.bg : colors.bg;
@@ -1000,8 +1003,10 @@ function SectionHeader({ title, subtitle }: { title: string; subtitle?: string }
   );
 }
 
-function IdentitySection({ workflow, patch }: {
-  workflow: Workflow; patch: <K extends keyof Workflow>(k: K, v: Workflow[K]) => void;
+function IdentitySection({ workflow, patch, agents }: {
+  workflow: Workflow;
+  patch: <K extends keyof Workflow>(k: K, v: Workflow[K]) => void;
+  agents: AgentOption[];
 }) {
   const colorBg = WORKFLOW_COLORS.find(c => c.key === workflow.color)?.bg ?? 'bg-indigo-500';
   const PreviewIcon = WORKFLOW_ICONS.find(i => i.key === workflow.icon)?.Icon ?? BoltIcon;
@@ -1054,6 +1059,41 @@ function IdentitySection({ workflow, patch }: {
             />
           </Field>
         )}
+        {(() => {
+          const workers = agents.filter(a => a.is_worker);
+          if (workers.length === 0) return null;
+          return (
+            <Field label="Assigned worker">
+              <select
+                value={workflow.agent_id ?? ''}
+                onChange={e => patch('agent_id', e.target.value || null)}
+                className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400 bg-white"
+              >
+                <option value="">None — run as generic workflow</option>
+                {workers.map(w => (
+                  <option key={w.id} value={w.id}>{w.name}</option>
+                ))}
+              </select>
+              {workflow.agent_id && (
+                <p className="text-[11px] text-indigo-500 mt-1">
+                  The final AI step will run in {workers.find(w => w.id === workflow.agent_id)?.name ?? 'this worker'}&apos;s voice, using their instructions, memory, and knowledge base.
+                </p>
+              )}
+            </Field>
+          );
+        })()}
+        {workflow.agent_id && (
+          <Field label="Task instructions">
+            <textarea
+              value={workflow.worker_instructions ?? ''}
+              onChange={e => patch('worker_instructions', e.target.value || null)}
+              placeholder="Optional — task-specific tone, persona, or style that overrides the worker's default. E.g. 'Write in the style of a German financial journalist. Be terse and data-driven.'"
+              rows={3}
+              className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400 resize-none leading-relaxed"
+            />
+            <p className="text-[11px] text-neutral-400 mt-1">Only applies to this task — does not change the worker&apos;s core identity.</p>
+          </Field>
+        )}
       </div>
     </div>
   );
@@ -1072,9 +1112,9 @@ function StepConfigSection({
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
-  const colors = STEP_TYPE_COLORS[step.type];
-  const TypeIcon = STEP_TYPE_ICONS[step.type];
-  const typeLabel = { tool: 'Tool', ai: 'AI', agent: 'Agent' }[step.type];
+  const colors = STEP_TYPE_COLORS[step.type as keyof typeof STEP_TYPE_COLORS] ?? STEP_TYPE_COLORS.tool;
+  const TypeIcon = STEP_TYPE_ICONS[step.type as keyof typeof STEP_TYPE_ICONS] ?? STEP_TYPE_ICONS.tool;
+  const typeLabel = ({ tool: 'Tool', ai: 'AI', agent: 'Agent' } as Record<string, string>)[step.type] ?? step.type;
 
   useEffect(() => {
     if (!menuOpen) return;

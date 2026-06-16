@@ -1,6 +1,7 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
+import { ChevronDownIcon } from '@heroicons/react/20/solid';
 import { SparklesIcon, CheckCircleIcon, DocumentTextIcon, ExclamationTriangleIcon, PencilSquareIcon, DocumentDuplicateIcon, TableCellsIcon, PresentationChartBarIcon, EnvelopeIcon, ArrowTopRightOnSquareIcon } from '@heroicons/react/24/outline';
 import { ArrowPathIcon } from '@heroicons/react/20/solid';
 import { ClarificationWidget, ClarificationData } from './clarification-widget';
@@ -502,20 +503,67 @@ function AssistantMessage({ content, toolCalls, artifactIds, citations, clarific
 interface StreamingMessageProps {
   text: string;
   tools: ToolStatus[];
+  thinking?: string;
+  thinkingDone?: boolean;
   clarification?: ClarificationData;
   onClarificationConfirm?: (choices: { sources: string[]; options: Record<string, string> }) => void;
 }
 
-export function StreamingMessage({ text, tools, clarification, onClarificationConfirm }: StreamingMessageProps) {
-  // Strip <think> blocks (DeepSeek reasoning) — they render as invisible HTML and hide the loading dots
+export function StreamingMessage({ text, tools, thinking, thinkingDone, clarification, onClarificationConfirm }: StreamingMessageProps) {
+  const [thinkingExpanded, setThinkingExpanded] = useState(false);
+  const prevTextRef = useRef('');
+
+  // Auto-collapse thinking when the actual response text starts appearing
+  useEffect(() => {
+    if (text && !prevTextRef.current && thinkingExpanded) {
+      setThinkingExpanded(false);
+    }
+    prevTextRef.current = text;
+  }, [text, thinkingExpanded]);
+
+  // Strip any leftover <think> blocks from display text (fallback for models that don't use SSE events)
   const displayText = text
     .replace(/<think>[\s\S]*?<\/think>/gi, '')
-    .replace(/<think>[\s\S]*$/gi, '')  // unclosed block (still reasoning)
+    .replace(/<think>[\s\S]*$/gi, '')
     .trim();
+
+  const hasThinking = thinking !== undefined && thinking !== '';
 
   return (
     <div className="flex gap-3">
       <div className="flex-1 min-w-0 space-y-2">
+
+        {/* Thinking section */}
+        {hasThinking && (
+          <div className="rounded-lg border border-neutral-100 bg-neutral-50 overflow-hidden">
+            <button
+              onClick={() => setThinkingExpanded(v => !v)}
+              className="w-full flex items-center justify-between gap-2 px-3 py-2 text-left hover:bg-neutral-100 transition-colors"
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                {!thinkingDone ? (
+                  <>
+                    <span className="flex gap-0.5">
+                      <span className="w-1 h-1 bg-neutral-400 rounded-full animate-bounce [animation-delay:0ms]" />
+                      <span className="w-1 h-1 bg-neutral-400 rounded-full animate-bounce [animation-delay:150ms]" />
+                      <span className="w-1 h-1 bg-neutral-400 rounded-full animate-bounce [animation-delay:300ms]" />
+                    </span>
+                    <span className="text-[11.5px] text-neutral-400 font-medium">Thinking…</span>
+                  </>
+                ) : (
+                  <span className="text-[11.5px] text-neutral-400 font-medium">Thought</span>
+                )}
+              </div>
+              <ChevronDownIcon className={`w-3.5 h-3.5 text-neutral-400 flex-shrink-0 transition-transform duration-150 ${thinkingExpanded ? 'rotate-180' : ''}`} />
+            </button>
+            {thinkingExpanded && (
+              <div className="px-3 pb-3 pt-0.5 text-[11.5px] text-neutral-400 leading-relaxed whitespace-pre-wrap border-t border-neutral-100">
+                {thinking}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Active tool chips — hide internal meta tools */}
         {tools.filter(t => t.name !== 'request_clarification').length > 0 && (
           <div className="flex flex-wrap gap-1.5">
@@ -528,7 +576,7 @@ export function StreamingMessage({ text, tools, clarification, onClarificationCo
         {/* Streaming text */}
         {displayText ? (
           <MarkdownText content={displayText} cursor />
-        ) : !clarification ? (
+        ) : !clarification && !hasThinking ? (
           <div className="flex gap-1 pt-1">
             <span className="w-1.5 h-1.5 bg-neutral-300 rounded-full animate-bounce [animation-delay:0ms]" />
             <span className="w-1.5 h-1.5 bg-neutral-300 rounded-full animate-bounce [animation-delay:150ms]" />

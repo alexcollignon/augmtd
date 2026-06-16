@@ -30,19 +30,25 @@ interface WorkerProfileProps {
   worker: Worker;
   initialThreads: WorkerThread[];
   initialMessages?: ChatMessage[];
+  initialTab?: Tab;
+  initialThreadId?: string | null;
+  onTabChange?: (tab: string) => void;
+  onActiveThreadChange?: (threadId: string | null) => void;
   onThreadCreated?: (thread: WorkerThread) => void;
 }
 
-export function WorkerProfile({ worker, initialThreads, initialMessages, onThreadCreated }: WorkerProfileProps) {
-  const [activeTab, setActiveTab] = useState<Tab>('chat');
+export function WorkerProfile({ worker, initialThreads, initialMessages, initialTab, initialThreadId, onTabChange, onActiveThreadChange, onThreadCreated }: WorkerProfileProps) {
+  const validInitialTab = initialTab && ['chat','knowledge','tasks','documents','activity'].includes(initialTab) ? initialTab : 'chat';
+  const [activeTab, setActiveTab] = useState<Tab>(validInitialTab);
   // Track which tabs have been visited so they stay mounted (lazy-mount, keep-alive)
-  const [mountedTabs, setMountedTabs] = useState<Set<Tab>>(new Set(['chat']));
+  const [mountedTabs, setMountedTabs] = useState<Set<Tab>>(new Set([validInitialTab]));
   const [jumpThreadId, setJumpThreadId] = useState<string | null>(null);
   const [chatPrefill, setChatPrefill] = useState<string | null>(null);
 
   function handleTabChange(tab: Tab) {
     setActiveTab(tab);
     setMountedTabs(prev => prev.has(tab) ? prev : new Set([...prev, tab]));
+    onTabChange?.(tab);
   }
 
   const handleOpenInChat = useCallback((threadId: string) => {
@@ -91,8 +97,10 @@ export function WorkerProfile({ worker, initialThreads, initialMessages, onThrea
               worker={worker}
               initialThreads={initialThreads}
               initialMessages={initialMessages}
+              initialThreadId={initialThreadId}
               jumpThreadId={jumpThreadId}
               onJumpConsumed={handleJumpConsumed}
+              onActiveThreadChange={onActiveThreadChange}
               onThreadCreated={onThreadCreated}
               initialInputValue={chatPrefill}
               onInitialInputConsumed={() => setChatPrefill(null)}
@@ -114,6 +122,7 @@ export function WorkerProfile({ worker, initialThreads, initialMessages, onThrea
               key={`tasks-${worker.id}`}
               workerId={worker.id}
               workerName={worker.name}
+              isActive={activeTab === 'tasks'}
               onOpenInChat={handleOpenInChat}
             />
           </div>

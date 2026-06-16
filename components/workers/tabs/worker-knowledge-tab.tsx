@@ -20,6 +20,8 @@ export function WorkerKnowledgeTab({ workerId, workerName }: WorkerKnowledgeTabP
   const [kbFiles, setKbFiles] = useState<KBFile[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [isResettingMemory, setIsResettingMemory] = useState(false);
+  const [confirmReset, setConfirmReset] = useState(false);
   const [savedAt, setSavedAt] = useState<Date | null>(null);
   const [isDirty, setIsDirty] = useState(false);
 
@@ -51,6 +53,21 @@ export function WorkerKnowledgeTab({ workerId, workerName }: WorkerKnowledgeTabP
       setIsDirty(false);
     } finally {
       setIsSaving(false);
+    }
+  }
+
+  async function handleResetMemory() {
+    setIsResettingMemory(true);
+    setConfirmReset(false);
+    try {
+      await fetch(`/api/agents/${workerId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ memory_text: null }),
+      });
+      setMemoryText(null);
+    } finally {
+      setIsResettingMemory(false);
     }
   }
 
@@ -111,14 +128,45 @@ export function WorkerKnowledgeTab({ workerId, workerName }: WorkerKnowledgeTabP
 
         {/* Memory */}
         <section>
-          <div className="mb-3">
-            <div className="flex items-center gap-1.5">
-              <SparklesIcon className="w-3.5 h-3.5 text-neutral-400" />
-              <h2 className="text-[13px] font-semibold text-neutral-800">Memory</h2>
+          <div className="flex items-start justify-between mb-3">
+            <div>
+              <div className="flex items-center gap-1.5">
+                <SparklesIcon className="w-3.5 h-3.5 text-neutral-400" />
+                <h2 className="text-[13px] font-semibold text-neutral-800">Memory</h2>
+              </div>
+              <p className="text-[11.5px] text-neutral-400 mt-0.5">
+                What {workerName} has learned about you automatically from your interactions
+              </p>
             </div>
-            <p className="text-[11.5px] text-neutral-400 mt-0.5">
-              What {workerName} has learned about you automatically from your interactions
-            </p>
+            {memoryText && (
+              <div className="flex-shrink-0 ml-4 flex items-center gap-2">
+                {confirmReset ? (
+                  <>
+                    <span className="text-[12px] text-neutral-500">Clear memory?</span>
+                    <button
+                      onClick={() => setConfirmReset(false)}
+                      className="px-2.5 py-1 rounded-lg border border-neutral-200 text-[12px] text-neutral-500 hover:bg-neutral-50 transition-colors"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleResetMemory}
+                      disabled={isResettingMemory}
+                      className="px-2.5 py-1 rounded-lg bg-red-500 text-white text-[12px] hover:bg-red-600 disabled:opacity-40 transition-colors"
+                    >
+                      {isResettingMemory ? 'Clearing…' : 'Clear'}
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    onClick={() => setConfirmReset(true)}
+                    className="px-3 py-1.5 rounded-lg border border-neutral-200 text-[12px] text-neutral-500 hover:border-red-200 hover:text-red-500 hover:bg-red-50 transition-colors"
+                  >
+                    Reset
+                  </button>
+                )}
+              </div>
+            )}
           </div>
           {memoryText ? (
             <div className="rounded-xl border border-neutral-200 bg-neutral-50 px-4 py-3">

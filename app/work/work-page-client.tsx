@@ -694,6 +694,8 @@ function ActiveChatView({
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamingText, setStreamingText] = useState('');
   const [streamingTools, setStreamingTools] = useState<ToolStatus[]>([]);
+  const [streamingThinking, setStreamingThinking] = useState('');
+  const [thinkingDone, setThinkingDone] = useState(false);
   const [streamingClarification, setStreamingClarification] = useState<ClarificationData | null>(null);
   const [chatAttachments, setChatAttachments] = useState<AttachmentChip[]>([]);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
@@ -722,6 +724,8 @@ function ActiveChatView({
     setIsStreaming(false);
     setStreamingText('');
     setStreamingTools([]);
+    setStreamingThinking('');
+    setThinkingDone(false);
     setStreamingClarification(null);
 
     const controller = new AbortController();
@@ -904,6 +908,8 @@ function ActiveChatView({
     setIsStreaming(true);
     setStreamingText('');
     setStreamingTools([]);
+    setStreamingThinking('');
+    setThinkingDone(false);
 
     const ac = new AbortController();
     streamAbortRef.current = ac;
@@ -947,7 +953,17 @@ function ActiveChatView({
           try {
             const event = JSON.parse(line.slice(6));
 
-            if (event.type === 'text') {
+            if (event.type === 'thinking_delta') {
+              setStreamingThinking(prev => prev + event.delta);
+
+            } else if (event.type === 'thinking_done') {
+              setThinkingDone(true);
+
+            } else if (event.type === 'text_clear') {
+              accText = '';
+              setStreamingText('');
+
+            } else if (event.type === 'text') {
               accText += event.delta;
               setStreamingText(accText);
 
@@ -1053,6 +1069,8 @@ function ActiveChatView({
       setIsStreaming(false);
       setStreamingText('');
       setStreamingTools([]);
+      setStreamingThinking('');
+      setThinkingDone(false);
       setStreamingClarification(null);
     }
   }
@@ -1324,6 +1342,8 @@ function ActiveChatView({
                 <StreamingMessage
                   text={streamingText}
                   tools={streamingTools}
+                  thinking={streamingThinking || undefined}
+                  thinkingDone={thinkingDone}
                   clarification={streamingClarification ?? undefined}
                   onClarificationConfirm={handleClarificationConfirm}
                 />

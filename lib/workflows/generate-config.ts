@@ -1,4 +1,4 @@
-import { getAIClient } from '@/lib/ai/factory';
+import { getAIClient, aiCreate } from '@/lib/ai/factory';
 import { parseModelJSON } from '@/lib/ai/parse-json';
 import { makeStepId } from '@/lib/workflows/types';
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -9,62 +9,71 @@ export interface GeneratedWorkflowConfig {
   trigger: Record<string, unknown>;
   steps: Array<Record<string, unknown>>;
   output_config: Record<string, unknown>;
+  worker_instructions?: string | null;
 }
 
-function buildGenerationPrompt(contextLine: string, workerContextLine: string, description: string): string {
-  return `You are a workflow configuration generator for a business automation tool. Respond with ONLY a valid JSON object — no explanation, no markdown fences.
+const SYSTEM = `You are a workflow pipeline architect for a business automation platform. Given a plain-language description, generate a complete, production-quality workflow as a JSON object.
 
-${contextLine}
-${workerContextLine ? workerContextLine + '\n' : ''}User request: "${description}"
+Respond with ONLY valid JSON — no markdown, no explanation.
 
-Generate a workflow matching this JSON structure exactly:
+JSON shape:
 {
-  "name": "Short human-readable name (3–5 words)",
-  "description": "One sentence describing what this workflow produces",
+  "name": "Short name (3–6 words)",
+  "description": "One sentence — what this produces",
   "trigger": { "type": "manual" },
   "steps": [],
-  "output_config": { "destination": "thread_message", "notification_mode": "inbox_card" }
+  "output_config": { "destination": "thread_message", "notification_mode": "inbox_card" },
+  "worker_instructions": null
 }
 
-TRIGGER OPTIONS:
-- Manual: { "type": "manual" }
-- Scheduled: { "type": "schedule", "cron": "0 9 * * *", "label": "Daily at 9am" }
-  Use a schedule trigger if the request mentions timing ("every morning", "weekly", "on Mondays", etc.)
-  Common crons: daily 9am="0 9 * * *", weekdays 8am="0 8 * * 1-5", Mondays 9am="0 9 * * 1", Fridays 5pm="0 17 * * 5"
+"worker_instructions" is null by default. Only set it when the request explicitly describes a task-specific tone, persona, style, or audience that differs from the worker's general identity (e.g. "in the style of a German journalist", "formal legal tone", "for a Portuguese-speaking audience"). Keep it concise: 1–3 sentences. Never repeat the worker's core identity here — only what's different for this task.
 
-STEP TYPES:
+━━━ TRIGGER ━━━
 
-Tool step — fetches data, runs first:
-{ "type": "tool", "id": "step_001", "label": "Short label", "tool": "TOOL_ID", "config": {} }
+{ "type": "manual" }
+{ "type": "schedule", "cron": "0 9 * * 1", "timezone": "Europe/Lisbon", "label": "Every Monday at 9am" }
 
-Available tools:
-- "get_urgent_emails" — fetches unread inbox emails. config: {}
-- "get_calendar" — fetches upcoming calendar events. config: {}
-- "web_search" — searches the web for a topic. config: { "query": "specific search query" }
-- "fetch_url" — reads the current content of specific pages. config: { "urls": ["https://example.com"] }
-- "rss_feed" — follows a news or blog feed, returns only new articles. config: { "feeds": ["https://example.com/feed.xml"], "since": "last_run" }
+Use schedule whenever the request mentions timing. Infer the most natural timezone from context (company, sources, language).
 
-AI step — processes and writes, runs last:
-{ "type": "ai", "id": "step_002", "label": "Short label", "prompt": "...", "output_format": "markdown", "model_tier": "fast" }
-- output_format: "markdown" for briefings/reports with structure, "text" for plain prose, "json" for structured data
-- model_tier: "fast" for summarisation and simple writing, "reasoning" for analysis and complex judgement
-- prompt: always begin with "Using the previous step outputs, ..."
+━━━ STEP TYPES ━━━
 
-OUTPUT CONFIG:
-- For briefings, digests, summaries: { "destination": "thread_message", "notification_mode": "inbox_card" }
-- For documents/reports to keep: { "destination": "artifact", "artifact_type": "document", "title_template": "{{workflow}} — {{date}}", "notification_mode": "inbox_card" }
+Tool step — fetches data, always before AI steps:
+{ "type": "tool", "id": "step_001", "label": "3–5 word label", "tool": "TOOL_ID", "config": {} }
 
-RULES:
-1. Use 2–4 steps total. Start with tool step(s) to gather data, end with exactly 1 AI step to synthesise.
-2. Each step id must be unique strings like "step_001", "step_002".
-3. Keep step labels short (3–5 words).
-4. The AI step prompt must be specific about what to produce, what format, and what to do if input is empty.
-5. For web research requests: use web_search with a well-targeted query.
-6. For news/feed monitoring: prefer rss_feed over web_search if the user mentions a feed, blog, or specific publication.
-7. Do not use read_kb_file unless the user explicitly mentions a document in their knowledge base.
+AI step — synthesises all previous outputs, always last and always exactly one:
+{ "type": "ai", "id": "step_010", "label": "3–5 word label", "prompt": "...", "output_format": "markdown", "model_tier": "reasoning" }
 
-Return ONLY the JSON object.`;
-}
+━━━ AVAILABLE TOOLS ━━━
+
+get_emails          — reads the user's inbox. config: { "mode": "recent" }
+get_meeting_context — reads calendar and meetings. config: { "include_upcoming": true }
+web_search          — searches the live web. config: { "query": "targeted query string" }
+fetch_url           — reads full content of a URL. config: { "urls": ["https://..."] }. Supports auth: { "urls": [...], "auth": { "username": "...", "password": "..." } }
+rss_feed            — follows a news or blog feed, new items only. config: { "feeds": ["https://.../feed.xml"], "max_items": 15, "since": "last_run" }
+deep_research       — multi-source research synthesis. config: { "queries": ["question"], "max_sources": 8 }
+get_pt_tenders      — Portuguese public procurement from Base.gov.pt. config: { "days": 7, "endpoint": "both" }
+linkedin_post       — drafts LinkedIn posts from previous content. config: { "tone": "thought_leadership", "length": "standard", "language": "en", "variants": 2 }
+read_kb_file        — reads a file from the knowledge base. config: { "file_id": "uuid" } — only if user explicitly mentions a document
+
+━━━ OUTPUT CONFIG ━━━
+
+Recurring briefings/reports (keep as a document):
+{ "destination": "artifact", "artifact_type": "document", "title_template": "Briefing — {{week_of}}", "notification_mode": "inbox_card" }
+
+Quick digests (inline, no persistent doc):
+{ "destination": "thread_message", "notification_mode": "inbox_card" }
+
+title_template tokens: {{date}}, {{week_of}}, {{workflow}}
+Scheduled tasks that produce a report should always use artifact destination.
+
+━━━ RULES ━━━
+
+1. Use as many tool steps as the task requires — a news briefing typically needs 4–12 tool steps.
+2. Group related sources into steps by theme (e.g. one rss_feed step per language or topic area).
+3. For tasks requiring current external data, prefer rss_feed and web_search over relying on the AI step alone.
+4. End with exactly one ai step that synthesises everything from the previous steps.
+5. The ai step prompt must be specific: state the output structure, language, tone, and what to write if input is sparse.
+6. Each step id must be unique: "step_001", "step_002", etc.`;
 
 export async function generateWorkflowConfig(
   description: string,
@@ -73,22 +82,35 @@ export async function generateWorkflowConfig(
   options?: {
     companyName?: string | null;
     workerContext?: { name: string; description: string | null; instructions: string | null } | null;
+    workerInstructions?: string | null;
   },
 ): Promise<GeneratedWorkflowConfig | null> {
-  const contextLine = options?.companyName ? `User's company: ${options.companyName}` : '';
+  const parts: string[] = [`User request: "${description.trim()}"`];
+
+  if (options?.companyName) {
+    parts.push(`User's company: ${options.companyName}`);
+  }
+
   const w = options?.workerContext;
-  const workerContextLine = w
-    ? `This workflow belongs to a worker named "${w.name}" (${w.description ?? ''}). The final AI step's tone, voice, and output style should reflect this worker's role. Here is the worker's persona for reference:\n${w.instructions ?? ''}`
-    : '';
+  if (w) {
+    const workerBlock = [`This workflow belongs to worker "${w.name}" (${w.description ?? 'AI colleague'}). The final AI step must be written in this worker's voice.\nWorker identity:\n${w.instructions ?? ''}`];
+    if (options?.workerInstructions?.trim()) {
+      workerBlock.push(`Task-specific instructions (already provided by user — use these verbatim as worker_instructions, do not generate new ones):\n${options.workerInstructions.trim()}`);
+    }
+    parts.push(workerBlock.join('\n\n'));
+  }
 
-  const prompt = buildGenerationPrompt(contextLine, workerContextLine, description.trim());
+  const userMessage = parts.join('\n\n');
 
-  const { client, model } = await getAIClient(userId, 'generation', supabase);
-  const completion = await client.chat.completions.create({
+  const { client, model } = await getAIClient(userId, 'conversation', supabase);
+  const completion = await aiCreate(client, {
     model,
-    messages: [{ role: 'user', content: prompt }],
-    max_tokens: 1200,
-    temperature: 0.3,
+    messages: [
+      { role: 'system', content: SYSTEM },
+      { role: 'user', content: userMessage },
+    ],
+    max_tokens: 4000,
+    temperature: 0.2,
   });
 
   const raw = completion.choices[0]?.message?.content ?? '';
@@ -104,11 +126,23 @@ export async function generateWorkflowConfig(
     label: typeof s.label === 'string' ? s.label : `Step ${i + 1}`,
   }));
 
+  // If caller passed an explicit override, use it; otherwise use model-generated value.
+  const workerInstructions =
+    options?.workerInstructions?.trim()
+      ? options.workerInstructions.trim()
+      : (typeof generated.worker_instructions === 'string' && generated.worker_instructions.trim()
+          ? generated.worker_instructions.trim()
+          : null);
+
   return {
     name: String(generated.name).trim(),
     description: typeof generated.description === 'string' ? generated.description.trim() : null,
     trigger: (generated.trigger as Record<string, unknown>) ?? { type: 'manual' },
     steps,
-    output_config: (generated.output_config as Record<string, unknown>) ?? { destination: 'thread_message', notification_mode: 'inbox_card' },
+    output_config: (generated.output_config as Record<string, unknown>) ?? {
+      destination: 'thread_message',
+      notification_mode: 'inbox_card',
+    },
+    worker_instructions: workerInstructions,
   };
 }
