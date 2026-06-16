@@ -2,6 +2,7 @@ import { generateWorkflowConfig } from '@/lib/workflows/generate-config';
 import { computeNextRun } from '@/lib/workflows/schedule';
 import { runWorkflow } from '@/lib/workflows/run-workflow';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import type { WorkflowStep, OutputConfig, WorkflowTrigger } from '@/lib/workflows/types';
 
 // ─── Tool definitions ─────────────────────────────────────────────────────────
 
@@ -30,16 +31,48 @@ export const createTaskDefinition = {
   },
 };
 
-export const updateTaskDefinition = {
-  name: 'update_task',
-  description: 'Pause or resume an existing task. Call when the user asks to pause, stop, enable, or resume a specific task by name or ID.',
+export const getTaskDefinition = {
+  name: 'get_task',
+  description: "Read the full config of one of your tasks — steps, schedule, output language, task instructions. Call this before editing anything so you have the current state.",
   input_schema: {
     type: 'object',
     properties: {
       task_id: { type: 'string', description: 'ID of the task (use list_tasks to get IDs)' },
-      status: { type: 'string', enum: ['active', 'paused'], description: 'New status for the task' },
     },
-    required: ['task_id', 'status'],
+    required: ['task_id'],
+  },
+};
+
+export const updateTaskDefinition = {
+  name: 'update_task',
+  description: "Edit any aspect of an existing task in response to user feedback. Use for: renaming, changing schedule, output language, task instructions (tone/persona), status (pause/resume), or updating step prompts when the user gives content/style feedback. Always call get_task first to read the current config. Act immediately — do not ask the user to confirm first.",
+  input_schema: {
+    type: 'object',
+    properties: {
+      task_id: { type: 'string', description: 'ID of the task to update' },
+      name: { type: 'string', description: 'New task name' },
+      description: { type: 'string', description: 'New task description' },
+      status: { type: 'string', enum: ['active', 'paused'], description: 'Pause or resume the task' },
+      trigger: {
+        type: 'object',
+        description: 'New trigger — include full object. For schedules: { type: "schedule", cron: "0 9 * * 1", timezone: "Europe/Lisbon", label: "Every Monday at 9am" }',
+        properties: {
+          type: { type: 'string', enum: ['manual', 'schedule'] },
+          cron: { type: 'string' },
+          timezone: { type: 'string' },
+          label: { type: 'string' },
+        },
+        required: ['type'],
+      },
+      output_language: { type: 'string', description: 'BCP-47 language code for output. Examples: "de" (German), "pt" (Portuguese), "fr" (French), "es" (Spanish)' },
+      worker_instructions: { type: 'string', description: 'Task-specific tone or persona instructions that override the worker default for this task only' },
+      steps: {
+        type: 'array',
+        description: 'Full replacement steps array. Only use when adjusting step prompts in response to content/style feedback. Pass the complete steps array from get_task with the relevant prompts changed.',
+        items: { type: 'object' },
+      },
+    },
+    required: ['task_id'],
   },
 };
 
@@ -220,34 +253,117 @@ export async function executeCreateTask(
   return `Task created: **${row.name}** — ${schedule}\nID: ${row.id}\n\nI've built a full pipeline for this. It'll run automatically on schedule and deliver results to your inbox. You can edit the steps anytime in the Tasks tab → Advanced settings.`;
 }
 
-export async function executeUpdateTask(
+export async function executeGetTask(
   taskId: string,
-  status: 'active' | 'paused',
   userId: string,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   adminClient: any,
 ): Promise<string> {
   const { data: task } = await adminClient
     .from('workflows')
-    .select('name')
+    .select('id, name, description, status, trigger, steps, output_config, worker_instructions, last_run_at, next_run_at')
     .eq('id', taskId)
     .eq('user_id', userId)
     .single();
 
-  if (!task) return 'Task not found or you do not have permission to modify it.';
+  if (!task) return 'Task not found or you do not have permission to view it.';
+
+  const t = task as {
+    id: string; name: string; description: string | null; status: string;
+    trigger: WorkflowTrigger; steps: WorkflowStep[]; output_config: OutputConfig;
+    worker_instructions: string | null; last_run_at: string | null; next_run_at: string | null;
+  };
+
+  const trigger = t.trigger.type === 'manual'
+    ? 'manual trigger'
+    : `schedule: ${(t.trigger as { label?: string; cron?: string }).label ?? (t.trigger as { cron?: string }).cron ?? 'scheduled'}`;
+
+  const stepsText = (t.steps ?? []).map((s, i) => {
+    if (s.type === 'tool') return `  ${i + 1}. [tool] ${s.label} — ${s.tool}`;
+    if (s.type === 'ai') return `  ${i + 1}. [ai] ${s.label}\n     prompt: ${s.prompt.slice(0, 200)}${s.prompt.length > 200 ? '…' : ''}`;
+    if (s.type === 'agent') return `  ${i + 1}. [agent] ${s.label} — agent_id: ${s.agent_id}`;
+    return `  ${i + 1}. [unknown]`;
+  }).join('\n');
+
+  const oc = t.output_config ?? {};
+  const outputInfo = [
+    `destination: ${oc.destination ?? 'thread_message'}`,
+    oc.output_language ? `language: ${oc.output_language}` : null,
+    oc.title_template ? `title: ${oc.title_template}` : null,
+  ].filter(Boolean).join(', ');
+
+  return [
+    `Task: ${t.name} [${t.id}]`,
+    t.description ? `Description: ${t.description}` : null,
+    `Status: ${t.status}`,
+    `Schedule: ${trigger}`,
+    `Output: ${outputInfo}`,
+    t.worker_instructions ? `Task instructions: ${t.worker_instructions}` : null,
+    `Steps (${(t.steps ?? []).length}):\n${stepsText || '  (no steps)'}`,
+  ].filter(Boolean).join('\n');
+}
+
+export async function executeUpdateTask(
+  taskId: string,
+  fields: {
+    name?: string;
+    description?: string;
+    status?: 'active' | 'paused';
+    trigger?: WorkflowTrigger;
+    output_language?: string;
+    worker_instructions?: string;
+    steps?: WorkflowStep[];
+  },
+  userId: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  adminClient: any,
+): Promise<string> {
+  const { data: existing } = await adminClient
+    .from('workflows')
+    .select('name, status, trigger, output_config')
+    .eq('id', taskId)
+    .eq('user_id', userId)
+    .single();
+
+  if (!existing) return 'Task not found or you do not have permission to modify it.';
+
+  const row = existing as { name: string; status: string; trigger: WorkflowTrigger; output_config: OutputConfig };
+  const update: Record<string, unknown> = {};
+  const changes: string[] = [];
+
+  if (fields.name !== undefined) { update.name = fields.name; changes.push(`renamed to "${fields.name}"`); }
+  if (fields.description !== undefined) { update.description = fields.description; changes.push('description updated'); }
+  if (fields.status !== undefined) { update.status = fields.status; changes.push(fields.status === 'active' ? 'resumed' : 'paused'); }
+  if (fields.steps !== undefined) { update.steps = fields.steps; changes.push('steps updated'); }
+  if (fields.worker_instructions !== undefined) { update.worker_instructions = fields.worker_instructions; changes.push('task instructions updated'); }
+
+  if (fields.trigger !== undefined) {
+    update.trigger = fields.trigger;
+    if (fields.trigger.type === 'schedule' && (fields.trigger as { cron?: string }).cron) {
+      const d = computeNextRun((fields.trigger as { cron: string }).cron, (fields.trigger as { timezone?: string }).timezone);
+      update.next_run_at = d ? d.toISOString() : null;
+    } else {
+      update.next_run_at = null;
+    }
+    changes.push('schedule updated');
+  }
+
+  if (fields.output_language !== undefined) {
+    update.output_config = { ...(row.output_config ?? {}), output_language: fields.output_language };
+    changes.push(`output language set to ${fields.output_language}`);
+  }
+
+  if (Object.keys(update).length === 0) return 'Nothing to update — no fields provided.';
 
   const { error } = await adminClient
     .from('workflows')
-    .update({ status })
+    .update(update)
     .eq('id', taskId)
     .eq('user_id', userId);
 
-  if (error) return `Failed to update task: ${error.message}`;
+  if (error) return `Failed to update "${row.name}": ${error.message}`;
 
-  const row = task as { name: string };
-  return status === 'active'
-    ? `"${row.name}" is now active and will run on schedule.`
-    : `"${row.name}" is paused. It won't run until you resume it.`;
+  return `"${fields.name ?? row.name}" updated — ${changes.join(', ')}.`;
 }
 
 export async function executeRunTask(

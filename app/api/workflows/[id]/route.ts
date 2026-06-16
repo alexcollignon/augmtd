@@ -50,6 +50,7 @@ export async function PATCH(
     sharing_mode: 'live' | 'template' | null;
     pinned: boolean;
     agent_id: string | null;
+    worker_instructions: string | null;
   }>;
   try { body = await request.json(); } catch { return NextResponse.json({ error: 'Invalid body' }, { status: 400 }); }
 

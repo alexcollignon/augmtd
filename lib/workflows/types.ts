@@ -101,6 +101,8 @@ export interface Workflow {
   created_at: string;
   updated_at: string;
   pinned?: boolean;
+  agent_id?: string | null;
+  worker_instructions?: string | null;
   // Team sharing (populated by API)
   company_id?: string | null;
   shared_with_company?: boolean;

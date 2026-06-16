@@ -29,11 +29,11 @@ export default async function StudioPage({
   const [{ data: workflowsData }, { data: agentsData }] = await Promise.all([
     supabase
       .from('workflows')
-      .select('id, user_id, name, description, icon, color, status, trigger, steps, output_config, last_run_at, next_run_at, created_at, updated_at, shared_with_company, sharing_mode, company_id, pinned')
+      .select('id, user_id, name, description, icon, color, status, trigger, steps, output_config, last_run_at, next_run_at, created_at, updated_at, shared_with_company, sharing_mode, company_id, pinned, agent_id')
       .order('updated_at', { ascending: false }),
     supabase
       .from('custom_agents')
-      .select('id, user_id, name, description, color, icon, conversation_starters, web_enabled, shared_with_company')
+      .select('id, user_id, name, description, color, icon, conversation_starters, web_enabled, shared_with_company, is_worker')
       .eq('is_active', true)
       .order('created_at', { ascending: true }),
   ]);

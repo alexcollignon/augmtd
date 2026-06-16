@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import {
   BoltIcon,
@@ -70,14 +70,16 @@ function upcomingTime(iso: string | null): string {
 interface WorkerTasksTabProps {
   workerId: string;
   workerName: string;
+  isActive?: boolean;
   onOpenInChat: (threadId: string) => void;
 }
 
-export function WorkerTasksTab({ workerId, workerName, onOpenInChat }: WorkerTasksTabProps) {
+export function WorkerTasksTab({ workerId, workerName, isActive, onOpenInChat }: WorkerTasksTabProps) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [openingId, setOpeningId] = useState<string | null>(null);
+  const [runningId, setRunningId] = useState<string | null>(null);
   const [showNewTask, setShowNewTask] = useState(false);
 
   const load = useCallback(() => {
@@ -89,6 +91,13 @@ export function WorkerTasksTab({ workerId, workerName, onOpenInChat }: WorkerTas
   }, [workerId]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Reload whenever the tab becomes visible so tasks created via chat appear immediately
+  const prevActiveRef = useRef(false);
+  useEffect(() => {
+    if (isActive && !prevActiveRef.current) load();
+    prevActiveRef.current = !!isActive;
+  }, [isActive, load]);
 
   async function handleDelete(taskId: string) {
     setTasks(prev => prev.filter(t => t.id !== taskId));
@@ -124,6 +133,35 @@ export function WorkerTasksTab({ workerId, workerName, onOpenInChat }: WorkerTas
       if (threadId) onOpenInChat(threadId);
     } finally {
       setOpeningId(null);
+    }
+  }
+
+  async function handleRunNow(taskId: string) {
+    if (runningId) return;
+    setRunningId(taskId);
+    try {
+      const res = await fetch(`/api/workflows/${taskId}/run`, { method: 'POST' });
+      if (res.ok) {
+        const { runId } = await res.json();
+        // Poll briefly then open the run thread
+        await new Promise(r => setTimeout(r, 1500));
+        const runsRes = await fetch(`/api/workflows/${taskId}/runs?limit=1`);
+        if (runsRes.ok) {
+          const { runs } = await runsRes.json();
+          const threadId = runs?.[0]?.thread_id;
+          if (threadId) onOpenInChat(threadId);
+          else if (runId) {
+            // Run still in progress — open the run page when ready
+            const pollRes = await fetch(`/api/workflows/${taskId}/runs?limit=1`);
+            if (pollRes.ok) {
+              const { runs: polled } = await pollRes.json();
+              if (polled?.[0]?.thread_id) onOpenInChat(polled[0].thread_id);
+            }
+          }
+        }
+      }
+    } finally {
+      setRunningId(null);
     }
   }
 
@@ -172,8 +210,10 @@ export function WorkerTasksTab({ workerId, workerName, onOpenInChat }: WorkerTas
                   task={task}
                   isToggling={togglingId === task.id}
                   isOpening={openingId === task.id}
+                  isRunning={runningId === task.id}
                   onToggle={() => handleToggle(task)}
                   onOpenLatestRun={() => handleOpenLatestRun(task.id)}
+                  onRunNow={() => handleRunNow(task.id)}
                   onDelete={() => handleDelete(task.id)}
                 />
               ))}
@@ -210,12 +250,14 @@ interface TaskRowProps {
   task: Task;
   isToggling: boolean;
   isOpening: boolean;
+  isRunning: boolean;
   onToggle: () => void;
   onOpenLatestRun: () => void;
+  onRunNow: () => void;
   onDelete: () => void;
 }
 
-function TaskRow({ task, isToggling, isOpening, onToggle, onOpenLatestRun, onDelete }: TaskRowProps) {
+function TaskRow({ task, isToggling, isOpening, isRunning, onToggle, onOpenLatestRun, onRunNow, onDelete }: TaskRowProps) {
   const isActive = task.status === 'active';
   const isDraft = task.status === 'draft';
   const [showMenu, setShowMenu] = useState(false);
@@ -223,7 +265,7 @@ function TaskRow({ task, isToggling, isOpening, onToggle, onOpenLatestRun, onDel
 
   return (
     <div className="flex items-center gap-3 px-4 py-3.5 hover:bg-neutral-50 transition-colors group relative">
-      <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isActive ? 'bg-emerald-400' : 'bg-neutral-300'}`} />
+      <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isRunning ? 'bg-amber-400 animate-pulse' : isActive ? 'bg-emerald-400' : 'bg-neutral-300'}`} />
 
       <button className="min-w-0 flex-1 text-left" onClick={onOpenLatestRun} disabled={isOpening}>
         <p className={`text-[13px] font-medium truncate transition-colors ${
@@ -253,18 +295,28 @@ function TaskRow({ task, isToggling, isOpening, onToggle, onOpenLatestRun, onDel
 
       <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
         {!isDraft && (
-          <button
-            onClick={onToggle}
-            disabled={isToggling}
-            title={isActive ? 'Pause' : 'Resume'}
-            className={`p-1.5 rounded-lg transition-colors ${
-              isActive
-                ? 'text-neutral-400 hover:text-amber-500 hover:bg-amber-50'
-                : 'text-neutral-400 hover:text-emerald-600 hover:bg-emerald-50'
-            } disabled:opacity-40`}
-          >
-            {isActive ? <PauseIcon className="w-3.5 h-3.5" /> : <PlayIcon className="w-3.5 h-3.5" />}
-          </button>
+          <>
+            <button
+              onClick={onRunNow}
+              disabled={isRunning}
+              title="Run now"
+              className="p-1.5 rounded-lg text-neutral-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors disabled:opacity-40"
+            >
+              <PlayIcon className={`w-3.5 h-3.5 ${isRunning ? 'text-amber-400' : ''}`} />
+            </button>
+            <button
+              onClick={onToggle}
+              disabled={isToggling}
+              title={isActive ? 'Pause schedule' : 'Resume schedule'}
+              className={`p-1.5 rounded-lg transition-colors ${
+                isActive
+                  ? 'text-neutral-400 hover:text-amber-500 hover:bg-amber-50'
+                  : 'text-neutral-400 hover:text-emerald-600 hover:bg-emerald-50'
+              } disabled:opacity-40`}
+            >
+              {isActive ? <PauseIcon className="w-3.5 h-3.5" /> : <PlayIcon className="w-3.5 h-3.5" />}
+            </button>
+          </>
         )}
 
         <div className="relative">
@@ -334,6 +386,8 @@ interface NewTaskModalProps {
 
 function NewTaskModal({ workerId, workerName, onClose, onCreated }: NewTaskModalProps) {
   const [description, setDescription] = useState('');
+  const [taskInstructions, setTaskInstructions] = useState('');
+  const [showInstructions, setShowInstructions] = useState(false);
   const [status, setStatus] = useState<'idle' | 'generating' | 'creating'>('idle');
   const [error, setError] = useState<string | null>(null);
 
@@ -349,7 +403,11 @@ function NewTaskModal({ workerId, workerName, onClose, onCreated }: NewTaskModal
       const genRes = await fetch('/api/workflows/generate-from-description', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ description: description.trim(), agent_id: workerId }),
+        body: JSON.stringify({
+          description: description.trim(),
+          agent_id: workerId,
+          worker_instructions: taskInstructions.trim() || null,
+        }),
       });
       if (!genRes.ok) {
         const { error: msg } = await genRes.json().catch(() => ({}));
@@ -363,7 +421,12 @@ function NewTaskModal({ workerId, workerName, onClose, onCreated }: NewTaskModal
       const createRes = await fetch('/api/workflows', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...generated, agent_id: workerId, status: 'active' }),
+        body: JSON.stringify({
+          ...generated,
+          agent_id: workerId,
+          status: 'active',
+          worker_instructions: generated.worker_instructions ?? null,
+        }),
       });
       if (!createRes.ok) throw new Error('Failed to save the task.');
       const { workflow } = await createRes.json();
@@ -397,7 +460,7 @@ function NewTaskModal({ workerId, workerName, onClose, onCreated }: NewTaskModal
           </button>
         </div>
 
-        <div className="px-6 py-5">
+        <div className="px-6 py-5 space-y-4">
           <textarea
             autoFocus
             value={description}
@@ -405,13 +468,39 @@ function NewTaskModal({ workerId, workerName, onClose, onCreated }: NewTaskModal
             onKeyDown={handleKeyDown}
             disabled={isBusy}
             placeholder={`e.g. "Every Monday morning, scan my inbox for client emails and write me a brief" or "Every Friday, search for industry news and summarise the top 5 stories"`}
-            rows={5}
+            rows={4}
             className="w-full px-3 py-2.5 rounded-xl border border-neutral-200 text-[13px] text-neutral-800 placeholder:text-neutral-400 focus:outline-none focus:border-indigo-300 focus:shadow-sm transition-all resize-none leading-relaxed disabled:opacity-50"
           />
-          <p className="mt-2 text-[11px] text-neutral-400">
+
+          {/* Optional task instructions toggle */}
+          {!showInstructions ? (
+            <button
+              type="button"
+              onClick={() => setShowInstructions(true)}
+              disabled={isBusy}
+              className="text-[11.5px] text-neutral-400 hover:text-indigo-500 transition-colors disabled:opacity-40"
+            >
+              + Add tone / persona for this task
+            </button>
+          ) : (
+            <div className="space-y-1">
+              <label className="block text-[11.5px] font-medium text-neutral-500">Tone / persona (optional)</label>
+              <textarea
+                value={taskInstructions}
+                onChange={e => setTaskInstructions(e.target.value)}
+                disabled={isBusy}
+                placeholder={`e.g. "Write in the style of a German financial journalist — terse, data-driven, no fluff."`}
+                rows={2}
+                className="w-full px-3 py-2 rounded-xl border border-neutral-200 text-[13px] text-neutral-700 placeholder:text-neutral-400 focus:outline-none focus:border-indigo-300 transition-all resize-none leading-relaxed disabled:opacity-50"
+              />
+              <p className="text-[11px] text-neutral-400">Specific to this task — doesn&apos;t change {workerName}&apos;s core identity.</p>
+            </div>
+          )}
+
+          <p className="text-[11px] text-neutral-400">
             AI builds a multi-step pipeline and detects the schedule automatically. ⌘↵ to submit.
           </p>
-          {error && <p className="mt-3 text-[12px] text-red-500">{error}</p>}
+          {error && <p className="text-[12px] text-red-500">{error}</p>}
         </div>
 
         {/* Footer */}

@@ -11,7 +11,7 @@ export async function POST(request: NextRequest) {
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const { description, agent_id: agentId } = await request.json() as { description?: string; agent_id?: string };
+  const { description, agent_id: agentId, worker_instructions: workerInstructions } = await request.json() as { description?: string; agent_id?: string; worker_instructions?: string | null };
   if (!description?.trim()) return NextResponse.json({ error: 'description is required' }, { status: 400 });
 
   // Lightweight context: company name
@@ -40,6 +40,7 @@ export async function POST(request: NextRequest) {
   const generated = await generateWorkflowConfig(description, user.id, supabase, {
     companyName,
     workerContext,
+    workerInstructions: workerInstructions ?? null,
   });
 
   if (!generated) {

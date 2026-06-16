@@ -277,8 +277,11 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
   const steps = (workflow.steps || []) as Workflow['steps'];
   const stepOutputs: StepOutput[] = [];
   let runError: string | null = null;
+  const workerAgentId = (workflow as Workflow & { agent_id?: string }).agent_id ?? undefined;
+  const workerInstructions = (workflow as Workflow & { worker_instructions?: string | null }).worker_instructions ?? null;
 
-  for (const step of steps) {
+  for (let i = 0; i < steps.length; i++) {
+    const step = steps[i];
     const out = await executeStep(step, {
       userId: workflow.user_id,
       runnerId,
@@ -288,6 +291,9 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
       workflowName: workflow.name,
       lastRunAt: workflow.last_run_at,
       outputLanguage: workflow.output_config.output_language,
+      workerAgentId,
+      isLastStep: i === steps.length - 1,
+      workerInstructions,
     });
     stepOutputs.push(out);
     if (out.error) {

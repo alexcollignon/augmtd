@@ -79,17 +79,19 @@ interface WorkerChatTabProps {
   worker: Worker;
   initialThreads: WorkerThread[];
   initialMessages?: ChatMessage[];
+  initialThreadId?: string | null;
   jumpThreadId?: string | null;
   onJumpConsumed?: () => void;
+  onActiveThreadChange?: (threadId: string | null) => void;
   onThreadCreated?: (thread: WorkerThread) => void;
   initialInputValue?: string | null;
   onInitialInputConsumed?: () => void;
 }
 
-export function WorkerChatTab({ worker, initialThreads, initialMessages, jumpThreadId, onJumpConsumed, onThreadCreated, initialInputValue, onInitialInputConsumed }: WorkerChatTabProps) {
+export function WorkerChatTab({ worker, initialThreads, initialMessages, initialThreadId, jumpThreadId, onJumpConsumed, onActiveThreadChange, onThreadCreated, initialInputValue, onInitialInputConsumed }: WorkerChatTabProps) {
   const [threads, setThreads] = useState<WorkerThread[]>(initialThreads);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(
-    initialThreads[0]?.id ?? null
+    initialThreadId ?? initialThreads[0]?.id ?? null
   );
   const [pendingMessage, setPendingMessage] = useState<string | null>(null);
 
@@ -123,6 +125,11 @@ export function WorkerChatTab({ worker, initialThreads, initialMessages, jumpThr
     });
     onJumpConsumed?.();
   }, [jumpThreadId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Notify parent when active thread changes so it can update the URL
+  useEffect(() => {
+    onActiveThreadChange?.(activeThreadId);
+  }, [activeThreadId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const activeThread = threads.find(t => t.id === activeThreadId) ?? null;
   const starters = (worker.conversation_starters ?? []).filter(Boolean);
@@ -411,6 +418,8 @@ function ActiveWorkerChat({
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamingText, setStreamingText] = useState('');
   const [streamingTools, setStreamingTools] = useState<ToolStatus[]>([]);
+  const [streamingThinking, setStreamingThinking] = useState('');
+  const [thinkingDone, setThinkingDone] = useState(false);
   const [inputValue, setInputValue] = useState('');
 
   // Artifact panel state
@@ -580,6 +589,8 @@ function ActiveWorkerChat({
     setIsStreaming(true);
     setStreamingText('');
     setStreamingTools([]);
+    setStreamingThinking('');
+    setThinkingDone(false);
 
     const ac = new AbortController();
     streamAbortRef.current = ac;
@@ -617,7 +628,17 @@ function ActiveWorkerChat({
           try {
             const event = JSON.parse(line.slice(6));
 
-            if (event.type === 'text') {
+            if (event.type === 'thinking_delta') {
+              setStreamingThinking(prev => prev + event.delta);
+
+            } else if (event.type === 'thinking_done') {
+              setThinkingDone(true);
+
+            } else if (event.type === 'text_clear') {
+              accText = '';
+              setStreamingText('');
+
+            } else if (event.type === 'text') {
               accText += event.delta;
               setStreamingText(accText);
 
@@ -692,13 +713,22 @@ function ActiveWorkerChat({
                   } : {}),
                 },
               };
-              if (mountedRef.current) setMessages(prev => {
-                const next = [...prev, assistantMsg];
-                // Keep cache fresh so switching threads and back shows latest
-                const existing = threadCache.current.get(thread.id);
-                if (existing) threadCache.current.set(thread.id, { ...existing, messages: next });
-                return next;
-              });
+              if (mountedRef.current) {
+                // Turn off streaming in the same batch as adding the message so there is
+                // never a frame where both the settled bubble and StreamingMessage are visible.
+                setIsStreaming(false);
+                setStreamingText('');
+                setStreamingTools([]);
+                setStreamingThinking('');
+                setThinkingDone(false);
+                setMessages(prev => {
+                  const next = [...prev, assistantMsg];
+                  // Keep cache fresh so switching threads and back shows latest
+                  const existing = threadCache.current.get(thread.id);
+                  if (existing) threadCache.current.set(thread.id, { ...existing, messages: next });
+                  return next;
+                });
+              }
               if (event.title) {
                 onTitleUpdate(thread.id, event.title);
                 fetch(`/api/work/threads/${thread.id}`, {
@@ -800,7 +830,7 @@ function ActiveWorkerChat({
               );
             })}
 
-            {isStreaming && <StreamingMessage text={streamingText} tools={streamingTools} />}
+            {isStreaming && <StreamingMessage text={streamingText} tools={streamingTools} thinking={streamingThinking || undefined} thinkingDone={thinkingDone} />}
             <div ref={messagesEndRef} />
           </div>
         </div>

@@ -82,6 +82,7 @@ export async function POST(request: NextRequest) {
     steps?: WorkflowStep[];
     output_config?: OutputConfig;
     agent_id?: string | null;
+    worker_instructions?: string | null;
   };
   try { body = await request.json(); } catch { return NextResponse.json({ error: 'Invalid body' }, { status: 400 }); }
 
@@ -122,6 +123,7 @@ export async function POST(request: NextRequest) {
       output_config: body.output_config ?? DEFAULT_OUTPUT_CONFIG,
       next_run_at: nextRunAt,
       ...(body.agent_id !== undefined ? { agent_id: body.agent_id } : {}),
+      ...(body.worker_instructions !== undefined ? { worker_instructions: body.worker_instructions } : {}),
     })
     .select('*')
     .single();

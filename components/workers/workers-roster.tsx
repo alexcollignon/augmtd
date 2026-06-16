@@ -108,10 +108,6 @@ export function WorkersRoster({ workers, activeWorkerId, onSelect, onManage }: W
                 )}
               </div>
 
-              {/* Active dot */}
-              {isActive && (
-                <div className="w-1.5 h-1.5 rounded-full bg-indigo-400 flex-shrink-0" />
-              )}
             </button>
           );
         })}

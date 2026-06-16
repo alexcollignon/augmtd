@@ -1,6 +1,7 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef, useCallback } from 'react';
+import { useSearchParams, useRouter } from 'next/navigation';
 import { WorkersRoster } from '@/components/workers/workers-roster';
 import { WorkerProfile } from '@/components/workers/worker-profile';
 import { WorkersSetupView } from '@/components/workers/workers-setup-view';
@@ -42,6 +43,9 @@ export function WorkersPageClient({
   initialThreads,
   initialMessages,
 }: WorkersPageClientProps) {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+
   const [workers, setWorkers] = useState<Worker[]>(initialWorkers);
 
   const enabledWorkers = workers.filter(w => w.is_enabled);
@@ -50,9 +54,46 @@ export function WorkersPageClient({
   // 'setup' = catalog view; 'workspace' = two-column roster+profile
   const [view, setView] = useState<'setup' | 'workspace'>(hasEnabled ? 'workspace' : 'setup');
 
-  const [activeWorkerId, setActiveWorkerId] = useState<string | null>(
-    enabledWorkers[0]?.id ?? null
-  );
+  // Read URL params once at mount — do NOT use reactively so worker switches
+  // can't bleed the old thread ID into the newly-mounted WorkerProfile.
+  const urlWorkerId = searchParams.get('worker');
+  const urlTab = searchParams.get('tab');
+  const urlThreadId = searchParams.get('thread');
+
+  const [activeWorkerId, setActiveWorkerId] = useState<string | null>(() => {
+    if (urlWorkerId && enabledWorkers.some(w => w.id === urlWorkerId)) return urlWorkerId;
+    return enabledWorkers[0]?.id ?? null;
+  });
+
+  // Tracks the thread ID to pass as initialThreadId to WorkerProfile.
+  // Set from URL on first load; cleared immediately when switching workers so
+  // the old thread ID never leaks into a newly-mounted WorkerProfile.
+  const [profileInitialThreadId, setProfileInitialThreadId] = useState<string | null>(urlThreadId);
+
+  // Refs track current tab/thread so URL updates always use up-to-date values
+  const currentTabRef = useRef<string>(urlTab ?? 'chat');
+  const currentThreadRef = useRef<string | null>(urlThreadId);
+
+  const pushUrl = useCallback((patch: { worker?: string | null; tab?: string | null; thread?: string | null }) => {
+    const w = patch.worker !== undefined ? patch.worker : (activeWorkerId);
+    const tab = patch.tab !== undefined ? patch.tab : currentTabRef.current;
+    const thread = patch.thread !== undefined ? patch.thread : currentThreadRef.current;
+    const params = new URLSearchParams();
+    if (w) params.set('worker', w);
+    if (tab && tab !== 'chat') params.set('tab', tab);
+    if (thread) params.set('thread', thread);
+    router.replace(`/workers${params.size ? '?' + params.toString() : ''}`, { scroll: false });
+  }, [activeWorkerId, router]);
+
+  const handleTabChange = useCallback((tab: string) => {
+    currentTabRef.current = tab;
+    pushUrl({ tab });
+  }, [pushUrl]);
+
+  const handleActiveThreadChange = useCallback((threadId: string | null) => {
+    currentThreadRef.current = threadId;
+    pushUrl({ thread: threadId });
+  }, [pushUrl]);
   const [threadsByWorker, setThreadsByWorker] = useState<Record<string, WorkerThread[]>>(
     activeWorkerId ? { [activeWorkerId]: initialThreads } : {}
   );
@@ -82,6 +123,10 @@ export function WorkersPageClient({
   async function handleSelectWorker(id: string) {
     if (id === activeWorkerId) return;
     setActiveWorkerId(id);
+    setProfileInitialThreadId(null); // clear before WorkerProfile remounts
+    currentTabRef.current = 'chat';
+    currentThreadRef.current = null;
+    pushUrl({ worker: id, tab: null, thread: null });
     // Always re-fetch — local cache can be stale if threads were created in this session
     const res = await fetch(`/api/work/threads?agent_id=${id}`);
     if (res.ok) {
@@ -141,6 +186,10 @@ export function WorkersPageClient({
             worker={activeWorker}
             initialThreads={activeThreads}
             initialMessages={activeWorkerId === (workers.find(w => w.is_enabled)?.id) ? (initialMessages as import('@/components/work/chat-message').ChatMessage[] | undefined) : undefined}
+            initialTab={(urlTab as 'chat' | 'knowledge' | 'tasks' | 'documents' | 'activity') ?? undefined}
+            initialThreadId={profileInitialThreadId ?? undefined}
+            onTabChange={handleTabChange}
+            onActiveThreadChange={handleActiveThreadChange}
             onThreadCreated={(thread) => handleThreadCreated(activeWorker.id, thread)}
           />
         ) : (

@@ -22,6 +22,9 @@ export interface StepContext {
   outputLanguage?: string;    // BCP-47 from output_config.output_language — injected into AI steps
   workflowId?: string;        // current workflow id — used by get_workflow_output to prevent self-reference
   runnerId?: string;          // user who triggered this run (may differ from userId for shared runs)
+  workerAgentId?: string;     // set when workflow.agent_id is non-null — injects worker identity into final AI step
+  isLastStep?: boolean;       // true for the final step in the ordered list
+  workerInstructions?: string | null; // task-specific tone/persona, injected between KB and step prompt
 }
 
 // ── Public entrypoint ─────────────────────────────────────────────────────────
@@ -61,7 +64,7 @@ export async function executeStep(step: WorkflowStep, ctx: StepContext): Promise
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function formatPreviousOutputs(outputs: StepOutput[]): string {
+function formatPreviousOutputs(outputs: StepOutput[], maxChars?: number): string {
   if (outputs.length === 0) return '';
   const parts = outputs.map((o, i) => {
     const body = typeof o.output === 'string'
@@ -69,7 +72,9 @@ function formatPreviousOutputs(outputs: StepOutput[]): string {
       : JSON.stringify(o.output, null, 2);
     return `[Step ${i + 1} — ${o.label}]\n${body}`;
   });
-  return `<previous_steps>\n${parts.join('\n\n')}\n</previous_steps>`;
+  const joined = parts.join('\n\n');
+  const content = maxChars && joined.length > maxChars ? joined.slice(0, maxChars) + '\n…[truncated]' : joined;
+  return `<previous_steps>\n${content}\n</previous_steps>`;
 }
 
 // ── Tool step ─────────────────────────────────────────────────────────────────
@@ -138,7 +143,12 @@ async function executeAIStep(step: AIStep, ctx: StepContext): Promise<string> {
   const tier = step.model_tier === 'reasoning' ? 'conversation' : 'summarization';
   const resolved = await getAIClient(ctx.userId, tier, ctx.supabase);
 
-  const previousBlock = formatPreviousOutputs(ctx.previousOutputs);
+  // Cap previous outputs when worker context will also be injected (token budget)
+  const previousBlock = formatPreviousOutputs(
+    ctx.previousOutputs,
+    ctx.isLastStep && ctx.workerAgentId ? 30000 : undefined,
+  );
+
   const formatNote =
     step.output_format === 'json'     ? '\n\nRespond with valid JSON only. No prose.' :
     step.output_format === 'markdown' ? '\n\nRespond in clean, scannable markdown.' :
@@ -152,6 +162,64 @@ async function executeAIStep(step: AIStep, ctx: StepContext): Promise<string> {
     `You are executing one step of an automated workflow named "${ctx.workflowName}". ` +
     `Use the previous step outputs below as your source material and produce the requested transformation.` +
     langInstruction;
+
+  // When this is the final step of a worker-owned workflow, replace the anonymous system prompt
+  // with the worker's full identity: instructions + memory + KB.
+  if (ctx.isLastStep && ctx.workerAgentId) {
+    const { data: agentRow } = await ctx.supabase
+      .from('custom_agents')
+      .select('name, instructions, memory_text, agent_knowledge_sources(knowledge_file_id)')
+      .eq('id', ctx.workerAgentId)
+      .eq('user_id', ctx.userId)
+      .single();
+
+    if (agentRow) {
+      const row = agentRow as {
+        name: string;
+        instructions: string | null;
+        memory_text: string | null;
+        agent_knowledge_sources: Array<{ knowledge_file_id: string | null }>;
+      };
+
+      const agentFileIds = row.agent_knowledge_sources
+        .map((s) => s.knowledge_file_id)
+        .filter((id): id is string => Boolean(id));
+
+      const parts: string[] = [
+        [
+          `You are "${row.name}".`,
+          row.instructions?.trim() ?? '',
+          `This is a scheduled automated task — produce the requested deliverable directly, in your voice.`,
+          langInstruction,
+        ].filter(Boolean).join('\n\n'),
+      ];
+
+      if (row.memory_text?.trim()) {
+        parts.push(`[MEMORY — things you've learned about this user]\n${row.memory_text.trim()}`);
+      }
+
+      if (agentFileIds.length > 0) {
+        try {
+          const kb = await buildKBContext(ctx.userId, step.prompt, ctx.supabase, {
+            fileLimit: 4,
+            maxChunksPerFile: 3,
+            threshold: 0.15,
+            maxTotalChars: 8000,
+            scopeFileIds: agentFileIds,
+          });
+          if (kb?.context) {
+            parts.push(`<agent_knowledge_base>\n${kb.context}\n</agent_knowledge_base>`);
+          }
+        } catch { /* non-fatal */ }
+      }
+
+      if (ctx.workerInstructions?.trim()) {
+        parts.push(`[TASK INSTRUCTIONS — for this specific task only]\n${ctx.workerInstructions.trim()}`);
+      }
+
+      systemPrompt = parts.join('\n\n');
+    }
+  }
 
   if (step.kb_file_ids && step.kb_file_ids.length > 0) {
     try {

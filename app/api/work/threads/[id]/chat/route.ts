@@ -24,9 +24,9 @@ import {
   deepResearchDefinition, executeDeepResearch,
 } from '@/lib/tools';
 import {
-  listTasksDefinition, createTaskDefinition, updateTaskDefinition, deleteTaskDefinition, runTaskDefinition,
+  listTasksDefinition, createTaskDefinition, getTaskDefinition, updateTaskDefinition, deleteTaskDefinition, runTaskDefinition,
   listWorkerDocumentsDefinition, getWorkerDocumentDefinition,
-  executeListTasks, executeCreateTask, executeUpdateTask, executeDeleteTask, executeRunTask,
+  executeListTasks, executeCreateTask, executeGetTask, executeUpdateTask, executeDeleteTask, executeRunTask,
   executeListWorkerDocuments, executeGetWorkerDocument,
 } from '@/lib/tools/worker-tasks';
 import { checkRateLimit } from '@/lib/utils/rate-limit';
@@ -369,10 +369,11 @@ export async function POST(
               : '',
             routinesBrief || '',
             documentHistoryBrief || '',
-            `You have access to: email inbox (get_emails), calendar & meetings (get_meeting_context), web search (web_search, fetch_url), and deep research (deep_research). Use them proactively — retrieve real context before answering rather than relying on memory.`,
-            `[TASK MANAGEMENT]\nYou can create and manage your own scheduled automations via: list_tasks (see what's running), create_task (set up a new recurring automation — describe it in plain language, the system builds the full pipeline), update_task (pause or resume), delete_task (remove permanently), run_task (trigger an immediate manual run right now). When the user asks to automate something, run a task now, or manage existing tasks, use these tools directly.`,
-            `[DOCUMENT ACCESS]\nYou can access documents you've previously produced via: list_worker_documents (see all outputs with artifact IDs), get_worker_document (retrieve full content + attach as chat chip). When the user asks to see, share, revise, or reference something you produced, call get_worker_document immediately — don't say you can't retrieve it.`,
-            `Act, don't hedge. When a task is clear, do it and show your work briefly. One focused question maximum if truly blocked.`,
+            `[TOOLS YOU HAVE RIGHT NOW — use them, never claim otherwise]\n- web_search: search the live web for any news, data, or information. Call it immediately when the user asks about anything current.\n- fetch_url: read the full content of any URL.\n- deep_research: multi-source research synthesis for complex topics.\n- get_emails: read the user's inbox.\n- get_meeting_context: read their calendar and meetings.\nNEVER say you cannot access the web, live data, news sources, or current information. You can. Call web_search and do it.`,
+            `[RECURRING TASKS]\nYou can set up and manage work you do regularly on their behalf.\n- list_tasks — see what's already running\n- create_task — set up something new from a plain description\n- get_task — read the full config of a task (steps, schedule, language, instructions)\n- update_task — edit any aspect: name, schedule, output language, task instructions, step prompts, status\n- run_task — trigger a task right now\n- delete_task — remove a task permanently\n\nWhen the user gives feedback on a task output — "too long", "more concise", "write in German", "change to Tuesdays", "make it more formal" — act on it immediately: call get_task to read the current config, identify what to change, call update_task. Then respond in one sentence confirming what you did. Never describe what you're about to change before doing it. Never ask for confirmation. A colleague just fixes it.`,
+            `[YOUR DOCUMENTS]\nlist_worker_documents shows everything you've produced. get_worker_document retrieves the full content. When the user asks to see, revise, or reference something you made, call get_worker_document — don't say you can't retrieve it.`,
+            `Understand intent before acting. "Prepare a weekly X" or "every Monday do Y" or "set up X for me" = the user wants a recurring task — call create_task immediately, confirm the schedule, done. "What's X?" or "find me X" or "draft X" = do it now with your tools. Never confuse the two. A human colleague would know the difference instantly.`,
+            `Speak like a capable colleague, not a software system. Say "Got it, I'll have that ready every Monday" not "I can create a scheduled automation task." Say "I'm on it" not "I don't have direct access to." When a task is clear, do it. One focused question maximum if truly blocked.`,
           ].filter(Boolean).join('\n\n')
         // Standard agent prompt
         : [
@@ -762,6 +763,8 @@ export async function POST(
             // Once XML tool call markers appear mid-stream, stop sending live deltas
             // and wait for text_set at stream end to show the clean version.
             let xmlStreamSuppressed = false;
+            // Tracks whether we are currently inside a <think>...</think> block
+            let inThinkBlock = false;
 
             // Retry wrapper for transient errors (429, 503, 529)
             let stream: AsyncIterable<OpenAI.Chat.ChatCompletionChunk>;
@@ -809,20 +812,46 @@ export async function POST(
               if (delta?.content) {
                 turnText += delta.content;
                 if (!xmlStreamSuppressed) {
-                  const hasXmlMarker = turnText.includes('<think>') ||
-                    turnText.includes('<function_calls>') ||
+                  const hasThink = turnText.includes('<think>');
+                  const hasOtherXml = turnText.includes('<function_calls>') ||
                     turnText.includes('<tool_call>') ||
                     XML_TOOL_NAMES.some(n => turnText.includes(`<${n}>`));
-                  if (hasXmlMarker) {
+                  if (hasThink || hasOtherXml) {
                     xmlStreamSuppressed = true;
                     // Immediately show clean version (strips XML and anything after it)
                     const cleanSoFar = stripXmlToolCalls(turnText);
                     send({ type: 'text_set', content: cleanSoFar });
+                    // If triggered by <think>, start streaming thinking content
+                    if (hasThink) {
+                      inThinkBlock = true;
+                      const openIdx = turnText.indexOf('<think>');
+                      const closeIdx = turnText.indexOf('</think>');
+                      if (closeIdx > openIdx) {
+                        const thinking = turnText.slice(openIdx + 7, closeIdx);
+                        if (thinking) send({ type: 'thinking_delta', delta: thinking });
+                        send({ type: 'thinking_done' });
+                        inThinkBlock = false;
+                      } else {
+                        const thinking = turnText.slice(openIdx + 7);
+                        if (thinking) send({ type: 'thinking_delta', delta: thinking });
+                      }
+                    }
                   } else {
                     send({ type: 'text', delta: delta.content });
                   }
+                } else if (inThinkBlock) {
+                  // Stream thinking content chunk by chunk until </think>
+                  if (delta.content.includes('</think>')) {
+                    const idx = delta.content.indexOf('</think>');
+                    const thinkPart = delta.content.slice(0, idx);
+                    if (thinkPart) send({ type: 'thinking_delta', delta: thinkPart });
+                    send({ type: 'thinking_done' });
+                    inThinkBlock = false;
+                  } else {
+                    send({ type: 'thinking_delta', delta: delta.content });
+                  }
                 }
-                // If xmlStreamSuppressed, accumulate silently — text_set at stream end handles display
+                // else: xmlStreamSuppressed && !inThinkBlock — XML tool call, accumulate silently
               }
 
               // Accumulate tool call fragments by index
@@ -840,6 +869,8 @@ export async function POST(
 
               if (finishReason === 'stop' || finishReason === 'end_turn' || finishReason === 'eos' || finishReason === 'length') {
                 sawFinish = true;
+                // Close any unclosed think block (stream ended while still reasoning)
+                if (inThinkBlock) { send({ type: 'thinking_done' }); inThinkBlock = false; }
 
                 // Some models (DeepSeek on Fireworks, Claude via Anthropic compat) emit tool calls
                 // as XML text instead of structured tool_calls deltas. Always strip XML from the
@@ -894,16 +925,18 @@ export async function POST(
 
               } else if (finishReason === 'tool_calls') {
                 sawFinish = true;
+                if (inThinkBlock) { send({ type: 'thinking_done' }); inThinkBlock = false; }
                 const cleanTurnText = stripXmlToolCalls(turnText);
-                // Strip <think> blocks so fullAssistantText stays clean for empty-response detection
-                fullAssistantText += cleanTurnText;
+                // Don't accumulate inter-turn narration into fullAssistantText — only the final
+                // response turn should be saved. Intermediate narration was already streamed to UI.
 
-                // Flush any accumulated text BEFORE firing tool events so the UI renders
-                // text above tool chips/clarification widgets, not after them.
-                // This matters when <think> suppressed all text deltas (xmlStreamSuppressed = true).
+                // Flush any suppressed text before the tool chips appear, then immediately clear
+                // so the streaming display resets for the next turn / final response.
                 if (cleanTurnText && xmlStreamSuppressed) {
                   send({ type: 'text_set', content: cleanTurnText });
                 }
+                // Signal client to clear streaming text now that tools are about to fire
+                send({ type: 'text_clear' });
 
                 const toolCalls: OpenAI.Chat.ChatCompletionMessageToolCall[] =
                   Array.from(toolCallAccum.values()).map(tc => ({
@@ -1268,7 +1301,7 @@ function buildChatTools(sources: string[], _provider: string, _modelFamily: stri
   // Worker-only tools — task management + document access
   if (isWorker) {
     neutral.push(
-      listTasksDefinition, createTaskDefinition, updateTaskDefinition, deleteTaskDefinition, runTaskDefinition,
+      listTasksDefinition, createTaskDefinition, getTaskDefinition, updateTaskDefinition, deleteTaskDefinition, runTaskDefinition,
       listWorkerDocumentsDefinition, getWorkerDocumentDefinition,
     );
   }
@@ -1298,6 +1331,7 @@ function toolLabel(name: string): string {
     generate_document: 'Generating document',
     list_tasks: 'Checking tasks',
     create_task: 'Building task pipeline…',
+    get_task: 'Reading task config',
     update_task: 'Updating task',
     delete_task: 'Deleting task',
     run_task: 'Running task…',
@@ -1712,7 +1746,7 @@ async function executeChatTool(
     case 'list_tasks': {
       if (!ctx.agentId) return { result: 'No worker context available.', summary: 'No worker' };
       const result = await executeListTasks(ctx.agentId, ctx.userId, ctx.adminClient);
-      const count = (result.match(/^\S/gm) ?? []).length;
+      const count = parseInt(result.match(/^Tasks \((\d+)\)/)?.[1] ?? '0', 10);
       return { result, summary: count > 0 ? `Found ${count} task${count !== 1 ? 's' : ''}` : 'No tasks found' };
     }
 
@@ -1723,11 +1757,25 @@ async function executeChatTool(
       return { result, summary: result.startsWith('Task created') ? 'Task created' : 'Task creation failed' };
     }
 
+    case 'get_task': {
+      if (!ctx.agentId) return { result: 'No worker context available.', summary: 'No worker' };
+      const taskId = typeof input.task_id === 'string' ? input.task_id : '';
+      const result = await executeGetTask(taskId, ctx.userId, ctx.adminClient);
+      return { result, summary: 'Task config retrieved' };
+    }
+
     case 'update_task': {
       const taskId = typeof input.task_id === 'string' ? input.task_id : '';
-      const status = (input.status === 'active' || input.status === 'paused') ? input.status : 'paused';
-      const result = await executeUpdateTask(taskId, status, ctx.userId, ctx.adminClient);
-      return { result, summary: `Task ${status}` };
+      const result = await executeUpdateTask(taskId, {
+        ...(typeof input.name === 'string' ? { name: input.name } : {}),
+        ...(typeof input.description === 'string' ? { description: input.description } : {}),
+        ...(input.status === 'active' || input.status === 'paused' ? { status: input.status } : {}),
+        ...(input.trigger && typeof input.trigger === 'object' ? { trigger: input.trigger as import('@/lib/workflows/types').WorkflowTrigger } : {}),
+        ...(typeof input.output_language === 'string' ? { output_language: input.output_language } : {}),
+        ...(typeof input.worker_instructions === 'string' ? { worker_instructions: input.worker_instructions } : {}),
+        ...(Array.isArray(input.steps) ? { steps: input.steps as import('@/lib/workflows/types').WorkflowStep[] } : {}),
+      }, ctx.userId, ctx.adminClient);
+      return { result, summary: 'Task updated' };
     }
 
     case 'delete_task': {
