@@ -12,6 +12,7 @@ export interface DriveAugmtdFile {
   storage_path?: string;
   is_indexed?: boolean;
   transcript_id?: string; // for meeting transcripts
+  agent_name?: string;    // worker name if produced by a worker workflow
 }
 
 export interface DriveFolder {

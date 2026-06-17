@@ -32,12 +32,37 @@ export async function GET() {
     // 1. Work threads — flatten artifacts array
     const { data: threads } = await supabase
       .from('work_threads')
-      .select('id, artifacts, artifact')
+      .select('id, artifacts, artifact, workflow_id')
       .eq('user_id', user.id);
 
+    // Resolve agent names for worker-produced files
+    const agentNameByWorkflowId = new Map<string, string>();
     if (threads) {
-      for (const thread of threads) {
-        const artifacts = ((thread as any).artifacts as DocumentArtifact[]) || [];
+      const workflowIds = [...new Set(threads.map((t: any) => t.workflow_id).filter(Boolean))];
+      if (workflowIds.length > 0) {
+        const { data: workflowRows } = await adminClient
+          .from('workflows')
+          .select('id, agent_id')
+          .in('id', workflowIds)
+          .not('agent_id', 'is', null);
+        if (workflowRows?.length) {
+          const agentIds = [...new Set(workflowRows.map((w: any) => w.agent_id))];
+          const { data: agentRows } = await adminClient
+            .from('custom_agents')
+            .select('id, name')
+            .in('id', agentIds);
+          const agentById = new Map(agentRows?.map((a: any) => [a.id, a.name]) ?? []);
+          for (const w of workflowRows as any[]) {
+            if (w.agent_id) agentNameByWorkflowId.set(w.id, agentById.get(w.agent_id) ?? '');
+          }
+        }
+      }
+    }
+
+    if (threads) {
+      for (const thread of threads as any[]) {
+        const agentName = thread.workflow_id ? agentNameByWorkflowId.get(thread.workflow_id) : undefined;
+        const artifacts = (thread.artifacts as DocumentArtifact[]) || [];
         const processed = new Set<string>();
 
         for (const art of artifacts) {
@@ -55,11 +80,12 @@ export async function GET() {
             generated_at: art.generated_at,
             work_thread_id: thread.id,
             storage_path: art.storage_path,
+            agent_name: agentName || undefined,
           });
         }
 
         // Legacy singular artifact
-        const singular = (thread as any).artifact as DocumentArtifact | null;
+        const singular = thread.artifact as DocumentArtifact | null;
         if (singular?.storage_path) {
           const singularId = singular.id ?? singular.storage_path;
           if (!processed.has(singularId)) {
@@ -72,6 +98,7 @@ export async function GET() {
               generated_at: singular.generated_at,
               work_thread_id: thread.id,
               storage_path: singular.storage_path,
+              agent_name: agentName || undefined,
             });
           }
         }
