@@ -5,6 +5,7 @@
 
 import { SupabaseClient } from '@supabase/supabase-js';
 import { getAIClient, aiCreate, getSystemClient } from '@/lib/ai/factory';
+import { isAgentOSEnabled, runWorkerStepViaAgentOS } from '@/lib/work/agentos-bridge';
 import { buildChatSystemPrompt, detectModelFamily } from '@/lib/work/chat-system-prompt';
 import { buildUserContextBlock } from '@/lib/context/build-user-context';
 import { getCalendarContext } from '@/lib/calendar/calendar-context';
@@ -277,7 +278,7 @@ async function executeAgentStep(step: AgentStep, ctx: StepContext): Promise<stri
   // Load agent
   const { data: agent, error } = await ctx.supabase
     .from('custom_agents')
-    .select('id, name, instructions, memory_text, agent_knowledge_sources(knowledge_file_id)')
+    .select('id, name, instructions, memory_text, worker_role, is_worker, agent_knowledge_sources(knowledge_file_id)')
     .eq('id', step.agent_id)
     .eq('user_id', ctx.userId)
     .single();
@@ -291,8 +292,33 @@ async function executeAgentStep(step: AgentStep, ctx: StepContext): Promise<stri
     name: string;
     instructions: string | null;
     memory_text: string | null;
+    worker_role: string | null;
+    is_worker: boolean | null;
     agent_knowledge_sources: Array<{ knowledge_file_id: string | null }>;
   };
+
+  // ── AgentOS path (Phase 5, dormant) ──
+  // When enabled and this agent is a worker, run the step through AgentOS so it
+  // gets the tool-enabled loop + per-user context. Falls back to the inline AI
+  // call below on any failure. Flag-off in prod → this block is skipped.
+  if (agentRow.is_worker && agentRow.worker_role && isAgentOSEnabled()) {
+    try {
+      const stepMessage = [
+        formatPreviousOutputs(ctx.previousOutputs),
+        `<workflow_task>\n${step.prompt}\n</workflow_task>`,
+      ].filter(Boolean).join('\n\n');
+      return await runWorkerStepViaAgentOS({
+        workerRole: agentRow.worker_role,
+        agentId: agentRow.id,
+        userId: ctx.userId,
+        message: stepMessage,
+        sessionId: `wf-${ctx.workflowId ?? 'run'}-${agentRow.id}`,
+        adminClient: ctx.supabase,
+      });
+    } catch (err) {
+      console.error('[execute-step] AgentOS agent step failed, falling back to inline:', err);
+    }
+  }
 
   const agentFileIds: string[] = agentRow.agent_knowledge_sources
     .map(s => s.knowledge_file_id)

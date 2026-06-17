@@ -16,6 +16,8 @@ import {
   FolderOpenIcon,
   MagnifyingGlassIcon,
   ChevronLeftIcon,
+  BoltIcon,
+  CalendarIcon,
 } from '@heroicons/react/24/outline';
 import type { DriveAugmtdFile, DriveFolder } from '@/lib/types/drive';
 
@@ -59,6 +61,9 @@ interface DriveClientProps {
 
 type SidebarView =
   | { kind: 'all' }
+  | { kind: 'generated' }
+  | { kind: 'meetings' }
+  | { kind: 'uploads' }
   | { kind: 'folder'; folderId: string };
 
 type SelectedFile =
@@ -361,6 +366,37 @@ function SourceBadge({ source }: { source: string }) {
   return <span className={`inline-flex items-center px-1.5 py-0.5 text-[10px] font-medium rounded ${c.className}`}>{c.label}</span>;
 }
 
+function isMeetingKbFile(f: KnowledgeFile): boolean {
+  return /^meeting[: ]/i.test(f.filename);
+}
+
+function fileTypeIcon(type: string): { label: string; bg: string; text: string } {
+  const byMime: Record<string, { label: string; bg: string; text: string }> = {
+    'application/pdf': { label: 'PDF', bg: 'bg-red-50', text: 'text-red-600' },
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': { label: 'DOC', bg: 'bg-blue-50', text: 'text-blue-700' },
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': { label: 'XLS', bg: 'bg-green-50', text: 'text-green-700' },
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation': { label: 'PPT', bg: 'bg-orange-50', text: 'text-orange-600' },
+    'application/vnd.google-apps.document': { label: 'DOC', bg: 'bg-blue-50', text: 'text-blue-700' },
+    'application/vnd.google-apps.spreadsheet': { label: 'XLS', bg: 'bg-green-50', text: 'text-green-700' },
+    'application/vnd.google-apps.presentation': { label: 'PPT', bg: 'bg-yellow-50', text: 'text-yellow-700' },
+    'text/plain': { label: 'TXT', bg: 'bg-neutral-100', text: 'text-neutral-600' },
+    'text/csv': { label: 'CSV', bg: 'bg-teal-50', text: 'text-teal-700' },
+    'image/jpeg': { label: 'IMG', bg: 'bg-purple-50', text: 'text-purple-600' },
+    'image/png': { label: 'IMG', bg: 'bg-purple-50', text: 'text-purple-600' },
+    'image/webp': { label: 'IMG', bg: 'bg-purple-50', text: 'text-purple-600' },
+  };
+  const byType: Record<string, { label: string; bg: string; text: string }> = {
+    report: { label: 'RPT', bg: 'bg-indigo-50', text: 'text-indigo-600' },
+    presentation: { label: 'PPT', bg: 'bg-orange-50', text: 'text-orange-600' },
+    document: { label: 'DOC', bg: 'bg-blue-50', text: 'text-blue-700' },
+    email: { label: 'EML', bg: 'bg-amber-50', text: 'text-amber-600' },
+    analysis: { label: 'ANL', bg: 'bg-teal-50', text: 'text-teal-700' },
+    spreadsheet: { label: 'XLS', bg: 'bg-green-50', text: 'text-green-700' },
+    transcript: { label: 'MTG', bg: 'bg-teal-50', text: 'text-teal-700' },
+  };
+  return byMime[type] ?? byType[type] ?? { label: 'FILE', bg: 'bg-neutral-100', text: 'text-neutral-500' };
+}
+
 function EmptyState({ message, sub }: { message: string; sub: string }) {
   return (
     <div className="py-16 text-center">
@@ -544,6 +580,9 @@ function isActiveView(current: SidebarView, target: SidebarView): boolean {
 function sidebarViewTitle(view: SidebarView, folders: DriveFolder[]): string {
   switch (view.kind) {
     case 'all': return 'All Files';
+    case 'generated': return 'Generated';
+    case 'meetings': return 'Meetings';
+    case 'uploads': return 'Uploads';
     case 'folder': return folders.find((f) => f.id === view.folderId)?.name ?? 'Folder';
   }
 }
@@ -554,49 +593,63 @@ function computeRows(
   kbFiles: KnowledgeFile[],
   folders: DriveFolder[],
 ): ListRow[] {
-  const augmtd = view.kind === 'folder'
-    ? augmtdFiles.filter((f) => f.folder_id === view.folderId)
-    : augmtdFiles;
-  const kb = view.kind === 'folder'
-    ? kbFiles.filter((f) => f.folder_id === view.folderId)
-    : kbFiles;
-
-  const flat: FileRow[] = [
-    ...augmtd.map((f) => ({ kind: 'augmtd' as const, file: f, date: f.generated_at })),
-    ...kb.map((f) => ({ kind: 'kb' as const, file: f, date: f.indexed_at })),
-  ];
-
   const sortByDate = (a: FileRow, b: FileRow) => new Date(b.date).getTime() - new Date(a.date).getTime();
 
-  if (view.kind !== 'all') {
+  // Filter views — flat sorted list, no separators
+  if (view.kind === 'generated') {
+    return augmtdFiles
+      .filter((f) => f.source === 'workflow')
+      .map((f) => ({ kind: 'augmtd' as const, file: f, date: f.generated_at }))
+      .sort(sortByDate);
+  }
+  if (view.kind === 'meetings') {
+    return [
+      ...augmtdFiles.filter((f) => f.source === 'meeting').map((f) => ({ kind: 'augmtd' as const, file: f, date: f.generated_at })),
+      ...kbFiles.filter(isMeetingKbFile).map((f) => ({ kind: 'kb' as const, file: f, date: f.indexed_at })),
+    ].sort(sortByDate);
+  }
+  if (view.kind === 'uploads') {
+    return kbFiles
+      .filter((f) => !isMeetingKbFile(f))
+      .map((f) => ({ kind: 'kb' as const, file: f, date: f.indexed_at }))
+      .sort(sortByDate);
+  }
+
+  if (view.kind === 'folder') {
+    const flat: FileRow[] = [
+      ...augmtdFiles.filter((f) => f.folder_id === view.folderId).map((f) => ({ kind: 'augmtd' as const, file: f, date: f.generated_at })),
+      ...kbFiles.filter((f) => f.folder_id === view.folderId).map((f) => ({ kind: 'kb' as const, file: f, date: f.indexed_at })),
+    ];
     return flat.sort(sortByDate);
   }
 
-  // All-files view: group by folder with section headers
-  const userFolders = folders.filter((f) => !f.is_system);
-  const folderMap = new Map(userFolders.map((f) => [f.id, f.name]));
-  const rowsByFolder = new Map<string | null, FileRow[]>();
-  for (const row of flat) {
-    const fid = row.file.folder_id ?? null;
-    if (!rowsByFolder.has(fid)) rowsByFolder.set(fid, []);
-    rowsByFolder.get(fid)!.push(row);
-  }
-
-  const namedGroupIds = userFolders.filter((f) => rowsByFolder.has(f.id)).map((f) => f.id);
-  const hasNamedGroups = namedGroupIds.length > 0;
+  // All Files — always group by source type
+  const generated: FileRow[] = augmtdFiles
+    .filter((f) => f.source === 'workflow')
+    .map((f) => ({ kind: 'augmtd' as const, file: f, date: f.generated_at }))
+    .sort(sortByDate);
+  const meetings: FileRow[] = [
+    ...augmtdFiles.filter((f) => f.source === 'meeting').map((f) => ({ kind: 'augmtd' as const, file: f, date: f.generated_at })),
+    ...kbFiles.filter(isMeetingKbFile).map((f) => ({ kind: 'kb' as const, file: f, date: f.indexed_at })),
+  ].sort(sortByDate);
+  const uploads: FileRow[] = kbFiles
+    .filter((f) => !isMeetingKbFile(f))
+    .map((f) => ({ kind: 'kb' as const, file: f, date: f.indexed_at }))
+    .sort(sortByDate);
 
   const result: ListRow[] = [];
-  for (const folderId of namedGroupIds) {
-    const groupRows = (rowsByFolder.get(folderId) ?? []).sort(sortByDate);
-    result.push({ kind: 'separator', label: folderMap.get(folderId) ?? 'Folder', folderId });
-    result.push(...groupRows);
+  if (generated.length > 0) {
+    result.push({ kind: 'separator', label: 'Generated', folderId: '__generated__' });
+    result.push(...generated);
   }
-  const unfiledRows = (rowsByFolder.get(null) ?? []).sort(sortByDate);
-  if (unfiledRows.length > 0) {
-    if (hasNamedGroups) result.push({ kind: 'separator', label: 'Other files', folderId: null });
-    result.push(...unfiledRows);
+  if (meetings.length > 0) {
+    result.push({ kind: 'separator', label: 'Meetings', folderId: '__meetings__' });
+    result.push(...meetings);
   }
-
+  if (uploads.length > 0) {
+    result.push({ kind: 'separator', label: 'Uploads', folderId: '__uploads__' });
+    result.push(...uploads);
+  }
   return result;
 }
 
@@ -840,6 +893,7 @@ function DriveFileList({ rows, onRowClick, sources, folders, onMove, onNewFolder
           currentSeparatorFolderId = row.folderId;
           const key = row.folderId ?? '__root__';
           const isCollapsed = collapsedFolders.has(key);
+          const isVirtual = key.startsWith('__');
           return (
             <button
               key={`sep-${key}`}
@@ -847,7 +901,7 @@ function DriveFileList({ rows, onRowClick, sources, folders, onMove, onNewFolder
               className="w-full flex items-center gap-2 px-4 pt-5 pb-2 text-left hover:bg-neutral-50 group"
             >
               <ChevronRightIcon className={`w-3 h-3 text-neutral-400 flex-shrink-0 transition-transform ${isCollapsed ? '' : 'rotate-90'}`} />
-              <FolderIcon className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" />
+              {!isVirtual && <FolderIcon className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" />}
               <span className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wider">{row.label}</span>
             </button>
           );
@@ -883,6 +937,19 @@ function DriveFileList({ rows, onRowClick, sources, folders, onMove, onNewFolder
           requestAnimationFrame(() => document.body.removeChild(ghost));
         }
 
+        const { label: typeLabel, bg: typeBg, text: typeText } = fileTypeIcon(typeProp);
+        const sourceMeta = row.kind === 'augmtd'
+          ? (row.file.source === 'meeting'
+              ? 'Meeting'
+              : row.file.agent_name
+                ? `Generated · ${row.file.agent_name}`
+                : 'Generated')
+          : (isMeetingKbFile(row.file)
+              ? 'Meeting'
+              : sourceKey === 'google_drive' ? 'Google Drive'
+              : sourceKey === 'onedrive' ? 'OneDrive'
+              : 'Upload');
+
         return (
           <div key={id} className="relative">
             {menuOpenId === id && <div className="fixed inset-0 z-20" onClick={() => setMenuOpenId(null)} />}
@@ -896,9 +963,9 @@ function DriveFileList({ rows, onRowClick, sources, folders, onMove, onNewFolder
                 }
                 onRowClick(row.kind === 'augmtd' ? { kind: 'augmtd', file: row.file } : { kind: 'kb', file: row.file });
               }}
-              className={`flex items-center gap-3 px-4 py-2.5 hover:bg-neutral-50 cursor-pointer group border-b border-neutral-50 ${isSelected ? 'bg-indigo-50/60' : ''}`}
+              className={`flex items-center gap-3 px-4 py-3 hover:bg-neutral-50 cursor-pointer group border-b border-neutral-50 ${isSelected ? 'bg-indigo-50/60' : ''}`}
             >
-              {/* Checkbox for selectable files */}
+              {/* Checkbox */}
               {isSelectable ? (
                 <input
                   type="checkbox"
@@ -908,12 +975,17 @@ function DriveFileList({ rows, onRowClick, sources, folders, onMove, onNewFolder
                   className={`w-3.5 h-3.5 rounded border-neutral-300 text-indigo-600 flex-shrink-0 cursor-pointer transition-opacity ${isSelected || hasSelection ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
                 />
               ) : (
-                <DocumentIcon className="w-4 h-4 text-neutral-300 flex-shrink-0" />
+                <div className="w-3.5 h-3.5 flex-shrink-0" />
               )}
-              <span className="flex-1 text-[13px] text-neutral-800 truncate">{name}</span>
-              <TypeBadge type={typeProp} />
-              <span className="hidden md:block"><SourceBadge source={sourceKey} /></span>
-              <span className="text-[11px] text-neutral-400 hidden lg:block flex-shrink-0">{formatDate(row.date)}</span>
+              {/* Type icon */}
+              <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${typeBg}`}>
+                <span className={`text-[9px] font-bold tracking-tight ${typeText}`}>{typeLabel}</span>
+              </div>
+              {/* Name + meta */}
+              <div className="flex-1 min-w-0">
+                <p className="text-[13px] font-medium text-neutral-800 truncate">{name}</p>
+                <p className="text-[11px] text-neutral-400 mt-0.5">{sourceMeta} · {formatDate(row.date)}</p>
+              </div>
               <button
                 onClick={(e) => { e.stopPropagation(); setMenuOpenId(menuOpenId === id ? null : id); }}
                 className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-neutral-100 transition-opacity flex-shrink-0"
@@ -1214,7 +1286,7 @@ function DriveSidebar({
 
       {/* Body */}
       <div className="flex-1 overflow-y-auto p-2">
-        {/* All Files — also a drop target (move to root) */}
+        {/* All Files — drop target for root */}
         <div {...makeDragHandlers('__root__', null)} className={`rounded-lg transition-colors ${dragOverKey === '__root__' ? 'ring-2 ring-indigo-400 ring-inset' : ''}`}>
           <NavRow
             icon={DocumentIcon}
@@ -1225,8 +1297,21 @@ function DriveSidebar({
           />
         </div>
 
-        {/* Folders */}
-        <SectionLabel label="Folders" />
+        {/* My Folders */}
+        <div className="flex items-center justify-between pr-1 pt-3 pb-1">
+          <p className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wider px-2">My Folders</p>
+          <button
+            onClick={() => setNewFolderOpen(true)}
+            title="New folder"
+            className="p-1 rounded-md text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100 transition-colors"
+          >
+            <PlusIcon className="w-3 h-3" />
+          </button>
+        </div>
+
+        {userFolders.length === 0 && !newFolderOpen && (
+          <p className="px-2 py-1 text-[11.5px] text-neutral-400 italic">No folders yet</p>
+        )}
 
         {userFolders.map((folder) => {
           const isActive = isActiveView(sidebarView, { kind: 'folder', folderId: folder.id });
@@ -1283,8 +1368,8 @@ function DriveSidebar({
           );
         })}
 
-        {/* New folder */}
-        {newFolderOpen ? (
+        {/* New folder input */}
+        {newFolderOpen && (
           <div className="flex items-center gap-1 px-2 py-1.5">
             <input
               autoFocus
@@ -1297,11 +1382,35 @@ function DriveSidebar({
             <button onClick={onCreateFolder} className="text-[11px] text-indigo-600 font-medium px-1">OK</button>
             <button onClick={() => setNewFolderOpen(false)} className="text-[11px] text-neutral-400 px-1">✕</button>
           </div>
-        ) : (
-          <button onClick={() => setNewFolderOpen(true)} className="w-full px-2 py-1 text-[11px] text-neutral-400 hover:text-neutral-600 flex items-center gap-1.5 transition-colors">
-            <PlusIcon className="w-3 h-3" />New folder
-          </button>
         )}
+
+        {/* Divider */}
+        <div className="my-2 border-t border-neutral-100" />
+
+        {/* Library — filter views */}
+        <SectionLabel label="Library" />
+
+        <NavRow
+          icon={BoltIcon}
+          label="Generated"
+          count={augmtdFiles.filter((f) => f.source === 'workflow').length}
+          active={isActiveView(sidebarView, { kind: 'generated' })}
+          onClick={() => nav({ kind: 'generated' })}
+        />
+        <NavRow
+          icon={CalendarIcon}
+          label="Meetings"
+          count={augmtdFiles.filter((f) => f.source === 'meeting').length + kbFiles.filter(isMeetingKbFile).length}
+          active={isActiveView(sidebarView, { kind: 'meetings' })}
+          onClick={() => nav({ kind: 'meetings' })}
+        />
+        <NavRow
+          icon={ArrowUpTrayIcon}
+          label="Uploads"
+          count={kbFiles.filter((f) => !isMeetingKbFile(f)).length}
+          active={isActiveView(sidebarView, { kind: 'uploads' })}
+          onClick={() => nav({ kind: 'uploads' })}
+        />
 
         {/* Divider */}
         <div className="my-2 border-t border-neutral-100" />
@@ -1403,14 +1512,20 @@ function DriveCenter({
               <div className="py-16 text-center px-6">
                 <FolderOpenIcon className="w-10 h-10 text-neutral-200 mx-auto mb-3" />
                 <p className="text-[13px] font-medium text-neutral-500">
-                  {sidebarView.kind === 'folder' ? 'This folder is empty' : 'Your drive is empty'}
+                  {sidebarView.kind === 'folder' ? 'This folder is empty'
+                    : sidebarView.kind === 'generated' ? 'No generated files yet'
+                    : sidebarView.kind === 'meetings' ? 'No meeting notes yet'
+                    : sidebarView.kind === 'uploads' ? 'No uploads yet'
+                    : 'Your drive is empty'}
                 </p>
                 <p className="text-[12px] text-neutral-400 mt-1 max-w-xs mx-auto">
-                  {sidebarView.kind === 'folder'
-                    ? 'Move files here or upload directly.'
+                  {sidebarView.kind === 'folder' ? 'Move files here or upload directly.'
+                    : sidebarView.kind === 'generated' ? 'Files generated by workflows and workers will appear here.'
+                    : sidebarView.kind === 'meetings' ? 'Meeting notes and transcripts will appear here.'
+                    : sidebarView.kind === 'uploads' ? 'Upload files or connect Google Drive to add knowledge.'
                     : 'Upload files, connect Google Drive or OneDrive, or generate documents from Workflows.'}
                 </p>
-                {sidebarView.kind === 'all' && (
+                {(sidebarView.kind === 'all' || sidebarView.kind === 'uploads') && (
                   <div className="flex items-center justify-center gap-2 mt-4">
                     <button onClick={onOpenUpload} className="flex items-center gap-1.5 px-3.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 text-[12.5px] font-medium rounded-lg transition-colors">
                       <ArrowUpTrayIcon className="w-3.5 h-3.5" />Upload a file

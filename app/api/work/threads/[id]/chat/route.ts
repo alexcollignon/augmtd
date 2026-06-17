@@ -32,6 +32,7 @@ import {
   executeListWorkerDocuments, executeGetWorkerDocument,
 } from '@/lib/tools/worker-tasks';
 import { checkRateLimit } from '@/lib/utils/rate-limit';
+import { isAgentOSEnabled, streamWorkerViaAgentOS } from '@/lib/work/agentos-bridge';
 
 export const maxDuration = 60;
 
@@ -192,6 +193,43 @@ export async function POST(
 
     if (!content?.trim()) {
       return NextResponse.json({ error: 'Content is required' }, { status: 400 });
+    }
+
+    // ── AgentOS bridge (Phase 3, dormant) ─────────────────────────────────────
+    // When WORKERS_USE_AGENTOS is on and this is a worker chat, proxy to the
+    // self-hosted AgentOS service instead of the native loop below. Flag is OFF
+    // in production until Phase 4 reaches tool/context parity — this early check
+    // is a no-op when the flag is unset, so behavior is unchanged by default.
+    if (agentId && isAgentOSEnabled()) {
+      const bridgeAdmin = getAdminClient();
+      const { data: workerRow } = await bridgeAdmin
+        .from('custom_agents')
+        .select('worker_role, is_worker')
+        .eq('id', agentId)
+        .single();
+      if (workerRow?.is_worker && workerRow.worker_role) {
+        // Persist the user message (the native path inserts it later in its
+        // Promise.all; here we own persistence for the proxied turn).
+        await bridgeAdmin.from('work_messages').insert({
+          thread_id: threadId,
+          role: 'user',
+          content: content.trim(),
+          metadata: mentions.length > 0 ? { mentions } : null,
+        });
+        try {
+          return await streamWorkerViaAgentOS({
+            workerRole: workerRow.worker_role as string,
+            agentId,
+            message: content.trim(),
+            threadId,
+            userId: user.id,
+            adminClient: bridgeAdmin,
+          });
+        } catch (bridgeErr) {
+          // AgentOS unreachable — fall through to the native loop below.
+          console.error('[Chat] AgentOS bridge failed, falling back:', bridgeErr);
+        }
+      }
     }
 
     // ── Resolve AI client + all context in one parallel round-trip ───────────
