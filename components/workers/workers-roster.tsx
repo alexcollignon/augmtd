@@ -10,6 +10,7 @@ import {
   BriefcaseIcon,
   ChartBarIcon,
   MagnifyingGlassIcon,
+  HomeIcon,
 } from '@heroicons/react/24/outline';
 import type { Worker } from '@/app/workers/workers-page-client';
 
@@ -53,12 +54,29 @@ interface WorkersRosterProps {
   activeWorkerId: string | null;
   onSelect: (id: string) => void;
   onManage: () => void;
+  onSelectHome?: () => void;
+  homeActive?: boolean;
 }
 
-export function WorkersRoster({ workers, activeWorkerId, onSelect, onManage }: WorkersRosterProps) {
+export function WorkersRoster({ workers, activeWorkerId, onSelect, onManage, onSelectHome, homeActive }: WorkersRosterProps) {
   return (
     <div className="h-full rounded-2xl bg-white shadow-sm overflow-hidden flex flex-col">
-      <div className="px-4 pt-4 pb-3 flex-shrink-0">
+      {/* Home — primary nav (matches the Meetings sidebar) */}
+      {onSelectHome && (
+        <div className="px-2 pt-2 flex-shrink-0">
+          <button
+            onClick={onSelectHome}
+            className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg transition-colors text-left ${
+              homeActive ? 'bg-indigo-50 text-indigo-700' : 'text-neutral-600 hover:bg-neutral-50'
+            }`}
+          >
+            <HomeIcon className={`w-3.5 h-3.5 flex-shrink-0 ${homeActive ? 'text-indigo-600' : 'text-neutral-400'}`} />
+            <span className="text-[12px]">Home</span>
+          </button>
+        </div>
+      )}
+
+      <div className="px-4 pt-3 pb-2 flex-shrink-0">
         <span className="text-[10.5px] font-semibold text-neutral-400 uppercase tracking-wider">
           Your team
         </span>

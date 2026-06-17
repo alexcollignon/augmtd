@@ -5,6 +5,7 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import { WorkersRoster } from '@/components/workers/workers-roster';
 import { WorkerProfile } from '@/components/workers/worker-profile';
 import { WorkersSetupView } from '@/components/workers/workers-setup-view';
+import { TeamHomeView } from '@/components/workers/team-home-view';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -65,6 +66,10 @@ export function WorkersPageClient({
     return enabledWorkers[0]?.id ?? null;
   });
 
+  // Land on the team home (review desk) by default; a ?worker=/?thread= deep
+  // link goes straight to that worker instead.
+  const [showTeamHome, setShowTeamHome] = useState<boolean>(!urlWorkerId && !urlThreadId);
+
   // Tracks the thread ID to pass as initialThreadId to WorkerProfile.
   // Set from URL on first load; cleared immediately when switching workers so
   // the old thread ID never leaks into a newly-mounted WorkerProfile.
@@ -120,7 +125,14 @@ export function WorkersPageClient({
     setView('workspace');
   }
 
+  function handleGoTeamHome() {
+    setShowTeamHome(true);
+    setProfileInitialThreadId(null);
+    pushUrl({ worker: null, tab: null, thread: null });
+  }
+
   async function handleSelectWorker(id: string) {
+    setShowTeamHome(false);
     if (id === activeWorkerId) return;
     setActiveWorkerId(id);
     setProfileInitialThreadId(null); // clear before WorkerProfile remounts
@@ -179,15 +191,22 @@ export function WorkersPageClient({
       <div className="w-[200px] flex-shrink-0">
         <WorkersRoster
           workers={workspaceWorkers}
-          activeWorkerId={activeWorkerId}
+          activeWorkerId={showTeamHome ? null : activeWorkerId}
           onSelect={handleSelectWorker}
           onManage={() => setView('setup')}
+          onSelectHome={handleGoTeamHome}
+          homeActive={showTeamHome}
         />
       </div>
 
-      {/* Right: worker profile */}
+      {/* Right: team home (review desk) or worker profile */}
       <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
-        {activeWorker ? (
+        {showTeamHome ? (
+          <TeamHomeView
+            userFirstName={userFirstName}
+            onSelectWorker={handleSelectWorker}
+          />
+        ) : activeWorker ? (
           <WorkerProfile
             key={activeWorker.id}
             worker={activeWorker}

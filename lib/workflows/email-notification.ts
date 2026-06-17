@@ -94,7 +94,7 @@ function buildEmailHtml(params: {
           <tr>
             <td align="center" style="padding-top:24px;">
               <p style="margin:0;color:#9ca3af;font-size:12px;">
-                augmtd · <a href="${BASE_URL}/studio" style="color:#9ca3af;text-decoration:underline;">View in Studio</a>
+                augmtd · <a href="${BASE_URL}/workers" style="color:#9ca3af;text-decoration:underline;">Open AUGMTD</a>
               </p>
             </td>
           </tr>
