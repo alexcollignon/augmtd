@@ -189,11 +189,15 @@ export function WorkerChatTab({ worker, initialThreads, initialMessages, initial
     // If the reply came from the home screen, save the briefing as the first assistant
     // message so it's visible in the thread and the AI has it as context.
     if (briefingText?.trim()) {
+      // Timestamp the briefing clearly before the first user message so DB
+      // ordering stays correct on reload (the user-message insert and this seed
+      // race; a buffer beats clock skew + insert latency).
+      const briefingCreatedAt = new Date(Date.now() - 5000).toISOString();
       const briefingMsg = {
         id: crypto.randomUUID(),
         role: 'assistant' as const,
         content: briefingText.trim(),
-        created_at: new Date(Date.now() - 1).toISOString(), // slightly before pending msg
+        created_at: briefingCreatedAt,
       };
       // Seed local cache immediately so it renders without waiting for DB
       threadCacheRef.current.set(threadId, {
@@ -201,11 +205,11 @@ export function WorkerChatTab({ worker, initialThreads, initialMessages, initial
         artifacts: [],
         artifactThreadMap: new Map(),
       });
-      // Persist to DB in background
+      // Persist to DB in background (with the same timestamp for stable ordering)
       fetch(`/api/work/threads/${threadId}/seed-message`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: briefingText.trim() }),
+        body: JSON.stringify({ content: briefingText.trim(), created_at: briefingCreatedAt }),
       }).catch(() => {});
     }
 
@@ -408,7 +412,19 @@ function ActiveWorkerChat({
         if (!mountedRef.current) return;
         const msgs: ChatMessage[] = data.messages ?? [];
         const arts: DocumentArtifact[] = data.thread?.artifacts ?? [];
-        setMessages(msgs);
+        // Merge, don't clobber: this mount GET races an in-flight first-message
+        // send (home → new thread). If the just-sent user message (or the seeded
+        // briefing) isn't persisted server-side yet, preserve the optimistic copy
+        // instead of overwriting it away. Ordered by created_at.
+        setMessages(prev => {
+          if (prev.length === 0) return msgs;
+          const serverKeys = new Set(msgs.map(m => `${m.role}:${m.content}`));
+          const pending = prev.filter(m => !serverKeys.has(`${m.role}:${m.content}`));
+          if (pending.length === 0) return msgs;
+          return [...msgs, ...pending].sort(
+            (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+          );
+        });
 
         // Hydrate artifact metadata from historical message metadata so chips show correct titles
         const historicalArtifacts: DocumentArtifact[] = [...arts];
