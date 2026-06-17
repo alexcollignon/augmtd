@@ -1,9 +1,22 @@
 import { NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { createClient as createAdmin } from '@supabase/supabase-js';
 import { getSystemClient } from '@/lib/ai/factory';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
+
+function sseStream(text: string): Response {
+  const encoder = new TextEncoder();
+  const readable = new ReadableStream({
+    start(controller) {
+      controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'text_delta', text })}\n\n`));
+      controller.enqueue(encoder.encode('data: {"type":"done","cached":true}\n\n'));
+      controller.close();
+    },
+  });
+  return new Response(readable, { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' } });
+}
 
 function relTime(iso: string | null): string {
   if (!iso) return '';
@@ -34,6 +47,14 @@ export async function POST(req: NextRequest) {
     .single();
   const firstName = (profile as { full_name: string | null } | null)?.full_name?.split(' ')[0] ?? '';
 
+  // Cache read — tolerant of the team_briefing column not existing yet (migration
+  // not applied → degrades to no-cache, still works).
+  let cached: { text: string; generated_at: string } | null = null;
+  try {
+    const { data: cacheRow } = await supabase.from('profiles').select('team_briefing').eq('id', user.id).single();
+    cached = (cacheRow as { team_briefing?: { text: string; generated_at: string } | null } | null)?.team_briefing ?? null;
+  } catch { /* column missing — no cache */ }
+
   const body = await req.json().catch(() => ({}));
   const home = body.homeData as {
     workers?: { name: string }[];
@@ -41,6 +62,17 @@ export async function POST(req: NextRequest) {
     needsReview?: { title: string; type: string; workerName: string | null; createdAt: string }[];
     upcoming?: { workflowName: string; workerName: string | null; nextRunAt: string }[];
   } | null;
+
+  // ── Cache: regenerate only when there's newer activity than the last briefing ──
+  const activityTimes = [
+    ...(home?.recentActivity ?? []).map(a => a.completedAt),
+    ...(home?.needsReview ?? []).map(r => r.createdAt),
+  ].filter(Boolean) as string[];
+  const lastActivityAt = activityTimes.sort().at(-1) ?? null;
+  if (cached?.text && cached?.generated_at) {
+    const fresh = !lastActivityAt || cached.generated_at > lastActivityAt;
+    if (fresh) return sseStream(cached.text);
+  }
 
   const teamNames = (home?.workers ?? []).map(w => w.name);
   const lines: string[] = [];
@@ -83,6 +115,7 @@ Write a short, conversational team update. Rules:
 - 2–4 sentences, natural and warm, like a chief-of-staff briefing a principal.
 - Refer to coworkers by name and say what they did AND briefly why (scheduled vs. the user asked) — make it feel like real colleagues, not a log.
 - Lead with what matters most (anything ready for review).
+- Plain text only — no markdown, asterisks, bullet symbols, or headings.
 - Do NOT invent tasks, outcomes, or reasoning beyond the context. No "I noticed", "it seems".
 ${nothing ? '- The team is new with no activity yet: in one or two sentences, warmly introduce the team and invite them to delegate their first piece of work.' : `- Address ${firstName ? `"${firstName}"` : 'them'} by name if natural.`}`;
 
@@ -97,18 +130,28 @@ ${nothing ? '- The team is new with no activity yet: in one or two sentences, wa
   });
 
   const encoder = new TextEncoder();
+  let fullText = '';
+  const generatedAt = new Date().toISOString();
   const readable = new ReadableStream({
     async start(controller) {
       try {
         for await (const chunk of stream) {
           const delta = chunk.choices[0]?.delta?.content;
-          if (delta) controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'text_delta', text: delta })}\n\n`));
+          if (delta) { fullText += delta; controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'text_delta', text: delta })}\n\n`)); }
           if (chunk.choices[0]?.finish_reason) controller.enqueue(encoder.encode('data: {"type":"done"}\n\n'));
         }
       } catch {
         controller.enqueue(encoder.encode('data: {"type":"done"}\n\n'));
       } finally {
         controller.close();
+        // Cache so we don't regenerate until there's new activity.
+        if (fullText.trim()) {
+          const admin = createAdmin(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+          admin.from('profiles')
+            .update({ team_briefing: { text: fullText.trim(), generated_at: generatedAt } })
+            .eq('id', user.id)
+            .then(() => {}, () => {});
+        }
       }
     },
   });

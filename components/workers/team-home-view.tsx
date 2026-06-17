@@ -33,7 +33,11 @@ function relTime(iso: string | null): string {
   return past ? `${d}d ago` : `in ${d}d`;
 }
 
-const TYPE_LABEL: Record<string, string> = { document: 'DOC', spreadsheet: 'XLS', presentation: 'PPT', email: 'EML' };
+// Strip stray markdown the model may emit (**bold**, #, etc.) so the briefing
+// renders as clean prose, not literal asterisks.
+function stripMarkdown(s: string): string {
+  return s.replace(/[*_`#]/g, '');
+}
 
 function Avatar({ role, name, size = 'md' }: { role: string | null; name: string | null; size?: 'sm' | 'md' }) {
   const src = role ? ROLE_AVATARS[role] : null;
@@ -129,7 +133,7 @@ export function TeamHomeView({ userFirstName, onSelectWorker }: TeamHomeViewProp
           <div className="flex-1 min-w-0">
             {briefing ? (
               <p className="text-[14px] text-neutral-700 leading-relaxed">
-                {briefing}
+                {stripMarkdown(briefing)}
                 {!briefingDone && (
                   <span className="inline-flex gap-0.5 ml-1 align-middle">
                     <span className="w-1 h-1 bg-neutral-400 rounded-full animate-bounce [animation-delay:0ms]" />
@@ -164,7 +168,7 @@ export function TeamHomeView({ userFirstName, onSelectWorker }: TeamHomeViewProp
                     <span className="font-medium">{r.title}</span>
                   </p>
                   <p className="text-[11px] text-neutral-400 leading-tight mt-0.5">
-                    {TYPE_LABEL[r.type] ?? 'DOC'} · {relTime(r.createdAt)}
+                    {relTime(r.createdAt)}
                   </p>
                 </div>
               </button>
