@@ -44,7 +44,7 @@ For config-only changes (no Python dependency changes), `docker restart` is suff
 All user-facing routes run on **Vercel** (Next.js 15 App Router, `maxDuration` set per route). Audio transcription runs on a **Hetzner VPS** (`46.224.176.245`) to avoid Vercel's timeout limits. The split is:
 
 - Vercel handles: auth, email sync, AI chat, workflow execution, insights generation
-- Hetzner handles: Whisper transcription (`faster-whisper-server:latest-cpu`, port 8000), meeting bot (`infra/meeting-bot/`, FastAPI, port 3001)
+- Hetzner handles: Whisper transcription (`faster-whisper-server:latest-cpu`, port 8000), meeting bot (`infra/meeting-bot/`, FastAPI, port 3001), **AgentOS** (`infra/agentos/`, Agno, port 8001 — see AI workers section)
 
 The `confirm` recording route fires a fire-and-forget POST to `MEETING_BOT_SERVICE_URL/transcribe`, returns 202 immediately, and lets Hetzner call back to `/api/meetings/recording/[id]/generate-insights` when done.
 
@@ -63,6 +63,18 @@ Tier defaults live in `lib/ai/defaults.ts`. Production standard tier uses: OpenA
 Use `aiCreate(client, params)` (also in `factory.ts`) instead of `client.chat.completions.create()` — it handles 429 rate-limit retries and transient 529/500 errors automatically.
 
 For background jobs without a user: `getSystemClient(task)` — always uses standard tier.
+
+### AI workers — Agno / AgentOS (privacy-preserving agent runtime)
+
+The AI **workers** (Clara/Sofia/Luca/Max — `custom_agents` rows with `is_worker=true`) run on a self-hosted **Agno AgentOS** service: `infra/agentos/` (Python/FastAPI, port 8001 on Hetzner). Deployed via Docker (`augmtd_agentos` container, `-v augmtd_agentos_data:/data` for durable SQLite sessions). Configured for **private models only** — `infra/agentos/models.py` can only build AWS Bedrock (EU) + Together AI clients, mirroring the `bedrock_optimised` tier; there is no code path to public OpenAI/Anthropic. Agno telemetry disabled (`telemetry=False` + `AGNO_TELEMETRY=false`). Bearer-auth via `AGENTOS_SECRET` on all routes except `/health`.
+
+**Gated behind `WORKERS_USE_AGENTOS`** (env). When unset → the native hand-rolled loop runs (the fallback, never removed). When `true` → worker chat + workflow `agent` steps route through AgentOS. Flipping the flag is the rollback switch.
+
+- **Bridge:** `lib/work/agentos-bridge.ts` — the `is_worker===true` branch of `app/api/work/threads/[id]/chat/route.ts` proxies to AgentOS `POST /agents/{worker_role}/runs?stream=true`. Translates AgentOS SSE (`RunContent`→text/thinking, `ToolCall*`→tool chips) to the client's event shape, injects per-user context (preferences/memory/identity/routines) via `dependencies.user_context` (+ `add_dependencies_to_context=True` on the agent), persists rich metadata to `work_messages`, fires memory extraction. `runWorkerStepViaAgentOS` does the non-streaming version for workflow `agent` steps.
+- **Tools (HTTP pattern):** Python `@tool`s in `infra/agentos/tools_tasks.py` + `tools_data.py` call back to Next.js internal routes `app/api/internal/agentos/{tasks,tools}/route.ts` (bearer-auth + `user_id`), which wrap the SAME executors as the native loop (`lib/tools/*`, `lib/work/generate-thread-document.ts`) — single source of truth, RLS-safe, external keys stay on Vercel. Tools read `user_id`/`agent_id` from `run_context`; box reaches Vercel via `AUGMTD_INTERNAL_URL`.
+- **Worker creation/edit:** `app/api/workers/init` seeds the 4 workers; worker `instructions` are not user-editable (customize via `user_preferences`/`memory_text`), so the static role prompts in `infra/agentos/workers.py` always match the DB.
+
+Env (on the box, `/root/augmtd/agentos.env`): `AGENTOS_SECRET`, `AWS_BEDROCK_*`, `AUGMTD_AI_KEY`, `AUGMTD_INTERNAL_URL`. Env (Vercel): `WORKERS_USE_AGENTOS`, `AGENTOS_SERVICE_URL=http://46.224.176.245:8001`, `AGENTOS_SECRET`. Redeploy the box with the manual docker sequence (same `ContainerConfig` caveat as the meeting bot — see `infra/agentos/README.md`).
 
 ### Supabase clients — two patterns, never mix
 
@@ -90,9 +102,15 @@ Defined in `lib/workflows/types.ts`. A workflow is a linear pipeline of steps:
 - **`ai`** — inline prompt transformation. `model_tier: 'fast'` → summarization task, `'reasoning'` → conversation task
 - **`agent`** — delegates to a `custom_agents` row, injecting its system prompt, KB files, and memory
 
-`lib/workflows/execute-step.ts` dispatches each step type. `lib/workflows/run-workflow.ts` orchestrates the full pipeline and handles streaming output to the run's linked `work_thread`.
+`lib/workflows/execute-step.ts` dispatches each step type. `lib/workflows/run-workflow.ts` orchestrates the full pipeline and handles streaming output to the run's linked `work_thread`. When `WORKERS_USE_AGENTOS` is on, `agent` steps route through AgentOS (`runWorkerStepViaAgentOS`); `tool`/`ai` steps and all output materialization stay in TS.
 
 Cron dispatch: `vercel.json` schedules `workflows-dispatch` hourly; it calls `runWorkflow()` directly via `after()` (fire-and-forget safe from Vercel function shutdown).
+
+**Studio is builder-only (no overview page).** Tasks are created/managed conversationally and from each worker's Tasks tab; the standalone Studio grid/overview + detail panel and the legacy `/studio/[id]` + `/work/studio/*` routes were removed. `/studio` is now solely the pipeline builder (`components/work/studio-builder.tsx`), reached as a deep-dive: `?workflow=<id>` edits a task's steps, `?assign_worker=<id>` creates a blank one, bare `/studio` → redirects to `/workers`.
+
+### Workers UI — team home (review desk)
+
+`/workers` lands on a **team home** (`components/workers/team-home-view.tsx`) before any worker is selected — a cross-coworker "review desk". `GET /api/workers/home` aggregates recent deliverables (Ready for you), recent task runs (Recently, attributed), and upcoming runs (Coming up). A conversational AI team briefing streams from `POST /api/workers/team-briefing` (the team analogue of the per-worker `/api/workers/[id]/briefing`) — grounded in real data, distinguishing scheduled vs. user-asked, cached per user in `profiles.team_briefing` (regenerated only when there's newer activity). A "Home" entry sits atop the roster (Meetings-sidebar style); `?worker=`/`?thread=` deep-links still go straight to a worker.
 
 ### Meetings / recording pipeline
 
