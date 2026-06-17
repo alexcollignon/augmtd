@@ -1,17 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createAdminClient } from '@supabase/supabase-js';
-import { getAIClient, aiCreate } from '@/lib/ai/factory';
+import { extractAgentMemory } from '@/lib/agents/extract-memory';
 
 type Params = { params: Promise<{ id: string }> };
 
-const MAX_MEMORY_CHARS = 2000;
-const COMPRESS_THRESHOLD = 1800;
-
 // POST /api/agents/[id]/extract-memory
 // Body: { threadId }
-// Called fire-and-forget after each agent conversation turn.
-// Extracts key facts from the conversation and appends to agent.memory_text.
+// Called fire-and-forget after each agent conversation turn (native chat loop).
+// The AgentOS bridge calls extractAgentMemory() directly instead. Both share the
+// same logic in lib/agents/extract-memory.ts.
 export async function POST(request: NextRequest, { params }: Params) {
   const { id: agentId } = await params;
   try {
@@ -27,107 +25,7 @@ export async function POST(request: NextRequest, { params }: Params) {
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
 
-    // Load agent — RLS allows reads of shared agents; check ownership separately
-    const { data: agent } = await supabase
-      .from('custom_agents')
-      .select('id, user_id, memory_text')
-      .eq('id', agentId)
-      .single();
-    if (!agent) return NextResponse.json({ error: 'Agent not found' }, { status: 404 });
-
-    const isOwner = (agent as { user_id: string }).user_id === user.id;
-
-    // Load last 20 messages from this thread
-    const { data: messages } = await adminClient
-      .from('work_messages')
-      .select('role, content')
-      .eq('thread_id', threadId)
-      .order('created_at', { ascending: false })
-      .limit(20);
-
-    if (!messages?.length) return NextResponse.json({ ok: true });
-
-    const conversation = messages
-      .reverse()
-      .map((m: { role: string; content: string }) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
-      .join('\n');
-
-    // Non-owner: read personal memory from agent_memories table
-    let existingMemory = '';
-    if (isOwner) {
-      existingMemory = (agent as { memory_text: string | null }).memory_text ?? '';
-    } else {
-      const { data: memRow } = await adminClient
-        .from('agent_memories')
-        .select('memory_text')
-        .eq('agent_id', agentId)
-        .eq('user_id', user.id)
-        .single();
-      existingMemory = (memRow as { memory_text: string | null } | null)?.memory_text ?? '';
-    }
-
-    const extractPrompt = `You are a memory extractor. Review this conversation and identify key facts worth remembering for future sessions with this user.
-
-Focus on: user preferences, decisions made, client/project details, constraints, personal style preferences.
-Be extremely terse — one short bullet per fact, no elaboration.
-Only add genuinely NEW information not already in the existing memory.
-If there is nothing new worth remembering, respond with exactly: NO_UPDATE
-
-EXISTING MEMORY:
-${existingMemory || '(none yet)'}
-
-CONVERSATION:
-${conversation.slice(0, 6000)}
-
-Respond with only new bullet points (or NO_UPDATE):`;
-
-    const { client: aiClient, model } = await getAIClient(user.id, 'summarization', supabase);
-
-    const result = await aiCreate(aiClient, {
-      model,
-      messages: [{ role: 'user', content: extractPrompt }],
-      max_tokens: 300,
-      temperature: 0.2,
-    });
-
-    const extracted = (result.choices?.[0]?.message?.content ?? '').trim();
-    if (!extracted || extracted === 'NO_UPDATE') return NextResponse.json({ ok: true });
-
-    let newMemory = existingMemory
-      ? `${existingMemory}\n${extracted}`
-      : extracted;
-
-    // Compress if too long
-    if (newMemory.length > COMPRESS_THRESHOLD) {
-      const compressPrompt = `Compress these memory notes into the most important facts only. Max ${MAX_MEMORY_CHARS - 200} characters. Keep bullet format, be ruthless about what to cut:
-
-${newMemory}`;
-
-      const compressed = await aiCreate(aiClient, {
-        model,
-        messages: [{ role: 'user', content: compressPrompt }],
-        max_tokens: 400,
-        temperature: 0.1,
-      });
-      newMemory = (compressed.choices?.[0]?.message?.content ?? newMemory).trim();
-    }
-
-    if (isOwner) {
-      await adminClient
-        .from('custom_agents')
-        .update({ memory_text: newMemory.slice(0, MAX_MEMORY_CHARS) })
-        .eq('id', agentId);
-    } else {
-      await adminClient
-        .from('agent_memories')
-        .upsert({
-          agent_id: agentId,
-          user_id: user.id,
-          memory_text: newMemory.slice(0, MAX_MEMORY_CHARS),
-          updated_at: new Date().toISOString(),
-        }, { onConflict: 'agent_id,user_id' });
-    }
-
+    await extractAgentMemory(agentId, user.id, threadId, adminClient, supabase);
     return NextResponse.json({ ok: true });
   } catch (err) {
     console.error('[Agents/extract-memory] error:', err);
