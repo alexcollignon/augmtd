@@ -3,7 +3,6 @@ import { createClient } from '@/lib/supabase/server';
 import { createClient as createAdmin } from '@supabase/supabase-js';
 import { redirect } from 'next/navigation';
 import { WorkersPageClient } from '@/app/workers/workers-page-client';
-import type { WorkersPageClientProps } from '@/app/workers/workers-page-client';
 
 // Inline worker seed — avoids fragile self-HTTP fetch that can 401 silently
 async function seedWorkersIfNeeded(userId: string, firstName: string) {
@@ -173,38 +172,14 @@ export default async function WorkersPage() {
     .eq('is_active', true)
     .order('created_at', { ascending: true });
 
-  // SSR threads + messages for the first enabled worker's most recent thread
-  const firstEnabled = (workers ?? []).find(w => w.is_enabled) ?? null;
-  const { data: initialThreads } = firstEnabled
-    ? await supabase
-        .from('work_threads')
-        .select('id, title, created_at, updated_at, agent_id')
-        .eq('user_id', user.id)
-        .eq('agent_id', firstEnabled.id)
-        .eq('status', 'active')
-        .or('is_temporary.eq.false,is_temporary.is.null')
-        .is('workflow_id', null)
-        .order('updated_at', { ascending: false })
-        .limit(30)
-    : { data: [] };
-
-  const firstThread = (initialThreads ?? [])[0] ?? null;
-  const { data: initialMessages } = firstThread
-    ? await supabase
-        .from('work_messages')
-        .select('id, role, content, created_at, metadata')
-        .eq('thread_id', firstThread.id)
-        .order('created_at', { ascending: true })
-    : { data: [] };
-
   return (
     <Suspense fallback={null}>
       <WorkersPageClient
         userId={user.id}
         userFirstName={firstName}
         initialWorkers={(workers ?? []) as Parameters<typeof WorkersPageClient>[0]['initialWorkers']}
-        initialThreads={initialThreads ?? []}
-        initialMessages={(initialMessages ?? []) as WorkersPageClientProps['initialMessages']}
+        initialThreads={[]}
+        initialMessages={[]}
       />
     </Suspense>
   );

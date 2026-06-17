@@ -78,6 +78,7 @@ function SidebarToggle({ open, onToggle }: { open: boolean; onToggle: () => void
 import { ChatMessageBubble, StreamingMessage, ToolStatus } from '@/components/work/chat-message';
 import type { ChatMessage } from '@/components/work/chat-message';
 import { WorkerThreadList } from '@/components/workers/worker-thread-list';
+import { WorkerHomeView } from '@/components/workers/worker-home-view';
 import type { Worker, WorkerThread } from '@/app/workers/workers-page-client';
 
 interface WorkerChatTabProps {
@@ -97,8 +98,9 @@ interface WorkerChatTabProps {
 export function WorkerChatTab({ worker, initialThreads, initialMessages, initialThreadId, jumpThreadId, onJumpConsumed, onActiveThreadChange, onThreadCreated, onThreadDeleted, initialInputValue, onInitialInputConsumed }: WorkerChatTabProps) {
   const [threads, setThreads] = useState<WorkerThread[]>(initialThreads);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(
-    initialThreadId ?? initialThreads[0]?.id ?? null
+    initialThreadId ?? null
   );
+  const [showHome, setShowHome] = useState<boolean>(!initialThreadId);
   const [pendingMessage, setPendingMessage] = useState<string | null>(null);
 
   // Always fetch fresh on mount — initialThreads from parent can be stale if threads
@@ -123,6 +125,7 @@ export function WorkerChatTab({ worker, initialThreads, initialMessages, initial
   useEffect(() => {
     if (!jumpThreadId) return;
     setActiveThreadId(jumpThreadId);
+    setShowHome(false);
     setPendingMessage(null);
     // If the thread isn't in the list (it's a routine output thread), add a placeholder
     setThreads(prev => {
@@ -138,7 +141,6 @@ export function WorkerChatTab({ worker, initialThreads, initialMessages, initial
   }, [activeThreadId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const activeThread = threads.find(t => t.id === activeThreadId) ?? null;
-  const starters = (worker.conversation_starters ?? []).filter(Boolean);
 
   async function handleCreateThread(message?: string): Promise<string | null> {
     const title = message
@@ -161,6 +163,7 @@ export function WorkerChatTab({ worker, initialThreads, initialMessages, initial
       };
       setThreads(prev => [newThread, ...prev]);
       setActiveThreadId(thread.id);
+      setShowHome(false);
       onThreadCreated?.(newThread);
       return thread.id;
     } catch {
@@ -179,9 +182,34 @@ export function WorkerChatTab({ worker, initialThreads, initialMessages, initial
     setThreads(prev => prev.map(t => t.id === id ? { ...t, title } : t));
   }
 
-  async function handleStarterClick(starter: string) {
+  async function handleStarterClick(starter: string, briefingText?: string) {
     const threadId = await handleCreateThread(starter);
-    if (threadId) setPendingMessage(starter);
+    if (!threadId) return;
+
+    // If the reply came from the home screen, save the briefing as the first assistant
+    // message so it's visible in the thread and the AI has it as context.
+    if (briefingText?.trim()) {
+      const briefingMsg = {
+        id: crypto.randomUUID(),
+        role: 'assistant' as const,
+        content: briefingText.trim(),
+        created_at: new Date(Date.now() - 1).toISOString(), // slightly before pending msg
+      };
+      // Seed local cache immediately so it renders without waiting for DB
+      threadCacheRef.current.set(threadId, {
+        messages: [briefingMsg],
+        artifacts: [],
+        artifactThreadMap: new Map(),
+      });
+      // Persist to DB in background
+      fetch(`/api/work/threads/${threadId}/seed-message`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: briefingText.trim() }),
+      }).catch(() => {});
+    }
+
+    setPendingMessage(starter);
   }
 
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -238,8 +266,8 @@ export function WorkerChatTab({ worker, initialThreads, initialMessages, initial
           <div className="flex-1 overflow-y-auto">
             <WorkerThreadList
               threads={threads}
-              activeThreadId={activeThreadId}
-              onSelect={(id) => { setActiveThreadId(id); setPendingMessage(null); }}
+              activeThreadId={showHome ? null : activeThreadId}
+              onSelect={(id) => { setActiveThreadId(id); setShowHome(false); setPendingMessage(null); }}
               onDelete={handleDeleteThread}
             />
           </div>
@@ -248,7 +276,14 @@ export function WorkerChatTab({ worker, initialThreads, initialMessages, initial
 
       {/* Chat area */}
       <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
-        {activeThread ? (
+        {showHome ? (
+          <WorkerHomeView
+            worker={worker}
+            onSend={(text, briefing) => { handleStarterClick(text, briefing); }}
+            sidebarOpen={sidebarOpen}
+            onToggleSidebar={() => setSidebarOpen(v => !v)}
+          />
+        ) : activeThread ? (
           <ActiveWorkerChat
             key={activeThread.id}
             thread={activeThread}
@@ -261,124 +296,10 @@ export function WorkerChatTab({ worker, initialThreads, initialMessages, initial
             sidebarOpen={sidebarOpen}
             onToggleSidebar={() => setSidebarOpen(v => !v)}
             onArtifactOpen={() => setSidebarOpen(false)}
+            onGoHome={() => setShowHome(true)}
             threadCache={threadCacheRef}
           />
-        ) : (
-          <WorkerChatHome
-            worker={worker}
-            starters={starters}
-            onSend={handleStarterClick}
-            sidebarOpen={sidebarOpen}
-            onToggleSidebar={() => setSidebarOpen(v => !v)}
-          />
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ─── Worker chat home (no thread selected) ────────────────────────────────────
-
-interface WorkerChatHomeProps {
-  worker: Worker;
-  starters: string[];
-  onSend: (message: string) => void;
-  sidebarOpen: boolean;
-  onToggleSidebar: () => void;
-}
-
-function WorkerChatHome({ worker, starters, onSend, sidebarOpen, onToggleSidebar }: WorkerChatHomeProps) {
-  const [inputValue, setInputValue] = useState('');
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-
-  useEffect(() => {
-    const el = textareaRef.current;
-    if (!el) return;
-    el.style.height = 'auto';
-    el.style.height = `${Math.min(el.scrollHeight, 180)}px`;
-  }, [inputValue]);
-
-  function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      if (inputValue.trim()) { onSend(inputValue.trim()); setInputValue(''); }
-    }
-  }
-
-  function handleSubmit() {
-    if (inputValue.trim()) { onSend(inputValue.trim()); setInputValue(''); }
-  }
-
-  const avatarSrc = worker.worker_role ? (ROLE_AVATARS[worker.worker_role] ?? null) : null;
-  const roleLabel = worker.worker_role ? (ROLE_LABELS[worker.worker_role] ?? null) : null;
-
-  return (
-    <div className="flex-1 flex flex-col overflow-hidden">
-      {/* Sidebar toggle */}
-      <div className="flex-shrink-0 flex items-center px-3 pt-2">
-        <SidebarToggle open={sidebarOpen} onToggle={onToggleSidebar} />
-      </div>
-      {/* Centered starters */}
-      <div className="flex-1 flex flex-col items-center justify-center px-8">
-        {/* Avatar */}
-        <div className="mb-4 flex flex-col items-center gap-2">
-          {avatarSrc ? (
-            <img src={avatarSrc} alt={worker.name} className="w-16 h-16 rounded-2xl object-cover object-top shadow-sm" />
-          ) : null}
-          <div className="text-center">
-            <p className="text-[15px] font-semibold text-neutral-800">{worker.name}</p>
-            {roleLabel && <p className="text-[11.5px] text-neutral-400">{roleLabel}</p>}
-          </div>
-        </div>
-        <p className="text-[13px] text-neutral-500 mb-6 text-center max-w-[360px]">
-          {worker.description ?? `Start a conversation with ${worker.name}`}
-        </p>
-
-        {starters.length > 0 && (
-          <div className="w-full max-w-[480px] rounded-2xl border border-neutral-100 overflow-hidden shadow-sm">
-            {starters.map((starter, i) => (
-              <div key={i}>
-                <button
-                  onClick={() => onSend(starter)}
-                  className="w-full text-left px-4 py-3 text-[13px] text-neutral-600 hover:bg-indigo-50 hover:text-indigo-700 transition-colors"
-                >
-                  {starter}
-                </button>
-                {i < starters.length - 1 && <div className="border-t border-neutral-100" />}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Input bar — same as ActiveWorkerChat */}
-      <div className="flex-shrink-0 px-4 pb-4 pt-2">
-        <div className="max-w-[660px] mx-auto">
-          <div className="rounded-2xl bg-neutral-50 border border-neutral-200 overflow-hidden focus-within:border-neutral-300 focus-within:bg-white focus-within:shadow-sm transition-all duration-150">
-            <textarea
-              ref={textareaRef}
-              value={inputValue}
-              onChange={e => setInputValue(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder={`Message ${worker.name}…`}
-              rows={1}
-              className="w-full resize-none px-4 pt-3 pb-2 text-[13.5px] text-neutral-800 placeholder:text-neutral-400 bg-transparent outline-none leading-relaxed"
-              style={{ minHeight: '44px', maxHeight: '180px' }}
-            />
-            <div className="flex items-center justify-end px-3 pb-2.5">
-              <button
-                onClick={handleSubmit}
-                disabled={!inputValue.trim()}
-                className="flex items-center justify-center w-7 h-7 rounded-lg bg-indigo-600 text-white disabled:opacity-40 hover:bg-indigo-700 transition-colors"
-              >
-                <PaperAirplaneIcon className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          </div>
-          <p className="mt-1.5 text-center text-[11px] text-neutral-400">
-            Enter to send · Shift+Enter for new line
-          </p>
-        </div>
+        ) : null}
       </div>
     </div>
   );
@@ -403,6 +324,7 @@ interface ActiveWorkerChatProps {
   sidebarOpen: boolean;
   onToggleSidebar: () => void;
   onArtifactOpen?: () => void;
+  onGoHome?: () => void;
   threadCache: React.MutableRefObject<Map<string, ThreadCacheEntry>>;
 }
 
@@ -417,6 +339,7 @@ function ActiveWorkerChat({
   sidebarOpen,
   onToggleSidebar,
   onArtifactOpen,
+  onGoHome,
   threadCache,
 }: ActiveWorkerChatProps) {
   const cached = threadCache.current.get(thread.id);
@@ -782,13 +705,19 @@ function ActiveWorkerChat({
         {/* Chat header */}
         <div className="flex-shrink-0 flex items-center gap-2.5 px-3 py-3 border-b border-neutral-100">
           <SidebarToggle open={sidebarOpen} onToggle={onToggleSidebar} />
-          {avatarSrc ? (
-            <img src={avatarSrc} alt={worker.name} className="w-7 h-7 rounded-lg object-cover object-top flex-shrink-0" />
-          ) : null}
-          <div className="min-w-0">
-            <p className="text-[13px] font-semibold text-neutral-800 leading-tight">{worker.name}</p>
-            {roleLabel && <p className="text-[10.5px] text-neutral-400 leading-tight">{roleLabel}</p>}
-          </div>
+          <button
+            onClick={onGoHome}
+            className="flex items-center gap-2 min-w-0 hover:opacity-70 transition-opacity"
+            title="Back to home"
+          >
+            {avatarSrc ? (
+              <img src={avatarSrc} alt={worker.name} className="w-7 h-7 rounded-lg object-cover object-top flex-shrink-0" />
+            ) : null}
+            <div className="min-w-0 text-left">
+              <p className="text-[13px] font-semibold text-neutral-800 leading-tight">{worker.name}</p>
+              {roleLabel && <p className="text-[10.5px] text-neutral-400 leading-tight">{roleLabel}</p>}
+            </div>
+          </button>
         </div>
 
         {/* Messages */}
