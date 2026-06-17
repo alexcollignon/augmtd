@@ -1,17 +1,19 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { DocumentTextIcon, ClockIcon, CheckCircleIcon, XCircleIcon, InboxArrowDownIcon } from '@heroicons/react/24/outline';
+import { useEffect, useRef, useState } from 'react';
 
+const ROLE_AVATARS: Record<string, string> = {
+  personal_assistant: '/workers/clara.png',
+  content_manager:    '/workers/sofia.png',
+  linkedin_drafter:   '/workers/luca.png',
+  research_analyst:   '/workers/max.png',
+};
+
+interface WorkerLite { id: string; name: string; worker_role: string | null }
 interface Review { artifactId: string; title: string; type: string; workerId: string | null; workerName: string | null; threadId: string; createdAt: string }
-interface Activity { runId: string; workflowName: string; workerId: string | null; workerName: string | null; status: string; completedAt: string | null }
+interface Activity { runId: string; workflowName: string; workerId: string | null; workerName: string | null; workerRole: string | null; status: string; triggeredBy: string; completedAt: string | null }
 interface Upcoming { workflowName: string; workerId: string | null; workerName: string | null; nextRunAt: string }
-
-interface HomeData {
-  needsReview: Review[];
-  recentActivity: Activity[];
-  upcoming: Upcoming[];
-}
+interface HomeData { workers: WorkerLite[]; needsReview: Review[]; recentActivity: Activity[]; upcoming: Upcoming[] }
 
 interface TeamHomeViewProps {
   userFirstName?: string;
@@ -31,134 +33,205 @@ function relTime(iso: string | null): string {
   return past ? `${d}d ago` : `in ${d}d`;
 }
 
-const TYPE_LABEL: Record<string, string> = {
-  document: 'DOC', spreadsheet: 'XLS', presentation: 'PPT', email: 'EML',
-};
+const TYPE_LABEL: Record<string, string> = { document: 'DOC', spreadsheet: 'XLS', presentation: 'PPT', email: 'EML' };
+
+function Avatar({ role, name, size = 'md' }: { role: string | null; name: string | null; size?: 'sm' | 'md' }) {
+  const src = role ? ROLE_AVATARS[role] : null;
+  const cls = size === 'sm' ? 'w-6 h-6' : 'w-8 h-8';
+  if (src) return <img src={src} alt={name ?? ''} className={`${cls} rounded-lg object-cover object-top flex-shrink-0 shadow-sm`} />;
+  return (
+    <div className={`${cls} rounded-lg bg-neutral-200 flex items-center justify-center flex-shrink-0`}>
+      <span className="text-[10px] font-semibold text-neutral-500">{(name ?? '?')[0]}</span>
+    </div>
+  );
+}
 
 export function TeamHomeView({ userFirstName, onSelectWorker }: TeamHomeViewProps) {
   const [data, setData] = useState<HomeData | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [briefing, setBriefing] = useState('');
+  const [briefingDone, setBriefingDone] = useState(false);
+  const mountedRef = useRef(true);
+  const fetchedRef = useRef(false);
 
   useEffect(() => {
-    let cancelled = false;
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
+
+  useEffect(() => {
+    if (fetchedRef.current) return;
+    fetchedRef.current = true;
+
     fetch('/api/workers/home')
       .then(r => r.ok ? r.json() : null)
-      .then(d => { if (!cancelled) { setData(d); setLoading(false); } })
-      .catch(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
+      .then(async (d: HomeData | null) => {
+        if (!mountedRef.current || !d) { setBriefingDone(true); return; }
+        setData(d);
+
+        const res = await fetch('/api/workers/team-briefing', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ homeData: d }),
+        });
+        if (!res.ok || !res.body) { setBriefingDone(true); return; }
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          const lines = buf.split('\n');
+          buf = lines.pop() ?? '';
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            try {
+              const ev = JSON.parse(line.slice(6));
+              if (ev.type === 'text_delta' && mountedRef.current) setBriefing(p => p + ev.text);
+              else if (ev.type === 'done' && mountedRef.current) setBriefingDone(true);
+            } catch { /* skip */ }
+          }
+        }
+      })
+      .catch(() => { if (mountedRef.current) setBriefingDone(true); });
   }, []);
+
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
+  const roleById = new Map((data?.workers ?? []).map(w => [w.id, w.worker_role]));
 
   return (
     <div className="h-full rounded-2xl bg-white shadow-sm overflow-y-auto">
-      <div className="max-w-[680px] mx-auto px-8 py-10">
-        <h1 className="text-[20px] font-semibold text-neutral-800 leading-tight">
-          {userFirstName ? `Welcome back, ${userFirstName}` : 'Your team'}
-        </h1>
-        <p className="text-[13px] text-neutral-400 mt-1">Here's what your team has been working on.</p>
+      <div className="max-w-[640px] mx-auto px-8 pt-10 pb-12">
 
-        {loading ? (
-          <div className="flex items-center justify-center py-16">
-            <div className="w-5 h-5 border-2 border-neutral-200 border-t-indigo-500 rounded-full animate-spin" />
+        {/* Greeting + team avatars */}
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-[20px] font-semibold text-neutral-800 leading-tight">
+              {greeting}{userFirstName ? `, ${userFirstName}` : ''}
+            </h1>
+            <p className="text-[13px] text-neutral-400 mt-1">Here's what your team has been up to.</p>
           </div>
-        ) : (
-          <div className="mt-8 space-y-9">
-
-            {/* Needs review */}
-            <Section title="Ready for you" icon={<InboxArrowDownIcon className="w-3.5 h-3.5" />}>
-              {data?.needsReview?.length ? (
-                <div className="space-y-1">
-                  {data.needsReview.map(r => (
-                    <button
-                      key={r.artifactId}
-                      onClick={() => r.workerId && onSelectWorker(r.workerId)}
-                      className="w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-neutral-50 transition-colors"
-                    >
-                      <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center flex-shrink-0">
-                        <span className="text-[9px] font-bold text-indigo-500">{TYPE_LABEL[r.type] ?? 'DOC'}</span>
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="text-[13px] font-medium text-neutral-700 truncate leading-tight">{r.title}</p>
-                        <p className="text-[11px] text-neutral-400 truncate leading-tight mt-0.5">
-                          {r.workerName ? `${r.workerName} · ` : ''}{relTime(r.createdAt)}
-                        </p>
-                      </div>
-                    </button>
-                  ))}
+          {data?.workers?.length ? (
+            <div className="flex -space-x-2 flex-shrink-0 pt-1">
+              {data.workers.slice(0, 5).map(w => (
+                <div key={w.id} className="ring-2 ring-white rounded-lg">
+                  <Avatar role={w.worker_role} name={w.name} />
                 </div>
-              ) : (
-                <Empty text="Nothing waiting on you right now." />
-              )}
-            </Section>
+              ))}
+            </div>
+          ) : null}
+        </div>
 
-            {/* Recent activity */}
-            <Section title="Recently done" icon={<DocumentTextIcon className="w-3.5 h-3.5" />}>
-              {data?.recentActivity?.length ? (
-                <div className="space-y-1">
-                  {data.recentActivity.map(a => (
-                    <button
-                      key={a.runId}
-                      onClick={() => a.workerId && onSelectWorker(a.workerId)}
-                      className="w-full text-left flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-neutral-50 transition-colors"
-                    >
-                      {a.status === 'succeeded'
-                        ? <CheckCircleIcon className="w-4 h-4 text-emerald-500 flex-shrink-0" />
-                        : <XCircleIcon className="w-4 h-4 text-rose-400 flex-shrink-0" />}
-                      <div className="min-w-0 flex-1">
-                        <p className="text-[12.5px] text-neutral-700 truncate leading-tight">{a.workflowName}</p>
-                      </div>
-                      <span className="text-[11px] text-neutral-400 flex-shrink-0">
-                        {a.workerName ? `${a.workerName} · ` : ''}{relTime(a.completedAt)}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <Empty text="No completed task runs yet." />
-              )}
-            </Section>
-
-            {/* Upcoming */}
-            {data?.upcoming?.length ? (
-              <Section title="Coming up" icon={<ClockIcon className="w-3.5 h-3.5" />}>
-                <div className="space-y-1">
-                  {data.upcoming.map((u, i) => (
-                    <button
-                      key={i}
-                      onClick={() => u.workerId && onSelectWorker(u.workerId)}
-                      className="w-full text-left flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-neutral-50 transition-colors"
-                    >
-                      <ClockIcon className="w-4 h-4 text-neutral-300 flex-shrink-0" />
-                      <div className="min-w-0 flex-1">
-                        <p className="text-[12.5px] text-neutral-700 truncate leading-tight">{u.workflowName}</p>
-                      </div>
-                      <span className="text-[11px] text-neutral-400 flex-shrink-0">
-                        {u.workerName ? `${u.workerName} · ` : ''}{relTime(u.nextRunAt)}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              </Section>
-            ) : null}
-
+        {/* Conversational team briefing */}
+        <div className="mt-7 flex gap-3">
+          <div className="flex-1 min-w-0">
+            {briefing ? (
+              <p className="text-[14px] text-neutral-700 leading-relaxed">
+                {briefing}
+                {!briefingDone && (
+                  <span className="inline-flex gap-0.5 ml-1 align-middle">
+                    <span className="w-1 h-1 bg-neutral-400 rounded-full animate-bounce [animation-delay:0ms]" />
+                    <span className="w-1 h-1 bg-neutral-400 rounded-full animate-bounce [animation-delay:150ms]" />
+                    <span className="w-1 h-1 bg-neutral-400 rounded-full animate-bounce [animation-delay:300ms]" />
+                  </span>
+                )}
+              </p>
+            ) : (
+              <div className="space-y-1.5 animate-pulse pt-0.5">
+                <div className="h-3 bg-neutral-100 rounded-full w-4/5" />
+                <div className="h-3 bg-neutral-100 rounded-full w-3/5" />
+              </div>
+            )}
           </div>
-        )}
+        </div>
+
+        {/* Ready for you */}
+        {data?.needsReview?.length ? (
+          <Section title="Ready for you">
+            {data.needsReview.map(r => (
+              <button
+                key={r.artifactId}
+                onClick={() => r.workerId && onSelectWorker(r.workerId)}
+                className="w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-neutral-50 transition-colors"
+              >
+                <Avatar role={roleById.get(r.workerId ?? '') ?? null} name={r.workerName} />
+                <div className="min-w-0 flex-1">
+                  <p className="text-[13px] text-neutral-700 leading-tight">
+                    <span className="font-medium">{r.workerName ?? 'A coworker'}</span>
+                    {' prepared '}
+                    <span className="font-medium">{r.title}</span>
+                  </p>
+                  <p className="text-[11px] text-neutral-400 leading-tight mt-0.5">
+                    {TYPE_LABEL[r.type] ?? 'DOC'} · {relTime(r.createdAt)}
+                  </p>
+                </div>
+              </button>
+            ))}
+          </Section>
+        ) : null}
+
+        {/* Recently */}
+        {data?.recentActivity?.length ? (
+          <Section title="Recently">
+            {data.recentActivity.map(a => (
+              <button
+                key={a.runId}
+                onClick={() => a.workerId && onSelectWorker(a.workerId)}
+                className="w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-neutral-50 transition-colors"
+              >
+                <Avatar role={a.workerRole} name={a.workerName} />
+                <div className="min-w-0 flex-1">
+                  <p className="text-[13px] text-neutral-700 leading-tight truncate">
+                    <span className="font-medium">{a.workerName ?? 'A coworker'}</span>
+                    {a.status === 'succeeded' ? ' ran ' : ' tried to run '}
+                    <span className="font-medium">{a.workflowName}</span>
+                  </p>
+                  <p className="text-[11px] text-neutral-400 leading-tight mt-0.5">
+                    {a.triggeredBy === 'manual' ? 'because you asked' : 'on schedule'} · {relTime(a.completedAt)}
+                  </p>
+                </div>
+              </button>
+            ))}
+          </Section>
+        ) : null}
+
+        {/* Coming up */}
+        {data?.upcoming?.length ? (
+          <Section title="Coming up">
+            {data.upcoming.map((u, i) => (
+              <button
+                key={i}
+                onClick={() => u.workerId && onSelectWorker(u.workerId)}
+                className="w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-neutral-50 transition-colors"
+              >
+                <Avatar role={roleById.get(u.workerId ?? '') ?? null} name={u.workerName} />
+                <div className="min-w-0 flex-1">
+                  <p className="text-[13px] text-neutral-700 leading-tight truncate">
+                    <span className="font-medium">{u.workerName ?? 'A coworker'}</span>
+                    {' will run '}
+                    <span className="font-medium">{u.workflowName}</span>
+                  </p>
+                  <p className="text-[11px] text-neutral-400 leading-tight mt-0.5">{relTime(u.nextRunAt)}</p>
+                </div>
+              </button>
+            ))}
+          </Section>
+        ) : null}
+
       </div>
     </div>
   );
 }
 
-function Section({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) {
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div>
-      <div className="flex items-center gap-1.5 px-3 mb-2 text-neutral-400">
-        {icon}
-        <span className="text-[10.5px] font-semibold uppercase tracking-wider">{title}</span>
+    <div className="mt-8">
+      <div className="px-3 mb-1.5">
+        <span className="text-[10.5px] font-semibold uppercase tracking-wider text-neutral-400">{title}</span>
       </div>
       {children}
     </div>
   );
-}
-
-function Empty({ text }: { text: string }) {
-  return <p className="px-3 py-2 text-[12.5px] text-neutral-400">{text}</p>;
 }

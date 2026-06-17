@@ -39,12 +39,12 @@ export async function GET() {
   const workflowIds = (workflows ?? []).map(w => w.id);
 
   // ── Recent activity: last task runs across the team ──
-  type Activity = { runId: string; workflowName: string; workerId: string | null; workerName: string | null; status: string; completedAt: string | null };
+  type Activity = { runId: string; workflowName: string; workerId: string | null; workerName: string | null; workerRole: string | null; status: string; triggeredBy: string; completedAt: string | null };
   let recentActivity: Activity[] = [];
   if (workflowIds.length > 0) {
     const { data: runs } = await supabase
       .from('workflow_runs')
-      .select('id, workflow_id, status, completed_at')
+      .select('id, workflow_id, status, triggered_by, completed_at')
       .in('workflow_id', workflowIds)
       .in('status', ['succeeded', 'failed'])
       .order('completed_at', { ascending: false })
@@ -57,7 +57,9 @@ export async function GET() {
         workflowName: wf?.name ?? 'Task',
         workerId: w?.id ?? null,
         workerName: w?.name ?? null,
+        workerRole: (w as { worker_role?: string } | undefined)?.worker_role ?? null,
         status: r.status,
+        triggeredBy: r.triggered_by ?? 'schedule',
         completedAt: r.completed_at,
       };
     });

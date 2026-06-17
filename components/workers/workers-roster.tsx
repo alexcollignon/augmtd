@@ -75,7 +75,7 @@ export function WorkersRoster({ workers, activeWorkerId, onSelect, onManage, onS
               homeActive ? 'bg-indigo-50' : 'hover:bg-neutral-50'
             }`}
           >
-            <div className={`w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 ${homeActive ? 'bg-indigo-500' : 'bg-neutral-100'}`}>
+            <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${homeActive ? 'bg-indigo-500' : 'bg-neutral-100'}`}>
               <HomeIcon className={`w-4 h-4 ${homeActive ? 'text-white' : 'text-neutral-500'}`} />
             </div>
             <p className={`text-[13px] font-medium leading-tight ${homeActive ? 'text-indigo-700' : 'text-neutral-700'}`}>Home</p>
