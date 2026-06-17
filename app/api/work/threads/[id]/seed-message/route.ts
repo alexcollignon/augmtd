@@ -23,10 +23,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const content = typeof body.content === 'string' ? body.content.trim() : '';
   if (!content) return NextResponse.json({ error: 'content required' }, { status: 400 });
 
+  // Honor a client-supplied timestamp so the briefing reliably sorts before the
+  // first user message (the two inserts race). Falls back to now().
+  const createdAt = typeof body.created_at === 'string' ? body.created_at : undefined;
+
   const { error } = await supabase.from('work_messages').insert({
     thread_id: threadId,
     role: 'assistant',
     content,
+    ...(createdAt ? { created_at: createdAt } : {}),
   });
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
