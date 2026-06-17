@@ -10,6 +10,7 @@ import {
   BriefcaseIcon,
   ChartBarIcon,
   MagnifyingGlassIcon,
+  HomeIcon,
 } from '@heroicons/react/24/outline';
 import type { Worker } from '@/app/workers/workers-page-client';
 
@@ -53,9 +54,11 @@ interface WorkersRosterProps {
   activeWorkerId: string | null;
   onSelect: (id: string) => void;
   onManage: () => void;
+  onSelectHome?: () => void;
+  homeActive?: boolean;
 }
 
-export function WorkersRoster({ workers, activeWorkerId, onSelect, onManage }: WorkersRosterProps) {
+export function WorkersRoster({ workers, activeWorkerId, onSelect, onManage, onSelectHome, homeActive }: WorkersRosterProps) {
   return (
     <div className="h-full rounded-2xl bg-white shadow-sm overflow-hidden flex flex-col">
       <div className="px-4 pt-4 pb-3 flex-shrink-0">
@@ -65,6 +68,19 @@ export function WorkersRoster({ workers, activeWorkerId, onSelect, onManage }: W
       </div>
 
       <div className="flex-1 overflow-y-auto px-2 space-y-0.5">
+        {onSelectHome && (
+          <button
+            onClick={onSelectHome}
+            className={`w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-xl transition-colors ${
+              homeActive ? 'bg-indigo-50' : 'hover:bg-neutral-50'
+            }`}
+          >
+            <div className={`w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 ${homeActive ? 'bg-indigo-500' : 'bg-neutral-100'}`}>
+              <HomeIcon className={`w-4 h-4 ${homeActive ? 'text-white' : 'text-neutral-500'}`} />
+            </div>
+            <p className={`text-[13px] font-medium leading-tight ${homeActive ? 'text-indigo-700' : 'text-neutral-700'}`}>Home</p>
+          </button>
+        )}
         {workers.map(worker => {
           const isActive   = worker.id === activeWorkerId;
           const colors     = COLOR_MAP[worker.color] ?? COLOR_MAP.neutral;
