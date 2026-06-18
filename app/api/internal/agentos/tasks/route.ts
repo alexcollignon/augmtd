@@ -5,6 +5,7 @@ import {
   executeRunTask, executeDuplicateTask, executeShareTask, executeListTeamTasks,
   executeUseTask, executeDeleteTask, executeListWorkerDocuments, executeGetWorkerDocument,
 } from '@/lib/tools/worker-tasks';
+import { executeListSkills, executeApplySkill } from '@/lib/tools/worker-skills';
 
 export const maxDuration = 60;
 
@@ -121,6 +122,16 @@ export async function POST(request: NextRequest) {
         result = doc.content;
         break;
       }
+
+      case 'list_skills':
+        if (!agent_id) return NextResponse.json({ error: 'agent_id required' }, { status: 400 });
+        result = await executeListSkills(agent_id, user_id, ac);
+        break;
+
+      case 'apply_skill':
+        if (!agent_id) return NextResponse.json({ error: 'agent_id required' }, { status: 400 });
+        result = await executeApplySkill(String(args.skill_name ?? ''), agent_id, user_id, ac);
+        break;
 
       default:
         return NextResponse.json({ error: `Unknown action: ${action}` }, { status: 400 });

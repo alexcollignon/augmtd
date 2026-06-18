@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { ArrowPathIcon } from '@heroicons/react/24/outline';
+import { Button } from '@/components/ui';
 
 interface SyncAllButtonProps {
   providers: string[];
@@ -36,13 +37,14 @@ export default function SyncAllButton({ providers }: SyncAllButtonProps) {
   };
 
   return (
-    <button
+    <Button
+      variant="secondary"
+      size="sm"
       onClick={handleSync}
       disabled={syncing || !providers.length}
-      className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium text-neutral-600 hover:text-neutral-900 border border-neutral-200 rounded-lg hover:bg-neutral-50 disabled:opacity-40 transition-colors"
     >
       <ArrowPathIcon className={`w-3.5 h-3.5 ${syncing ? 'animate-spin' : ''}`} />
       {message ?? (syncing ? 'Syncing…' : 'Sync now')}
-    </button>
+    </Button>
   );
 }

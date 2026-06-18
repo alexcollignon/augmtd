@@ -11,6 +11,7 @@ import {
   UsersIcon,
 } from '@heroicons/react/24/outline';
 import type { DriveFolder } from '@/lib/types/drive';
+import { IconButton, Badge, SegmentedControl, EmptyState } from '@/components/ui';
 
 interface Transcript {
   id: string;
@@ -107,17 +108,17 @@ function SourceIcon({ source }: { source: string }) {
 function SourceBadge({ source }: { source: string }) {
   if (source === 'recording' || source === 'bot' || source === 'upload') {
     return (
-      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-emerald-50 text-[10px] font-medium text-emerald-600 flex-shrink-0">
+      <Badge tone="emerald" className="flex-shrink-0">
         <MicrophoneIcon className="w-2.5 h-2.5" />
         Recorded
-      </span>
+      </Badge>
     );
   }
   return (
-    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-blue-50 text-[10px] font-medium text-blue-500 flex-shrink-0">
+    <Badge tone="blue" className="flex-shrink-0">
       <DocumentTextIcon className="w-2.5 h-2.5" />
       Note
-    </span>
+    </Badge>
   );
 }
 
@@ -266,12 +267,9 @@ export default function FolderDetailView({
             )}
           </div>
           <div className="relative">
-            <button
-              onClick={() => setMenuOpen(!menuOpen)}
-              className="p-1.5 text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100 rounded-md transition-colors"
-            >
+            <IconButton onClick={() => setMenuOpen(!menuOpen)}>
               <EllipsisHorizontalIcon className="w-4 h-4" />
-            </button>
+            </IconButton>
             {menuOpen && (
               <>
                 <div className="fixed inset-0 z-20" onClick={() => setMenuOpen(false)} />
@@ -349,33 +347,26 @@ export default function FolderDetailView({
 
       {/* Filter tabs */}
       <div className="flex-shrink-0 px-6 mb-3">
-        <div className="inline-flex items-center gap-1 bg-neutral-100 rounded-lg p-0.5">
-          {(['all', 'recordings', 'notes'] as CaptureFilter[]).map((f) => (
-            <button
-              key={f}
-              onClick={() => setCaptureFilter(f)}
-              className={`px-2.5 py-1 rounded-md text-[11.5px] font-medium transition-colors capitalize ${
-                captureFilter === f
-                  ? 'bg-white text-neutral-800 shadow-sm'
-                  : 'text-neutral-500 hover:text-neutral-700'
-              }`}
-            >
-              {f === 'all' ? 'All' : f === 'recordings' ? 'Recordings' : 'Notes'}
-            </button>
-          ))}
-        </div>
+        <SegmentedControl<CaptureFilter>
+          className="inline-flex"
+          items={[
+            { value: 'all', label: 'All' },
+            { value: 'recordings', label: 'Recordings' },
+            { value: 'notes', label: 'Notes' },
+          ]}
+          value={captureFilter}
+          onChange={setCaptureFilter}
+        />
       </div>
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto px-6 pb-6">
         {folderTranscripts.length === 0 && (
-          <div className="py-12 text-center">
-            <FolderOpenIcon className="w-8 h-8 text-neutral-200 mx-auto mb-2" />
-            <p className="text-[13px] text-neutral-500">No meetings in this folder yet</p>
-            <p className="text-[11px] text-neutral-400 mt-0.5">
-              Drag meetings here from the home list.
-            </p>
-          </div>
+          <EmptyState
+            icon={FolderOpenIcon}
+            title="No meetings in this folder yet"
+            description="Drag meetings here from the home list."
+          />
         )}
         {dateGroups.map((group) => (
           <div key={group.label} className="mb-4">
@@ -398,16 +389,16 @@ export default function FolderDetailView({
                       <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                         <SourceBadge source={t.source} />
                         {t.sharingMode && !t.isSharedWithMe && (
-                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-indigo-50 text-[10px] font-medium text-indigo-600 flex-shrink-0">
+                          <Badge tone="indigo" className="flex-shrink-0">
                             <UsersIcon className="w-2.5 h-2.5" />
                             Shared
-                          </span>
+                          </Badge>
                         )}
                         {t.isSharedWithMe && (
-                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-neutral-100 text-[10px] font-medium text-neutral-500 flex-shrink-0">
+                          <Badge tone="neutral" className="flex-shrink-0">
                             <UsersIcon className="w-2.5 h-2.5" />
                             {t.sharedByName ? `from ${t.sharedByName.split(' ')[0]}` : 'Shared'}
-                          </span>
+                          </Badge>
                         )}
                         {(t.attendees?.length ?? 0) > 0 && (
                           <AttendeeAvatars attendees={t.attendees!} />

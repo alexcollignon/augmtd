@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { ChevronDownIcon, ChevronUpIcon, CalendarDaysIcon, ChatBubbleLeftIcon, ChevronRightIcon, ChevronLeftIcon, PlusIcon } from '@heroicons/react/24/outline';
+import { IconButton } from '@/components/ui';
 import type { CalendarEvent } from '@/lib/types/meetings';
 import MeetingCard from '@/components/meetings/meeting-card';
 import MonthCalendar from '@/components/meetings/month-calendar';
@@ -238,13 +239,13 @@ export default function CalendarSidebar({
           </div>
           {/* Right: + button, Month/Week pill, close */}
           <div className="flex items-center gap-1.5">
-            <button
+            <IconButton
               onClick={() => onNewMeeting?.()}
               title="New meeting"
-              className="p-1 text-neutral-400 hover:text-neutral-600 transition-colors"
+              size="sm"
             >
               <PlusIcon className="w-3.5 h-3.5" />
-            </button>
+            </IconButton>
             <div className="relative grid grid-cols-2 bg-neutral-100 rounded-full p-0.5">
               <div
                 className="absolute inset-y-0.5 w-[calc(50%-2px)] rounded-full bg-white shadow-sm pointer-events-none"
@@ -267,9 +268,9 @@ export default function CalendarSidebar({
               </button>
             </div>
             {onClose && (
-              <button onClick={onClose} title="Close" className="p-1 text-neutral-400 hover:text-neutral-600 transition-colors">
+              <IconButton onClick={onClose} title="Close" size="sm">
                 <ChevronRightIcon className="w-3.5 h-3.5" />
-              </button>
+              </IconButton>
             )}
           </div>
         </div>

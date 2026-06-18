@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { ChevronDownIcon, ChevronUpIcon, XMarkIcon, MicrophoneIcon } from '@heroicons/react/24/outline';
+import { IconButton, EmptyState } from '@/components/ui';
 import type { CalendarEvent } from '@/lib/types/meetings';
 import { useRecording } from '@/hooks/useRecording';
 import MeetingCard from './meeting-card';
@@ -119,13 +120,12 @@ export default function MeetingsSidebar({ userId, userEmail, isOpen, onClose }: 
             <MicrophoneIcon className="w-3 h-3" />
             Record
           </button>
-          <button
+          <IconButton
             onClick={onClose}
-            className="p-1.5 hover:bg-neutral-100 rounded transition-colors"
             aria-label="Close meetings panel"
           >
             <XMarkIcon className="w-5 h-5 text-neutral-500" />
-          </button>
+          </IconButton>
         </div>
       </div>
 
@@ -143,9 +143,7 @@ export default function MeetingsSidebar({ userId, userEmail, isOpen, onClose }: 
             </div>
           </div>
         ) : totalMeetings === 0 ? (
-          <div className="text-center py-12">
-            <p className="text-[14px] text-neutral-500">No meetings scheduled</p>
-          </div>
+          <EmptyState title="No meetings scheduled" />
         ) : (
           <div className="space-y-6">
             {/* Happening Now */}

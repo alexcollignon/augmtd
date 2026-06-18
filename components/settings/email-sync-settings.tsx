@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { Button, Input } from '@/components/ui';
 
 interface EmailSyncSettingsProps {
   connectionId: string;
@@ -53,32 +54,27 @@ export default function EmailSyncSettings({
   return (
     <div className="space-y-4">
       <div>
-        <label htmlFor="maxEmails" className="block text-sm font-medium text-gray-700 mb-2">
+        <label htmlFor="maxEmails" className="block text-[13px] font-medium text-neutral-700 mb-2">
           Emails per sync
         </label>
         <div className="flex items-center space-x-4">
-          <input
+          <Input
             type="number"
             id="maxEmails"
             min="1"
             max="100"
             value={maxEmails}
             onChange={(e) => setMaxEmails(parseInt(e.target.value) || 50)}
-            className="block w-32 px-3 py-2 border border-gray-300 rounded-lg focus:ring-primary-500 focus:border-primary-500"
+            className="w-32"
           />
-          <button
+          <Button
             onClick={handleSave}
             disabled={isSaving || maxEmails === currentMaxEmails}
-            className={`px-4 py-2 rounded-lg font-medium transition-colors ${
-              isSaving || maxEmails === currentMaxEmails
-                ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                : 'bg-primary-600 text-white hover:bg-primary-700'
-            }`}
           >
             {isSaving ? 'Saving...' : 'Save'}
-          </button>
+          </Button>
         </div>
-        <p className="text-xs text-gray-500 mt-2">
+        <p className="text-[12px] text-neutral-400 mt-2">
           How many recent unread emails to fetch during each sync (1-100)
         </p>
       </div>

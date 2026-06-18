@@ -6,6 +6,7 @@ import {
   ArrowUpTrayIcon, ArrowDownTrayIcon, CheckIcon,
 } from '@heroicons/react/24/outline';
 import { parseSkillMarkdown, skillToMarkdown, skillFilename } from '@/lib/skills/markdown';
+import { Button, IconButton, Input, Textarea, Card, EmptyState } from '@/components/ui';
 
 const ROLE_AVATARS: Record<string, string> = {
   personal_assistant: '/workers/clara.png',
@@ -152,19 +153,12 @@ export function SkillsLibraryView({ workers }: SkillsLibraryViewProps) {
                 e.target.value = ''; // allow re-importing the same file
               }}
             />
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-neutral-200 text-neutral-600 text-[12.5px] font-medium hover:bg-neutral-50 transition-colors"
-              title="Import a .md skill file"
-            >
+            <Button variant="secondary" size="sm" onClick={() => fileInputRef.current?.click()} title="Import a .md skill file">
               <ArrowUpTrayIcon className="w-4 h-4" /> Import
-            </button>
-            <button
-              onClick={() => setDraft({ ...EMPTY_DRAFT })}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-[12.5px] font-medium hover:bg-indigo-700 transition-colors"
-            >
+            </Button>
+            <Button size="sm" onClick={() => setDraft({ ...EMPTY_DRAFT })}>
               <PlusIcon className="w-4 h-4" /> New skill
-            </button>
+            </Button>
           </div>
         </div>
         <p className="text-[13px] text-neutral-500 mb-7">
@@ -177,26 +171,21 @@ export function SkillsLibraryView({ workers }: SkillsLibraryViewProps) {
             {[1, 2, 3].map(i => <div key={i} className="h-36 rounded-2xl bg-neutral-100 animate-pulse" />)}
           </div>
         ) : skills.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-neutral-200 bg-neutral-50 px-6 py-14 text-center">
-            <AcademicCapIcon className="w-7 h-7 text-neutral-300 mx-auto mb-3" />
-            <p className="text-[14px] font-medium text-neutral-600">No skills yet</p>
-            <p className="text-[12.5px] text-neutral-400 mt-1 max-w-[360px] mx-auto">
-              Capture how you like things written once — “open with a hook, no jargon, end with a question” — and any worker can apply it.
-            </p>
-            <button
-              onClick={() => setDraft({ ...EMPTY_DRAFT })}
-              className="mt-4 inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-indigo-600 text-white text-[12.5px] font-medium hover:bg-indigo-700 transition-colors"
-            >
-              <PlusIcon className="w-4 h-4" /> Create your first skill
-            </button>
-          </div>
+          <EmptyState
+            bordered
+            icon={AcademicCapIcon}
+            title="No skills yet"
+            description="Capture how you want a kind of work done once — a writing style, a report format, a research method, a review checklist — and any worker can apply it."
+            action={
+              <Button size="sm" onClick={() => setDraft({ ...EMPTY_DRAFT })}>
+                <PlusIcon className="w-4 h-4" /> Create your first skill
+              </Button>
+            }
+          />
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {skills.map(skill => (
-              <div
-                key={skill.id}
-                className="group relative rounded-2xl border border-neutral-200 bg-white p-4 hover:border-indigo-200 hover:shadow-sm transition-all flex flex-col"
-              >
+              <Card key={skill.id} interactive className="group relative p-4 flex flex-col">
                 <div className="flex items-start gap-2.5 mb-2">
                   <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center flex-shrink-0">
                     <AcademicCapIcon className="w-4 h-4 text-indigo-500" />
@@ -263,40 +252,32 @@ export function SkillsLibraryView({ workers }: SkillsLibraryViewProps) {
                   </div>
 
                   <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button
-                      onClick={() => handleExport(skill)}
-                      className="p-1.5 rounded-md text-neutral-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors"
-                      title="Export .md"
-                    >
+                    <IconButton size="sm" onClick={() => handleExport(skill)} title="Export .md">
                       <ArrowDownTrayIcon className="w-4 h-4" />
-                    </button>
-                    <button
+                    </IconButton>
+                    <IconButton
+                      size="sm"
                       onClick={() => setDraft({ id: skill.id, name: skill.name, when_to_use: skill.when_to_use ?? '', content: skill.content })}
-                      className="p-1.5 rounded-md text-neutral-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors"
                       title="Edit"
                     >
                       <PencilSquareIcon className="w-4 h-4" />
-                    </button>
+                    </IconButton>
                     {confirmDelete === skill.id ? (
-                      <button
-                        onClick={() => handleDelete(skill.id)}
-                        className="px-2 py-1 rounded-md bg-red-500 text-white text-[11px] hover:bg-red-600 transition-colors"
-                      >
-                        Delete
-                      </button>
+                      <Button variant="danger" size="sm" onClick={() => handleDelete(skill.id)}>Delete</Button>
                     ) : (
-                      <button
+                      <IconButton
+                        size="sm"
+                        tone="danger"
                         onClick={() => setConfirmDelete(skill.id)}
                         onMouseLeave={() => setConfirmDelete(c => c === skill.id ? null : c)}
-                        className="p-1.5 rounded-md text-neutral-400 hover:text-red-500 hover:bg-red-50 transition-colors"
                         title="Delete"
                       >
                         <TrashIcon className="w-4 h-4" />
-                      </button>
+                      </IconButton>
                     )}
                   </div>
                 </div>
-              </div>
+              </Card>
             ))}
           </div>
         )}
@@ -311,58 +292,49 @@ export function SkillsLibraryView({ workers }: SkillsLibraryViewProps) {
           >
             <div className="flex items-center justify-between px-5 py-4 border-b border-neutral-100">
               <h2 className="text-[14px] font-semibold text-neutral-800">{draft.id ? 'Edit skill' : 'New skill'}</h2>
-              <button onClick={() => setDraft(null)} className="p-1 rounded-md text-neutral-400 hover:bg-neutral-100 transition-colors">
+              <IconButton onClick={() => setDraft(null)}>
                 <XMarkIcon className="w-5 h-5" />
-              </button>
+              </IconButton>
             </div>
 
             <div className="px-5 py-4 space-y-4 overflow-y-auto">
               <div>
                 <label className="block text-[12px] font-medium text-neutral-600 mb-1.5">Name</label>
-                <input
+                <Input
                   value={draft.name}
                   onChange={e => setDraft({ ...draft, name: e.target.value })}
-                  placeholder="e.g. LinkedIn voice"
-                  className="w-full px-3 py-2 rounded-lg border border-neutral-200 text-[13px] outline-none focus:border-indigo-300 transition-colors"
+                  placeholder="e.g. Client report format"
                 />
               </div>
               <div>
                 <label className="block text-[12px] font-medium text-neutral-600 mb-1.5">
                   Use when <span className="text-neutral-400 font-normal">— optional, helps the worker pick the right skill</span>
                 </label>
-                <input
+                <Input
                   value={draft.when_to_use}
                   onChange={e => setDraft({ ...draft, when_to_use: e.target.value })}
-                  placeholder="e.g. When drafting LinkedIn posts"
-                  className="w-full px-3 py-2 rounded-lg border border-neutral-200 text-[13px] outline-none focus:border-indigo-300 transition-colors"
+                  placeholder="e.g. When writing a client report"
                 />
               </div>
               <div>
                 <label className="block text-[12px] font-medium text-neutral-600 mb-1.5">Instructions</label>
-                <textarea
+                <Textarea
                   value={draft.content}
                   onChange={e => setDraft({ ...draft, content: e.target.value })}
                   rows={9}
-                  placeholder={`The rules the worker should follow. e.g.\n\n- Open with a hook, never a greeting\n- Conversational, no corporate jargon\n- Max 3 short paragraphs\n- End with a question to drive comments`}
-                  className="w-full px-3 py-2 rounded-lg border border-neutral-200 text-[13px] leading-relaxed outline-none focus:border-indigo-300 transition-colors resize-none placeholder:text-neutral-300"
+                  placeholder={`The rules the worker should follow when this applies. e.g.\n\n- Lead with the recommendation, then the rationale\n- One page max; cite every figure\n- UK English, metric units\n- No jargon or filler`}
                 />
               </div>
             </div>
 
             <div className="flex items-center justify-end gap-2 px-5 py-3.5 border-t border-neutral-100 bg-neutral-50">
-              <button
-                onClick={() => setDraft(null)}
-                className="px-3.5 py-2 rounded-lg text-[12.5px] text-neutral-500 hover:bg-neutral-100 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
+              <Button variant="ghost" onClick={() => setDraft(null)}>Cancel</Button>
+              <Button
                 onClick={handleSave}
                 disabled={isSaving || !draft.name.trim() || !draft.content.trim()}
-                className="px-4 py-2 rounded-lg bg-indigo-600 text-white text-[12.5px] font-medium disabled:opacity-40 hover:bg-indigo-700 transition-colors"
               >
                 {isSaving ? 'Saving…' : draft.id ? 'Save changes' : 'Create skill'}
-              </button>
+              </Button>
             </div>
           </div>
         </div>

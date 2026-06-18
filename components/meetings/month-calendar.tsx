@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { ChevronLeftIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
+import { IconButton } from '@/components/ui';
 import type { CalendarEvent } from '@/lib/types/meetings';
 
 export function getDotColor(m: CalendarEvent, userEmail: string): string {
@@ -71,21 +72,15 @@ export default function MonthCalendar({
     <div>
       {/* Month nav */}
       <div className="flex items-center justify-between mb-2 px-1">
-        <button
-          onClick={() => setMonthOffset(o => o - 1)}
-          className="p-0.5 text-neutral-400 hover:text-neutral-700 transition-colors"
-        >
+        <IconButton onClick={() => setMonthOffset(o => o - 1)} size="sm">
           <ChevronLeftIcon className={compact ? 'w-3.5 h-3.5' : 'w-4 h-4'} />
-        </button>
+        </IconButton>
         <span className={`font-semibold text-neutral-700 ${compact ? 'text-[11px]' : 'text-[13px]'}`}>
           {monthLabel}
         </span>
-        <button
-          onClick={() => setMonthOffset(o => o + 1)}
-          className="p-0.5 text-neutral-400 hover:text-neutral-700 transition-colors"
-        >
+        <IconButton onClick={() => setMonthOffset(o => o + 1)} size="sm">
           <ChevronRightIcon className={compact ? 'w-3.5 h-3.5' : 'w-4 h-4'} />
-        </button>
+        </IconButton>
       </div>
 
       {/* Day-of-week labels */}

@@ -18,7 +18,7 @@ export default function InboxViewToggle() {
         onClick={() => handleViewChange('filtered')}
         className={`flex items-center space-x-2 px-4 py-2 text-sm font-medium rounded-md transition-colors ${
           view === 'filtered'
-            ? 'bg-primary-100 text-primary-700'
+            ? 'bg-indigo-100 text-indigo-700'
             : 'text-gray-600 hover:text-gray-900'
         }`}
       >
@@ -29,7 +29,7 @@ export default function InboxViewToggle() {
         onClick={() => handleViewChange('all')}
         className={`flex items-center space-x-2 px-4 py-2 text-sm font-medium rounded-md transition-colors ${
           view === 'all'
-            ? 'bg-primary-100 text-primary-700'
+            ? 'bg-indigo-100 text-indigo-700'
             : 'text-gray-600 hover:text-gray-900'
         }`}
       >

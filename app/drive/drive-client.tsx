@@ -20,6 +20,7 @@ import {
   CalendarIcon,
 } from '@heroicons/react/24/outline';
 import type { DriveAugmtdFile, DriveFolder } from '@/lib/types/drive';
+import { Button, IconButton, Badge, Input, Select, EmptyState } from '@/components/ui';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -194,9 +195,9 @@ function UploadModal({ folders, onClose, onUploaded, onFolderCreated }: UploadMo
       <div className="bg-white w-full max-w-md border border-neutral-200 shadow-xl rounded-2xl overflow-hidden">
         <div className="flex items-center justify-between px-5 py-4 border-b border-neutral-100">
           <h2 className="text-[14px] font-semibold text-neutral-900">Upload files</h2>
-          <button onClick={onClose} disabled={running} className="text-neutral-400 hover:text-neutral-600 disabled:opacity-40">
+          <IconButton onClick={onClose} disabled={running}>
             <XMarkIcon className="w-4 h-4" />
-          </button>
+          </IconButton>
         </div>
         <div className="p-5 space-y-4">
           <div
@@ -213,10 +214,10 @@ function UploadModal({ folders, onClose, onUploaded, onFolderCreated }: UploadMo
           {entries.length > 0 && (
             <div className="space-y-1.5 max-h-48 overflow-y-auto">
               {entries.map((entry, idx) => (
-                <div key={idx} className="flex items-center gap-2 px-3 py-2 bg-neutral-50 border border-neutral-100 rounded-md">
+                <div key={idx} className="flex items-center gap-2 px-3 py-2 bg-neutral-50 border border-neutral-100 rounded-lg">
                   <DocumentIcon className="w-3.5 h-3.5 text-neutral-400 flex-shrink-0" />
                   <span className="flex-1 text-[12px] text-neutral-700 truncate">{entry.file.name}</span>
-                  {entry.status === 'pending' && !running && <button onClick={() => removeEntry(idx)} className="text-neutral-300 hover:text-neutral-500"><XMarkIcon className="w-3.5 h-3.5" /></button>}
+                  {entry.status === 'pending' && !running && <IconButton size="sm" onClick={() => removeEntry(idx)}><XMarkIcon className="w-3.5 h-3.5" /></IconButton>}
                   {entry.status === 'uploading' && <span className="text-[11px] text-indigo-500 flex-shrink-0">{entry.progress}%</span>}
                   {entry.status === 'done' && <span className="text-[11px] text-emerald-600 font-medium flex-shrink-0">✓</span>}
                   {entry.status === 'error' && <span className="text-[11px] text-red-500 flex-shrink-0" title={entry.error}>Error</span>}
@@ -228,11 +229,11 @@ function UploadModal({ folders, onClose, onUploaded, onFolderCreated }: UploadMo
             <label className="block text-[12px] font-medium text-neutral-700 mb-1">Save to folder (optional)</label>
             {userFolders.length > 0 && !showNewFolder ? (
               <div className="flex gap-1.5">
-                <select value={folderId} onChange={(e) => setFolderId(e.target.value)} disabled={running} className="flex-1 border border-neutral-200 rounded-md px-2 py-1.5 text-[13px] text-neutral-700 bg-white focus:outline-none focus:border-indigo-400 disabled:opacity-50">
+                <Select value={folderId} onChange={(e) => setFolderId(e.target.value)} disabled={running} className="flex-1">
                   <option value="">Root (no folder)</option>
                   {userFolders.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
-                </select>
-                <button type="button" onClick={() => setShowNewFolder(true)} disabled={running} className="px-2.5 py-1.5 text-[12px] text-neutral-500 border border-neutral-200 rounded-md hover:bg-neutral-50 disabled:opacity-40 flex-shrink-0">+ New</button>
+                </Select>
+                <Button type="button" variant="secondary" size="sm" onClick={() => setShowNewFolder(true)} disabled={running} className="flex-shrink-0">+ New</Button>
               </div>
             ) : !showNewFolder ? (
               <button type="button" onClick={() => setShowNewFolder(true)} disabled={running} className="flex items-center gap-1.5 text-[12.5px] text-indigo-600 hover:text-indigo-800 disabled:opacity-40">
@@ -241,28 +242,28 @@ function UploadModal({ folders, onClose, onUploaded, onFolderCreated }: UploadMo
             ) : null}
             {showNewFolder && (
               <div className="flex gap-1.5">
-                <input
+                <Input
                   autoFocus
                   value={newFolderName}
                   onChange={(e) => setNewFolderName(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter') handleCreateFolder(); if (e.key === 'Escape') { setShowNewFolder(false); setNewFolderName(''); } }}
                   placeholder="Folder name…"
                   disabled={creatingFolder}
-                  className="flex-1 border border-neutral-200 rounded-md px-2 py-1.5 text-[13px] focus:outline-none focus:border-indigo-400 disabled:opacity-50"
+                  className="flex-1"
                 />
-                <button type="button" onClick={handleCreateFolder} disabled={!newFolderName.trim() || creatingFolder} className="px-3 py-1.5 bg-indigo-600 text-white text-[12px] rounded-md disabled:opacity-40">
+                <Button type="button" size="sm" onClick={handleCreateFolder} disabled={!newFolderName.trim() || creatingFolder}>
                   {creatingFolder ? '…' : 'Create'}
-                </button>
-                <button type="button" onClick={() => { setShowNewFolder(false); setNewFolderName(''); }} disabled={creatingFolder} className="px-2 py-1.5 text-[12px] text-neutral-400 hover:text-neutral-600 disabled:opacity-40">✕</button>
+                </Button>
+                <Button type="button" variant="ghost" size="sm" onClick={() => { setShowNewFolder(false); setNewFolderName(''); }} disabled={creatingFolder}>✕</Button>
               </div>
             )}
           </div>
         </div>
         <div className="flex justify-end gap-2 px-5 py-4 border-t border-neutral-100">
-          <button onClick={onClose} disabled={running} className="px-3 py-1.5 text-[13px] text-neutral-600 border border-neutral-200 rounded-md hover:bg-neutral-50 disabled:opacity-40">Cancel</button>
-          <button onClick={handleUpload} disabled={!entries.length || running} className="px-4 py-1.5 text-[13px] font-semibold bg-indigo-600 hover:bg-indigo-700 text-white rounded-md disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+          <Button variant="secondary" onClick={onClose} disabled={running}>Cancel</Button>
+          <Button onClick={handleUpload} disabled={!entries.length || running}>
             {running ? 'Uploading…' : `Upload ${entries.length > 1 ? `${entries.length} files` : 'file'}`}
-          </button>
+          </Button>
         </div>
       </div>
     </div>
@@ -300,8 +301,8 @@ function FolderPickerDropdown({ folders, currentFolderId, onSelect, onNewFolder,
       ))}
       <div className="border-t border-neutral-100 mt-1 pt-1 px-2">
         <div className="flex gap-1">
-          <input value={newName} onChange={(e) => setNewName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleCreate()} placeholder="New folder…" className="flex-1 text-[12px] border border-neutral-200 rounded-md px-2 py-1 focus:outline-none focus:border-indigo-300" />
-          <button onClick={handleCreate} disabled={!newName.trim() || creating} className="px-2 py-1 bg-indigo-600 text-white text-[11px] rounded-md disabled:opacity-40">+</button>
+          <Input value={newName} onChange={(e) => setNewName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleCreate()} placeholder="New folder…" className="flex-1" />
+          <Button size="sm" onClick={handleCreate} disabled={!newName.trim() || creating}>+</Button>
         </div>
       </div>
     </div>
@@ -397,16 +398,6 @@ function fileTypeIcon(type: string): { label: string; bg: string; text: string }
   return byMime[type] ?? byType[type] ?? { label: 'FILE', bg: 'bg-neutral-100', text: 'text-neutral-500' };
 }
 
-function EmptyState({ message, sub }: { message: string; sub: string }) {
-  return (
-    <div className="py-16 text-center">
-      <FolderOpenIcon className="w-10 h-10 text-neutral-200 mx-auto mb-3" />
-      <p className="text-[13px] font-medium text-neutral-500">{message}</p>
-      <p className="text-[12px] text-neutral-400 mt-1 max-w-xs mx-auto">{sub}</p>
-    </div>
-  );
-}
-
 // ─── Add From Drive Modal ─────────────────────────────────────────────────────
 
 interface AddFromDriveModalProps {
@@ -477,7 +468,7 @@ function AddFromDriveModal({ connections, onClose, onSuccess, onSwitchToUpload }
       <div className="bg-white w-full max-w-lg border border-neutral-200 shadow-xl rounded-2xl overflow-hidden flex flex-col max-h-[85vh]">
         <div className="flex items-center justify-between px-5 py-4 border-b border-neutral-100 flex-shrink-0">
           <h2 className="text-[14px] font-semibold text-neutral-900">Add from Drive</h2>
-          <button onClick={onClose} className="text-neutral-400 hover:text-neutral-600"><XMarkIcon className="w-4 h-4" /></button>
+          <IconButton onClick={onClose}><XMarkIcon className="w-4 h-4" /></IconButton>
         </div>
         <div className="flex-1 overflow-y-auto p-5 space-y-4">
           {!canAddGoogleDrive && !canAddOneDrive ? (
@@ -491,7 +482,7 @@ function AddFromDriveModal({ connections, onClose, onSuccess, onSwitchToUpload }
                     const enabled = p === 'google_drive' ? canAddGoogleDrive : canAddOneDrive;
                     return (
                       <button key={p} onClick={() => handleProviderChange(p)} disabled={!enabled}
-                        className={`px-3 py-1.5 text-[12.5px] font-medium border rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${addProvider === p ? 'bg-indigo-50 border-indigo-400 text-indigo-700' : 'bg-white border-neutral-200 text-neutral-600 hover:bg-neutral-50'}`}>
+                        className={`px-3 py-1.5 text-[12.5px] font-medium border rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${addProvider === p ? 'bg-indigo-50 border-indigo-400 text-indigo-700' : 'bg-white border-neutral-200 text-neutral-600 hover:bg-neutral-50'}`}>
                         {p === 'google_drive' ? 'Google Drive' : 'OneDrive'}
                         {!enabled && <span className="ml-1 text-[10px] text-neutral-400">(connect email first)</span>}
                       </button>
@@ -506,7 +497,7 @@ function AddFromDriveModal({ connections, onClose, onSuccess, onSwitchToUpload }
                     {currentAccounts.map((c) => (
                       <button key={c.id}
                         onClick={() => { setSelectedConnectionId(c.id); setPickerReady(false); setTimeout(() => setPickerReady(true), 0); }}
-                        className={`px-3 py-1.5 text-[12px] border rounded-md transition-colors ${selectedConnectionId === c.id ? 'bg-indigo-50 border-indigo-400 text-indigo-700 font-medium' : 'bg-white border-neutral-200 text-neutral-600 hover:bg-neutral-50'}`}>
+                        className={`px-3 py-1.5 text-[12px] border rounded-lg transition-colors ${selectedConnectionId === c.id ? 'bg-indigo-50 border-indigo-400 text-indigo-700 font-medium' : 'bg-white border-neutral-200 text-neutral-600 hover:bg-neutral-50'}`}>
                         {c.email}
                       </button>
                     ))}
@@ -535,10 +526,9 @@ function AddFromDriveModal({ connections, onClose, onSuccess, onSwitchToUpload }
           )}
         </div>
         <div className="flex-shrink-0 px-5 py-3 border-t border-neutral-100">
-          <button onClick={() => { onSwitchToUpload(); onClose(); }}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-[12.5px] text-neutral-600 border border-neutral-200 rounded-md hover:bg-neutral-50 transition-colors">
+          <Button variant="secondary" size="sm" onClick={() => { onSwitchToUpload(); onClose(); }}>
             <ArrowUpTrayIcon className="w-3.5 h-3.5" />Upload a file instead
-          </button>
+          </Button>
         </div>
       </div>
     </div>
@@ -794,13 +784,14 @@ function DriveFileList({ rows, onRowClick, sources, folders, onMove, onNewFolder
           <div className="flex-1" />
           {/* Move to */}
           <div className="relative">
-            <button
+            <Button
+              variant="secondary"
+              size="sm"
               onClick={() => setShowBulkMoveDropdown((v) => !v)}
               disabled={bulkMoving}
-              className="px-3 py-1 bg-white border border-neutral-200 hover:bg-neutral-50 text-neutral-700 text-[12.5px] font-medium rounded-md transition-colors disabled:opacity-40 flex items-center gap-1.5"
             >
               {bulkMoving ? 'Moving…' : 'Move to…'}
-            </button>
+            </Button>
             {showBulkMoveDropdown && (
               <>
                 <div className="fixed inset-0 z-20" onClick={() => { setShowBulkMoveDropdown(false); setBulkMoveNewFolderName(''); setBulkMoveCreatingFolder(false); }} />
@@ -823,34 +814,35 @@ function DriveFileList({ rows, onRowClick, sources, folders, onMove, onNewFolder
                   ))}
                   <div className="border-t border-neutral-100 mt-1 pt-1 px-2 pb-1">
                     <div className="flex gap-1">
-                      <input
+                      <Input
                         value={bulkMoveNewFolderName}
                         onChange={(e) => setBulkMoveNewFolderName(e.target.value)}
                         onKeyDown={(e) => { if (e.key === 'Enter') handleBulkMoveNewFolder(); e.stopPropagation(); }}
                         onClick={(e) => e.stopPropagation()}
                         placeholder="New folder…"
                         disabled={bulkMoveCreatingFolder}
-                        className="flex-1 text-[12px] border border-neutral-200 rounded-md px-2 py-1 focus:outline-none focus:border-indigo-300 disabled:opacity-50"
+                        className="flex-1"
                       />
-                      <button
+                      <Button
+                        size="sm"
                         onClick={(e) => { e.stopPropagation(); handleBulkMoveNewFolder(); }}
                         disabled={!bulkMoveNewFolderName.trim() || bulkMoveCreatingFolder}
-                        className="px-2 py-1 bg-indigo-600 text-white text-[11px] rounded-md disabled:opacity-40"
                       >
                         {bulkMoveCreatingFolder ? '…' : '+'}
-                      </button>
+                      </Button>
                     </div>
                   </div>
                 </div>
               </>
             )}
           </div>
-          <button
+          <Button
+            variant="danger"
+            size="sm"
             onClick={() => setConfirmingDelete(true)}
-            className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white text-[12.5px] font-medium rounded-md transition-colors"
           >
             Remove {totalSelected} {totalSelected === 1 ? 'file' : 'files'} from index
-          </button>
+          </Button>
         </div>
       )}
 
@@ -861,10 +853,10 @@ function DriveFileList({ rows, onRowClick, sources, folders, onMove, onNewFolder
             <p className="text-[14px] font-semibold text-neutral-900">Remove {totalSelected} {totalSelected === 1 ? 'file' : 'files'} from index?</p>
             <p className="text-[13px] text-neutral-500">These files will no longer be available to AI. This cannot be undone.</p>
             <div className="flex justify-end gap-2 pt-1">
-              <button onClick={() => setConfirmingDelete(false)} disabled={deleting} className="px-3 py-1.5 text-[13px] text-neutral-600 border border-neutral-200 rounded-md hover:bg-neutral-50 disabled:opacity-40">Cancel</button>
-              <button onClick={handleBatchDelete} disabled={deleting} className="px-4 py-1.5 text-[13px] font-semibold bg-red-600 hover:bg-red-700 text-white rounded-md disabled:opacity-40 transition-colors">
+              <Button variant="secondary" onClick={() => setConfirmingDelete(false)} disabled={deleting}>Cancel</Button>
+              <Button variant="danger" onClick={handleBatchDelete} disabled={deleting}>
                 {deleting ? 'Deleting…' : 'Delete'}
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -986,12 +978,13 @@ function DriveFileList({ rows, onRowClick, sources, folders, onMove, onNewFolder
                 <p className="text-[13px] font-medium text-neutral-800 truncate">{name}</p>
                 <p className="text-[11px] text-neutral-400 mt-0.5">{sourceMeta} · {formatDate(row.date)}</p>
               </div>
-              <button
+              <IconButton
+                size="sm"
                 onClick={(e) => { e.stopPropagation(); setMenuOpenId(menuOpenId === id ? null : id); }}
-                className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-neutral-100 transition-opacity flex-shrink-0"
+                className="opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
               >
                 <EllipsisHorizontalIcon className="w-4 h-4 text-neutral-400" />
-              </button>
+              </IconButton>
             </div>
 
             {menuOpenId === id && (
@@ -1110,7 +1103,7 @@ function DriveFileDetail({ selectedFile, sectionLabel, onBack, folders, sources,
               <div>
                 <p className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wider mb-1">AI Status</p>
                 {(file as DriveAugmtdFile).is_indexed
-                  ? <span className="inline-flex items-center px-2 py-0.5 text-[11px] font-medium rounded bg-emerald-50 text-emerald-700">Available to AI</span>
+                  ? <Badge tone="emerald">Available to AI</Badge>
                   : <span className="text-[13px] text-neutral-400">Not indexed</span>}
               </div>
             </>
@@ -1135,9 +1128,9 @@ function DriveFileDetail({ selectedFile, sectionLabel, onBack, folders, sources,
               {(file as KnowledgeFile).chunk_count !== undefined && (
                 <div>
                   <p className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wider mb-1">AI Status</p>
-                  <span className={`inline-flex items-center px-2 py-0.5 text-[11px] font-medium rounded ${(file as KnowledgeFile).chunk_count! > 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}`}>
+                  <Badge tone={(file as KnowledgeFile).chunk_count! > 0 ? 'emerald' : 'red'}>
                     {(file as KnowledgeFile).chunk_count! > 0 ? `${(file as KnowledgeFile).chunk_count} chunks indexed` : 'Index failed'}
-                  </span>
+                  </Badge>
                 </div>
               )}
             </>
@@ -1148,18 +1141,18 @@ function DriveFileDetail({ selectedFile, sectionLabel, onBack, folders, sources,
         <div className="mt-6 flex flex-wrap gap-2">
           {/* Download */}
           {isAugmtd && (file as DriveAugmtdFile).work_thread_id && (file as DriveAugmtdFile).storage_path && (
-            <a href={`/api/work/threads/${(file as DriveAugmtdFile).work_thread_id}/download?artifactId=${file.id}`} download className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-[13px] font-semibold rounded-md transition-colors">Download</a>
+            <a href={`/api/work/threads/${(file as DriveAugmtdFile).work_thread_id}/download?artifactId=${file.id}`} download className="inline-flex items-center justify-center px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-[13px] font-semibold rounded-lg transition-colors">Download</a>
           )}
           {/* Open in source */}
           {isAugmtd && (file as DriveAugmtdFile).source === 'workflow' && (file as DriveAugmtdFile).work_thread_id && (
-            <a href={`/work?thread=${(file as DriveAugmtdFile).work_thread_id}`} className="px-3 py-1.5 border border-neutral-200 text-[13px] text-neutral-700 rounded-md hover:bg-neutral-50 transition-colors">Open in Workflows</a>
+            <a href={`/work?thread=${(file as DriveAugmtdFile).work_thread_id}`} className="inline-flex items-center justify-center px-3 py-1.5 border border-neutral-200 text-[13px] text-neutral-700 rounded-lg hover:bg-neutral-50 transition-colors">Open in Workflows</a>
           )}
           {isAugmtd && (file as DriveAugmtdFile).source === 'meeting' && (file as DriveAugmtdFile).transcript_id && (
-            <a href={`/meetings/${(file as DriveAugmtdFile).transcript_id}`} className="px-3 py-1.5 border border-neutral-200 text-[13px] text-neutral-700 rounded-md hover:bg-neutral-50 transition-colors">Open in Meetings</a>
+            <a href={`/meetings/${(file as DriveAugmtdFile).transcript_id}`} className="inline-flex items-center justify-center px-3 py-1.5 border border-neutral-200 text-[13px] text-neutral-700 rounded-lg hover:bg-neutral-50 transition-colors">Open in Meetings</a>
           )}
           {/* Move to folder */}
           <div className="relative">
-            <button onClick={() => setShowMoveDropdown((v) => !v)} className="px-3 py-1.5 border border-neutral-200 text-[13px] text-neutral-700 rounded-md hover:bg-neutral-50 transition-colors">Move to folder</button>
+            <Button variant="secondary" onClick={() => setShowMoveDropdown((v) => !v)}>Move to folder</Button>
             {showMoveDropdown && (
               <FolderPickerDropdown
                 folders={userFolders}
@@ -1172,14 +1165,14 @@ function DriveFileDetail({ selectedFile, sectionLabel, onBack, folders, sources,
           </div>
           {/* Remove from index — KB uploads */}
           {!isAugmtd && (
-            <button onClick={handleDeleteKbFile} className="px-3 py-1.5 border border-red-200 text-[13px] text-red-600 rounded-md hover:bg-red-50 transition-colors">Remove from index</button>
+            <button onClick={handleDeleteKbFile} className="px-3 py-1.5 border border-red-200 text-[13px] text-red-600 rounded-lg hover:bg-red-50 transition-colors">Remove from index</button>
           )}
           {/* Remove from index — augmtd indexed files (meeting transcripts, workflow artifacts) */}
           {isAugmtd && (file as DriveAugmtdFile).is_indexed && (
             <button onClick={async () => {
               const res = await fetch('/api/drive/augmtd-files/batch', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ providerFileIds: [file.id] }) });
               if (res.ok) { onDeindexAugmtdFiles([file.id]); onBack(); toast.success('Removed from index'); } else { toast.error('Failed to remove'); }
-            }} className="px-3 py-1.5 border border-red-200 text-[13px] text-red-600 rounded-md hover:bg-red-50 transition-colors">Remove from index</button>
+            }} className="px-3 py-1.5 border border-red-200 text-[13px] text-red-600 rounded-lg hover:bg-red-50 transition-colors">Remove from index</button>
           )}
         </div>
       </div>
@@ -1281,7 +1274,7 @@ function DriveSidebar({
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
         />
-        {searchQuery && <button onClick={() => setSearchQuery('')} className="text-neutral-400 hover:text-neutral-600"><XMarkIcon className="w-3.5 h-3.5" /></button>}
+        {searchQuery && <IconButton size="sm" onClick={() => setSearchQuery('')}><XMarkIcon className="w-3.5 h-3.5" /></IconButton>}
       </div>
 
       {/* Body */}
@@ -1300,13 +1293,13 @@ function DriveSidebar({
         {/* My Folders */}
         <div className="flex items-center justify-between pr-1 pt-3 pb-1">
           <p className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wider px-2">My Folders</p>
-          <button
+          <IconButton
+            size="sm"
             onClick={() => setNewFolderOpen(true)}
             title="New folder"
-            className="p-1 rounded-md text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100 transition-colors"
           >
             <PlusIcon className="w-3 h-3" />
-          </button>
+          </IconButton>
         </div>
 
         {userFolders.length === 0 && !newFolderOpen && (
@@ -1339,12 +1332,13 @@ function DriveSidebar({
                     <span className="flex-1 truncate text-left">{folder.name}</span>
                   )}
                 </button>
-                <button
+                <IconButton
+                  size="sm"
                   onClick={(e) => { e.stopPropagation(); setMenuFolderId(menuFolderId === folder.id ? null : folder.id); }}
-                  className="opacity-0 group-hover/folder:opacity-100 p-0.5 rounded hover:bg-neutral-200 transition-opacity flex-shrink-0"
+                  className="opacity-0 group-hover/folder:opacity-100 transition-opacity flex-shrink-0"
                 >
                   <EllipsisHorizontalIcon className="w-3.5 h-3.5" />
-                </button>
+                </IconButton>
               </div>
               {menuFolderId === folder.id && (
                 <div className="absolute right-0 top-full mt-0.5 w-44 bg-white border border-neutral-200 shadow-lg z-30 py-1 rounded-lg">
@@ -1352,8 +1346,8 @@ function DriveSidebar({
                     <div className="px-3 py-2 space-y-2">
                       <p className="text-[11.5px] text-neutral-500">Files move to root.</p>
                       <div className="flex gap-1.5">
-                        <button onClick={() => { setConfirmingDeleteFolderId(null); setMenuFolderId(null); }} className="flex-1 px-2 py-1 text-[12px] border border-neutral-200 rounded-md text-neutral-600 hover:bg-neutral-50">Cancel</button>
-                        <button onClick={() => { onDeleteFolder(folder.id); setConfirmingDeleteFolderId(null); setMenuFolderId(null); }} className="flex-1 px-2 py-1 text-[12px] bg-red-600 hover:bg-red-700 text-white rounded-md font-medium">Delete</button>
+                        <Button variant="secondary" size="sm" onClick={() => { setConfirmingDeleteFolderId(null); setMenuFolderId(null); }} className="flex-1">Cancel</Button>
+                        <Button variant="danger" size="sm" onClick={() => { onDeleteFolder(folder.id); setConfirmingDeleteFolderId(null); setMenuFolderId(null); }} className="flex-1">Delete</Button>
                       </div>
                     </div>
                   ) : (
@@ -1371,13 +1365,13 @@ function DriveSidebar({
         {/* New folder input */}
         {newFolderOpen && (
           <div className="flex items-center gap-1 px-2 py-1.5">
-            <input
+            <Input
               autoFocus
               value={newFolderName}
               onChange={(e) => setNewFolderName(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') onCreateFolder(); if (e.key === 'Escape') setNewFolderOpen(false); }}
               placeholder="Folder name"
-              className="flex-1 text-[12px] border border-neutral-200 rounded px-1.5 py-0.5 focus:outline-none focus:border-indigo-300"
+              className="flex-1"
             />
             <button onClick={onCreateFolder} className="text-[11px] text-indigo-600 font-medium px-1">OK</button>
             <button onClick={() => setNewFolderOpen(false)} className="text-[11px] text-neutral-400 px-1">✕</button>
@@ -1506,36 +1500,38 @@ function DriveCenter({
         {!selectedFile && (() => {
           if (rows.length === 0) {
             if (searchQuery.trim()) {
-              return <EmptyState message={`No files match "${searchQuery}"`} sub="Try a different name or keyword." />;
+              return <EmptyState icon={FolderOpenIcon} title={`No files match "${searchQuery}"`} description="Try a different name or keyword." />;
             }
             return (
-              <div className="py-16 text-center px-6">
-                <FolderOpenIcon className="w-10 h-10 text-neutral-200 mx-auto mb-3" />
-                <p className="text-[13px] font-medium text-neutral-500">
-                  {sidebarView.kind === 'folder' ? 'This folder is empty'
+              <EmptyState
+                icon={FolderOpenIcon}
+                title={
+                  sidebarView.kind === 'folder' ? 'This folder is empty'
                     : sidebarView.kind === 'generated' ? 'No generated files yet'
                     : sidebarView.kind === 'meetings' ? 'No meeting notes yet'
                     : sidebarView.kind === 'uploads' ? 'No uploads yet'
-                    : 'Your drive is empty'}
-                </p>
-                <p className="text-[12px] text-neutral-400 mt-1 max-w-xs mx-auto">
-                  {sidebarView.kind === 'folder' ? 'Move files here or upload directly.'
+                    : 'Your drive is empty'
+                }
+                description={
+                  sidebarView.kind === 'folder' ? 'Move files here or upload directly.'
                     : sidebarView.kind === 'generated' ? 'Files generated by workflows and workers will appear here.'
                     : sidebarView.kind === 'meetings' ? 'Meeting notes and transcripts will appear here.'
                     : sidebarView.kind === 'uploads' ? 'Upload files or connect Google Drive to add knowledge.'
-                    : 'Upload files, connect Google Drive or OneDrive, or generate documents from Workflows.'}
-                </p>
-                {(sidebarView.kind === 'all' || sidebarView.kind === 'uploads') && (
-                  <div className="flex items-center justify-center gap-2 mt-4">
-                    <button onClick={onOpenUpload} className="flex items-center gap-1.5 px-3.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 text-[12.5px] font-medium rounded-lg transition-colors">
-                      <ArrowUpTrayIcon className="w-3.5 h-3.5" />Upload a file
-                    </button>
-                    <button onClick={onOpenAddFromDrive} className="flex items-center gap-1.5 px-3.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 text-[12.5px] font-medium rounded-lg transition-colors">
-                      <FolderOpenIcon className="w-3.5 h-3.5" />Add from Drive
-                    </button>
-                  </div>
-                )}
-              </div>
+                    : 'Upload files, connect Google Drive or OneDrive, or generate documents from Workflows.'
+                }
+                action={
+                  (sidebarView.kind === 'all' || sidebarView.kind === 'uploads') ? (
+                    <div className="flex items-center justify-center gap-2">
+                      <Button variant="soft" size="sm" onClick={onOpenUpload}>
+                        <ArrowUpTrayIcon className="w-3.5 h-3.5" />Upload a file
+                      </Button>
+                      <Button variant="soft" size="sm" onClick={onOpenAddFromDrive}>
+                        <FolderOpenIcon className="w-3.5 h-3.5" />Add from Drive
+                      </Button>
+                    </div>
+                  ) : undefined
+                }
+              />
             );
           }
 

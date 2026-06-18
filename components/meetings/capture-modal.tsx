@@ -8,6 +8,7 @@ import {
 } from '@heroicons/react/24/outline';
 import type { UseRecordingReturn } from '@/hooks/useRecording';
 import MeetingRecorder from './meeting-recorder';
+import { Button, IconButton, Input } from '@/components/ui';
 
 interface CaptureModalProps {
   isOpen: boolean;
@@ -54,17 +55,16 @@ export default function CaptureModal({
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-neutral-100">
           <h2 className="text-[15px] font-bold text-neutral-900">Record meeting</h2>
-          <button
+          <IconButton
             onClick={onClose}
-            className="p-1.5 hover:bg-neutral-100 rounded-md transition-colors"
             title={isRecording ? 'Minimize — recording continues in background' : 'Close'}
           >
             {isRecording ? (
-              <ArrowDownTrayIcon className="w-4 h-4 text-neutral-400" />
+              <ArrowDownTrayIcon className="w-4 h-4" />
             ) : (
-              <XMarkIcon className="w-4 h-4 text-neutral-400" />
+              <XMarkIcon className="w-4 h-4" />
             )}
-          </button>
+          </IconButton>
         </div>
 
         <div className="px-5 py-5 flex flex-col gap-4">
@@ -73,12 +73,11 @@ export default function CaptureModal({
               {!isRecording && (
                 <div>
                   <label className="block text-[11px] font-medium text-neutral-500 mb-1.5">Meeting title</label>
-                  <input
+                  <Input
                     type="text"
                     value={title}
                     onChange={(e) => setTitle(e.target.value)}
                     placeholder="e.g. Q2 Revenue Planning"
-                    className="w-full px-3 py-2 text-[13px] border border-neutral-200 rounded-md outline-none focus:border-indigo-400 placeholder:text-neutral-400"
                   />
                 </div>
               )}
@@ -110,12 +109,9 @@ export default function CaptureModal({
                   <p className="text-[11px] text-emerald-600 mt-0.5">Action items will appear in your inbox once done. You can close this.</p>
                 </div>
               </div>
-              <button
-                onClick={onClose}
-                className="w-full py-2 text-[13px] font-medium text-neutral-600 border border-neutral-200 rounded-md hover:bg-neutral-50 transition-colors"
-              >
+              <Button variant="secondary" onClick={onClose} className="w-full">
                 Close
-              </button>
+              </Button>
             </div>
           )}
 

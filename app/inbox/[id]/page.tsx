@@ -91,7 +91,7 @@ export default async function InboxDetailPage({ params }: { params: Promise<{ id
                   {sourceData?.urgency || 'medium'}
                 </span>
                 {item.priority >= 75 && (
-                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary-100 text-primary-700">
+                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-700">
                     High Priority
                   </span>
                 )}
@@ -168,7 +168,7 @@ export default async function InboxDetailPage({ params }: { params: Promise<{ id
                       )}
                     </div>
                     {action.preparedLink && (
-                      <a href={action.preparedLink} target="_blank" rel="noopener noreferrer" className="flex items-center space-x-1 text-xs text-primary-600 hover:text-primary-700 mt-1">
+                      <a href={action.preparedLink} target="_blank" rel="noopener noreferrer" className="flex items-center space-x-1 text-xs text-indigo-600 hover:text-indigo-700 mt-1">
                         <LinkIcon className="w-3 h-3" />
                         <span>Open link</span>
                       </a>
@@ -304,7 +304,7 @@ export default async function InboxDetailPage({ params }: { params: Promise<{ id
                   <h4 className="text-sm font-medium text-gray-700 mb-2">Links</h4>
                   <div className="space-y-1">
                     {sourceData.extractedData.links.map((link: string, index: number) => (
-                      <a key={index} href={link} target="_blank" rel="noopener noreferrer" className="flex items-center space-x-1 text-xs text-primary-600 hover:text-primary-700 truncate">
+                      <a key={index} href={link} target="_blank" rel="noopener noreferrer" className="flex items-center space-x-1 text-xs text-indigo-600 hover:text-indigo-700 truncate">
                         <LinkIcon className="w-3 h-3 flex-shrink-0" />
                         <span>{link}</span>
                       </a>
@@ -326,7 +326,7 @@ export default async function InboxDetailPage({ params }: { params: Promise<{ id
             <ul className="space-y-2">
               {sourceData.followUpActions.map((action: string, index: number) => (
                 <li key={index} className="flex items-start">
-                  <span className="text-primary-600 mr-2">•</span>
+                  <span className="text-indigo-600 mr-2">•</span>
                   <span className="text-gray-900">{action}</span>
                 </li>
               ))}

@@ -6,6 +6,7 @@ import {
   SparklesIcon,
   ArrowLeftIcon,
 } from '@heroicons/react/24/outline';
+import { Button, IconButton } from '@/components/ui';
 
 interface TextNoteEditorProps {
   transcriptId?: string;
@@ -146,12 +147,9 @@ export default function TextNoteEditor({
       {/* Header */}
       <div className="flex items-center gap-3 px-6 pt-6 pb-2">
         {onClose && (
-          <button
-            onClick={onClose}
-            className="p-1 hover:bg-neutral-100 rounded-md transition-colors text-neutral-400 hover:text-neutral-600"
-          >
+          <IconButton size="sm" onClick={onClose}>
             <ArrowLeftIcon className="w-4 h-4" />
-          </button>
+          </IconButton>
         )}
         <DocumentTextIcon className="w-5 h-5 text-blue-500" />
         <span className="text-[12px] text-neutral-400">
@@ -191,14 +189,13 @@ export default function TextNoteEditor({
             ✓ AI processing complete — loading your note…
           </p>
         ) : (
-          <button
+          <Button
             onClick={handleProcess}
             disabled={processing || (!body.trim() && !title.trim())}
-            className="flex items-center gap-2 px-4 py-2.5 text-[13px] font-semibold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors"
           >
             <SparklesIcon className="w-4 h-4" />
             {processing ? 'Processing…' : 'Process with AI'}
-          </button>
+          </Button>
         )}
       </div>
     </div>

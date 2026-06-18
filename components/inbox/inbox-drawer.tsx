@@ -132,9 +132,9 @@ export default function InboxDrawer({ item, isOpen, onClose }: InboxDrawerProps)
 
                           {/* What I Prepared */}
                           <div className="flex items-start space-x-2 mb-3">
-                            <SparklesIcon className="w-5 h-5 text-primary-600 flex-shrink-0 mt-0.5" />
+                            <SparklesIcon className="w-5 h-5 text-indigo-600 flex-shrink-0 mt-0.5" />
                             <div>
-                              <p className="text-sm font-semibold text-primary-700">What I prepared:</p>
+                              <p className="text-sm font-semibold text-indigo-700">What I prepared:</p>
                               <p className="text-sm text-gray-900">{item.what_i_prepared || 'Summary and analysis'}</p>
                             </div>
                           </div>
@@ -180,7 +180,7 @@ export default function InboxDrawer({ item, isOpen, onClose }: InboxDrawerProps)
                           <ul className="space-y-2.5">
                             {sourceData.keyPoints.map((point: string, index: number) => (
                               <li key={index} className="flex items-start space-x-2.5 text-gray-900">
-                                <span className="text-primary-600 font-bold mt-0.5">•</span>
+                                <span className="text-indigo-600 font-bold mt-0.5">•</span>
                                 <span className="leading-relaxed">{point}</span>
                               </li>
                             ))}
@@ -229,17 +229,17 @@ export default function InboxDrawer({ item, isOpen, onClose }: InboxDrawerProps)
 
                       {/* Next Steps / Action Items */}
                       {sourceData?.nextSteps && sourceData.nextSteps.length > 0 && (
-                        <div className="bg-gradient-to-br from-primary-50 to-purple-50 rounded-lg p-5 border border-primary-200/50">
+                        <div className="bg-gradient-to-br from-indigo-50 to-purple-50 rounded-lg p-5 border border-indigo-200/50">
                           <div className="flex items-center space-x-2.5 mb-4">
-                            <div className="p-2 bg-gradient-to-br from-primary-500 to-primary-600 rounded-lg shadow-sm">
+                            <div className="p-2 bg-gradient-to-br from-indigo-500 to-indigo-600 rounded-lg shadow-sm">
                               <ClipboardDocumentListIcon className="w-4 h-4 text-white" />
                             </div>
                             <h3 className="text-sm font-semibold text-gray-900 uppercase tracking-wide">Next Steps</h3>
                           </div>
                           <div className="space-y-3">
                             {sourceData.nextSteps.map((step: any, index: number) => (
-                              <div key={index} className="flex items-start space-x-3 p-3 bg-white rounded-lg border border-primary-100 shadow-sm">
-                                <input type="checkbox" className="mt-1.5 w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500" />
+                              <div key={index} className="flex items-start space-x-3 p-3 bg-white rounded-lg border border-indigo-100 shadow-sm">
+                                <input type="checkbox" className="mt-1.5 w-4 h-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500" />
                                 <div className="flex-1">
                                   <p className="text-sm text-gray-900 font-medium leading-relaxed">{step.description}</p>
                                   {step.estimatedTime && (
@@ -350,7 +350,7 @@ export default function InboxDrawer({ item, isOpen, onClose }: InboxDrawerProps)
                                 </p>
                                 <div className="space-y-1">
                                   {sourceData.extractedData.links.map((link: string, i: number) => (
-                                    <a key={i} href={link} target="_blank" rel="noopener noreferrer" className="block text-sm text-primary-600 hover:text-primary-700 truncate">
+                                    <a key={i} href={link} target="_blank" rel="noopener noreferrer" className="block text-sm text-indigo-600 hover:text-indigo-700 truncate">
                                       {link}
                                     </a>
                                   ))}

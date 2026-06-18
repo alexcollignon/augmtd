@@ -25,6 +25,7 @@ import { createClient } from '@/lib/supabase/client';
 import RsvpButtons from '@/components/inbox/rsvp-buttons';
 import MeetingRecorder from '@/components/meetings/meeting-recorder';
 import { useRecording } from '@/hooks/useRecording';
+import { Button, IconButton } from '@/components/ui';
 
 interface TranscriptSegment {
   speaker: string;
@@ -170,9 +171,9 @@ export default function MeetingDetailPanel({
                       {/* Actions row */}
                       <div className="flex items-center justify-end gap-1 mb-3">
                         {onEdit && (
-                          <button onClick={onEdit} title="Edit" className="p-1.5 text-neutral-300 hover:text-neutral-600 transition-colors rounded-md hover:bg-neutral-100">
+                          <IconButton onClick={onEdit} title="Edit">
                             <PencilSquareIcon className="w-4 h-4" />
-                          </button>
+                          </IconButton>
                         )}
                         {onDelete && (
                           deleteConfirm ? (
@@ -196,14 +197,14 @@ export default function MeetingDetailPanel({
                               <button onClick={() => setDeleteConfirm(false)} className="text-[11px] text-neutral-400 hover:text-neutral-600">No</button>
                             </div>
                           ) : (
-                            <button onClick={() => setDeleteConfirm(true)} title="Delete" className="p-1.5 text-neutral-300 hover:text-red-500 transition-colors rounded-md hover:bg-neutral-100">
+                            <IconButton onClick={() => setDeleteConfirm(true)} title="Delete" tone="danger">
                               <TrashIcon className="w-4 h-4" />
-                            </button>
+                            </IconButton>
                           )
                         )}
-                        <button onClick={onClose} className="p-1.5 text-neutral-300 hover:text-neutral-600 transition-colors rounded-md hover:bg-neutral-100">
+                        <IconButton onClick={onClose}>
                           <XMarkIcon className="w-4 h-4" />
-                        </button>
+                        </IconButton>
                       </div>
 
                       {/* Title */}
@@ -355,12 +356,9 @@ export default function MeetingDetailPanel({
                           Close
                         </button>
                         {event.meeting_link && (
-                          <button
-                            onClick={handleJoinMeeting}
-                            className="flex-1 px-4 py-2 rounded-md text-[13px] font-semibold text-white bg-indigo-600 hover:bg-indigo-700 transition-colors"
-                          >
+                          <Button onClick={handleJoinMeeting} variant="primary" className="flex-1">
                             Join meeting
-                          </button>
+                          </Button>
                         )}
                       </div>
                     </div>

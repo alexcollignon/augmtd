@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { DocumentTextIcon, SparklesIcon, CheckIcon, AcademicCapIcon } from '@heroicons/react/24/outline';
+import { Button, Textarea } from '@/components/ui';
 
 interface KBFile {
   id: string;
@@ -136,20 +137,15 @@ export function WorkerKnowledgeTab({ workerId, workerName }: WorkerKnowledgeTabP
               {savedAt && !isDirty && (
                 <span className="text-[11px] text-neutral-400">Saved</span>
               )}
-              <button
-                onClick={handleSave}
-                disabled={!isDirty || isSaving}
-                className="px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-[12px] font-medium disabled:opacity-40 hover:bg-indigo-700 transition-colors"
-              >
+              <Button size="sm" onClick={handleSave} disabled={!isDirty || isSaving}>
                 {isSaving ? 'Saving…' : 'Save'}
-              </button>
+              </Button>
             </div>
           </div>
-          <textarea
+          <Textarea
             value={userPreferences}
             onChange={e => handlePreferencesChange(e.target.value)}
             rows={10}
-            className="w-full rounded-xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-[13px] text-neutral-700 leading-relaxed resize-none outline-none focus:border-neutral-300 focus:bg-white transition-colors placeholder:text-neutral-400"
             placeholder={`e.g. I prefer concise emails, no bullet points. Flag anything from clients as urgent. I work 9–6 CET. Don't bother me with newsletters or automated notifications…`}
           />
           <p className="mt-2 text-[11px] text-neutral-400">
@@ -174,27 +170,13 @@ export function WorkerKnowledgeTab({ workerId, workerName }: WorkerKnowledgeTabP
                 {confirmReset ? (
                   <>
                     <span className="text-[12px] text-neutral-500">Clear memory?</span>
-                    <button
-                      onClick={() => setConfirmReset(false)}
-                      className="px-2.5 py-1 rounded-lg border border-neutral-200 text-[12px] text-neutral-500 hover:bg-neutral-50 transition-colors"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      onClick={handleResetMemory}
-                      disabled={isResettingMemory}
-                      className="px-2.5 py-1 rounded-lg bg-red-500 text-white text-[12px] hover:bg-red-600 disabled:opacity-40 transition-colors"
-                    >
+                    <Button variant="secondary" size="sm" onClick={() => setConfirmReset(false)}>Cancel</Button>
+                    <Button variant="danger" size="sm" onClick={handleResetMemory} disabled={isResettingMemory}>
                       {isResettingMemory ? 'Clearing…' : 'Clear'}
-                    </button>
+                    </Button>
                   </>
                 ) : (
-                  <button
-                    onClick={() => setConfirmReset(true)}
-                    className="px-3 py-1.5 rounded-lg border border-neutral-200 text-[12px] text-neutral-500 hover:border-red-200 hover:text-red-500 hover:bg-red-50 transition-colors"
-                  >
-                    Reset
-                  </button>
+                  <Button variant="secondary" size="sm" onClick={() => setConfirmReset(true)}>Reset</Button>
                 )}
               </div>
             )}

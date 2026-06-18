@@ -188,9 +188,34 @@ def get_worker_document(run_context: RunContext, artifact_id: str) -> str:
     return _call("get_worker_document", run_context, artifact_id=artifact_id)
 
 
+@tool
+def list_skills(run_context: RunContext) -> str:
+    """List the user's whole skill library. A skill is a reusable set of
+    instructions for how to handle a kind of work — a method, process, format,
+    structure, or style. Shows which skills are assigned to you (applied
+    automatically) and which are available to pull on demand. Call when the user
+    asks what skills exist, or before applying one you're unsure is assigned."""
+    return _call("list_skills", run_context)
+
+
+@tool
+def apply_skill(run_context: RunContext, skill_name: str) -> str:
+    """Pull a skill's full instructions from the user's library by name and apply
+    them to the current task — use when the user asks you to follow a particular
+    approach, method, format, or named skill that isn't already assigned to you.
+    Assigned skills apply automatically and don't need this. After calling, follow
+    the returned instructions precisely.
+
+    Args:
+        skill_name: Name of the skill. Use list_skills if unsure of the exact name.
+    """
+    return _call("apply_skill", run_context, skill_name=skill_name)
+
+
 # All task tools — assigned to every worker (matches the native chat loop).
 TASK_TOOLS = [
     list_tasks, create_task, get_task, update_task, run_task, duplicate_task,
     share_task, list_team_tasks, use_task, delete_task,
     list_worker_documents, get_worker_document,
+    list_skills, apply_skill,
 ]

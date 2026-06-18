@@ -21,6 +21,7 @@ import {
   CheckIcon,
 } from '@heroicons/react/24/outline';
 import type { MeetingChatContext } from '@/components/meetings/meeting-chat-sidebar';
+import { Button, IconButton, Badge } from '@/components/ui';
 import { useRecordingContext } from '@/context/recording-context';
 import type { CalendarEvent } from '@/lib/types/meetings';
 import { formatMeetingTime, calculateDuration } from '@/lib/types/meetings';
@@ -765,12 +766,9 @@ const handleRetry = async () => {
 
       {/* Back */}
       <div className="flex items-center gap-2 mb-4">
-        <button
-          onClick={handleBack}
-          className="p-1 hover:bg-neutral-100 rounded-md transition-colors text-neutral-400 hover:text-neutral-600"
-        >
+        <IconButton onClick={handleBack} size="sm">
           <ArrowLeftIcon className="w-4 h-4" />
-        </button>
+        </IconButton>
         <span className="text-[12px] text-neutral-400">Meetings</span>
       </div>
 
@@ -885,21 +883,21 @@ const handleRetry = async () => {
                 )}
                 {/* Delete — owner only */}
                 {transcript && isOwner && !confirmDelete && (
-                  <button
+                  <IconButton
                     onClick={() => setConfirmDelete(true)}
-                    className="p-1.5 text-neutral-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
+                    tone="danger"
                     title="Delete recording & transcript"
                   >
                     <TrashIcon className="w-4 h-4" />
-                  </button>
+                  </IconButton>
                 )}
                 {transcript && isOwner && confirmDelete && (
                   <div className="flex items-center gap-2">
                     <span className="text-[11px] text-neutral-500">Delete?</span>
-                    <button onClick={handleDelete} disabled={deleting} className="text-[11px] font-medium text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 px-2.5 py-1 rounded transition-colors">
+                    <Button onClick={handleDelete} disabled={deleting} variant="danger" size="sm">
                       {deleting ? 'Deleting…' : 'Delete'}
-                    </button>
-                    <button onClick={() => setConfirmDelete(false)} className="text-[11px] text-neutral-500 hover:text-neutral-700">Cancel</button>
+                    </Button>
+                    <Button onClick={() => setConfirmDelete(false)} variant="ghost" size="sm">Cancel</Button>
                   </div>
                 )}
               </div>
@@ -935,9 +933,9 @@ const handleRetry = async () => {
                 </>
               )}
               {transcript && (
-                <span className="text-[11px] text-neutral-400 bg-neutral-100 px-2 py-0.5 rounded">
+                <Badge tone="neutral">
                   {transcript.source === 'recording' ? 'In-person' : transcript.source === 'text' ? 'Note' : 'Upload'}
-                </span>
+                </Badge>
               )}
             </div>
 
@@ -1045,13 +1043,15 @@ const handleRetry = async () => {
               </p>
             </div>
             {(transcript.source === 'text' || transcript.source === 'recording' || transcript.source === 'upload') && (
-              <button
+              <Button
                 onClick={handleRetry}
                 disabled={retrying}
-                className="px-3 py-1.5 text-[12px] font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors disabled:opacity-50 flex-shrink-0"
+                variant="danger"
+                size="sm"
+                className="flex-shrink-0"
               >
                 {retrying ? 'Retrying…' : 'Retry'}
-              </button>
+              </Button>
             )}
           </div>
           {transcript.notesStructured?.live_notes && (
@@ -1070,18 +1070,22 @@ const handleRetry = async () => {
             <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse flex-shrink-0" />
             <span className="text-[12px] font-semibold text-red-600 tabular-nums">{fmtDuration(recording.elapsed)}</span>
             <span className="flex-1 text-[12px] text-red-400">Recording in progress</span>
-            <button
+            <Button
               onClick={recording.pauseRecording}
-              className="px-3 py-1 text-[12px] font-semibold text-neutral-600 bg-white border border-neutral-200 hover:bg-neutral-50 rounded-lg transition-colors flex-shrink-0"
+              variant="secondary"
+              size="sm"
+              className="flex-shrink-0"
             >
               Pause
-            </button>
-            <button
+            </Button>
+            <Button
               onClick={recording.stopAndUpload}
-              className="px-3 py-1 text-[12px] font-semibold text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors flex-shrink-0"
+              variant="danger"
+              size="sm"
+              className="flex-shrink-0"
             >
               Finish
-            </button>
+            </Button>
           </div>
           {/* Away-time warnings — visible on return to tab */}
           {recording.awaySeconds >= 55 * 60 ? (
@@ -1111,12 +1115,14 @@ const handleRetry = async () => {
           >
             Resume
           </button>
-          <button
+          <Button
             onClick={recording.stopAndUpload}
-            className="px-3 py-1 text-[12px] font-semibold text-neutral-600 bg-white border border-neutral-200 hover:bg-neutral-50 rounded-lg transition-colors flex-shrink-0"
+            variant="secondary"
+            size="sm"
+            className="flex-shrink-0"
           >
             Finish
-          </button>
+          </Button>
         </div>
       )}
 
@@ -1476,14 +1482,10 @@ const handleRetry = async () => {
           {risks.length > 0 && (
             <div className="mt-3 flex flex-wrap gap-1.5">
               {risks.map((risk: Risk, i: number) => (
-                <span key={i} className={`inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full ${
-                  risk.severity === 'high' ? 'bg-red-50 text-red-600' :
-                  risk.severity === 'medium' ? 'bg-amber-50 text-amber-600' :
-                  'bg-neutral-100 text-neutral-500'
-                }`}>
+                <Badge key={i} tone={risk.severity === 'high' ? 'red' : risk.severity === 'medium' ? 'amber' : 'neutral'}>
                   <span className={`w-1 h-1 rounded-full ${RISK_DOT[risk.severity] ?? 'bg-neutral-300'}`} />
                   {risk.text}
-                </span>
+                </Badge>
               ))}
             </div>
           )}

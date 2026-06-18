@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { ChevronLeftIcon, ChevronRightIcon, XMarkIcon, VideoCameraIcon, PencilSquareIcon, TrashIcon, MapPinIcon, CalendarIcon } from '@heroicons/react/24/outline';
 import { toast } from 'sonner';
+import { Button, IconButton, Input, Select } from '@/components/ui';
 import type { CalendarEvent } from '@/lib/types/meetings';
 import { isUserOrganizer, formatMeetingTime, calculateDuration } from '@/lib/types/meetings';
 import NewMeetingModal from './new-meeting-modal';
@@ -191,9 +192,9 @@ function QuickCreatePopover({ quickCreate, onClose, onSuccess, style }: QuickCre
       {/* Header */}
       <div className="flex items-center justify-between px-3 pt-3 pb-2 border-b border-neutral-100">
         <span className="text-[13px] font-bold text-neutral-900">New meeting</span>
-        <button onClick={onClose} className="p-0.5 text-neutral-300 hover:text-neutral-500 transition-colors">
+        <IconButton onClick={onClose} size="sm">
           <XMarkIcon className="w-3.5 h-3.5" />
-        </button>
+        </IconButton>
       </div>
 
       <div className="px-3 py-3 space-y-2.5">
@@ -210,28 +211,27 @@ function QuickCreatePopover({ quickCreate, onClose, onSuccess, style }: QuickCre
 
         {/* Date + Time */}
         <div className="flex gap-2">
-          <input
+          <Input
             type="date"
             value={form.date}
             onChange={e => setForm(f => ({ ...f, date: e.target.value }))}
-            className="flex-1 text-[12px] border border-neutral-200 rounded-md px-2 py-1.5 outline-none focus:border-indigo-400 transition-colors"
+            className="flex-1"
           />
-          <input
+          <Input
             type="time"
             value={form.time}
             onChange={e => setForm(f => ({ ...f, time: e.target.value }))}
-            className="w-[88px] text-[12px] border border-neutral-200 rounded-md px-2 py-1.5 outline-none focus:border-indigo-400 transition-colors"
+            className="w-[88px]"
           />
         </div>
 
         {/* Duration */}
-        <select
+        <Select
           value={form.duration}
           onChange={e => setForm(f => ({ ...f, duration: Number(e.target.value) }))}
-          className="w-full text-[12px] border border-neutral-200 rounded-md px-2 py-1.5 outline-none focus:border-indigo-400 bg-white transition-colors"
         >
           {DURATION_OPTIONS.map(d => <option key={d} value={d}>{d} min</option>)}
-        </select>
+        </Select>
 
         {/* Attendees */}
         <AttendeeInput
@@ -242,17 +242,16 @@ function QuickCreatePopover({ quickCreate, onClose, onSuccess, style }: QuickCre
 
         {/* Account picker — only if >1 connection */}
         {connections.length > 1 && (
-          <select
+          <Select
             value={form.connectionId}
             onChange={e => setForm(f => ({ ...f, connectionId: e.target.value }))}
-            className="w-full text-[12px] border border-neutral-200 rounded-md px-2 py-1.5 outline-none focus:border-indigo-400 bg-white transition-colors"
           >
             {connections.map(c => (
               <option key={c.id} value={c.id}>
                 {c.email || c.id} ({c.provider === 'gmail' ? 'Google' : 'Outlook'})
               </option>
             ))}
-          </select>
+          </Select>
         )}
 
         {/* Meet link toggle */}
@@ -273,19 +272,21 @@ function QuickCreatePopover({ quickCreate, onClose, onSuccess, style }: QuickCre
 
         {/* Actions */}
         <div className="flex gap-2 pt-0.5">
-          <button
+          <Button
             onClick={handleSubmit}
             disabled={sending}
-            className="flex-1 py-1.5 text-[12px] font-semibold rounded-md bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+            size="sm"
+            className="flex-1"
           >
             {sending ? 'Sending…' : 'Send invitation'}
-          </button>
-          <button
+          </Button>
+          <Button
             onClick={onClose}
-            className="px-3 py-1.5 text-[12px] rounded-md text-neutral-500 border border-neutral-200 hover:border-neutral-300 hover:text-neutral-700 transition-colors"
+            variant="secondary"
+            size="sm"
           >
             Cancel
-          </button>
+          </Button>
         </div>
       </div>
     </div>
@@ -346,12 +347,12 @@ function EventPopover({ event, userEmail, style, onClose, onEdit, onDeleted }: E
         <div className="flex items-center gap-0.5 flex-shrink-0">
           {isUpcoming && !deleteConfirm && (
             <>
-              <button onClick={onEdit} title="Edit" className="p-1.5 text-neutral-400 hover:text-indigo-600 transition-colors rounded-md hover:bg-neutral-50">
+              <IconButton onClick={onEdit} title="Edit" className="hover:text-indigo-600">
                 <PencilSquareIcon className="w-4 h-4" />
-              </button>
-              <button onClick={() => setDeleteConfirm(true)} title="Delete" className="p-1.5 text-neutral-400 hover:text-red-500 transition-colors rounded-md hover:bg-neutral-50">
+              </IconButton>
+              <IconButton onClick={() => setDeleteConfirm(true)} title="Delete" tone="danger">
                 <TrashIcon className="w-4 h-4" />
-              </button>
+              </IconButton>
             </>
           )}
           {deleteConfirm && (
@@ -363,9 +364,9 @@ function EventPopover({ event, userEmail, style, onClose, onEdit, onDeleted }: E
               <button onClick={() => setDeleteConfirm(false)} className="text-[11px] text-neutral-400 hover:text-neutral-600">No</button>
             </div>
           )}
-          <button onClick={onClose} className="p-1.5 text-neutral-300 hover:text-neutral-500 transition-colors rounded-md hover:bg-neutral-50">
+          <IconButton onClick={onClose}>
             <XMarkIcon className="w-4 h-4" />
-          </button>
+          </IconButton>
         </div>
       </div>
 
@@ -481,13 +482,13 @@ export default function WeekCalendar({
       {/* Week nav header */}
       <div className="flex-shrink-0 flex items-center justify-between px-4 py-2 border-b border-neutral-100 bg-white">
         <div className="flex items-center gap-2">
-          <button onClick={() => setWeekOffset(o => o - 1)} className="p-1 text-neutral-400 hover:text-neutral-700 transition-colors">
+          <IconButton onClick={() => setWeekOffset(o => o - 1)} size="sm">
             <ChevronLeftIcon className="w-4 h-4" />
-          </button>
+          </IconButton>
           <span className="text-[13px] font-semibold text-neutral-700 min-w-[180px] text-center">{weekLabel}</span>
-          <button onClick={() => setWeekOffset(o => o + 1)} className="p-1 text-neutral-400 hover:text-neutral-700 transition-colors">
+          <IconButton onClick={() => setWeekOffset(o => o + 1)} size="sm">
             <ChevronRightIcon className="w-4 h-4" />
-          </button>
+          </IconButton>
         </div>
         {weekOffset !== 0 && (
           <button onClick={() => setWeekOffset(0)} className="text-[12px] text-indigo-500 hover:underline">Today</button>

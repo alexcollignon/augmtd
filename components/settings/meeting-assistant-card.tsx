@@ -1,4 +1,5 @@
 import Image from 'next/image';
+import { Badge } from '@/components/ui';
 
 interface MeetingAssistantCardProps {
   isEnabled: boolean;
@@ -39,11 +40,9 @@ export default function MeetingAssistantCard({
             : 'Disabled by your administrator'}
         </p>
       </div>
-      <span className={`text-[11px] font-medium px-2.5 py-1 rounded-full flex-shrink-0 ${
-        isEnabled ? 'bg-green-50 text-green-700' : 'bg-neutral-100 text-neutral-500'
-      }`}>
+      <Badge tone={isEnabled ? 'emerald' : 'neutral'} className="flex-shrink-0">
         {isEnabled ? 'Active' : 'Inactive'}
-      </span>
+      </Badge>
     </div>
   );
 }

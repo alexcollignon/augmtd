@@ -63,7 +63,7 @@ export default function ActivityLogRow({ item, onClick, isSelected }: ActivityLo
       onClick={onClick}
       className={`w-full text-left px-4 py-2 hover:bg-gray-50 transition-colors border-l-2 ${
         isSelected
-          ? 'border-l-primary-500 bg-primary-50/50'
+          ? 'border-l-indigo-500 bg-indigo-50/50'
           : 'border-l-transparent'
       }`}
     >

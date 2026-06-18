@@ -15,6 +15,7 @@ import {
 } from '@heroicons/react/24/outline';
 import type { CalendarEvent } from '@/lib/types/meetings';
 import type { DriveFolder } from '@/lib/types/drive';
+import { Badge, IconButton, SegmentedControl, EmptyState } from '@/components/ui';
 
 interface Transcript {
   id: string;
@@ -115,17 +116,17 @@ function SourceIcon({ source }: { source: string }) {
 function SourceBadge({ source }: { source: string }) {
   if (source === 'recording' || source === 'bot' || source === 'upload') {
     return (
-      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-emerald-50 text-[10px] font-medium text-emerald-600 flex-shrink-0">
+      <Badge tone="emerald" className="flex-shrink-0">
         <MicrophoneIcon className="w-2.5 h-2.5" />
         Recorded
-      </span>
+      </Badge>
     );
   }
   return (
-    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-blue-50 text-[10px] font-medium text-blue-500 flex-shrink-0">
+    <Badge tone="blue" className="flex-shrink-0">
       <DocumentTextIcon className="w-2.5 h-2.5" />
       Note
-    </span>
+    </Badge>
   );
 }
 
@@ -419,26 +420,28 @@ export default function MeetingsHome({
                 {confirmDeleteId === t.id ? (
                   <div className="flex items-center gap-1 flex-shrink-0">
                     <span className="text-[11px] text-neutral-500 mr-0.5">Remove?</span>
-                    <button
+                    <IconButton
+                      tone="danger"
+                      size="sm"
                       onClick={(e) => { e.stopPropagation(); onDeleteTranscript(t.id); setConfirmDeleteId(null); }}
-                      className="p-1 rounded hover:bg-red-100 text-red-500"
                     >
                       <CheckIcon className="w-3.5 h-3.5" />
-                    </button>
-                    <button
+                    </IconButton>
+                    <IconButton
+                      size="sm"
                       onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(null); }}
-                      className="p-1 rounded hover:bg-neutral-200 text-neutral-400"
                     >
                       <XMarkIcon className="w-3.5 h-3.5" />
-                    </button>
+                    </IconButton>
                   </div>
                 ) : (
-                  <button
+                  <IconButton
+                    size="sm"
                     onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(t.id); }}
-                    className="opacity-0 group-hover/lv:opacity-100 transition-opacity p-1 rounded hover:bg-neutral-200 text-neutral-400 hover:text-neutral-600 flex-shrink-0"
+                    className="opacity-0 group-hover/lv:opacity-100 transition-opacity flex-shrink-0"
                   >
                     <XMarkIcon className="w-3.5 h-3.5" />
-                  </button>
+                  </IconButton>
                 )}
               </div>
             ))}
@@ -478,26 +481,28 @@ export default function MeetingsHome({
                   {confirmDeleteId === t.id ? (
                     <div className="flex items-center gap-1 flex-shrink-0">
                       <span className="text-[11px] text-neutral-500 mr-0.5">Remove?</span>
-                      <button
+                      <IconButton
+                        tone="danger"
+                        size="sm"
                         onClick={(e) => { e.stopPropagation(); onDeleteTranscript(t.id); setConfirmDeleteId(null); }}
-                        className="p-1 rounded hover:bg-red-100 text-red-500"
                       >
                         <CheckIcon className="w-3.5 h-3.5" />
-                      </button>
-                      <button
+                      </IconButton>
+                      <IconButton
+                        size="sm"
                         onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(null); }}
-                        className="p-1 rounded hover:bg-neutral-200 text-neutral-400"
                       >
                         <XMarkIcon className="w-3.5 h-3.5" />
-                      </button>
+                      </IconButton>
                     </div>
                   ) : (
-                    <button
+                    <IconButton
+                      size="sm"
                       onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(t.id); }}
-                      className="opacity-0 group-hover/ip:opacity-100 transition-opacity p-1 rounded hover:bg-neutral-200 text-neutral-400 hover:text-neutral-600 flex-shrink-0"
+                      className="opacity-0 group-hover/ip:opacity-100 transition-opacity flex-shrink-0"
                     >
                       <XMarkIcon className="w-3.5 h-3.5" />
-                    </button>
+                    </IconButton>
                   )}
                 </div>
               );
@@ -508,21 +513,15 @@ export default function MeetingsHome({
 
       {/* ── Captured ── */}
       <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-1 bg-neutral-100 rounded-lg p-0.5">
-          {(['all', 'recordings', 'notes'] as CaptureFilter[]).map((f) => (
-            <button
-              key={f}
-              onClick={() => setCaptureFilter(f)}
-              className={`px-2.5 py-1 rounded-md text-[11.5px] font-medium transition-colors ${
-                captureFilter === f
-                  ? 'bg-white text-neutral-800 shadow-sm'
-                  : 'text-neutral-500 hover:text-neutral-700'
-              }`}
-            >
-              {f === 'all' ? 'All' : f === 'recordings' ? 'Recordings' : 'Notes'}
-            </button>
-          ))}
-        </div>
+        <SegmentedControl<CaptureFilter>
+          items={[
+            { value: 'all', label: 'All' },
+            { value: 'recordings', label: 'Recordings' },
+            { value: 'notes', label: 'Notes' },
+          ]}
+          value={captureFilter}
+          onChange={setCaptureFilter}
+        />
         {selectedIds.size > 0 && (
           <span className="text-[11px] text-neutral-500">{selectedIds.size} selected</span>
         )}
@@ -530,13 +529,11 @@ export default function MeetingsHome({
 
       {recentByDate.length === 0 ? (
         inProgress.length === 0 && live.length === 0 && (
-          <div className="py-12 text-center">
-            <MicrophoneIcon className="w-8 h-8 text-neutral-200 mx-auto mb-2" />
-            <p className="text-[13px] text-neutral-500 font-medium">No notes yet</p>
-            <p className="text-[12px] text-neutral-400 mt-1">
-              {filterPersonEmail ? 'No meetings with this person.' : 'Use New Note to get started.'}
-            </p>
-          </div>
+          <EmptyState
+            icon={MicrophoneIcon}
+            title="No notes yet"
+            description={filterPersonEmail ? 'No meetings with this person.' : 'Use New Note to get started.'}
+          />
         )
       ) : (
         <div className="space-y-6">
@@ -577,26 +574,27 @@ export default function MeetingsHome({
                           {confirmDeleteId === t.id ? (
                             <div className="flex items-center gap-1">
                               <span className="text-[11px] text-neutral-500 mr-0.5">Remove?</span>
-                              <button
+                              <IconButton
+                                tone="danger"
+                                size="sm"
                                 onClick={() => { onDeleteTranscript(t.id); setConfirmDeleteId(null); }}
-                                className="p-1 rounded hover:bg-red-100 text-red-500"
                               >
                                 <CheckIcon className="w-3.5 h-3.5" />
-                              </button>
-                              <button
+                              </IconButton>
+                              <IconButton
+                                size="sm"
                                 onClick={() => setConfirmDeleteId(null)}
-                                className="p-1 rounded hover:bg-neutral-200 text-neutral-400"
                               >
                                 <XMarkIcon className="w-3.5 h-3.5" />
-                              </button>
+                              </IconButton>
                             </div>
                           ) : (
-                            <button
+                            <IconButton
+                              size="sm"
                               onClick={() => setConfirmDeleteId(t.id)}
-                              className="p-1 rounded hover:bg-neutral-100 text-neutral-400 hover:text-neutral-600"
                             >
                               <XMarkIcon className="w-3.5 h-3.5" />
-                            </button>
+                            </IconButton>
                           )}
                         </div>
                       </div>
@@ -641,16 +639,16 @@ export default function MeetingsHome({
                         <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                           <SourceBadge source={t.source} />
                           {t.sharingMode && !t.isSharedWithMe && (
-                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-indigo-50 text-[10px] font-medium text-indigo-600 flex-shrink-0">
+                            <Badge tone="indigo" className="flex-shrink-0">
                               <UsersIcon className="w-2.5 h-2.5" />
                               Shared
-                            </span>
+                            </Badge>
                           )}
                           {t.isSharedWithMe && (
-                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-neutral-100 text-[10px] font-medium text-neutral-500 flex-shrink-0">
+                            <Badge tone="neutral" className="flex-shrink-0">
                               <UsersIcon className="w-2.5 h-2.5" />
                               {t.sharedByName ? `from ${t.sharedByName.split(' ')[0]}` : 'Shared'}
-                            </span>
+                            </Badge>
                           )}
                           {folders.length > 0 && <FolderChip folderId={t.folderId} folders={folders} />}
                           {(t.attendees?.length ?? 0) > 0 && (
@@ -665,12 +663,13 @@ export default function MeetingsHome({
                         {t.workItemsGenerated > 0 && (
                           <p className="text-[10px] text-blue-500 font-medium ml-1">{t.workItemsGenerated} items</p>
                         )}
-                        <button
+                        <IconButton
+                          size="sm"
                           onClick={(e) => openMenu(e, t.id)}
-                          className="opacity-0 group-hover/card:opacity-100 transition-opacity p-1 rounded hover:bg-neutral-200 text-neutral-400 hover:text-neutral-600 ml-1"
+                          className="opacity-0 group-hover/card:opacity-100 transition-opacity ml-1"
                         >
                           <EllipsisHorizontalIcon className="w-3.5 h-3.5" />
-                        </button>
+                        </IconButton>
                       </div>
                     </div>
                   );

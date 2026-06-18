@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { ExclamationTriangleIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import { Button, IconButton, Input } from '@/components/ui';
 
 interface Member {
   user_id: string;
@@ -80,12 +81,9 @@ export default function DeleteAccountModal({ isOpen, member, onClose, onDeleted 
                 <p className="text-[12px] text-neutral-400 mt-0.5">{displayName}</p>
               </div>
             </div>
-            <button
-              onClick={onClose}
-              className="text-neutral-400 hover:text-neutral-600 transition-colors"
-            >
+            <IconButton onClick={onClose}>
               <XMarkIcon className="w-5 h-5" />
-            </button>
+            </IconButton>
           </div>
 
           {/* Body */}
@@ -101,14 +99,14 @@ export default function DeleteAccountModal({ isOpen, member, onClose, onDeleted 
               <label className="block text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-1.5">
                 Type <span className="font-mono font-bold text-neutral-700">{member.email}</span> to confirm
               </label>
-              <input
+              <Input
                 ref={inputRef}
                 type="email"
                 value={confirmEmail}
                 onChange={e => setConfirmEmail(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && confirmed && handleDelete()}
                 placeholder={member.email}
-                className="w-full px-3 py-2.5 text-[13px] border border-neutral-200 rounded-lg focus:outline-none focus:border-red-400 focus:ring-1 focus:ring-red-100 placeholder:text-neutral-300 bg-white"
+                className="focus:border-red-400"
               />
             </div>
 
@@ -117,20 +115,12 @@ export default function DeleteAccountModal({ isOpen, member, onClose, onDeleted 
             )}
 
             <div className="flex gap-2 pt-1">
-              <button
-                onClick={onClose}
-                disabled={loading}
-                className="flex-1 py-2.5 text-[13px] font-medium border border-neutral-200 text-neutral-600 rounded-lg hover:bg-neutral-50 transition-colors disabled:opacity-50"
-              >
+              <Button variant="secondary" onClick={onClose} disabled={loading} className="flex-1">
                 Cancel
-              </button>
-              <button
-                onClick={handleDelete}
-                disabled={!confirmed || loading}
-                className="flex-1 py-2.5 text-[13px] font-medium bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-              >
+              </Button>
+              <Button variant="danger" onClick={handleDelete} disabled={!confirmed || loading} className="flex-1">
                 {loading ? 'Deleting…' : 'Delete account'}
-              </button>
+              </Button>
             </div>
           </div>
         </div>
