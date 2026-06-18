@@ -6,6 +6,7 @@ import { WorkersRoster } from '@/components/workers/workers-roster';
 import { WorkerProfile } from '@/components/workers/worker-profile';
 import { WorkersSetupView } from '@/components/workers/workers-setup-view';
 import { TeamHomeView } from '@/components/workers/team-home-view';
+import { SkillsLibraryView } from '@/components/workers/skills-library-view';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -69,6 +70,8 @@ export function WorkersPageClient({
   // Land on the team home (review desk) by default; a ?worker=/?thread= deep
   // link goes straight to that worker instead.
   const [showTeamHome, setShowTeamHome] = useState<boolean>(!urlWorkerId && !urlThreadId);
+  // Skills library — a team-level surface (sits with Home in the roster).
+  const [showSkills, setShowSkills] = useState<boolean>(false);
 
   // Tracks the thread ID to pass as initialThreadId to WorkerProfile.
   // Set from URL on first load; cleared immediately when switching workers so
@@ -127,12 +130,21 @@ export function WorkersPageClient({
 
   function handleGoTeamHome() {
     setShowTeamHome(true);
+    setShowSkills(false);
+    setProfileInitialThreadId(null);
+    pushUrl({ worker: null, tab: null, thread: null });
+  }
+
+  function handleGoSkills() {
+    setShowSkills(true);
+    setShowTeamHome(false);
     setProfileInitialThreadId(null);
     pushUrl({ worker: null, tab: null, thread: null });
   }
 
   async function handleSelectWorker(id: string) {
     setShowTeamHome(false);
+    setShowSkills(false);
     if (id === activeWorkerId) return;
     setActiveWorkerId(id);
     setProfileInitialThreadId(null); // clear before WorkerProfile remounts
@@ -191,17 +203,23 @@ export function WorkersPageClient({
       <div className="w-[200px] flex-shrink-0">
         <WorkersRoster
           workers={workspaceWorkers}
-          activeWorkerId={showTeamHome ? null : activeWorkerId}
+          activeWorkerId={showTeamHome || showSkills ? null : activeWorkerId}
           onSelect={handleSelectWorker}
           onManage={() => setView('setup')}
           onSelectHome={handleGoTeamHome}
           homeActive={showTeamHome}
+          onSelectSkills={handleGoSkills}
+          skillsActive={showSkills}
         />
       </div>
 
       {/* Right: team home (review desk) or worker profile */}
       <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
-        {showTeamHome ? (
+        {showSkills ? (
+          <SkillsLibraryView
+            workers={workspaceWorkers.map(w => ({ id: w.id, name: w.name, worker_role: w.worker_role }))}
+          />
+        ) : showTeamHome ? (
           <TeamHomeView
             userFirstName={userFirstName}
             onSelectWorker={handleSelectWorker}

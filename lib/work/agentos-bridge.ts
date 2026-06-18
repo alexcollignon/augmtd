@@ -13,6 +13,7 @@
 
 import { buildUserContextBlock } from '@/lib/context/build-user-context'
 import { extractAgentMemory } from '@/lib/agents/extract-memory'
+import { buildSkillsBlock } from '@/lib/work/worker-skills-context'
 
 const SSE = (data: object) => `data: ${JSON.stringify(data)}\n\n`
 
@@ -69,7 +70,7 @@ async function buildWorkerRunContext(
   userId: string,
   agentId: string,
 ): Promise<string> {
-  const [agentRes, identityBlock, routinesRes] = await Promise.all([
+  const [agentRes, identityBlock, routinesRes, skillsBlock] = await Promise.all([
     adminClient
       .from('custom_agents')
       .select('memory_text, user_preferences')
@@ -84,6 +85,7 @@ async function buildWorkerRunContext(
       .eq('status', 'active')
       .order('created_at', { ascending: true })
       .limit(10),
+    buildSkillsBlock(adminClient, agentId),
   ])
 
   const agent = agentRes?.data as { memory_text: string | null; user_preferences: string | null } | null
@@ -91,6 +93,9 @@ async function buildWorkerRunContext(
 
   if (agent?.user_preferences?.trim()) {
     parts.push(`[USER PREFERENCES — set by this user]\n${agent.user_preferences.trim()}`)
+  }
+  if (skillsBlock) {
+    parts.push(skillsBlock)
   }
   if (agent?.memory_text?.trim()) {
     parts.push(`[MEMORY — things you've learned about this user from past conversations]\n${agent.memory_text.trim()}`)

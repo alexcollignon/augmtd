@@ -110,7 +110,19 @@ Cron dispatch: `vercel.json` schedules `workflows-dispatch` hourly; it calls `ru
 
 ### Workers UI — team home (review desk)
 
-`/workers` lands on a **team home** (`components/workers/team-home-view.tsx`) before any worker is selected — a cross-coworker "review desk". `GET /api/workers/home` aggregates recent deliverables (Ready for you), recent task runs (Recently, attributed), and upcoming runs (Coming up). A conversational AI team briefing streams from `POST /api/workers/team-briefing` (the team analogue of the per-worker `/api/workers/[id]/briefing`) — grounded in real data, distinguishing scheduled vs. user-asked, cached per user in `profiles.team_briefing` (regenerated only when there's newer activity). A "Home" entry sits atop the roster (Meetings-sidebar style); `?worker=`/`?thread=` deep-links still go straight to a worker.
+`/workers` lands on a **team home** (`components/workers/team-home-view.tsx`) before any worker is selected — a cross-coworker "review desk". `GET /api/workers/home` aggregates recent deliverables (Ready for you), recent task runs (Recently, attributed), and upcoming runs (Coming up). A conversational AI team briefing streams from `POST /api/workers/team-briefing` (the team analogue of the per-worker `/api/workers/[id]/briefing`) — grounded in real data, distinguishing scheduled vs. user-asked, cached per user in `profiles.team_briefing` (regenerated only when there's newer activity). A "Your team" coworker card grid at the bottom fills the page when activity is sparse — each card opens that coworker's chat.
+
+The roster left panel: a **Home / Skills segmented switcher** at the top (view switcher, not stacked pills), then a "Your team" label with a **cog** (manage workers), then the worker list. Nothing sits at the bottom. `?worker=`/`?thread=` deep-links still go straight to a worker.
+
+### Worker skills (reusable style/voice instructions)
+
+A **skill** is a curated, reusable prompt block describing *how* to produce a kind of output (LinkedIn voice, email tone, proposal style) — distinct from tasks (*what/when*), KB (searchable *documents*), and memory (passively *learned*). Skills are user-owned (team-level library) and assigned to specific workers.
+
+- **Schema** (`supabase/migrations/20260618_skills.sql` — apply manually): `skills` (user-owned: `name`, `when_to_use`, `content`, `source`, `company_id` reserved for future team sharing) + `agent_skills` join (mirrors `agent_knowledge_sources`). Both owner-RLS.
+- **Library UI**: `components/workers/skills-library-view.tsx` — reached via the roster's **Skills** segment. Card grid with create/edit modal, inline delete, assigned-worker avatars + an in-place **assign popover** per card. `.md` import (Claude SKILL.md style — `lib/skills/markdown.ts` parses YAML frontmatter `name`/`description` + body) and `.md` export round-trip; DB row is the system of record, `.md` is the interchange format.
+- **APIs**: `GET/POST /api/skills`, `PATCH/DELETE /api/skills/[id]`, `GET/PUT /api/agents/[id]/skills` (replace a worker's assignments), `POST /api/skills/[id]/assign` (toggle one skill↔worker, used by library cards).
+- **Assignment UI**: a Skills section in each worker's Knowledge tab (`worker-knowledge-tab.tsx`) — checklist of the library, optimistic toggle → PUT.
+- **Runtime injection (smart-auto)**: `lib/work/worker-skills-context.ts` → `buildSkillsBlock(client, agentId)` renders a `[SKILLS — apply the matching skill when its "use when" fits…]` block; each skill tagged with its `when_to_use` hint so the worker picks the right one per output type (no per-conversation picking). Injected in **both** run paths for parity: the AgentOS bridge (`buildWorkerRunContext` → covers chat + scheduled `agent` steps, the live prod path) and the native loop (`chat/route.ts`). Rides the existing `dependencies.user_context` channel — **no AgentOS/Python redeploy needed**.
 
 ### Meetings / recording pipeline
 

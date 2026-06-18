@@ -11,6 +11,7 @@ import {
   ChartBarIcon,
   MagnifyingGlassIcon,
   HomeIcon,
+  AcademicCapIcon,
 } from '@heroicons/react/24/outline';
 import type { Worker } from '@/app/workers/workers-page-client';
 
@@ -56,30 +57,55 @@ interface WorkersRosterProps {
   onManage: () => void;
   onSelectHome?: () => void;
   homeActive?: boolean;
+  onSelectSkills?: () => void;
+  skillsActive?: boolean;
 }
 
-export function WorkersRoster({ workers, activeWorkerId, onSelect, onManage, onSelectHome, homeActive }: WorkersRosterProps) {
+export function WorkersRoster({ workers, activeWorkerId, onSelect, onManage, onSelectHome, homeActive, onSelectSkills, skillsActive }: WorkersRosterProps) {
   return (
     <div className="h-full rounded-2xl bg-white shadow-sm overflow-hidden flex flex-col">
-      {/* Home — primary nav (matches the Meetings sidebar) */}
-      {onSelectHome && (
+      {/* Home / Skills — segmented view switcher at the top */}
+      {(onSelectHome || onSelectSkills) && (
         <div className="px-2 pt-2 flex-shrink-0">
-          <button
-            onClick={onSelectHome}
-            className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg transition-colors text-left ${
-              homeActive ? 'bg-indigo-50 text-indigo-700' : 'text-neutral-600 hover:bg-neutral-50'
-            }`}
-          >
-            <HomeIcon className={`w-3.5 h-3.5 flex-shrink-0 ${homeActive ? 'text-indigo-600' : 'text-neutral-400'}`} />
-            <span className="text-[12px]">Home</span>
-          </button>
+          <div className="flex gap-0.5 p-0.5 bg-neutral-100 rounded-lg">
+            {onSelectHome && (
+              <button
+                onClick={onSelectHome}
+                className={`flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-md text-[12px] font-medium transition-colors ${
+                  homeActive ? 'bg-white text-indigo-700 shadow-sm' : 'text-neutral-500 hover:text-neutral-700'
+                }`}
+              >
+                <HomeIcon className="w-3.5 h-3.5 flex-shrink-0" />
+                Home
+              </button>
+            )}
+            {onSelectSkills && (
+              <button
+                onClick={onSelectSkills}
+                className={`flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-md text-[12px] font-medium transition-colors ${
+                  skillsActive ? 'bg-white text-indigo-700 shadow-sm' : 'text-neutral-500 hover:text-neutral-700'
+                }`}
+              >
+                <AcademicCapIcon className="w-3.5 h-3.5 flex-shrink-0" />
+                Skills
+              </button>
+            )}
+          </div>
         </div>
       )}
 
-      <div className="px-4 pt-3 pb-2 flex-shrink-0">
+      {/* Your team — label + manage cog */}
+      <div className="px-4 pt-4 pb-2 flex-shrink-0 flex items-center justify-between">
         <span className="text-[10.5px] font-semibold text-neutral-400 uppercase tracking-wider">
           Your team
         </span>
+        <button
+          onClick={onManage}
+          title="Manage workers"
+          className="p-1 -mr-1 rounded-md text-neutral-300 hover:text-neutral-500 hover:bg-neutral-100 transition-colors"
+        >
+          <Cog6ToothIcon className="w-3.5 h-3.5" />
+        </button>
       </div>
 
       <div className="flex-1 overflow-y-auto px-2 space-y-0.5">
@@ -129,17 +155,6 @@ export function WorkersRoster({ workers, activeWorkerId, onSelect, onManage, onS
             </button>
           );
         })}
-      </div>
-
-      {/* Manage link */}
-      <div className="flex-shrink-0 px-3 py-3 border-t border-neutral-100">
-        <button
-          onClick={onManage}
-          className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-[11.5px] text-neutral-400 hover:text-neutral-600 hover:bg-neutral-50 transition-colors"
-        >
-          <Cog6ToothIcon className="w-3.5 h-3.5" />
-          Manage workers
-        </button>
       </div>
     </div>
   );
