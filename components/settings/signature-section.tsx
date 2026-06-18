@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { ChevronRightIcon, TrashIcon } from '@heroicons/react/24/outline';
 import FormatToolbar from '@/components/inbox/format-toolbar';
 import Image from 'next/image';
+import { Button, IconButton } from '@/components/ui';
 
 interface Connection {
   id: string;
@@ -92,7 +93,8 @@ function SignatureRow({ connection }: { connection: Connection }) {
           <div className="flex items-center justify-between px-4 py-2 border-t border-neutral-100 bg-neutral-50">
             <FormatToolbar editorRef={editorRef} onSync={handleSync} />
             <div className="flex items-center gap-2">
-              <button
+              <IconButton
+                tone="danger"
                 onClick={async () => {
                   setIsDeleting(true);
                   try {
@@ -114,22 +116,21 @@ function SignatureRow({ connection }: { connection: Connection }) {
                   }
                 }}
                 disabled={isDeleting || isSaving}
-                className="p-1.5 text-neutral-400 hover:text-red-500 disabled:opacity-40 transition-colors rounded"
                 title="Remove signature"
               >
                 {isDeleting
                   ? <div className="w-3.5 h-3.5 border-2 border-neutral-300 border-t-red-400 rounded-full animate-spin" />
                   : <TrashIcon className="w-3.5 h-3.5" />
                 }
-              </button>
-              <button
+              </IconButton>
+              <Button
+                size="sm"
                 onClick={handleSave}
                 disabled={isSaving || isDeleting}
-                className="flex items-center gap-1.5 px-3 py-1 text-[12px] font-semibold bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:opacity-50 transition-colors"
               >
                 {isSaving && <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />}
                 Save
-              </button>
+              </Button>
             </div>
           </div>
         </>

@@ -3,7 +3,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useSearchParams, useRouter } from 'next/navigation';
-import Link from 'next/link';
 import EmailListSections from '@/components/inbox/email-list-sections';
 import EmailListChronological from '@/components/inbox/email-list-chronological';
 import { type SentEmail } from '@/components/inbox/sent-email-list';
@@ -20,6 +19,7 @@ import ComposePanel from '@/components/inbox/compose-panel';
 import { toast } from 'sonner';
 import type { CalendarEvent } from '@/lib/types/meetings';
 import type { InboxItem } from '@/lib/types/inbox';
+import { Button, EmptyState } from '@/components/ui';
 
 
 type ViewMode = 'chronological' | 'smart';
@@ -1079,21 +1079,16 @@ export function InboxPageClient({
         {/* No connection */}
         {!hasConnection && (
           <div className="flex-1 flex items-center justify-center">
-            <div className="text-center max-w-xs">
-              <div className="w-12 h-12 mx-auto mb-5 bg-primary-50 rounded-2xl flex items-center justify-center">
-                <EnvelopeIcon className="w-6 h-6 text-primary-500" />
-              </div>
-              <h3 className="text-[16px] font-semibold text-neutral-900 mb-1.5">Connect your email</h3>
-              <p className="text-[13px] text-neutral-400 mb-6 leading-relaxed">
-                Connect Gmail or Outlook and give your AI the busywork
-              </p>
-              <Link
-                href="/settings"
-                className="inline-flex items-center px-5 py-2 bg-primary-500 text-white text-[13px] font-medium rounded-xl hover:bg-primary-600 transition-colors"
-              >
-                Go to Settings
-              </Link>
-            </div>
+            <EmptyState
+              icon={EnvelopeIcon}
+              title="Connect your email"
+              description="Connect Gmail or Outlook and give your AI the busywork"
+              action={
+                <Button variant="primary" size="md" onClick={() => router.push('/settings')}>
+                  Go to Settings
+                </Button>
+              }
+            />
           </div>
         )}
 

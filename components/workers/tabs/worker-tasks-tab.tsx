@@ -17,6 +17,7 @@ import {
   UsersIcon,
   LockClosedIcon,
 } from '@heroicons/react/24/outline';
+import { Button, IconButton, Badge, Textarea } from '@/components/ui';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -281,13 +282,10 @@ export function WorkerTasksTab({ workerId, workerName, isActive, onOpenInChat }:
                 Scheduled tasks {workerName} runs automatically
               </p>
             </div>
-            <button
-              onClick={() => setShowNewTask(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-600 text-[12px] font-medium transition-colors"
-            >
+            <Button variant="soft" size="sm" onClick={() => setShowNewTask(true)}>
               <PlusIcon className="w-3.5 h-3.5" />
               New task
-            </button>
+            </Button>
           </div>
 
           {/* My tasks */}
@@ -395,10 +393,10 @@ function TaskRow({ task, isToggling, isOpening, isRunning, isDuplicating, isShar
             {isOpening ? 'Opening…' : task.name}
           </p>
           {isShared && (
-            <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-500 text-[9.5px] font-medium flex-shrink-0">
+            <Badge tone="indigo" className="flex-shrink-0">
               <UsersIcon className="w-2.5 h-2.5" />
               Shared
-            </span>
+            </Badge>
           )}
         </div>
         <div className="flex items-center gap-3 mt-0.5 flex-wrap">
@@ -415,9 +413,7 @@ function TaskRow({ task, isToggling, isOpening, isRunning, isDuplicating, isShar
           {isActive && task.next_run_at && (
             <span className="text-[11px] text-neutral-400">{upcomingTime(task.next_run_at)}</span>
           )}
-          {isDraft && (
-            <span className="text-[10.5px] text-neutral-400 bg-neutral-100 px-1.5 py-0.5 rounded-full">Draft</span>
-          )}
+          {isDraft && <Badge tone="neutral">Draft</Badge>}
         </div>
       </button>
 
@@ -449,12 +445,9 @@ function TaskRow({ task, isToggling, isOpening, isRunning, isDuplicating, isShar
         )}
 
         <div className="relative">
-          <button
-            onClick={() => setShowMenu(v => !v)}
-            className="p-1.5 rounded-lg text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100 transition-colors"
-          >
+          <IconButton onClick={() => setShowMenu(v => !v)}>
             <EllipsisHorizontalIcon className="w-3.5 h-3.5" />
-          </button>
+          </IconButton>
           {showMenu && (
             <>
               <div className="fixed inset-0 z-10" onClick={() => setShowMenu(false)} />
@@ -632,13 +625,13 @@ function NewTaskModal({ workerId, workerName, onClose, onCreated }: NewTaskModal
               Describe what {workerName} should do — and when.
             </p>
           </div>
-          <button onClick={onClose} disabled={isBusy} className="p-1.5 rounded-lg text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100 transition-colors disabled:opacity-40">
+          <IconButton onClick={onClose} disabled={isBusy}>
             <XMarkIcon className="w-4 h-4" />
-          </button>
+          </IconButton>
         </div>
 
         <div className="px-6 py-5 space-y-4">
-          <textarea
+          <Textarea
             autoFocus
             value={description}
             onChange={e => setDescription(e.target.value)}
@@ -646,7 +639,6 @@ function NewTaskModal({ workerId, workerName, onClose, onCreated }: NewTaskModal
             disabled={isBusy}
             placeholder={`e.g. "Every Monday morning, scan my inbox for client emails and write me a brief" or "Every Friday, search for industry news and summarise the top 5 stories"`}
             rows={4}
-            className="w-full px-3 py-2.5 rounded-xl border border-neutral-200 text-[13px] text-neutral-800 placeholder:text-neutral-400 focus:outline-none focus:border-indigo-300 focus:shadow-sm transition-all resize-none leading-relaxed disabled:opacity-50"
           />
 
           {!showInstructions ? (
@@ -661,13 +653,12 @@ function NewTaskModal({ workerId, workerName, onClose, onCreated }: NewTaskModal
           ) : (
             <div className="space-y-1">
               <label className="block text-[11.5px] font-medium text-neutral-500">Tone / persona (optional)</label>
-              <textarea
+              <Textarea
                 value={taskInstructions}
                 onChange={e => setTaskInstructions(e.target.value)}
                 disabled={isBusy}
                 placeholder={`e.g. "Write in the style of a German financial journalist — terse, data-driven, no fluff."`}
                 rows={2}
-                className="w-full px-3 py-2 rounded-xl border border-neutral-200 text-[13px] text-neutral-700 placeholder:text-neutral-400 focus:outline-none focus:border-indigo-300 transition-all resize-none leading-relaxed disabled:opacity-50"
               />
               <p className="text-[11px] text-neutral-400">Specific to this task — doesn&apos;t change {workerName}&apos;s core identity.</p>
             </div>
@@ -680,18 +671,8 @@ function NewTaskModal({ workerId, workerName, onClose, onCreated }: NewTaskModal
         </div>
 
         <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-neutral-100">
-          <button
-            onClick={onClose}
-            disabled={isBusy}
-            className="px-4 py-2 rounded-xl text-[12.5px] text-neutral-600 hover:bg-neutral-100 transition-colors disabled:opacity-40"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={handleCreate}
-            disabled={!description.trim() || isBusy}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 text-white text-[12.5px] font-medium hover:bg-indigo-700 transition-colors disabled:opacity-40"
-          >
+          <Button variant="ghost" onClick={onClose} disabled={isBusy}>Cancel</Button>
+          <Button onClick={handleCreate} disabled={!description.trim() || isBusy}>
             {isBusy && (
               <svg className="animate-spin w-3.5 h-3.5" viewBox="0 0 24 24" fill="none">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
@@ -699,7 +680,7 @@ function NewTaskModal({ workerId, workerName, onClose, onCreated }: NewTaskModal
               </svg>
             )}
             {buttonLabel}
-          </button>
+          </Button>
         </div>
 
       </div>
@@ -720,16 +701,13 @@ function EmptyTasks({ workerName, workerId, onNew }: { workerName: string; worke
         Tell {workerName} in chat what you want automated, or create a task directly.
       </p>
       <div className="flex items-center justify-center gap-3">
-        <button
-          onClick={onNew}
-          className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-indigo-50 text-indigo-600 text-[12.5px] font-medium hover:bg-indigo-100 transition-colors"
-        >
+        <Button variant="soft" onClick={onNew}>
           <PlusIcon className="w-3.5 h-3.5" />
           New task
-        </button>
+        </Button>
         <Link
           href={`/studio?assign_worker=${workerId}`}
-          className="px-3.5 py-2 rounded-xl border border-neutral-200 text-neutral-500 text-[12.5px] hover:border-neutral-300 hover:text-neutral-700 transition-colors"
+          className="inline-flex items-center px-3.5 py-2 rounded-lg border border-neutral-200 text-neutral-500 text-[13px] font-medium hover:bg-neutral-50 hover:text-neutral-700 transition-colors"
         >
           Open Studio
         </Link>

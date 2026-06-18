@@ -22,6 +22,7 @@ import { isExecutable } from '@/lib/types/inbox';
 import RecipientContextDisplay from './recipient-context-display';
 import RsvpButtons from './rsvp-buttons';
 import { createClient } from '@/lib/supabase/client';
+import { Button } from '@/components/ui';
 
 interface WorkDetailPanelProps {
   item: InboxItem;
@@ -408,9 +409,8 @@ export default function WorkDetailPanel({ item, isOpen, onClose, batchItems }: W
                 <Dialog.Panel className="pointer-events-auto w-screen max-w-2xl">
                   <div className="flex h-full flex-col bg-white shadow-2xl">
                     {/* Header */}
-                    <div className="relative bg-gradient-to-r from-indigo-50 to-violet-50 px-6 py-5 border-b border-indigo-100">
-                      <div className="absolute left-0 top-0 bottom-0 w-[3px] bg-indigo-500" />
-                      <div className="flex items-start justify-between pl-4">
+                    <div className="bg-white px-6 py-5 border-b border-neutral-200">
+                      <div className="flex items-start justify-between">
                         <div className="flex-1 pr-4">
                           <Dialog.Title className="text-[18px] font-semibold text-neutral-900 leading-tight">
                             {item.work_title || sourceData?.subject || 'Work Item'}
@@ -434,7 +434,7 @@ export default function WorkDetailPanel({ item, isOpen, onClose, batchItems }: W
                           {selectedBatchItem && isBatch && (
                             <button
                               onClick={() => setSelectedBatchItem(null)}
-                              className="flex-shrink-0 p-2 hover:bg-white/60 transition-colors"
+                              className="flex-shrink-0 p-2 rounded-lg hover:bg-neutral-100 transition-colors"
                               title="Back to batch summary"
                             >
                               <ArrowLeftIcon className="w-5 h-5 text-neutral-500" />
@@ -442,7 +442,7 @@ export default function WorkDetailPanel({ item, isOpen, onClose, batchItems }: W
                           )}
                           <button
                             onClick={handleClose}
-                            className="flex-shrink-0 p-2 hover:bg-white/60 transition-colors"
+                            className="flex-shrink-0 p-2 rounded-lg hover:bg-neutral-100 transition-colors"
                           >
                             <XMarkIcon className="w-5 h-5 text-neutral-500" />
                           </button>
@@ -772,21 +772,24 @@ export default function WorkDetailPanel({ item, isOpen, onClose, batchItems }: W
                             Actions will apply to all {batchItems?.length} items
                           </p>
                           <div className="flex items-center gap-3">
-                            <button
+                            <Button
+                              variant="primary"
+                              size="md"
                               onClick={handleCompleteAll}
                               disabled={isCompleting}
-                              className="flex-1 inline-flex items-center justify-center px-4 py-2.5 text-[13px] font-semibold bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm hover:shadow"
+                              className="flex-1"
                             >
-                              <CheckIcon className="w-4 h-4 mr-2" />
+                              <CheckIcon className="w-4 h-4" />
                               {isCompleting ? 'Completing...' : 'Mark All Complete'}
-                            </button>
-                            <button
+                            </Button>
+                            <Button
+                              variant="secondary"
+                              size="md"
                               onClick={handleDismissAll}
                               disabled={isDismissing}
-                              className="px-4 py-2.5 text-[13px] font-semibold text-neutral-700 hover:bg-neutral-200 disabled:opacity-50 transition-colors border border-neutral-300"
                             >
                               {isDismissing ? 'Dismissing...' : 'Dismiss All'}
-                            </button>
+                            </Button>
                           </div>
                         </div>
                       ) : (
@@ -795,10 +798,12 @@ export default function WorkDetailPanel({ item, isOpen, onClose, batchItems }: W
                           {/* Executable work — draft reply (if any) + open in Workflows */}
                           {isExecutable(item) && (
                             <>
-                              <button
+                              <Button
+                                variant="primary"
+                                size="md"
                                 onClick={handleOpenInWorkflows}
                                 disabled={isOpeningWorkflow}
-                                className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 text-[13px] font-semibold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm hover:shadow"
+                                className="flex-1"
                               >
                                 {isOpeningWorkflow ? (
                                   <>
@@ -811,32 +816,35 @@ export default function WorkDetailPanel({ item, isOpen, onClose, batchItems }: W
                                     Open in Workflows
                                   </>
                                 )}
-                              </button>
+                              </Button>
                             </>
                           )}
 
                           {/* Regular work actions */}
                           {!isExecutable(item) && (
                             <>
-                              <button
+                              <Button
+                                variant="primary"
+                                size="md"
                                 onClick={handleComplete}
                                 disabled={isCompleting}
-                                className="flex-1 inline-flex items-center justify-center px-4 py-2.5 text-[13px] font-semibold bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm hover:shadow"
+                                className="flex-1"
                               >
-                                <CheckIcon className="w-4 h-4 mr-2" />
+                                <CheckIcon className="w-4 h-4" />
                                 {isCompleting ? 'Completing...' : 'Mark Complete'}
-                              </button>
+                              </Button>
                             </>
                           )}
 
                           {/* Secondary actions */}
-                          <button
+                          <Button
+                            variant="secondary"
+                            size="md"
                             onClick={handleDismiss}
                             disabled={isDismissing}
-                            className="px-4 py-2.5 text-[13px] font-semibold text-neutral-700 hover:bg-neutral-200 disabled:opacity-50 transition-colors border border-neutral-300"
                           >
                             {isDismissing ? 'Dismissing...' : 'Dismiss'}
-                          </button>
+                          </Button>
                         </div>
                       )}
                     </div>

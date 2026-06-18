@@ -13,6 +13,7 @@ import {
   HomeIcon,
   AcademicCapIcon,
 } from '@heroicons/react/24/outline';
+import { SegmentedControl, IconButton } from '@/components/ui';
 import type { Worker } from '@/app/workers/workers-page-client';
 
 const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -67,30 +68,14 @@ export function WorkersRoster({ workers, activeWorkerId, onSelect, onManage, onS
       {/* Home / Skills — segmented view switcher at the top */}
       {(onSelectHome || onSelectSkills) && (
         <div className="px-2 pt-2 flex-shrink-0">
-          <div className="flex gap-0.5 p-0.5 bg-neutral-100 rounded-lg">
-            {onSelectHome && (
-              <button
-                onClick={onSelectHome}
-                className={`flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-md text-[12px] font-medium transition-colors ${
-                  homeActive ? 'bg-white text-indigo-700 shadow-sm' : 'text-neutral-500 hover:text-neutral-700'
-                }`}
-              >
-                <HomeIcon className="w-3.5 h-3.5 flex-shrink-0" />
-                Home
-              </button>
-            )}
-            {onSelectSkills && (
-              <button
-                onClick={onSelectSkills}
-                className={`flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-md text-[12px] font-medium transition-colors ${
-                  skillsActive ? 'bg-white text-indigo-700 shadow-sm' : 'text-neutral-500 hover:text-neutral-700'
-                }`}
-              >
-                <AcademicCapIcon className="w-3.5 h-3.5 flex-shrink-0" />
-                Skills
-              </button>
-            )}
-          </div>
+          <SegmentedControl
+            items={[
+              ...(onSelectHome ? [{ value: 'home' as const, label: 'Home', icon: HomeIcon }] : []),
+              ...(onSelectSkills ? [{ value: 'skills' as const, label: 'Skills', icon: AcademicCapIcon }] : []),
+            ]}
+            value={homeActive ? 'home' : skillsActive ? 'skills' : null}
+            onChange={v => { if (v === 'home') onSelectHome?.(); else onSelectSkills?.(); }}
+          />
         </div>
       )}
 
@@ -99,13 +84,9 @@ export function WorkersRoster({ workers, activeWorkerId, onSelect, onManage, onS
         <span className="text-[10.5px] font-semibold text-neutral-400 uppercase tracking-wider">
           Your team
         </span>
-        <button
-          onClick={onManage}
-          title="Manage workers"
-          className="p-1 -mr-1 rounded-md text-neutral-300 hover:text-neutral-500 hover:bg-neutral-100 transition-colors"
-        >
+        <IconButton onClick={onManage} title="Manage workers" size="sm" className="-mr-1">
           <Cog6ToothIcon className="w-3.5 h-3.5" />
-        </button>
+        </IconButton>
       </div>
 
       <div className="flex-1 overflow-y-auto px-2 space-y-0.5">

@@ -175,7 +175,7 @@ export default function InboxActions({ itemId, status, draft, onClose }: InboxAc
               type="text"
               value={editedSubject}
               onChange={(e) => setEditedSubject(e.target.value)}
-              className="w-full px-3 py-2.5 bg-white border border-gray-200 rounded-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-all"
+              className="w-full px-3 py-2.5 bg-white border border-gray-200 rounded-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all"
               placeholder="Email subject..."
             />
           </div>
@@ -188,7 +188,7 @@ export default function InboxActions({ itemId, status, draft, onClose }: InboxAc
               value={editedBody}
               onChange={(e) => setEditedBody(e.target.value)}
               rows={12}
-              className="w-full px-3 py-2.5 bg-white border border-gray-200 rounded-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 font-sans text-sm leading-relaxed transition-all resize-none"
+              className="w-full px-3 py-2.5 bg-white border border-gray-200 rounded-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 font-sans text-sm leading-relaxed transition-all resize-none"
               placeholder="Email body..."
             />
           </div>
@@ -203,7 +203,7 @@ export default function InboxActions({ itemId, status, draft, onClose }: InboxAc
             <button
               onClick={handleSendModified}
               disabled={isSending || !editedSubject || !editedBody}
-              className="flex items-center space-x-2 px-6 py-2 bg-primary-600 text-white rounded-lg font-medium hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="flex items-center space-x-2 px-6 py-2 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <CheckCircleIcon className="w-5 h-5" />
               <span>{isSending ? 'Sending...' : 'Send Modified Email'}</span>
@@ -218,10 +218,10 @@ export default function InboxActions({ itemId, status, draft, onClose }: InboxAc
               <button
                 onClick={handleApprove}
                 disabled={isApproving || isRejecting}
-                className={`flex items-center justify-center space-x-2 px-5 py-2.5 bg-primary-600 text-white text-sm rounded-lg font-medium transition-all ${
+                className={`flex items-center justify-center space-x-2 px-5 py-2.5 bg-indigo-600 text-white text-sm rounded-lg font-medium transition-all ${
                   isApproving || isRejecting
                     ? 'opacity-50 cursor-not-allowed'
-                    : 'hover:bg-primary-700'
+                    : 'hover:bg-indigo-700'
                 }`}
               >
                 <CheckCircleIcon className="w-4 h-4" />

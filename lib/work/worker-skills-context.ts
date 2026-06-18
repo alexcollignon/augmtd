@@ -44,9 +44,10 @@ export async function buildSkillsBlock(
     });
 
     return (
-      `[SKILLS — apply the matching skill when its "use when" fits the current task. ` +
-      `These define HOW the user wants specific kinds of output produced. Follow them precisely; ` +
-      `if none fits, ignore them.]\n\n${blocks.join('\n\n')}`
+      `[SKILLS — reusable instructions for how to handle specific kinds of work ` +
+      `(a method, process, format, structure, or style). Apply the matching skill ` +
+      `when its "use when" fits the current task and follow it precisely; if none ` +
+      `fits, ignore them.]\n\n${blocks.join('\n\n')}`
     );
   } catch {
     return '';

@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { toast } from 'sonner';
 import { ClipboardDocumentIcon, ArrowUpTrayIcon } from '@heroicons/react/24/outline';
+import { Button, IconButton, Badge, Textarea, Card } from '@/components/ui';
 
 const IMPORT_PROMPT = `Please summarize everything you know about me in this JSON format. Omit fields you don't know.
 
@@ -37,16 +38,8 @@ interface MemorySection {
 
 function ConfidenceBadge({ score }: { score: number }) {
   const pct = Math.round(score);
-  const cls = pct >= 70
-    ? 'text-emerald-600 bg-emerald-50'
-    : pct >= 30
-    ? 'text-amber-600 bg-amber-50'
-    : 'text-neutral-400 bg-neutral-100';
-  return (
-    <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full ${cls}`}>
-      {pct}%
-    </span>
-  );
+  const tone = pct >= 70 ? 'emerald' : pct >= 30 ? 'amber' : 'neutral';
+  return <Badge tone={tone}>{pct}%</Badge>;
 }
 
 export default function MemorySection() {
@@ -125,20 +118,22 @@ export default function MemorySection() {
             <p className="text-[12px] text-neutral-400 mt-0.5">What augmtd has learned about how you work. Updated automatically.</p>
           </div>
           <div className="flex items-center gap-2 flex-shrink-0 ml-4">
-            <button
+            <Button
+              variant="secondary"
+              size="sm"
               onClick={() => { setImportOpen(true); setImportStep(1); }}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] text-neutral-600 border border-neutral-200 rounded-lg hover:bg-neutral-50 transition-colors"
             >
               <ArrowUpTrayIcon className="w-3.5 h-3.5" />
               Import
-            </button>
-            <button
+            </Button>
+            <Button
+              variant="soft"
+              size="sm"
               onClick={handleExport}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] text-indigo-600 border border-indigo-200 bg-indigo-50 rounded-lg hover:bg-indigo-100 transition-colors"
             >
               <ClipboardDocumentIcon className="w-3.5 h-3.5" />
               Copy as AI context
-            </button>
+            </Button>
           </div>
         </div>
 
@@ -152,7 +147,7 @@ export default function MemorySection() {
         ) : (
           <div className="space-y-3">
             {sections.map(section => (
-              <div key={section.profile_type} className="border border-neutral-100 rounded-xl px-4 py-3">
+              <Card key={section.profile_type} className="px-4 py-3">
                 <div className="flex items-center justify-between mb-1.5">
                   <span className="text-[13px] font-medium text-neutral-700">
                     {SECTION_LABELS[section.profile_type] ?? section.profile_type}
@@ -164,7 +159,7 @@ export default function MemorySection() {
                 ) : (
                   <p className="text-[12px] text-neutral-300 italic">Not enough data yet</p>
                 )}
-              </div>
+              </Card>
             ))}
           </div>
         )}
@@ -193,59 +188,46 @@ export default function MemorySection() {
                     <pre className="text-[11px] text-neutral-600 font-mono whitespace-pre-wrap leading-relaxed pr-8">
                       {IMPORT_PROMPT}
                     </pre>
-                    <button
+                    <IconButton
                       onClick={() => { navigator.clipboard.writeText(IMPORT_PROMPT); toast.success('Prompt copied'); }}
-                      className="absolute top-3 right-3 p-1.5 text-neutral-400 hover:text-neutral-600 transition-colors"
+                      className="absolute top-3 right-3"
                       title="Copy prompt"
                     >
                       <ClipboardDocumentIcon className="w-4 h-4" />
-                    </button>
+                    </IconButton>
                   </div>
                   <div className="flex justify-end gap-2 mt-4">
-                    <button
-                      onClick={closeModal}
-                      className="px-4 py-2 text-[13px] text-neutral-500 hover:text-neutral-700 transition-colors"
-                    >
+                    <Button variant="ghost" onClick={closeModal}>
                       Cancel
-                    </button>
-                    <button
-                      onClick={() => setImportStep(2)}
-                      className="px-4 py-2 text-[13px] bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
-                    >
+                    </Button>
+                    <Button onClick={() => setImportStep(2)}>
                       I have the response →
-                    </button>
+                    </Button>
                   </div>
                 </>
               ) : (
                 <>
-                  <textarea
-                    className="w-full h-40 p-3 text-[13px] border border-neutral-200 rounded-xl resize-none focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                  <Textarea
+                    className="h-40"
                     placeholder="Paste the AI's response here..."
                     value={pastedText}
                     onChange={e => setPastedText(e.target.value)}
                     autoFocus
                   />
                   <div className="flex items-center justify-between mt-4">
-                    <button
-                      onClick={() => setImportStep(1)}
-                      className="text-[13px] text-neutral-400 hover:text-neutral-600 transition-colors"
-                    >
+                    <Button variant="ghost" onClick={() => setImportStep(1)}>
                       ← Back
-                    </button>
+                    </Button>
                     <div className="flex gap-2">
-                      <button
-                        onClick={closeModal}
-                        className="px-4 py-2 text-[13px] text-neutral-500 hover:text-neutral-700 transition-colors"
-                      >
+                      <Button variant="ghost" onClick={closeModal}>
                         Cancel
-                      </button>
-                      <button
+                      </Button>
+                      <Button
                         onClick={handleImport}
                         disabled={!pastedText.trim() || importing}
-                        className="px-4 py-2 text-[13px] bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50"
                       >
                         {importing ? 'Importing…' : 'Import'}
-                      </button>
+                      </Button>
                     </div>
                   </div>
                 </>

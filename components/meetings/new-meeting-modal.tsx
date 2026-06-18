@@ -5,6 +5,7 @@ import { XMarkIcon, VideoCameraIcon } from '@heroicons/react/24/outline';
 import { toast } from 'sonner';
 import type { CalendarEvent } from '@/lib/types/meetings';
 import AttendeeInput, { type AttendeeChip } from './attendee-input';
+import { Button, IconButton, Input, Textarea, Select } from '@/components/ui';
 
 type Connection = { id: string; provider: string; email?: string };
 
@@ -167,57 +168,54 @@ export default function NewMeetingModal({ isOpen, onClose, onSuccess, initialDat
       <div className="relative w-full max-w-[360px] mx-4 bg-white rounded-lg shadow-xl flex flex-col max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-100">
           <h2 className="text-[14px] font-bold text-neutral-900">{isEdit ? 'Edit meeting' : 'New meeting'}</h2>
-          <button onClick={onClose} className="p-1 hover:bg-neutral-100 rounded-md transition-colors">
-            <XMarkIcon className="w-4 h-4 text-neutral-400" />
-          </button>
+          <IconButton size="sm" onClick={onClose}>
+            <XMarkIcon className="w-4 h-4" />
+          </IconButton>
         </div>
 
         <div className="px-4 py-4 space-y-2.5">
-          <input
+          <Input
             type="text"
             placeholder="Title"
             value={form.title}
             onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
             autoFocus
-            className="w-full text-[13px] border border-neutral-200 rounded-md px-3 py-2 outline-none focus:border-indigo-400 placeholder:text-neutral-400"
           />
 
           <div className="flex gap-2">
-            <input
+            <Input
               type="date"
               value={form.date}
               onChange={e => setForm(f => ({ ...f, date: e.target.value }))}
-              className="flex-1 text-[13px] border border-neutral-200 rounded-md px-3 py-2 outline-none focus:border-indigo-400"
+              className="flex-1"
             />
-            <input
+            <Input
               type="time"
               value={form.time}
               onChange={e => setForm(f => ({ ...f, time: e.target.value }))}
-              className="w-[100px] text-[13px] border border-neutral-200 rounded-md px-3 py-2 outline-none focus:border-indigo-400"
+              className="w-[100px]"
             />
           </div>
 
-          <select
+          <Select
             value={form.duration}
             onChange={e => setForm(f => ({ ...f, duration: Number(e.target.value) }))}
-            className="w-full text-[13px] border border-neutral-200 rounded-md px-3 py-2 outline-none focus:border-indigo-400 bg-white"
           >
             {DURATION_OPTIONS.map(d => (
               <option key={d} value={d}>{d} min</option>
             ))}
-          </select>
+          </Select>
 
           <AttendeeInput
             value={form.attendees}
             onChange={attendees => setForm(f => ({ ...f, attendees }))}
           />
 
-          <textarea
+          <Textarea
             rows={2}
             placeholder="Notes (optional)"
             value={form.notes}
             onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
-            className="w-full text-[13px] border border-neutral-200 rounded-md px-3 py-2 outline-none focus:border-indigo-400 placeholder:text-neutral-400 resize-none"
           />
 
           {/* Account picker — only when > 1 connection and not editing */}
@@ -269,19 +267,16 @@ export default function NewMeetingModal({ isOpen, onClose, onSuccess, initialDat
             <p className="text-[13px] text-green-600 font-medium">{isEdit ? 'Meeting updated ✓' : 'Invitation sent ✓'}</p>
           ) : (
             <div className="flex gap-2 pt-1">
-              <button
+              <Button
                 onClick={handleSubmit}
                 disabled={formState === 'sending'}
-                className="flex-1 py-2 text-[13px] font-semibold rounded-md bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                className="flex-1"
               >
                 {formState === 'sending' ? 'Saving…' : isEdit ? 'Save changes' : 'Send invitation'}
-              </button>
-              <button
-                onClick={onClose}
-                className="px-4 py-2 text-[13px] rounded-md text-neutral-500 hover:text-neutral-700 border border-neutral-200 hover:border-neutral-300 transition-colors"
-              >
+              </Button>
+              <Button variant="secondary" onClick={onClose}>
                 Cancel
-              </button>
+              </Button>
             </div>
           )}
         </div>

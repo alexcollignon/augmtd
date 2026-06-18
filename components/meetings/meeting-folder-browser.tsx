@@ -9,6 +9,7 @@ import {
   PlusIcon,
 } from '@heroicons/react/24/outline';
 import { toast } from 'sonner';
+import { Button, IconButton, EmptyState } from '@/components/ui';
 import type { DriveFolder } from '@/lib/types/drive';
 import TranscriptListCard from '@/components/meetings/transcript-list-card';
 
@@ -189,24 +190,26 @@ export default function MeetingFolderBrowser({
                 placeholder="Folder name"
                 className="border border-neutral-200 px-2 py-1 text-[12.5px] focus:outline-none focus:border-indigo-400 w-36"
               />
-              <button onClick={handleCreateFolder} className="px-2 py-1 bg-indigo-600 text-white text-[12px]">
+              <Button onClick={handleCreateFolder} size="sm">
                 Create
-              </button>
-              <button
+              </Button>
+              <Button
                 onClick={() => { setNewFolderOpen(false); setNewFolderName(''); }}
-                className="px-2 py-1 text-neutral-500 text-[12px] border border-neutral-200 hover:bg-neutral-50"
+                variant="secondary"
+                size="sm"
               >
                 Cancel
-              </button>
+              </Button>
             </div>
           ) : (
-            <button
+            <Button
               onClick={() => setNewFolderOpen(true)}
-              className="flex items-center gap-1 px-2.5 py-1.5 text-[12.5px] text-neutral-600 border border-neutral-200 hover:bg-neutral-50 transition-colors"
+              variant="secondary"
+              size="sm"
             >
               <FolderIcon className="w-3.5 h-3.5" />
               New folder
-            </button>
+            </Button>
           )}
         </div>
       </div>
@@ -256,33 +259,35 @@ export default function MeetingFolderBrowser({
                   <div className="fixed inset-0 z-20" onClick={() => { setMenuOpenId(null); setConfirmDeleteId(null); }} />
                 )}
                 <div className="relative opacity-0 group-hover:opacity-100 transition-opacity">
-                  <button
+                  <IconButton
                     onClick={(e) => {
                       e.stopPropagation();
                       setMenuOpenId(menuOpenId === folder.id ? null : folder.id);
                     }}
-                    className="p-1 hover:bg-neutral-100 rounded"
+                    size="sm"
                   >
                     <EllipsisHorizontalIcon className="w-4 h-4 text-neutral-400" />
-                  </button>
+                  </IconButton>
                   {menuOpenId === folder.id && (
                     <div className="absolute right-0 top-full mt-1 w-44 bg-white border border-neutral-200 shadow-lg z-30 py-1">
                       {confirmDeleteId === folder.id ? (
                         <div className="px-3 py-2">
                           <p className="text-[11.5px] text-neutral-600 mb-2">Delete this folder?</p>
                           <div className="flex items-center gap-1.5">
-                            <button
+                            <Button
                               onClick={() => { handleDeleteFolder(folder.id); setMenuOpenId(null); setConfirmDeleteId(null); }}
-                              className="px-2.5 py-1 bg-red-600 text-white text-[11px] font-medium hover:bg-red-700 transition-colors"
+                              variant="danger"
+                              size="sm"
                             >
                               Delete
-                            </button>
-                            <button
+                            </Button>
+                            <Button
                               onClick={() => setConfirmDeleteId(null)}
-                              className="px-2.5 py-1 text-[11px] text-neutral-500 border border-neutral-200 hover:bg-neutral-50 transition-colors"
+                              variant="secondary"
+                              size="sm"
                             >
                               Cancel
-                            </button>
+                            </Button>
                           </div>
                         </div>
                       ) : (
@@ -402,26 +407,20 @@ export default function MeetingFolderBrowser({
 
       {/* Empty state */}
       {isEmpty && (
-        <div className="py-8 text-center border border-dashed border-neutral-200">
-          <FolderIcon className="w-7 h-7 text-neutral-300 mx-auto mb-2" />
-          <p className="text-[13px] text-neutral-500 font-medium">
-            {currentFolderId ? 'This folder is empty' : 'No folders yet'}
-          </p>
-          <p className="text-[12px] text-neutral-400 mt-1">
-            {currentFolderId
-              ? 'Move meetings here using the folder icon on any meeting.'
-              : 'Create a folder to start organising your meetings.'}
-          </p>
-          {!currentFolderId && (
-            <button
-              onClick={() => setNewFolderOpen(true)}
-              className="inline-flex items-center gap-1.5 mt-3 px-3 py-1.5 text-[12px] font-medium text-indigo-600 border border-indigo-200 hover:bg-indigo-50 transition-colors"
-            >
+        <EmptyState
+          bordered
+          icon={FolderIcon}
+          title={currentFolderId ? 'This folder is empty' : 'No folders yet'}
+          description={currentFolderId
+            ? 'Move meetings here using the folder icon on any meeting.'
+            : 'Create a folder to start organising your meetings.'}
+          action={!currentFolderId ? (
+            <Button onClick={() => setNewFolderOpen(true)} variant="soft" size="sm">
               <PlusIcon className="w-3.5 h-3.5" />
               New folder
-            </button>
-          )}
-        </div>
+            </Button>
+          ) : undefined}
+        />
       )}
     </section>
   );

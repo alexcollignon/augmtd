@@ -51,7 +51,7 @@ export default function FolderEmailList({ folderName, emails, loading, selectedI
             <div
               key={email.id}
               onClick={() => onSelect(email)}
-              className={`rounded-md px-3 py-1.5 cursor-pointer transition-colors ${isSelected ? 'bg-indigo-50' : 'bg-white hover:bg-neutral-50'}`}
+              className={`rounded-lg px-3 py-1.5 cursor-pointer transition-colors ${isSelected ? 'bg-indigo-50' : 'bg-white hover:bg-neutral-50'}`}
             >
               <div className="flex items-baseline justify-between gap-2 mb-0.5">
                 <span className={`text-[12px] font-semibold truncate ${isSelected ? 'text-indigo-900' : 'text-neutral-900'}`}>
@@ -69,7 +69,7 @@ export default function FolderEmailList({ folderName, emails, loading, selectedI
           <div
             key={email.id}
             onClick={() => onSelect(email)}
-            className={`rounded-md px-3 py-3 cursor-pointer transition-colors ${isSelected ? 'bg-indigo-50' : 'bg-white hover:bg-neutral-50'}`}
+            className={`rounded-lg px-3 py-3 cursor-pointer transition-colors ${isSelected ? 'bg-indigo-50' : 'bg-white hover:bg-neutral-50'}`}
           >
             <div className="flex items-center justify-between gap-2 mb-0.5">
               <span className={`text-[13px] font-semibold truncate ${isSelected ? 'text-indigo-900' : 'text-neutral-900'}`}>

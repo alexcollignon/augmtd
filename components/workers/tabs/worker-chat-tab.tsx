@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { PlusIcon, PaperAirplaneIcon } from '@heroicons/react/24/outline';
+import { IconButton } from '@/components/ui';
 import { ArtifactPanel } from '@/components/workers/artifact-panel';
 import type { DocumentArtifact } from '@/lib/types/inbox';
 
@@ -259,13 +260,9 @@ export function WorkerChatTab({ worker, initialThreads, initialMessages, initial
             <span className="text-[10.5px] font-semibold text-neutral-400 uppercase tracking-wider whitespace-nowrap">
               Conversations
             </span>
-            <button
-              onClick={() => handleCreateThread()}
-              className="p-1 rounded-md text-neutral-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors"
-              title="New conversation"
-            >
+            <IconButton size="sm" onClick={() => handleCreateThread()} title="New conversation">
               <PlusIcon className="w-3.5 h-3.5" />
-            </button>
+            </IconButton>
           </div>
           <div className="flex-1 overflow-y-auto">
             <WorkerThreadList

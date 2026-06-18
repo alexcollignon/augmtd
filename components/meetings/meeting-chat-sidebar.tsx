@@ -2,6 +2,7 @@
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { PaperAirplaneIcon, SparklesIcon, ArrowTopRightOnSquareIcon, ChatBubbleLeftRightIcon, ChevronRightIcon, CalendarIcon } from '@heroicons/react/24/outline';
+import { Button, IconButton } from '@/components/ui';
 
 interface ChatMessage {
   role: 'user' | 'assistant';
@@ -155,14 +156,16 @@ function WorkflowChip({ workflow, onOpenWorkflow }: {
 }) {
   const [clicked, setClicked] = useState(false);
   return (
-    <button
+    <Button
+      variant="soft"
+      size="sm"
       onClick={() => { if (clicked) return; setClicked(true); onOpenWorkflow(workflow.prefillTitle ?? '', workflow.skill); }}
       disabled={clicked}
-      className="inline-flex items-center gap-1.5 mt-2 px-3 py-1.5 bg-indigo-50 rounded-lg text-[12px] text-indigo-700 hover:bg-indigo-100 transition-colors disabled:opacity-50"
+      className="mt-2"
     >
       <SparklesIcon className="w-3 h-3 flex-shrink-0" />
       {workflow.prefillTitle ? `Start: ${workflow.prefillTitle} →` : 'Open workflow →'}
-    </button>
+    </Button>
   );
 }
 
@@ -185,13 +188,15 @@ function ProcessChip({ process, onOpenProcess }: {
 function ReplyDraftButton({ body }: { body: string }) {
   const [state, setState] = useState<'idle' | 'copied'>('idle');
   return (
-    <button
+    <Button
+      variant="soft"
+      size="sm"
       onClick={() => { navigator.clipboard.writeText(body); setState('copied'); setTimeout(() => setState('idle'), 2000); }}
-      className="inline-flex items-center gap-1.5 mt-2 px-3 py-1.5 bg-indigo-50 rounded-lg text-[12px] text-indigo-700 hover:bg-indigo-100 transition-colors"
+      className="mt-2"
     >
       <PaperAirplaneIcon className="w-3 h-3 flex-shrink-0" />
       {state === 'copied' ? 'Copied ✓' : 'Copy draft →'}
-    </button>
+    </Button>
   );
 }
 
@@ -337,9 +342,9 @@ export default function MeetingChatSidebar({
               <ChatBubbleLeftRightIcon className="w-3.5 h-3.5" />
             </div>
           </div>
-          <button onClick={onClose} className="p-1 text-neutral-400 hover:text-neutral-600 transition-colors">
+          <IconButton onClick={onClose} size="sm">
             <ChevronRightIcon className="w-3.5 h-3.5" />
-          </button>
+          </IconButton>
         </div>
 
         {/* Messages */}

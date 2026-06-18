@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { TrashIcon } from '@heroicons/react/24/outline';
+import { Button, Input, Select } from '@/components/ui';
 
 interface Connection {
   id: string;
@@ -101,10 +102,10 @@ export default function DataManagementSection({ connections, userEmail }: DataMa
       )}
 
       <div className="flex items-center gap-3">
-        <select
+        <Select
           value={selectedScope}
           onChange={e => { setSelectedScope(e.target.value); setConfirming(false); setResult(null); }}
-          className="flex-1 max-w-xs px-3 py-2 border border-neutral-200 rounded-lg text-[13px] text-neutral-900 bg-white focus:outline-none focus:border-neutral-400"
+          className="flex-1 max-w-xs"
           disabled={deleting}
         >
           <option value="all">All accounts</option>
@@ -113,7 +114,7 @@ export default function DataManagementSection({ connections, userEmail }: DataMa
               {conn.metadata?.email || conn.provider} ({conn.provider})
             </option>
           ))}
-        </select>
+        </Select>
 
         {!confirming && (
           <button
@@ -137,20 +138,12 @@ export default function DataManagementSection({ connections, userEmail }: DataMa
             {selectedScope === 'all' ? ', and knowledge base files' : ''}. This cannot be undone.
           </p>
           <div className="flex items-center gap-2">
-            <button
-              onClick={handleConfirm}
-              disabled={deleting}
-              className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-medium text-[13px] rounded-lg transition-colors disabled:opacity-60"
-            >
+            <Button variant="danger" onClick={handleConfirm} disabled={deleting}>
               {deleting ? 'Deleting…' : 'Confirm delete'}
-            </button>
-            <button
-              onClick={() => setConfirming(false)}
-              disabled={deleting}
-              className="px-4 py-2 border border-neutral-200 text-neutral-600 hover:bg-neutral-50 font-medium text-[13px] rounded-lg transition-colors"
-            >
+            </Button>
+            <Button variant="secondary" onClick={() => setConfirming(false)} disabled={deleting}>
               Cancel
-            </button>
+            </Button>
           </div>
         </div>
       )}
@@ -180,34 +173,26 @@ export default function DataManagementSection({ connections, userEmail }: DataMa
               <label className="block text-[11px] font-semibold text-red-700 uppercase tracking-wide mb-1.5">
                 Type <span className="font-mono font-bold">{userEmail}</span> to confirm
               </label>
-              <input
+              <Input
                 ref={confirmInputRef}
                 type="email"
                 value={confirmEmail}
                 onChange={e => { setConfirmEmail(e.target.value); setDeleteError(''); }}
                 onKeyDown={e => e.key === 'Enter' && emailConfirmed && handleDeleteAccount()}
                 placeholder={userEmail}
-                className="w-full px-3 py-2 text-[13px] border border-red-200 rounded-lg focus:outline-none focus:border-red-400 placeholder:text-red-200 bg-white"
+                className="border-red-200 focus:border-red-400 placeholder:text-red-200"
               />
             </div>
             {deleteError && (
               <p className="text-[12px] text-red-600">{deleteError}</p>
             )}
             <div className="flex gap-2">
-              <button
-                onClick={() => setDeleteAccountOpen(false)}
-                disabled={deletingAccount}
-                className="px-4 py-2 border border-neutral-200 text-neutral-600 hover:bg-neutral-50 font-medium text-[13px] rounded-lg transition-colors disabled:opacity-50 bg-white"
-              >
+              <Button variant="secondary" onClick={() => setDeleteAccountOpen(false)} disabled={deletingAccount}>
                 Cancel
-              </button>
-              <button
-                onClick={handleDeleteAccount}
-                disabled={!emailConfirmed || deletingAccount}
-                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-medium text-[13px] rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-              >
+              </Button>
+              <Button variant="danger" onClick={handleDeleteAccount} disabled={!emailConfirmed || deletingAccount}>
                 {deletingAccount ? 'Deleting…' : 'Delete my account'}
-              </button>
+              </Button>
             </div>
           </div>
         )}

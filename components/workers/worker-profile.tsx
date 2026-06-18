@@ -14,6 +14,7 @@ import { WorkerKnowledgeTab } from '@/components/workers/tabs/worker-knowledge-t
 import { WorkerActivityTab } from '@/components/workers/tabs/worker-activity-tab';
 import { WorkerTasksTab } from '@/components/workers/tabs/worker-tasks-tab';
 import { WorkerDocumentsTab } from '@/components/workers/tabs/worker-documents-tab';
+import { TabBar } from '@/components/ui';
 import type { Worker, WorkerThread } from '@/app/workers/workers-page-client';
 
 type Tab = 'chat' | 'knowledge' | 'tasks' | 'documents' | 'activity';
@@ -70,23 +71,8 @@ export function WorkerProfile({ worker, initialThreads, initialMessages, initial
     <div className="flex-1 flex flex-col overflow-hidden rounded-2xl bg-white shadow-sm">
 
       {/* Tab bar */}
-      <div className="flex-shrink-0 border-b border-neutral-100 px-2 pt-1">
-        <div className="flex gap-0">
-          {TABS.map(tab => (
-            <button
-              key={tab.id}
-              onClick={() => handleTabChange(tab.id)}
-              className={`flex items-center gap-1.5 px-3.5 py-2.5 text-[12.5px] font-medium border-b-2 transition-colors -mb-px ${
-                activeTab === tab.id
-                  ? 'border-indigo-500 text-indigo-600'
-                  : 'border-transparent text-neutral-400 hover:text-neutral-600'
-              }`}
-            >
-              <tab.icon className="w-3.5 h-3.5 flex-shrink-0" />
-              {tab.label}
-            </button>
-          ))}
-        </div>
+      <div className="flex-shrink-0 pt-1">
+        <TabBar tabs={TABS} active={activeTab} onChange={handleTabChange} />
       </div>
 
       {/* Tab content — lazy-mount on first visit, then keep alive with CSS hide */}

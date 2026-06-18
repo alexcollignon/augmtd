@@ -13,6 +13,7 @@ import {
   MagnifyingGlassIcon,
   InformationCircleIcon,
 } from '@heroicons/react/24/outline';
+import { Button } from '@/components/ui';
 import type { Worker } from '@/app/workers/workers-page-client';
 
 const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -191,18 +192,16 @@ export function WorkersSetupView({
 
                 {/* Toggle button */}
                 <div className="px-4 pb-4 pt-3 mt-auto">
-                  <button
+                  <Button
+                    variant={isEnabled ? 'secondary' : 'primary'}
+                    size="sm"
                     onClick={() => handleToggle(worker)}
                     disabled={isToggling}
-                    className={`w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-[12px] font-medium transition-colors disabled:opacity-50 ${
-                      isEnabled
-                        ? 'bg-neutral-100 text-neutral-600 hover:bg-neutral-200'
-                        : 'bg-indigo-600 text-white hover:bg-indigo-700'
-                    }`}
+                    className="w-full"
                   >
                     {isEnabled && <CheckIcon className="w-3.5 h-3.5" />}
                     {isToggling ? '…' : isEnabled ? 'Added' : 'Add'}
-                  </button>
+                  </Button>
                 </div>
               </div>
             );
@@ -212,12 +211,9 @@ export function WorkersSetupView({
         {/* CTA */}
         {enabledCount > 0 && (
           <div className="text-center">
-            <button
-              onClick={onEnterWorkspace}
-              className="px-6 py-2.5 rounded-xl bg-indigo-600 text-white text-[13px] font-medium hover:bg-indigo-700 transition-colors"
-            >
+            <Button onClick={onEnterWorkspace} className="px-6 py-2.5">
               Go to workspace →
-            </button>
+            </Button>
           </div>
         )}
 
