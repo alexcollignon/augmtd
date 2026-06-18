@@ -1,12 +1,18 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { DocumentTextIcon, SparklesIcon } from '@heroicons/react/24/outline';
+import { useState, useEffect, useCallback } from 'react';
+import { DocumentTextIcon, SparklesIcon, CheckIcon, AcademicCapIcon } from '@heroicons/react/24/outline';
 
 interface KBFile {
   id: string;
   name: string;
   knowledge_file_id: string;
+}
+
+interface LibrarySkill {
+  id: string;
+  name: string;
+  when_to_use: string | null;
 }
 
 interface WorkerKnowledgeTabProps {
@@ -25,6 +31,11 @@ export function WorkerKnowledgeTab({ workerId, workerName }: WorkerKnowledgeTabP
   const [savedAt, setSavedAt] = useState<Date | null>(null);
   const [isDirty, setIsDirty] = useState(false);
 
+  // Skills: the user's whole library + which ids are assigned to this worker.
+  const [librarySkills, setLibrarySkills] = useState<LibrarySkill[]>([]);
+  const [assignedSkillIds, setAssignedSkillIds] = useState<Set<string>>(new Set());
+  const [savingSkills, setSavingSkills] = useState(false);
+
   useEffect(() => {
     setIsLoading(true);
     setIsDirty(false);
@@ -32,13 +43,33 @@ export function WorkerKnowledgeTab({ workerId, workerName }: WorkerKnowledgeTabP
     Promise.all([
       fetch(`/api/agents/${workerId}`).then(r => r.json()),
       fetch(`/api/agents/${workerId}/knowledge`).then(r => r.json()),
-    ]).then(([{ agent }, { sources }]) => {
+      fetch('/api/skills').then(r => r.json()),
+      fetch(`/api/agents/${workerId}/skills`).then(r => r.json()),
+    ]).then(([{ agent }, { sources }, lib, assigned]) => {
       setUserPreferences(agent?.user_preferences ?? '');
       setMemoryText(agent?.memory_text ?? null);
       setKbFiles(sources ?? []);
+      setLibrarySkills((lib?.skills ?? []).map((s: { id: string; name: string; when_to_use: string | null }) => ({ id: s.id, name: s.name, when_to_use: s.when_to_use })));
+      setAssignedSkillIds(new Set((assigned?.skills ?? []).map((s: { id: string }) => s.id)));
       setIsLoading(false);
     }).catch(() => setIsLoading(false));
   }, [workerId]);
+
+  const toggleSkill = useCallback(async (skillId: string) => {
+    const next = new Set(assignedSkillIds);
+    if (next.has(skillId)) next.delete(skillId); else next.add(skillId);
+    setAssignedSkillIds(next); // optimistic
+    setSavingSkills(true);
+    try {
+      await fetch(`/api/agents/${workerId}/skills`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ skill_ids: [...next] }),
+      });
+    } finally {
+      setSavingSkills(false);
+    }
+  }, [assignedSkillIds, workerId]);
 
   async function handleSave() {
     if (!isDirty || isSaving) return;
@@ -97,8 +128,8 @@ export function WorkerKnowledgeTab({ workerId, workerName }: WorkerKnowledgeTabP
           <div className="flex items-start justify-between mb-3">
             <div>
               <h2 className="text-[13px] font-semibold text-neutral-800">Your preferences</h2>
-              <p className="text-[11.5px] text-neutral-400 mt-0.5 max-w-[420px]">
-                Tell {workerName} what matters to you — communication style, priorities, what to ignore, working hours. This is your personal context, only visible to your worker.
+              <p className="text-[11.5px] text-neutral-400 mt-0.5">
+                Your style, priorities, and working hours — only {workerName} sees this.
               </p>
             </div>
             <div className="flex items-center gap-2 flex-shrink-0 ml-4">
@@ -178,6 +209,54 @@ export function WorkerKnowledgeTab({ workerId, workerName }: WorkerKnowledgeTabP
             <div className="rounded-xl border border-neutral-100 bg-neutral-50 px-4 py-5 text-center">
               <p className="text-[12.5px] text-neutral-400">
                 Memory builds automatically as you interact with {workerName}
+              </p>
+            </div>
+          )}
+        </section>
+
+        {/* Skills */}
+        <section>
+          <div className="flex items-start justify-between mb-3">
+            <div>
+              <div className="flex items-center gap-1.5">
+                <AcademicCapIcon className="w-3.5 h-3.5 text-neutral-400" />
+                <h2 className="text-[13px] font-semibold text-neutral-800">Skills</h2>
+              </div>
+              <p className="text-[11.5px] text-neutral-400 mt-0.5">
+                Reusable ways of working {workerName} applies when relevant.
+              </p>
+            </div>
+            {savingSkills && <span className="text-[11px] text-neutral-400 flex-shrink-0 ml-4">Saving…</span>}
+          </div>
+          {librarySkills.length > 0 ? (
+            <div className="rounded-xl border border-neutral-200 overflow-hidden divide-y divide-neutral-100">
+              {librarySkills.map(skill => {
+                const on = assignedSkillIds.has(skill.id);
+                return (
+                  <button
+                    key={skill.id}
+                    onClick={() => toggleSkill(skill.id)}
+                    className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-neutral-50 transition-colors"
+                  >
+                    <div className={`w-4 h-4 rounded flex items-center justify-center flex-shrink-0 transition-colors ${
+                      on ? 'bg-indigo-600' : 'border border-neutral-300'
+                    }`}>
+                      {on && <CheckIcon className="w-3 h-3 text-white" strokeWidth={3} />}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className={`text-[13px] truncate ${on ? 'text-neutral-800 font-medium' : 'text-neutral-600'}`}>{skill.name}</p>
+                      {skill.when_to_use && (
+                        <p className="text-[11px] text-neutral-400 truncate mt-0.5">{skill.when_to_use}</p>
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="rounded-xl border border-neutral-100 bg-neutral-50 px-4 py-5 text-center">
+              <p className="text-[12.5px] text-neutral-400">
+                No skills in your library yet — create one from the Skills tab, then assign it here.
               </p>
             </div>
           )}

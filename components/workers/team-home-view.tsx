@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   DocumentTextIcon, TableCellsIcon, PresentationChartBarIcon, EnvelopeIcon,
-  CheckCircleIcon, XCircleIcon, ClockIcon, ArrowRightIcon,
+  CheckCircleIcon, XCircleIcon, ClockIcon, ArrowRightIcon, ChatBubbleLeftRightIcon,
 } from '@heroicons/react/24/outline';
 
 const ROLE_AVATARS: Record<string, string> = {
@@ -11,6 +11,13 @@ const ROLE_AVATARS: Record<string, string> = {
   content_manager:    '/workers/sofia.png',
   linkedin_drafter:   '/workers/luca.png',
   research_analyst:   '/workers/max.png',
+};
+
+const ROLE_LABELS: Record<string, string> = {
+  personal_assistant: 'Personal Assistant',
+  content_manager:    'Content Strategist',
+  linkedin_drafter:   'LinkedIn Wizard',
+  research_analyst:   'Research Analyst',
 };
 
 interface WorkerLite { id: string; name: string; worker_role: string | null }
@@ -247,6 +254,32 @@ export function TeamHomeView({ userFirstName, onSelectWorker }: TeamHomeViewProp
           ) : null}
 
         </div>
+
+        {/* Your team — quick-launch into any coworker's chat (also fills the
+            page when there's little activity yet). */}
+        {data?.workers?.length ? (
+          <div className="mt-10">
+            <SectionLabel>Your team</SectionLabel>
+            <p className="text-[12.5px] text-neutral-400 mt-1 mb-3">Jump into a conversation with any coworker.</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {data.workers.map(w => (
+                <button
+                  key={w.id}
+                  onClick={() => onSelectWorker(w.id)}
+                  className="group flex items-center gap-3 p-4 rounded-2xl border border-neutral-200 bg-white hover:border-indigo-200 hover:shadow-[0_2px_12px_rgba(0,0,0,0.04)] transition-all text-left"
+                >
+                  <Avatar role={w.worker_role} name={w.name} />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[13.5px] font-medium text-neutral-800 truncate">{w.name}</p>
+                    <p className="text-[11.5px] text-neutral-400 truncate">{ROLE_LABELS[w.worker_role ?? ''] ?? 'Coworker'}</p>
+                  </div>
+                  <ChatBubbleLeftRightIcon className="w-4 h-4 text-neutral-300 group-hover:text-indigo-400 transition-colors flex-shrink-0" />
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
       </div>
     </div>
   );

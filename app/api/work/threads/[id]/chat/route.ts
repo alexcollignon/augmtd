@@ -6,6 +6,7 @@ import { buildChatSystemPrompt, detectModelFamily } from '@/lib/work/chat-system
 // Intent classifier removed — replaced by lightweight heuristic router below.
 // import { classifyIntent } from '@/lib/work/intent-classifier';
 import { buildUserContextBlock } from '@/lib/context/build-user-context';
+import { buildSkillsBlock } from '@/lib/work/worker-skills-context';
 import { buildKBContext } from '@/lib/knowledge/build-kb-context';
 import { getCalendarContext } from '@/lib/calendar/calendar-context';
 import { formatCalendarContextForChat } from '@/lib/calendar/format-calendar-context';
@@ -383,6 +384,13 @@ export async function POST(
           ].filter(Boolean).join('\n\n');
 
       contextParts.push(agentHeader);
+
+      // Assigned skills (workers only) — curated "how to produce X" prompt blocks.
+      // Same block the AgentOS bridge injects, so behaviour is identical on both paths.
+      if (isWorker) {
+        const skillsBlock = await buildSkillsBlock(supabase, agent.id);
+        if (skillsBlock) contextParts.push(skillsBlock);
+      }
 
       if (agent.memory_text?.trim()) {
         contextParts.push(
