@@ -11,6 +11,32 @@
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Admin = any;
 
+// ─── Name resolution (for pinning skills on tasks by name) ────────────────────
+// The model knows skill names (from context / list_skills), not UUIDs. These
+// turn names into the skill_ids stored on a workflow.
+
+/** Coerce an array or comma-separated string of names into a clean string[]. */
+export function normalizeSkillNames(v: unknown): string[] {
+  if (Array.isArray(v)) return v.map(x => String(x).trim()).filter(Boolean);
+  if (typeof v === 'string') return v.split(',').map(s => s.trim()).filter(Boolean);
+  return [];
+}
+
+/** Resolve skill names → IDs (user-scoped, exact then fuzzy). Dedupes. */
+export async function resolveSkillIdsByName(admin: Admin, userId: string, names: string[]): Promise<string[]> {
+  const ids: string[] = [];
+  for (const name of names) {
+    if (!name) continue;
+    let { data } = await admin.from('skills').select('id').eq('user_id', userId).ilike('name', name).limit(1);
+    if (!(data ?? [])[0]) {
+      ({ data } = await admin.from('skills').select('id').eq('user_id', userId).ilike('name', `%${name}%`).limit(1));
+    }
+    const id = (data ?? [])[0]?.id as string | undefined;
+    if (id) ids.push(id);
+  }
+  return [...new Set(ids)];
+}
+
 // ─── Definitions ──────────────────────────────────────────────────────────────
 
 export const listSkillsDefinition = {

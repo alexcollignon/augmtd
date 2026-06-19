@@ -54,7 +54,7 @@ def list_tasks(run_context: RunContext) -> str:
 
 
 @tool
-def create_task(run_context: RunContext, description: str) -> str:
+def create_task(run_context: RunContext, description: str, skill_names: Optional[str] = None) -> str:
     """Create a new scheduled automation task from a plain-language description.
     Include sources, what to produce, and the schedule. The system builds the full
     multi-step pipeline automatically.
@@ -62,8 +62,14 @@ def create_task(run_context: RunContext, description: str) -> str:
     Args:
         description: What the task does and when, e.g. "Every Monday 8am, scan my
             inbox for client emails and write a brief."
+        skill_names: Optional comma-separated skill names (see list_skills) to enforce
+            on this task's output, e.g. "Exec summary, Brand tone". Omit to use your
+            assigned skills automatically.
     """
-    return _call("create_task", run_context, description=description)
+    args = {"description": description}
+    if skill_names:
+        args["skill_names"] = skill_names
+    return _call("create_task", run_context, **args)
 
 
 @tool
@@ -85,10 +91,12 @@ def update_task(
     status: Optional[str] = None,
     output_language: Optional[str] = None,
     worker_instructions: Optional[str] = None,
+    skill_names: Optional[str] = None,
 ) -> str:
     """Edit an existing task in response to user feedback. Call get_task first.
-    Supports rename, pause/resume (status active|paused), output language, and
-    task-specific instructions. Act immediately — do not ask to confirm first.
+    Supports rename, pause/resume (status active|paused), output language,
+    task-specific instructions, and pinned skills. Act immediately — do not ask
+    to confirm first.
 
     Args:
         task_id: Task to update.
@@ -96,12 +104,16 @@ def update_task(
         status: "active" or "paused".
         output_language: BCP-47 code, e.g. "de", "pt", "fr".
         worker_instructions: Task-specific tone/persona overriding the worker default.
+        skill_names: Comma-separated skill names (see list_skills) to enforce on this
+            task's output. Pass an empty string to clear pinned skills (fall back to
+            your assigned skills).
     """
     args = {
         k: v for k, v in {
             "name": name, "status": status,
             "output_language": output_language,
             "worker_instructions": worker_instructions,
+            "skill_names": skill_names,
         }.items() if v is not None
     }
     return _call("update_task", run_context, task_id=task_id, **args)

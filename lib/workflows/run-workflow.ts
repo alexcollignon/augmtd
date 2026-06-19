@@ -279,6 +279,7 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
   let runError: string | null = null;
   const workerAgentId = (workflow as Workflow & { agent_id?: string }).agent_id ?? undefined;
   const workerInstructions = (workflow as Workflow & { worker_instructions?: string | null }).worker_instructions ?? null;
+  const skillIds = (workflow as Workflow & { skill_ids?: string[] }).skill_ids ?? undefined;
 
   for (let i = 0; i < steps.length; i++) {
     const step = steps[i];
@@ -294,6 +295,7 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
       workerAgentId,
       isLastStep: i === steps.length - 1,
       workerInstructions,
+      skillIds,
     });
     stepOutputs.push(out);
     if (out.error) {

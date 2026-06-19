@@ -74,7 +74,7 @@ export async function POST(request: NextRequest) {
 
       case 'create_task':
         if (!agent_id) return NextResponse.json({ error: 'agent_id required' }, { status: 400 });
-        result = await executeCreateTask(String(args.description ?? ''), agent_id, user_id, sb, ac);
+        result = await executeCreateTask(String(args.description ?? ''), agent_id, user_id, sb, ac, args.skill_names as string[] | string | undefined);
         break;
 
       case 'get_task':

@@ -11,6 +11,7 @@ import { buildUserContextBlock } from '@/lib/context/build-user-context';
 import { getCalendarContext } from '@/lib/calendar/calendar-context';
 import { formatCalendarContextForChat } from '@/lib/calendar/format-calendar-context';
 import { buildKBContext } from '@/lib/knowledge/build-kb-context';
+import { buildSkillsBlock, buildSkillsBlockByIds } from '@/lib/work/worker-skills-context';
 import { executeWebSearch, executeFetchUrl, executeRssFeed, executeLinkedInPost, executeBrowserFetch, executePtTenders, executeDeepResearch, executeWorkflowOutput, executeGetEmails, executeGetMeetingContext } from '@/lib/tools';
 import type { WorkflowStep, StepOutput, ToolStep, AIStep, AgentStep } from './types';
 
@@ -26,6 +27,7 @@ export interface StepContext {
   workerAgentId?: string;     // set when workflow.agent_id is non-null — injects worker identity into final AI step
   isLastStep?: boolean;       // true for the final step in the ordered list
   workerInstructions?: string | null; // task-specific tone/persona, injected between KB and step prompt
+  skillIds?: string[];        // task-pinned skill IDs (selector); empty/undefined → fall back to the worker's assigned skills
 }
 
 // ── Public entrypoint ─────────────────────────────────────────────────────────
@@ -194,6 +196,13 @@ async function executeAIStep(step: AIStep, ctx: StepContext): Promise<string> {
           langInstruction,
         ].filter(Boolean).join('\n\n'),
       ];
+
+      // Skills — the task's pinned skills if selected, else the worker's assigned
+      // skills (parity with chat). Enforced on the deliverable-producing step.
+      const skillsBlock = ctx.skillIds && ctx.skillIds.length > 0
+        ? await buildSkillsBlockByIds(ctx.supabase, ctx.userId, ctx.skillIds)
+        : await buildSkillsBlock(ctx.supabase, ctx.workerAgentId);
+      if (skillsBlock) parts.push(skillsBlock);
 
       if (row.memory_text?.trim()) {
         parts.push(`[MEMORY — things you've learned about this user]\n${row.memory_text.trim()}`);

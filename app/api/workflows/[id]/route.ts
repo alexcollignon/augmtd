@@ -51,6 +51,7 @@ export async function PATCH(
     pinned: boolean;
     agent_id: string | null;
     worker_instructions: string | null;
+    skill_ids: string[];
   }>;
   try { body = await request.json(); } catch { return NextResponse.json({ error: 'Invalid body' }, { status: 400 }); }
 

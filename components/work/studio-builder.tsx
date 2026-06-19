@@ -208,6 +208,7 @@ export function StudioBuilder({ workflow: initialWorkflow, agents, onClose, onBa
           status: workflow.status,
           agent_id: workflow.agent_id ?? null,
           worker_instructions: workflow.worker_instructions ?? null,
+          skill_ids: workflow.skill_ids ?? [],
         }),
       });
       if (res.ok) {
@@ -1010,6 +1011,21 @@ function IdentitySection({ workflow, patch, agents }: {
 }) {
   const colorBg = WORKFLOW_COLORS.find(c => c.key === workflow.color)?.bg ?? 'bg-indigo-500';
   const PreviewIcon = WORKFLOW_ICONS.find(i => i.key === workflow.icon)?.Icon ?? BoltIcon;
+
+  const [skills, setSkills] = useState<Array<{ id: string; name: string; when_to_use: string | null }>>([]);
+  useEffect(() => {
+    fetch('/api/skills')
+      .then(r => r.json())
+      .then(({ skills: lib }) => setSkills((lib ?? []).map((s: { id: string; name: string; when_to_use: string | null }) => ({ id: s.id, name: s.name, when_to_use: s.when_to_use }))))
+      .catch(() => {});
+  }, []);
+  const selectedSkillIds = new Set(workflow.skill_ids ?? []);
+  const toggleSkill = (id: string) => {
+    const next = new Set(selectedSkillIds);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    patch('skill_ids', [...next]);
+  };
+
   return (
     <div className="space-y-6">
       <SectionHeader title="Identity" subtitle="Name and appearance of this workflow." />
@@ -1092,6 +1108,29 @@ function IdentitySection({ workflow, patch, agents }: {
               className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400 resize-none leading-relaxed"
             />
             <p className="text-[11px] text-neutral-400 mt-1">Only applies to this task — does not change the worker&apos;s core identity.</p>
+          </Field>
+        )}
+        {workflow.agent_id && skills.length > 0 && (
+          <Field label="Skills to apply">
+            <div className="flex flex-wrap gap-1.5">
+              {skills.map(s => {
+                const on = selectedSkillIds.has(s.id);
+                return (
+                  <button
+                    key={s.id}
+                    type="button"
+                    onClick={() => toggleSkill(s.id)}
+                    title={s.when_to_use ?? undefined}
+                    className={`inline-flex items-center px-2.5 py-1 rounded-full text-[12px] font-medium transition-colors ${
+                      on ? 'bg-indigo-600 text-white' : 'bg-neutral-100 text-neutral-500 hover:bg-neutral-200'
+                    }`}
+                  >
+                    {s.name}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="text-[11px] text-neutral-400 mt-1">Enforced on this task&apos;s output. Leave empty to use the worker&apos;s assigned skills.</p>
           </Field>
         )}
       </div>

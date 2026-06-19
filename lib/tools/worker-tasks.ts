@@ -1,6 +1,7 @@
 import { generateWorkflowConfig } from '@/lib/workflows/generate-config';
 import { computeNextRun } from '@/lib/workflows/schedule';
 import { runWorkflow } from '@/lib/workflows/run-workflow';
+import { resolveSkillIdsByName, normalizeSkillNames } from '@/lib/tools/worker-skills';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { WorkflowStep, OutputConfig, WorkflowTrigger } from '@/lib/workflows/types';
 
@@ -25,6 +26,11 @@ export const createTaskDefinition = {
       description: {
         type: 'string',
         description: 'Plain-language description of what the task should do and when. Be specific: include sources, what to produce, and the schedule. Example: "Every Monday at 8am, scan my inbox for client emails and write a brief."',
+      },
+      skill_names: {
+        type: 'array',
+        items: { type: 'string' },
+        description: "Optional. Names of skills (from the library — see list_skills) to enforce on this task's output. Omit to use the worker's assigned skills automatically.",
       },
     },
     required: ['description'],
@@ -70,6 +76,11 @@ export const updateTaskDefinition = {
       output_title: { type: 'string', description: 'Title template for the output artifact. Use {{date}} for the run date, {{week_of}} for the week. Example: "AHK Briefing — {{week_of}}"' },
       output_notification: { type: 'string', enum: ['inbox_card', 'silent', 'email_digest'], description: 'How to notify when the task completes. inbox_card = appears in inbox; silent = no notification; email_digest = send by email' },
       worker_instructions: { type: 'string', description: 'Task-specific tone or persona instructions that override the worker default for this task only' },
+      skill_names: {
+        type: 'array',
+        items: { type: 'string' },
+        description: "Names of skills (from the library — see list_skills) to enforce on this task's output. Pass an empty array to clear pinned skills and fall back to the worker's assigned skills.",
+      },
       step_patch: {
         type: 'object',
         description: 'Edit a single step by its id. Read the step ids from get_task, identify the right step from its label and prompt, then patch only what needs to change. Safer than replacing the full steps array.',
@@ -250,6 +261,7 @@ export async function executeCreateTask(
   supabase: SupabaseClient,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   adminClient: any,
+  skillNames?: string[] | string,
 ): Promise<string> {
   // Fetch worker persona to shape the pipeline's AI step
   const { data: agent } = await adminClient
@@ -288,6 +300,11 @@ export async function executeCreateTask(
     if (d) nextRunAt = d.toISOString();
   }
 
+  // Resolve any pinned skill names → ids (omit → task uses the worker's assigned skills)
+  const skillIds = skillNames !== undefined
+    ? await resolveSkillIdsByName(adminClient, userId, normalizeSkillNames(skillNames))
+    : [];
+
   const { data: workflow, error } = await adminClient
     .from('workflows')
     .insert({
@@ -303,6 +320,7 @@ export async function executeCreateTask(
       steps: generated.steps,
       output_config: generated.output_config,
       next_run_at: nextRunAt,
+      ...(skillIds.length > 0 ? { skill_ids: skillIds } : {}),
     })
     .select('id, name, trigger')
     .single();
@@ -381,6 +399,7 @@ export async function executeUpdateTask(
     output_title?: string;
     output_notification?: string;
     worker_instructions?: string;
+    skill_names?: string[] | string;
     step_patch?: { step_id: string; label?: string; prompt?: string; config?: Record<string, unknown> };
     steps?: WorkflowStep[];
   },
@@ -405,6 +424,12 @@ export async function executeUpdateTask(
   if (fields.description !== undefined) { update.description = fields.description; changes.push('description updated'); }
   if (fields.status !== undefined) { update.status = fields.status; changes.push(fields.status === 'active' ? 'resumed' : 'paused'); }
   if (fields.worker_instructions !== undefined) { update.worker_instructions = fields.worker_instructions; changes.push('task instructions updated'); }
+
+  if (fields.skill_names !== undefined) {
+    const skillIds = await resolveSkillIdsByName(adminClient, userId, normalizeSkillNames(fields.skill_names));
+    update.skill_ids = skillIds;
+    changes.push(skillIds.length > 0 ? `skills pinned (${skillIds.length})` : 'skills cleared (using assigned)');
+  }
 
   if (fields.trigger !== undefined) {
     update.trigger = fields.trigger;
