@@ -104,6 +104,7 @@ export function WorkerTasksTab({ workerId, workerName, isActive, onOpenInChat }:
   const [sharingId, setSharingId] = useState<string | null>(null);
   const [usingTaskId, setUsingTaskId] = useState<string | null>(null);
   const [showNewTask, setShowNewTask] = useState(false);
+  const [buildingTasks, setBuildingTasks] = useState<Array<{ tempId: string; description: string; failed: boolean }>>([]);
   // Prefetched once so the New task modal can render its skill selector instantly.
   const [skillsLib, setSkillsLib] = useState<Array<{ id: string; name: string; when_to_use: string | null; assigned: boolean }>>([]);
 
@@ -268,10 +269,40 @@ export function WorkerTasksTab({ workerId, workerName, isActive, onOpenInChat }:
     }
   }
 
-  function handleTaskCreated(task: Task) {
-    setMyTasks(prev => [{ ...task, sharing_mode: null, is_owned_by_me: true }, ...prev]);
-    setShowNewTask(false);
-  }
+  // Build the pipeline in the background so the modal can close instantly and the
+  // user keeps using the app. A placeholder row shows progress in the task list.
+  const handleBuildTask = useCallback(async (payload: { description: string; workerInstructions: string | null; skillIds: string[] }) => {
+    const tempId = `building-${Date.now()}`;
+    setBuildingTasks(prev => [{ tempId, description: payload.description, failed: false }, ...prev]);
+    try {
+      const genRes = await fetch('/api/workflows/generate-from-description', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ description: payload.description, agent_id: workerId, worker_instructions: payload.workerInstructions }),
+      });
+      if (!genRes.ok) throw new Error('generate failed');
+      const { workflow: generated } = await genRes.json();
+
+      const createRes = await fetch('/api/workflows', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...generated,
+          agent_id: workerId,
+          status: 'active',
+          worker_instructions: generated.worker_instructions ?? payload.workerInstructions ?? null,
+          skill_ids: payload.skillIds,
+        }),
+      });
+      if (!createRes.ok) throw new Error('create failed');
+      const { workflow } = await createRes.json();
+
+      setMyTasks(prev => [{ ...workflow, sharing_mode: workflow.sharing_mode ?? null, is_owned_by_me: true }, ...prev]);
+      setBuildingTasks(prev => prev.filter(b => b.tempId !== tempId));
+    } catch {
+      setBuildingTasks(prev => prev.map(b => b.tempId === tempId ? { ...b, failed: true } : b));
+    }
+  }, [workerId]);
 
   if (isLoading) {
     return (
@@ -301,10 +332,18 @@ export function WorkerTasksTab({ workerId, workerName, isActive, onOpenInChat }:
           </div>
 
           {/* My tasks */}
-          {myTasks.length === 0 ? (
+          {myTasks.length === 0 && buildingTasks.length === 0 ? (
             <EmptyTasks workerName={workerName} workerId={workerId} onNew={() => setShowNewTask(true)} />
           ) : (
             <div className="rounded-xl border border-neutral-200 divide-y divide-neutral-100 mb-6">
+              {buildingTasks.map(b => (
+                <BuildingRow
+                  key={b.tempId}
+                  description={b.description}
+                  failed={b.failed}
+                  onDismiss={() => setBuildingTasks(prev => prev.filter(x => x.tempId !== b.tempId))}
+                />
+              ))}
               {myTasks.map(task => (
                 <TaskRow
                   key={task.id}
@@ -363,7 +402,7 @@ export function WorkerTasksTab({ workerId, workerName, isActive, onOpenInChat }:
           workerName={workerName}
           skills={skillsLib}
           onClose={() => setShowNewTask(false)}
-          onCreated={handleTaskCreated}
+          onSubmit={handleBuildTask}
         />
       )}
     </>
@@ -568,22 +607,18 @@ interface NewTaskModalProps {
   workerName: string;
   skills: Array<{ id: string; name: string; when_to_use: string | null; assigned: boolean }>;
   onClose: () => void;
-  onCreated: (task: Task) => void;
+  onSubmit: (payload: { description: string; workerInstructions: string | null; skillIds: string[] }) => void;
 }
 
-function NewTaskModal({ workerId, workerName, skills, onClose, onCreated }: NewTaskModalProps) {
+function NewTaskModal({ workerName, skills, onClose, onSubmit }: NewTaskModalProps) {
   const [description, setDescription] = useState('');
   const [taskInstructions, setTaskInstructions] = useState('');
   const [showInstructions, setShowInstructions] = useState(false);
-  const [status, setStatus] = useState<'idle' | 'generating' | 'creating'>('idle');
-  const [error, setError] = useState<string | null>(null);
   // Pre-select the skills already assigned to this worker (skills are prefetched
   // by the parent, so the selector renders immediately — no async pop-in).
   const [selectedSkillIds, setSelectedSkillIds] = useState<Set<string>>(
     () => new Set(skills.filter(s => s.assigned).map(s => s.id)),
   );
-
-  const isBusy = status !== 'idle';
 
   function toggleSkill(id: string) {
     setSelectedSkillIds(prev => {
@@ -593,60 +628,22 @@ function NewTaskModal({ workerId, workerName, skills, onClose, onCreated }: NewT
     });
   }
 
-  async function handleCreate() {
-    if (!description.trim() || isBusy) return;
-    setError(null);
-    setStatus('generating');
-
-    try {
-      const genRes = await fetch('/api/workflows/generate-from-description', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          description: description.trim(),
-          agent_id: workerId,
-          worker_instructions: taskInstructions.trim() || null,
-        }),
-      });
-      if (!genRes.ok) {
-        const { error: msg } = await genRes.json().catch(() => ({}));
-        throw new Error(msg ?? 'Could not generate a task from that description. Try rephrasing.');
-      }
-      const { workflow: generated } = await genRes.json();
-
-      setStatus('creating');
-
-      // If the selection is unchanged from the worker's assigned skills, store []
-      // so the task follows assignments dynamically; only pin when customized.
-      const assignedIds = new Set(skills.filter(s => s.assigned).map(s => s.id));
-      const sameAsAssigned = assignedIds.size === selectedSkillIds.size && [...selectedSkillIds].every(id => assignedIds.has(id));
-      const skillIdsToSave = sameAsAssigned ? [] : [...selectedSkillIds];
-
-      const createRes = await fetch('/api/workflows', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...generated,
-          agent_id: workerId,
-          status: 'active',
-          worker_instructions: generated.worker_instructions ?? null,
-          skill_ids: skillIdsToSave,
-        }),
-      });
-      if (!createRes.ok) throw new Error('Failed to save the task.');
-      const { workflow } = await createRes.json();
-      onCreated(workflow);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Something went wrong. Please try again.');
-      setStatus('idle');
-    }
+  // Hand the build off to the parent (runs in the background) and close instantly,
+  // so the user can keep using the app while the pipeline builds.
+  function handleCreate() {
+    if (!description.trim()) return;
+    // If the selection is unchanged from the worker's assigned skills, send []
+    // so the task follows assignments dynamically; only pin when customized.
+    const assignedIds = new Set(skills.filter(s => s.assigned).map(s => s.id));
+    const sameAsAssigned = assignedIds.size === selectedSkillIds.size && [...selectedSkillIds].every(id => assignedIds.has(id));
+    const skillIds = sameAsAssigned ? [] : [...selectedSkillIds];
+    onSubmit({ description: description.trim(), workerInstructions: taskInstructions.trim() || null, skillIds });
+    onClose();
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleCreate();
   }
-
-  const buttonLabel = status === 'generating' ? 'Building pipeline…' : status === 'creating' ? 'Saving…' : 'Create task';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 backdrop-blur-sm p-4">
@@ -659,7 +656,7 @@ function NewTaskModal({ workerId, workerName, skills, onClose, onCreated }: NewT
               Describe what {workerName} should do — and when.
             </p>
           </div>
-          <IconButton onClick={onClose} disabled={isBusy}>
+          <IconButton onClick={onClose}>
             <XMarkIcon className="w-4 h-4" />
           </IconButton>
         </div>
@@ -670,7 +667,6 @@ function NewTaskModal({ workerId, workerName, skills, onClose, onCreated }: NewT
             value={description}
             onChange={e => setDescription(e.target.value)}
             onKeyDown={handleKeyDown}
-            disabled={isBusy}
             placeholder={`e.g. "Every Monday morning, scan my inbox for client emails and write me a brief" or "Every Friday, search for industry news and summarise the top 5 stories"`}
             rows={4}
           />
@@ -685,10 +681,9 @@ function NewTaskModal({ workerId, workerName, skills, onClose, onCreated }: NewT
                     <button
                       key={s.id}
                       type="button"
-                      disabled={isBusy}
                       onClick={() => toggleSkill(s.id)}
                       title={s.when_to_use ?? undefined}
-                      className={`inline-flex items-center px-2.5 py-1 rounded-full text-[12px] font-medium transition-colors disabled:opacity-40 ${
+                      className={`inline-flex items-center px-2.5 py-1 rounded-full text-[12px] font-medium transition-colors ${
                         on ? 'bg-indigo-600 text-white' : 'bg-neutral-100 text-neutral-500 hover:bg-neutral-200'
                       }`}
                     >
@@ -705,8 +700,7 @@ function NewTaskModal({ workerId, workerName, skills, onClose, onCreated }: NewT
             <button
               type="button"
               onClick={() => setShowInstructions(true)}
-              disabled={isBusy}
-              className="text-[11.5px] text-neutral-400 hover:text-indigo-500 transition-colors disabled:opacity-40"
+              className="text-[11.5px] text-neutral-400 hover:text-indigo-500 transition-colors"
             >
               + Add tone / persona for this task
             </button>
@@ -716,7 +710,6 @@ function NewTaskModal({ workerId, workerName, skills, onClose, onCreated }: NewT
               <Textarea
                 value={taskInstructions}
                 onChange={e => setTaskInstructions(e.target.value)}
-                disabled={isBusy}
                 placeholder={`e.g. "Write in the style of a German financial journalist — terse, data-driven, no fluff."`}
                 rows={2}
               />
@@ -725,25 +718,44 @@ function NewTaskModal({ workerId, workerName, skills, onClose, onCreated }: NewT
           )}
 
           <p className="text-[11px] text-neutral-400">
-            AI builds a multi-step pipeline and detects the schedule automatically. ⌘↵ to submit.
+            {workerName} builds a multi-step pipeline and detects the schedule automatically — it&apos;ll keep working while you do. ⌘↵ to submit.
           </p>
-          {error && <p className="text-[12px] text-red-500">{error}</p>}
         </div>
 
         <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-neutral-100">
-          <Button variant="ghost" onClick={onClose} disabled={isBusy}>Cancel</Button>
-          <Button onClick={handleCreate} disabled={!description.trim() || isBusy}>
-            {isBusy && (
-              <svg className="animate-spin w-3.5 h-3.5" viewBox="0 0 24 24" fill="none">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-              </svg>
-            )}
-            {buttonLabel}
-          </Button>
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button onClick={handleCreate} disabled={!description.trim()}>Create task</Button>
         </div>
 
       </div>
+    </div>
+  );
+}
+
+// ─── Building placeholder ─────────────────────────────────────────────────────
+
+function BuildingRow({ description, failed, onDismiss }: { description: string; failed: boolean; onDismiss: () => void }) {
+  return (
+    <div className="flex items-center gap-3 px-4 py-3.5">
+      <div className="w-8 h-8 rounded-lg bg-neutral-100 flex items-center justify-center flex-shrink-0">
+        {failed ? (
+          <XMarkIcon className="w-4 h-4 text-rose-400" />
+        ) : (
+          <svg className="animate-spin w-4 h-4 text-indigo-500" viewBox="0 0 24 24" fill="none">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+          </svg>
+        )}
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="text-[13px] font-medium text-neutral-700 truncate">
+          {failed ? "Couldn't build this task — try again" : 'Building your task…'}
+        </p>
+        <p className="text-[11px] text-neutral-400 truncate mt-0.5">{description}</p>
+      </div>
+      {failed && (
+        <button onClick={onDismiss} className="text-[11.5px] text-neutral-400 hover:text-neutral-600 transition-colors flex-shrink-0">Dismiss</button>
+      )}
     </div>
   );
 }
