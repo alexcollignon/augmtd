@@ -103,6 +103,7 @@ export interface Workflow {
   pinned?: boolean;
   agent_id?: string | null;
   worker_instructions?: string | null;
+  skill_ids?: string[];            // task-pinned skills; empty → use the worker's assigned skills
   // Team sharing (populated by API)
   company_id?: string | null;
   shared_with_company?: boolean;

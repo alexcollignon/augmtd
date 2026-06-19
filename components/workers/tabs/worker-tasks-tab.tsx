@@ -104,6 +104,18 @@ export function WorkerTasksTab({ workerId, workerName, isActive, onOpenInChat }:
   const [sharingId, setSharingId] = useState<string | null>(null);
   const [usingTaskId, setUsingTaskId] = useState<string | null>(null);
   const [showNewTask, setShowNewTask] = useState(false);
+  // Prefetched once so the New task modal can render its skill selector instantly.
+  const [skillsLib, setSkillsLib] = useState<Array<{ id: string; name: string; when_to_use: string | null; assigned: boolean }>>([]);
+
+  useEffect(() => {
+    fetch('/api/skills')
+      .then(r => r.json())
+      .then(({ skills }) => setSkillsLib((skills ?? []).map((s: { id: string; name: string; when_to_use: string | null; workers?: Array<{ id: string }> }) => ({
+        id: s.id, name: s.name, when_to_use: s.when_to_use,
+        assigned: (s.workers ?? []).some(w => w.id === workerId),
+      }))))
+      .catch(() => {});
+  }, [workerId]);
 
   const load = useCallback(() => {
     setIsLoading(true);
@@ -349,6 +361,7 @@ export function WorkerTasksTab({ workerId, workerName, isActive, onOpenInChat }:
         <NewTaskModal
           workerId={workerId}
           workerName={workerName}
+          skills={skillsLib}
           onClose={() => setShowNewTask(false)}
           onCreated={handleTaskCreated}
         />
@@ -553,18 +566,32 @@ function TeamTaskRow({ task, isUsing, onUse }: { task: TeamTask; isUsing: boolea
 interface NewTaskModalProps {
   workerId: string;
   workerName: string;
+  skills: Array<{ id: string; name: string; when_to_use: string | null; assigned: boolean }>;
   onClose: () => void;
   onCreated: (task: Task) => void;
 }
 
-function NewTaskModal({ workerId, workerName, onClose, onCreated }: NewTaskModalProps) {
+function NewTaskModal({ workerId, workerName, skills, onClose, onCreated }: NewTaskModalProps) {
   const [description, setDescription] = useState('');
   const [taskInstructions, setTaskInstructions] = useState('');
   const [showInstructions, setShowInstructions] = useState(false);
   const [status, setStatus] = useState<'idle' | 'generating' | 'creating'>('idle');
   const [error, setError] = useState<string | null>(null);
+  // Pre-select the skills already assigned to this worker (skills are prefetched
+  // by the parent, so the selector renders immediately — no async pop-in).
+  const [selectedSkillIds, setSelectedSkillIds] = useState<Set<string>>(
+    () => new Set(skills.filter(s => s.assigned).map(s => s.id)),
+  );
 
   const isBusy = status !== 'idle';
+
+  function toggleSkill(id: string) {
+    setSelectedSkillIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
 
   async function handleCreate() {
     if (!description.trim() || isBusy) return;
@@ -589,6 +616,12 @@ function NewTaskModal({ workerId, workerName, onClose, onCreated }: NewTaskModal
 
       setStatus('creating');
 
+      // If the selection is unchanged from the worker's assigned skills, store []
+      // so the task follows assignments dynamically; only pin when customized.
+      const assignedIds = new Set(skills.filter(s => s.assigned).map(s => s.id));
+      const sameAsAssigned = assignedIds.size === selectedSkillIds.size && [...selectedSkillIds].every(id => assignedIds.has(id));
+      const skillIdsToSave = sameAsAssigned ? [] : [...selectedSkillIds];
+
       const createRes = await fetch('/api/workflows', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -597,6 +630,7 @@ function NewTaskModal({ workerId, workerName, onClose, onCreated }: NewTaskModal
           agent_id: workerId,
           status: 'active',
           worker_instructions: generated.worker_instructions ?? null,
+          skill_ids: skillIdsToSave,
         }),
       });
       if (!createRes.ok) throw new Error('Failed to save the task.');
@@ -640,6 +674,32 @@ function NewTaskModal({ workerId, workerName, onClose, onCreated }: NewTaskModal
             placeholder={`e.g. "Every Monday morning, scan my inbox for client emails and write me a brief" or "Every Friday, search for industry news and summarise the top 5 stories"`}
             rows={4}
           />
+
+          {skills.length > 0 && (
+            <div>
+              <label className="block text-[11.5px] font-medium text-neutral-500 mb-1.5">Skills to apply</label>
+              <div className="flex flex-wrap gap-1.5">
+                {skills.map(s => {
+                  const on = selectedSkillIds.has(s.id);
+                  return (
+                    <button
+                      key={s.id}
+                      type="button"
+                      disabled={isBusy}
+                      onClick={() => toggleSkill(s.id)}
+                      title={s.when_to_use ?? undefined}
+                      className={`inline-flex items-center px-2.5 py-1 rounded-full text-[12px] font-medium transition-colors disabled:opacity-40 ${
+                        on ? 'bg-indigo-600 text-white' : 'bg-neutral-100 text-neutral-500 hover:bg-neutral-200'
+                      }`}
+                    >
+                      {s.name}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="text-[11px] text-neutral-400 mt-1.5">Enforced when this task produces output. {workerName}&apos;s assigned skills are pre-selected.</p>
+            </div>
+          )}
 
           {!showInstructions ? (
             <button

@@ -22,7 +22,7 @@ export async function GET(request: NextRequest) {
   // RLS returns own workflows + shared company workflows automatically
   let query = supabase
     .from('workflows')
-    .select('id, user_id, name, description, icon, color, status, trigger, steps, output_config, last_run_at, next_run_at, created_at, updated_at, shared_with_company, sharing_mode, company_id, pinned, agent_id')
+    .select('id, user_id, name, description, icon, color, status, trigger, steps, output_config, last_run_at, next_run_at, created_at, updated_at, shared_with_company, sharing_mode, company_id, pinned, agent_id, worker_instructions, skill_ids')
     .order('updated_at', { ascending: false });
 
   if (companyTasks) {
@@ -89,6 +89,7 @@ export async function POST(request: NextRequest) {
     output_config?: OutputConfig;
     agent_id?: string | null;
     worker_instructions?: string | null;
+    skill_ids?: string[];
   };
   try { body = await request.json(); } catch { return NextResponse.json({ error: 'Invalid body' }, { status: 400 }); }
 
@@ -130,6 +131,7 @@ export async function POST(request: NextRequest) {
       next_run_at: nextRunAt,
       ...(body.agent_id !== undefined ? { agent_id: body.agent_id } : {}),
       ...(body.worker_instructions !== undefined ? { worker_instructions: body.worker_instructions } : {}),
+      ...(body.skill_ids !== undefined ? { skill_ids: body.skill_ids } : {}),
     })
     .select('*')
     .single();
