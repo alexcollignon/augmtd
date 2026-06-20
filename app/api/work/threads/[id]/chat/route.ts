@@ -1790,6 +1790,8 @@ async function executeChatTool(
         ...(typeof input.output_destination === 'string' ? { output_destination: input.output_destination } : {}),
         ...(typeof input.output_artifact_type === 'string' ? { output_artifact_type: input.output_artifact_type } : {}),
         ...(typeof input.output_title === 'string' ? { output_title: input.output_title } : {}),
+        ...(typeof input.output_slack_channel === 'string' ? { output_slack_channel: input.output_slack_channel } : {}),
+        ...(typeof input.output_report_mode === 'string' ? { output_report_mode: input.output_report_mode } : {}),
         ...(typeof input.output_notification === 'string' ? { output_notification: input.output_notification } : {}),
         ...(typeof input.worker_instructions === 'string' ? { worker_instructions: input.worker_instructions } : {}),
         ...(Array.isArray(input.skill_names) ? { skill_names: input.skill_names as string[] } : {}),

@@ -4,6 +4,7 @@ import { runWorkflow } from '@/lib/workflows/run-workflow';
 import { resolveSkillIdsByName, normalizeSkillNames } from '@/lib/tools/worker-skills';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { WorkflowStep, OutputConfig, WorkflowTrigger } from '@/lib/workflows/types';
+import { normalizeOutput } from '@/lib/workflows/types';
 
 // ─── Tool definitions ─────────────────────────────────────────────────────────
 
@@ -71,10 +72,11 @@ export const updateTaskDefinition = {
         required: ['type'],
       },
       output_language: { type: 'string', description: 'BCP-47 language code for output. Examples: "de" (German), "pt" (Portuguese), "fr" (French), "es" (Spanish)' },
-      output_destination: { type: 'string', enum: ['thread_message', 'artifact', 'multiple_artifacts'], description: 'Where the final output goes. thread_message = message in the run thread; artifact = saved document/spreadsheet/etc; multiple_artifacts = one artifact per output item' },
-      output_artifact_type: { type: 'string', enum: ['document', 'spreadsheet', 'presentation', 'email'], description: 'Type of artifact to create. Only relevant when output_destination is artifact or multiple_artifacts' },
-      output_title: { type: 'string', description: 'Title template for the output artifact. Use {{date}} for the run date, {{week_of}} for the week. Example: "AHK Briefing — {{week_of}}"' },
-      output_notification: { type: 'string', enum: ['inbox_card', 'silent', 'email_digest'], description: 'How to notify when the task completes. inbox_card = appears in inbox; silent = no notification; email_digest = send by email' },
+      output_destination: { type: 'string', enum: ['message', 'document', 'slack', 'email'], description: "The deliverable's single home. message = a message in the run thread; document = a saved document in Documents/Drive; slack = posted to a Slack channel; email = emailed. The app always keeps a record regardless." },
+      output_artifact_type: { type: 'string', enum: ['document', 'spreadsheet', 'presentation', 'email'], description: 'Document type — only when output_destination is document' },
+      output_title: { type: 'string', description: 'Title template for a document. Use {{date}} for the run date, {{week_of}} for the week. Example: "AHK Briefing — {{week_of}}"' },
+      output_slack_channel: { type: 'string', description: 'Slack channel (#name or id). The channel to post to when output_destination=slack, OR — for a document — a channel to also drop a link to the doc in. Resolve names via slack_list_channels.' },
+      output_report_mode: { type: 'string', enum: ['each_run', 'digest', 'silent'], description: 'How proactively you report back after a run. each_run = message the user after every run (default); digest = periodic summary; silent = no report.' },
       worker_instructions: { type: 'string', description: 'Task-specific tone or persona instructions that override the worker default for this task only' },
       skill_names: {
         type: 'array',
@@ -367,12 +369,15 @@ export async function executeGetTask(
   }).join('\n\n');
 
   const oc = t.output_config ?? {};
+  const norm = normalizeOutput(oc as OutputConfig);
   const outputLines = [
-    `  destination: ${oc.destination ?? 'thread_message'}`,
-    oc.artifact_type ? `  artifact_type: ${oc.artifact_type}` : null,
+    `  home: ${norm.home}`,
+    norm.home === 'document' && oc.artifact_type ? `  document_type: ${oc.artifact_type}` : null,
     oc.title_template ? `  title_template: ${oc.title_template}` : null,
-    `  notification: ${oc.notification_mode ?? 'inbox_card'}`,
-    oc.output_language ? `  language: ${oc.output_language}` : null,
+    norm.slackChannel ? `  slack_channel: ${norm.slackChannel}${norm.home === 'document' && norm.linkOut.slack ? ' (link-out)' : ''}` : null,
+    norm.linkOut.email ? `  also: emailed` : null,
+    `  report: ${norm.reportMode}`,
+    norm.outputLanguage ? `  language: ${norm.outputLanguage}` : null,
   ].filter(Boolean).join('\n');
 
   return [
@@ -397,7 +402,9 @@ export async function executeUpdateTask(
     output_destination?: string;
     output_artifact_type?: string;
     output_title?: string;
-    output_notification?: string;
+    output_slack_channel?: string;
+    output_report_mode?: string;
+    output_notification?: string;  // legacy alias → report_mode
     worker_instructions?: string;
     skill_names?: string[] | string;
     step_patch?: { step_id: string; label?: string; prompt?: string; config?: Record<string, unknown> };
@@ -447,15 +454,25 @@ export async function executeUpdateTask(
     || fields.output_destination !== undefined
     || fields.output_artifact_type !== undefined
     || fields.output_title !== undefined
+    || fields.output_slack_channel !== undefined
+    || fields.output_report_mode !== undefined
     || fields.output_notification !== undefined;
 
   if (hasOutputChange) {
-    const oc = { ...(row.output_config ?? {}) };
+    const oc = { ...(row.output_config ?? {}) } as OutputConfig;
     if (fields.output_language !== undefined) { oc.output_language = fields.output_language; changes.push(`language → ${fields.output_language}`); }
-    if (fields.output_destination !== undefined) { oc.destination = fields.output_destination as OutputConfig['destination']; changes.push(`destination → ${fields.output_destination}`); }
-    if (fields.output_artifact_type !== undefined) { oc.artifact_type = fields.output_artifact_type as OutputConfig['artifact_type']; changes.push(`artifact type → ${fields.output_artifact_type}`); }
+    if (fields.output_destination !== undefined) { oc.destination = fields.output_destination as OutputConfig['destination']; changes.push(`home → ${fields.output_destination}`); }
+    if (fields.output_artifact_type !== undefined) { oc.artifact_type = fields.output_artifact_type as OutputConfig['artifact_type']; changes.push(`document type → ${fields.output_artifact_type}`); }
     if (fields.output_title !== undefined) { oc.title_template = fields.output_title; changes.push(`title → "${fields.output_title}"`); }
-    if (fields.output_notification !== undefined) { oc.notification_mode = fields.output_notification as OutputConfig['notification_mode']; changes.push(`notification → ${fields.output_notification}`); }
+    if (fields.output_slack_channel !== undefined) {
+      oc.slack_channel = fields.output_slack_channel;
+      // On a document, a channel means "also drop a link there" (link-out, not the home).
+      if ((oc.destination ?? '') === 'document') oc.link_out = { ...(oc.link_out ?? {}), slack: true };
+      changes.push(`Slack channel → ${fields.output_slack_channel}`);
+    }
+    if (fields.output_report_mode !== undefined) { oc.report_mode = fields.output_report_mode as OutputConfig['report_mode']; changes.push(`report → ${fields.output_report_mode}`); }
+    // legacy alias
+    if (fields.output_notification !== undefined) { oc.report_mode = (fields.output_notification === 'silent' ? 'silent' : 'each_run'); changes.push(`report → ${oc.report_mode}`); }
     update.output_config = oc;
   }
 
