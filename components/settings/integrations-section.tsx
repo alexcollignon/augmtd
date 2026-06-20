@@ -15,6 +15,7 @@ interface Integration {
   connected: boolean;
   connectedCount?: number;   // slack: how many coworker apps connected
   connectedTotal?: number;   // slack: total coworker apps
+  apps?: { key: string; name: string; connected: boolean }[];  // slack: per-coworker apps
   status: string | null;
   metadata: { workspace_name?: string } | null;
   canManage: boolean;
@@ -78,16 +79,21 @@ export default function IntegrationsSection() {
   const handleConnect = useCallback(async (provider: string) => {
     setBusyProvider(provider);
     try {
-      // Slack = one app per coworker → connect each in sequence (one button, N approvals).
-      const keys = provider === 'slack' ? SLACK_APP_KEYS : [provider];
-      for (const key of keys) {
-        try { await connectOne(key); } catch { /* popup closed/blocked — keep going */ }
+      // Slack = one app per coworker. Connect ONE per click — browsers block popups
+      // opened after an await, so we can't loop all 4 from a single gesture.
+      let key = provider;
+      if (provider === 'slack') {
+        const slack = integrations.find(i => i.provider === 'slack');
+        const next = slack?.apps?.find(a => !a.connected);
+        if (!next) { setBusyProvider(null); return; }
+        key = next.key;
       }
+      try { await connectOne(key); } catch { /* popup closed/blocked */ }
       load();
     } finally {
       setBusyProvider(null);
     }
-  }, [connectOne, load]);
+  }, [connectOne, load, integrations]);
 
   const handleDisconnect = useCallback(async (provider: string) => {
     setBusyProvider(provider);
@@ -178,7 +184,9 @@ export default function IntegrationsSection() {
                     {busyProvider === i.provider
                       ? 'Connecting…'
                       : i.provider === 'slack'
-                        ? (i.connectedCount ? `Resume (${i.connectedCount}/${i.connectedTotal})` : 'Connect your team')
+                        ? (i.connectedCount
+                            ? `Connect ${i.apps?.find(a => !a.connected)?.name ?? 'next'} (${i.connectedCount}/${i.connectedTotal})`
+                            : 'Connect your team')
                         : 'Connect'}
                   </Button>
                 )}

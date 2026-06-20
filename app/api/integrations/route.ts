@@ -32,12 +32,18 @@ export async function GET() {
 
       // Slack = one card backed by one app per coworker; report progress across the set.
       if (i.provider === 'slack') {
-        const count = SLACK_APP_KEYS.filter(isActive).length;
+        const apps = SLACK_APP_KEYS.map(k => ({
+          key: k,
+          name: k.replace('slack-', '').replace(/^./, c => c.toUpperCase()),
+          connected: isActive(k),
+        }));
+        const count = apps.filter(a => a.connected).length;
         return {
           ...i,
           connected: count === SLACK_APP_KEYS.length,
           connectedCount: count,
           connectedTotal: SLACK_APP_KEYS.length,
+          apps,
           status: count > 0 ? 'active' : null,
           metadata: null,
           canManage,
