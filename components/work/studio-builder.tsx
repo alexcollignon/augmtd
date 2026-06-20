@@ -972,7 +972,7 @@ function OutputFlowCard({ output, stepNum: _stepNum, active, onClick }: {
     email_digest: 'email digest',
   };
   const title = output.title_template || destTitle[output.destination] || 'Output';
-  const subtitle = `${destTitle[output.destination] ?? output.destination} · ${notifLabel[output.notification_mode] ?? output.notification_mode}`;
+  const subtitle = `${destTitle[output.destination] ?? output.destination} · ${(output.notification_mode && notifLabel[output.notification_mode]) || output.report_mode || 'each run'}`;
   return (
     <div role="button" tabIndex={0}
       onClick={onClick} onKeyDown={e => e.key === 'Enter' && onClick()}

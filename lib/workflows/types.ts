@@ -59,24 +59,81 @@ export type WorkflowStep = ToolStep | AIStep | AgentStep;
 
 // ── Output ─────────────────────────────────────────────────────────────────────
 
+// The single HOME of a deliverable — where it lives + is consumed.
+export type OutputHome = 'message' | 'document' | 'slack' | 'email';
+
+// Legacy destination values (still read from old rows via normalizeOutput).
 export type OutputDestination =
-  | 'thread_message'        // final output becomes an assistant message in the run's thread
-  | 'artifact'              // final output materialised as a generated document
-  | 'multiple_artifacts'    // final output is an array; each item becomes its own artifact
-  | 'email_draft'           // final output drafted into the compose system (future)
-  | 'living_document';      // replaces a pinned artifact on the workflow (future)
+  | OutputHome
+  | 'thread_message'        // → message
+  | 'artifact'              // → document
+  | 'multiple_artifacts'    // → document
+  | 'email_draft'           // → message (never shipped)
+  | 'living_document';      // → document
 
 export type ArtifactType = 'document' | 'spreadsheet' | 'presentation' | 'email';
 
+// How proactively the coworker reports back after a run.
+export type ReportMode = 'each_run' | 'digest' | 'silent';
+
+// Legacy — superseded by ReportMode (read via normalizeOutput).
 export type NotificationMode = 'inbox_card' | 'silent' | 'email_digest';
 
 export interface OutputConfig {
   destination: OutputDestination;
   artifact_type?: ArtifactType;
-  title_template?: string;        // e.g. "AHK Briefing — {{date}}"
-  notification_mode: NotificationMode;
-  notification_email_ids?: string[]; // connection IDs to send email digest to; empty = none selected yet
-  output_language?: string;          // BCP-47 code — injected into all AI steps; default 'en'
+  title_template?: string;            // e.g. "AHK Briefing — {{date}}"
+  slack_channel?: string;             // home=slack, or document link-out target (id or #name)
+  email_recipient_ids?: string[];     // home=email, or document email link-out
+  link_out?: { slack?: boolean; email?: boolean };  // DOCUMENT-only pointer fan-out (a link, never a copy)
+  report_mode?: ReportMode;           // coworker report-back cadence (default each_run)
+  output_language?: string;           // BCP-47 code — injected into all AI steps; default 'en'
+  // ── legacy (read-only back-compat) ──
+  notification_mode?: NotificationMode;
+  notification_email_ids?: string[];
+}
+
+// Runtime-canonical output, derived from any (old or new) OutputConfig.
+export interface NormalizedOutput {
+  home: OutputHome;
+  artifactType: ArtifactType;
+  titleTemplate?: string;
+  slackChannel?: string;
+  emailRecipientIds: string[];
+  linkOut: { slack: boolean; email: boolean };
+  reportMode: ReportMode;
+  outputLanguage?: string;
+}
+
+/** Map any OutputConfig (legacy or new) to the canonical runtime shape. One source of truth. */
+export function normalizeOutput(c: OutputConfig | null | undefined): NormalizedOutput {
+  const oc = (c ?? {}) as OutputConfig;
+  const d = String(oc.destination ?? '');
+  let home: OutputHome;
+  if (d === 'message' || d === 'document' || d === 'slack' || d === 'email') home = d;
+  else if (d === 'thread_message' || d === 'email_draft') home = d === 'email_draft' ? 'message' : 'message';
+  else if (d === 'artifact' || d === 'multiple_artifacts' || d === 'living_document') home = 'document';
+  else home = 'message';
+
+  const reportMode: ReportMode = oc.report_mode
+    ?? (oc.notification_mode === 'silent' ? 'silent' : 'each_run');
+
+  const linkOut = {
+    slack: Boolean(oc.link_out?.slack),
+    // legacy: email_digest on a document meant "email the doc" → email link-out
+    email: Boolean(oc.link_out?.email) || (home === 'document' && oc.notification_mode === 'email_digest'),
+  };
+
+  return {
+    home,
+    artifactType: (oc.artifact_type as ArtifactType) ?? 'document',
+    titleTemplate: oc.title_template,
+    slackChannel: oc.slack_channel,
+    emailRecipientIds: oc.email_recipient_ids ?? oc.notification_email_ids ?? [],
+    linkOut,
+    reportMode,
+    outputLanguage: oc.output_language,
+  };
 }
 
 // ── Workflow record ────────────────────────────────────────────────────────────
