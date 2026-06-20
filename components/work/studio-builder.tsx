@@ -43,7 +43,7 @@ import type {
   Workflow, WorkflowStep, WorkflowTrigger, OutputConfig,
   ToolStep, AIStep, AgentStep, SharingMode,
 } from '@/lib/workflows/types';
-import { makeStepId } from '@/lib/workflows/types';
+import { makeStepId, normalizeOutput } from '@/lib/workflows/types';
 import { SharingModeSelector } from '@/components/work/sharing-mode-selector';
 import { LINKEDIN_FRAMEWORKS } from '@/lib/tools/linkedin-post';
 
@@ -959,20 +959,20 @@ function StepFlowCard({ step, index: _index, active, onClick }: {
 function OutputFlowCard({ output, stepNum: _stepNum, active, onClick }: {
   output: OutputConfig; stepNum: number; active: boolean; onClick: () => void;
 }) {
-  const destTitle: Record<string, string> = {
-    thread_message: 'Send to inbox',
-    artifact: 'Create document',
-    multiple_artifacts: 'Create documents',
-    email_draft: 'Draft email',
-    living_document: 'Update document',
+  const norm = normalizeOutput(output);
+  const homeTitle: Record<string, string> = {
+    message: 'Message in thread',
+    document: 'Create document',
+    slack: `Post to ${norm.slackChannel ?? 'Slack'}`,
+    email: 'Email it',
   };
-  const notifLabel: Record<string, string> = {
-    inbox_card: 'badge + notification',
+  const reportLabel: Record<string, string> = {
+    each_run: 'reports each run',
+    digest: 'digest',
     silent: 'silent',
-    email_digest: 'email digest',
   };
-  const title = output.title_template || destTitle[output.destination] || 'Output';
-  const subtitle = `${destTitle[output.destination] ?? output.destination} · ${notifLabel[output.notification_mode] ?? output.notification_mode}`;
+  const title = output.title_template || homeTitle[norm.home] || 'Output';
+  const subtitle = `${homeTitle[norm.home] ?? norm.home}${norm.home === 'document' && norm.linkOut.slack ? ` + link in ${norm.slackChannel ?? 'Slack'}` : ''} · ${reportLabel[norm.reportMode]}`;
   return (
     <div role="button" tabIndex={0}
       onClick={onClick} onKeyDown={e => e.key === 'Enter' && onClick()}
@@ -2368,32 +2368,75 @@ function AgentStepFields({
   );
 }
 
+interface SlackChannel { id: string; name: string; is_private: boolean }
+
+function SlackChannelField({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
+  const [state, setState] = useState<{ connected: boolean; channels: SlackChannel[]; loaded: boolean }>({ connected: false, channels: [], loaded: false });
+  useEffect(() => {
+    fetch('/api/integrations/slack/channels').then(r => r.json())
+      .then(d => setState({ connected: Boolean(d.connected), channels: d.channels ?? [], loaded: true }))
+      .catch(() => setState({ connected: false, channels: [], loaded: true }));
+  }, []);
+  if (state.loaded && !state.connected) {
+    return (
+      <Field label={label}>
+        <p className="text-[11.5px] text-amber-600">
+          Slack isn&apos;t connected. <a href="/settings?tab=connections" className="underline">Connect it</a> to post to a channel.
+        </p>
+      </Field>
+    );
+  }
+  return (
+    <Field label={label}>
+      <select value={value} onChange={e => onChange(e.target.value)}
+        className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] bg-white">
+        <option value="">Select a channel…</option>
+        <option value="@me">📩 Direct message to you</option>
+        {state.channels.map(c => (
+          <option key={c.id} value={c.is_private ? c.id : `#${c.name}`}>{c.is_private ? '🔒 ' : '#'}{c.name}</option>
+        ))}
+      </select>
+      <p className="text-[11px] text-neutral-400 mt-1">DMs you privately, or posts to a channel (invite @AUGMTD to private ones).</p>
+    </Field>
+  );
+}
+
 function OutputEditor({ output, onChange }: { output: OutputConfig; onChange: (o: OutputConfig) => void }) {
   const [connections, setConnections] = useState<{ id: string; provider: string; email: string }[]>([]);
+  const norm = normalizeOutput(output);
+  const home = norm.home;
+  const linkSlack = home === 'document' && Boolean(output.link_out?.slack);
 
   useEffect(() => {
-    if (output.notification_mode !== 'email_digest') return;
+    if (home !== 'email') return;
     fetch('/api/connections').then(r => r.json()).then(d => setConnections(d.connections ?? [])).catch(() => {});
-  }, [output.notification_mode]);
+  }, [home]);
 
   const toggleEmailId = (id: string) => {
-    const current = output.notification_email_ids ?? [];
+    const current = output.email_recipient_ids ?? output.notification_email_ids ?? [];
     const next = current.includes(id) ? current.filter(x => x !== id) : [...current, id];
-    onChange({ ...output, notification_email_ids: next });
+    onChange({ ...output, email_recipient_ids: next });
   };
 
   return (
     <>
-      <Field label="Destination">
-        <select value={output.destination} onChange={e => onChange({ ...output, destination: e.target.value as OutputConfig['destination'] })}
+      <Field label="Where it goes" hint="The app always keeps a record regardless">
+        <select value={home} onChange={e => onChange({ ...output, destination: e.target.value as OutputConfig['destination'] })}
           className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] bg-white">
-          <option value="thread_message">Message in thread</option>
-          <option value="artifact">Document artifact</option>
+          <option value="message">Message in thread</option>
+          <option value="document">Document (saved to Drive)</option>
+          <option value="slack">Slack channel</option>
+          <option value="email">Email</option>
         </select>
       </Field>
-      {output.destination === 'artifact' && (
+
+      {home === 'slack' && (
+        <SlackChannelField label="Channel" value={output.slack_channel ?? ''} onChange={v => onChange({ ...output, slack_channel: v })} />
+      )}
+
+      {home === 'document' && (
         <>
-          <Field label="Artifact type">
+          <Field label="Document type">
             <select value={output.artifact_type ?? 'document'} onChange={e => onChange({ ...output, artifact_type: e.target.value as OutputConfig['artifact_type'] })}
               className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] bg-white">
               <option value="document">Word document</option>
@@ -2410,8 +2453,18 @@ function OutputEditor({ output, onChange }: { output: OutputConfig; onChange: (o
               <code className="bg-neutral-100 px-1 rounded">{'{{workflow}}'}</code>.
             </p>
           </Field>
+          <label className="flex items-center gap-2.5 cursor-pointer">
+            <input type="checkbox" checked={linkSlack}
+              onChange={e => onChange({ ...output, link_out: { ...(output.link_out ?? {}), slack: e.target.checked } })}
+              className="w-3.5 h-3.5 rounded accent-indigo-600" />
+            <span className="text-[12.5px] text-neutral-700">Also drop a link in a Slack channel</span>
+          </label>
+          {linkSlack && (
+            <SlackChannelField label="Link channel" value={output.slack_channel ?? ''} onChange={v => onChange({ ...output, slack_channel: v })} />
+          )}
         </>
       )}
+
       <Field label="Output language" hint="All AI steps in this workflow write in this language">
         <select value={output.output_language ?? 'en'} onChange={e => onChange({ ...output, output_language: e.target.value || undefined })}
           className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] bg-white">
@@ -2426,19 +2479,21 @@ function OutputEditor({ output, onChange }: { output: OutputConfig; onChange: (o
           <option value="ja">日本語</option>
         </select>
       </Field>
-      <Field label="Notifications">
-        <select value={output.notification_mode} onChange={e => onChange({ ...output, notification_mode: e.target.value as OutputConfig['notification_mode'] })}
+
+      <Field label="Report back" hint="How the coworker tells you what it did">
+        <select value={norm.reportMode} onChange={e => onChange({ ...output, report_mode: e.target.value as OutputConfig['report_mode'] })}
           className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] bg-white">
-          <option value="inbox_card">Inbox card (badge + notification)</option>
-          <option value="silent">Silent (no notification)</option>
-          <option value="email_digest">Email digest</option>
+          <option value="each_run">After every run</option>
+          <option value="digest">Periodic digest</option>
+          <option value="silent">Silent (no message)</option>
         </select>
       </Field>
-      {output.notification_mode === 'email_digest' && connections.length > 0 && (
+
+      {home === 'email' && connections.length > 0 && (
         <Field label="Send to">
           <div className="space-y-1.5">
             {connections.map(c => {
-              const checked = (output.notification_email_ids ?? []).includes(c.id);
+              const checked = (output.email_recipient_ids ?? output.notification_email_ids ?? []).includes(c.id);
               return (
                 <label key={c.id} className="flex items-center gap-2.5 cursor-pointer">
                   <input type="checkbox" checked={checked} onChange={() => toggleEmailId(c.id)}

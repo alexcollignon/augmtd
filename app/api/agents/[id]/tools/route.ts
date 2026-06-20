@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { INTEGRATIONS, isKnownProvider } from '@/lib/integrations/registry';
+import { INTEGRATIONS, isKnownProvider, slackKeyForRole } from '@/lib/integrations/registry';
 import { integrationsAdmin, listConnectedProviders, getAgentToolSettings } from '@/lib/integrations/connection';
 
 type Params = { params: Promise<{ id: string }> };
@@ -20,20 +20,28 @@ export async function GET(_req: NextRequest, { params }: Params) {
     if (!(await ownAgent(supabase, agentId, user.id))) return NextResponse.json({ error: 'Agent not found' }, { status: 404 });
 
     const admin = integrationsAdmin();
-    const [connected, settings] = await Promise.all([
+    const [connected, settings, agentRow] = await Promise.all([
       listConnectedProviders(admin, user.id),
       getAgentToolSettings(admin, agentId),
+      supabase.from('custom_agents').select('worker_role').eq('id', agentId).maybeSingle(),
     ]);
+    const role = (agentRow.data as { worker_role?: string } | null)?.worker_role ?? null;
 
-    const tools = INTEGRATIONS.map(def => ({
-      provider: def.provider,
-      name: def.name,
-      description: def.description,
-      scope: def.scope,
-      connected: connected.includes(def.provider),
-      enabled: settings[def.provider]?.enabled ?? true,   // default on
-      config: settings[def.provider]?.config ?? {},
-    }));
+    const tools = INTEGRATIONS.map(def => {
+      // Slack is per-coworker: this worker is "connected" if its own app is connected.
+      const isConnected = def.provider === 'slack'
+        ? connected.includes(slackKeyForRole(role))
+        : connected.includes(def.provider);
+      return {
+        provider: def.provider,
+        name: def.name,
+        description: def.description,
+        scope: def.scope,
+        connected: isConnected,
+        enabled: settings[def.provider]?.enabled ?? true,   // default on
+        config: settings[def.provider]?.config ?? {},
+      };
+    });
 
     return NextResponse.json({ tools });
   } catch (err) {

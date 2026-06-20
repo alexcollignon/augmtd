@@ -142,15 +142,19 @@ export function WorkersPageClient({
     pushUrl({ worker: null, tab: null, thread: null });
   }
 
-  async function handleSelectWorker(id: string) {
+  async function handleSelectWorker(id: string, threadId?: string) {
     setShowTeamHome(false);
     setShowSkills(false);
-    if (id === activeWorkerId) return;
+    if (id === activeWorkerId) {
+      // already open — just jump to the thread if one was requested
+      if (threadId) { setProfileInitialThreadId(threadId); pushUrl({ worker: id, tab: null, thread: threadId }); }
+      return;
+    }
     setActiveWorkerId(id);
-    setProfileInitialThreadId(null); // clear before WorkerProfile remounts
+    setProfileInitialThreadId(threadId ?? null); // open the requested thread, or clear
     currentTabRef.current = 'chat';
-    currentThreadRef.current = null;
-    pushUrl({ worker: id, tab: null, thread: null });
+    currentThreadRef.current = threadId ?? null;
+    pushUrl({ worker: id, tab: null, thread: threadId ?? null });
     // Always re-fetch — local cache can be stale if threads were created in this session
     const res = await fetch(`/api/work/threads?agent_id=${id}`);
     if (res.ok) {

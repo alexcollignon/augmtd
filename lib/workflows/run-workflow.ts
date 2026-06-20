@@ -9,8 +9,12 @@ import { executeStep } from './execute-step';
 import { nextRunFromTrigger } from './schedule';
 import { sendWorkflowEmail } from './email-notification';
 import { buildArtifactFile, getFileExt, getMimeType } from '@/lib/artifacts/builders';
+import { normalizeOutput } from './types';
+import { generateReportBack, fallbackReport, type ReportFacts } from './report-back';
+import { executeSlackPostMessage, sendSlackDM, isDmTarget } from '@/lib/tools/slack';
+import { getAIClient } from '@/lib/ai/factory';
 import type {
-  Workflow, WorkflowRun, StepOutput, TriggerSource, OutputConfig,
+  Workflow, WorkflowRun, StepOutput, TriggerSource, OutputConfig, NormalizedOutput, OutputHome,
 } from './types';
 import type { DocContent, DocSection, DocumentArtifact, DeliverableType } from '@/lib/types/inbox';
 
@@ -106,78 +110,67 @@ async function uploadArtifact(
 // ── Materialise final output ─────────────────────────────────────────────────
 
 interface MaterialisedOutput {
-  messageContent: string;           // text shown in thread
-  artifact?: DocumentArtifact;      // if an artifact was produced
+  text: string;                     // the raw deliverable text
+  artifact?: DocumentArtifact;      // if a document was produced
+  title: string;                    // rendered title
 }
 
+// Produce the raw deliverable (text + optional document artifact). Delivery to the
+// home + the report-back are handled by the caller — this only builds the content.
 async function materialiseOutput(
   admin: SupabaseClient,
   userId: string,
   threadId: string,
   workflowName: string,
-  outputConfig: OutputConfig,
+  out: NormalizedOutput,
   finalStepOutput: StepOutput | undefined,
 ): Promise<MaterialisedOutput> {
   const finalText = typeof finalStepOutput?.output === 'string'
     ? finalStepOutput.output
     : JSON.stringify(finalStepOutput?.output ?? '', null, 2);
 
-  if (!finalText.trim()) {
-    return { messageContent: '(Workflow produced no output.)' };
-  }
-
   const now = new Date();
+  const title = renderTitle(out.titleTemplate, workflowName, now);
 
-  if (outputConfig.destination === 'thread_message') {
-    return { messageContent: finalText };
+  if (!finalText.trim()) {
+    return { text: '(Workflow produced no output.)', title };
   }
 
-  if (outputConfig.destination === 'artifact') {
-    const title = renderTitle(outputConfig.title_template, workflowName, now);
-    const artifactType: DeliverableType = (outputConfig.artifact_type as DeliverableType) ?? 'document';
-
-    // Only 'document' supports the markdown-to-DocContent conversion cleanly.
-    // For spreadsheet/presentation/email, fall back to thread_message for now —
-    // these require structured input that the AI step may not produce reliably.
-    if (artifactType !== 'document' && artifactType !== 'email') {
-      return { messageContent: finalText };
-    }
+  if (out.home === 'document') {
+    const artifactType: DeliverableType = (out.artifactType as DeliverableType) ?? 'document';
 
     if (artifactType === 'email') {
-      // Email artifacts are stored as content (no file), displayed inline.
       const artifact: DocumentArtifact = {
         id: randomUUID(),
         title,
         type: 'email',
         generated_at: now.toISOString(),
-        content: {
-          to: '',
-          subject: title,
-          body: finalText,
-        },
+        content: { to: '', subject: title, body: finalText },
       };
-      return { messageContent: `**${title}** ready.`, artifact };
+      return { text: finalText, artifact, title };
     }
 
-    // Document artifact
-    const doc = textToDocContent(title, finalText);
-    const artifactId = randomUUID();
-    const { storagePath } = await uploadArtifact(admin, userId, threadId, artifactId, 'document', doc);
+    if (artifactType === 'document') {
+      const doc = textToDocContent(title, finalText);
+      const artifactId = randomUUID();
+      const { storagePath } = await uploadArtifact(admin, userId, threadId, artifactId, 'document', doc);
+      const artifact: DocumentArtifact = {
+        id: artifactId,
+        title,
+        type: 'document',
+        generated_at: now.toISOString(),
+        storage_path: storagePath,
+        content: doc,
+      };
+      return { text: finalText, artifact, title };
+    }
 
-    const artifact: DocumentArtifact = {
-      id: artifactId,
-      title,
-      type: 'document',
-      generated_at: now.toISOString(),
-      storage_path: storagePath,
-      content: doc,
-    };
-
-    return { messageContent: `**${title}** ready.`, artifact };
+    // spreadsheet / presentation not yet supported → keep as text
+    return { text: finalText, title };
   }
 
-  // Unsupported destinations → fall back to message
-  return { messageContent: finalText };
+  // message / slack / email homes: just the text
+  return { text: finalText, title };
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -326,21 +319,96 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
     return { runId, status: 'failed', threadId, error: runError };
   }
 
-  // Materialise output from the last step
+  // Materialise the deliverable (text + optional document artifact)
   const finalStep = stepOutputs[stepOutputs.length - 1];
+  const out = normalizeOutput(workflow.output_config);
   const materialised = await materialiseOutput(
-    admin, workflow.user_id, threadId, workflow.name, workflow.output_config, finalStep,
+    admin, workflow.user_id, threadId, workflow.name, out, finalStep,
   );
+  const finalText = materialised.text;
+  const agentId = (workflow as Workflow & { agent_id?: string }).agent_id ?? undefined;
 
-  // Persist assistant message
+  // Teammates manually running a shared task don't fire the owner's external
+  // deliveries (Slack/email) — they get the result in-app + a report card.
+  const isOwnerRun = runnerId === workflow.user_id;
+  const home: OutputHome = isOwnerRun ? out.home : (out.home === 'document' ? 'document' : 'message');
+
+  // Worker persona + the runner's first name, for the report-back voice
+  let worker: ReportFacts['worker'] = { name: 'Your coworker', description: null, instructions: null };
+  if (agentId) {
+    const { data: a } = await admin.from('custom_agents').select('name, description, instructions').eq('id', agentId).maybeSingle();
+    if (a) worker = a as ReportFacts['worker'];
+  }
+  const { data: prof } = await admin.from('profiles').select('full_name, slack_dm_reports').eq('id', runnerId).maybeSingle();
+  const firstName = (((prof as { full_name?: string } | null)?.full_name) ?? '').split(' ')[0] ?? '';
+  const dmReports = Boolean((prof as { slack_dm_reports?: boolean } | null)?.slack_dm_reports);
+
+  const APP_URL = (process.env.AUGMTD_WEBHOOK_BASE_URL || 'https://app.augmtd.ai').replace(/\/$/, '');
+  const threadLink = `${APP_URL}/workers?worker=${agentId ?? ''}&thread=${threadId}`;
+  const nextRunAt = nextRunFromTrigger(workflow.trigger as { type: string; cron?: string; timezone?: string }, new Date());
+  const nextRunLabel = nextRunAt
+    ? new Date(nextRunAt as string | number | Date).toLocaleString('en-GB', { weekday: 'short', hour: '2-digit', minute: '2-digit' })
+    : undefined;
+
+  // ── Deliver to the single home (+ optional document link-outs) ──
+  let problem: string | undefined;
+  let channelLabel: string | undefined;
+  let alsoNote: string | undefined;
+
+  if (home === 'slack') {
+    if (!out.slackChannel) problem = 'no Slack channel was set for this task';
+    else {
+      const r = await executeSlackPostMessage({ channel: out.slackChannel, text: finalText }, workflow.user_id, agentId, admin);
+      channelLabel = isDmTarget(out.slackChannel) ? 'a direct message to you' : out.slackChannel;
+      if (!r.startsWith('Posted') && !r.startsWith('Sent')) problem = r;
+    }
+  } else if (home === 'document' && out.linkOut.slack && out.slackChannel) {
+    const r = await executeSlackPostMessage({ channel: out.slackChannel, text: `*${materialised.title}* is ready — ${threadLink}` }, workflow.user_id, agentId, admin);
+    if (r.startsWith('Posted')) alsoNote = `dropped a link in ${out.slackChannel}`;
+  }
+
+  // Email: home=email, or a document email link-out (owner runs only)
+  if (home === 'email' || (home === 'document' && out.linkOut.email)) {
+    await sendWorkflowEmail({
+      userId: runnerId,
+      workflowName: workflow.name,
+      messageContent: finalText,
+      artifact: materialised.artifact,
+      notificationEmailIds: out.emailRecipientIds,
+    });
+    if (home === 'email') channelLabel = out.emailRecipientIds.length ? `${out.emailRecipientIds.length} recipient${out.emailRecipientIds.length > 1 ? 's' : ''}` : 'the team';
+    else alsoNote = [alsoNote, 'emailed a copy'].filter(Boolean).join(' and ');
+  }
+
+  // ── In-thread message: message home = the deliverable; else = the report-back ──
+  let threadMessage: string;
+  let reportText: string;
+  if (home === 'message') {
+    threadMessage = finalText;
+    reportText = finalText;
+  } else {
+    const facts: ReportFacts = {
+      worker, firstName, taskName: workflow.name, home,
+      channel: channelLabel, docTitle: materialised.title,
+      link: home === 'document' ? threadLink : undefined,
+      alsoNote, nextRun: nextRunLabel, deliverableGist: finalText, problem,
+    };
+    try {
+      const { client, model } = await getAIClient(workflow.user_id, 'conversation', admin);
+      reportText = await generateReportBack(client, model, facts);
+    } catch {
+      reportText = fallbackReport(facts);
+    }
+    threadMessage = reportText;
+  }
+
+  // Persist assistant message (+ artifact)
   await admin.from('work_messages').insert({
     thread_id: threadId,
     role: 'assistant',
-    content: materialised.messageContent,
+    content: threadMessage,
     metadata: materialised.artifact ? { artifact_ids: [materialised.artifact.id] } : null,
   });
-
-  // Append artifact to thread if produced
   if (materialised.artifact) {
     const { data: fresh } = await admin
       .from('work_threads')
@@ -353,31 +421,19 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
       .eq('id', threadId);
   }
 
-  // Notification — skip entirely for test runs
-  if (!opts.isTest) {
-    // Non-owners running a shared workflow always get an inbox card — they haven't
-    // configured their own email notification preferences on this workflow.
-    const isOwnerRun = runnerId === workflow.user_id;
-    const notificationMode = isOwnerRun
-      ? workflow.output_config.notification_mode
-      : 'inbox_card';
-
-    if (notificationMode === 'inbox_card') {
-      await admin.from('workflow_notifications').insert({
-        workflow_run_id: runId,
-        workflow_id: workflow.id,
-        user_id: runnerId,
-        title: `${workflow.name} — run complete`,
-        summary: materialised.artifact ? `${materialised.artifact.title} is ready.` : materialised.messageContent.slice(0, 200),
-      });
-    } else if (notificationMode === 'email_digest') {
-      await sendWorkflowEmail({
-        userId: runnerId,
-        workflowName: workflow.name,
-        messageContent: materialised.messageContent,
-        artifact: materialised.artifact,
-        notificationEmailIds: workflow.output_config.notification_email_ids,
-      });
+  // ── Report-back notification (DM from the coworker) — skip for tests / silent ──
+  if (!opts.isTest && out.reportMode !== 'silent') {
+    await admin.from('workflow_notifications').insert({
+      workflow_run_id: runId,
+      workflow_id: workflow.id,
+      user_id: runnerId,
+      title: worker.name,                          // sender = the coworker (DM feel)
+      summary: reportText.slice(0, 280),
+    });
+    // Optional: also ping the user with a real Slack DM from the coworker persona.
+    // (Skip when the home was already a Slack DM, to avoid double-pinging.)
+    if (dmReports && !(home === 'slack' && out.slackChannel && isDmTarget(out.slackChannel))) {
+      await sendSlackDM(admin, runnerId, agentId, reportText).catch(() => {});
     }
   }
 
@@ -401,10 +457,8 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
   // Proactive completion message — post back into the source chat thread if triggered from one
   if (opts.sourceThreadId) {
     const artifact = materialised.artifact;
-    // Build a short prose intro + structured artifact reference the chat UI can render
-    const completionContent = artifact
-      ? `**${artifact.title}** is ready.\n\n${materialised.messageContent.replace(/\*\*.*?\*\* ready\./, '').trim()}`
-      : materialised.messageContent;
+    // The coworker's report-back is the natural "here's what I did" message.
+    const completionContent = reportText;
 
     try {
       await admin.from('work_messages').insert({

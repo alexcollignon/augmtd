@@ -141,7 +141,11 @@ export async function listConnectedProviders(admin: Admin, userId: string): Prom
  *  When agentId is given, only lists tools enabled for that worker (per-worker gating). */
 export async function buildConnectedIntegrationsBlock(admin: Admin, userId: string, agentId?: string | null): Promise<string> {
   try {
-    let providers = await listConnectedProviders(admin, userId);
+    const raw = await listConnectedProviders(admin, userId);
+    // Collapse per-coworker slack app keys (slack-clara, …) to the single 'slack' capability.
+    const hasSlack = raw.some(p => p === 'slack' || p.startsWith('slack-'));
+    let providers = raw.filter(p => p !== 'slack' && !p.startsWith('slack-'));
+    if (hasSlack) providers.push('slack');
     if (agentId) {
       const settings = await getAgentToolSettings(admin, agentId);
       providers = providers.filter(p => settings[p]?.enabled !== false);

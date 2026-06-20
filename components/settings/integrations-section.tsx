@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import Nango from '@nangohq/frontend';
 import { Squares2X2Icon } from '@heroicons/react/24/outline';
 import { Button, Badge } from '@/components/ui';
+import { SLACK_APP_KEYS } from '@/lib/integrations/registry';
 
 interface Integration {
   provider: string;
@@ -12,6 +13,9 @@ interface Integration {
   scopesNote: string;
   scope: 'user' | 'company';
   connected: boolean;
+  connectedCount?: number;   // slack: how many coworker apps connected
+  connectedTotal?: number;   // slack: total coworker apps
+  apps?: { key: string; name: string; connected: boolean }[];  // slack: per-coworker apps
   status: string | null;
   metadata: { workspace_name?: string } | null;
   canManage: boolean;
@@ -30,6 +34,7 @@ export default function IntegrationsSection() {
   const [isLoading, setIsLoading] = useState(true);
   const [busyProvider, setBusyProvider] = useState<string | null>(null);
   const [confirmDisconnect, setConfirmDisconnect] = useState<string | null>(null);
+  const [dmReports, setDmReports] = useState(false);
 
   const load = useCallback(() => {
     fetch('/api/integrations')
@@ -43,45 +48,58 @@ export default function IntegrationsSection() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    fetch('/api/integrations/slack/dm-reports').then(r => r.json()).then(d => setDmReports(Boolean(d.enabled))).catch(() => {});
+  }, []);
+
+  const toggleDmReports = useCallback(() => {
+    setDmReports(prev => {
+      const next = !prev;
+      fetch('/api/integrations/slack/dm-reports', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: next }) }).catch(() => {});
+      return next;
+    });
+  }, []);
+
+  // OAuth one provider key (a single Slack app, or a non-slack provider).
+  const connectOne = useCallback(async (key: string) => {
+    const res = await fetch('/api/integrations/connect-session', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider: key }),
+    });
+    if (!res.ok) throw new Error('session');
+    const { token, apiURL } = await res.json();
+    const nango = new Nango({ host: apiURL, connectSessionToken: token });
+    const result = await nango.auth(key);
+    const r = result as { connectionId?: string; connection?: { connection_id?: string; id?: string } };
+    const connectionId = r?.connectionId ?? r?.connection?.connection_id ?? r?.connection?.id;
+    await fetch(`/api/integrations/${key}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ connectionId }),
+    }).catch(() => {});
+  }, []);
 
   const handleConnect = useCallback(async (provider: string) => {
     setBusyProvider(provider);
     try {
-      const res = await fetch('/api/integrations/connect-session', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider }),
-      });
-      if (!res.ok) throw new Error('session');
-      const { token, apiURL } = await res.json();
-
-      // Direct OAuth popup against our self-hosted Nango — no Connect-UI iframe,
-      // no second domain, and no Nango account/login for the end user.
-      const nango = new Nango({ host: apiURL, connectSessionToken: token });
-      const result = await nango.auth(provider);
-      // The SDK's success payload shape varies; cover the known variants.
-      const r = result as { connectionId?: string; connection?: { connection_id?: string; id?: string } };
-      const connectionId = r?.connectionId ?? r?.connection?.connection_id ?? r?.connection?.id;
-
-      // Resolved = OAuth succeeded → record the connection (Nango assigns its own
-      // connection id, so pass it along) + refresh.
-      await fetch(`/api/integrations/${provider}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ connectionId }),
-      }).catch(() => {});
+      // Slack = one app per coworker. Connect ONE per click — browsers block popups
+      // opened after an await, so we can't loop all 4 from a single gesture.
+      let key = provider;
+      if (provider === 'slack') {
+        const slack = integrations.find(i => i.provider === 'slack');
+        const next = slack?.apps?.find(a => !a.connected);
+        if (!next) { setBusyProvider(null); return; }
+        key = next.key;
+      }
+      try { await connectOne(key); } catch { /* popup closed/blocked */ }
       load();
-    } catch {
-      // user closed the popup or auth failed — nothing to record
     } finally {
       setBusyProvider(null);
     }
-  }, [load]);
+  }, [connectOne, load, integrations]);
 
   const handleDisconnect = useCallback(async (provider: string) => {
     setBusyProvider(provider);
-    setIntegrations(prev => prev.map(i => i.provider === provider ? { ...i, connected: false, metadata: null } : i)); // optimistic
-    await fetch(`/api/integrations/${provider}`, { method: 'DELETE' }).catch(() => {});
+    setIntegrations(prev => prev.map(i => i.provider === provider ? { ...i, connected: false, connectedCount: 0, metadata: null } : i)); // optimistic
+    const keys = provider === 'slack' ? SLACK_APP_KEYS : [provider];
+    for (const key of keys) await fetch(`/api/integrations/${key}`, { method: 'DELETE' }).catch(() => {});
     setBusyProvider(null);
     load();
   }, [load]);
@@ -109,7 +127,8 @@ export default function IntegrationsSection() {
       ) : (
         <div className="space-y-3">
           {integrations.map(i => (
-            <div key={i.provider} className="rounded-xl border border-neutral-200 bg-white px-4 py-3.5 flex items-start gap-4">
+            <div key={i.provider} className="rounded-xl border border-neutral-200 bg-white px-4 py-3.5">
+              <div className="flex items-start gap-4">
               {LOGOS[i.provider] && (
                 <div className="flex-shrink-0 w-9 h-9 rounded-lg border border-neutral-200 bg-white flex items-center justify-center overflow-hidden mt-0.5">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -162,10 +181,33 @@ export default function IntegrationsSection() {
                   )
                 ) : (
                   <Button size="sm" disabled={!configured || busyProvider === i.provider} onClick={() => handleConnect(i.provider)}>
-                    {busyProvider === i.provider ? 'Connecting…' : 'Connect'}
+                    {busyProvider === i.provider
+                      ? 'Connecting…'
+                      : i.provider === 'slack'
+                        ? (i.connectedCount
+                            ? `Connect ${i.apps?.find(a => !a.connected)?.name ?? 'next'} (${i.connectedCount}/${i.connectedTotal})`
+                            : 'Connect your team')
+                        : 'Connect'}
                   </Button>
                 )}
               </div>
+              </div>
+              {i.provider === 'slack' && i.connected && (
+                <div className="mt-3 pt-3 border-t border-neutral-100 flex items-center justify-between gap-4">
+                  <div className="min-w-0">
+                    <p className="text-[12.5px] text-neutral-700">DM me task updates</p>
+                    <p className="text-[11px] text-neutral-400 mt-0.5">Your coworkers also message you in Slack when they finish a task.</p>
+                  </div>
+                  <button
+                    role="switch"
+                    aria-checked={dmReports}
+                    onClick={toggleDmReports}
+                    className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors ${dmReports ? 'bg-indigo-600' : 'bg-neutral-300'}`}
+                  >
+                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${dmReports ? 'translate-x-[18px]' : 'translate-x-0.5'}`} />
+                  </button>
+                </div>
+              )}
             </div>
           ))}
         </div>

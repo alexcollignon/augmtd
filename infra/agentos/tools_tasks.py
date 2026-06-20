@@ -90,28 +90,39 @@ def update_task(
     name: Optional[str] = None,
     status: Optional[str] = None,
     output_language: Optional[str] = None,
+    output_destination: Optional[str] = None,
+    output_slack_channel: Optional[str] = None,
+    output_report_mode: Optional[str] = None,
     worker_instructions: Optional[str] = None,
     skill_names: Optional[str] = None,
 ) -> str:
     """Edit an existing task in response to user feedback. Call get_task first.
-    Supports rename, pause/resume (status active|paused), output language,
-    task-specific instructions, and pinned skills. Act immediately — do not ask
-    to confirm first.
+    Supports rename, pause/resume, output language, where the deliverable goes,
+    report cadence, task instructions, and pinned skills. Act immediately — do not
+    ask to confirm first.
 
     Args:
         task_id: Task to update.
         name: New name.
         status: "active" or "paused".
         output_language: BCP-47 code, e.g. "de", "pt", "fr".
+        output_destination: The deliverable's single home — "message" (run thread),
+            "document" (Documents/Drive), "slack" (a channel), or "email".
+        output_slack_channel: Slack channel (#name or id) — to post to when destination
+            is slack, or (for a document) a channel to also drop a link in.
+        output_report_mode: How proactively you report back — "each_run" (default),
+            "digest", or "silent".
         worker_instructions: Task-specific tone/persona overriding the worker default.
         skill_names: Comma-separated skill names (see list_skills) to enforce on this
-            task's output. Pass an empty string to clear pinned skills (fall back to
-            your assigned skills).
+            task's output. Empty string clears pinned skills (use your assigned skills).
     """
     args = {
         k: v for k, v in {
             "name": name, "status": status,
             "output_language": output_language,
+            "output_destination": output_destination,
+            "output_slack_channel": output_slack_channel,
+            "output_report_mode": output_report_mode,
             "worker_instructions": worker_instructions,
             "skill_names": skill_names,
         }.items() if v is not None

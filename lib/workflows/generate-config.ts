@@ -1,6 +1,8 @@
 import { getAIClient, aiCreate } from '@/lib/ai/factory';
 import { parseModelJSON } from '@/lib/ai/parse-json';
 import { makeStepId } from '@/lib/workflows/types';
+import { listConnectedProviders } from '@/lib/integrations/connection';
+import { INTEGRATIONS } from '@/lib/integrations/registry';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 export interface GeneratedWorkflowConfig {
@@ -22,7 +24,7 @@ JSON shape:
   "description": "One sentence — what this produces",
   "trigger": { "type": "manual" },
   "steps": [],
-  "output_config": { "destination": "thread_message", "notification_mode": "inbox_card" },
+  "output_config": { "destination": "message", "report_mode": "each_run" },
   "worker_instructions": null
 }
 
@@ -57,14 +59,22 @@ read_kb_file        — reads a file from the knowledge base. config: { "file_id
 
 ━━━ OUTPUT CONFIG ━━━
 
-Recurring briefings/reports (keep as a document):
-{ "destination": "artifact", "artifact_type": "document", "title_template": "Briefing — {{week_of}}", "notification_mode": "inbox_card" }
+Pick ONE home for the deliverable (the app always keeps a record regardless):
+- "message"  → a message in the run thread (quick digests, short conversational updates)
+- "document" → a saved document in Documents/Drive (briefings, reports). Set artifact_type:"document" + a title_template.
+- "slack"    → posted to a Slack channel. Set slack_channel (e.g. "#marketing"), or "@me" to DM the user privately. ONLY if Slack is connected.
+- "email"    → emailed.
 
-Quick digests (inline, no persistent doc):
-{ "destination": "thread_message", "notification_mode": "inbox_card" }
+report_mode: how proactively the coworker reports back — "each_run" (default), "digest", or "silent".
+
+Examples:
+Recurring briefing → { "destination": "document", "artifact_type": "document", "title_template": "Briefing — {{week_of}}", "report_mode": "each_run" }
+Post to Slack      → { "destination": "slack", "slack_channel": "#marketing", "report_mode": "each_run" }
+Quick digest       → { "destination": "message", "report_mode": "each_run" }
+Document + link in Slack → { "destination": "document", "artifact_type": "document", "title_template": "...", "slack_channel": "#team", "link_out": { "slack": true }, "report_mode": "each_run" }
 
 title_template tokens: {{date}}, {{week_of}}, {{workflow}}
-Scheduled tasks that produce a report should always use artifact destination.
+Default to "document" for scheduled reports and "message" for quick output. Use "slack"/"email" ONLY when the request explicitly asks to post/send there AND that tool is listed as connected.
 
 ━━━ RULES ━━━
 
@@ -90,6 +100,20 @@ export async function generateWorkflowConfig(
   if (options?.companyName) {
     parts.push(`User's company: ${options.companyName}`);
   }
+
+  // Integration-aware: tell the model which delivery tools are actually connected,
+  // so "post to #marketing" / "email it" can resolve to a slack/email home.
+  try {
+    const connected = await listConnectedProviders(supabase, userId);
+    if (connected.length > 0) {
+      const names = [...new Set(connected.map(p =>
+        p.startsWith('slack') ? 'Slack' : (INTEGRATIONS.find(i => i.provider === p)?.name ?? p),
+      ))].join(', ');
+      parts.push(`Connected delivery tools: ${names}. If the request asks to post or send somewhere these support (e.g. "post to #marketing", "Slack", "email it"), set output_config.destination to slack/email and slack_channel from the request. If a tool isn't listed here, do NOT use it as a home.`);
+    } else {
+      parts.push('No external delivery tools are connected — use only "message" or "document" homes.');
+    }
+  } catch { /* non-fatal */ }
 
   const w = options?.workerContext;
   if (w) {
@@ -140,8 +164,8 @@ export async function generateWorkflowConfig(
     trigger: (generated.trigger as Record<string, unknown>) ?? { type: 'manual' },
     steps,
     output_config: (generated.output_config as Record<string, unknown>) ?? {
-      destination: 'thread_message',
-      notification_mode: 'inbox_card',
+      destination: 'message',
+      report_mode: 'each_run',
     },
     worker_instructions: workerInstructions,
   };

@@ -24,11 +24,12 @@ interface WorkerLite { id: string; name: string; worker_role: string | null }
 interface Review { artifactId: string; title: string; type: string; workerId: string | null; workerName: string | null; threadId: string; createdAt: string }
 interface Activity { runId: string; workflowName: string; workerId: string | null; workerName: string | null; workerRole: string | null; status: string; triggeredBy: string; completedAt: string | null }
 interface Upcoming { workflowName: string; workerId: string | null; workerName: string | null; nextRunAt: string }
-interface HomeData { workers: WorkerLite[]; needsReview: Review[]; recentActivity: Activity[]; upcoming: Upcoming[] }
+interface TeamMessage { id: string; workerId: string | null; workerName: string | null; workerRole: string | null; text: string; threadId: string | null; createdAt: string; seen: boolean }
+interface HomeData { workers: WorkerLite[]; needsReview: Review[]; recentActivity: Activity[]; upcoming: Upcoming[]; messages: TeamMessage[] }
 
 interface TeamHomeViewProps {
   userFirstName?: string;
-  onSelectWorker: (workerId: string) => void;
+  onSelectWorker: (workerId: string, threadId?: string) => void;
 }
 
 function relTime(iso: string | null): string {
@@ -87,6 +88,9 @@ export function TeamHomeView({ userFirstName, onSelectWorker }: TeamHomeViewProp
       .then(async (d: HomeData | null) => {
         if (!mountedRef.current || !d) { setBriefingDone(true); return; }
         setData(d);
+        // Mark report-back messages seen in the DB — the unseen dots stay for this
+        // render (we keep the fetched state) and clear on the next visit.
+        if (d.messages?.length) fetch('/api/notifications/workflows/read', { method: 'POST' }).catch(() => {});
 
         const res = await fetch('/api/workers/team-briefing', {
           method: 'POST',
@@ -164,6 +168,33 @@ export function TeamHomeView({ userFirstName, onSelectWorker }: TeamHomeViewProp
             </div>
           )}
         </div>
+
+        {/* From your team — report-back messages, styled like DMs from a colleague */}
+        {data?.messages?.length ? (
+          <div className="mt-10">
+            <SectionLabel>From your team</SectionLabel>
+            <div className="mt-3 space-y-2">
+              {data.messages.map(m => (
+                <button
+                  key={m.id}
+                  onClick={() => m.workerId && onSelectWorker(m.workerId, m.threadId ?? undefined)}
+                  className="group w-full text-left flex items-start gap-3 p-3.5 rounded-2xl border border-neutral-200 bg-white hover:border-indigo-200 hover:shadow-[0_2px_12px_rgba(0,0,0,0.04)] transition-all"
+                >
+                  <Avatar role={m.workerRole} name={m.workerName} />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[13px] font-semibold text-neutral-800">{m.workerName ?? 'A coworker'}</span>
+                      <span className="text-[11px] text-neutral-400">{relTime(m.createdAt)}</span>
+                      {!m.seen && <span className="w-1.5 h-1.5 rounded-full bg-indigo-500" />}
+                    </div>
+                    <p className="text-[13px] text-neutral-600 leading-snug mt-0.5 line-clamp-2">{stripMarkdown(m.text)}</p>
+                  </div>
+                  <ChatBubbleLeftRightIcon className="w-4 h-4 text-neutral-300 group-hover:text-indigo-400 transition-colors flex-shrink-0 mt-0.5" />
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
 
         {/* Ready for you — card grid */}
         {data?.needsReview?.length ? (

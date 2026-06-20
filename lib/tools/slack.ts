@@ -1,37 +1,73 @@
 // ─── Slack tools ──────────────────────────────────────────────────────────────
-// Company-scoped: one workspace install (Nango connection keyed by company_id),
-// shared by the whole team. Coworkers post as PERSONAS of the one bot — each
-// message carries the coworker's name + avatar (chat:write.customize) so a
-// coworker appears once in a channel, never once-per-user. The bot must be
-// invited to a channel to post/read it.
+// Company-scoped, ONE SLACK APP PER COWORKER (distinct bot identities → separate
+// DM threads, real @mentions). A worker's role maps to its own Nango provider key
+// (slack-clara / slack-sofia / …); each posts/DMs as itself (no persona override).
+// The bot must be invited to a channel to post/read it.
 
 import { nangoProxy } from '@/lib/integrations/nango';
 import { resolveConnection, isToolEnabledForAgent, getAgentToolConfig } from '@/lib/integrations/connection';
+import { slackKeyForRole } from '@/lib/integrations/registry';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Admin = any;
 
-const NOT_CONNECTED = "Slack isn't connected for your team. An owner or admin can connect it in Settings → Connections.";
+const NOT_CONNECTED = "This coworker isn't connected to Slack yet. An owner or admin can connect the team in Settings → Connections.";
 const DISABLED = "Slack is turned off for this coworker. Enable it in this worker's Tools tab.";
 
-const BASE_URL = process.env.VERCEL_PROJECT_PRODUCTION_URL
-  ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
-  : 'https://app.augmtd.ai';
+// Resolve which Slack app (per-coworker) + connection this worker posts through.
+async function slackConn(admin: Admin, userId: string, agentId?: string): Promise<{ connectionId: string; providerKey: string } | null> {
+  let role: string | null = null;
+  if (agentId) {
+    const { data } = await admin.from('custom_agents').select('worker_role').eq('id', agentId).maybeSingle();
+    role = (data?.worker_role as string) ?? null;
+  }
+  const providerKey = slackKeyForRole(role);
+  const conn = await resolveConnection(admin, userId, providerKey);
+  return conn ? { connectionId: conn.connectionId, providerKey } : null;
+}
 
-// Worker role → avatar file in public/workers (for the persona icon).
-const ROLE_AVATAR: Record<string, string> = {
-  personal_assistant: 'clara',
-  content_manager: 'sofia',
-  linkedin_drafter: 'luca',
-  research_analyst: 'max',
-};
+// "DM the user" sentinels — a channel value the worker/UI uses to mean a direct message.
+const DM_SENTINELS = new Set(['@me', 'dm', 'dm:me', 'me', '__dm__']);
+export function isDmTarget(ch: string): boolean { return DM_SENTINELS.has(ch.trim().toLowerCase()); }
 
-async function getPersona(admin: Admin, agentId?: string): Promise<{ username?: string; icon_url?: string }> {
-  if (!agentId) return {};
-  const { data } = await admin.from('custom_agents').select('name, worker_role').eq('id', agentId).maybeSingle();
-  if (!data?.name) return {};
-  const file = data.worker_role ? ROLE_AVATAR[data.worker_role as string] : undefined;
-  return { username: data.name as string, icon_url: file ? `${BASE_URL}/workers/${file}.png` : undefined };
+// Resolve the user's Slack DM channel id (email → slack user → open DM) for a given
+// coworker app. null if not resolvable.
+async function resolveDmChannelId(admin: Admin, userId: string, connectionId: string, providerKey: string): Promise<string | null> {
+  let email: string | undefined;
+  try {
+    const { data } = await admin.auth.admin.getUserById(userId);
+    email = (data?.user?.email as string | undefined) ?? undefined;
+  } catch { /* no email */ }
+  if (!email) return null;
+
+  const lookup = await nangoProxy({
+    method: 'GET', endpoint: '/users.lookupByEmail', providerConfigKey: providerKey,
+    connectionId, params: { email },
+  });
+  const slackUserId = (lookup.body as { user?: { id?: string } } | null)?.user?.id;
+  if (!slackUserId) return null;
+
+  const open = await nangoProxy({
+    method: 'POST', endpoint: '/conversations.open', providerConfigKey: providerKey,
+    connectionId, data: { users: slackUserId },
+  });
+  return (open.body as { channel?: { id?: string } } | null)?.channel?.id ?? null;
+}
+
+// Send a direct message to the user, from this coworker's own Slack app. Used by the report-back.
+export async function sendSlackDM(admin: Admin, userId: string, agentId: string | undefined, text: string): Promise<boolean> {
+  if (!text.trim()) return false;
+  if (!(await isToolEnabledForAgent(admin, agentId, 'slack'))) return false;
+  const conn = await slackConn(admin, userId, agentId);
+  if (!conn) return false;
+  const dm = await resolveDmChannelId(admin, userId, conn.connectionId, conn.providerKey);
+  if (!dm) return false;
+  const res = await nangoProxy({
+    method: 'POST', endpoint: '/chat.postMessage', providerConfigKey: conn.providerKey, connectionId: conn.connectionId,
+    data: { channel: dm, text },
+  });
+  const body = res.body as { ok?: boolean } | null;
+  return Boolean(res.ok && body?.ok);
 }
 
 // ── Definitions ───────────────────────────────────────────────────────────────
@@ -57,11 +93,11 @@ export const slackReadMessagesDefinition = {
 
 export const slackPostMessageDefinition = {
   name: 'slack_post_message',
-  description: "Post a message to a Slack channel, as this coworker (their name + avatar). The app must already be in the channel. Use slack_list_channels to resolve a channel id from a name.",
+  description: "Post a message to a Slack channel as yourself (your own Slack app). The app must already be in the channel. Use slack_list_channels to resolve a channel id from a name, or \"@me\" to DM the user.",
   input_schema: {
     type: 'object',
     properties: {
-      channel: { type: 'string', description: 'Channel id (preferred, e.g. C0123ABCD) or name (e.g. #general).' },
+      channel: { type: 'string', description: 'Channel id (e.g. C0123ABCD) or name (e.g. #general). Use "@me" to send the user a direct message instead of posting to a channel.' },
       text: { type: 'string', description: 'Message text. Slack mrkdwn: *bold*, _italic_, <url|label>.' },
     },
     required: ['channel', 'text'],
@@ -72,12 +108,12 @@ export const slackPostMessageDefinition = {
 
 export async function executeSlackListChannels(userId: string, admin: Admin, agentId?: string): Promise<string> {
   if (!(await isToolEnabledForAgent(admin, agentId, 'slack'))) return DISABLED;
-  const conn = await resolveConnection(admin, userId, 'slack');
+  const conn = await slackConn(admin, userId, agentId);
   if (!conn) return NOT_CONNECTED;
   const res = await nangoProxy({
     method: 'GET',
     endpoint: '/conversations.list',
-    providerConfigKey: 'slack',
+    providerConfigKey: conn.providerKey,
     connectionId: conn.connectionId,
     params: { types: 'public_channel,private_channel', exclude_archived: 'true', limit: '200' },
   });
@@ -99,14 +135,14 @@ export async function executeSlackReadMessages(
   const channel = String(config.channel ?? '').trim();
   if (!channel) return 'Provide a channel or DM id (resolve a name via slack_list_channels first).';
 
-  const conn = await resolveConnection(admin, userId, 'slack');
+  const conn = await slackConn(admin, userId, agentId);
   if (!conn) return NOT_CONNECTED;
 
   const limit = Math.min(Math.max(Number(config.limit) || 20, 1), 100);
   const res = await nangoProxy({
     method: 'GET',
     endpoint: '/conversations.history',
-    providerConfigKey: 'slack',
+    providerConfigKey: conn.providerKey,
     connectionId: conn.connectionId,
     params: { channel, limit: String(limit) },
   });
@@ -140,26 +176,30 @@ export async function executeSlackPostMessage(
   }
   if (!channel || !text) return 'Provide both a channel and message text.';
 
-  const conn = await resolveConnection(admin, userId, 'slack');
+  const conn = await slackConn(admin, userId, agentId);
   if (!conn) return NOT_CONNECTED;
 
-  const persona = await getPersona(admin, agentId);
+  // "@me"/"dm" → resolve the user's direct-message channel (with this coworker's app).
+  const dm = isDmTarget(channel);
+  let target = channel;
+  if (dm) {
+    const dmId = await resolveDmChannelId(admin, userId, conn.connectionId, conn.providerKey);
+    if (!dmId) return "Couldn't open a Slack DM — your AUGMTD email must match your Slack account (needs the im:write + users:read.email scopes).";
+    target = dmId;
+  }
+
   const res = await nangoProxy({
     method: 'POST',
     endpoint: '/chat.postMessage',
-    providerConfigKey: 'slack',
+    providerConfigKey: conn.providerKey,
     connectionId: conn.connectionId,
-    data: {
-      channel,
-      text,
-      ...(persona.username ? { username: persona.username } : {}),
-      ...(persona.icon_url ? { icon_url: persona.icon_url } : {}),
-    },
+    data: { channel: target, text },
   });
   const body = res.body as { ok?: boolean; error?: string } | null;
   if (!res.ok || !body?.ok) {
-    const who = persona.username ?? 'the app';
-    return `Couldn't post to Slack (${body?.error ?? res.status}). Make sure ${who} is invited to ${channel}.`;
+    return dm
+      ? `Couldn't send the Slack DM (${body?.error ?? res.status}).`
+      : `Couldn't post to Slack (${body?.error ?? res.status}). Make sure this coworker's app is invited to ${channel}.`;
   }
-  return `Posted to Slack ${channel}${persona.username ? ` as ${persona.username}` : ''}.`;
+  return dm ? 'Sent you a Slack DM.' : `Posted to Slack ${channel}.`;
 }
