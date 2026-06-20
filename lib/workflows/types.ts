@@ -86,6 +86,7 @@ export interface OutputConfig {
   slack_channel?: string;             // home=slack, or document link-out target (id or #name)
   email_recipient_ids?: string[];     // home=email, or document email link-out
   link_out?: { slack?: boolean; email?: boolean };  // DOCUMENT-only pointer fan-out (a link, never a copy)
+  slack_announcement?: string;        // template for the document → Slack link-out post ({{title}}, {{link}}, {{date}}; supports <@Name>)
   report_mode?: ReportMode;           // coworker report-back cadence (default each_run)
   output_language?: string;           // BCP-47 code — injected into all AI steps; default 'en'
   // ── legacy (read-only back-compat) ──
@@ -101,6 +102,7 @@ export interface NormalizedOutput {
   slackChannel?: string;
   emailRecipientIds: string[];
   linkOut: { slack: boolean; email: boolean };
+  slackAnnouncement?: string;
   reportMode: ReportMode;
   outputLanguage?: string;
 }
@@ -131,6 +133,7 @@ export function normalizeOutput(c: OutputConfig | null | undefined): NormalizedO
     slackChannel: oc.slack_channel,
     emailRecipientIds: oc.email_recipient_ids ?? oc.notification_email_ids ?? [],
     linkOut,
+    slackAnnouncement: oc.slack_announcement,
     reportMode,
     outputLanguage: oc.output_language,
   };

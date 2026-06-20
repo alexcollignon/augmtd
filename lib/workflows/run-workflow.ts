@@ -363,8 +363,13 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
       if (!r.startsWith('Posted') && !r.startsWith('Sent')) problem = r;
     }
   } else if (home === 'document' && out.linkOut.slack && out.slackChannel) {
-    const r = await executeSlackPostMessage({ channel: out.slackChannel, text: `*${materialised.title}* is ready — ${threadLink}` }, workflow.user_id, agentId, admin);
-    if (r.startsWith('Posted')) alsoNote = `dropped a link in ${out.slackChannel}`;
+    const tmpl = out.slackAnnouncement?.trim() || '📣 *{{title}}* is ready: {{link}}';
+    const announcement = tmpl
+      .replace(/\{\{\s*title\s*\}\}/gi, materialised.title)
+      .replace(/\{\{\s*link\s*\}\}/gi, threadLink)
+      .replace(/\{\{\s*date\s*\}\}/gi, new Date().toISOString().slice(0, 10));
+    const r = await executeSlackPostMessage({ channel: out.slackChannel, text: announcement }, workflow.user_id, agentId, admin);
+    if (r.startsWith('Posted')) alsoNote = `announced it in ${out.slackChannel}`;
   }
 
   // Email: home=email, or a document email link-out (owner runs only)

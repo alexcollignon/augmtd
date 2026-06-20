@@ -2474,7 +2474,17 @@ function OutputEditor({ output, onChange }: { output: OutputConfig; onChange: (o
             <span className="text-[12.5px] text-neutral-700">Also drop a link in a Slack channel</span>
           </label>
           {linkSlack && (
-            <SlackChannelField label="Link channel" value={output.slack_channel ?? ''} onChange={v => onChange({ ...output, slack_channel: v })} />
+            <>
+              <SlackChannelField label="Link channel" value={output.slack_channel ?? ''} onChange={v => onChange({ ...output, slack_channel: v })} />
+              <Field label="Announcement message" hint="Posted to the channel. {{title}} and {{link}} fill in; tag people with <@Name>.">
+                <textarea
+                  value={output.slack_announcement ?? ''}
+                  onChange={e => onChange({ ...output, slack_announcement: e.target.value })}
+                  placeholder={'📣 *{{title}}* is ready — <@Rene>, take a look: {{link}}'}
+                  rows={2}
+                  className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] resize-y" />
+              </Field>
+            </>
           )}
         </>
       )}
