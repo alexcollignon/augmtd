@@ -45,26 +45,19 @@ export default function IntegrationsSection() {
         body: JSON.stringify({ provider }),
       });
       if (!res.ok) throw new Error('session');
-      const { token, apiURL, baseURL } = await res.json();
+      const { token, apiURL } = await res.json();
 
-      const nango = new Nango({ host: apiURL });
-      const connectUI = nango.openConnectUI({
-        apiURL,
-        baseURL,
-        onEvent: (event: { type: string }) => {
-          if (event.type === 'connect') {
-            // Record + refresh once the OAuth flow completes.
-            fetch(`/api/integrations/${provider}`, { method: 'POST' })
-              .catch(() => {})
-              .finally(() => { load(); setBusyProvider(null); });
-          } else if (event.type === 'close') {
-            load();
-            setBusyProvider(null);
-          }
-        },
-      });
-      connectUI.setSessionToken(token);
+      // Direct OAuth popup against our self-hosted Nango — no Connect-UI iframe,
+      // no second domain, and no Nango account/login for the end user.
+      const nango = new Nango({ host: apiURL, connectSessionToken: token });
+      await nango.auth(provider);
+
+      // Resolved = OAuth succeeded → record the connection + refresh.
+      await fetch(`/api/integrations/${provider}`, { method: 'POST' }).catch(() => {});
+      load();
     } catch {
+      // user closed the popup or auth failed — nothing to record
+    } finally {
       setBusyProvider(null);
     }
   }, [load]);
