@@ -56,6 +56,7 @@ deep_research       — multi-source research synthesis. config: { "queries": ["
 get_pt_tenders      — Portuguese public procurement from Base.gov.pt. config: { "days": 7, "endpoint": "both" }
 linkedin_post       — drafts LinkedIn posts from previous content. config: { "tone": "thought_leadership", "length": "standard", "language": "en", "variants": 2 }
 read_kb_file        — reads a file from the knowledge base. config: { "file_id": "uuid" } — only if user explicitly mentions a document
+slack_read_channel  — reads recent messages from a Slack channel (to summarize/digest/act on). config: { "channel": "#name or id", "limit": 30 }. ONLY if Slack is connected.
 
 ━━━ OUTPUT CONFIG ━━━
 
