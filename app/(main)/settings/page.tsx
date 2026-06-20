@@ -10,6 +10,7 @@ import SettingsPageClient from '@/app/settings/settings-page-client';
 import CompanyPageClient from '@/app/company/company-page-client';
 import CompanyPending from '@/app/company/company-pending';
 import MemorySection from '@/components/settings/memory-section';
+import IntegrationsSection from '@/components/settings/integrations-section';
 import { getMyCompany } from '@/lib/company/get-my-company';
 
 interface Props {
@@ -182,6 +183,12 @@ export default async function SettingsPage({ searchParams }: Props) {
 
             {tab === 'memory' && (
               <MemorySection />
+            )}
+
+            {tab === 'connections' && (
+              <div className="flex-1 overflow-y-auto px-6 py-6">
+                <IntegrationsSection />
+              </div>
             )}
 
             {tab === 'company' && (

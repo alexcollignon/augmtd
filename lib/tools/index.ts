@@ -20,6 +20,10 @@ export type { GetEmailsConfig } from './get-emails';
 export { getMeetingContextDefinition, executeGetMeetingContext } from './get-meeting-context';
 export type { GetMeetingContextConfig } from './get-meeting-context';
 export { deepResearchDefinition } from './deep-research';
+export {
+  slackListChannelsDefinition, slackPostMessageDefinition,
+  executeSlackListChannels, executeSlackPostMessage,
+} from './slack';
 
 // OpenAI function-calling format converter — used by chat route
 export function toOpenAITool(def: {

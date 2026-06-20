@@ -3,6 +3,7 @@ import { createClient as createAdminClient } from '@supabase/supabase-js';
 import {
   executeGetEmails, executeGetMeetingContext,
   executeWebSearch, executeFetchUrl, executeDeepResearch,
+  executeSlackListChannels, executeSlackPostMessage,
 } from '@/lib/tools';
 import { buildKBContext } from '@/lib/knowledge/build-kb-context';
 import { generateThreadDocument } from '@/lib/work/generate-thread-document';
@@ -62,6 +63,17 @@ export async function POST(request: NextRequest) {
     let result: string;
 
     switch (action) {
+      // ── Slack (company-scoped) ──
+      case 'slack_list_channels':
+        if (!user_id) return NextResponse.json({ error: 'user_id required' }, { status: 400 });
+        result = await executeSlackListChannels(user_id, ac);
+        break;
+
+      case 'slack_post_message':
+        if (!user_id) return NextResponse.json({ error: 'user_id required' }, { status: 400 });
+        result = await executeSlackPostMessage(config, user_id, agent_id, ac);
+        break;
+
       // ── User-scoped data tools ──
       case 'get_emails':
         if (!user_id) return NextResponse.json({ error: 'user_id required' }, { status: 400 });

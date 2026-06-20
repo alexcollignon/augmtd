@@ -23,7 +23,10 @@ import {
   getEmailsDefinition, executeGetEmails,
   getMeetingContextDefinition, executeGetMeetingContext,
   deepResearchDefinition, executeDeepResearch,
+  slackListChannelsDefinition, slackPostMessageDefinition,
+  executeSlackListChannels, executeSlackPostMessage,
 } from '@/lib/tools';
+import { buildConnectedIntegrationsBlock } from '@/lib/integrations/connection';
 import {
   listTasksDefinition, createTaskDefinition, getTaskDefinition, updateTaskDefinition, duplicateTaskDefinition, deleteTaskDefinition, runTaskDefinition,
   shareTaskDefinition, listTeamTasksDefinition, useTaskDefinition,
@@ -395,6 +398,8 @@ export async function POST(
       if (isWorker) {
         const skillsBlock = await buildSkillsBlock(supabase, agent.id);
         if (skillsBlock) contextParts.push(skillsBlock);
+        const integrationsBlock = await buildConnectedIntegrationsBlock(adminClient, user.id);
+        if (integrationsBlock) contextParts.push(integrationsBlock);
       }
 
       if (agent.memory_text?.trim()) {
@@ -1308,6 +1313,7 @@ function buildChatTools(sources: string[], _provider: string, _modelFamily: stri
       shareTaskDefinition, listTeamTasksDefinition, useTaskDefinition,
       listWorkerDocumentsDefinition, getWorkerDocumentDefinition,
       listSkillsDefinition, applySkillDefinition,
+      slackListChannelsDefinition, slackPostMessageDefinition,
     );
   }
 
@@ -1871,6 +1877,17 @@ async function executeChatTool(
       const result = await executeApplySkill(skillName, ctx.agentId, ctx.userId, ctx.adminClient);
       const found = !result.startsWith('No skill named');
       return { result, summary: found ? `Applied "${skillName}"` : 'Skill not found' };
+    }
+
+    // ── Slack ───────────────────────────────────────────────────────────────────
+    case 'slack_list_channels': {
+      const result = await executeSlackListChannels(ctx.userId, ctx.adminClient);
+      return { result, summary: 'Listed Slack channels' };
+    }
+
+    case 'slack_post_message': {
+      const result = await executeSlackPostMessage(input, ctx.userId, ctx.agentId, ctx.adminClient);
+      return { result, summary: result.startsWith('Posted') ? 'Posted to Slack' : 'Slack post failed' };
     }
 
     default:
