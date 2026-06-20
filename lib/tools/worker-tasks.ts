@@ -77,6 +77,7 @@ export const updateTaskDefinition = {
       output_title: { type: 'string', description: 'Title template for a document. Use {{date}} for the run date, {{week_of}} for the week. Example: "AHK Briefing — {{week_of}}"' },
       output_slack_channel: { type: 'string', description: 'Slack channel (#name or id) when output_destination=slack, or "@me" to DM the user privately. For a document, the channel to also drop a link in. Resolve names via slack_list_channels.' },
       output_report_mode: { type: 'string', enum: ['each_run', 'digest', 'silent'], description: 'How proactively you report back after a run. each_run = message the user after every run (default); digest = periodic summary; silent = no report.' },
+      output_slack_announcement: { type: 'string', description: 'For a document that also posts to Slack: the announcement message for the channel. Use {{title}} and {{link}}, and tag people with <@Name> (e.g. "📣 New brief — <@Rene> please review: {{link}}").' },
       worker_instructions: { type: 'string', description: 'Task-specific tone or persona instructions that override the worker default for this task only' },
       skill_names: {
         type: 'array',
@@ -404,6 +405,7 @@ export async function executeUpdateTask(
     output_title?: string;
     output_slack_channel?: string;
     output_report_mode?: string;
+    output_slack_announcement?: string;
     output_notification?: string;  // legacy alias → report_mode
     worker_instructions?: string;
     skill_names?: string[] | string;
@@ -456,6 +458,7 @@ export async function executeUpdateTask(
     || fields.output_title !== undefined
     || fields.output_slack_channel !== undefined
     || fields.output_report_mode !== undefined
+    || fields.output_slack_announcement !== undefined
     || fields.output_notification !== undefined;
 
   if (hasOutputChange) {
@@ -471,6 +474,7 @@ export async function executeUpdateTask(
       changes.push(`Slack channel → ${fields.output_slack_channel}`);
     }
     if (fields.output_report_mode !== undefined) { oc.report_mode = fields.output_report_mode as OutputConfig['report_mode']; changes.push(`report → ${fields.output_report_mode}`); }
+    if (fields.output_slack_announcement !== undefined) { oc.slack_announcement = fields.output_slack_announcement; changes.push('Slack announcement updated'); }
     // legacy alias
     if (fields.output_notification !== undefined) { oc.report_mode = (fields.output_notification === 'silent' ? 'silent' : 'each_run'); changes.push(`report → ${oc.report_mode}`); }
     update.output_config = oc;

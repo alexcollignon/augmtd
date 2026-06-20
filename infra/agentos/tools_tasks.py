@@ -93,6 +93,7 @@ def update_task(
     output_destination: Optional[str] = None,
     output_slack_channel: Optional[str] = None,
     output_report_mode: Optional[str] = None,
+    output_slack_announcement: Optional[str] = None,
     worker_instructions: Optional[str] = None,
     skill_names: Optional[str] = None,
 ) -> str:
@@ -123,6 +124,7 @@ def update_task(
             "output_destination": output_destination,
             "output_slack_channel": output_slack_channel,
             "output_report_mode": output_report_mode,
+            "output_slack_announcement": output_slack_announcement,
             "worker_instructions": worker_instructions,
             "skill_names": skill_names,
         }.items() if v is not None
