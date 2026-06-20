@@ -83,6 +83,47 @@ export async function resolveConnection(admin: Admin, userId: string, provider: 
   return { connectionId: data.nango_connection_id as string, metadata: (data.metadata as Record<string, unknown>) ?? {} };
 }
 
+// ─── Per-worker tool enablement (agent_tool_settings) ────────────────────────
+// No row for (agent, provider) = ENABLED by default. A row may also carry config
+// (e.g. { default_channel }). agentId undefined → not in a worker context → on.
+
+/** Is this provider's tool enabled for this worker? Defaults to true. */
+export async function isToolEnabledForAgent(admin: Admin, agentId: string | undefined | null, provider: string): Promise<boolean> {
+  if (!agentId) return true;
+  const { data } = await admin
+    .from('agent_tool_settings')
+    .select('enabled')
+    .eq('agent_id', agentId)
+    .eq('provider', provider)
+    .maybeSingle();
+  return data ? data.enabled !== false : true;
+}
+
+/** Per-worker config for a provider (e.g. default channel). {} if none. */
+export async function getAgentToolConfig(admin: Admin, agentId: string | undefined | null, provider: string): Promise<Record<string, unknown>> {
+  if (!agentId) return {};
+  const { data } = await admin
+    .from('agent_tool_settings')
+    .select('config')
+    .eq('agent_id', agentId)
+    .eq('provider', provider)
+    .maybeSingle();
+  return (data?.config as Record<string, unknown>) ?? {};
+}
+
+/** Per-agent enablement map for all providers (one query). provider → enabled. */
+export async function getAgentToolSettings(admin: Admin, agentId: string): Promise<Record<string, { enabled: boolean; config: Record<string, unknown> }>> {
+  const { data } = await admin
+    .from('agent_tool_settings')
+    .select('provider, enabled, config')
+    .eq('agent_id', agentId);
+  const out: Record<string, { enabled: boolean; config: Record<string, unknown> }> = {};
+  for (const r of (data ?? []) as Array<{ provider: string; enabled: boolean; config: Record<string, unknown> }>) {
+    out[r.provider] = { enabled: r.enabled !== false, config: r.config ?? {} };
+  }
+  return out;
+}
+
 /** Active provider keys available to this user (own + their company's), for tool gating + context. */
 export async function listConnectedProviders(admin: Admin, userId: string): Promise<string[]> {
   const company = await getCompanyForUser(admin, userId);
@@ -96,10 +137,15 @@ export async function listConnectedProviders(admin: Admin, userId: string): Prom
   return [...new Set<string>((data ?? []).map((r: { provider: string }) => r.provider))];
 }
 
-/** A `[CONNECTED INTEGRATIONS]` prompt block, or '' if none. Injected into worker context. */
-export async function buildConnectedIntegrationsBlock(admin: Admin, userId: string): Promise<string> {
+/** A `[CONNECTED INTEGRATIONS]` prompt block, or '' if none. Injected into worker context.
+ *  When agentId is given, only lists tools enabled for that worker (per-worker gating). */
+export async function buildConnectedIntegrationsBlock(admin: Admin, userId: string, agentId?: string | null): Promise<string> {
   try {
-    const providers = await listConnectedProviders(admin, userId);
+    let providers = await listConnectedProviders(admin, userId);
+    if (agentId) {
+      const settings = await getAgentToolSettings(admin, agentId);
+      providers = providers.filter(p => settings[p]?.enabled !== false);
+    }
     if (providers.length === 0) return '';
     const names = providers.map(p => INTEGRATIONS.find(i => i.provider === p)?.name ?? p);
     return (

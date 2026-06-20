@@ -87,7 +87,7 @@ async function buildWorkerRunContext(
       .order('created_at', { ascending: true })
       .limit(10),
     buildSkillsBlock(adminClient, agentId),
-    buildConnectedIntegrationsBlock(adminClient, userId),
+    buildConnectedIntegrationsBlock(adminClient, userId, agentId),
   ])
 
   const agent = agentRes?.data as { memory_text: string | null; user_preferences: string | null } | null

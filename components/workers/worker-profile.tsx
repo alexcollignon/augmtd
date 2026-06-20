@@ -8,21 +8,24 @@ import {
   BoltIcon,
   DocumentTextIcon,
   ClockIcon,
+  WrenchScrewdriverIcon,
 } from '@heroicons/react/24/outline';
 import { WorkerChatTab } from '@/components/workers/tabs/worker-chat-tab';
 import { WorkerKnowledgeTab } from '@/components/workers/tabs/worker-knowledge-tab';
 import { WorkerActivityTab } from '@/components/workers/tabs/worker-activity-tab';
 import { WorkerTasksTab } from '@/components/workers/tabs/worker-tasks-tab';
 import { WorkerDocumentsTab } from '@/components/workers/tabs/worker-documents-tab';
+import { WorkerToolsTab } from '@/components/workers/tabs/worker-tools-tab';
 import { TabBar } from '@/components/ui';
 import type { Worker, WorkerThread } from '@/app/workers/workers-page-client';
 
-type Tab = 'chat' | 'knowledge' | 'tasks' | 'documents' | 'activity';
+type Tab = 'chat' | 'knowledge' | 'tasks' | 'tools' | 'documents' | 'activity';
 
 const TABS: { id: Tab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
   { id: 'chat',      label: 'Chat',      icon: ChatBubbleLeftRightIcon },
   { id: 'knowledge', label: 'Knowledge', icon: BookOpenIcon },
   { id: 'tasks',     label: 'Tasks',     icon: BoltIcon },
+  { id: 'tools',     label: 'Tools',     icon: WrenchScrewdriverIcon },
   { id: 'documents', label: 'Documents', icon: DocumentTextIcon },
   { id: 'activity',  label: 'Activity',  icon: ClockIcon },
 ];
@@ -40,7 +43,7 @@ interface WorkerProfileProps {
 }
 
 export function WorkerProfile({ worker, initialThreads, initialMessages, initialTab, initialThreadId, onTabChange, onActiveThreadChange, onThreadCreated, onThreadDeleted }: WorkerProfileProps) {
-  const validInitialTab = initialTab && ['chat','knowledge','tasks','documents','activity'].includes(initialTab) ? initialTab : 'chat';
+  const validInitialTab = initialTab && ['chat','knowledge','tasks','tools','documents','activity'].includes(initialTab) ? initialTab : 'chat';
   const [activeTab, setActiveTab] = useState<Tab>(validInitialTab);
   // Track which tabs have been visited so they stay mounted (lazy-mount, keep-alive)
   const [mountedTabs, setMountedTabs] = useState<Set<Tab>>(new Set([validInitialTab]));
@@ -112,6 +115,15 @@ export function WorkerProfile({ worker, initialThreads, initialMessages, initial
               workerName={worker.name}
               isActive={activeTab === 'tasks'}
               onOpenInChat={handleOpenInChat}
+            />
+          </div>
+        )}
+        {mountedTabs.has('tools') && (
+          <div className={activeTab === 'tools' ? 'flex flex-col flex-1 overflow-hidden' : 'hidden'}>
+            <WorkerToolsTab
+              key={`tools-${worker.id}`}
+              workerId={worker.id}
+              workerName={worker.name}
             />
           </div>
         )}

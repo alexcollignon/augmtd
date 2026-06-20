@@ -66,7 +66,7 @@ export async function POST(request: NextRequest) {
       // ── Slack (company-scoped) ──
       case 'slack_list_channels':
         if (!user_id) return NextResponse.json({ error: 'user_id required' }, { status: 400 });
-        result = await executeSlackListChannels(user_id, ac);
+        result = await executeSlackListChannels(user_id, ac, agent_id);
         break;
 
       case 'slack_post_message':
@@ -76,7 +76,7 @@ export async function POST(request: NextRequest) {
 
       case 'slack_read_messages':
         if (!user_id) return NextResponse.json({ error: 'user_id required' }, { status: 400 });
-        result = await executeSlackReadMessages(config, user_id, ac);
+        result = await executeSlackReadMessages(config, user_id, ac, agent_id);
         break;
 
       // ── User-scoped data tools ──
