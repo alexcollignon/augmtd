@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { getIntegration } from '@/lib/integrations/registry';
-import { getConnection, deleteConnection } from '@/lib/integrations/nango';
+import { getConnection, deleteConnection, listConnections } from '@/lib/integrations/nango';
 import { integrationsAdmin, getCompanyForUser, canManageIntegrations } from '@/lib/integrations/connection';
 
 type Params = { params: Promise<{ provider: string }> };
@@ -48,15 +48,25 @@ export async function POST(request: NextRequest, { params }: Params) {
     if (!w.ok) return NextResponse.json({ error: w.error }, { status: w.status });
 
     const body = await request.json().catch(() => ({}));
-    const connectionId = typeof body.connectionId === 'string' && body.connectionId ? body.connectionId : w.key;
+    const clientId = typeof body.connectionId === 'string' && body.connectionId ? body.connectionId : null;
 
-    // Fetch the connection for metadata (best-effort). If the client gave us a
-    // connectionId from a successful auth(), trust it even if this lookup is flaky.
-    const conn = await getConnection(provider, connectionId).catch(() => null);
-    if (!conn && !body.connectionId) {
+    // Server-authoritative: Nango assigns its own connection id on a Connect session,
+    // so find the connection(s) it created for our end-user (= scope key), newest first.
+    const mine = (await listConnections(w.key).catch(() => []))
+      .filter((c) => c.providerConfigKey === provider)
+      .sort((a, b) => new Date(b.created).getTime() - new Date(a.created).getTime());
+
+    const connectionId = mine[0]?.connectionId ?? clientId;
+    if (!connectionId) {
       return NextResponse.json({ error: 'No connection found — please try connecting again.' }, { status: 400 });
     }
 
+    // One workspace = one connection: revoke any older duplicates for this end-user.
+    for (const dup of mine.slice(1)) {
+      await deleteConnection(provider, dup.connectionId).catch(() => {});
+    }
+
+    const conn = await getConnection(provider, connectionId).catch(() => null);
     const metadata = conn ? extractMetadata(provider, conn) : {};
     const admin = integrationsAdmin();
     const { error: upsertErr } = await admin
