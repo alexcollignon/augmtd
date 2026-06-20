@@ -16,6 +16,7 @@ from agno.agent import Agent
 from models import model_for_task
 from tools_tasks import TASK_TOOLS
 from tools_data import DATA_TOOLS
+from tools_integrations import INTEGRATION_TOOLS
 
 # ─── System prompts (verbatim from app/api/workers/init/route.ts) ─────────────
 
@@ -101,7 +102,7 @@ def build_workers(db) -> list[Agent]:
             description=w["description"],
             model=model_for_task("conversation"),  # Bedrock Sonnet EU
             db=db,
-            tools=[*TASK_TOOLS, *DATA_TOOLS],  # task + data/web tools (Phase 4) — HTTP to Next.js
+            tools=[*TASK_TOOLS, *DATA_TOOLS, *INTEGRATION_TOOLS],  # task + data/web + integrations — HTTP to Next.js
             telemetry=False,  # privacy: no per-run pings to Agno
             instructions=w["instructions"],
             add_history_to_context=True,  # multi-turn conversation memory
