@@ -23,8 +23,8 @@ import {
   getEmailsDefinition, executeGetEmails,
   getMeetingContextDefinition, executeGetMeetingContext,
   deepResearchDefinition, executeDeepResearch,
-  slackListChannelsDefinition, slackPostMessageDefinition, slackReadMessagesDefinition,
-  executeSlackListChannels, executeSlackPostMessage, executeSlackReadMessages,
+  slackListChannelsDefinition, slackPostMessageDefinition, slackReadMessagesDefinition, slackListMembersDefinition,
+  executeSlackListChannels, executeSlackPostMessage, executeSlackReadMessages, executeSlackListMembers,
 } from '@/lib/tools';
 import { buildConnectedIntegrationsBlock } from '@/lib/integrations/connection';
 import {
@@ -1313,7 +1313,7 @@ function buildChatTools(sources: string[], _provider: string, _modelFamily: stri
       shareTaskDefinition, listTeamTasksDefinition, useTaskDefinition,
       listWorkerDocumentsDefinition, getWorkerDocumentDefinition,
       listSkillsDefinition, applySkillDefinition,
-      slackListChannelsDefinition, slackPostMessageDefinition, slackReadMessagesDefinition,
+      slackListChannelsDefinition, slackPostMessageDefinition, slackReadMessagesDefinition, slackListMembersDefinition,
     );
   }
 
@@ -1895,6 +1895,11 @@ async function executeChatTool(
     case 'slack_read_messages': {
       const result = await executeSlackReadMessages(input, ctx.userId, ctx.adminClient, ctx.agentId);
       return { result, summary: 'Read Slack messages' };
+    }
+
+    case 'slack_list_members': {
+      const result = await executeSlackListMembers(input, ctx.userId, ctx.adminClient, ctx.agentId);
+      return { result, summary: 'Listed channel members' };
     }
 
     default:

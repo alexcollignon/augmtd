@@ -54,28 +54,52 @@ async function resolveDmChannelId(admin: Admin, userId: string, connectionId: st
   return (open.body as { channel?: { id?: string } } | null)?.channel?.id ?? null;
 }
 
-// Turn `<@me>` and `<@someone@email.com>` tokens in a message into real Slack
-// mentions (`<@U…>`). Leaves existing `<@U…>` ids and `<!channel>`/`<!here>` alone.
+interface SlackMember { id: string; name?: string; deleted?: boolean; is_bot?: boolean; profile?: { real_name?: string; display_name?: string } }
+
+// Fetch workspace members (one page) for name → id resolution. Best-effort.
+async function fetchMembers(connectionId: string, providerKey: string): Promise<SlackMember[]> {
+  const res = await nangoProxy({ method: 'GET', endpoint: '/users.list', providerConfigKey: providerKey, connectionId, params: { limit: '500' } });
+  return ((res.body as { members?: SlackMember[] } | null)?.members ?? []).filter(m => !m.deleted && !m.is_bot && m.id);
+}
+
+function matchMemberByName(members: SlackMember[], name: string): string | undefined {
+  const n = name.trim().toLowerCase();
+  const cands = (m: SlackMember) => [m.profile?.display_name, m.profile?.real_name, m.name].filter(Boolean).map(s => (s as string).toLowerCase());
+  // exact display/real/handle, then first-name
+  let u = members.find(m => cands(m).includes(n));
+  if (!u) u = members.find(m => (m.profile?.real_name ?? '').toLowerCase().split(' ')[0] === n);
+  return u?.id;
+}
+
+// Turn `<@me>`, `<@someone@email.com>`, and `<@Name>` tokens into real Slack mentions
+// (`<@U…>`). Leaves existing `<@U…>` ids and `<!channel>`/`<!here>` alone. Names are
+// resolved against the workspace's actual members so the worker never invents one.
 async function resolveMentions(text: string, admin: Admin, userId: string, connectionId: string, providerKey: string): Promise<string> {
   const matches = [...text.matchAll(/<@([^>]+)>/g)];
   if (matches.length === 0) return text;
   let runnerEmail: string | null | undefined;
+  let members: SlackMember[] | undefined;
   let out = text;
   for (const m of matches) {
     const inner = m[1].trim();
     if (/^[UW][A-Z0-9]{6,}$/.test(inner)) continue; // already a Slack id
-    let email: string | undefined;
+    let id: string | undefined;
     if (inner.toLowerCase() === 'me') {
       if (runnerEmail === undefined) {
         try { const { data } = await admin.auth.admin.getUserById(userId); runnerEmail = (data?.user?.email as string) ?? null; } catch { runnerEmail = null; }
       }
-      email = runnerEmail ?? undefined;
+      if (runnerEmail) {
+        const look = await nangoProxy({ method: 'GET', endpoint: '/users.lookupByEmail', providerConfigKey: providerKey, connectionId, params: { email: runnerEmail } });
+        id = (look.body as { user?: { id?: string } } | null)?.user?.id;
+      }
     } else if (inner.includes('@') && inner.includes('.')) {
-      email = inner;
+      const look = await nangoProxy({ method: 'GET', endpoint: '/users.lookupByEmail', providerConfigKey: providerKey, connectionId, params: { email: inner } });
+      id = (look.body as { user?: { id?: string } } | null)?.user?.id;
+    } else {
+      // a name → match against real members
+      if (!members) members = await fetchMembers(connectionId, providerKey);
+      id = matchMemberByName(members, inner);
     }
-    if (!email) continue;
-    const look = await nangoProxy({ method: 'GET', endpoint: '/users.lookupByEmail', providerConfigKey: providerKey, connectionId, params: { email } });
-    const id = (look.body as { user?: { id?: string } } | null)?.user?.id;
     if (id) out = out.replace(m[0], `<@${id}>`);
   }
   return out;
@@ -118,6 +142,18 @@ export const slackReadMessagesDefinition = {
   },
 };
 
+export const slackListMembersDefinition = {
+  name: 'slack_list_members',
+  description: "List the people in a Slack channel (their names + ids) — use this to find the right person to @-mention before posting, instead of guessing. Returns names you can then mention with <@Name>.",
+  input_schema: {
+    type: 'object',
+    properties: {
+      channel: { type: 'string', description: 'Channel id (C0123ABCD, G…) or name. Resolve a name via slack_list_channels first.' },
+    },
+    required: ['channel'],
+  },
+};
+
 export const slackPostMessageDefinition = {
   name: 'slack_post_message',
   description: "Post a message to a Slack channel as yourself (your own Slack app). The app must already be in the channel. Use slack_list_channels to resolve a channel id from a name, or \"@me\" to DM the user. You can @-mention people and reply in threads.",
@@ -125,7 +161,7 @@ export const slackPostMessageDefinition = {
     type: 'object',
     properties: {
       channel: { type: 'string', description: 'Channel id (e.g. C0123ABCD) or name (e.g. #general). Use "@me" to send the user a direct message instead of posting to a channel.' },
-      text: { type: 'string', description: 'Message text (Slack mrkdwn: *bold*, _italic_, <url|label>). To @-mention someone, write <@their-email@example.com> or <@me> for the user — these resolve to real mentions. <!channel> / <!here> also work.' },
+      text: { type: 'string', description: 'Message text (Slack mrkdwn: *bold*, _italic_, <url|label>). To @-mention someone, write <@Their Name> (e.g. <@Rene>) — it resolves to the real person; <@me> tags the user. Never invent an email. If unsure who is in the channel, call slack_list_members first. <!channel> / <!here> also work.' },
       thread_ts: { type: 'string', description: 'Optional. Reply inside a thread by passing the parent message ts (from slack_read_messages, shown as [ts:…]).' },
     },
     required: ['channel', 'text'],
@@ -185,6 +221,35 @@ export async function executeSlackReadMessages(
     .map(m => `- [ts:${m.ts}] ${m.user ? `<@${m.user}>` : 'bot'}: ${m.text}`);
   if (msgs.length === 0) return `No recent messages in ${channel}.`;
   return `Recent messages in ${channel} (${msgs.length}, oldest first; pass a ts as thread_ts to reply in its thread):\n${msgs.join('\n')}`;
+}
+
+export async function executeSlackListMembers(
+  config: Record<string, unknown>,
+  userId: string,
+  admin: Admin,
+  agentId?: string,
+): Promise<string> {
+  if (!(await isToolEnabledForAgent(admin, agentId, 'slack'))) return DISABLED;
+  const channel = String(config.channel ?? '').trim();
+  if (!channel) return 'Provide a channel id (resolve a name via slack_list_channels first).';
+
+  const conn = await slackConn(admin, userId, agentId);
+  if (!conn) return NOT_CONNECTED;
+
+  const res = await nangoProxy({
+    method: 'GET', endpoint: '/conversations.members', providerConfigKey: conn.providerKey,
+    connectionId: conn.connectionId, params: { channel, limit: '200' },
+  });
+  const body = res.body as { ok?: boolean; members?: string[]; error?: string } | null;
+  if (!res.ok || !body?.ok) return `Couldn't list members (${body?.error ?? res.status}). The app must be in ${channel}.`;
+
+  const ids = new Set(body.members ?? []);
+  const all = await fetchMembers(conn.connectionId, conn.providerKey);
+  const people = all
+    .filter(m => ids.has(m.id))
+    .map(m => `${m.profile?.real_name || m.profile?.display_name || m.name || m.id} (${m.id})`);
+  if (people.length === 0) return `No human members found in ${channel}.`;
+  return `Members of ${channel} (${people.length}):\n${people.join('\n')}\n\nTo tag someone, write <@Their Name> in your message.`;
 }
 
 export async function executeSlackPostMessage(
