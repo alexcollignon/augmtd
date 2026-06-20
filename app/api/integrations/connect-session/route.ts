@@ -33,7 +33,9 @@ export async function POST(request: NextRequest) {
     }
 
     const token = await createConnectSession(connectionKey, [provider]);
-    return NextResponse.json({ token });
+    // Tell the frontend SDK to use our self-hosted Nango (it defaults to cloud).
+    const host = (process.env.NANGO_HOST ?? '').replace(/\/$/, '');
+    return NextResponse.json({ token, apiURL: host, baseURL: `${host}/connect` });
   } catch (err) {
     console.error('[integrations/connect-session] error:', err);
     return NextResponse.json({ error: 'Could not start the connection.' }, { status: 500 });
