@@ -51,7 +51,9 @@ export default function IntegrationsSection() {
       // no second domain, and no Nango account/login for the end user.
       const nango = new Nango({ host: apiURL, connectSessionToken: token });
       const result = await nango.auth(provider);
-      const connectionId = (result as { connectionId?: string })?.connectionId;
+      // The SDK's success payload shape varies; cover the known variants.
+      const r = result as { connectionId?: string; connection?: { connection_id?: string; id?: string } };
+      const connectionId = r?.connectionId ?? r?.connection?.connection_id ?? r?.connection?.id;
 
       // Resolved = OAuth succeeded → record the connection (Nango assigns its own
       // connection id, so pass it along) + refresh.
