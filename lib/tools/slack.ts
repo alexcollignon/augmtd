@@ -54,6 +54,33 @@ async function resolveDmChannelId(admin: Admin, userId: string, connectionId: st
   return (open.body as { channel?: { id?: string } } | null)?.channel?.id ?? null;
 }
 
+// Turn `<@me>` and `<@someone@email.com>` tokens in a message into real Slack
+// mentions (`<@U…>`). Leaves existing `<@U…>` ids and `<!channel>`/`<!here>` alone.
+async function resolveMentions(text: string, admin: Admin, userId: string, connectionId: string, providerKey: string): Promise<string> {
+  const matches = [...text.matchAll(/<@([^>]+)>/g)];
+  if (matches.length === 0) return text;
+  let runnerEmail: string | null | undefined;
+  let out = text;
+  for (const m of matches) {
+    const inner = m[1].trim();
+    if (/^[UW][A-Z0-9]{6,}$/.test(inner)) continue; // already a Slack id
+    let email: string | undefined;
+    if (inner.toLowerCase() === 'me') {
+      if (runnerEmail === undefined) {
+        try { const { data } = await admin.auth.admin.getUserById(userId); runnerEmail = (data?.user?.email as string) ?? null; } catch { runnerEmail = null; }
+      }
+      email = runnerEmail ?? undefined;
+    } else if (inner.includes('@') && inner.includes('.')) {
+      email = inner;
+    }
+    if (!email) continue;
+    const look = await nangoProxy({ method: 'GET', endpoint: '/users.lookupByEmail', providerConfigKey: providerKey, connectionId, params: { email } });
+    const id = (look.body as { user?: { id?: string } } | null)?.user?.id;
+    if (id) out = out.replace(m[0], `<@${id}>`);
+  }
+  return out;
+}
+
 // Send a direct message to the user, from this coworker's own Slack app. Used by the report-back.
 export async function sendSlackDM(admin: Admin, userId: string, agentId: string | undefined, text: string): Promise<boolean> {
   if (!text.trim()) return false;
@@ -93,12 +120,13 @@ export const slackReadMessagesDefinition = {
 
 export const slackPostMessageDefinition = {
   name: 'slack_post_message',
-  description: "Post a message to a Slack channel as yourself (your own Slack app). The app must already be in the channel. Use slack_list_channels to resolve a channel id from a name, or \"@me\" to DM the user.",
+  description: "Post a message to a Slack channel as yourself (your own Slack app). The app must already be in the channel. Use slack_list_channels to resolve a channel id from a name, or \"@me\" to DM the user. You can @-mention people and reply in threads.",
   input_schema: {
     type: 'object',
     properties: {
       channel: { type: 'string', description: 'Channel id (e.g. C0123ABCD) or name (e.g. #general). Use "@me" to send the user a direct message instead of posting to a channel.' },
-      text: { type: 'string', description: 'Message text. Slack mrkdwn: *bold*, _italic_, <url|label>.' },
+      text: { type: 'string', description: 'Message text (Slack mrkdwn: *bold*, _italic_, <url|label>). To @-mention someone, write <@their-email@example.com> or <@me> for the user — these resolve to real mentions. <!channel> / <!here> also work.' },
+      thread_ts: { type: 'string', description: 'Optional. Reply inside a thread by passing the parent message ts (from slack_read_messages, shown as [ts:…]).' },
     },
     required: ['channel', 'text'],
   },
@@ -146,17 +174,17 @@ export async function executeSlackReadMessages(
     connectionId: conn.connectionId,
     params: { channel, limit: String(limit) },
   });
-  const body = res.body as { ok?: boolean; messages?: Array<{ user?: string; text?: string; bot_id?: string }>; error?: string } | null;
+  const body = res.body as { ok?: boolean; messages?: Array<{ user?: string; text?: string; bot_id?: string; ts?: string }>; error?: string } | null;
   if (!res.ok || !body?.ok) {
     return `Couldn't read Slack messages (${body?.error ?? res.status}). The app must be a member of ${channel}.`;
   }
-  // Slack returns newest-first; reverse to chronological for readability.
+  // Slack returns newest-first; reverse to chronological. ts lets you reply in-thread.
   const msgs = (body.messages ?? [])
     .filter(m => m.text)
     .reverse()
-    .map(m => `- ${m.user ? `<@${m.user}>` : 'bot'}: ${m.text}`);
+    .map(m => `- [ts:${m.ts}] ${m.user ? `<@${m.user}>` : 'bot'}: ${m.text}`);
   if (msgs.length === 0) return `No recent messages in ${channel}.`;
-  return `Recent messages in ${channel} (${msgs.length}, oldest first):\n${msgs.join('\n')}`;
+  return `Recent messages in ${channel} (${msgs.length}, oldest first; pass a ts as thread_ts to reply in its thread):\n${msgs.join('\n')}`;
 }
 
 export async function executeSlackPostMessage(
@@ -188,12 +216,15 @@ export async function executeSlackPostMessage(
     target = dmId;
   }
 
+  const finalText = await resolveMentions(text, admin, userId, conn.connectionId, conn.providerKey);
+  const threadTs = typeof config.thread_ts === 'string' && config.thread_ts ? config.thread_ts : undefined;
+
   const res = await nangoProxy({
     method: 'POST',
     endpoint: '/chat.postMessage',
     providerConfigKey: conn.providerKey,
     connectionId: conn.connectionId,
-    data: { channel: target, text },
+    data: { channel: target, text: finalText, ...(threadTs ? { thread_ts: threadTs } : {}) },
   });
   const body = res.body as { ok?: boolean; error?: string } | null;
   if (!res.ok || !body?.ok) {
@@ -201,5 +232,5 @@ export async function executeSlackPostMessage(
       ? `Couldn't send the Slack DM (${body?.error ?? res.status}).`
       : `Couldn't post to Slack (${body?.error ?? res.status}). Make sure this coworker's app is invited to ${channel}.`;
   }
-  return dm ? 'Sent you a Slack DM.' : `Posted to Slack ${channel}.`;
+  return dm ? 'Sent you a Slack DM.' : `${threadTs ? 'Replied in thread on' : 'Posted to'} Slack ${channel}.`;
 }

@@ -67,16 +67,22 @@ def slack_read_messages(run_context: RunContext, channel: str, limit: int = 20) 
 
 
 @tool
-def slack_post_message(run_context: RunContext, channel: str, text: str) -> str:
-    """Post a message to a Slack channel, as this coworker (their name + avatar).
-    The app must already be invited to the channel.
+def slack_post_message(run_context: RunContext, channel: str, text: str, thread_ts: str = "") -> str:
+    """Post a message to a Slack channel as yourself (your own Slack app). The app
+    must already be in the channel. You can @-mention people and reply in threads.
 
     Args:
         channel: Channel id (e.g. C0123ABCD) or name (e.g. #general). Use "@me" to
             send the user a direct message instead of posting to a channel.
-        text: Message text. Slack mrkdwn: *bold*, _italic_, <url|label>.
+        text: Message text (Slack mrkdwn). To @-mention someone write
+            <@their-email@example.com> or <@me> for the user; <!channel>/<!here> also work.
+        thread_ts: Optional. Reply inside a thread — pass the parent message ts
+            (from slack_read_messages, shown as [ts:…]).
     """
-    return _call("slack_post_message", run_context, {"channel": channel, "text": text})
+    args = {"channel": channel, "text": text}
+    if thread_ts:
+        args["thread_ts"] = thread_ts
+    return _call("slack_post_message", run_context, args)
 
 
 INTEGRATION_TOOLS = [slack_list_channels, slack_post_message, slack_read_messages]
