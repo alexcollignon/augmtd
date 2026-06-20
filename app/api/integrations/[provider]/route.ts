@@ -35,7 +35,9 @@ async function resolveWritable(provider: string, userId: string): Promise<
 }
 
 // POST /api/integrations/[provider] — confirm + record a connection after the popup.
-export async function POST(_req: NextRequest, { params }: Params) {
+// Body: { connectionId } — Nango assigns its own connection id (not our scope key),
+// so the client passes the id from the auth() result.
+export async function POST(request: NextRequest, { params }: Params) {
   const { provider } = await params;
   try {
     const supabase = await createClient();
@@ -45,10 +47,17 @@ export async function POST(_req: NextRequest, { params }: Params) {
     const w = await resolveWritable(provider, user.id);
     if (!w.ok) return NextResponse.json({ error: w.error }, { status: w.status });
 
-    const conn = await getConnection(provider, w.key);
-    if (!conn) return NextResponse.json({ error: 'No connection found — please try connecting again.' }, { status: 400 });
+    const body = await request.json().catch(() => ({}));
+    const connectionId = typeof body.connectionId === 'string' && body.connectionId ? body.connectionId : w.key;
 
-    const metadata = extractMetadata(provider, conn);
+    // Fetch the connection for metadata (best-effort). If the client gave us a
+    // connectionId from a successful auth(), trust it even if this lookup is flaky.
+    const conn = await getConnection(provider, connectionId).catch(() => null);
+    if (!conn && !body.connectionId) {
+      return NextResponse.json({ error: 'No connection found — please try connecting again.' }, { status: 400 });
+    }
+
+    const metadata = conn ? extractMetadata(provider, conn) : {};
     const admin = integrationsAdmin();
     const { error: upsertErr } = await admin
       .from('integration_connections')
@@ -58,7 +67,7 @@ export async function POST(_req: NextRequest, { params }: Params) {
           company_id: w.companyId,
           scope: w.scope,
           provider,
-          nango_connection_id: w.key,
+          nango_connection_id: connectionId,
           status: 'active',
           metadata,
           updated_at: new Date().toISOString(),
@@ -85,11 +94,16 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
     const w = await resolveWritable(provider, user.id);
     if (!w.ok) return NextResponse.json({ error: w.error }, { status: w.status });
 
-    await deleteConnection(provider, w.key);
     const admin = integrationsAdmin();
-    let q = admin.from('integration_connections').delete().eq('provider', provider).eq('scope', w.scope);
-    q = w.scope === 'company' ? q.eq('company_id', w.key) : q.eq('user_id', w.key);
-    await q;
+    // Revoke the actual Nango connection (its id is stored on our row, not the scope key).
+    let sel = admin.from('integration_connections').select('nango_connection_id').eq('provider', provider).eq('scope', w.scope);
+    sel = w.scope === 'company' ? sel.eq('company_id', w.key) : sel.eq('user_id', w.key);
+    const { data: row } = await sel.maybeSingle();
+    if (row?.nango_connection_id) await deleteConnection(provider, row.nango_connection_id as string);
+
+    let del = admin.from('integration_connections').delete().eq('provider', provider).eq('scope', w.scope);
+    del = w.scope === 'company' ? del.eq('company_id', w.key) : del.eq('user_id', w.key);
+    await del;
 
     return NextResponse.json({ ok: true });
   } catch (err) {
