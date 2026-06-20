@@ -17,11 +17,19 @@ interface Integration {
   canManage: boolean;
 }
 
+// Provider → logo (in /public/logos). Mirrors the Gmail/Outlook pattern.
+const LOGOS: Record<string, string> = {
+  slack: '/logos/slack.svg',
+  gmail: '/logos/gmail.png',
+  outlook: '/logos/outlook.png',
+};
+
 export default function IntegrationsSection() {
   const [integrations, setIntegrations] = useState<Integration[]>([]);
   const [configured, setConfigured] = useState(true);
   const [isLoading, setIsLoading] = useState(true);
   const [busyProvider, setBusyProvider] = useState<string | null>(null);
+  const [confirmDisconnect, setConfirmDisconnect] = useState<string | null>(null);
 
   const load = useCallback(() => {
     fetch('/api/integrations')
@@ -102,6 +110,17 @@ export default function IntegrationsSection() {
         <div className="space-y-3">
           {integrations.map(i => (
             <div key={i.provider} className="rounded-xl border border-neutral-200 bg-white px-4 py-3.5 flex items-start gap-4">
+              {LOGOS[i.provider] && (
+                <div className="flex-shrink-0 w-9 h-9 rounded-lg border border-neutral-200 bg-white flex items-center justify-center overflow-hidden mt-0.5">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={LOGOS[i.provider]}
+                    alt=""
+                    className="w-5 h-5 object-contain"
+                    onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+                  />
+                </div>
+              )}
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
                   <h3 className="text-[13.5px] font-semibold text-neutral-800">{i.name}</h3>
@@ -119,9 +138,28 @@ export default function IntegrationsSection() {
                 {!i.canManage ? (
                   <span className="text-[11.5px] text-neutral-400">{i.connected ? 'Connected by your team' : 'Admin only'}</span>
                 ) : i.connected ? (
-                  <Button variant="secondary" size="sm" disabled={busyProvider === i.provider} onClick={() => handleDisconnect(i.provider)}>
-                    Disconnect
-                  </Button>
+                  confirmDisconnect === i.provider ? (
+                    <div className="flex items-center gap-3" onMouseLeave={() => setConfirmDisconnect(null)}>
+                      <span className="text-[11.5px] text-neutral-500">Disconnect?</span>
+                      <button
+                        className="text-[12px] text-neutral-500 hover:text-neutral-700"
+                        onClick={() => setConfirmDisconnect(null)}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        className="text-[12px] font-medium text-red-600 hover:text-red-700"
+                        disabled={busyProvider === i.provider}
+                        onClick={() => { setConfirmDisconnect(null); handleDisconnect(i.provider); }}
+                      >
+                        Disconnect
+                      </button>
+                    </div>
+                  ) : (
+                    <Button variant="secondary" size="sm" disabled={busyProvider === i.provider} onClick={() => setConfirmDisconnect(i.provider)}>
+                      Disconnect
+                    </Button>
+                  )
                 ) : (
                   <Button size="sm" disabled={!configured || busyProvider === i.provider} onClick={() => handleConnect(i.provider)}>
                     {busyProvider === i.provider ? 'Connecting…' : 'Connect'}
