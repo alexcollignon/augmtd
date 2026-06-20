@@ -37,6 +37,7 @@ import {
   Cog6ToothIcon,
   PlusIcon,
   EllipsisVerticalIcon,
+  ChatBubbleLeftRightIcon,
   PaperAirplaneIcon,
 } from '@heroicons/react/24/outline';
 import type {
@@ -106,12 +107,13 @@ const AVAILABLE_TOOLS = [
   { id: 'linkedin_post',       label: 'Generate LinkedIn posts',   description: 'Drafts 1–3 LinkedIn post variants from previous step content.' },
   { id: 'deep_research',       label: 'Deep research',             description: 'Takes topics from the previous step and researches each one in depth using AI + web search. Returns cited findings.' },
   { id: 'get_workflow_output', label: 'Read workflow output',      description: 'Reads the output of another workflow and passes it as context to the next step. Compose workflows together.' },
+  { id: 'slack_read_channel',  label: 'Read a Slack channel',      description: 'Returns recent messages from a Slack channel this coworker is in — to summarize, digest, or act on. Config: channel (#name or id), limit.' },
 ];
 
 const TOOL_GROUPS = [
   { label: 'Your workspace', ids: ['get_emails', 'get_meeting_context', 'get_calendar', 'read_kb_file'] },
   { label: 'Web & research', ids: ['web_search', 'fetch_url', 'rss_feed', 'get_pt_tenders', 'deep_research'] },
-  { label: 'Social media',   ids: ['linkedin_post'] },
+  { label: 'Social media',   ids: ['linkedin_post', 'slack_read_channel'] },
 ];
 
 const TOOL_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -128,6 +130,7 @@ const TOOL_ICONS: Record<string, React.ComponentType<{ className?: string }>> = 
   get_pt_tenders:       BuildingOfficeIcon,
   deep_research:        MagnifyingGlassIcon,
   get_workflow_output:  ArrowPathIcon,
+  slack_read_channel:   ChatBubbleLeftRightIcon,
 };
 
 const TOOL_STYLES: Record<string, { bg: string; logo?: string }> = {
@@ -144,6 +147,7 @@ const TOOL_STYLES: Record<string, { bg: string; logo?: string }> = {
   get_pt_tenders:    { bg: 'bg-emerald-600' },
   deep_research:        { bg: 'bg-indigo-600' },
   get_workflow_output:  { bg: 'bg-teal-500' },
+  slack_read_channel:   { bg: 'bg-[#4A154B]' },
 };
 
 const STEP_TYPE_COLORS = {
@@ -1863,6 +1867,16 @@ function ToolStepFields({ step, onUpdate, isEnhancing, isPending, onEnhance, cur
           value={(step.config.file_id as string) ?? ''}
           onChange={id => onUpdate({ config: { ...step.config, file_id: id } })}
         />
+      )}
+      {step.tool === 'slack_read_channel' && (
+        <>
+          <SlackChannelField label="Channel to read" value={(step.config.channel as string) ?? ''} onChange={v => onUpdate({ config: { ...step.config, channel: v } })} />
+          <Field label="How many messages" hint="Most recent (max 100)">
+            <input type="number" min={1} max={100} value={(step.config.limit as number) ?? 30}
+              onChange={e => onUpdate({ config: { ...step.config, limit: Number(e.target.value) || 30 } })}
+              className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px]" />
+          </Field>
+        </>
       )}
       {(step.tool === 'get_emails' || step.tool === 'get_urgent_emails') && (
         <GetEmailsFields step={step} onUpdate={onUpdate} />

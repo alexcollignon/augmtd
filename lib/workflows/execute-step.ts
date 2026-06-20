@@ -12,7 +12,7 @@ import { getCalendarContext } from '@/lib/calendar/calendar-context';
 import { formatCalendarContextForChat } from '@/lib/calendar/format-calendar-context';
 import { buildKBContext } from '@/lib/knowledge/build-kb-context';
 import { buildSkillsBlock, buildSkillsBlockByIds } from '@/lib/work/worker-skills-context';
-import { executeWebSearch, executeFetchUrl, executeRssFeed, executeLinkedInPost, executeBrowserFetch, executePtTenders, executeDeepResearch, executeWorkflowOutput, executeGetEmails, executeGetMeetingContext } from '@/lib/tools';
+import { executeWebSearch, executeFetchUrl, executeRssFeed, executeLinkedInPost, executeBrowserFetch, executePtTenders, executeDeepResearch, executeWorkflowOutput, executeGetEmails, executeGetMeetingContext, executeSlackReadMessages } from '@/lib/tools';
 import type { WorkflowStep, StepOutput, ToolStep, AIStep, AgentStep } from './types';
 
 export interface StepContext {
@@ -92,6 +92,7 @@ async function executeToolStep(step: ToolStep, ctx: StepContext): Promise<string
     case 'web_search':        return await executeWebSearch(step.config);
     case 'fetch_url':         return await executeFetchUrl(step.config);
     case 'rss_feed':          return await executeRssFeed(step.config, ctx.lastRunAt);
+    case 'slack_read_channel': return await executeSlackReadMessages(step.config, ctx.userId, ctx.supabase, ctx.workerAgentId);
     case 'linkedin_post':     return await executeLinkedInPost(step.config, {
       userId: ctx.userId,
       supabase: ctx.supabase,
