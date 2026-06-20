@@ -398,7 +398,7 @@ export async function POST(
       if (isWorker) {
         const skillsBlock = await buildSkillsBlock(supabase, agent.id);
         if (skillsBlock) contextParts.push(skillsBlock);
-        const integrationsBlock = await buildConnectedIntegrationsBlock(adminClient, user.id);
+        const integrationsBlock = await buildConnectedIntegrationsBlock(adminClient, user.id, agent.id);
         if (integrationsBlock) contextParts.push(integrationsBlock);
       }
 
@@ -1881,7 +1881,7 @@ async function executeChatTool(
 
     // ── Slack ───────────────────────────────────────────────────────────────────
     case 'slack_list_channels': {
-      const result = await executeSlackListChannels(ctx.userId, ctx.adminClient);
+      const result = await executeSlackListChannels(ctx.userId, ctx.adminClient, ctx.agentId);
       return { result, summary: 'Listed Slack channels' };
     }
 
@@ -1891,7 +1891,7 @@ async function executeChatTool(
     }
 
     case 'slack_read_messages': {
-      const result = await executeSlackReadMessages(input, ctx.userId, ctx.adminClient);
+      const result = await executeSlackReadMessages(input, ctx.userId, ctx.adminClient, ctx.agentId);
       return { result, summary: 'Read Slack messages' };
     }
 

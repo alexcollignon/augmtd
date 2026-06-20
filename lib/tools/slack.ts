@@ -6,12 +6,13 @@
 // invited to a channel to post/read it.
 
 import { nangoProxy } from '@/lib/integrations/nango';
-import { resolveConnection } from '@/lib/integrations/connection';
+import { resolveConnection, isToolEnabledForAgent, getAgentToolConfig } from '@/lib/integrations/connection';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Admin = any;
 
 const NOT_CONNECTED = "Slack isn't connected for your team. An owner or admin can connect it in Settings → Connections.";
+const DISABLED = "Slack is turned off for this coworker. Enable it in this worker's Tools tab.";
 
 const BASE_URL = process.env.VERCEL_PROJECT_PRODUCTION_URL
   ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
@@ -69,7 +70,8 @@ export const slackPostMessageDefinition = {
 
 // ── Executors ─────────────────────────────────────────────────────────────────
 
-export async function executeSlackListChannels(userId: string, admin: Admin): Promise<string> {
+export async function executeSlackListChannels(userId: string, admin: Admin, agentId?: string): Promise<string> {
+  if (!(await isToolEnabledForAgent(admin, agentId, 'slack'))) return DISABLED;
   const conn = await resolveConnection(admin, userId, 'slack');
   if (!conn) return NOT_CONNECTED;
   const res = await nangoProxy({
@@ -90,7 +92,10 @@ export async function executeSlackReadMessages(
   config: Record<string, unknown>,
   userId: string,
   admin: Admin,
+  agentId?: string,
 ): Promise<string> {
+  if (!(await isToolEnabledForAgent(admin, agentId, 'slack'))) return DISABLED;
+
   const channel = String(config.channel ?? '').trim();
   if (!channel) return 'Provide a channel or DM id (resolve a name via slack_list_channels first).';
 
@@ -124,8 +129,15 @@ export async function executeSlackPostMessage(
   agentId: string | undefined,
   admin: Admin,
 ): Promise<string> {
-  const channel = String(config.channel ?? '').trim();
+  if (!(await isToolEnabledForAgent(admin, agentId, 'slack'))) return DISABLED;
+
   const text = String(config.text ?? '').trim();
+  let channel = String(config.channel ?? '').trim();
+  if (!channel) {
+    // Fall back to this worker's configured default channel, if any.
+    const cfg = await getAgentToolConfig(admin, agentId, 'slack');
+    channel = String(cfg.default_channel ?? '').trim();
+  }
   if (!channel || !text) return 'Provide both a channel and message text.';
 
   const conn = await resolveConnection(admin, userId, 'slack');
