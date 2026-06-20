@@ -45,10 +45,12 @@ export default function IntegrationsSection() {
         body: JSON.stringify({ provider }),
       });
       if (!res.ok) throw new Error('session');
-      const { token } = await res.json();
+      const { token, apiURL, baseURL } = await res.json();
 
-      const nango = new Nango();
+      const nango = new Nango({ host: apiURL });
       const connectUI = nango.openConnectUI({
+        apiURL,
+        baseURL,
         onEvent: (event: { type: string }) => {
           if (event.type === 'connect') {
             // Record + refresh once the OAuth flow completes.
