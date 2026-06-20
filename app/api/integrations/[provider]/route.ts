@@ -69,22 +69,24 @@ export async function POST(request: NextRequest, { params }: Params) {
     const conn = await getConnection(provider, connectionId).catch(() => null);
     const metadata = conn ? extractMetadata(provider, conn) : {};
     const admin = integrationsAdmin();
-    const { error: upsertErr } = await admin
-      .from('integration_connections')
-      .upsert(
-        {
-          user_id: user.id,
-          company_id: w.companyId,
-          scope: w.scope,
-          provider,
-          nango_connection_id: connectionId,
-          status: 'active',
-          metadata,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: w.scope === 'company' ? 'company_id,provider' : 'user_id,provider' },
-      );
-    if (upsertErr) throw upsertErr;
+
+    // Delete-then-insert rather than upsert(onConflict): the unique indexes are
+    // PARTIAL (WHERE scope = …), which Postgres cannot use for ON CONFLICT
+    // inference — upsert() would throw and silently drop the write.
+    let delPrev = admin.from('integration_connections').delete().eq('provider', provider).eq('scope', w.scope);
+    delPrev = w.scope === 'company' ? delPrev.eq('company_id', w.key) : delPrev.eq('user_id', w.key);
+    await delPrev;
+
+    const { error: insErr } = await admin.from('integration_connections').insert({
+      user_id: user.id,
+      company_id: w.companyId,
+      scope: w.scope,
+      provider,
+      nango_connection_id: connectionId,
+      status: 'active',
+      metadata,
+    });
+    if (insErr) throw insErr;
 
     return NextResponse.json({ ok: true, metadata });
   } catch (err) {
