@@ -107,10 +107,40 @@ export async function GET() {
   }
   needsReview.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
 
+  // ── Messages from the team: report-back cards (every run, all homes) ──
+  type TeamMessage = { id: string; workerId: string | null; workerName: string | null; workerRole: string | null; text: string; threadId: string | null; createdAt: string; seen: boolean };
+  let messages: TeamMessage[] = [];
+  const { data: notifs } = await supabase
+    .from('workflow_notifications')
+    .select('id, workflow_id, workflow_run_id, summary, seen, created_at')
+    .eq('user_id', user.id)
+    .order('created_at', { ascending: false })
+    .limit(12);
+  if (notifs?.length) {
+    const runIds = notifs.map(n => n.workflow_run_id).filter(Boolean);
+    const { data: runs2 } = await supabase.from('workflow_runs').select('id, thread_id').in('id', runIds);
+    const threadByRun = new Map((runs2 ?? []).map(r => [r.id, r.thread_id]));
+    messages = notifs.map(n => {
+      const wf = wfMap.get(n.workflow_id);
+      const w = wf ? workerMap.get(wf.agent_id) : null;
+      return {
+        id: n.id as string,
+        workerId: w?.id ?? null,
+        workerName: w?.name ?? null,
+        workerRole: (w as { worker_role?: string } | undefined)?.worker_role ?? null,
+        text: (n.summary as string) ?? '',
+        threadId: (threadByRun.get(n.workflow_run_id) as string) ?? null,
+        createdAt: n.created_at as string,
+        seen: Boolean(n.seen),
+      };
+    });
+  }
+
   return NextResponse.json({
     workers: workerList,
     needsReview: needsReview.slice(0, 10),
     recentActivity,
     upcoming,
+    messages,
   });
 }
