@@ -137,6 +137,7 @@ export const slackReadMessagesDefinition = {
     properties: {
       channel: { type: 'string', description: 'Channel or DM id (C0123ABCD, G…, D…). Ids only — resolve names via slack_list_channels.' },
       limit: { type: 'number', description: 'How many recent messages to fetch (default 20, max 100).' },
+      days: { type: 'number', description: 'Optional time window — only messages from the last N days (e.g. 7 for the past week). Omit or 0 for no time limit.' },
     },
     required: ['channel'],
   },
@@ -203,12 +204,16 @@ export async function executeSlackReadMessages(
   if (!conn) return NOT_CONNECTED;
 
   const limit = Math.min(Math.max(Number(config.limit) || 20, 1), 100);
+  const days = Math.max(Number(config.days) || 0, 0);  // 0 = no time limit
+  const params: Record<string, string> = { channel, limit: String(limit) };
+  if (days > 0) params.oldest = String(Math.floor(Date.now() / 1000) - days * 86400);
+
   const res = await nangoProxy({
     method: 'GET',
     endpoint: '/conversations.history',
     providerConfigKey: conn.providerKey,
     connectionId: conn.connectionId,
-    params: { channel, limit: String(limit) },
+    params,
   });
   const body = res.body as { ok?: boolean; messages?: Array<{ user?: string; text?: string; bot_id?: string; ts?: string }>; error?: string } | null;
   if (!res.ok || !body?.ok) {

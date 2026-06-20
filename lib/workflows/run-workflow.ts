@@ -12,6 +12,7 @@ import { buildArtifactFile, getFileExt, getMimeType } from '@/lib/artifacts/buil
 import { normalizeOutput } from './types';
 import { generateReportBack, fallbackReport, type ReportFacts } from './report-back';
 import { executeSlackPostMessage, sendSlackDM, isDmTarget } from '@/lib/tools/slack';
+import { composeSlackMessage } from './slack-message';
 import { getAIClient } from '@/lib/ai/factory';
 import type {
   Workflow, WorkflowRun, StepOutput, TriggerSource, OutputConfig, NormalizedOutput, OutputHome,
@@ -319,8 +320,13 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
     return { runId, status: 'failed', threadId, error: runError };
   }
 
-  // Materialise the deliverable (text + optional document artifact)
-  const finalStep = stepOutputs[stepOutputs.length - 1];
+  // Materialise the deliverable from the last CONTENT step — Slack "send" steps are
+  // side-effects (notifications), never the deliverable.
+  const sendStepIds = new Set(
+    (workflow.steps ?? []).filter(s => s.type === 'tool' && (s as { tool?: string }).tool === 'slack_send').map(s => s.id),
+  );
+  const contentOutputs = stepOutputs.filter(o => !sendStepIds.has(o.step_id));
+  const finalStep = contentOutputs[contentOutputs.length - 1] ?? stepOutputs[stepOutputs.length - 1];
   const out = normalizeOutput(workflow.output_config);
   const materialised = await materialiseOutput(
     admin, workflow.user_id, threadId, workflow.name, out, finalStep,
@@ -363,11 +369,21 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
       if (!r.startsWith('Posted') && !r.startsWith('Sent')) problem = r;
     }
   } else if (home === 'document' && out.linkOut.slack && out.slackChannel) {
-    const tmpl = out.slackAnnouncement?.trim() || '📣 *{{title}}* is ready: {{link}}';
-    const announcement = tmpl
-      .replace(/\{\{\s*title\s*\}\}/gi, materialised.title)
-      .replace(/\{\{\s*link\s*\}\}/gi, threadLink)
-      .replace(/\{\{\s*date\s*\}\}/gi, new Date().toISOString().slice(0, 10));
+    const fallback = `📣 *${materialised.title}* is ready: ${threadLink}`;
+    const instr = out.slackAnnouncement?.trim();
+    let announcement = fallback;
+    if (instr) {
+      // Instruction-driven: the coworker writes the channel announcement.
+      try {
+        const { client, model } = await getAIClient(workflow.user_id, 'conversation', admin);
+        announcement = await composeSlackMessage(client, model, {
+          workerName: worker.name, workerInstructions: worker.instructions,
+          channel: out.slackChannel, instruction: instr,
+          context: `Document "${materialised.title}" (link: ${threadLink}):\n${finalText.slice(0, 2000)}`,
+          fallback,
+        });
+      } catch { announcement = fallback; }
+    }
     const r = await executeSlackPostMessage({ channel: out.slackChannel, text: announcement }, workflow.user_id, agentId, admin);
     if (r.startsWith('Posted')) alsoNote = `announced it in ${out.slackChannel}`;
   }

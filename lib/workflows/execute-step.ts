@@ -12,7 +12,8 @@ import { getCalendarContext } from '@/lib/calendar/calendar-context';
 import { formatCalendarContextForChat } from '@/lib/calendar/format-calendar-context';
 import { buildKBContext } from '@/lib/knowledge/build-kb-context';
 import { buildSkillsBlock, buildSkillsBlockByIds } from '@/lib/work/worker-skills-context';
-import { executeWebSearch, executeFetchUrl, executeRssFeed, executeLinkedInPost, executeBrowserFetch, executePtTenders, executeDeepResearch, executeWorkflowOutput, executeGetEmails, executeGetMeetingContext, executeSlackReadMessages } from '@/lib/tools';
+import { composeSlackMessage } from './slack-message';
+import { executeWebSearch, executeFetchUrl, executeRssFeed, executeLinkedInPost, executeBrowserFetch, executePtTenders, executeDeepResearch, executeWorkflowOutput, executeGetEmails, executeGetMeetingContext, executeSlackReadMessages, executeSlackPostMessage } from '@/lib/tools';
 import type { WorkflowStep, StepOutput, ToolStep, AIStep, AgentStep } from './types';
 
 export interface StepContext {
@@ -93,6 +94,7 @@ async function executeToolStep(step: ToolStep, ctx: StepContext): Promise<string
     case 'fetch_url':         return await executeFetchUrl(step.config);
     case 'rss_feed':          return await executeRssFeed(step.config, ctx.lastRunAt);
     case 'slack_read_channel': return await executeSlackReadMessages(step.config, ctx.userId, ctx.supabase, ctx.workerAgentId);
+    case 'slack_send':         return await toolSlackSend(step, ctx);
     case 'linkedin_post':     return await executeLinkedInPost(step.config, {
       userId: ctx.userId,
       supabase: ctx.supabase,
@@ -117,6 +119,37 @@ async function executeToolStep(step: ToolStep, ctx: StepContext): Promise<string
 async function toolGetCalendar(ctx: StepContext): Promise<string> {
   const cal = await getCalendarContext(ctx.userId, ctx.supabase);
   return formatCalendarContextForChat(cal) || 'No upcoming meetings.';
+}
+
+// Action step: write a Slack message from an instruction + the pipeline's context,
+// in the coworker's voice, and post it (mentions/threads handled by the executor).
+// Side-effect only — not the deliverable (run-workflow excludes send steps).
+async function toolSlackSend(step: ToolStep, ctx: StepContext): Promise<string> {
+  const channel = String(step.config.channel ?? '').trim();
+  const instruction = String(step.config.instruction ?? '').trim();
+  if (!channel) return 'No Slack channel set for this send step.';
+
+  const context = ctx.previousOutputs
+    .map(o => (typeof o.output === 'string' ? o.output : JSON.stringify(o.output)))
+    .filter(Boolean)
+    .join('\n\n')
+    .slice(0, 6000);
+
+  let workerName = 'Your coworker';
+  let workerInstructions: string | null = null;
+  if (ctx.workerAgentId) {
+    const { data } = await ctx.supabase.from('custom_agents').select('name, instructions').eq('id', ctx.workerAgentId).maybeSingle();
+    if (data) { workerName = (data.name as string) ?? workerName; workerInstructions = (data.instructions as string) ?? null; }
+  }
+
+  let text = instruction;
+  try {
+    const { client, model } = await getAIClient(ctx.userId, 'conversation', ctx.supabase);
+    text = await composeSlackMessage(client, model, { workerName, workerInstructions, channel, instruction, context, fallback: instruction });
+  } catch { /* fall back to the raw instruction */ }
+  if (!text) return 'Nothing to send to Slack.';
+
+  return await executeSlackPostMessage({ channel, text }, ctx.userId, ctx.workerAgentId, ctx.supabase);
 }
 
 async function toolReadKbFile(

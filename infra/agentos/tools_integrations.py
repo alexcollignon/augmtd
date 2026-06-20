@@ -66,15 +66,19 @@ def slack_list_members(run_context: RunContext, channel: str) -> str:
 
 
 @tool
-def slack_read_messages(run_context: RunContext, channel: str, limit: int = 20) -> str:
+def slack_read_messages(run_context: RunContext, channel: str, limit: int = 20, days: int = 0) -> str:
     """Read recent messages from a Slack channel or DM the app is a member of
     (to catch up, summarize, or answer about a conversation). The app must be in it.
 
     Args:
         channel: Channel or DM id (C0123ABCD, G…, D…). Resolve names via slack_list_channels.
         limit: How many recent messages to fetch (default 20, max 100).
+        days: Optional time window — only messages from the last N days (e.g. 7). 0 = no limit.
     """
-    return _call("slack_read_messages", run_context, {"channel": channel, "limit": limit})
+    args = {"channel": channel, "limit": limit}
+    if days:
+        args["days"] = days
+    return _call("slack_read_messages", run_context, args)
 
 
 @tool
