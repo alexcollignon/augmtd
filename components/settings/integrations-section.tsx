@@ -50,10 +50,16 @@ export default function IntegrationsSection() {
       // Direct OAuth popup against our self-hosted Nango — no Connect-UI iframe,
       // no second domain, and no Nango account/login for the end user.
       const nango = new Nango({ host: apiURL, connectSessionToken: token });
-      await nango.auth(provider);
+      const result = await nango.auth(provider);
+      const connectionId = (result as { connectionId?: string })?.connectionId;
 
-      // Resolved = OAuth succeeded → record the connection + refresh.
-      await fetch(`/api/integrations/${provider}`, { method: 'POST' }).catch(() => {});
+      // Resolved = OAuth succeeded → record the connection (Nango assigns its own
+      // connection id, so pass it along) + refresh.
+      await fetch(`/api/integrations/${provider}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ connectionId }),
+      }).catch(() => {});
       load();
     } catch {
       // user closed the popup or auth failed — nothing to record
