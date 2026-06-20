@@ -48,6 +48,36 @@ export async function getConnection(providerConfigKey: string, connectionId: str
   return res.json();
 }
 
+export interface NangoConnectionSummary {
+  connectionId: string;
+  providerConfigKey: string;
+  endUserId: string | null;
+  created: string;
+}
+
+/**
+ * List stored connections (this environment), optionally filtered to one end-user.
+ * Connect sessions assign their own connection id, so this is how the server finds
+ * the connection it just created (match on the end_user id we passed = our scope key).
+ */
+export async function listConnections(endUserId?: string): Promise<NangoConnectionSummary[]> {
+  const res = await nangoFetch('/connection', { method: 'GET' });
+  if (!res.ok) return [];
+  const json = (await res.json().catch(() => null)) as { connections?: Array<Record<string, unknown>> } | null;
+  const out = (json?.connections ?? [])
+    .map((c) => ({
+      connectionId: String(c.connection_id ?? ''),
+      providerConfigKey: String(c.provider_config_key ?? ''),
+      endUserId:
+        (c.end_user as { id?: string } | null)?.id ??
+        (c.tags as { end_user_id?: string } | null)?.end_user_id ??
+        null,
+      created: String(c.created ?? c.created_at ?? ''),
+    }))
+    .filter((c) => c.connectionId);
+  return endUserId ? out.filter((c) => c.endUserId === endUserId) : out;
+}
+
 /** Revoke + delete a stored connection. Best-effort. */
 export async function deleteConnection(providerConfigKey: string, connectionId: string): Promise<void> {
   await nangoFetch(
