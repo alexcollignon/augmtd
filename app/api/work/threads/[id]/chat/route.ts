@@ -23,8 +23,8 @@ import {
   getEmailsDefinition, executeGetEmails,
   getMeetingContextDefinition, executeGetMeetingContext,
   deepResearchDefinition, executeDeepResearch,
-  slackListChannelsDefinition, slackPostMessageDefinition,
-  executeSlackListChannels, executeSlackPostMessage,
+  slackListChannelsDefinition, slackPostMessageDefinition, slackReadMessagesDefinition,
+  executeSlackListChannels, executeSlackPostMessage, executeSlackReadMessages,
 } from '@/lib/tools';
 import { buildConnectedIntegrationsBlock } from '@/lib/integrations/connection';
 import {
@@ -1313,7 +1313,7 @@ function buildChatTools(sources: string[], _provider: string, _modelFamily: stri
       shareTaskDefinition, listTeamTasksDefinition, useTaskDefinition,
       listWorkerDocumentsDefinition, getWorkerDocumentDefinition,
       listSkillsDefinition, applySkillDefinition,
-      slackListChannelsDefinition, slackPostMessageDefinition,
+      slackListChannelsDefinition, slackPostMessageDefinition, slackReadMessagesDefinition,
     );
   }
 
@@ -1888,6 +1888,11 @@ async function executeChatTool(
     case 'slack_post_message': {
       const result = await executeSlackPostMessage(input, ctx.userId, ctx.agentId, ctx.adminClient);
       return { result, summary: result.startsWith('Posted') ? 'Posted to Slack' : 'Slack post failed' };
+    }
+
+    case 'slack_read_messages': {
+      const result = await executeSlackReadMessages(input, ctx.userId, ctx.adminClient);
+      return { result, summary: 'Read Slack messages' };
     }
 
     default:

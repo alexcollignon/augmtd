@@ -49,9 +49,21 @@ def _call(action: str, run_context: RunContext, config: dict) -> str:
 
 @tool
 def slack_list_channels(run_context: RunContext) -> str:
-    """List the Slack channels the team's app can see, to resolve a channel name
-    to an id. Call before slack_post_message if you only have a channel name."""
+    """List the Slack channels the team's app can see (public + private it's in),
+    to resolve a channel name to an id. Call before posting or reading by name."""
     return _call("slack_list_channels", run_context, {})
+
+
+@tool
+def slack_read_messages(run_context: RunContext, channel: str, limit: int = 20) -> str:
+    """Read recent messages from a Slack channel or DM the app is a member of
+    (to catch up, summarize, or answer about a conversation). The app must be in it.
+
+    Args:
+        channel: Channel or DM id (C0123ABCD, G…, D…). Resolve names via slack_list_channels.
+        limit: How many recent messages to fetch (default 20, max 100).
+    """
+    return _call("slack_read_messages", run_context, {"channel": channel, "limit": limit})
 
 
 @tool
@@ -66,4 +78,4 @@ def slack_post_message(run_context: RunContext, channel: str, text: str) -> str:
     return _call("slack_post_message", run_context, {"channel": channel, "text": text})
 
 
-INTEGRATION_TOOLS = [slack_list_channels, slack_post_message]
+INTEGRATION_TOOLS = [slack_list_channels, slack_post_message, slack_read_messages]
