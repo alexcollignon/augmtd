@@ -108,12 +108,13 @@ const AVAILABLE_TOOLS = [
   { id: 'deep_research',       label: 'Deep research',             description: 'Takes topics from the previous step and researches each one in depth using AI + web search. Returns cited findings.' },
   { id: 'get_workflow_output', label: 'Read workflow output',      description: 'Reads the output of another workflow and passes it as context to the next step. Compose workflows together.' },
   { id: 'slack_read_channel',  label: 'Read a Slack channel',      description: 'Returns recent messages from a Slack channel this coworker is in — to summarize, digest, or act on. Config: channel (#name or id), limit.' },
+  { id: 'slack_send',          label: 'Send a Slack message',      description: 'Posts a message to a channel, written by this coworker from your instruction + what the pipeline produced. Notify a team, tag people. Config: channel + instruction.' },
 ];
 
 const TOOL_GROUPS = [
   { label: 'Your workspace', ids: ['get_emails', 'get_meeting_context', 'get_calendar', 'read_kb_file'] },
   { label: 'Web & research', ids: ['web_search', 'fetch_url', 'rss_feed', 'get_pt_tenders', 'deep_research'] },
-  { label: 'Social media',   ids: ['linkedin_post', 'slack_read_channel'] },
+  { label: 'Social media',   ids: ['linkedin_post', 'slack_read_channel', 'slack_send'] },
 ];
 
 const TOOL_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -131,6 +132,7 @@ const TOOL_ICONS: Record<string, React.ComponentType<{ className?: string }>> = 
   deep_research:        MagnifyingGlassIcon,
   get_workflow_output:  ArrowPathIcon,
   slack_read_channel:   ChatBubbleLeftRightIcon,
+  slack_send:           PaperAirplaneIcon,
 };
 
 const TOOL_STYLES: Record<string, { bg: string; logo?: string }> = {
@@ -148,6 +150,7 @@ const TOOL_STYLES: Record<string, { bg: string; logo?: string }> = {
   deep_research:        { bg: 'bg-indigo-600' },
   get_workflow_output:  { bg: 'bg-teal-500' },
   slack_read_channel:   { bg: 'bg-[#4A154B]' },
+  slack_send:           { bg: 'bg-[#4A154B]' },
 };
 
 const STEP_TYPE_COLORS = {
@@ -1876,6 +1879,29 @@ function ToolStepFields({ step, onUpdate, isEnhancing, isPending, onEnhance, cur
               onChange={e => onUpdate({ config: { ...step.config, limit: Number(e.target.value) || 30 } })}
               className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px]" />
           </Field>
+          <Field label="Time window">
+            <select value={String((step.config.days as number) ?? 0)}
+              onChange={e => onUpdate({ config: { ...step.config, days: Number(e.target.value) } })}
+              className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] bg-white">
+              <option value="0">All recent</option>
+              <option value="1">Past 24 hours</option>
+              <option value="7">Past 7 days</option>
+              <option value="30">Past 30 days</option>
+            </select>
+          </Field>
+        </>
+      )}
+      {step.tool === 'slack_send' && (
+        <>
+          <SlackChannelField label="Channel" value={(step.config.channel as string) ?? ''} onChange={v => onUpdate({ config: { ...step.config, channel: v } })} />
+          <Field label="What to say" hint="The coworker writes the message from this + what the pipeline produced. Tag people with <@Name>.">
+            <textarea
+              value={(step.config.instruction as string) ?? ''}
+              onChange={e => onUpdate({ config: { ...step.config, instruction: e.target.value } })}
+              placeholder={'Post a 2-line summary of the brief and tag <@Rene> to review.'}
+              rows={3}
+              className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] resize-y" />
+          </Field>
         </>
       )}
       {(step.tool === 'get_emails' || step.tool === 'get_urgent_emails') && (
@@ -2476,11 +2502,11 @@ function OutputEditor({ output, onChange }: { output: OutputConfig; onChange: (o
           {linkSlack && (
             <>
               <SlackChannelField label="Link channel" value={output.slack_channel ?? ''} onChange={v => onChange({ ...output, slack_channel: v })} />
-              <Field label="Announcement message" hint="Posted to the channel. {{title}} and {{link}} fill in; tag people with <@Name>.">
+              <Field label="How to announce it" hint="The coworker writes the channel message from this + the document. Leave blank for a simple link.">
                 <textarea
                   value={output.slack_announcement ?? ''}
                   onChange={e => onChange({ ...output, slack_announcement: e.target.value })}
-                  placeholder={'📣 *{{title}}* is ready — <@Rene>, take a look: {{link}}'}
+                  placeholder={'e.g. Post a 2-line summary highlighting the top risk, and tag <@Rene> to review.'}
                   rows={2}
                   className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] resize-y" />
               </Field>

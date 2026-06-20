@@ -113,6 +113,9 @@ def update_task(
             is slack, or (for a document) a channel to also drop a link in.
         output_report_mode: How proactively you report back — "each_run" (default),
             "digest", or "silent".
+        output_slack_announcement: For a document that also posts to Slack — an
+            instruction for how to announce it in the channel (you write the message
+            from this + the document, e.g. "2-line summary, tag <@Rene>").
         worker_instructions: Task-specific tone/persona overriding the worker default.
         skill_names: Comma-separated skill names (see list_skills) to enforce on this
             task's output. Empty string clears pinned skills (use your assigned skills).

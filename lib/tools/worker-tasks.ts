@@ -77,7 +77,7 @@ export const updateTaskDefinition = {
       output_title: { type: 'string', description: 'Title template for a document. Use {{date}} for the run date, {{week_of}} for the week. Example: "AHK Briefing — {{week_of}}"' },
       output_slack_channel: { type: 'string', description: 'Slack channel (#name or id) when output_destination=slack, or "@me" to DM the user privately. For a document, the channel to also drop a link in. Resolve names via slack_list_channels.' },
       output_report_mode: { type: 'string', enum: ['each_run', 'digest', 'silent'], description: 'How proactively you report back after a run. each_run = message the user after every run (default); digest = periodic summary; silent = no report.' },
-      output_slack_announcement: { type: 'string', description: 'For a document that also posts to Slack: the announcement message for the channel. Use {{title}} and {{link}}, and tag people with <@Name> (e.g. "📣 New brief — <@Rene> please review: {{link}}").' },
+      output_slack_announcement: { type: 'string', description: 'For a document that also posts to Slack: an INSTRUCTION for how to announce it in the channel — the coworker writes the message from this + the document (e.g. "post a 2-line summary and tag <@Rene> to review"). Leave empty for a simple link.' },
       worker_instructions: { type: 'string', description: 'Task-specific tone or persona instructions that override the worker default for this task only' },
       skill_names: {
         type: 'array',
