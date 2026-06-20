@@ -62,7 +62,7 @@ read_kb_file        — reads a file from the knowledge base. config: { "file_id
 Pick ONE home for the deliverable (the app always keeps a record regardless):
 - "message"  → a message in the run thread (quick digests, short conversational updates)
 - "document" → a saved document in Documents/Drive (briefings, reports). Set artifact_type:"document" + a title_template.
-- "slack"    → posted to a Slack channel. Set slack_channel (e.g. "#marketing"). ONLY if Slack is connected.
+- "slack"    → posted to a Slack channel. Set slack_channel (e.g. "#marketing"), or "@me" to DM the user privately. ONLY if Slack is connected.
 - "email"    → emailed.
 
 report_mode: how proactively the coworker reports back — "each_run" (default), "digest", or "silent".

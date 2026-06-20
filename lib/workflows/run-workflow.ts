@@ -11,7 +11,7 @@ import { sendWorkflowEmail } from './email-notification';
 import { buildArtifactFile, getFileExt, getMimeType } from '@/lib/artifacts/builders';
 import { normalizeOutput } from './types';
 import { generateReportBack, fallbackReport, type ReportFacts } from './report-back';
-import { executeSlackPostMessage } from '@/lib/tools/slack';
+import { executeSlackPostMessage, sendSlackDM, isDmTarget } from '@/lib/tools/slack';
 import { getAIClient } from '@/lib/ai/factory';
 import type {
   Workflow, WorkflowRun, StepOutput, TriggerSource, OutputConfig, NormalizedOutput, OutputHome,
@@ -339,8 +339,9 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
     const { data: a } = await admin.from('custom_agents').select('name, description, instructions').eq('id', agentId).maybeSingle();
     if (a) worker = a as ReportFacts['worker'];
   }
-  const { data: prof } = await admin.from('profiles').select('full_name').eq('id', runnerId).maybeSingle();
+  const { data: prof } = await admin.from('profiles').select('full_name, slack_dm_reports').eq('id', runnerId).maybeSingle();
   const firstName = (((prof as { full_name?: string } | null)?.full_name) ?? '').split(' ')[0] ?? '';
+  const dmReports = Boolean((prof as { slack_dm_reports?: boolean } | null)?.slack_dm_reports);
 
   const APP_URL = (process.env.AUGMTD_WEBHOOK_BASE_URL || 'https://app.augmtd.ai').replace(/\/$/, '');
   const threadLink = `${APP_URL}/workers?worker=${agentId ?? ''}&thread=${threadId}`;
@@ -358,8 +359,8 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
     if (!out.slackChannel) problem = 'no Slack channel was set for this task';
     else {
       const r = await executeSlackPostMessage({ channel: out.slackChannel, text: finalText }, workflow.user_id, agentId, admin);
-      channelLabel = out.slackChannel;
-      if (!r.startsWith('Posted')) problem = r;
+      channelLabel = isDmTarget(out.slackChannel) ? 'a direct message to you' : out.slackChannel;
+      if (!r.startsWith('Posted') && !r.startsWith('Sent')) problem = r;
     }
   } else if (home === 'document' && out.linkOut.slack && out.slackChannel) {
     const r = await executeSlackPostMessage({ channel: out.slackChannel, text: `*${materialised.title}* is ready — ${threadLink}` }, workflow.user_id, agentId, admin);
@@ -429,6 +430,11 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
       title: worker.name,                          // sender = the coworker (DM feel)
       summary: reportText.slice(0, 280),
     });
+    // Optional: also ping the user with a real Slack DM from the coworker persona.
+    // (Skip when the home was already a Slack DM, to avoid double-pinging.)
+    if (dmReports && !(home === 'slack' && out.slackChannel && isDmTarget(out.slackChannel))) {
+      await sendSlackDM(admin, runnerId, agentId, reportText).catch(() => {});
+    }
   }
 
   // Update run row: success

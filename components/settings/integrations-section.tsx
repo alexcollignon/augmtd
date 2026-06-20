@@ -30,6 +30,7 @@ export default function IntegrationsSection() {
   const [isLoading, setIsLoading] = useState(true);
   const [busyProvider, setBusyProvider] = useState<string | null>(null);
   const [confirmDisconnect, setConfirmDisconnect] = useState<string | null>(null);
+  const [dmReports, setDmReports] = useState(false);
 
   const load = useCallback(() => {
     fetch('/api/integrations')
@@ -43,6 +44,17 @@ export default function IntegrationsSection() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    fetch('/api/integrations/slack/dm-reports').then(r => r.json()).then(d => setDmReports(Boolean(d.enabled))).catch(() => {});
+  }, []);
+
+  const toggleDmReports = useCallback(() => {
+    setDmReports(prev => {
+      const next = !prev;
+      fetch('/api/integrations/slack/dm-reports', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: next }) }).catch(() => {});
+      return next;
+    });
+  }, []);
 
   const handleConnect = useCallback(async (provider: string) => {
     setBusyProvider(provider);
@@ -109,7 +121,8 @@ export default function IntegrationsSection() {
       ) : (
         <div className="space-y-3">
           {integrations.map(i => (
-            <div key={i.provider} className="rounded-xl border border-neutral-200 bg-white px-4 py-3.5 flex items-start gap-4">
+            <div key={i.provider} className="rounded-xl border border-neutral-200 bg-white px-4 py-3.5">
+              <div className="flex items-start gap-4">
               {LOGOS[i.provider] && (
                 <div className="flex-shrink-0 w-9 h-9 rounded-lg border border-neutral-200 bg-white flex items-center justify-center overflow-hidden mt-0.5">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -166,6 +179,23 @@ export default function IntegrationsSection() {
                   </Button>
                 )}
               </div>
+              </div>
+              {i.provider === 'slack' && i.connected && (
+                <div className="mt-3 pt-3 border-t border-neutral-100 flex items-center justify-between gap-4">
+                  <div className="min-w-0">
+                    <p className="text-[12.5px] text-neutral-700">DM me task updates</p>
+                    <p className="text-[11px] text-neutral-400 mt-0.5">Your coworkers also message you in Slack when they finish a task.</p>
+                  </div>
+                  <button
+                    role="switch"
+                    aria-checked={dmReports}
+                    onClick={toggleDmReports}
+                    className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors ${dmReports ? 'bg-indigo-600' : 'bg-neutral-300'}`}
+                  >
+                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${dmReports ? 'translate-x-[18px]' : 'translate-x-0.5'}`} />
+                  </button>
+                </div>
+              )}
             </div>
           ))}
         </div>

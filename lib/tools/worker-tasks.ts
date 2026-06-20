@@ -75,7 +75,7 @@ export const updateTaskDefinition = {
       output_destination: { type: 'string', enum: ['message', 'document', 'slack', 'email'], description: "The deliverable's single home. message = a message in the run thread; document = a saved document in Documents/Drive; slack = posted to a Slack channel; email = emailed. The app always keeps a record regardless." },
       output_artifact_type: { type: 'string', enum: ['document', 'spreadsheet', 'presentation', 'email'], description: 'Document type — only when output_destination is document' },
       output_title: { type: 'string', description: 'Title template for a document. Use {{date}} for the run date, {{week_of}} for the week. Example: "AHK Briefing — {{week_of}}"' },
-      output_slack_channel: { type: 'string', description: 'Slack channel (#name or id). The channel to post to when output_destination=slack, OR — for a document — a channel to also drop a link to the doc in. Resolve names via slack_list_channels.' },
+      output_slack_channel: { type: 'string', description: 'Slack channel (#name or id) when output_destination=slack, or "@me" to DM the user privately. For a document, the channel to also drop a link in. Resolve names via slack_list_channels.' },
       output_report_mode: { type: 'string', enum: ['each_run', 'digest', 'silent'], description: 'How proactively you report back after a run. each_run = message the user after every run (default); digest = periodic summary; silent = no report.' },
       worker_instructions: { type: 'string', description: 'Task-specific tone or persona instructions that override the worker default for this task only' },
       skill_names: {

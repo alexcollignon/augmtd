@@ -72,7 +72,8 @@ def slack_post_message(run_context: RunContext, channel: str, text: str) -> str:
     The app must already be invited to the channel.
 
     Args:
-        channel: Channel id (preferred, e.g. C0123ABCD) or name (e.g. #general).
+        channel: Channel id (e.g. C0123ABCD) or name (e.g. #general). Use "@me" to
+            send the user a direct message instead of posting to a channel.
         text: Message text. Slack mrkdwn: *bold*, _italic_, <url|label>.
     """
     return _call("slack_post_message", run_context, {"channel": channel, "text": text})

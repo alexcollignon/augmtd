@@ -2391,11 +2391,12 @@ function SlackChannelField({ label, value, onChange }: { label: string; value: s
       <select value={value} onChange={e => onChange(e.target.value)}
         className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] bg-white">
         <option value="">Select a channel…</option>
+        <option value="@me">📩 Direct message to you</option>
         {state.channels.map(c => (
           <option key={c.id} value={c.is_private ? c.id : `#${c.name}`}>{c.is_private ? '🔒 ' : '#'}{c.name}</option>
         ))}
       </select>
-      <p className="text-[11px] text-neutral-400 mt-1">The app must be in private channels (invite @AUGMTD).</p>
+      <p className="text-[11px] text-neutral-400 mt-1">DMs you privately, or posts to a channel (invite @AUGMTD to private ones).</p>
     </Field>
   );
 }

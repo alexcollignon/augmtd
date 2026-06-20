@@ -34,6 +34,50 @@ async function getPersona(admin: Admin, agentId?: string): Promise<{ username?: 
   return { username: data.name as string, icon_url: file ? `${BASE_URL}/workers/${file}.png` : undefined };
 }
 
+// "DM the user" sentinels — a channel value the worker/UI uses to mean a direct message.
+const DM_SENTINELS = new Set(['@me', 'dm', 'dm:me', 'me', '__dm__']);
+export function isDmTarget(ch: string): boolean { return DM_SENTINELS.has(ch.trim().toLowerCase()); }
+
+// Resolve the user's Slack DM channel id (email → slack user → open DM). null if not resolvable.
+async function resolveDmChannelId(admin: Admin, userId: string, connectionId: string): Promise<string | null> {
+  let email: string | undefined;
+  try {
+    const { data } = await admin.auth.admin.getUserById(userId);
+    email = (data?.user?.email as string | undefined) ?? undefined;
+  } catch { /* no email */ }
+  if (!email) return null;
+
+  const lookup = await nangoProxy({
+    method: 'GET', endpoint: '/users.lookupByEmail', providerConfigKey: 'slack',
+    connectionId, params: { email },
+  });
+  const slackUserId = (lookup.body as { user?: { id?: string } } | null)?.user?.id;
+  if (!slackUserId) return null;
+
+  const open = await nangoProxy({
+    method: 'POST', endpoint: '/conversations.open', providerConfigKey: 'slack',
+    connectionId, data: { users: slackUserId },
+  });
+  return (open.body as { channel?: { id?: string } } | null)?.channel?.id ?? null;
+}
+
+// Send a direct message to the user, as the coworker persona. Used by the report-back.
+export async function sendSlackDM(admin: Admin, userId: string, agentId: string | undefined, text: string): Promise<boolean> {
+  if (!text.trim()) return false;
+  if (!(await isToolEnabledForAgent(admin, agentId, 'slack'))) return false;
+  const conn = await resolveConnection(admin, userId, 'slack');
+  if (!conn) return false;
+  const dm = await resolveDmChannelId(admin, userId, conn.connectionId);
+  if (!dm) return false;
+  const persona = await getPersona(admin, agentId);
+  const res = await nangoProxy({
+    method: 'POST', endpoint: '/chat.postMessage', providerConfigKey: 'slack', connectionId: conn.connectionId,
+    data: { channel: dm, text, ...(persona.username ? { username: persona.username } : {}), ...(persona.icon_url ? { icon_url: persona.icon_url } : {}) },
+  });
+  const body = res.body as { ok?: boolean } | null;
+  return Boolean(res.ok && body?.ok);
+}
+
 // ── Definitions ───────────────────────────────────────────────────────────────
 
 export const slackListChannelsDefinition = {
@@ -61,7 +105,7 @@ export const slackPostMessageDefinition = {
   input_schema: {
     type: 'object',
     properties: {
-      channel: { type: 'string', description: 'Channel id (preferred, e.g. C0123ABCD) or name (e.g. #general).' },
+      channel: { type: 'string', description: 'Channel id (e.g. C0123ABCD) or name (e.g. #general). Use "@me" to send the user a direct message instead of posting to a channel.' },
       text: { type: 'string', description: 'Message text. Slack mrkdwn: *bold*, _italic_, <url|label>.' },
     },
     required: ['channel', 'text'],
@@ -143,6 +187,15 @@ export async function executeSlackPostMessage(
   const conn = await resolveConnection(admin, userId, 'slack');
   if (!conn) return NOT_CONNECTED;
 
+  // "@me"/"dm" → resolve the user's direct-message channel.
+  const dm = isDmTarget(channel);
+  let target = channel;
+  if (dm) {
+    const dmId = await resolveDmChannelId(admin, userId, conn.connectionId);
+    if (!dmId) return "Couldn't open a Slack DM — your AUGMTD email must match your Slack account (needs the im:write + users:read.email scopes).";
+    target = dmId;
+  }
+
   const persona = await getPersona(admin, agentId);
   const res = await nangoProxy({
     method: 'POST',
@@ -150,7 +203,7 @@ export async function executeSlackPostMessage(
     providerConfigKey: 'slack',
     connectionId: conn.connectionId,
     data: {
-      channel,
+      channel: target,
       text,
       ...(persona.username ? { username: persona.username } : {}),
       ...(persona.icon_url ? { icon_url: persona.icon_url } : {}),
@@ -159,7 +212,11 @@ export async function executeSlackPostMessage(
   const body = res.body as { ok?: boolean; error?: string } | null;
   if (!res.ok || !body?.ok) {
     const who = persona.username ?? 'the app';
-    return `Couldn't post to Slack (${body?.error ?? res.status}). Make sure ${who} is invited to ${channel}.`;
+    return dm
+      ? `Couldn't send the Slack DM (${body?.error ?? res.status}).`
+      : `Couldn't post to Slack (${body?.error ?? res.status}). Make sure ${who} is invited to ${channel}.`;
   }
-  return `Posted to Slack ${channel}${persona.username ? ` as ${persona.username}` : ''}.`;
+  return dm
+    ? `Sent you a Slack DM${persona.username ? ` as ${persona.username}` : ''}.`
+    : `Posted to Slack ${channel}${persona.username ? ` as ${persona.username}` : ''}.`;
 }
