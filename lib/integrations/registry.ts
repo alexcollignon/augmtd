@@ -17,8 +17,8 @@ export const INTEGRATIONS: IntegrationDef[] = [
   {
     provider: 'slack',
     name: 'Slack',
-    description: 'Your coworkers post updates and read channels — as themselves, through one shared workspace app.',
-    scopesNote: 'Connected once for your whole team. Post messages (as each coworker) and list channels.',
+    description: 'Each coworker posts and DMs as themselves through their own Slack app — distinct identities, separate DMs.',
+    scopesNote: 'Connected once for your whole team (one app per coworker). Posts, DMs, and reads channels.',
     scope: 'company',
   },
   // Notion deferred — will get its own scope decision when we build it.
@@ -26,10 +26,33 @@ export const INTEGRATIONS: IntegrationDef[] = [
 
 export const INTEGRATION_PROVIDERS = INTEGRATIONS.map(i => i.provider);
 
+// ── Slack: one display integration, one Slack app per coworker ───────────────
+// Distinct bot identities → separate DM threads + real @mentions. Each coworker
+// role maps to its own Nango provider-config-key (one Slack app each).
+export const SLACK_APP_BY_ROLE: Record<string, string> = {
+  personal_assistant: 'slack-clara',
+  content_manager:    'slack-sofia',
+  linkedin_drafter:   'slack-luca',
+  research_analyst:   'slack-max',
+};
+export const SLACK_APP_KEYS = Object.values(SLACK_APP_BY_ROLE);
+export const SLACK_DEFAULT_APP_KEY = 'slack-clara'; // agent-less posts default to Clara
+
+export function isSlackProviderKey(p: string): boolean {
+  return p === 'slack' || SLACK_APP_KEYS.includes(p);
+}
+export function slackKeyForRole(role: string | null | undefined): string {
+  return (role && SLACK_APP_BY_ROLE[role]) || SLACK_DEFAULT_APP_KEY;
+}
+
 export function getIntegration(provider: string): IntegrationDef | undefined {
-  return INTEGRATIONS.find(i => i.provider === provider);
+  const found = INTEGRATIONS.find(i => i.provider === provider);
+  if (found) return found;
+  // Per-coworker Slack app keys resolve to the shared Slack def (company scope).
+  if (SLACK_APP_KEYS.includes(provider)) return INTEGRATIONS.find(i => i.provider === 'slack');
+  return undefined;
 }
 
 export function isKnownProvider(p: string): boolean {
-  return INTEGRATION_PROVIDERS.includes(p);
+  return INTEGRATION_PROVIDERS.includes(p) || SLACK_APP_KEYS.includes(p);
 }

@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import Nango from '@nangohq/frontend';
 import { Squares2X2Icon } from '@heroicons/react/24/outline';
 import { Button, Badge } from '@/components/ui';
+import { SLACK_APP_KEYS } from '@/lib/integrations/registry';
 
 interface Integration {
   provider: string;
@@ -12,6 +13,8 @@ interface Integration {
   scopesNote: string;
   scope: 'user' | 'company';
   connected: boolean;
+  connectedCount?: number;   // slack: how many coworker apps connected
+  connectedTotal?: number;   // slack: total coworker apps
   status: string | null;
   metadata: { workspace_name?: string } | null;
   canManage: boolean;
@@ -56,44 +59,41 @@ export default function IntegrationsSection() {
     });
   }, []);
 
+  // OAuth one provider key (a single Slack app, or a non-slack provider).
+  const connectOne = useCallback(async (key: string) => {
+    const res = await fetch('/api/integrations/connect-session', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider: key }),
+    });
+    if (!res.ok) throw new Error('session');
+    const { token, apiURL } = await res.json();
+    const nango = new Nango({ host: apiURL, connectSessionToken: token });
+    const result = await nango.auth(key);
+    const r = result as { connectionId?: string; connection?: { connection_id?: string; id?: string } };
+    const connectionId = r?.connectionId ?? r?.connection?.connection_id ?? r?.connection?.id;
+    await fetch(`/api/integrations/${key}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ connectionId }),
+    }).catch(() => {});
+  }, []);
+
   const handleConnect = useCallback(async (provider: string) => {
     setBusyProvider(provider);
     try {
-      const res = await fetch('/api/integrations/connect-session', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider }),
-      });
-      if (!res.ok) throw new Error('session');
-      const { token, apiURL } = await res.json();
-
-      // Direct OAuth popup against our self-hosted Nango — no Connect-UI iframe,
-      // no second domain, and no Nango account/login for the end user.
-      const nango = new Nango({ host: apiURL, connectSessionToken: token });
-      const result = await nango.auth(provider);
-      // The SDK's success payload shape varies; cover the known variants.
-      const r = result as { connectionId?: string; connection?: { connection_id?: string; id?: string } };
-      const connectionId = r?.connectionId ?? r?.connection?.connection_id ?? r?.connection?.id;
-
-      // Resolved = OAuth succeeded → record the connection (Nango assigns its own
-      // connection id, so pass it along) + refresh.
-      await fetch(`/api/integrations/${provider}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ connectionId }),
-      }).catch(() => {});
+      // Slack = one app per coworker → connect each in sequence (one button, N approvals).
+      const keys = provider === 'slack' ? SLACK_APP_KEYS : [provider];
+      for (const key of keys) {
+        try { await connectOne(key); } catch { /* popup closed/blocked — keep going */ }
+      }
       load();
-    } catch {
-      // user closed the popup or auth failed — nothing to record
     } finally {
       setBusyProvider(null);
     }
-  }, [load]);
+  }, [connectOne, load]);
 
   const handleDisconnect = useCallback(async (provider: string) => {
     setBusyProvider(provider);
-    setIntegrations(prev => prev.map(i => i.provider === provider ? { ...i, connected: false, metadata: null } : i)); // optimistic
-    await fetch(`/api/integrations/${provider}`, { method: 'DELETE' }).catch(() => {});
+    setIntegrations(prev => prev.map(i => i.provider === provider ? { ...i, connected: false, connectedCount: 0, metadata: null } : i)); // optimistic
+    const keys = provider === 'slack' ? SLACK_APP_KEYS : [provider];
+    for (const key of keys) await fetch(`/api/integrations/${key}`, { method: 'DELETE' }).catch(() => {});
     setBusyProvider(null);
     load();
   }, [load]);
@@ -175,7 +175,11 @@ export default function IntegrationsSection() {
                   )
                 ) : (
                   <Button size="sm" disabled={!configured || busyProvider === i.provider} onClick={() => handleConnect(i.provider)}>
-                    {busyProvider === i.provider ? 'Connecting…' : 'Connect'}
+                    {busyProvider === i.provider
+                      ? 'Connecting…'
+                      : i.provider === 'slack'
+                        ? (i.connectedCount ? `Resume (${i.connectedCount}/${i.connectedTotal})` : 'Connect your team')
+                        : 'Connect'}
                   </Button>
                 )}
               </div>

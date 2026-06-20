@@ -106,7 +106,9 @@ export async function generateWorkflowConfig(
   try {
     const connected = await listConnectedProviders(supabase, userId);
     if (connected.length > 0) {
-      const names = connected.map(p => INTEGRATIONS.find(i => i.provider === p)?.name ?? p).join(', ');
+      const names = [...new Set(connected.map(p =>
+        p.startsWith('slack') ? 'Slack' : (INTEGRATIONS.find(i => i.provider === p)?.name ?? p),
+      ))].join(', ');
       parts.push(`Connected delivery tools: ${names}. If the request asks to post or send somewhere these support (e.g. "post to #marketing", "Slack", "email it"), set output_config.destination to slack/email and slack_channel from the request. If a tool isn't listed here, do NOT use it as a home.`);
     } else {
       parts.push('No external delivery tools are connected — use only "message" or "document" homes.');
