@@ -55,6 +55,17 @@ def slack_list_channels(run_context: RunContext) -> str:
 
 
 @tool
+def slack_list_members(run_context: RunContext, channel: str) -> str:
+    """List the people in a Slack channel (names + ids) — use this to find the right
+    person to @-mention before posting, instead of guessing. Then write <@Their Name>.
+
+    Args:
+        channel: Channel id (C0123ABCD, G…) or name. Resolve names via slack_list_channels.
+    """
+    return _call("slack_list_members", run_context, {"channel": channel})
+
+
+@tool
 def slack_read_messages(run_context: RunContext, channel: str, limit: int = 20) -> str:
     """Read recent messages from a Slack channel or DM the app is a member of
     (to catch up, summarize, or answer about a conversation). The app must be in it.
@@ -85,4 +96,4 @@ def slack_post_message(run_context: RunContext, channel: str, text: str, thread_
     return _call("slack_post_message", run_context, args)
 
 
-INTEGRATION_TOOLS = [slack_list_channels, slack_post_message, slack_read_messages]
+INTEGRATION_TOOLS = [slack_list_channels, slack_post_message, slack_read_messages, slack_list_members]

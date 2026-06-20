@@ -21,8 +21,8 @@ export { getMeetingContextDefinition, executeGetMeetingContext } from './get-mee
 export type { GetMeetingContextConfig } from './get-meeting-context';
 export { deepResearchDefinition } from './deep-research';
 export {
-  slackListChannelsDefinition, slackPostMessageDefinition, slackReadMessagesDefinition,
-  executeSlackListChannels, executeSlackPostMessage, executeSlackReadMessages,
+  slackListChannelsDefinition, slackPostMessageDefinition, slackReadMessagesDefinition, slackListMembersDefinition,
+  executeSlackListChannels, executeSlackPostMessage, executeSlackReadMessages, executeSlackListMembers,
 } from './slack';
 
 // OpenAI function-calling format converter — used by chat route
