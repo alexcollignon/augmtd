@@ -225,11 +225,20 @@ export async function POST(
           content: content.trim(),
           metadata: mentions.length > 0 ? { mentions } : null,
         });
+        // Resolve @mentions (coworker / task / document) → context, appended to the
+        // message the worker reads — parity with the native path below.
+        let bridgeMessage = content.trim();
+        if (mentions.length > 0) {
+          try {
+            const { mentionContext } = await buildMentionContext(mentions, user.id, bridgeAdmin);
+            if (mentionContext) bridgeMessage = `${bridgeMessage}\n\n${mentionContext}`;
+          } catch { /* non-fatal — proceed without mention context */ }
+        }
         try {
           return await streamWorkerViaAgentOS({
             workerRole: workerRow.worker_role as string,
             agentId,
-            message: content.trim(),
+            message: bridgeMessage,
             threadId,
             userId: user.id,
             adminClient: bridgeAdmin,
@@ -2125,6 +2134,43 @@ async function buildMentionContext(
           }
 
           lines.push(parts.join('\n'));
+          break;
+        }
+
+        case 'coworker': {
+          // @coworker → directive to build on that teammate's work (via find_team_work).
+          lines.push(
+            `[COWORKER] ${m.label}\n` +
+            `Build on ${m.label}'s work for this — call find_team_work with coworker="${m.label}" to pull their relevant output, then read_team_work to use it.`
+          );
+          break;
+        }
+
+        case 'task': {
+          // @task → the task + a preview of its latest output.
+          const { data: wf } = await adminClient
+            .from('workflows').select('name, status').eq('id', m.id).eq('user_id', userId).single();
+          if (wf) {
+            const { data: rthreads } = await adminClient
+              .from('work_threads').select('artifacts').eq('user_id', userId).eq('workflow_id', m.id)
+              .not('artifacts', 'is', null).order('updated_at', { ascending: false }).limit(1);
+            const arts = Array.isArray(rthreads?.[0]?.artifacts) ? rthreads[0].artifacts : [];
+            const latest = arts[arts.length - 1] as { content?: { sections?: Array<{ heading: string; paragraphs: string[] }> } } | undefined;
+            let preview = '';
+            const secs = latest?.content?.sections;
+            if (Array.isArray(secs)) preview = secs.map(s => `${s.heading}\n${(s.paragraphs ?? []).join('\n')}`).join('\n\n').slice(0, 1200);
+            lines.push(
+              `[TASK] "${wf.name}"${wf.status === 'paused' ? ' (paused)' : ''}\n` +
+              (preview ? `Latest output:\n${preview}` : 'No output yet — you can run it (run_task) or read its config (get_task).')
+            );
+          }
+          break;
+        }
+
+        case 'document': {
+          // @document → inject the doc's full content (same reliable read path as read_team_work).
+          const out = await executeReadTeamWork({ id: m.id }, userId, adminClient);
+          lines.push(`[DOCUMENT] ${out}`);
           break;
         }
       }
