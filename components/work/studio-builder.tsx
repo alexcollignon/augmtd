@@ -106,15 +106,16 @@ const AVAILABLE_TOOLS = [
   { id: 'get_pt_tenders',      label: 'Portuguese public tenders', description: 'Fetches contracts and announcements from Portal Base (Base.gov.pt).' },
   { id: 'linkedin_post',       label: 'Generate LinkedIn posts',   description: 'Drafts 1–3 LinkedIn post variants from previous step content.' },
   { id: 'deep_research',       label: 'Deep research',             description: 'Takes topics from the previous step and researches each one in depth using AI + web search. Returns cited findings.' },
-  { id: 'get_workflow_output', label: 'Read workflow output',      description: 'Reads the output of another workflow and passes it as context to the next step. Compose workflows together.' },
+  { id: 'get_workflow_output', label: "Use a coworker's task",      description: "Pulls the latest output of another coworker's task and passes it as context. Build on what a teammate already produced." },
   { id: 'slack_read_channel',  label: 'Read a Slack channel',      description: 'Returns recent messages from a Slack channel this coworker is in — to summarize, digest, or act on. Config: channel (#name or id), limit.' },
   { id: 'slack_send',          label: 'Send a Slack message',      description: 'Posts a message to a channel, written by this coworker from your instruction + what the pipeline produced. Notify a team, tag people. Config: channel + instruction.' },
 ];
 
 const TOOL_GROUPS = [
-  { label: 'Your workspace', ids: ['get_emails', 'get_meeting_context', 'get_calendar', 'read_kb_file'] },
-  { label: 'Web & research', ids: ['web_search', 'fetch_url', 'rss_feed', 'get_pt_tenders', 'deep_research'] },
-  { label: 'Social media',   ids: ['linkedin_post', 'slack_read_channel', 'slack_send'] },
+  { label: 'Gather',      ids: ['get_emails', 'get_meeting_context', 'get_calendar', 'read_kb_file', 'web_search', 'fetch_url', 'rss_feed', 'get_pt_tenders', 'deep_research', 'slack_read_channel'] },
+  { label: 'Collaborate', ids: ['get_workflow_output'] },
+  { label: 'Act',         ids: ['slack_send'] },
+  // linkedin_post deprecated from the picker — superseded by the LinkedIn coworker + a LinkedIn skill (still runs for existing tasks).
 ];
 
 const TOOL_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -258,9 +259,9 @@ export function StudioBuilder({ workflow: initialWorkflow, agents, onClose, onBa
     if (type === 'tool') {
       step = { id, type: 'tool', label: 'New tool step', tool: 'get_emails', config: {} } as ToolStep;
     } else if (type === 'ai') {
-      step = { id, type: 'ai', label: 'New AI step', prompt: '', output_format: 'markdown', model_tier: 'fast' } as AIStep;
+      step = { id, type: 'ai', label: 'New writing step', prompt: '', output_format: 'markdown', model_tier: 'fast' } as AIStep;
     } else {
-      step = { id, type: 'agent', label: 'New agent step', agent_id: agents[0]?.id ?? '', prompt: '' } as AgentStep;
+      step = { id, type: 'agent', label: 'Hand off to a teammate', agent_id: agents[0]?.id ?? '', prompt: '' } as AgentStep;
     }
     setWorkflow(w => {
       const steps = [...w.steps];
@@ -784,9 +785,9 @@ function InlineAddButton({ insertAt, agents, onAdd }: {
       {open && (
         <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1.5 bg-white border border-neutral-200 rounded-xl shadow-xl z-50 overflow-hidden min-w-[150px]">
           {([
-            { type: 'tool' as const,  Icon: WrenchScrewdriverIcon, label: 'Tool step',  disabled: false },
-            { type: 'ai' as const,    Icon: SparklesIcon,          label: 'AI step',    disabled: false },
-            { type: 'agent' as const, Icon: UserCircleIcon,        label: 'Agent step', disabled: agents.length === 0 },
+            { type: 'tool' as const,  Icon: WrenchScrewdriverIcon, label: 'Tool step',          disabled: false },
+            { type: 'ai' as const,    Icon: SparklesIcon,          label: 'Write / produce',    disabled: false },
+            { type: 'agent' as const, Icon: UserCircleIcon,        label: 'Hand off to a teammate', disabled: agents.length === 0 },
           ] as const).map(({ type, Icon, label, disabled }) => (
             <button key={type}
               onClick={() => { if (!disabled) { onAdd(type, insertAt); setOpen(false); } }}
@@ -1160,7 +1161,7 @@ function StepConfigSection({
   const menuRef = useRef<HTMLDivElement>(null);
   const colors = STEP_TYPE_COLORS[step.type as keyof typeof STEP_TYPE_COLORS] ?? STEP_TYPE_COLORS.tool;
   const TypeIcon = STEP_TYPE_ICONS[step.type as keyof typeof STEP_TYPE_ICONS] ?? STEP_TYPE_ICONS.tool;
-  const typeLabel = ({ tool: 'Tool', ai: 'AI', agent: 'Agent' } as Record<string, string>)[step.type] ?? step.type;
+  const typeLabel = ({ tool: 'Tool', ai: 'Produce', agent: 'Hand off' } as Record<string, string>)[step.type] ?? step.type;
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -1712,10 +1713,9 @@ function KbFilePickerField({ value, onChange }: { value: string; onChange: (id: 
 function InlineToolGrid({ value, onChange }: { value: string; onChange: (toolId: string) => void }) {
   const displayId = value === 'browser_fetch' ? 'fetch_url' : (value === 'get_urgent_emails' ? 'get_emails' : value);
   const groups = [
-    { label: 'Your Workspace',  ids: ['get_emails', 'get_meeting_context', 'get_calendar', 'read_kb_file'] },
-    { label: 'Web & Research',  ids: ['web_search', 'fetch_url', 'rss_feed', 'get_pt_tenders', 'deep_research'] },
-    { label: 'Social & Output', ids: ['linkedin_post'] },
-    { label: 'Pipeline',        ids: ['get_workflow_output'] },
+    { label: 'Gather',      ids: ['get_emails', 'get_meeting_context', 'get_calendar', 'read_kb_file', 'web_search', 'fetch_url', 'rss_feed', 'get_pt_tenders', 'deep_research', 'slack_read_channel'] },
+    { label: 'Collaborate', ids: ['get_workflow_output'] },
+    { label: 'Act',         ids: ['slack_send'] },
   ];
   return (
     <div className="space-y-3">

@@ -54,7 +54,6 @@ fetch_url           — reads full content of a URL. config: { "urls": ["https:/
 rss_feed            — follows a news or blog feed, new items only. config: { "feeds": ["https://.../feed.xml"], "max_items": 15, "since": "last_run" }
 deep_research       — multi-source research synthesis. config: { "queries": ["question"], "max_sources": 8 }
 get_pt_tenders      — Portuguese public procurement from Base.gov.pt. config: { "days": 7, "endpoint": "both" }
-linkedin_post       — drafts LinkedIn posts from previous content. config: { "tone": "thought_leadership", "length": "standard", "language": "en", "variants": 2 }
 read_kb_file        — reads a file from the knowledge base. config: { "file_id": "uuid" } — only if user explicitly mentions a document
 slack_read_channel  — reads recent messages from a Slack channel (to summarize/digest/act on). config: { "channel": "#name or id", "limit": 30, "days": 7 } — days is an optional time window (omit for no limit). ONLY if Slack is connected.
 slack_send          — posts a message to a Slack channel, written from an instruction + the pipeline's output (to notify a team after producing something, tag people). config: { "channel": "#name or id", "instruction": "what to say / who to tag" }. Place AFTER the content steps. ONLY if Slack is connected.
