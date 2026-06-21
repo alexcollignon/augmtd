@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { WorkerActivityTrace } from './worker-activity-trace';
 import { WorkerMentionInput, type WorkerMention } from './worker-mention-input';
+import type { AttachmentChip } from '@/components/work/chat-input-bar';
 import type { Worker } from '@/app/workers/workers-page-client';
 
 const ROLE_AVATARS: Record<string, string> = {
@@ -37,6 +38,9 @@ interface HomeData {
 interface WorkerHomeViewProps {
   worker: Worker;
   onSend: (message: string, briefingText: string, mentions?: WorkerMention[]) => void;
+  onAttach?: (files: File[]) => void;
+  attachments?: AttachmentChip[];
+  onRemoveAttachment?: (id: string) => void;
   sidebarOpen: boolean;
   onToggleSidebar: () => void;
 }
@@ -56,7 +60,7 @@ function SidebarToggle({ open, onToggle }: { open: boolean; onToggle: () => void
   );
 }
 
-export function WorkerHomeView({ worker, onSend, sidebarOpen, onToggleSidebar }: WorkerHomeViewProps) {
+export function WorkerHomeView({ worker, onSend, onAttach, attachments, onRemoveAttachment, sidebarOpen, onToggleSidebar }: WorkerHomeViewProps) {
   const [homeData, setHomeData] = useState<HomeData | null>(null);
   const [briefingText, setBriefingText] = useState('');
   const [briefingDone, setBriefingDone] = useState(false);
@@ -186,6 +190,9 @@ export function WorkerHomeView({ worker, onSend, sidebarOpen, onToggleSidebar }:
           <WorkerMentionInput
             onSubmit={(text, mentions) => onSend(text, briefingText, mentions)}
             placeholder={`Reply to ${worker.name}…  (@ to mention a coworker, task, or document)`}
+            onAttach={onAttach}
+            attachments={attachments}
+            onRemoveAttachment={onRemoveAttachment}
           />
           <p className="mt-1.5 text-center text-[11px] text-neutral-400">
             Enter to send · Shift+Enter for new line · @ to mention
