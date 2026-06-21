@@ -7,11 +7,16 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  PaperAirplaneIcon, AtSymbolIcon, ChevronRightIcon, ChevronLeftIcon,
+  PaperAirplaneIcon, AtSymbolIcon, PaperClipIcon, ChevronRightIcon, ChevronLeftIcon,
   UserCircleIcon, BoltIcon, DocumentTextIcon,
 } from '@heroicons/react/24/outline';
+import type { AttachmentChip } from '@/components/work/chat-input-bar';
 
 export interface WorkerMention { id: string; type: 'coworker' | 'task' | 'document'; label: string; subtitle?: string }
+
+function formatBytes(b: number): string {
+  return b < 1024 * 1024 ? `${Math.round(b / 1024)} KB` : `${(b / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 const ICONS: Record<WorkerMention['type'], React.ElementType> = { coworker: UserCircleIcon, task: BoltIcon, document: DocumentTextIcon };
 const CHIP: Record<WorkerMention['type'], string> = {
@@ -39,9 +44,12 @@ interface Props {
   placeholder?: string;
   prefill?: string | null;
   onPrefillConsumed?: () => void;
+  onAttach?: (files: File[]) => void;
+  attachments?: AttachmentChip[];
+  onRemoveAttachment?: (id: string) => void;
 }
 
-export function WorkerMentionInput({ onSubmit, disabled, placeholder, prefill, onPrefillConsumed }: Props) {
+export function WorkerMentionInput({ onSubmit, disabled, placeholder, prefill, onPrefillConsumed, onAttach, attachments = [], onRemoveAttachment }: Props) {
   const [value, setValue] = useState('');
   const [mentions, setMentions] = useState<WorkerMention[]>([]);
   const [mq, setMq] = useState<string | null>(null);
@@ -52,6 +60,7 @@ export function WorkerMentionInput({ onSubmit, disabled, placeholder, prefill, o
   const [loadingItems, setLoadingItems] = useState(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [rect, setRect] = useState<{ left: number; right: number; bottom: number } | null>(null);
 
@@ -204,11 +213,20 @@ export function WorkerMentionInput({ onSubmit, disabled, placeholder, prefill, o
     setTimeout(() => { el.focus(); el.setSelectionRange(pos + 1, pos + 1); }, 0);
   }
 
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files || []);
+    e.target.value = '';
+    if (files.length) onAttach?.(files);
+  }
+
+  const hasChips = mentions.length > 0 || attachments.length > 0;
+
   return (
     <div className="relative" ref={wrapRef}>
       {dropdown}
+      <input ref={fileInputRef} type="file" multiple accept=".pdf,.docx,.txt,.jpg,.jpeg,.png,.webp,.zip" className="hidden" onChange={handleFileChange} />
       <div className="rounded-2xl bg-neutral-50 border border-neutral-200 overflow-hidden focus-within:border-neutral-300 focus-within:bg-white focus-within:shadow-sm transition-all duration-150">
-        {mentions.length > 0 && (
+        {hasChips && (
           <div className="flex flex-wrap gap-1.5 px-4 pt-3">
             {mentions.map(m => {
               const Icon = ICONS[m.type];
@@ -220,6 +238,19 @@ export function WorkerMentionInput({ onSubmit, disabled, placeholder, prefill, o
                 </div>
               );
             })}
+            {attachments.map(att => (
+              <div key={att.id} className="flex items-center gap-1.5 px-2.5 py-1 bg-neutral-100 rounded-lg text-[12px] text-neutral-700">
+                {att.isUploading ? (
+                  <svg className="w-3 h-3 text-neutral-400 animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+                  </svg>
+                ) : <PaperClipIcon className="w-3 h-3 text-neutral-400" />}
+                <span className="max-w-[120px] truncate">{att.name}</span>
+                {!att.isUploading && <span className="text-neutral-400">{formatBytes(att.size)}</span>}
+                {onRemoveAttachment && <button onClick={() => onRemoveAttachment(att.id)} className="text-neutral-400 hover:text-neutral-600 ml-0.5">×</button>}
+              </div>
+            ))}
           </div>
         )}
         <textarea
@@ -232,6 +263,11 @@ export function WorkerMentionInput({ onSubmit, disabled, placeholder, prefill, o
           <button onClick={toggleMention} className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[12px] text-neutral-500 hover:bg-neutral-100 hover:text-neutral-700 transition-colors">
             <AtSymbolIcon className="w-3.5 h-3.5" /> Mention
           </button>
+          {onAttach && (
+            <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[12px] text-neutral-500 hover:bg-neutral-100 hover:text-neutral-700 transition-colors">
+              <PaperClipIcon className="w-3.5 h-3.5" /> Attach
+            </button>
+          )}
           <button onClick={submit} disabled={disabled || !value.trim()}
             className="ml-auto flex items-center justify-center w-7 h-7 rounded-lg bg-indigo-600 text-white disabled:opacity-40 hover:bg-indigo-700 transition-colors">
             <PaperAirplaneIcon className="w-3.5 h-3.5" />

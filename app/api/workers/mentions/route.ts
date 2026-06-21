@@ -20,7 +20,6 @@ export async function GET(request: NextRequest) {
     const q = (searchParams.get('q') ?? '').trim();
     const all = ['coworker', 'task', 'document'] as const;
     const types = (searchParams.get('types')?.split(',').filter(t => (all as readonly string[]).includes(t)) as typeof all[number][] | undefined) ?? [...all];
-    const ql = q.toLowerCase();
     const like = `%${q}%`;
     const limit = types.length === 1 ? 12 : 5;
     const results: MentionResult[] = [];
@@ -45,26 +44,22 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Documents (artifacts produced by the user's coworkers)
+    // Documents — the indexed knowledge base (meetings, uploads, and generated docs).
+    // Sourced from knowledge_files (lightweight + spans everything the chat can retrieve
+    // via search_knowledge_base) rather than the heavy work_threads.artifacts blob, which
+    // was both incomplete (no meetings/uploads) and slow (loaded full document bodies).
     if (types.includes('document')) {
-      const { data: agents } = await supabase.from('custom_agents').select('id, name').eq('user_id', user.id).eq('is_worker', true);
-      const nameById = new Map((agents ?? []).map((a: { id: string; name: string }) => [a.id, a.name]));
-      const workerIds = (agents ?? []).map((a: { id: string }) => a.id);
-      if (workerIds.length > 0) {
-        const { data: threads } = await supabase
-          .from('work_threads').select('agent_id, artifacts, updated_at')
-          .eq('user_id', user.id).in('agent_id', workerIds).not('artifacts', 'is', null)
-          .order('updated_at', { ascending: false }).limit(40);
-        for (const t of (threads ?? []) as Array<{ agent_id: string; artifacts: Array<{ id?: string; title?: string }> | null }>) {
-          const arts = Array.isArray(t.artifacts) ? t.artifacts : [];
-          for (const a of arts) {
-            if (!a.id || !a.title) continue;
-            if (q && !a.title.toLowerCase().includes(ql)) continue;
-            results.push({ type: 'document', id: a.id, label: a.title, subtitle: `by ${nameById.get(t.agent_id) ?? 'a coworker'}` });
-            if (results.filter(r => r.type === 'document').length >= limit) break;
-          }
-          if (results.filter(r => r.type === 'document').length >= limit) break;
-        }
+      let dq = supabase
+        .from('knowledge_files')
+        .select('id, filename, provider_file_id')
+        .eq('user_id', user.id)
+        .order('indexed_at', { ascending: false })
+        .limit(limit);
+      if (q) dq = dq.ilike('filename', like);
+      const { data } = await dq;
+      for (const f of (data ?? []) as Array<{ id: string; filename: string; provider_file_id: string | null }>) {
+        const isMeeting = /^meeting[: ]/i.test(f.filename) || (f.provider_file_id ?? '').startsWith('transcript::');
+        results.push({ type: 'document', id: f.id, label: f.filename, subtitle: isMeeting ? 'meeting' : 'document' });
       }
     }
 

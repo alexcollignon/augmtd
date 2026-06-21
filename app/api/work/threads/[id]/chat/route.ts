@@ -234,6 +234,18 @@ export async function POST(
             if (mentionContext) bridgeMessage = `${bridgeMessage}\n\n${mentionContext}`;
           } catch { /* non-fatal — proceed without mention context */ }
         }
+        // Attached files → append their extracted text (the AgentOS path is text-only,
+        // so images / scanned-PDF vision aren't available here — text extraction only).
+        if (attachments.length > 0) {
+          try {
+            const attachIds = new Set((attachments as Array<{ id: string }>).map(a => a.id));
+            const { data: thr } = await bridgeAdmin.from('work_threads').select('user_attachments').eq('id', threadId).single();
+            const atts = (((thr as { user_attachments?: Array<{ chatAttachId?: string; filename: string; extractedText: string | null }> } | null)?.user_attachments) ?? [])
+              .filter(a => a.chatAttachId && attachIds.has(a.chatAttachId) && a.extractedText);
+            const attText = atts.map(a => `--- ${a.filename} ---\n${a.extractedText}`).join('\n\n');
+            if (attText) bridgeMessage = `${bridgeMessage}\n\nATTACHED FILES:\n${attText}`;
+          } catch { /* non-fatal — proceed without attachment context */ }
+        }
         try {
           return await streamWorkerViaAgentOS({
             workerRole: workerRow.worker_role as string,
@@ -2168,9 +2180,21 @@ async function buildMentionContext(
         }
 
         case 'document': {
-          // @document → inject the doc's full content (same reliable read path as read_team_work).
-          const out = await executeReadTeamWork({ id: m.id }, userId, adminClient);
-          lines.push(`[DOCUMENT] ${out}`);
+          // @document → a knowledge-base file (meeting / upload / generated). Inject its
+          // indexed content from knowledge_chunks (mirrors the 'kb' case above).
+          const { data: kf } = await adminClient
+            .from('knowledge_files').select('filename, summary').eq('id', m.id).eq('user_id', userId).single();
+          if (kf) {
+            const { data: chunks } = await adminClient
+              .from('knowledge_chunks').select('content, heading').eq('file_id', m.id)
+              .order('chunk_index', { ascending: true }).limit(20);
+            const fullText = ((chunks as Array<{ heading?: string; content: string }> | null) ?? [])
+              .map(c => (c.heading ? `${c.heading}\n${c.content}` : c.content)).join('\n\n');
+            lines.push(
+              `[DOCUMENT] "${kf.filename}"\n` +
+              (fullText ? fullText.slice(0, 6000) : kf.summary ? `Summary: ${kf.summary}` : '(no indexed content)')
+            );
+          }
           break;
         }
       }
