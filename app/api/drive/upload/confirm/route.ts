@@ -1,9 +1,13 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, after } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+
+// Indexing a large PDF (extract → ~200 chunk summaries → embeddings) can take minutes,
+// so it runs in the background via after(); this ceiling covers that background work.
+export const maxDuration = 300;
 
 // POST /api/drive/upload/confirm
 // Body: { path, filename, mimeType, sizeBytes, folderId? }
-// Downloads from storage, indexes into KB, returns knowledge_files row
+// Registers the file immediately (so it appears in Drive), then indexes in the background.
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createClient();
@@ -47,25 +51,46 @@ export async function POST(request: NextRequest) {
 
     const buffer = Buffer.from(await fileData.arrayBuffer());
 
-    const { indexUploadedFile } = await import('@/lib/knowledge/indexer');
+    const { indexUploadedFile, getOrCreateUploadSource } = await import('@/lib/knowledge/indexer');
 
-    const fileId = await indexUploadedFile(
-      {
-        buffer,
-        filename,
-        mimeType,
-        userId: user.id,
-        storagePathInBucket: path,
-        folderId,
-      },
-      adminClient
-    );
-
-    const { data: fileRow } = await adminClient
+    // Register the file immediately (lightweight row) so it shows in Drive right away —
+    // the heavy extract/embed/chunk work runs in the background and upserts this same row
+    // (onConflict user_id,provider_file_id), so a large book can't time out the request.
+    const sourceId = await getOrCreateUploadSource(user.id, adminClient);
+    const { data: fileRow, error: rowError } = await adminClient
       .from('knowledge_files')
+      .upsert(
+        {
+          user_id: user.id,
+          source_id: sourceId,
+          provider_file_id: path,
+          filename,
+          mime_type: mimeType,
+          size_bytes: buffer.length,
+          storage_path: path,
+          indexed_at: new Date().toISOString(),
+          ...(folderId ? { folder_id: folderId } : {}),
+        },
+        { onConflict: 'user_id,provider_file_id' }
+      )
       .select('id, filename, mime_type, size_bytes, indexed_at, folder_id, storage_path')
-      .eq('id', fileId)
       .single();
+
+    if (rowError || !fileRow) {
+      console.error('[Drive/Confirm] Register error:', rowError);
+      return NextResponse.json({ error: 'Failed to register file' }, { status: 500 });
+    }
+
+    after(async () => {
+      try {
+        await indexUploadedFile(
+          { buffer, filename, mimeType, userId: user.id, storagePathInBucket: path, folderId },
+          adminClient
+        );
+      } catch (err) {
+        console.error('[Drive/Confirm] Background index failed:', filename, err);
+      }
+    });
 
     return NextResponse.json(fileRow);
   } catch (error) {
