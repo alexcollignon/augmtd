@@ -84,7 +84,8 @@ export async function executeFindTeamWork(config: Record<string, unknown>, userI
     const arts = Array.isArray(t.artifacts) ? (t.artifacts as DocumentArtifact[]) : [];
     for (const a of arts) {
       if (!a.id || !a.title) continue;
-      if (q && !a.title.toLowerCase().includes(q)) continue;
+      // Match the query against the title OR the document content (so it's searchable, not just by title).
+      if (q && !a.title.toLowerCase().includes(q) && !JSON.stringify(a.content ?? '').toLowerCase().includes(q)) continue;
       const when = (a.generated_at ?? (t.updated_at as string) ?? '').slice(0, 10);
       lines.push(`- "${a.title}" — by ${nameById.get(t.agent_id) ?? 'a coworker'}${when ? ` (${when})` : ''} [id: ${a.id}]`);
       if (lines.length >= limit) break;
@@ -99,17 +100,28 @@ export async function executeReadTeamWork(config: Record<string, unknown>, userI
   const id = String(config.id ?? '').trim();
   if (!id) return 'Provide a document id (from find_team_work).';
 
+  const { data: agents } = await admin.from('custom_agents').select('id').eq('user_id', userId).eq('is_worker', true);
+  const workerIds = (agents ?? []).map((a: { id: string }) => a.id);
+  if (workerIds.length === 0) return 'No coworkers found.';
+
+  // Scan the coworkers' threads for the artifact — jsonb `contains` is unreliable for
+  // partial object matches, so we fetch + find in JS (same approach as get_worker_document).
   const { data: threads } = await admin
     .from('work_threads')
     .select('artifacts')
     .eq('user_id', userId)
-    .contains('artifacts', [{ id }])
-    .limit(1);
+    .in('agent_id', workerIds)
+    .not('artifacts', 'is', null)
+    .order('updated_at', { ascending: false })
+    .limit(200);
 
-  const arts = Array.isArray(threads?.[0]?.artifacts) ? (threads[0].artifacts as DocumentArtifact[]) : [];
-  const art = arts.find(a => a.id === id);
-  if (!art) return "Couldn't find that document — call find_team_work again for a valid id.";
-  const text = renderDoc(art.content);
-  if (!text) return `"${art.title}" has no readable content.`;
-  return `"${art.title}":\n\n${text.slice(0, 8000)}`;
+  for (const t of (threads ?? []) as Array<{ artifacts: DocumentArtifact[] | null }>) {
+    const arts = Array.isArray(t.artifacts) ? t.artifacts : [];
+    const art = arts.find(a => a.id === id);
+    if (!art) continue;
+    const text = renderDoc(art.content);
+    if (!text) return `"${art.title}" (${art.type}) — no text preview available.`;
+    return `"${art.title}":\n\n${text.slice(0, 9000)}`;
+  }
+  return "Couldn't find that document — call find_team_work again for a valid id.";
 }
