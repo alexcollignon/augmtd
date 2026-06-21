@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { WrenchScrewdriverIcon } from '@heroicons/react/24/outline';
-import { Badge, Input } from '@/components/ui';
+import { Badge } from '@/components/ui';
 import { cn } from '@/lib/cn';
 
 interface ToolSetting {
@@ -13,7 +13,7 @@ interface ToolSetting {
   scope: 'user' | 'company';
   connected: boolean;
   enabled: boolean;
-  config: { default_channel?: string } & Record<string, unknown>;
+  config: Record<string, unknown>;
 }
 
 const LOGOS: Record<string, string> = {
@@ -50,12 +50,6 @@ export function WorkerToolsTab({ workerId, workerName }: { workerId: string; wor
     });
   }, [save]);
 
-  const setChannel = useCallback((provider: string, val: string) => {
-    setTools(prev => prev.map(t => (t.provider === provider ? { ...t, config: { ...t.config, default_channel: val } } : t)));
-  }, []);
-
-  const commit = useCallback(() => { setTools(prev => { save(prev); return prev; }); }, [save]);
-
   return (
     <div className="flex-1 overflow-y-auto px-6 py-5">
       <div className="max-w-[640px]">
@@ -64,7 +58,7 @@ export function WorkerToolsTab({ workerId, workerName }: { workerId: string; wor
           <h2 className="text-[15px] font-semibold text-neutral-900">Tools</h2>
         </div>
         <p className="text-[13px] text-neutral-500 mb-5">
-          Choose which connected tools {workerName} can use, and set defaults. Connect tools for your whole team in{' '}
+          Choose which connected tools {workerName} can use. Connect tools for your whole team in{' '}
           <Link href="/settings?tab=connections" className="text-indigo-600 hover:text-indigo-700">Settings → Connections</Link>.
         </p>
 
@@ -103,20 +97,6 @@ export function WorkerToolsTab({ workerId, workerName }: { workerId: string; wor
                     )}
                   </div>
                 </div>
-
-                {/* Per-tool config: Slack default channel (only when connected + enabled) */}
-                {t.provider === 'slack' && t.connected && t.enabled && (
-                  <div className="mt-3 pl-12">
-                    <label className="block text-[11.5px] font-medium text-neutral-600 mb-1">Default channel</label>
-                    <Input
-                      value={t.config.default_channel ?? ''}
-                      onChange={e => setChannel(t.provider, e.target.value)}
-                      onBlur={commit}
-                      placeholder="#general or C0123ABCD (optional)"
-                    />
-                    <p className="text-[11px] text-neutral-400 mt-1">Used when {workerName} posts without naming a channel.</p>
-                  </div>
-                )}
               </div>
             ))}
           </div>
