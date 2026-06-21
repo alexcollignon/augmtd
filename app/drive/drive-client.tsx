@@ -643,11 +643,13 @@ function computeRows(
   return result;
 }
 
-function computeSearchRows(query: string, augmtdFiles: DriveAugmtdFile[], kbFiles: KnowledgeFile[]): FileRow[] {
+function computeSearchRows(query: string, augmtdFiles: DriveAugmtdFile[], kbFiles: KnowledgeFile[], semanticIds?: Set<string>): FileRow[] {
   const q = query.toLowerCase().trim();
+  const sem = semanticIds ?? new Set<string>();
   const rows: FileRow[] = [
     ...augmtdFiles.filter((f) => f.title.toLowerCase().includes(q)).map((f) => ({ kind: 'augmtd' as const, file: f, date: f.generated_at })),
-    ...kbFiles.filter((f) => f.filename.toLowerCase().includes(q)).map((f) => ({ kind: 'kb' as const, file: f, date: f.indexed_at })),
+    // Filename match (instant) OR semantic content match (from /api/drive/search).
+    ...kbFiles.filter((f) => f.filename.toLowerCase().includes(q) || sem.has(f.id)).map((f) => ({ kind: 'kb' as const, file: f, date: f.indexed_at })),
   ];
   return rows.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 }
@@ -1464,8 +1466,25 @@ function DriveCenter({
   // Clear selected file when search changes
   useEffect(() => { if (searchQuery) setSelectedFile(null); }, [searchQuery]);
 
+  // Semantic content search — surfaces files by what's *inside* them, not just the name.
+  // Debounced; merged with the instant client-side filename match in computeSearchRows.
+  const [semanticIds, setSemanticIds] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    const q = searchQuery.trim();
+    if (q.length < 2) { setSemanticIds(new Set()); return; }
+    const t = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/drive/search?q=${encodeURIComponent(q)}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        setSemanticIds(new Set<string>(data.fileIds ?? []));
+      } catch { /* ignore — filename match still works */ }
+    }, 300);
+    return () => clearTimeout(t);
+  }, [searchQuery]);
+
   const rows = searchQuery.trim()
-    ? computeSearchRows(searchQuery, augmtdFiles, kbFiles)
+    ? computeSearchRows(searchQuery, augmtdFiles, kbFiles, semanticIds)
     : computeRows(sidebarView, augmtdFiles, kbFiles, folders);
 
   return (
