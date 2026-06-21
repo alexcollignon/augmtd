@@ -416,7 +416,11 @@ function ActiveWorkerChat({
       .then(r => r.json())
       .then(data => {
         if (!mountedRef.current) return;
-        const msgs: ChatMessage[] = data.messages ?? [];
+        // Hydrate mention chips from saved metadata so they show on reload too.
+        const msgs: ChatMessage[] = ((data.messages ?? []) as ChatMessage[]).map(m => {
+          const mts = (m.metadata as Record<string, unknown> | null)?.mentions as ChatMessage['mentions'] | undefined;
+          return mts && mts.length ? { ...m, mentions: mts } : m;
+        });
         const arts: DocumentArtifact[] = data.thread?.artifacts ?? [];
         // Merge, don't clobber: this mount GET races an in-flight first-message
         // send (home → new thread). If the just-sent user message (or the seeded
@@ -534,6 +538,8 @@ function ActiveWorkerChat({
       role: 'user',
       content: message,
       created_at: new Date().toISOString(),
+      ...(mentions && mentions.length ? { mentions } : {}),
+      ...(sendAttachments.length ? { metadata: { attachments: sendAttachments } } : {}),
     };
     setMessages(prev => [...prev, userMsg]);
     setInputValue('');

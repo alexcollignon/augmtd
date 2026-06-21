@@ -2,10 +2,18 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { ChevronDownIcon } from '@heroicons/react/20/solid';
-import { SparklesIcon, CheckCircleIcon, DocumentTextIcon, ExclamationTriangleIcon, PencilSquareIcon, DocumentDuplicateIcon, TableCellsIcon, PresentationChartBarIcon, EnvelopeIcon, ArrowTopRightOnSquareIcon } from '@heroicons/react/24/outline';
+import { SparklesIcon, CheckCircleIcon, DocumentTextIcon, ExclamationTriangleIcon, PencilSquareIcon, DocumentDuplicateIcon, TableCellsIcon, PresentationChartBarIcon, EnvelopeIcon, ArrowTopRightOnSquareIcon, UserCircleIcon, BoltIcon } from '@heroicons/react/24/outline';
 import { ArrowPathIcon } from '@heroicons/react/20/solid';
 import { ClarificationWidget, ClarificationData } from './clarification-widget';
 import { MENTION_ICONS, MENTION_COLORS, MentionChip } from './chat-input-bar';
+
+// Coworker-chat mention types (coworker/task/document) — mirrors WorkerMentionInput.
+const WORKER_MENTION_ICONS: Record<string, React.ElementType> = { coworker: UserCircleIcon, task: BoltIcon, document: DocumentTextIcon };
+const WORKER_MENTION_COLORS: Record<string, string> = {
+  coworker: 'bg-indigo-50 text-indigo-700 border-indigo-200',
+  task: 'bg-amber-50 text-amber-700 border-amber-200',
+  document: 'bg-violet-50 text-violet-700 border-violet-200',
+};
 
 // ── Markdown renderer ─────────────────────────────────────────────────────────
 
@@ -262,8 +270,8 @@ export function ChatMessageBubble({ message, isLastAssistantMessage, onViewArtif
             <div className="flex flex-wrap justify-end gap-1 max-w-[75%]">
               {mentions.map((m) => {
                 const type = m.type as MentionChip['type'];
-                const Icon = MENTION_ICONS[type];
-                const colors = MENTION_COLORS[type] ?? 'bg-neutral-100 text-neutral-600 border-neutral-200';
+                const Icon = MENTION_ICONS[type] ?? WORKER_MENTION_ICONS[m.type];
+                const colors = MENTION_COLORS[type] ?? WORKER_MENTION_COLORS[m.type] ?? 'bg-neutral-100 text-neutral-600 border-neutral-200';
                 return (
                   <span
                     key={`mention:${m.type}:${m.id}`}
