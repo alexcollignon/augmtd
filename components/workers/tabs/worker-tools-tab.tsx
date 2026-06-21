@@ -3,8 +3,58 @@
 import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { WrenchScrewdriverIcon } from '@heroicons/react/24/outline';
-import { Badge, Input } from '@/components/ui';
+import { Badge, Input, SegmentedControl } from '@/components/ui';
 import { cn } from '@/lib/cn';
+
+type SlackMode = 'dm' | 'channel' | 'link';
+const DM_VALUES = ['@me', 'dm', 'dm:me', 'me', '__dm__'];
+
+function deriveSlackMode(v: string): SlackMode {
+  const s = (v ?? '').trim();
+  if (!s) return 'channel';
+  if (DM_VALUES.includes(s.toLowerCase())) return 'dm';
+  if (s.startsWith('#')) return 'channel';
+  if (/^https?:\/\//i.test(s) || /^[CGD][A-Z0-9]{6,}$/i.test(s)) return 'link';
+  return 'channel';
+}
+
+// Selectable Slack default target: DM the user, a public #channel (name auto-prefixed),
+// or a pasted channel link (best for private channels — invite the bot, paste the URL).
+function SlackTargetEditor({ value, workerName, onSave }: { value: string; workerName: string; onSave: (val: string) => void }) {
+  const mode0 = deriveSlackMode(value);
+  const [mode, setMode] = useState<SlackMode>(mode0);
+  const [draft, setDraft] = useState(mode0 === 'channel' ? value.replace(/^#+/, '') : mode0 === 'link' ? value : '');
+
+  function persist(m: SlackMode, d: string) {
+    let v = '';
+    if (m === 'dm') v = '@me';
+    else if (m === 'channel') { const n = d.trim().replace(/^#+/, ''); v = n ? `#${n}` : ''; }
+    else v = d.trim();
+    onSave(v);
+  }
+
+  return (
+    <div className="mt-3 pl-12 space-y-2">
+      <label className="block text-[11.5px] font-medium text-neutral-600">Where {workerName} posts by default</label>
+      <SegmentedControl<SlackMode>
+        items={[{ value: 'dm', label: 'DM me' }, { value: 'channel', label: 'Channel' }, { value: 'link', label: 'Channel link' }]}
+        value={mode}
+        onChange={(m) => { setMode(m); if (m === 'dm') persist('dm', ''); else persist(m, draft); }}
+      />
+      {mode === 'channel' && (
+        <Input value={draft} onChange={e => setDraft(e.target.value)} onBlur={() => persist('channel', draft)} placeholder="general" />
+      )}
+      {mode === 'link' && (
+        <Input value={draft} onChange={e => setDraft(e.target.value)} onBlur={() => persist('link', draft)} placeholder="https://yourteam.slack.com/archives/C0123ABCD" />
+      )}
+      <p className="text-[11px] text-neutral-400">
+        {mode === 'dm' && `${workerName} will DM you — your AUGMTD email must match your Slack account.`}
+        {mode === 'channel' && `Just the name — public channels work automatically. For a private channel, use “Channel link”.`}
+        {mode === 'link' && `Paste the channel's Slack link, then invite ${workerName}'s app to that channel (Channel → Integrations → Add apps).`}
+      </p>
+    </div>
+  );
+}
 
 interface ToolSetting {
   provider: string;
@@ -50,11 +100,13 @@ export function WorkerToolsTab({ workerId, workerName }: { workerId: string; wor
     });
   }, [save]);
 
-  const setChannel = useCallback((provider: string, val: string) => {
-    setTools(prev => prev.map(t => (t.provider === provider ? { ...t, config: { ...t.config, default_channel: val } } : t)));
-  }, []);
-
-  const commit = useCallback(() => { setTools(prev => { save(prev); return prev; }); }, [save]);
+  const setSlackTarget = useCallback((val: string) => {
+    setTools(prev => {
+      const next = prev.map(t => (t.provider === 'slack' ? { ...t, config: { ...t.config, default_channel: val } } : t));
+      save(next);
+      return next;
+    });
+  }, [save]);
 
   return (
     <div className="flex-1 overflow-y-auto px-6 py-5">
@@ -104,18 +156,9 @@ export function WorkerToolsTab({ workerId, workerName }: { workerId: string; wor
                   </div>
                 </div>
 
-                {/* Per-tool config: Slack default channel (only when connected + enabled) */}
+                {/* Per-tool config: Slack default target (only when connected + enabled) */}
                 {t.provider === 'slack' && t.connected && t.enabled && (
-                  <div className="mt-3 pl-12">
-                    <label className="block text-[11.5px] font-medium text-neutral-600 mb-1">Default channel</label>
-                    <Input
-                      value={t.config.default_channel ?? ''}
-                      onChange={e => setChannel(t.provider, e.target.value)}
-                      onBlur={commit}
-                      placeholder="#general or C0123ABCD (optional)"
-                    />
-                    <p className="text-[11px] text-neutral-400 mt-1">Used when {workerName} posts without naming a channel. Public channels work automatically — for a private channel, invite {workerName}&apos;s Slack app to it first.</p>
-                  </div>
+                  <SlackTargetEditor value={t.config.default_channel ?? ''} workerName={workerName} onSave={setSlackTarget} />
                 )}
               </div>
             ))}

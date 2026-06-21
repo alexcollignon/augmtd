@@ -30,6 +30,15 @@ async function slackConn(admin: Admin, userId: string, agentId?: string): Promis
 const DM_SENTINELS = new Set(['@me', 'dm', 'dm:me', 'me', '__dm__']);
 export function isDmTarget(ch: string): boolean { return DM_SENTINELS.has(ch.trim().toLowerCase()); }
 
+// Accept a pasted Slack channel URL (e.g. .../archives/C0123ABCD or
+// .../client/T.../C0123ABCD) and reduce it to the channel ID, so users can point at a
+// private channel by copying its link. Non-URL values (#name, @me, raw ID) pass through.
+export function normalizeChannel(ch: string): string {
+  const v = ch.trim();
+  const m = v.match(/\/(?:archives|client\/[A-Z0-9]+)\/([A-Z0-9]+)/i);
+  return m ? m[1] : v;
+}
+
 // Resolve the user's Slack DM channel id (email → slack user → open DM) for a given
 // coworker app. null if not resolvable.
 async function resolveDmChannelId(admin: Admin, userId: string, connectionId: string, providerKey: string): Promise<string | null> {
@@ -296,6 +305,7 @@ export async function executeSlackPostMessage(
     const cfg = await getAgentToolConfig(admin, agentId, 'slack');
     channel = String(cfg.default_channel ?? '').trim();
   }
+  channel = normalizeChannel(channel); // a pasted Slack URL → channel ID
   if (!channel || !text) return 'Provide both a channel and message text.';
 
   const conn = await slackConn(admin, userId, agentId);
