@@ -257,6 +257,30 @@ export async function executeSlackListMembers(
   return `Members of ${channel} (${people.length}):\n${people.join('\n')}\n\nTo tag someone, write <@Their Name> in your message.`;
 }
 
+// One Slack bot per coworker role is shared across all users in a company, so a
+// channel post from "Clara" can't be traced to a person on its own. We append a
+// context label ("Alex's Personal Assistant") to channel posts so it's attributable.
+// DMs need none — they're already per-user threads.
+const ROLE_LABELS: Record<string, string> = {
+  personal_assistant: 'Personal Assistant',
+  content_manager: 'Content Strategist',
+  linkedin_drafter: 'LinkedIn Wizard',
+  research_analyst: 'Research Analyst',
+};
+
+async function attributionLabel(admin: Admin, userId: string, agentId?: string): Promise<string | null> {
+  let role: string | null = null;
+  if (agentId) {
+    const { data: agent } = await admin.from('custom_agents').select('worker_role').eq('id', agentId).maybeSingle();
+    role = ROLE_LABELS[(agent?.worker_role as string) ?? ''] ?? null;
+  }
+  const { data: prof } = await admin.from('profiles').select('full_name').eq('id', userId).maybeSingle();
+  const first = (((prof as { full_name?: string } | null)?.full_name) ?? '').trim().split(/\s+/)[0] ?? '';
+  if (first && role) return `${first}'s ${role}`;
+  if (first) return `for ${first}`;
+  return role;
+}
+
 export async function executeSlackPostMessage(
   config: Record<string, unknown>,
   userId: string,
@@ -289,12 +313,24 @@ export async function executeSlackPostMessage(
   const finalText = await resolveMentions(text, admin, userId, conn.connectionId, conn.providerKey);
   const threadTs = typeof config.thread_ts === 'string' && config.thread_ts ? config.thread_ts : undefined;
 
+  const data: Record<string, unknown> = { channel: target, text: finalText, ...(threadTs ? { thread_ts: threadTs } : {}) };
+  // Channel posts get an attribution label (whose coworker this is); DMs don't need it.
+  if (!dm) {
+    const label = await attributionLabel(admin, userId, agentId);
+    if (label) {
+      data.blocks = [
+        { type: 'section', text: { type: 'mrkdwn', text: finalText } },
+        { type: 'context', elements: [{ type: 'mrkdwn', text: `👤 ${label}` }] },
+      ];
+    }
+  }
+
   const res = await nangoProxy({
     method: 'POST',
     endpoint: '/chat.postMessage',
     providerConfigKey: conn.providerKey,
     connectionId: conn.connectionId,
-    data: { channel: target, text: finalText, ...(threadTs ? { thread_ts: threadTs } : {}) },
+    data,
   });
   const body = res.body as { ok?: boolean; error?: string } | null;
   if (!res.ok || !body?.ok) {
