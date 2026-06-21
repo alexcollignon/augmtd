@@ -5,7 +5,7 @@
 // The bot must be invited to a channel to post/read it.
 
 import { nangoProxy } from '@/lib/integrations/nango';
-import { resolveConnection, isToolEnabledForAgent, getAgentToolConfig } from '@/lib/integrations/connection';
+import { resolveConnection, isToolEnabledForAgent } from '@/lib/integrations/connection';
 import { slackKeyForRole } from '@/lib/integrations/registry';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -290,12 +290,7 @@ export async function executeSlackPostMessage(
   if (!(await isToolEnabledForAgent(admin, agentId, 'slack'))) return DISABLED;
 
   const text = String(config.text ?? '').trim();
-  let channel = String(config.channel ?? '').trim();
-  if (!channel) {
-    // Fall back to this worker's configured default channel, if any.
-    const cfg = await getAgentToolConfig(admin, agentId, 'slack');
-    channel = String(cfg.default_channel ?? '').trim();
-  }
+  const channel = String(config.channel ?? '').trim();
   if (!channel || !text) return 'Provide both a channel and message text.';
 
   const conn = await slackConn(admin, userId, agentId);
