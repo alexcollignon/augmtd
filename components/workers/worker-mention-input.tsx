@@ -84,21 +84,47 @@ export function WorkerMentionInput({ onSubmit, disabled, placeholder, prefill, o
     document.addEventListener('mousedown', h); return () => document.removeEventListener('mousedown', h);
   }, [mq]);
 
-  const fetchItems = useCallback(async (q: string, type?: WorkerMention['type']) => {
-    setLoadingItems(true);
+  const cacheRef = useRef<Record<string, WorkerMention[]>>({});
+  const prefetchedRef = useRef(false);
+
+  const fetchItems = useCallback(async (q: string, type?: WorkerMention['type'], silent = false) => {
+    if (!silent) setLoadingItems(true);
     try {
       const p = new URLSearchParams({ q }); if (type) p.set('types', type);
       const res = await fetch(`/api/workers/mentions?${p}`);
-      if (res.ok) { const d = await res.json(); setResults(d.results || []); setIdx(0); }
-    } catch { /* ignore */ } finally { setLoadingItems(false); }
+      if (res.ok) {
+        const items: WorkerMention[] = (await res.json()).results || [];
+        setResults(items); setIdx(0);
+        if (type && q === '') cacheRef.current[type] = items; // cache each category's default list
+      }
+    } catch { /* ignore */ } finally { if (!silent) setLoadingItems(false); }
   }, []);
+
+  // Warm the cache the moment the menu opens (one request, split by type) so drilling is instant.
+  useEffect(() => {
+    if (mq === null || prefetchedRef.current) return;
+    prefetchedRef.current = true;
+    (async () => {
+      try {
+        const res = await fetch(`/api/workers/mentions?q=`);
+        if (!res.ok) return;
+        const all: WorkerMention[] = (await res.json()).results || [];
+        cacheRef.current.coworker = all.filter(r => r.type === 'coworker');
+        cacheRef.current.task = all.filter(r => r.type === 'task');
+        cacheRef.current.document = all.filter(r => r.type === 'document');
+      } catch { /* ignore */ }
+    })();
+  }, [mq]);
 
   useEffect(() => {
     if (mq === null) { setResults([]); setMode('categories'); setCat(null); return; }
     if (mq === '' && cat === null) { setMode('categories'); setResults([]); return; }
     setMode('items');
+    // Cache hit for a category's default list → render instantly, refresh silently.
+    const cached = cat && mq === '' ? cacheRef.current[cat] : undefined;
+    if (cached) { setResults(cached); setIdx(0); }
     if (debounce.current) clearTimeout(debounce.current);
-    debounce.current = setTimeout(() => fetchItems(mq, cat ?? undefined), cat ? 0 : 180);
+    debounce.current = setTimeout(() => fetchItems(mq, cat ?? undefined, !!cached), cat ? 0 : 180);
     return () => { if (debounce.current) clearTimeout(debounce.current); };
   }, [mq, cat, fetchItems]);
 
