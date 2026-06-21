@@ -29,80 +29,69 @@ export async function GET() {
       .maybeSingle();
     const augmtdSourceId = augmtdSource?.id ?? null;
 
-    // 1. Work threads — flatten artifacts array
-    const { data: threads } = await supabase
-      .from('work_threads')
-      .select('id, artifacts, artifact, workflow_id')
-      .eq('user_id', user.id);
+    // 1. Work threads — artifact METADATA only (RPC strips the heavy `content` bodies
+    //    server-side so the list query doesn't ship full documents over the wire).
+    type ArtRow = {
+      work_thread_id: string; workflow_id: string | null; art_id: string;
+      title: string; art_type: string; folder_id: string | null;
+      generated_at: string | null; storage_path: string | null;
+    };
+    let rows: ArtRow[] = [];
+    const { data: artRows, error: rpcError } = await adminClient
+      .rpc('drive_augmtd_artifacts', { p_user_id: user.id });
+    if (rpcError) {
+      // Fallback (migration not yet applied): flatten artifacts in JS the old way.
+      const { data: threads } = await adminClient
+        .from('work_threads').select('id, artifacts, artifact, workflow_id').eq('user_id', user.id);
+      for (const t of (threads ?? []) as any[]) {
+        for (const a of ((t.artifacts as DocumentArtifact[]) ?? [])) {
+          if (!a.storage_path && a.type !== 'email') continue;
+          rows.push({ work_thread_id: t.id, workflow_id: t.workflow_id, art_id: a.id ?? a.storage_path ?? '', title: a.title, art_type: a.type, folder_id: a.folder_id ?? null, generated_at: a.generated_at ?? null, storage_path: a.storage_path ?? null });
+        }
+        const s = t.artifact as DocumentArtifact | null;
+        if (s?.storage_path) rows.push({ work_thread_id: t.id, workflow_id: t.workflow_id, art_id: s.id ?? s.storage_path, title: s.title, art_type: s.type, folder_id: s.folder_id ?? null, generated_at: s.generated_at ?? null, storage_path: s.storage_path ?? null });
+      }
+    } else {
+      rows = (artRows ?? []) as ArtRow[];
+    }
 
     // Resolve agent names for worker-produced files
     const agentNameByWorkflowId = new Map<string, string>();
-    if (threads) {
-      const workflowIds = [...new Set(threads.map((t: any) => t.workflow_id).filter(Boolean))];
-      if (workflowIds.length > 0) {
-        const { data: workflowRows } = await adminClient
-          .from('workflows')
-          .select('id, agent_id')
-          .in('id', workflowIds)
-          .not('agent_id', 'is', null);
-        if (workflowRows?.length) {
-          const agentIds = [...new Set(workflowRows.map((w: any) => w.agent_id))];
-          const { data: agentRows } = await adminClient
-            .from('custom_agents')
-            .select('id, name')
-            .in('id', agentIds);
-          const agentById = new Map(agentRows?.map((a: any) => [a.id, a.name]) ?? []);
-          for (const w of workflowRows as any[]) {
-            if (w.agent_id) agentNameByWorkflowId.set(w.id, agentById.get(w.agent_id) ?? '');
-          }
+    const workflowIds = [...new Set(rows.map(r => r.workflow_id).filter(Boolean))] as string[];
+    if (workflowIds.length > 0) {
+      const { data: workflowRows } = await adminClient
+        .from('workflows')
+        .select('id, agent_id')
+        .in('id', workflowIds)
+        .not('agent_id', 'is', null);
+      if (workflowRows?.length) {
+        const agentIds = [...new Set(workflowRows.map((w: any) => w.agent_id))];
+        const { data: agentRows } = await adminClient
+          .from('custom_agents')
+          .select('id, name')
+          .in('id', agentIds);
+        const agentById = new Map(agentRows?.map((a: any) => [a.id, a.name]) ?? []);
+        for (const w of workflowRows as any[]) {
+          if (w.agent_id) agentNameByWorkflowId.set(w.id, agentById.get(w.agent_id) ?? '');
         }
       }
     }
 
-    if (threads) {
-      for (const thread of threads as any[]) {
-        const agentName = thread.workflow_id ? agentNameByWorkflowId.get(thread.workflow_id) : undefined;
-        const artifacts = (thread.artifacts as DocumentArtifact[]) || [];
-        const processed = new Set<string>();
-
-        for (const art of artifacts) {
-          if (!art.storage_path && art.type !== 'email') continue;
-          const artId = art.id ?? art.storage_path ?? '';
-          if (!artId || processed.has(artId)) continue;
-          processed.add(artId);
-
-          files.push({
-            id: artId,
-            title: art.title,
-            type: art.type,
-            source: 'workflow',
-            folder_id: art.folder_id,
-            generated_at: art.generated_at,
-            work_thread_id: thread.id,
-            storage_path: art.storage_path,
-            agent_name: agentName || undefined,
-          });
-        }
-
-        // Legacy singular artifact
-        const singular = thread.artifact as DocumentArtifact | null;
-        if (singular?.storage_path) {
-          const singularId = singular.id ?? singular.storage_path;
-          if (!processed.has(singularId)) {
-            files.push({
-              id: singularId,
-              title: singular.title,
-              type: singular.type,
-              source: 'workflow',
-              folder_id: singular.folder_id,
-              generated_at: singular.generated_at,
-              work_thread_id: thread.id,
-              storage_path: singular.storage_path,
-              agent_name: agentName || undefined,
-            });
-          }
-        }
-      }
+    const processed = new Set<string>();
+    for (const r of rows) {
+      if (!r.art_id || processed.has(r.art_id)) continue;
+      processed.add(r.art_id);
+      files.push({
+        id: r.art_id,
+        title: r.title,
+        type: r.art_type as DocumentArtifact['type'],
+        source: 'workflow',
+        folder_id: r.folder_id ?? undefined,
+        generated_at: r.generated_at ?? '',
+        work_thread_id: r.work_thread_id,
+        storage_path: r.storage_path ?? undefined,
+        agent_name: (r.workflow_id ? agentNameByWorkflowId.get(r.workflow_id) : undefined) || undefined,
+      });
     }
 
     // 2. Meeting transcripts — indexed to KB via augmtd source
