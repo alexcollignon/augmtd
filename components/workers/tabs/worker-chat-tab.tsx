@@ -106,6 +106,7 @@ export function WorkerChatTab({ worker, initialThreads, initialMessages, initial
   );
   const [showHome, setShowHome] = useState<boolean>(!initialThreadId);
   const [pendingMessage, setPendingMessage] = useState<string | null>(null);
+  const [pendingMentions, setPendingMentions] = useState<WorkerMention[] | undefined>(undefined);
 
   // Always fetch fresh on mount — initialThreads from parent can be stale if threads
   // were created in a previous session or before the parent's fetch completed.
@@ -186,9 +187,10 @@ export function WorkerChatTab({ worker, initialThreads, initialMessages, initial
     setThreads(prev => prev.map(t => t.id === id ? { ...t, title } : t));
   }
 
-  async function handleStarterClick(starter: string, briefingText?: string) {
+  async function handleStarterClick(starter: string, briefingText?: string, mentions?: WorkerMention[]) {
     const threadId = await handleCreateThread(starter);
     if (!threadId) return;
+    setPendingMentions(mentions);
 
     // If the reply came from the home screen, save the briefing as the first assistant
     // message so it's visible in the thread and the AI has it as context.
@@ -283,7 +285,7 @@ export function WorkerChatTab({ worker, initialThreads, initialMessages, initial
         {showHome ? (
           <WorkerHomeView
             worker={worker}
-            onSend={(text, briefing) => { handleStarterClick(text, briefing); }}
+            onSend={(text, briefing, mentions) => { handleStarterClick(text, briefing, mentions); }}
             sidebarOpen={sidebarOpen}
             onToggleSidebar={() => setSidebarOpen(v => !v)}
           />
@@ -293,7 +295,8 @@ export function WorkerChatTab({ worker, initialThreads, initialMessages, initial
             thread={activeThread}
             worker={worker}
             pendingMessage={pendingMessage}
-            onPendingConsumed={() => setPendingMessage(null)}
+            pendingMentions={pendingMentions}
+            onPendingConsumed={() => { setPendingMessage(null); setPendingMentions(undefined); }}
             onTitleUpdate={handleUpdateThreadTitle}
             initialInputValue={initialInputValue}
             onInitialInputConsumed={onInitialInputConsumed}
@@ -321,6 +324,7 @@ interface ActiveWorkerChatProps {
   thread: WorkerThread;
   worker: Worker;
   pendingMessage: string | null;
+  pendingMentions?: WorkerMention[];
   onPendingConsumed: () => void;
   onTitleUpdate: (id: string, title: string) => void;
   initialInputValue?: string | null;
@@ -336,6 +340,7 @@ function ActiveWorkerChat({
   thread,
   worker,
   pendingMessage,
+  pendingMentions,
   onPendingConsumed,
   onTitleUpdate,
   initialInputValue,
@@ -505,7 +510,7 @@ function ActiveWorkerChat({
     if (!pendingMessage || isLoading || isStreaming || hasSentPending.current) return;
     hasSentPending.current = true;
     onPendingConsumed();
-    handleSubmit(pendingMessage);
+    handleSubmit(pendingMessage, pendingMentions);
   }, [pendingMessage, isLoading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Consume prefill from "New version" button in documents tab

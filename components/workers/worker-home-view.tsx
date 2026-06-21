@@ -1,8 +1,8 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { PaperAirplaneIcon } from '@heroicons/react/24/outline';
 import { WorkerActivityTrace } from './worker-activity-trace';
+import { WorkerMentionInput, type WorkerMention } from './worker-mention-input';
 import type { Worker } from '@/app/workers/workers-page-client';
 
 const ROLE_AVATARS: Record<string, string> = {
@@ -36,7 +36,7 @@ interface HomeData {
 
 interface WorkerHomeViewProps {
   worker: Worker;
-  onSend: (message: string, briefingText: string) => void;
+  onSend: (message: string, briefingText: string, mentions?: WorkerMention[]) => void;
   sidebarOpen: boolean;
   onToggleSidebar: () => void;
 }
@@ -61,8 +61,6 @@ export function WorkerHomeView({ worker, onSend, sidebarOpen, onToggleSidebar }:
   const [briefingText, setBriefingText] = useState('');
   const [briefingDone, setBriefingDone] = useState(false);
   const [traceExpanded, setTraceExpanded] = useState(true);
-  const [inputValue, setInputValue] = useState('');
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const mountedRef = useRef(true);
   const hasFetchedRef = useRef(false);
 
@@ -120,25 +118,6 @@ export function WorkerHomeView({ worker, onSend, sidebarOpen, onToggleSidebar }:
         if (mountedRef.current) setBriefingDone(true);
       });
   }, [worker.id]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Resize textarea
-  useEffect(() => {
-    const el = textareaRef.current;
-    if (!el) return;
-    el.style.height = 'auto';
-    el.style.height = `${Math.min(el.scrollHeight, 180)}px`;
-  }, [inputValue]);
-
-  function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      if (inputValue.trim()) { onSend(inputValue.trim(), briefingText); setInputValue(''); }
-    }
-  }
-
-  function handleSubmit() {
-    if (inputValue.trim()) { onSend(inputValue.trim(), briefingText); setInputValue(''); }
-  }
 
   const avatarSrc = worker.worker_role ? (ROLE_AVATARS[worker.worker_role] ?? null) : null;
 
@@ -200,32 +179,16 @@ export function WorkerHomeView({ worker, onSend, sidebarOpen, onToggleSidebar }:
         </div>
       </div>
 
-      {/* Reply input */}
+      {/* Reply input — same composer as in-thread (@ to mention). Attach lives in-thread
+          once a conversation exists, since uploads attach to a thread. */}
       <div className="flex-shrink-0 px-4 pb-4 pt-2">
         <div className="max-w-[640px] mx-auto">
-          <div className="rounded-2xl bg-neutral-50 border border-neutral-200 overflow-hidden focus-within:border-neutral-300 focus-within:bg-white focus-within:shadow-sm transition-all duration-150">
-            <textarea
-              ref={textareaRef}
-              value={inputValue}
-              onChange={e => setInputValue(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder={`Reply to ${worker.name}…`}
-              rows={1}
-              className="w-full resize-none px-4 pt-3 pb-2 text-[13.5px] text-neutral-800 placeholder:text-neutral-400 bg-transparent outline-none leading-relaxed"
-              style={{ minHeight: '44px', maxHeight: '180px' }}
-            />
-            <div className="flex items-center justify-end px-3 pb-2.5">
-              <button
-                onClick={handleSubmit}
-                disabled={!inputValue.trim()}
-                className="flex items-center justify-center w-7 h-7 rounded-lg bg-indigo-600 text-white disabled:opacity-40 hover:bg-indigo-700 transition-colors"
-              >
-                <PaperAirplaneIcon className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          </div>
+          <WorkerMentionInput
+            onSubmit={(text, mentions) => onSend(text, briefingText, mentions)}
+            placeholder={`Reply to ${worker.name}…  (@ to mention a coworker, task, or document)`}
+          />
           <p className="mt-1.5 text-center text-[11px] text-neutral-400">
-            Enter to send · Shift+Enter for new line
+            Enter to send · Shift+Enter for new line · @ to mention
           </p>
         </div>
       </div>
