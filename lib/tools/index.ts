@@ -24,6 +24,10 @@ export {
   slackListChannelsDefinition, slackPostMessageDefinition, slackReadMessagesDefinition, slackListMembersDefinition,
   executeSlackListChannels, executeSlackPostMessage, executeSlackReadMessages, executeSlackListMembers,
 } from './slack';
+export {
+  findTeamWorkDefinition, readTeamWorkDefinition,
+  executeFindTeamWork, executeReadTeamWork,
+} from './team-work';
 
 // OpenAI function-calling format converter — used by chat route
 export function toOpenAITool(def: {

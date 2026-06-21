@@ -168,8 +168,41 @@ def generate_document(
     return _call("generate_document", run_context, config)
 
 
+@tool
+def find_team_work(run_context: RunContext, query: str = "", coworker: str = "", limit: int = 10) -> str:
+    """Find a teammate's recent work — documents/outputs other coworkers produced.
+    Use this to build on a colleague's output (e.g. find Max's research) instead of
+    asking the user to fetch it. Then read_team_work to read one.
+
+    Args:
+        query: Topic or keywords to match in titles (optional).
+        coworker: Limit to one coworker by name, e.g. "Max" (optional).
+        limit: Max results (default 10).
+    """
+    config: dict = {}
+    if query:
+        config["query"] = query
+    if coworker:
+        config["coworker"] = coworker
+    if limit:
+        config["limit"] = limit
+    return _call("find_team_work", run_context, config)
+
+
+@tool
+def read_team_work(run_context: RunContext, id: str) -> str:
+    """Read the full content of a teammate's document by its id (from find_team_work),
+    so you can build on it.
+
+    Args:
+        id: The document id from find_team_work.
+    """
+    return _call("read_team_work", run_context, {"id": id})
+
+
 # Data + web tools — assigned to every worker (matches all_tools in native loop).
 DATA_TOOLS = [
     get_emails, get_meeting_context, search_knowledge_base,
     web_search, fetch_url, deep_research, generate_document,
+    find_team_work, read_team_work,
 ]

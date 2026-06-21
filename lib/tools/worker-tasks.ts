@@ -334,7 +334,7 @@ export async function executeCreateTask(
 
   const row = workflow as { id: string; name: string; trigger: { type: string; cron?: string; label?: string } };
   const schedule = formatSchedule(row.trigger);
-  return `Task created: **${row.name}** — ${schedule}\nID: ${row.id}\n\nI've built a full pipeline for this. It'll run automatically on schedule and deliver results to your inbox. You can edit the steps anytime in the Tasks tab → Advanced settings.`;
+  return `Task created: **${row.name}** — ${schedule}\nID: ${row.id}\n\nI've built a full pipeline for this. It runs on its schedule if set, and you can run it on demand anytime — the setup's saved so neither of us rebuilds it. Edit the steps anytime in the Tasks tab → Advanced settings.`;
 }
 
 export async function executeGetTask(
