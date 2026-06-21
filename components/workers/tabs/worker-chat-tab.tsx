@@ -79,6 +79,7 @@ function SidebarToggle({ open, onToggle }: { open: boolean; onToggle: () => void
 import { ChatMessageBubble, StreamingMessage, ToolStatus } from '@/components/work/chat-message';
 import type { ChatMessage } from '@/components/work/chat-message';
 import { WorkerThreadList } from '@/components/workers/worker-thread-list';
+import { toast } from 'sonner';
 import { WorkerMentionInput, type WorkerMention } from '@/components/workers/worker-mention-input';
 import type { AttachmentChip } from '@/components/work/chat-input-bar';
 import { WorkerHomeView } from '@/components/workers/worker-home-view';
@@ -707,7 +708,15 @@ function ActiveWorkerChat({
     }
   }, [thread.id, worker.id, isStreaming, onTitleUpdate, chatAttachments]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleAttach = useCallback(async (files: File[]) => {
+  const handleAttach = useCallback(async (rawFiles: File[]) => {
+    // Direct chat uploads go through a Vercel function (~4.5 MB request-body ceiling).
+    // Guard client-side so big files get a clear message instead of an opaque 413.
+    const MAX = 4 * 1024 * 1024;
+    const files = rawFiles.filter(f => f.size <= MAX);
+    if (files.length < rawFiles.length) {
+      toast.error('Files over 4 MB can\'t be attached here — upload them to Drive and @mention them instead.');
+      if (files.length === 0) return;
+    }
     const temp: AttachmentChip[] = files.map(f => ({ id: `temp-${crypto.randomUUID()}`, name: f.name, size: f.size, isUploading: true }));
     setChatAttachments(prev => [...prev, ...temp]);
     try {
