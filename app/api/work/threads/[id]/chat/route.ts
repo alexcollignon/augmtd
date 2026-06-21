@@ -1914,7 +1914,12 @@ async function executeChatTool(
 
     case 'slack_post_message': {
       const result = await executeSlackPostMessage(input, ctx.userId, ctx.agentId, ctx.adminClient);
-      return { result, summary: result.startsWith('Posted') ? 'Posted to Slack' : 'Slack post failed' };
+      // Success strings: "Posted to Slack …" / "Sent you a Slack DM." / "Replied in thread …".
+      const summary = /^Posted/.test(result) ? 'Posted to Slack'
+        : /^Sent/.test(result) ? 'Sent a Slack DM'
+        : /^Replied/.test(result) ? 'Replied on Slack'
+        : 'Slack post failed';
+      return { result, summary };
     }
 
     case 'slack_read_messages': {
