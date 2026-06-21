@@ -64,9 +64,14 @@ export function WorkerMentionInput({ onSubmit, disabled, placeholder, prefill, o
     el.style.height = 'auto'; el.style.height = `${Math.min(el.scrollHeight, 180)}px`;
   }, [value]);
 
-  useEffect(() => { // close on outside click
+  useEffect(() => { // close on outside click — strip the dangling @ since nothing was chosen
     if (mq === null) return;
-    const h = (e: MouseEvent) => { if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) { setMq(null); setMode('categories'); } };
+    const h = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) {
+        setValue(v => v.replace(/@[^@\s]*$/, ''));
+        setMq(null); setMode('categories'); setCat(null);
+      }
+    };
     document.addEventListener('mousedown', h); return () => document.removeEventListener('mousedown', h);
   }, [mq]);
 
@@ -185,7 +190,13 @@ export function WorkerMentionInput({ onSubmit, disabled, placeholder, prefill, o
       )}
     </div>, document.body) : null;
 
-  function openMention() {
+  function toggleMention() {
+    // Clicking Mention again (dropdown open) closes it and strips the dangling @.
+    if (mq !== null) {
+      setValue(v => v.replace(/@[^@\s]*$/, ''));
+      setMq(null); setCat(null); setMode('categories');
+      return;
+    }
     const el = taRef.current; if (!el) return;
     const pos = el.selectionStart ?? value.length;
     setValue(value.slice(0, pos) + '@' + value.slice(pos));
@@ -218,7 +229,7 @@ export function WorkerMentionInput({ onSubmit, disabled, placeholder, prefill, o
           style={{ minHeight: '44px', maxHeight: '180px' }}
         />
         <div className="flex items-center px-3 pb-2.5">
-          <button onClick={openMention} className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[12px] text-neutral-500 hover:bg-neutral-100 hover:text-neutral-700 transition-colors">
+          <button onClick={toggleMention} className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[12px] text-neutral-500 hover:bg-neutral-100 hover:text-neutral-700 transition-colors">
             <AtSymbolIcon className="w-3.5 h-3.5" /> Mention
           </button>
           <button onClick={submit} disabled={disabled || !value.trim()}
