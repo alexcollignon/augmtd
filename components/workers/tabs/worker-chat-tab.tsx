@@ -107,6 +107,8 @@ export function WorkerChatTab({ worker, initialThreads, initialMessages, initial
   const [showHome, setShowHome] = useState<boolean>(!initialThreadId);
   const [pendingMessage, setPendingMessage] = useState<string | null>(null);
   const [pendingMentions, setPendingMentions] = useState<WorkerMention[] | undefined>(undefined);
+  const [pendingAttachments, setPendingAttachments] = useState<{ id: string; name: string }[] | undefined>(undefined);
+  const [homeAttach, setHomeAttach] = useState<{ id: string; file: File }[]>([]);
 
   // Always fetch fresh on mount — initialThreads from parent can be stale if threads
   // were created in a previous session or before the parent's fetch completed.
@@ -187,10 +189,33 @@ export function WorkerChatTab({ worker, initialThreads, initialMessages, initial
     setThreads(prev => prev.map(t => t.id === id ? { ...t, title } : t));
   }
 
+  function handleHomeAttach(rawFiles: File[]) {
+    const MAX = 4 * 1024 * 1024;
+    const files = rawFiles.filter(f => f.size <= MAX);
+    if (files.length < rawFiles.length) {
+      toast.error('Files over 4 MB can\'t be attached here — upload them to Drive and @mention them instead.');
+    }
+    setHomeAttach(prev => [...prev, ...files.map(f => ({ id: crypto.randomUUID(), file: f }))]);
+  }
+  const handleRemoveHomeAttach = (id: string) => setHomeAttach(prev => prev.filter(a => a.id !== id));
+
   async function handleStarterClick(starter: string, briefingText?: string, mentions?: WorkerMention[]) {
     const threadId = await handleCreateThread(starter);
     if (!threadId) return;
     setPendingMentions(mentions);
+    // Upload any files attached on the home box now that the thread exists.
+    if (homeAttach.length > 0) {
+      try {
+        const fd = new FormData();
+        homeAttach.forEach(a => fd.append('file', a.file));
+        const res = await fetch(`/api/work/threads/${threadId}/chat-attach`, { method: 'POST', body: fd });
+        if (res.ok) {
+          const data = await res.json();
+          setPendingAttachments(((data.attachments ?? []) as Array<{ chatAttachId: string; filename: string }>).map(r => ({ id: r.chatAttachId, name: r.filename })));
+        }
+      } catch { /* ignore */ }
+      setHomeAttach([]);
+    }
 
     // If the reply came from the home screen, save the briefing as the first assistant
     // message so it's visible in the thread and the AI has it as context.
@@ -286,6 +311,9 @@ export function WorkerChatTab({ worker, initialThreads, initialMessages, initial
           <WorkerHomeView
             worker={worker}
             onSend={(text, briefing, mentions) => { handleStarterClick(text, briefing, mentions); }}
+            onAttach={handleHomeAttach}
+            attachments={homeAttach.map(a => ({ id: a.id, name: a.file.name, size: a.file.size }))}
+            onRemoveAttachment={handleRemoveHomeAttach}
             sidebarOpen={sidebarOpen}
             onToggleSidebar={() => setSidebarOpen(v => !v)}
           />
@@ -296,7 +324,8 @@ export function WorkerChatTab({ worker, initialThreads, initialMessages, initial
             worker={worker}
             pendingMessage={pendingMessage}
             pendingMentions={pendingMentions}
-            onPendingConsumed={() => { setPendingMessage(null); setPendingMentions(undefined); }}
+            pendingAttachments={pendingAttachments}
+            onPendingConsumed={() => { setPendingMessage(null); setPendingMentions(undefined); setPendingAttachments(undefined); }}
             onTitleUpdate={handleUpdateThreadTitle}
             initialInputValue={initialInputValue}
             onInitialInputConsumed={onInitialInputConsumed}
@@ -325,6 +354,7 @@ interface ActiveWorkerChatProps {
   worker: Worker;
   pendingMessage: string | null;
   pendingMentions?: WorkerMention[];
+  pendingAttachments?: { id: string; name: string }[];
   onPendingConsumed: () => void;
   onTitleUpdate: (id: string, title: string) => void;
   initialInputValue?: string | null;
@@ -341,6 +371,7 @@ function ActiveWorkerChat({
   worker,
   pendingMessage,
   pendingMentions,
+  pendingAttachments,
   onPendingConsumed,
   onTitleUpdate,
   initialInputValue,
@@ -514,7 +545,7 @@ function ActiveWorkerChat({
     if (!pendingMessage || isLoading || isStreaming || hasSentPending.current) return;
     hasSentPending.current = true;
     onPendingConsumed();
-    handleSubmit(pendingMessage, pendingMentions);
+    handleSubmit(pendingMessage, pendingMentions, pendingAttachments);
   }, [pendingMessage, isLoading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Consume prefill from "New version" button in documents tab
@@ -528,10 +559,11 @@ function ActiveWorkerChat({
     }, 50);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleSubmit = useCallback(async (message: string, mentions?: WorkerMention[]) => {
+  const handleSubmit = useCallback(async (message: string, mentions?: WorkerMention[], attachmentsOverride?: { id: string; name: string }[]) => {
     if (isStreaming || !message.trim()) return;
 
-    const sendAttachments = chatAttachments.filter(a => !a.isUploading).map(a => ({ id: a.id, name: a.name }));
+    // attachmentsOverride = files uploaded by the home box before this thread existed.
+    const sendAttachments = attachmentsOverride ?? chatAttachments.filter(a => !a.isUploading).map(a => ({ id: a.id, name: a.name }));
 
     const userMsg: ChatMessage = {
       id: crypto.randomUUID(),
