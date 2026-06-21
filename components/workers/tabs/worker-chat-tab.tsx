@@ -80,6 +80,7 @@ import { ChatMessageBubble, StreamingMessage, ToolStatus } from '@/components/wo
 import type { ChatMessage } from '@/components/work/chat-message';
 import { WorkerThreadList } from '@/components/workers/worker-thread-list';
 import { WorkerMentionInput, type WorkerMention } from '@/components/workers/worker-mention-input';
+import type { AttachmentChip } from '@/components/work/chat-input-bar';
 import { WorkerHomeView } from '@/components/workers/worker-home-view';
 import type { Worker, WorkerThread } from '@/app/workers/workers-page-client';
 
@@ -353,6 +354,7 @@ function ActiveWorkerChat({
   const [streamingThinking, setStreamingThinking] = useState('');
   const [thinkingDone, setThinkingDone] = useState(false);
   const [inputValue, setInputValue] = useState('');
+  const [chatAttachments, setChatAttachments] = useState<AttachmentChip[]>([]);
 
   // Artifact panel state
   const [openArtifact, setOpenArtifact] = useState<{ artifactId: string; threadId: string } | null>(null);
@@ -519,6 +521,8 @@ function ActiveWorkerChat({
   const handleSubmit = useCallback(async (message: string, mentions?: WorkerMention[]) => {
     if (isStreaming || !message.trim()) return;
 
+    const sendAttachments = chatAttachments.filter(a => !a.isUploading).map(a => ({ id: a.id, name: a.name }));
+
     const userMsg: ChatMessage = {
       id: crypto.randomUUID(),
       role: 'user',
@@ -527,6 +531,7 @@ function ActiveWorkerChat({
     };
     setMessages(prev => [...prev, userMsg]);
     setInputValue('');
+    setChatAttachments([]);
     setIsStreaming(true);
     setStreamingText('');
     setStreamingTools([]);
@@ -540,7 +545,7 @@ function ActiveWorkerChat({
       const res = await fetch(`/api/work/threads/${thread.id}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: message, agentId: worker.id, ...(mentions && mentions.length ? { mentions } : {}) }),
+        body: JSON.stringify({ content: message, agentId: worker.id, ...(mentions && mentions.length ? { mentions } : {}), ...(sendAttachments.length ? { attachments: sendAttachments } : {}) }),
         signal: ac.signal,
       });
 
@@ -700,7 +705,31 @@ function ActiveWorkerChat({
         setStreamingTools([]);
       }
     }
-  }, [thread.id, worker.id, isStreaming, onTitleUpdate]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [thread.id, worker.id, isStreaming, onTitleUpdate, chatAttachments]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleAttach = useCallback(async (files: File[]) => {
+    const temp: AttachmentChip[] = files.map(f => ({ id: `temp-${crypto.randomUUID()}`, name: f.name, size: f.size, isUploading: true }));
+    setChatAttachments(prev => [...prev, ...temp]);
+    try {
+      const fd = new FormData();
+      files.forEach(f => fd.append('file', f));
+      const res = await fetch(`/api/work/threads/${thread.id}/chat-attach`, { method: 'POST', body: fd });
+      if (!res.ok) throw new Error('upload failed');
+      const data = await res.json();
+      const real = ((data.attachments ?? []) as Array<{ chatAttachId: string; filename: string; size: number }>)
+        .map(r => ({ id: r.chatAttachId, name: r.filename, size: r.size }));
+      setChatAttachments(prev => [...prev.filter(c => !temp.some(t => t.id === c.id)), ...real]);
+    } catch {
+      setChatAttachments(prev => prev.filter(c => !temp.some(t => t.id === c.id)));
+    }
+  }, [thread.id]);
+
+  const handleRemoveAttachment = useCallback((id: string) => {
+    setChatAttachments(prev => prev.filter(c => c.id !== id));
+    if (!id.startsWith('temp-')) {
+      fetch(`/api/work/threads/${thread.id}/chat-attach?chatAttachId=${id}`, { method: 'DELETE' }).catch(() => {});
+    }
+  }, [thread.id]);
 
   const avatarSrc = worker.worker_role ? (ROLE_AVATARS[worker.worker_role] ?? null) : null;
   const roleLabel = worker.worker_role ? (ROLE_LABELS[worker.worker_role] ?? null) : null;
@@ -784,6 +813,9 @@ function ActiveWorkerChat({
               placeholder={`Message ${worker.name}…  (@ to mention a coworker, task, or document)`}
               prefill={inputValue || null}
               onPrefillConsumed={() => setInputValue('')}
+              onAttach={handleAttach}
+              attachments={chatAttachments}
+              onRemoveAttachment={handleRemoveAttachment}
             />
             <p className="mt-1.5 text-center text-[11px] text-neutral-400">
               Enter to send · Shift+Enter for new line · @ to mention
