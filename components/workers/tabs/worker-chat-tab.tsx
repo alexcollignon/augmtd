@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { PlusIcon, PaperAirplaneIcon } from '@heroicons/react/24/outline';
+import { PlusIcon } from '@heroicons/react/24/outline';
 import { IconButton } from '@/components/ui';
 import { ArtifactPanel } from '@/components/workers/artifact-panel';
 import type { DocumentArtifact } from '@/lib/types/inbox';
@@ -79,6 +79,7 @@ function SidebarToggle({ open, onToggle }: { open: boolean; onToggle: () => void
 import { ChatMessageBubble, StreamingMessage, ToolStatus } from '@/components/work/chat-message';
 import type { ChatMessage } from '@/components/work/chat-message';
 import { WorkerThreadList } from '@/components/workers/worker-thread-list';
+import { WorkerMentionInput, type WorkerMention } from '@/components/workers/worker-mention-input';
 import { WorkerHomeView } from '@/components/workers/worker-home-view';
 import type { Worker, WorkerThread } from '@/app/workers/workers-page-client';
 
@@ -515,7 +516,7 @@ function ActiveWorkerChat({
     }, 50);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleSubmit = useCallback(async (message: string) => {
+  const handleSubmit = useCallback(async (message: string, mentions?: WorkerMention[]) => {
     if (isStreaming || !message.trim()) return;
 
     const userMsg: ChatMessage = {
@@ -539,7 +540,7 @@ function ActiveWorkerChat({
       const res = await fetch(`/api/work/threads/${thread.id}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: message, agentId: worker.id }),
+        body: JSON.stringify({ content: message, agentId: worker.id, ...(mentions && mentions.length ? { mentions } : {}) }),
         signal: ac.signal,
       });
 
@@ -701,13 +702,6 @@ function ActiveWorkerChat({
     }
   }, [thread.id, worker.id, isStreaming, onTitleUpdate]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      if (inputValue.trim()) handleSubmit(inputValue);
-    }
-  }
-
   const avatarSrc = worker.worker_role ? (ROLE_AVATARS[worker.worker_role] ?? null) : null;
   const roleLabel = worker.worker_role ? (ROLE_LABELS[worker.worker_role] ?? null) : null;
 
@@ -784,30 +778,15 @@ function ActiveWorkerChat({
         {/* Input */}
         <div className="flex-shrink-0 px-4 pb-4 pt-2">
           <div className="max-w-[660px] mx-auto">
-            <div className="rounded-2xl bg-neutral-50 border border-neutral-200 overflow-hidden focus-within:border-neutral-300 focus-within:bg-white focus-within:shadow-sm transition-all duration-150">
-              <textarea
-                ref={textareaRef}
-                value={inputValue}
-                onChange={e => setInputValue(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder={`Message ${worker.name}…`}
-                rows={1}
-                disabled={isStreaming}
-                className="w-full resize-none px-4 pt-3 pb-2 text-[13.5px] text-neutral-800 placeholder:text-neutral-400 bg-transparent outline-none leading-relaxed disabled:opacity-50"
-                style={{ minHeight: '44px', maxHeight: '180px' }}
-              />
-              <div className="flex items-center justify-end px-3 pb-2.5">
-                <button
-                  onClick={() => { if (inputValue.trim()) handleSubmit(inputValue); }}
-                  disabled={isStreaming || !inputValue.trim()}
-                  className="flex items-center justify-center w-7 h-7 rounded-lg bg-indigo-600 text-white disabled:opacity-40 hover:bg-indigo-700 transition-colors"
-                >
-                  <PaperAirplaneIcon className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            </div>
+            <WorkerMentionInput
+              onSubmit={(text, mentions) => handleSubmit(text, mentions)}
+              disabled={isStreaming}
+              placeholder={`Message ${worker.name}…  (@ to mention a coworker, task, or document)`}
+              prefill={inputValue || null}
+              onPrefillConsumed={() => setInputValue('')}
+            />
             <p className="mt-1.5 text-center text-[11px] text-neutral-400">
-              Enter to send · Shift+Enter for new line
+              Enter to send · Shift+Enter for new line · @ to mention
             </p>
           </div>
         </div>
