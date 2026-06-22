@@ -771,7 +771,6 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
         {/* Conversation thread stack — live from emails table, oldest first, latest expanded */}
         {(() => {
           const sd = sourceData as any;
-          const currentEmailId: string = sd?.email_id ?? '';
 
           // Helper: parse display name from "Name <email>" or bare email
           const parseName = (addr: string) => {
@@ -797,10 +796,12 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
             );
           }
 
-          // Split into older + latest
-          const latestIdx = threadEmails.findIndex(e => e.id === currentEmailId);
-          const latest = latestIdx >= 0 ? threadEmails[latestIdx] : threadEmails[threadEmails.length - 1];
-          const older = latestIdx > 0 ? threadEmails.slice(0, latestIdx) : threadEmails.slice(0, -1);
+          // Split into older + latest. The expanded "latest" is the ACTUAL newest message in
+          // the thread — not the email that created the inbox item (currentEmailId). Anchoring
+          // to currentEmailId dropped every message sent after it, so when you had the last word
+          // (replied after the final received email), your own reply disappeared from the thread.
+          const latest = threadEmails[threadEmails.length - 1];
+          const older = threadEmails.slice(0, -1);
 
           const ALWAYS_VISIBLE = 2;
           const hidden = older.length > ALWAYS_VISIBLE ? older.slice(0, older.length - ALWAYS_VISIBLE) : [];
