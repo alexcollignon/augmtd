@@ -41,19 +41,26 @@ export function normalizeChannel(ch: string): string {
 
 // Resolve the user's Slack DM channel id (email → slack user → open DM) for a given
 // coworker app. null if not resolvable.
-async function resolveDmChannelId(admin: Admin, userId: string, connectionId: string, providerKey: string): Promise<string | null> {
+// The user's Slack member id: prefer the verified id (profiles.slack_user_id — set via the
+// verify-by-code flow, handles email mismatch), else look up by their login email.
+export async function resolveUserSlackId(admin: Admin, userId: string, connectionId: string, providerKey: string): Promise<string | null> {
+  const { data: prof } = await admin.from('profiles').select('slack_user_id').eq('id', userId).maybeSingle();
+  if (prof?.slack_user_id) return prof.slack_user_id as string;
   let email: string | undefined;
   try {
     const { data } = await admin.auth.admin.getUserById(userId);
     email = (data?.user?.email as string | undefined) ?? undefined;
   } catch { /* no email */ }
   if (!email) return null;
-
   const lookup = await nangoProxy({
     method: 'GET', endpoint: '/users.lookupByEmail', providerConfigKey: providerKey,
     connectionId, params: { email },
   });
-  const slackUserId = (lookup.body as { user?: { id?: string } } | null)?.user?.id;
+  return (lookup.body as { user?: { id?: string } } | null)?.user?.id ?? null;
+}
+
+async function resolveDmChannelId(admin: Admin, userId: string, connectionId: string, providerKey: string): Promise<string | null> {
+  const slackUserId = await resolveUserSlackId(admin, userId, connectionId, providerKey);
   if (!slackUserId) return null;
 
   const open = await nangoProxy({
@@ -86,7 +93,6 @@ function matchMemberByName(members: SlackMember[], name: string): string | undef
 async function resolveMentions(text: string, admin: Admin, userId: string, connectionId: string, providerKey: string): Promise<string> {
   const matches = [...text.matchAll(/<@([^>]+)>/g)];
   if (matches.length === 0) return text;
-  let runnerEmail: string | null | undefined;
   let members: SlackMember[] | undefined;
   let out = text;
   for (const m of matches) {
@@ -94,13 +100,7 @@ async function resolveMentions(text: string, admin: Admin, userId: string, conne
     if (/^[UW][A-Z0-9]{6,}$/.test(inner)) continue; // already a Slack id
     let id: string | undefined;
     if (inner.toLowerCase() === 'me') {
-      if (runnerEmail === undefined) {
-        try { const { data } = await admin.auth.admin.getUserById(userId); runnerEmail = (data?.user?.email as string) ?? null; } catch { runnerEmail = null; }
-      }
-      if (runnerEmail) {
-        const look = await nangoProxy({ method: 'GET', endpoint: '/users.lookupByEmail', providerConfigKey: providerKey, connectionId, params: { email: runnerEmail } });
-        id = (look.body as { user?: { id?: string } } | null)?.user?.id;
-      }
+      id = (await resolveUserSlackId(admin, userId, connectionId, providerKey)) ?? undefined;
     } else if (inner.includes('@') && inner.includes('.')) {
       const look = await nangoProxy({ method: 'GET', endpoint: '/users.lookupByEmail', providerConfigKey: providerKey, connectionId, params: { email: inner } });
       id = (look.body as { user?: { id?: string } } | null)?.user?.id;
