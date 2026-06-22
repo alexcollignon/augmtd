@@ -58,15 +58,21 @@ export async function GET(req: NextRequest) {
       ),
     ];
 
+    // The relationship + transcript lookups both depend only on the meetings list, not on
+    // each other — run them in parallel instead of two sequential round-trips.
+    const eventIds = (meetings || []).map((m) => m.id);
+    const [relRes, transRes] = await Promise.all([
+      allAttendeeEmails.length > 0
+        ? supabase.from('relationship_graph').select('contact_email, importance').eq('user_id', user.id).in('contact_email', allAttendeeEmails)
+        : Promise.resolve({ data: [] as { contact_email: string; importance: number }[] }),
+      eventIds.length > 0
+        ? supabase.from('meeting_transcripts').select('calendar_event_id').eq('user_id', user.id).in('calendar_event_id', eventIds)
+        : Promise.resolve({ data: [] as { calendar_event_id: string }[] }),
+    ]);
+
     const relMap = new Map<string, number>();
-    if (allAttendeeEmails.length > 0) {
-      const { data: relationships } = await supabase
-        .from('relationship_graph')
-        .select('contact_email, importance')
-        .eq('user_id', user.id)
-        .in('contact_email', allAttendeeEmails);
-      (relationships ?? []).forEach((r) => relMap.set(r.contact_email, r.importance));
-    }
+    (relRes.data ?? []).forEach((r) => relMap.set(r.contact_email, r.importance));
+    const transcriptSet = new Set((transRes.data ?? []).map((t) => t.calendar_event_id));
 
     const enrichedMeetings = (meetings || []).map((meeting) => ({
       ...meeting,
@@ -75,23 +81,8 @@ export async function GET(req: NextRequest) {
         isVIP: (relMap.get(attendee.email) ?? 0) > 80,
         importance: relMap.get(attendee.email) ?? 0,
       })),
-      has_transcript: false, // filled below
+      has_transcript: transcriptSet.has(meeting.id),
     }));
-
-    // Batch-check which events have transcripts
-    const eventIds = enrichedMeetings.map((m) => m.id);
-    if (eventIds.length > 0) {
-      const { data: transcripts } = await supabase
-        .from('meeting_transcripts')
-        .select('calendar_event_id')
-        .eq('user_id', user.id)
-        .in('calendar_event_id', eventIds);
-
-      const transcriptSet = new Set((transcripts ?? []).map((t) => t.calendar_event_id));
-      enrichedMeetings.forEach((m) => {
-        m.has_transcript = transcriptSet.has(m.id);
-      });
-    }
 
     return NextResponse.json({
       meetings: enrichedMeetings,
