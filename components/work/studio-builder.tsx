@@ -2497,7 +2497,7 @@ function OutputEditor({ output, onChange }: { output: OutputConfig; onChange: (o
       {(home === 'document' || home === 'email') && (
         <Field label={home === 'email' ? 'Subject line' : 'Title template'}>
           <input type="text" value={output.title_template ?? ''} onChange={e => onChange({ ...output, title_template: e.target.value })}
-            placeholder={home === 'email' ? 'AHK Briefing — {{week_of}}' : 'Weekly Briefing — {{date}}'}
+            placeholder="Weekly Briefing — {{date}}"
             className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px]" />
           <p className="text-[11.5px] text-neutral-500 mt-1">
             Use <code className="bg-neutral-100 px-1 rounded">{'{{date}}'}</code>,{' '}
@@ -2581,6 +2581,40 @@ function OutputEditor({ output, onChange }: { output: OutputConfig; onChange: (o
             </div>
           )}
         </Field>
+      )}
+
+      {home === 'email' && (
+        <Field label="Delivery">
+          <label className="flex items-center gap-2.5 cursor-pointer">
+            <input type="checkbox" checked={!!output.email_as_attachment}
+              onChange={e => onChange({ ...output, email_as_attachment: e.target.checked })}
+              className="w-3.5 h-3.5 rounded accent-indigo-600" />
+            <span className="text-[13px] text-neutral-700">Send as an attachment</span>
+          </label>
+          <p className="text-[11.5px] text-neutral-400 mt-1">
+            {output.email_as_attachment
+              ? 'The deliverable is attached as a document; the email body is a short note.'
+              : 'The deliverable is the email body.'}
+          </p>
+        </Field>
+      )}
+
+      {home === 'email' && output.email_as_attachment && (
+        <>
+          <Field label="Attachment type">
+            <select value={output.artifact_type ?? 'document'} onChange={e => onChange({ ...output, artifact_type: e.target.value as OutputConfig['artifact_type'] })}
+              className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] bg-white">
+              <option value="document">Word document</option>
+            </select>
+          </Field>
+          <Field label="Email body instructions (optional)">
+            <textarea value={output.email_body_instructions ?? ''} onChange={e => onChange({ ...output, email_body_instructions: e.target.value })}
+              rows={3}
+              placeholder="How the email body should read (optional)"
+              className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] resize-y" />
+            <p className="text-[11.5px] text-neutral-500 mt-1">Leave empty for a simple cover note.</p>
+          </Field>
+        </>
       )}
     </>
   );

@@ -21,7 +21,7 @@ const DAILY_CAP = Number(process.env.COWORKER_EMAIL_DAILY_CAP || 50);
 const MAX_RECIPIENTS = 20;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-export interface CoworkerEmailInput { to: string[]; cc?: string[]; subject: string; body: string }
+export interface CoworkerEmailInput { to: string[]; cc?: string[]; subject: string; body: string; attachments?: { filename: string; content: Buffer }[] }
 
 // A draft surfaced in chat for the user to review/edit/send (NOT sent by the model).
 export interface EmailDraft { id: string; to: string[]; cc: string[]; subject: string; body: string; from: string; fromName: string; sent_at?: string }
@@ -153,6 +153,7 @@ export async function sendCoworkerEmail(admin: Admin, userId: string, agentId: s
     subject,
     html: personalEmailHtml(body, sig),
     text: body,
+    ...(input.attachments?.length ? { attachments: input.attachments.map(a => ({ filename: a.filename, content: a.content })) } : {}),
   });
 
   await admin.from('email_sends').insert({
