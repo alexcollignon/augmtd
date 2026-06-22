@@ -525,12 +525,19 @@ export function InboxPageClient({
             const incoming = payload.new as any;
             setInboxItems(prev => prev.map(i => {
               if (i.id !== incoming.id) return i;
-              // Don't let background AI reclassification silently remove a visible item —
-              // preserve work_state if it's being flipped to 'noise' without user action.
+              // MERGE over the existing item — never replace. Supabase Realtime omits unchanged
+              // TOASTed columns (the large source_data jsonb) from payload.new, so an unrelated
+              // update (mark-read / flag) arrives with source_data === null. Replacing wholesale
+              // blanked it, making the card vanish until the next refetch re-read the full row
+              // ("disappears, then reappears a couple seconds later"). Keep existing large fields
+              // when the payload lacks them.
+              const merged: any = { ...i, ...incoming };
+              if (incoming.source_data == null) merged.source_data = (i as any).source_data;
+              // Don't let background AI reclassification silently remove a visible item.
               if ((i as any).work_state !== 'noise' && incoming.work_state === 'noise') {
-                return { ...incoming, work_state: (i as any).work_state };
+                merged.work_state = (i as any).work_state;
               }
-              return incoming as InboxItem;
+              return merged as InboxItem;
             }));
           } else if (payload.eventType === 'DELETE') {
             setInboxItems(prev => prev.filter(i => i.id !== (payload.old as any).id));
