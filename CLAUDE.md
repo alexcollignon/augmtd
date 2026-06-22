@@ -143,6 +143,16 @@ Each coworker sends real email from its own address on the verified **`team.augm
 - **Presentation:** from-name = `{Name} · {First}'s assistant`; every email ends with a **signature** — the coworker **avatar** (loaded from `https://app.augmtd.ai/workers/{role}.png`, i.e. `public/workers/*.png` — so changing a coworker avatar means committing + deploying that file), name, "{role} to {user full name}", and the coworker's address (`personalEmailHtml`/`signatureHtml` in `coworker-email.ts`). Body has no max-width (flows to the client). The Gmail **sender-circle avatar** needs domain-level **BIMI** (one logo for the whole domain, can't be per-coworker) — not pursued.
 - **Deliverability:** the shared `team.augmtd.ai` reputation is the operational risk — per-account cap + monitoring now, per-company subdomains later. **Inbound (replies → coworker) is NOT built** — the same deferred two-way phase as Slack inbound.
 
+### Workspace feature gating (scalable — one map, all surfaces)
+
+`lib/workspace/tool-capabilities.ts` is the **single source of truth** mapping each tool/step → its required workspace feature (`TOOL_FEATURE`, `null` = always on). Workspace features (`email, meetings, drive, agents, studio` — `lib/workspace/types.ts`) are set per-company in platform-admin. Every surface reads the map so they can't drift:
+- **Coworker chat (native):** `buildChatTools` drops disabled tools; the `[TOOLS]` prompt only lists what's on (both gated on the early-loaded `features`). Executors keep a `ctx.features` backstop.
+- **AgentOS path:** the internal tools route (`app/api/internal/agentos/tools/route.ts`) gates via `getWorkspaceFeatures` + the map (returns "unavailable" for off-feature tools) — Python tools stay static, no box redeploy when flags change.
+- **Studio builder:** the tool picker disables (greys + tooltip, doesn't hide) gated steps via `GET /api/workspace/features`.
+- **generate-config:** tells the model which tools are off so auto-built tasks skip them.
+
+**Adding a tool/integration = one line in the map.** Adding a feature = a key in `WorkspaceFeatures` + mapping its tools. Platform-admin feature labels read **Coworkers** (`agents`) / **Tasks** (`studio`) — current product naming; underlying keys unchanged.
+
 ### Workers UI — team home (review desk)
 
 `/workers` lands on a **team home** (`components/workers/team-home-view.tsx`) before any worker is selected — a cross-coworker "review desk". `GET /api/workers/home` aggregates recent deliverables (Ready for you), recent task runs (Recently, attributed), and upcoming runs (Coming up). A conversational AI team briefing streams from `POST /api/workers/team-briefing` (the team analogue of the per-worker `/api/workers/[id]/briefing`) — grounded in real data, distinguishing scheduled vs. user-asked, cached per user in `profiles.team_briefing` (regenerated only when there's newer activity). A "Your team" coworker card grid at the bottom fills the page when activity is sparse — each card opens that coworker's chat.
