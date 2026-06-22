@@ -112,7 +112,11 @@ async function processOutlookNotifications(notifications: any[]) {
 
       const message = await client
         .api(`/me/messages/${messageId}`)
-        .select('id,conversationId,subject,bodyPreview,body,from,toRecipients,ccRecipients,receivedDateTime,internetMessageId,hasAttachments')
+        // internetMessageHeaders is REQUIRED — parseOutlookMessage derives in_reply_to /
+        // references_ids from it, which the thread view uses to stitch a conversation.
+        // Omitting it (as before) stored null RFC headers on every push-delivered email,
+        // splitting threads and dropping replies. Must match the cron/list select.
+        .select('id,conversationId,subject,bodyPreview,body,from,toRecipients,ccRecipients,receivedDateTime,internetMessageId,hasAttachments,isRead,internetMessageHeaders')
         .get();
 
       await syncEmailsForConnection(connection, adminSupabase, {

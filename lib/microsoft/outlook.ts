@@ -182,7 +182,10 @@ export function parseOutlookMessage(message: OutlookMessage) {
     body: bodyText || message.bodyPreview || '',
     html_body: htmlBody,
     received_at: new Date(message.receivedDateTime).toISOString(),
-    thread_id: message.conversationId, // Outlook conversation ID for threading
+    // Outlook conversation ID for threading. Never null — fall back to the stable RFC
+    // message id so the thread_id COLUMN and the grouping key (thread_id || message_id)
+    // can't diverge if Graph ever omits conversationId on a given fetch.
+    thread_id: message.conversationId || message.internetMessageId,
     hasAttachments: message.hasAttachments || false,
     is_read: message.isRead ?? true,
     outlookInternalId: message.id, // Graph API message ID (needed for attachment calls)
