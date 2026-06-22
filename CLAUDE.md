@@ -95,6 +95,8 @@ Both paths call `syncEmails()` in `lib/email-sync/` which calls `processEmail()`
 
 Gmail and Outlook integrations live in `lib/google/` and `lib/microsoft/` respectively. Token refresh is handled inline in each — pass an `onTokenRefresh` callback when you need the new token persisted.
 
+**Sync correctness invariants** (June 2026 — see memory `project_email_sync_bugs.md`). Four bugs caused recurring "missing emails / split threads", all fixed: (1) **Outlook fetch must paginate** the window via `@odata.nextLink` (`fetchUnreadEmails`), not a single `.top()` page. (2) **Only a full-window sync advances `connections.last_sync`** — a push webhook (`options.preloadedMessages`) updates `sync_status` only; otherwise it jumps the cursor past mail the push never delivered. `last_sync` is stamped to `syncStartedAt` (before the fetch). (3) **Email dedup is per-user**: the `existingEmail` / 23505 lookups in `sync-emails.ts` filter by `user_id` — `message_id` is globally unique, so without it a copy synced by another platform recipient blocks this user's own copy. DB enforces this via per-`(user_id, message_id)` uniqueness (`20260622_emails_per_user_dedup.sql`), NOT a global `UNIQUE(message_id)`. (4) **Outlook push webhook must `$select` `internetMessageHeaders`** so `in_reply_to`/`references_ids` populate for RFC thread stitching. Recovery for missing mail: set `last_sync=null` + trigger `cron/fetch-emails` (now race-proof since pushes don't advance the cursor).
+
 ### Studio workflows
 
 Defined in `lib/workflows/types.ts`. A workflow is a linear pipeline of steps:
