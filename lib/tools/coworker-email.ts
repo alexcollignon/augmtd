@@ -1,0 +1,104 @@
+// ─── Coworker email (Resend, OAuth-free) ──────────────────────────────────────
+// Each coworker sends real email from its own address on team.augmtd.ai, Reply-To
+// the user, to any recipient. Gated per-coworker (default OFF) + a daily send cap.
+// Used by the user-confirmed chat send endpoint AND the task email output.
+
+import { Resend } from 'resend';
+import { coworkerEmailForRole } from '@/lib/integrations/registry';
+import { isToolEnabledForAgent } from '@/lib/integrations/connection';
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Admin = any;
+
+const ROLE_LABELS: Record<string, string> = {
+  personal_assistant: 'Personal Assistant',
+  content_manager: 'Content Strategist',
+  linkedin_drafter: 'LinkedIn Wizard',
+  research_analyst: 'Research Analyst',
+};
+const DAILY_CAP = Number(process.env.COWORKER_EMAIL_DAILY_CAP || 50);
+const MAX_RECIPIENTS = 20;
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+export interface CoworkerEmailInput { to: string[]; cc?: string[]; subject: string; body: string }
+
+/** The user's own known addresses — login (auth) email + any connected mailboxes.
+ *  Used as "you" defaults/quick-picks and as identity context for the model. */
+export async function getUserEmailIdentities(admin: Admin, userId: string): Promise<{ login: string | null; connected: string[] }> {
+  let login: string | null = null;
+  try { const { data } = await admin.auth.admin.getUserById(userId); login = (data?.user?.email as string) ?? null; } catch { /* ignore */ }
+  const { data: conns } = await admin.from('connections').select('metadata').eq('user_id', userId).eq('status', 'active');
+  const connected = [...new Set(((conns ?? []) as Array<{ metadata: { email?: string } | null }>).map(c => c.metadata?.email).filter(Boolean) as string[])]
+    .filter(e => e.toLowerCase() !== (login ?? '').toLowerCase());
+  return { login, connected };
+}
+
+export async function isEmailEnabledForAgent(admin: Admin, agentId: string | undefined): Promise<boolean> {
+  return isToolEnabledForAgent(admin, agentId, 'email', false); // opt-in: off until enabled in Tools tab
+}
+
+function clean(list: string[] | undefined): string[] {
+  return [...new Set((list ?? []).map(s => String(s).trim().toLowerCase()).filter(e => EMAIL_RE.test(e)))].slice(0, MAX_RECIPIENTS);
+}
+
+// Light, personal-style HTML (markdown-ish → paragraphs); no big branded header.
+function personalEmailHtml(body: string): string {
+  const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const blocks = body.split(/\n{2,}/).map(b => {
+    const line = b.trim();
+    if (!line) return '';
+    const inner = esc(line).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br/>');
+    return `<p style="margin:0 0 14px;color:#1f2937;font-size:14px;line-height:1.6;">${inner}</p>`;
+  }).join('');
+  return `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;max-width:560px;">${blocks}<p style="margin:20px 0 0;color:#9ca3af;font-size:11px;">Sent via AUGMTD</p></div>`;
+}
+
+export async function sendCoworkerEmail(admin: Admin, userId: string, agentId: string | undefined, input: CoworkerEmailInput): Promise<{ ok: boolean; error?: string }> {
+  if (!(await isEmailEnabledForAgent(admin, agentId))) return { ok: false, error: 'Email is off for this coworker — enable it in the Tools tab.' };
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) return { ok: false, error: 'Email is not configured.' };
+
+  const to = clean(input.to);
+  const cc = clean(input.cc);
+  const subject = String(input.subject ?? '').trim();
+  const body = String(input.body ?? '').trim();
+  if (to.length === 0) return { ok: false, error: 'No valid recipient address.' };
+  if (!subject) return { ok: false, error: 'A subject is required.' };
+  if (!body) return { ok: false, error: 'The email body is empty.' };
+
+  // Daily send cap (shared-domain abuse guard).
+  const since = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+  const { count } = await admin.from('email_sends').select('id', { count: 'exact', head: true }).eq('user_id', userId).gte('created_at', since);
+  if ((count ?? 0) >= DAILY_CAP) return { ok: false, error: `Daily email limit reached (${DAILY_CAP}).` };
+
+  // From identity: coworker address + "{Name} · {FirstName}'s assistant"; Reply-To = user.
+  const { data: agent } = agentId
+    ? await admin.from('custom_agents').select('name, worker_role').eq('id', agentId).maybeSingle()
+    : { data: null };
+  const role = (agent?.worker_role as string) ?? null;
+  const fromEmail = coworkerEmailForRole(role);
+  const coworkerName = (agent?.name as string) || ROLE_LABELS[role ?? ''] || 'Your assistant';
+  const { data: prof } = await admin.from('profiles').select('full_name').eq('id', userId).maybeSingle();
+  const first = (((prof as { full_name?: string } | null)?.full_name) ?? '').trim().split(/\s+/)[0];
+  const fromName = first ? `${coworkerName} · ${first}'s assistant` : coworkerName;
+  const { login: replyTo } = await getUserEmailIdentities(admin, userId);
+
+  const resend = new Resend(apiKey);
+  const { error } = await resend.emails.send({
+    from: `${fromName} <${fromEmail}>`,
+    to,
+    ...(cc.length ? { cc } : {}),
+    ...(replyTo ? { replyTo } : {}),
+    subject,
+    html: personalEmailHtml(body),
+    text: body,
+  });
+
+  await admin.from('email_sends').insert({
+    user_id: userId, agent_id: agentId ?? null, to_count: to.length + cc.length,
+    subject: subject.slice(0, 200), status: error ? 'failed' : 'sent',
+  }).then(() => {}).catch(() => {});
+
+  if (error) { console.error('[coworker-email] send failed:', error); return { ok: false, error: 'The email failed to send.' }; }
+  return { ok: true };
+}

@@ -45,6 +45,20 @@ export function slackKeyForRole(role: string | null | undefined): string {
   return (role && SLACK_APP_BY_ROLE[role]) || SLACK_DEFAULT_APP_KEY;
 }
 
+// ─── Coworker email identities (Resend, OAuth-free) ───────────────────────────
+// Each coworker sends from its own address on the dedicated domain.
+export const COWORKER_EMAIL_DOMAIN = process.env.COWORKER_EMAIL_DOMAIN || 'team.augmtd.ai';
+export const EMAIL_LOCAL_BY_ROLE: Record<string, string> = {
+  personal_assistant: 'clara',
+  content_manager:    'sofia',
+  linkedin_drafter:   'luca',
+  research_analyst:   'max',
+};
+export function coworkerEmailForRole(role: string | null | undefined): string {
+  const local = (role && EMAIL_LOCAL_BY_ROLE[role]) || 'team';
+  return `${local}@${COWORKER_EMAIL_DOMAIN}`;
+}
+
 export function getIntegration(provider: string): IntegrationDef | undefined {
   const found = INTEGRATIONS.find(i => i.provider === provider);
   if (found) return found;
