@@ -197,13 +197,14 @@ export default function IntegrationsSection() {
               {i.provider === 'slack' && i.connected && (
                 <div className="mt-3 pt-3 border-t border-neutral-100">
                   <button onClick={() => setSlackSettingsOpen(v => !v)} className="flex items-center gap-1.5 text-[12px] text-neutral-500 hover:text-neutral-700">
-                    <Cog6ToothIcon className="w-3.5 h-3.5" />
+                    <Cog6ToothIcon className={`w-3.5 h-3.5 transition-transform duration-300 ease-out ${slackSettingsOpen ? 'rotate-90 text-neutral-700' : ''}`} />
                     Settings
-                    <ChevronRightIcon className={`w-3 h-3 transition-transform ${slackSettingsOpen ? 'rotate-90' : ''}`} />
+                    <ChevronRightIcon className={`w-3 h-3 transition-transform duration-300 ease-out ${slackSettingsOpen ? 'rotate-90' : ''}`} />
                   </button>
-                  {slackSettingsOpen && (
-                    <div className="mt-3 space-y-3">
-                      <div className="flex items-center justify-between gap-4">
+                  <div className={`grid transition-[grid-template-rows] duration-300 ease-out ${slackSettingsOpen ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'}`}>
+                    <div className="overflow-hidden">
+                      <div className="space-y-3 pt-3">
+                        <div className="flex items-center justify-between gap-4">
                         <div className="min-w-0">
                           <p className="text-[12.5px] text-neutral-700">DM me task updates</p>
                           <p className="text-[11px] text-neutral-400 mt-0.5">Your coworkers also message you in Slack when they finish a task.</p>
@@ -218,8 +219,9 @@ export default function IntegrationsSection() {
                         </button>
                       </div>
                       <SlackIdentity />
+                      </div>
                     </div>
-                  )}
+                  </div>
                 </div>
               )}
             </div>
