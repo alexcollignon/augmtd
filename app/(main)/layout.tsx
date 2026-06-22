@@ -1,23 +1,25 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
+import { getSessionUser } from '@/lib/supabase/get-session-user';
 import SidebarNav from '@/components/sidebar-nav';
-import { getMyWorkspace } from '@/lib/workspace/features';
+import { getMyWorkspace, getMyProfile } from '@/lib/workspace/features';
 import { WorkspaceProvider } from '@/context/workspace-context';
 import { DEFAULT_FEATURES } from '@/lib/workspace/types';
 
 export default async function MainLayout({ children }: { children: React.ReactNode }) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getSessionUser();
   if (!user) redirect('/login');
 
-  // Fetch sidebar + workspace data in parallel — no serial waterfalls
-  const [{ data: profileData }, { data: connectionsData }, workspace] = await Promise.all([
-    supabase.from('profiles').select('is_super_admin').eq('id', user.id).single(),
+  // Fetch sidebar + workspace data in parallel — no serial waterfalls. The profile +
+  // workspace reads are React-cached, so the feature-guard on the page reuses them.
+  const supabase = await createClient();
+  const [profile, { data: connectionsData }, workspace] = await Promise.all([
+    getMyProfile(user.id),
     supabase.from('connections').select('metadata').eq('user_id', user.id).eq('status', 'active').order('created_at', { ascending: true }),
     getMyWorkspace(user.id, supabase),
   ]);
 
-  const isSuperAdmin = profileData?.is_super_admin === true;
+  const isSuperAdmin = profile?.is_super_admin === true;
 
   // Orphan (no workspace) → /onboarding for new users. Superadmins bypass.
   if (!workspace && !isSuperAdmin) {

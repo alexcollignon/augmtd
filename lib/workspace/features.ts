@@ -73,3 +73,17 @@ export async function getWorkspaceFeatures(userId: string, supabase: SupabaseCli
   const { DEFAULT_FEATURES } = await import('./types');
   return ws?.features ?? DEFAULT_FEATURES;
 }
+
+// The current user's profile row, React-cached by userId so the layout + feature guard +
+// page share ONE query per render (was 2–3 separate `profiles` reads per navigation).
+// Creates its own client internally so the cache key is just userId (reliably dedupes).
+export const getMyProfile = cache(async (userId: string) => {
+  const { createClient } = await import('@/lib/supabase/server');
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from('profiles')
+    .select('is_super_admin, needs_join, full_name')
+    .eq('id', userId)
+    .maybeSingle();
+  return data as { is_super_admin?: boolean | null; needs_join?: boolean | null; full_name?: string | null } | null;
+});

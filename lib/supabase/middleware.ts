@@ -1,7 +1,8 @@
 import { createServerClient, type CookieOptions } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
+import type { User } from '@supabase/supabase-js';
 
-export async function updateSession(request: NextRequest) {
+export async function updateSession(request: NextRequest): Promise<{ supabaseResponse: NextResponse; user: User | null }> {
   let supabaseResponse = NextResponse.next({
     request,
   });
@@ -55,5 +56,7 @@ export async function updateSession(request: NextRequest) {
   // If this is not done, you may be causing the browser and server to go out
   // of sync and terminate the user's session prematurely!
 
-  return supabaseResponse;
+  // Return the user too so the caller doesn't re-validate the token (a second
+  // network round-trip to the auth server) on every request.
+  return { supabaseResponse, user };
 }

@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
-import { getMyWorkspace } from './features';
+import { getSessionUser } from '@/lib/supabase/get-session-user';
+import { getMyWorkspace, getMyProfile } from './features';
 import type { FeatureKey, MyWorkspace } from './types';
 
 /**
@@ -12,19 +13,15 @@ import type { FeatureKey, MyWorkspace } from './types';
  * (getMyWorkspace is React-cached).
  */
 export async function guardFeaturePage(feature: FeatureKey | null): Promise<MyWorkspace> {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getSessionUser();
   if (!user) redirect('/login');
 
-  // Superadmin bypass — still needs a workspace to render feature pages,
-  // but bypass the feature/status checks. If they have no workspace, send to /join.
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('is_super_admin, needs_join')
-    .eq('id', user.id)
-    .maybeSingle();
-
-  const workspace = await getMyWorkspace(user.id, supabase);
+  // Cached helpers — deduped with the layout's reads in the same render pass.
+  const supabase = await createClient();
+  const [profile, workspace] = await Promise.all([
+    getMyProfile(user.id),
+    getMyWorkspace(user.id, supabase),
+  ]);
 
   if (!workspace) {
     redirect('/onboarding');
