@@ -28,6 +28,10 @@ export {
   findTeamWorkDefinition, readTeamWorkDefinition,
   executeFindTeamWork, executeReadTeamWork,
 } from './team-work';
+export {
+  composeEmailDefinition, executeComposeEmail, sendCoworkerEmail, getUserEmailIdentities, isEmailEnabledForAgent,
+} from './coworker-email';
+export type { EmailDraft } from './coworker-email';
 
 // OpenAI function-calling format converter — used by chat route
 export function toOpenAITool(def: {

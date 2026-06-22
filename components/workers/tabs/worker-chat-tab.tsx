@@ -82,6 +82,7 @@ import { WorkerThreadList } from '@/components/workers/worker-thread-list';
 import { toast } from 'sonner';
 import { WorkerMentionInput, type WorkerMention } from '@/components/workers/worker-mention-input';
 import type { AttachmentChip } from '@/components/work/chat-input-bar';
+import { EmailDraftCard, type EmailDraftData } from '@/components/workers/email-draft-card';
 import { WorkerHomeView } from '@/components/workers/worker-home-view';
 import type { Worker, WorkerThread } from '@/app/workers/workers-page-client';
 
@@ -602,6 +603,7 @@ function ActiveWorkerChat({
       let accArtifactIds: string[] = [];
       // Extra metadata for artifact chips that came via get_worker_document
       const accArtifactMeta: Map<string, { title: string; versionLabel: string; type?: string }> = new Map();
+      let accEmailDrafts: EmailDraftData[] = [];
       let lineBuffer = '';
 
       while (true) {
@@ -652,6 +654,10 @@ function ActiveWorkerChat({
               );
               setStreamingTools([...accTools]);
 
+            } else if (event.type === 'email_draft') {
+              // Coworker drafted an email — render an editable card for the user to send.
+              if (event.draft) accEmailDrafts = [...accEmailDrafts, event.draft as EmailDraftData];
+
             } else if (event.type === 'artifact_ready') {
               // Worker retrieved a document — accumulate ID + metadata for chip rendering
               const art = event.artifact as { id: string; title: string; type: string } | undefined;
@@ -700,6 +706,7 @@ function ActiveWorkerChat({
                     artifact_ids: accArtifactIds,
                     ...(Object.keys(artifactMeta).length > 0 ? { artifact_meta: artifactMeta } : {}),
                   } : {}),
+                  ...(accEmailDrafts.length > 0 ? { email_drafts: accEmailDrafts } : {}),
                 },
               };
               if (mountedRef.current) {
@@ -839,14 +846,19 @@ function ActiveWorkerChat({
             {!isLoading && messages.map((msg, idx, arr) => {
               const isLastAssistant = msg.role === 'assistant' && !isStreaming &&
                 idx === arr.map((m, i) => m.role === 'assistant' ? i : -1).filter(i => i >= 0).at(-1);
+              const drafts = (msg.metadata as { email_drafts?: EmailDraftData[] } | undefined)?.email_drafts ?? [];
               return (
-                <ChatMessageBubble
-                  key={msg.id}
-                  message={msg}
-                  isLastAssistantMessage={isLastAssistant}
-                  onViewArtifact={handleViewArtifact}
-                  artifactVersionMap={artifactVersionMap}
-                />
+                <div key={msg.id}>
+                  <ChatMessageBubble
+                    message={msg}
+                    isLastAssistantMessage={isLastAssistant}
+                    onViewArtifact={handleViewArtifact}
+                    artifactVersionMap={artifactVersionMap}
+                  />
+                  {drafts.map((d, i) => (
+                    <EmailDraftCard key={`${msg.id}-email-${i}`} draft={d} threadId={thread.id} agentId={worker.id} />
+                  ))}
+                </div>
               );
             })}
 

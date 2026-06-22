@@ -22,6 +22,46 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export interface CoworkerEmailInput { to: string[]; cc?: string[]; subject: string; body: string }
 
+// A draft surfaced in chat for the user to review/edit/send (NOT sent by the model).
+export interface EmailDraft { to: string[]; cc: string[]; subject: string; body: string; from: string; fromName: string }
+
+export const composeEmailDefinition = {
+  name: 'compose_email',
+  description: "Draft an email for the user to review and send — you do NOT send it; the user edits the draft and clicks Send. Use whenever the user asks you to email someone. Recipients can be anyone; for 'me'/'us' use the user's own address from the [YOUR EMAIL ADDRESSES] context block. Never claim the email was sent.",
+  input_schema: {
+    type: 'object',
+    properties: {
+      to: { type: 'array', items: { type: 'string' }, description: 'Recipient email address(es).' },
+      cc: { type: 'array', items: { type: 'string' }, description: 'Cc address(es) — optional.' },
+      subject: { type: 'string', description: 'Email subject.' },
+      body: { type: 'string', description: 'Email body — plain prose, blank line between paragraphs; **bold** allowed.' },
+    },
+    required: ['to', 'subject', 'body'] as string[],
+  },
+};
+
+export async function executeComposeEmail(config: Record<string, unknown>, userId: string, agentId: string | undefined, admin: Admin): Promise<{ result: string; draft: EmailDraft | null }> {
+  if (!(await isEmailEnabledForAgent(admin, agentId))) {
+    return { result: 'Email is turned off for this coworker — ask the user to enable it in your Tools tab, then try again.', draft: null };
+  }
+  const to = clean(config.to as string[] | undefined);
+  const cc = clean(config.cc as string[] | undefined);
+  const subject = String(config.subject ?? '').trim();
+  const body = String(config.body ?? '').trim();
+  const { data: agent } = agentId
+    ? await admin.from('custom_agents').select('name, worker_role').eq('id', agentId).maybeSingle()
+    : { data: null };
+  const draft: EmailDraft = {
+    to, cc, subject, body,
+    from: coworkerEmailForRole((agent?.worker_role as string) ?? null),
+    fromName: (agent?.name as string) || 'Your assistant',
+  };
+  const result = to.length
+    ? `Drafted an email to ${to.join(', ')} — it's shown to the user to review, edit, and send. Do NOT claim it's sent.`
+    : `Drafted an email (no recipient yet) — shown to the user to fill in the recipient and send.`;
+  return { result, draft };
+}
+
 /** The user's own known addresses — login (auth) email + any connected mailboxes.
  *  Used as "you" defaults/quick-picks and as identity context for the model. */
 export async function getUserEmailIdentities(admin: Admin, userId: string): Promise<{ login: string | null; connected: string[] }> {
