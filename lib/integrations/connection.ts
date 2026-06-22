@@ -87,16 +87,17 @@ export async function resolveConnection(admin: Admin, userId: string, provider: 
 // No row for (agent, provider) = ENABLED by default. A row may also carry config
 // (e.g. { default_channel }). agentId undefined → not in a worker context → on.
 
-/** Is this provider's tool enabled for this worker? Defaults to true. */
-export async function isToolEnabledForAgent(admin: Admin, agentId: string | undefined | null, provider: string): Promise<boolean> {
-  if (!agentId) return true;
+/** Is this provider's tool enabled for this worker? `defaultEnabled` = the value when
+ *  no row exists (true for most tools; pass false for opt-in tools like email). */
+export async function isToolEnabledForAgent(admin: Admin, agentId: string | undefined | null, provider: string, defaultEnabled = true): Promise<boolean> {
+  if (!agentId) return defaultEnabled;
   const { data } = await admin
     .from('agent_tool_settings')
     .select('enabled')
     .eq('agent_id', agentId)
     .eq('provider', provider)
     .maybeSingle();
-  return data ? data.enabled !== false : true;
+  return data ? data.enabled !== false : defaultEnabled;
 }
 
 /** Per-worker config for a provider (e.g. default channel). {} if none. */
