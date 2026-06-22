@@ -1,6 +1,5 @@
 import { generateWorkflowConfig } from '@/lib/workflows/generate-config';
 import { computeNextRun } from '@/lib/workflows/schedule';
-import { runWorkflow } from '@/lib/workflows/run-workflow';
 import { resolveSkillIdsByName, normalizeSkillNames } from '@/lib/tools/worker-skills';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { WorkflowStep, OutputConfig, WorkflowTrigger } from '@/lib/workflows/types';
@@ -576,8 +575,15 @@ export async function executeRunTask(
 
   const runId = (run as { id: string }).id;
 
-  // Fire-and-forget — results post back into sourceThreadId when done
-  void runWorkflow({ workflowId: taskId, runId, triggerSource: 'manual', runnerId: userId, sourceThreadId });
+  // Dispatch to the dedicated internal endpoint (its own 800s window via after()) — the
+  // chat/AgentOS routes are maxDuration=60, so running inline here gets killed mid-run.
+  // We await only the 202 (the endpoint then runs the workflow in the background).
+  const base = (process.env.AUGMTD_WEBHOOK_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || '').replace(/\/$/, '');
+  await fetch(`${base}/api/internal/run-workflow`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.AGENTOS_SECRET ?? ''}` },
+    body: JSON.stringify({ workflowId: taskId, runId, runnerId: userId, sourceThreadId }),
+  }).catch(() => {});
 
   return `"${row.name}" is now running. Results will appear in your inbox when it completes.`;
 }

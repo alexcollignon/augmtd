@@ -100,7 +100,8 @@ export function WorkerTasksTab({ workerId, workerName, isActive, onOpenInChat }:
   const [isLoading, setIsLoading] = useState(true);
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [openingId, setOpeningId] = useState<string | null>(null);
-  const [runningId, setRunningId] = useState<string | null>(null);
+  const [runningIds, setRunningIds] = useState<Set<string>>(new Set());
+  const pollingRef = useRef<Set<string>>(new Set());
   const [duplicatingId, setDuplicatingId] = useState<string | null>(null);
   const [sharingId, setSharingId] = useState<string | null>(null);
   const [usingTaskId, setUsingTaskId] = useState<string | null>(null);
@@ -251,28 +252,25 @@ export function WorkerTasksTab({ workerId, workerName, isActive, onOpenInChat }:
     }
   }
 
-  async function handleRunNow(taskId: string) {
-    if (runningId) return;
-    setRunningId(taskId);
-    const res = await fetch(`/api/workflows/${taskId}/run`, { method: 'POST' }).catch(() => null);
-    if (!res || !res.ok) {
-      toast.error('Could not start the task. Try again.');
-      setRunningId(null);
-      return;
-    }
-    // Don't open an empty thread — the coworker reports back when it's done. Keep the row
-    // in "Running…" by polling the latest run until it finishes (the POST only dispatches it).
-    toast.success(`${workerName} is on it — they'll report back when it's done.`);
+  // Hold a task's row in "Running…" until its latest run finishes — polls regardless of
+  // how the run was triggered (Run now, chat run_task, or schedule). Deduped via pollingRef.
+  const pollTask = useCallback((taskId: string) => {
+    if (pollingRef.current.has(taskId)) return;
+    pollingRef.current.add(taskId);
+    setRunningIds(prev => new Set(prev).add(taskId));
     const deadline = Date.now() + 15 * 60 * 1000;
+    const stop = () => {
+      pollingRef.current.delete(taskId);
+      setRunningIds(prev => { const n = new Set(prev); n.delete(taskId); return n; });
+    };
     const poll = async () => {
-      if (Date.now() > deadline) { setRunningId(null); load(); return; }
+      if (Date.now() > deadline) { stop(); load(); return; }
       try {
         const r = await fetch(`/api/workflows/${taskId}/runs?limit=1`);
         const data = r.ok ? await r.json() : { runs: [] };
         const status = data.runs?.[0]?.status;
         if (status && status !== 'running' && status !== 'queued') {
-          setRunningId(null);
-          load(); // refresh last-run time + result
+          stop(); load();
           if (status === 'failed') toast.error('That run failed — check Activity.');
           return;
         }
@@ -280,7 +278,34 @@ export function WorkerTasksTab({ workerId, workerName, isActive, onOpenInChat }:
       setTimeout(poll, 4000);
     };
     setTimeout(poll, 3000);
+  }, [load]);
+
+  async function handleRunNow(taskId: string) {
+    if (runningIds.has(taskId)) return;
+    setRunningIds(prev => new Set(prev).add(taskId)); // optimistic
+    const res = await fetch(`/api/workflows/${taskId}/run`, { method: 'POST' }).catch(() => null);
+    if (!res || !res.ok) {
+      toast.error('Could not start the task. Try again.');
+      setRunningIds(prev => { const n = new Set(prev); n.delete(taskId); return n; });
+      return;
+    }
+    toast.success(`${workerName} is on it — they'll report back when it's done.`);
+    pollTask(taskId);
   }
+
+  // Reflect any already-in-progress run as "Running…" (chat-triggered or scheduled, not
+  // just Run now) — when the task list (re)loads, poll any task whose latest run is live.
+  useEffect(() => {
+    myTasks.forEach(async t => {
+      if (pollingRef.current.has(t.id)) return;
+      try {
+        const r = await fetch(`/api/workflows/${t.id}/runs?limit=1`);
+        const data = r.ok ? await r.json() : { runs: [] };
+        const status = data.runs?.[0]?.status;
+        if (status === 'running' || status === 'queued') pollTask(t.id);
+      } catch { /* ignore */ }
+    });
+  }, [myTasks, pollTask]);
 
   // Build the pipeline in the background so the modal can close instantly and the
   // user keeps using the app. A placeholder row shows progress in the task list.
@@ -363,7 +388,7 @@ export function WorkerTasksTab({ workerId, workerName, isActive, onOpenInChat }:
                   task={task}
                   isToggling={togglingId === task.id}
                   isOpening={openingId === task.id}
-                  isRunning={runningId === task.id}
+                  isRunning={runningIds.has(task.id)}
                   isDuplicating={duplicatingId === task.id}
                   isSharing={sharingId === task.id}
                   onToggle={() => handleToggle(task)}
