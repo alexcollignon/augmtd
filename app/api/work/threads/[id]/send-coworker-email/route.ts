@@ -13,7 +13,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const { data: { user }, error } = await supabase.auth.getUser();
     if (error || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { to, cc, subject, body, agentId } = await req.json();
+    const { to, cc, subject, body, agentId, draftId } = await req.json();
 
     const admin = createAdmin(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 
@@ -34,6 +34,24 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       body: String(body ?? ''),
     });
     if (!res.ok) return NextResponse.json({ error: res.error }, { status: 400 });
+
+    // Persist the "sent" state on the draft in its message metadata so reload shows it sent.
+    if (draftId) {
+      const { data: msgs } = await admin.from('work_messages')
+        .select('id, metadata').eq('thread_id', threadId)
+        .order('created_at', { ascending: false }).limit(25);
+      for (const m of (msgs ?? []) as Array<{ id: string; metadata: { email_drafts?: Array<{ id?: string; sent_at?: string }> } | null }>) {
+        const drafts = m.metadata?.email_drafts;
+        if (!Array.isArray(drafts)) continue;
+        const i = drafts.findIndex(d => d.id === draftId);
+        if (i >= 0) {
+          drafts[i] = { ...drafts[i], sent_at: new Date().toISOString() };
+          await admin.from('work_messages').update({ metadata: { ...m.metadata, email_drafts: drafts } }).eq('id', m.id);
+          break;
+        }
+      }
+    }
+
     return NextResponse.json({ ok: true });
   } catch (err) {
     console.error('[send-coworker-email] error:', err);

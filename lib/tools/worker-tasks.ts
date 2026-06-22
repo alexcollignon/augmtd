@@ -77,6 +77,7 @@ export const updateTaskDefinition = {
       output_title: { type: 'string', description: 'Title template for a document. Use {{date}} for the run date, {{week_of}} for the week. Example: "AHK Briefing — {{week_of}}"' },
       output_slack_channel: { type: 'string', description: 'Slack channel (#name or id) when output_destination=slack, or "@me" to DM the user privately. For a document, the channel to also drop a link in. Resolve names via slack_list_channels.' },
       output_report_mode: { type: 'string', enum: ['each_run', 'digest', 'silent'], description: 'How proactively you report back after a run. each_run = message the user after every run (default); digest = periodic summary; silent = no report.' },
+      output_email_to: { type: 'string', description: 'When output_destination=email: comma-separated recipient address(es) to send the deliverable to (any address — no inbox connection needed). Leave/clear to email the user themselves.' },
       output_slack_announcement: { type: 'string', description: 'For a document that also posts to Slack: an INSTRUCTION for how to announce it in the channel — the coworker writes the message from this + the document (e.g. "post a 2-line summary and tag <@Rene> to review"). Leave empty for a simple link.' },
       worker_instructions: { type: 'string', description: 'Task-specific tone or persona instructions that override the worker default for this task only' },
       skill_names: {
@@ -406,6 +407,7 @@ export async function executeUpdateTask(
     output_slack_channel?: string;
     output_report_mode?: string;
     output_slack_announcement?: string;
+    output_email_to?: string;
     output_notification?: string;  // legacy alias → report_mode
     worker_instructions?: string;
     skill_names?: string[] | string;
@@ -459,6 +461,7 @@ export async function executeUpdateTask(
     || fields.output_slack_channel !== undefined
     || fields.output_report_mode !== undefined
     || fields.output_slack_announcement !== undefined
+    || fields.output_email_to !== undefined
     || fields.output_notification !== undefined;
 
   if (hasOutputChange) {
@@ -474,6 +477,10 @@ export async function executeUpdateTask(
       changes.push(`Slack channel → ${fields.output_slack_channel}`);
     }
     if (fields.output_report_mode !== undefined) { oc.report_mode = fields.output_report_mode as OutputConfig['report_mode']; changes.push(`report → ${fields.output_report_mode}`); }
+    if (fields.output_email_to !== undefined) {
+      oc.email_to = fields.output_email_to.split(',').map(s => s.trim()).filter(Boolean);
+      changes.push(oc.email_to.length ? `email recipients → ${oc.email_to.join(', ')}` : 'email recipients cleared (→ you)');
+    }
     if (fields.output_slack_announcement !== undefined) { oc.slack_announcement = fields.output_slack_announcement; changes.push('Slack announcement updated'); }
     // legacy alias
     if (fields.output_notification !== undefined) { oc.report_mode = (fields.output_notification === 'silent' ? 'silent' : 'each_run'); changes.push(`report → ${oc.report_mode}`); }
