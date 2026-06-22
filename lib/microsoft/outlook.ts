@@ -509,8 +509,9 @@ export async function listOutlookFolderEmails(
   encryptedTokens: string,
   folderId: string,
   maxResults = 25,
+  onTokenRefresh?: TokenRefreshCallback,
 ): Promise<FolderEmailSummary[]> {
-  const client = await getGraphClient(encryptedTokens);
+  const client = await getGraphClient(encryptedTokens, onTokenRefresh);
   const res = await client
     .api(`/me/mailFolders/${folderId}/messages`)
     .select('id,subject,from,receivedDateTime,bodyPreview')
@@ -531,16 +532,18 @@ export async function moveOutlookMessageToFolder(
   encryptedTokens: string,
   outlookMessageId: string,
   folderId: string,
+  onTokenRefresh?: TokenRefreshCallback,
 ): Promise<void> {
-  const client = await getGraphClient(encryptedTokens);
+  const client = await getGraphClient(encryptedTokens, onTokenRefresh);
   await client.api(`/me/messages/${outlookMessageId}/move`).post({ destinationId: folderId });
 }
 
 export async function getOutlookMessageDetail(
   encryptedTokens: string,
   messageId: string,
+  onTokenRefresh?: TokenRefreshCallback,
 ): Promise<import('@/lib/google/gmail').MessageDetail> {
-  const client = await getGraphClient(encryptedTokens);
+  const client = await getGraphClient(encryptedTokens, onTokenRefresh);
   const m = await client
     .api(`/me/messages/${messageId}`)
     .select('id,subject,from,toRecipients,receivedDateTime,body,bodyPreview')
@@ -564,8 +567,9 @@ export async function getOutlookMessageDetail(
 export async function archiveOutlookMessage(
   encryptedTokens: string,
   outlookMessageId: string,
+  onTokenRefresh?: TokenRefreshCallback,
 ): Promise<void> {
-  const client = await getGraphClient(encryptedTokens);
+  const client = await getGraphClient(encryptedTokens, onTokenRefresh);
   await client
     .api(`/me/messages/${outlookMessageId}/move`)
     .post({ destinationId: 'archive' });
@@ -574,11 +578,22 @@ export async function archiveOutlookMessage(
 export async function trashOutlookMessage(
   encryptedTokens: string,
   outlookMessageId: string,
+  onTokenRefresh?: TokenRefreshCallback,
 ): Promise<void> {
-  const client = await getGraphClient(encryptedTokens);
+  const client = await getGraphClient(encryptedTokens, onTokenRefresh);
   await client
     .api(`/me/messages/${outlookMessageId}/move`)
     .post({ destinationId: 'deleteditems' });
+}
+
+// Build an onTokenRefresh callback that persists refreshed Outlook tokens back to the
+// connection row — pass this into the helpers above so a mid-action refresh isn't lost.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function persistOutlookTokens(supabase: any, connection: { id: string; metadata: any }): TokenRefreshCallback {
+  return async (newTokens: { accessToken: string; refreshToken: string; expiresOn: string }) => {
+    const newEncrypted = Buffer.from(JSON.stringify(newTokens)).toString('base64');
+    await supabase.from('connections').update({ metadata: { ...connection.metadata, tokens: newEncrypted } }).eq('id', connection.id);
+  };
 }
 
 export async function sendOutlookReply(params: SendOutlookReplyParams): Promise<string> {

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { trashGmailThread } from '@/lib/google/gmail';
 import { sanitizeError } from '@/lib/utils/api-error';
-import { trashOutlookMessage } from '@/lib/microsoft/outlook';
+import { trashOutlookMessage, persistOutlookTokens } from '@/lib/microsoft/outlook';
 
 export async function POST(
   _request: NextRequest,
@@ -53,7 +53,7 @@ export async function POST(
         outlookMessageId = email?.metadata?.outlook_id ?? null;
       }
       if (!outlookMessageId) return NextResponse.json({ error: 'Could not resolve Outlook message ID' }, { status: 400 });
-      await trashOutlookMessage(encryptedTokens, outlookMessageId);
+      await trashOutlookMessage(encryptedTokens, outlookMessageId, persistOutlookTokens(supabase, connection as { id: string; metadata: { tokens: string } }));
     } else {
       return NextResponse.json({ error: 'Unsupported provider' }, { status: 400 });
     }
