@@ -26,6 +26,7 @@ import {
   slackListChannelsDefinition, slackPostMessageDefinition, slackReadMessagesDefinition, slackListMembersDefinition,
   executeSlackListChannels, executeSlackPostMessage, executeSlackReadMessages, executeSlackListMembers,
   findTeamWorkDefinition, readTeamWorkDefinition, executeFindTeamWork, executeReadTeamWork,
+  composeEmailDefinition, executeComposeEmail, getUserEmailIdentities, type EmailDraft,
 } from '@/lib/tools';
 import { buildConnectedIntegrationsBlock } from '@/lib/integrations/connection';
 import {
@@ -397,6 +398,7 @@ export async function POST(
             `[TASKS]\nA task is reusable structured work you set up once. It runs on a schedule OR on demand whenever asked (run_task) — so neither of you rebuilds it each time. Offer to set one up whenever work is repeatable, even without a schedule ("want me to save this as a task you can re-run anytime?").\n- list_tasks — see what's already running\n- create_task — set up something new from a plain description\n- get_task — read the full config of a task (steps, schedule, language, instructions)\n- update_task — edit any aspect: name, schedule, output language, task instructions, step prompts, status\n- duplicate_task — copy a task (useful for variants: same pipeline, different language or audience)\n- run_task — trigger a task right now\n- delete_task — remove a task permanently\n- share_task — share a task with the team so teammates can copy it (or stop sharing)\n- list_team_tasks — see tasks shared by teammates\n- use_task — copy a shared team task to your own list\n\nWhen the user asks you to change, update, fix, or adjust a task — YOU MUST COMPLETE THE FULL TOOL SEQUENCE before saying anything. Do not say "Done" or "Updated" until the final action tool has returned a result.\n\nRequired sequences (complete every step, no skipping):\n- Change language / schedule / name / status → list_tasks (get ID) → update_task → say one sentence confirming\n- Change a step prompt → list_tasks (get ID) → get_task (read steps) → update_task with step_patch → confirm\n- Duplicate a task → list_tasks (get ID) → duplicate_task → confirm\n- Run a task → list_tasks (get ID) → run_task → confirm\n- Share a task → list_tasks (get ID) → share_task → confirm\n- Use a team task → list_team_tasks (get ID) → use_task → confirm\n\nNEVER report success after only calling list_tasks. list_tasks only finds the ID — the action hasn't happened yet. A colleague who said "Done, changed to Portuguese" without actually changing it would be fired. Don't be that colleague.`,
             `[YOUR DOCUMENTS]\nlist_worker_documents shows everything you've produced. get_worker_document retrieves the full content. When the user asks to see, revise, or reference something you made, call get_worker_document — don't say you can't retrieve it.`,
             `[TEAM]\nYou work alongside other coworkers. To build on a teammate's output (e.g. research another coworker did), use find_team_work to locate it (by topic, or by coworker name like "Max") and read_team_work to read it — then do your part. Don't ask the user to fetch a teammate's work; get it yourself. The user talks to whoever owns the result they want — so if they ask you for a deliverable that needs a colleague's input, pull it.`,
+            `[EMAIL]\nYou can draft and send email as yourself (from your own address). When the user asks you to email someone, call compose_email with to/subject/body — it shows the user an EDITABLE draft to review and send. You NEVER send directly and NEVER say it's sent ("I've drafted it — review and hit Send"). Recipients can be anyone; for "me"/"us" use the user's own address from [YOUR EMAIL ADDRESSES]. If compose_email reports email is off, tell them to enable Email in your Tools tab.`,
             `[SKILLS]\nSkills are reusable instructions for how to handle a kind of work — a method, process, format, structure, or style. Any skill assigned to you is already in your context above — apply the matching one automatically. If the user asks you to follow an approach or named skill you don't see assigned, call list_skills to check the library, then apply_skill to pull and follow it. When creating or updating a task, pass skill_names to create_task/update_task to enforce specific skills on that task's output (omit to use your assigned skills); use list_skills first if you're unsure of the exact names.`,
             `Understand intent before acting. "Prepare a weekly X", "every Monday do Y", "set up X for me", or anything you'll be asked to repeat = the user wants a reusable task — call create_task immediately (with a schedule if given, otherwise it's run on demand), confirm, done. "What's X?" or "find me X" or "draft X" = do it now with your tools. Never confuse the two. A human colleague would know the difference instantly.`,
             `Speak like a capable colleague, not a software system. Say "Got it, I'll have that ready every Monday" not "I can create a scheduled automation task." Say "I'm on it" not "I don't have direct access to." When a task is clear, do it. One focused question maximum if truly blocked.`,
@@ -419,6 +421,12 @@ export async function POST(
       // Assigned skills (workers only) — curated "how to produce X" prompt blocks.
       // Same block the AgentOS bridge injects, so behaviour is identical on both paths.
       if (isWorker) {
+        // The user's own addresses → "me"/"us" resolution for compose_email.
+        try {
+          const ids = await getUserEmailIdentities(adminClient, user.id);
+          const mine = [ids.login, ...ids.connected].filter(Boolean);
+          if (mine.length) contextParts.push(`[YOUR EMAIL ADDRESSES]\nThe user ("me"/"us") can be reached at: ${mine.join(', ')}. Use these when asked to email the user themselves.`);
+        } catch { /* non-fatal */ }
         const skillsBlock = await buildSkillsBlock(supabase, agent.id);
         if (skillsBlock) contextParts.push(skillsBlock);
         const integrationsBlock = await buildConnectedIntegrationsBlock(adminClient, user.id, agent.id);
@@ -731,6 +739,7 @@ export async function POST(
     const allToolCalls: Array<{ name: string; summary: string; citations?: string[]; clarification?: object }> = [];
     const allArtifactIds: string[] = [];
     const allArtifactMeta: Record<string, { title: string; type: string }> = {};
+    const allEmailDrafts: EmailDraft[] = [];
 
     const readable = new ReadableStream({
       async start(controller) {
@@ -937,11 +946,12 @@ export async function POST(
                     calledTools.add(dedupeKey);
 
                     send({ type: 'tool_start', name: tc.function.name, id: tc.id, label: toolLabel(tc.function.name) });
-                    const { result, summary, artifact, citations, clarification, stopStream } = await executeChatTool(tc.function.name, toolInput, sources, runContext);
+                    const { result, summary, artifact, citations, clarification, stopStream, emailDraft } = await executeChatTool(tc.function.name, toolInput, sources, runContext);
                     send({ type: 'tool_result', name: tc.function.name, id: tc.id, summary, ...(citations?.length ? { citations } : {}) });
                     allToolCalls.push({ name: tc.function.name, summary, ...(citations?.length ? { citations } : {}) });
                     if (clarification) send({ type: 'clarification_request', ...(clarification as object) });
                     if (artifact?.id) { allArtifactIds.push(artifact.id); allArtifactMeta[artifact.id] = { title: artifact.title, type: artifact.type }; send({ type: 'artifact_ready', artifact: { id: artifact.id, type: artifact.type, title: artifact.title } }); }
+                    if (emailDraft) { allEmailDrafts.push(emailDraft); send({ type: 'email_draft', draft: emailDraft }); }
                     toolResultMessages.push({ role: 'tool', tool_call_id: tc.id, content: result });
                     toolResultCache.set(dedupeKey, result);
                     if (stopStream) { continueLoop = false; break; }
@@ -1005,7 +1015,7 @@ export async function POST(
 
                   send({ type: 'tool_start', name: tc.function.name, id: tc.id, label: toolLabel(tc.function.name) });
 
-                  const { result, summary, artifact, citations, clarification, stopStream, retryCorrection } = await executeChatTool(
+                  const { result, summary, artifact, citations, clarification, stopStream, retryCorrection, emailDraft } = await executeChatTool(
                     tc.function.name,
                     toolInput,
                     sources,
@@ -1039,6 +1049,8 @@ export async function POST(
                     allArtifactMeta[artifact.id] = { title: artifact.title, type: artifact.type };
                     send({ type: 'artifact_ready', artifact: { id: artifact.id, type: artifact.type, title: artifact.title } });
                   }
+
+                  if (emailDraft) { allEmailDrafts.push(emailDraft); send({ type: 'email_draft', draft: emailDraft }); }
 
                   toolResultMessages.push({
                     role: 'tool',
@@ -1156,6 +1168,7 @@ export async function POST(
                 tool_calls: allToolCalls,
                 artifact_ids: allArtifactIds,
                 ...(Object.keys(allArtifactMeta).length > 0 ? { artifact_meta: allArtifactMeta } : {}),
+                ...(allEmailDrafts.length > 0 ? { email_drafts: allEmailDrafts } : {}),
                 ...(clarificationCall?.clarification ? { clarification: clarificationCall.clarification } : {}),
               },
             });
@@ -1338,6 +1351,7 @@ function buildChatTools(sources: string[], _provider: string, _modelFamily: stri
       listSkillsDefinition, applySkillDefinition,
       slackListChannelsDefinition, slackPostMessageDefinition, slackReadMessagesDefinition, slackListMembersDefinition,
       findTeamWorkDefinition, readTeamWorkDefinition,
+      composeEmailDefinition,
     );
   }
 
@@ -1375,6 +1389,7 @@ function toolLabel(name: string): string {
     use_task: 'Adding task from team…',
     list_worker_documents: 'Checking documents',
     get_worker_document: 'Retrieving document…',
+    compose_email: 'Drafting email…',
   };
   return labels[name] ?? name;
 }
@@ -1435,8 +1450,12 @@ async function executeChatTool(
   input: Record<string, unknown>,
   sources: string[],
   ctx: RunContext
-): Promise<{ result: string; summary: string; artifact?: DocumentArtifact; citations?: string[]; clarification?: object; stopStream?: boolean; retryCorrection?: string }> {
+): Promise<{ result: string; summary: string; artifact?: DocumentArtifact; citations?: string[]; clarification?: object; stopStream?: boolean; retryCorrection?: string; emailDraft?: EmailDraft }> {
   switch (name) {
+    case 'compose_email': {
+      const { result, draft } = await executeComposeEmail(input, ctx.userId, ctx.agentId, ctx.adminClient);
+      return { result, summary: draft ? 'Drafted an email' : 'Email is off', emailDraft: draft ?? undefined };
+    }
     case 'request_clarification': {
       // Validate question field before doing anything else
       const validationError = validateClarificationInput(input);
