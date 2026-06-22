@@ -168,7 +168,15 @@ export async function POST() {
 
   if (toInsert.length === 0) return NextResponse.json({ seeded: false });
 
-  await adminClient.from('custom_agents').insert(toInsert);
+  // The read-then-insert above is a TOCTOU race: concurrent init calls all read "0 existing"
+  // and all insert (this seeded up to 20× each role for one account). The unique index
+  // (user_id, worker_role) makes that impossible — a losing concurrent insert violates it
+  // (23505), which we treat as "already seeded by the winner" and ignore. Inserts are atomic,
+  // so any later read sees 0 or all-4, never a partial set — no role can go missing.
+  const { error } = await adminClient.from('custom_agents').insert(toInsert);
+  if (error && error.code !== '23505') {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
 
-  return NextResponse.json({ seeded: true, added: toInsert.map(w => w.worker_role) });
+  return NextResponse.json({ seeded: !error, added: toInsert.map(w => w.worker_role) });
 }
