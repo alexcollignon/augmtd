@@ -9,7 +9,7 @@ import { Input, Textarea, Button } from '@/components/ui';
 import { toast } from 'sonner';
 
 export interface EmailDraftData {
-  to: string[]; cc: string[]; subject: string; body: string; from: string; fromName: string;
+  id?: string; to: string[]; cc: string[]; subject: string; body: string; from: string; fromName: string; sent_at?: string;
 }
 
 function RecipientRow({ label, list, setList }: { label: string; list: string[]; setList: (v: string[]) => void }) {
@@ -48,7 +48,7 @@ export function EmailDraftCard({ draft, threadId, agentId }: { draft: EmailDraft
   const [subject, setSubject] = useState(draft.subject ?? '');
   const [body, setBody] = useState(draft.body ?? '');
   const [showCc, setShowCc] = useState((draft.cc ?? []).length > 0);
-  const [status, setStatus] = useState<'draft' | 'sending' | 'sent'>('draft');
+  const [status, setStatus] = useState<'draft' | 'sending' | 'sent'>(draft.sent_at ? 'sent' : 'draft');
   const [dismissed, setDismissed] = useState(false);
 
   if (dismissed) return null;
@@ -70,7 +70,7 @@ export function EmailDraftCard({ draft, threadId, agentId }: { draft: EmailDraft
       const res = await fetch(`/api/work/threads/${threadId}/send-coworker-email`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ to, cc, subject, body, agentId }),
+        body: JSON.stringify({ to, cc, subject, body, agentId, draftId: draft.id }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) { toast.error(data.error ?? 'Failed to send.'); setStatus('draft'); return; }

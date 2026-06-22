@@ -94,6 +94,7 @@ def update_task(
     output_slack_channel: Optional[str] = None,
     output_report_mode: Optional[str] = None,
     output_slack_announcement: Optional[str] = None,
+    output_email_to: Optional[str] = None,
     worker_instructions: Optional[str] = None,
     skill_names: Optional[str] = None,
 ) -> str:
@@ -116,6 +117,8 @@ def update_task(
         output_slack_announcement: For a document that also posts to Slack — an
             instruction for how to announce it in the channel (you write the message
             from this + the document, e.g. "2-line summary, tag <@Rene>").
+        output_email_to: When destination is email — comma-separated recipient
+            address(es) to send the deliverable to (any address). Empty clears it (→ the user).
         worker_instructions: Task-specific tone/persona overriding the worker default.
         skill_names: Comma-separated skill names (see list_skills) to enforce on this
             task's output. Empty string clears pinned skills (use your assigned skills).
@@ -127,6 +130,7 @@ def update_task(
             "output_destination": output_destination,
             "output_slack_channel": output_slack_channel,
             "output_report_mode": output_report_mode,
+            "output_email_to": output_email_to,
             "output_slack_announcement": output_slack_announcement,
             "worker_instructions": worker_instructions,
             "skill_names": skill_names,

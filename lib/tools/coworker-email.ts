@@ -4,6 +4,7 @@
 // Used by the user-confirmed chat send endpoint AND the task email output.
 
 import { Resend } from 'resend';
+import { randomUUID } from 'crypto';
 import { coworkerEmailForRole } from '@/lib/integrations/registry';
 import { isToolEnabledForAgent } from '@/lib/integrations/connection';
 
@@ -23,7 +24,7 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 export interface CoworkerEmailInput { to: string[]; cc?: string[]; subject: string; body: string }
 
 // A draft surfaced in chat for the user to review/edit/send (NOT sent by the model).
-export interface EmailDraft { to: string[]; cc: string[]; subject: string; body: string; from: string; fromName: string }
+export interface EmailDraft { id: string; to: string[]; cc: string[]; subject: string; body: string; from: string; fromName: string; sent_at?: string }
 
 export const composeEmailDefinition = {
   name: 'compose_email',
@@ -52,6 +53,7 @@ export async function executeComposeEmail(config: Record<string, unknown>, userI
     ? await admin.from('custom_agents').select('name, worker_role').eq('id', agentId).maybeSingle()
     : { data: null };
   const draft: EmailDraft = {
+    id: randomUUID(),
     to, cc, subject, body,
     from: coworkerEmailForRole((agent?.worker_role as string) ?? null),
     fromName: (agent?.name as string) || 'Your assistant',
