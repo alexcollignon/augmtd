@@ -2,6 +2,21 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
+import { isToolAllowed } from '@/lib/workspace/tool-capabilities';
+import { DEFAULT_FEATURES, type WorkspaceFeatures } from '@/lib/workspace/types';
+
+// Workspace feature flags (cached across the builder) — disable steps whose feature is off.
+let _featuresCache: WorkspaceFeatures | null = null;
+function useWorkspaceFeatures(): WorkspaceFeatures {
+  const [features, setFeatures] = useState<WorkspaceFeatures>(_featuresCache ?? DEFAULT_FEATURES);
+  useEffect(() => {
+    if (_featuresCache) return;
+    fetch('/api/workspace/features').then(r => r.json()).then(d => {
+      if (d.features) { _featuresCache = d.features; setFeatures(d.features); }
+    }).catch(() => {});
+  }, []);
+  return features;
+}
 import {
   ArrowLeftIcon,
   TrashIcon,
@@ -1711,6 +1726,7 @@ function KbFilePickerField({ value, onChange }: { value: string; onChange: (id: 
 }
 
 function InlineToolGrid({ value, onChange }: { value: string; onChange: (toolId: string) => void }) {
+  const features = useWorkspaceFeatures();
   const displayId = value === 'browser_fetch' ? 'fetch_url' : (value === 'get_urgent_emails' ? 'get_emails' : value);
   const groups = [
     { label: 'Gather',      ids: ['get_emails', 'get_meeting_context', 'get_calendar', 'read_kb_file', 'web_search', 'fetch_url', 'rss_feed', 'get_pt_tenders', 'deep_research', 'slack_read_channel'] },
@@ -1727,13 +1743,17 @@ function InlineToolGrid({ value, onChange }: { value: string; onChange: (toolId:
             <div className="grid grid-cols-2 gap-1.5">
               {tools.map(t => {
                 const isSelected = t.id === displayId;
+                const allowed = isToolAllowed(t.id, features);
                 return (
-                  <button key={t.id} type="button"
-                    onClick={() => onChange(t.id)}
+                  <button key={t.id} type="button" disabled={!allowed}
+                    title={allowed ? '' : 'This step needs a feature that\'s off for this workspace'}
+                    onClick={() => { if (allowed) onChange(t.id); }}
                     className={`flex items-center gap-2 px-2.5 py-2 rounded-lg border text-left transition-all ${
-                      isSelected
-                        ? 'bg-indigo-50 border-indigo-200'
-                        : 'bg-white border-neutral-200 hover:border-neutral-300 hover:bg-neutral-50'
+                      !allowed
+                        ? 'bg-neutral-50 border-neutral-200 opacity-40 cursor-not-allowed'
+                        : isSelected
+                          ? 'bg-indigo-50 border-indigo-200'
+                          : 'bg-white border-neutral-200 hover:border-neutral-300 hover:bg-neutral-50'
                     }`}>
                     <ToolPickerIcon toolId={t.id} size="sm" />
                     <span className={`text-[11.5px] font-medium leading-tight truncate ${isSelected ? 'text-indigo-800' : 'text-neutral-700'}`}>

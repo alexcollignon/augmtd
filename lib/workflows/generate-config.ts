@@ -3,6 +3,7 @@ import { parseModelJSON } from '@/lib/ai/parse-json';
 import { makeStepId } from '@/lib/workflows/types';
 import { listConnectedProviders } from '@/lib/integrations/connection';
 import { INTEGRATIONS } from '@/lib/integrations/registry';
+import { getWorkspaceFeatures } from '@/lib/workspace/features';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 export interface GeneratedWorkflowConfig {
@@ -114,6 +115,16 @@ export async function generateWorkflowConfig(
     } else {
       parts.push('No external delivery tools are connected — use only "message" or "document" homes.');
     }
+  } catch { /* non-fatal */ }
+
+  // Workspace-feature gating — don't let the model build steps using disabled tools.
+  try {
+    const features = await getWorkspaceFeatures(userId, supabase);
+    const off: string[] = [];
+    if (!features.email) off.push('get_emails');
+    if (!features.meetings) off.push('get_meeting_context');
+    if (!features.drive) off.push('read_kb_file');
+    if (off.length) parts.push(`These tools are OFF for this workspace — do NOT use them in any step: ${off.join(', ')}.`);
   } catch { /* non-fatal */ }
 
   const w = options?.workerContext;
