@@ -68,5 +68,5 @@ export function getIntegration(provider: string): IntegrationDef | undefined {
 }
 
 export function isKnownProvider(p: string): boolean {
-  return INTEGRATION_PROVIDERS.includes(p) || SLACK_APP_KEYS.includes(p);
+  return INTEGRATION_PROVIDERS.includes(p) || SLACK_APP_KEYS.includes(p) || p === 'email';
 }
