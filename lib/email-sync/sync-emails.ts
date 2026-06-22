@@ -1532,12 +1532,16 @@ export async function syncEmailsForConnection(
       console.warn(`[SentSync] Non-fatal: failed to sync sent emails`, sentErr);
     }
 
-    // Update sync status
+    // Update sync status. CRUCIAL: only advance last_sync on a FULL-WINDOW sync. A push
+    // webhook delivers a single preloaded message and must NOT move the cursor — otherwise
+    // it claims "everything up to now is synced", and the cron's incremental window then
+    // starts AFTER any earlier emails the push never delivered, dropping them forever.
+    const isPreloaded = !!options.preloadedMessages;
     await adminSupabase
       .from('connections')
       .update({
         sync_status: 'completed',
-        last_sync: syncStartedAt
+        ...(isPreloaded ? {} : { last_sync: syncStartedAt }),
       })
       .eq('id', connection.id);
 
