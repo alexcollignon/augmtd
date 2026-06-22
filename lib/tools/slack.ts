@@ -44,8 +44,8 @@ export function normalizeChannel(ch: string): string {
 // The user's Slack member id: prefer the verified id (profiles.slack_user_id — set via the
 // verify-by-code flow, handles email mismatch), else look up by their login email.
 export async function resolveUserSlackId(admin: Admin, userId: string, connectionId: string, providerKey: string): Promise<string | null> {
-  const { data: prof } = await admin.from('profiles').select('slack_user_id').eq('id', userId).maybeSingle();
-  if (prof?.slack_user_id) return prof.slack_user_id as string;
+  const { data: ident } = await admin.from('slack_identities').select('slack_user_id').eq('user_id', userId).maybeSingle();
+  if (ident?.slack_user_id) return ident.slack_user_id as string;
   let email: string | undefined;
   try {
     const { data } = await admin.auth.admin.getUserById(userId);

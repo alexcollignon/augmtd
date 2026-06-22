@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import Nango from '@nangohq/frontend';
-import { Squares2X2Icon } from '@heroicons/react/24/outline';
+import { Squares2X2Icon, Cog6ToothIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
 import { Button, Badge, Input } from '@/components/ui';
 import { toast } from 'sonner';
 import { SLACK_APP_KEYS } from '@/lib/integrations/registry';
@@ -36,6 +36,7 @@ export default function IntegrationsSection() {
   const [busyProvider, setBusyProvider] = useState<string | null>(null);
   const [confirmDisconnect, setConfirmDisconnect] = useState<string | null>(null);
   const [dmReports, setDmReports] = useState(false);
+  const [slackSettingsOpen, setSlackSettingsOpen] = useState(false);
 
   const load = useCallback(() => {
     fetch('/api/integrations')
@@ -194,22 +195,33 @@ export default function IntegrationsSection() {
               </div>
               </div>
               {i.provider === 'slack' && i.connected && (
-                <div className="mt-3 pt-3 border-t border-neutral-100 flex items-center justify-between gap-4">
-                  <div className="min-w-0">
-                    <p className="text-[12.5px] text-neutral-700">DM me task updates</p>
-                    <p className="text-[11px] text-neutral-400 mt-0.5">Your coworkers also message you in Slack when they finish a task.</p>
-                  </div>
-                  <button
-                    role="switch"
-                    aria-checked={dmReports}
-                    onClick={toggleDmReports}
-                    className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors ${dmReports ? 'bg-indigo-600' : 'bg-neutral-300'}`}
-                  >
-                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${dmReports ? 'translate-x-[18px]' : 'translate-x-0.5'}`} />
+                <div className="mt-3 pt-3 border-t border-neutral-100">
+                  <button onClick={() => setSlackSettingsOpen(v => !v)} className="flex items-center gap-1.5 text-[12px] text-neutral-500 hover:text-neutral-700">
+                    <Cog6ToothIcon className="w-3.5 h-3.5" />
+                    Settings
+                    <ChevronRightIcon className={`w-3 h-3 transition-transform ${slackSettingsOpen ? 'rotate-90' : ''}`} />
                   </button>
+                  {slackSettingsOpen && (
+                    <div className="mt-3 space-y-3">
+                      <div className="flex items-center justify-between gap-4">
+                        <div className="min-w-0">
+                          <p className="text-[12.5px] text-neutral-700">DM me task updates</p>
+                          <p className="text-[11px] text-neutral-400 mt-0.5">Your coworkers also message you in Slack when they finish a task.</p>
+                        </div>
+                        <button
+                          role="switch"
+                          aria-checked={dmReports}
+                          onClick={toggleDmReports}
+                          className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors ${dmReports ? 'bg-indigo-600' : 'bg-neutral-300'}`}
+                        >
+                          <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${dmReports ? 'translate-x-[18px]' : 'translate-x-0.5'}`} />
+                        </button>
+                      </div>
+                      <SlackIdentity />
+                    </div>
+                  )}
                 </div>
               )}
-              {i.provider === 'slack' && i.connected && <SlackIdentity />}
             </div>
           ))}
         </div>
@@ -220,14 +232,14 @@ export default function IntegrationsSection() {
 
 // Verify-by-code Slack identity — for DM-to-me when the user's Slack email ≠ login email.
 function SlackIdentity() {
-  const [state, setState] = useState<{ slackUserId: string | null; pending: boolean; pendingName: string | null } | null>(null);
+  const [state, setState] = useState<{ slackUserId: string | null } | null>(null);
   const [mode, setMode] = useState<'view' | 'email' | 'code'>('view');
   const [email, setEmail] = useState('');
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
   const [sentTo, setSentTo] = useState<string | null>(null);
 
-  const refresh = () => fetch('/api/integrations/slack/identity').then(r => r.json()).then(setState).catch(() => {});
+  const refresh = () => fetch('/api/integrations/slack/identity').then(r => r.json()).then(setState).catch(() => setState({ slackUserId: null }));
   useEffect(() => { refresh(); }, []);
 
   async function post(payload: Record<string, unknown>) {
@@ -253,32 +265,44 @@ function SlackIdentity() {
   }
   async function unlink() { await post({ action: 'clear' }); setMode('view'); refresh(); }
 
-  if (!state) return null;
+  const linked = !!state?.slackUserId;
 
   return (
-    <div className="mt-3 pt-3 border-t border-neutral-100">
-      <p className="text-[12.5px] text-neutral-700">Your Slack identity</p>
-      <p className="text-[11px] text-neutral-400 mt-0.5">Needed for DM-to-me if your Slack email differs from your login. We DM you a code to confirm it&apos;s you.</p>
-      {state.slackUserId && mode === 'view' ? (
-        <div className="mt-2 flex items-center gap-3">
-          <span className="text-[12px] text-emerald-600">Linked ✓</span>
-          <button onClick={() => setMode('email')} className="text-[12px] text-neutral-500 hover:text-neutral-700">Change</button>
-          <button onClick={unlink} className="text-[12px] text-neutral-400 hover:text-red-600">Unlink</button>
+    <div>
+      {/* Same row shape as the DM toggle above: label + description left, control right */}
+      <div className="flex items-center justify-between gap-4">
+        <div className="min-w-0">
+          <p className="text-[12.5px] text-neutral-700">Your Slack identity</p>
+          <p className="text-[11px] text-neutral-400 mt-0.5">Needed for DM-to-me if your Slack email differs from your login.</p>
         </div>
-      ) : mode === 'code' ? (
-        <div className="mt-2 flex items-center gap-2">
+        <div className="flex-shrink-0 flex items-center gap-2.5">
+          {state === null ? (
+            <span className="inline-block h-4 w-14 rounded bg-neutral-100 animate-pulse" />
+          ) : mode !== 'view' ? (
+            <button onClick={() => setMode('view')} className="text-[12px] text-neutral-400 hover:text-neutral-600">Cancel</button>
+          ) : linked ? (
+            <>
+              <span className="text-[12px] text-emerald-600">Linked</span>
+              <button onClick={() => setMode('email')} className="text-[12px] text-neutral-500 hover:text-neutral-700">Change</button>
+              <button onClick={unlink} className="text-[12px] text-neutral-400 hover:text-red-600">Unlink</button>
+            </>
+          ) : (
+            <Button variant="secondary" size="sm" onClick={() => setMode('email')}>Link</Button>
+          )}
+        </div>
+      </div>
+      {mode === 'email' && (
+        <div className="mt-2.5 flex items-center gap-2">
+          <Input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="your Slack email" className="w-52" />
+          <Button size="sm" onClick={sendCode} disabled={busy || !email.trim()}>Send code</Button>
+        </div>
+      )}
+      {mode === 'code' && (
+        <div className="mt-2.5 flex items-center gap-2">
           <Input value={code} onChange={e => setCode(e.target.value)} placeholder="6-digit code" className="w-32" />
           <Button size="sm" onClick={verify} disabled={busy || code.trim().length < 6}>Verify</Button>
           <span className="text-[11px] text-neutral-400">Code sent to {sentTo} in Slack</span>
         </div>
-      ) : mode === 'email' ? (
-        <div className="mt-2 flex items-center gap-2">
-          <Input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="your Slack email" className="w-52" />
-          <Button size="sm" onClick={sendCode} disabled={busy || !email.trim()}>Send code</Button>
-          {state.slackUserId && <button onClick={() => setMode('view')} className="text-[12px] text-neutral-400 hover:text-neutral-600">Cancel</button>}
-        </div>
-      ) : (
-        <button onClick={() => setMode('email')} className="mt-2 text-[12.5px] text-indigo-600 hover:text-indigo-700">Link my Slack</button>
       )}
     </div>
   );

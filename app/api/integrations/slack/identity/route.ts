@@ -29,10 +29,10 @@ export async function GET() {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const ac = admin();
-  const { data: prof } = await ac.from('profiles').select('slack_user_id, slack_verify').eq('id', user.id).maybeSingle();
-  const verify = prof?.slack_verify as { target_name?: string; expires_at?: string } | null;
+  const { data: row } = await ac.from('slack_identities').select('slack_user_id, verify').eq('user_id', user.id).maybeSingle();
+  const verify = row?.verify as { target_name?: string; expires_at?: string } | null;
   const pending = !!verify && !!verify.expires_at && new Date(verify.expires_at) > new Date();
-  return NextResponse.json({ slackUserId: prof?.slack_user_id ?? null, pending, pendingName: pending ? verify?.target_name ?? null : null });
+  return NextResponse.json({ slackUserId: row?.slack_user_id ?? null, pending, pendingName: pending ? verify?.target_name ?? null : null });
 }
 
 export async function POST(req: NextRequest) {
@@ -45,7 +45,7 @@ export async function POST(req: NextRequest) {
   const ac = admin();
 
   if (action === 'clear') {
-    await ac.from('profiles').update({ slack_user_id: null, slack_verify: null }).eq('id', user.id);
+    await ac.from('slack_identities').delete().eq('user_id', user.id);
     return NextResponse.json({ ok: true });
   }
 
@@ -62,7 +62,11 @@ export async function POST(req: NextRequest) {
 
     const code = String(randomInt(100000, 1000000));
     const expiresAt = new Date(Date.now() + CODE_TTL_MIN * 60_000).toISOString();
-    await ac.from('profiles').update({ slack_verify: { code, target_id: member.id, target_name: member.real_name || member.name || email, expires_at: expiresAt } }).eq('id', user.id);
+    await ac.from('slack_identities').upsert({
+      user_id: user.id,
+      verify: { code, target_id: member.id, target_name: member.real_name || member.name || email, expires_at: expiresAt },
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'user_id' });
 
     // DM the code from the bot (Clara by default). Open a DM channel first.
     const open = await nangoProxy({ method: 'POST', endpoint: '/conversations.open', providerConfigKey: conn.providerKey, connectionId: conn.connectionId, data: { users: member.id } });
@@ -75,11 +79,11 @@ export async function POST(req: NextRequest) {
 
   if (action === 'confirm') {
     const code = String(body.code ?? '').trim();
-    const { data: prof } = await ac.from('profiles').select('slack_verify').eq('id', user.id).maybeSingle();
-    const v = prof?.slack_verify as { code?: string; target_id?: string; expires_at?: string } | null;
+    const { data: row } = await ac.from('slack_identities').select('verify').eq('user_id', user.id).maybeSingle();
+    const v = row?.verify as { code?: string; target_id?: string; expires_at?: string } | null;
     if (!v || !v.expires_at || new Date(v.expires_at) < new Date()) return NextResponse.json({ error: 'The code expired — send a new one.' }, { status: 400 });
     if (code !== v.code) return NextResponse.json({ error: 'Incorrect code.' }, { status: 400 });
-    await ac.from('profiles').update({ slack_user_id: v.target_id, slack_verify: null }).eq('id', user.id);
+    await ac.from('slack_identities').upsert({ user_id: user.id, slack_user_id: v.target_id, verify: null, updated_at: new Date().toISOString() }, { onConflict: 'user_id' });
     return NextResponse.json({ ok: true });
   }
 
