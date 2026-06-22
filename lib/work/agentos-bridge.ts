@@ -116,7 +116,7 @@ async function buildWorkerRunContext(
     const { getUserEmailIdentities } = await import('@/lib/tools')
     const ids = await getUserEmailIdentities(adminClient, userId)
     const mine = [ids.login, ...ids.connected].filter(Boolean)
-    if (mine.length) parts.push(`[YOUR EMAIL ADDRESSES]\nThe user ("me"/"us") can be reached at: ${mine.join(', ')}. Use these when asked to email the user themselves. To email anyone, call compose_email — it shows the user an editable draft to send; you never send directly.`)
+    if (mine.length) parts.push(`[YOUR EMAIL ADDRESSES]\nThe user ("me"/"us") can be reached at: ${mine.join(', ')}. Use these when asked to email the user themselves. To email anyone, call compose_email — it shows the user an editable draft to send; you never send directly. The email is FROM YOU (the coworker, your @team.augmtd.ai address), NOT the user — write in your own voice and do NOT sign off with the user's name; a signature with your name/role/address is appended automatically, so end the body with no sign-off.`)
   } catch { /* non-fatal */ }
   if (agent?.memory_text?.trim()) {
     parts.push(`[MEMORY — things you've learned about this user from past conversations]\n${agent.memory_text.trim()}`)
