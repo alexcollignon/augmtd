@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { ChatBubbleLeftIcon, BoltIcon, ArrowRightIcon, CheckCircleIcon, ExclamationCircleIcon, ClockIcon } from '@heroicons/react/24/outline';
+import { ChatBubbleLeftIcon, BoltIcon, ArrowRightIcon, CheckCircleIcon, ExclamationCircleIcon, ClockIcon, ArrowPathIcon, TrashIcon } from '@heroicons/react/24/outline';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -68,6 +68,7 @@ interface WorkerActivityTabProps {
 export function WorkerActivityTab({ workerId, workerName, onOpenInChat }: WorkerActivityTabProps) {
   const [entries, setEntries] = useState<HeartbeatEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [clearing, setClearing] = useState(false);
 
   const load = useCallback(async () => {
     setIsLoading(true);
@@ -132,6 +133,16 @@ export function WorkerActivityTab({ workerId, workerName, onOpenInChat }: Worker
 
   useEffect(() => { load(); }, [load]);
 
+  async function handleClear() {
+    if (clearing) return;
+    if (!window.confirm(`Clear ${workerName}'s run history? Conversations are not affected.`)) return;
+    setClearing(true);
+    try {
+      await fetch(`/api/workers/${workerId}/activity`, { method: 'DELETE' });
+      await load();
+    } finally { setClearing(false); }
+  }
+
   if (isLoading) {
     return (
       <div className="flex-1 px-8 py-8 space-y-4 animate-pulse">
@@ -166,12 +177,23 @@ export function WorkerActivityTab({ workerId, workerName, onOpenInChat }: Worker
           <h2 className="text-[11px] font-semibold text-neutral-400 uppercase tracking-wider">
             Activity
           </h2>
-          <button
-            onClick={load}
-            className="text-[11.5px] text-neutral-400 hover:text-neutral-600 transition-colors"
-          >
-            Refresh
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={load}
+              title="Refresh"
+              className="p-1.5 rounded-lg text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100 transition-colors"
+            >
+              <ArrowPathIcon className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={handleClear}
+              disabled={clearing}
+              title="Clear activity"
+              className="p-1.5 rounded-lg text-neutral-400 hover:text-red-600 hover:bg-red-50 transition-colors disabled:opacity-40"
+            >
+              <TrashIcon className="w-3.5 h-3.5" />
+            </button>
+          </div>
         </div>
 
         {/* Timeline */}
