@@ -114,7 +114,7 @@ export function WorkerChatTab({ worker, initialThreads, initialMessages, initial
   // Always fetch fresh on mount — initialThreads from parent can be stale if threads
   // were created in a previous session or before the parent's fetch completed.
   useEffect(() => {
-    fetch(`/api/work/threads?agent_id=${worker.id}`)
+    fetch(`/api/work/threads?agent_id=${worker.id}&include_workflow=true`)
       .then(r => r.json())
       .then(data => {
         const serverThreads: WorkerThread[] = data.threads ?? [];

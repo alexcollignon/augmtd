@@ -9,6 +9,7 @@ import { executeStep } from './execute-step';
 import { nextRunFromTrigger } from './schedule';
 import { sendCoworkerEmail } from '@/lib/tools/coworker-email';
 import { buildArtifactFile, getFileExt, getMimeType } from '@/lib/artifacts/builders';
+import { indexArtifact } from '@/lib/knowledge/indexer';
 import { normalizeOutput } from './types';
 import { generateReportBack, fallbackReport, type ReportFacts } from './report-back';
 import { executeSlackPostMessage, sendSlackDM, isDmTarget } from '@/lib/tools/slack';
@@ -161,40 +162,38 @@ async function materialiseOutput(
     return { text: '(Workflow produced no output.)', title };
   }
 
-  if (out.home === 'document') {
-    const artifactType: DeliverableType = (out.artifactType as DeliverableType) ?? 'document';
+  const artifactType: DeliverableType = (out.artifactType as DeliverableType) ?? 'document';
+  // Email-as-attachment produces the same document artifact as the document home — so it's
+  // kept in Documents + Drive and attached to the email.
+  const wantsAttachmentDoc = out.home === 'email' && out.emailAsAttachment;
 
-    if (artifactType === 'email') {
-      const artifact: DocumentArtifact = {
-        id: randomUUID(),
-        title,
-        type: 'email',
-        generated_at: now.toISOString(),
-        content: { to: '', subject: title, body: finalText },
-      };
-      return { text: finalText, artifact, title };
-    }
-
-    if (artifactType === 'document') {
-      const doc = textToDocContent(title, finalText);
-      const artifactId = randomUUID();
-      const { storagePath } = await uploadArtifact(admin, userId, threadId, artifactId, 'document', doc);
-      const artifact: DocumentArtifact = {
-        id: artifactId,
-        title,
-        type: 'document',
-        generated_at: now.toISOString(),
-        storage_path: storagePath,
-        content: doc,
-      };
-      return { text: finalText, artifact, title };
-    }
-
-    // spreadsheet / presentation not yet supported → keep as text
-    return { text: finalText, title };
+  if (out.home === 'document' && artifactType === 'email') {
+    const artifact: DocumentArtifact = {
+      id: randomUUID(),
+      title,
+      type: 'email',
+      generated_at: now.toISOString(),
+      content: { to: '', subject: title, body: finalText },
+    };
+    return { text: finalText, artifact, title };
   }
 
-  // message / slack / email homes: just the text
+  if ((out.home === 'document' && artifactType === 'document') || wantsAttachmentDoc) {
+    const doc = textToDocContent(title, finalText);
+    const artifactId = randomUUID();
+    const { storagePath } = await uploadArtifact(admin, userId, threadId, artifactId, 'document', doc);
+    const artifact: DocumentArtifact = {
+      id: artifactId,
+      title,
+      type: 'document',
+      generated_at: now.toISOString(),
+      storage_path: storagePath,
+      content: doc,
+    };
+    return { text: finalText, artifact, title };
+  }
+
+  // message / slack / email-body homes (and unsupported artifact types): just the text
   return { text: finalText, title };
 }
 
@@ -428,10 +427,10 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
     const subject = materialised.title || workflow.name;
     let body = finalText;
     let attachments: { filename: string; content: Buffer }[] | undefined;
-    if (out.emailAsAttachment) {
-      // Same materialisation as the document home, then attach the file; the body is a short cover note.
+    if (out.emailAsAttachment && materialised.artifact) {
+      // The doc artifact was already materialised (and kept in Documents + Drive); attach it.
       const docType: DeliverableType = (out.artifactType as DeliverableType) ?? 'document';
-      const buffer = await buildArtifactFile(docType, textToDocContent(subject, finalText));
+      const buffer = await buildArtifactFile(docType, materialised.artifact.content as DocContent);
       const safeName = (subject.replace(/[^\w\s.-]/g, '').trim() || 'document').slice(0, 80);
       attachments = [{ filename: `${safeName}.${getFileExt(docType)}`, content: buffer }];
       body = await draftEmailCoverBody(admin, runnerId, out.emailBodyInstructions, subject, finalText);
@@ -484,6 +483,21 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
     await admin.from('work_threads')
       .update({ artifacts: [...existing, materialised.artifact], artifact: materialised.artifact })
       .eq('id', threadId);
+
+    // Index into the knowledge base so the generated doc is searchable in Drive
+    // (fire-and-forget; skip test runs). Drive's list already reads work_threads.artifacts.
+    if (!opts.isTest && materialised.artifact.id) {
+      const a = materialised.artifact;
+      indexArtifact({
+        artifactId: a.id!,
+        storagePath: a.storage_path ?? null,
+        filename: `${a.title}.${getFileExt(a.type)}`,
+        mimeType: getMimeType(a.type),
+        userId: runnerId,
+        threadId,
+        emailBody: a.type === 'email' ? (a.content as { body?: string })?.body : undefined,
+      }, admin).catch(() => {});
+    }
   }
 
   // ── Report-back notification (DM from the coworker) — skip for tests / silent ──

@@ -12,6 +12,10 @@ export async function GET(request: NextRequest) {
     }
 
     const agentId = request.nextUrl.searchParams.get('agent_id');
+    // A worker's run-output threads (report-backs) should appear as conversations in the
+    // worker chat tab — but NOT in general Chat history or the activity timeline (which
+    // shows runs separately). The chat tab opts in with include_workflow=true.
+    const includeWorkflow = request.nextUrl.searchParams.get('include_workflow') === 'true';
 
     let query = supabase
       .from('work_threads')
@@ -19,10 +23,12 @@ export async function GET(request: NextRequest) {
       .eq('user_id', user.id)
       .eq('status', 'active')
       .or('is_temporary.eq.false,is_temporary.is.null')
-      .is('workflow_id', null)
       .order('updated_at', { ascending: false })
       .limit(50);
 
+    if (!(agentId && includeWorkflow)) {
+      query = query.is('workflow_id', null);
+    }
     if (agentId) {
       query = query.eq('agent_id', agentId);
     }

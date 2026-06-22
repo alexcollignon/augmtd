@@ -156,7 +156,7 @@ export function WorkersPageClient({
     currentThreadRef.current = threadId ?? null;
     pushUrl({ worker: id, tab: null, thread: threadId ?? null });
     // Always re-fetch — local cache can be stale if threads were created in this session
-    const res = await fetch(`/api/work/threads?agent_id=${id}`);
+    const res = await fetch(`/api/work/threads?agent_id=${id}&include_workflow=true`);
     if (res.ok) {
       const data = await res.json();
       setThreadsByWorker(prev => ({ ...prev, [id]: data.threads ?? [] }));

@@ -78,6 +78,8 @@ export const updateTaskDefinition = {
       output_slack_channel: { type: 'string', description: 'Slack channel (#name or id) when output_destination=slack, or "@me" to DM the user privately. For a document, the channel to also drop a link in. Resolve names via slack_list_channels.' },
       output_report_mode: { type: 'string', enum: ['each_run', 'digest', 'silent'], description: 'How proactively you report back after a run. each_run = message the user after every run (default); digest = periodic summary; silent = no report.' },
       output_email_to: { type: 'string', description: 'When output_destination=email: comma-separated recipient address(es) to send the deliverable to (any address — no inbox connection needed). Leave/clear to email the user themselves.' },
+      output_email_as_attachment: { type: 'boolean', description: 'When output_destination=email: true to send the deliverable as a Word-document attachment (kept in Documents + Drive) instead of as the email body.' },
+      output_email_body_instructions: { type: 'string', description: 'When emailing as an attachment: optional guidance for how the coworker should write the short email body.' },
       output_slack_announcement: { type: 'string', description: 'For a document that also posts to Slack: an INSTRUCTION for how to announce it in the channel — the coworker writes the message from this + the document (e.g. "post a 2-line summary and tag <@Rene> to review"). Leave empty for a simple link.' },
       worker_instructions: { type: 'string', description: 'Task-specific tone or persona instructions that override the worker default for this task only' },
       skill_names: {
@@ -408,6 +410,8 @@ export async function executeUpdateTask(
     output_report_mode?: string;
     output_slack_announcement?: string;
     output_email_to?: string;
+    output_email_as_attachment?: boolean;
+    output_email_body_instructions?: string;
     output_notification?: string;  // legacy alias → report_mode
     worker_instructions?: string;
     skill_names?: string[] | string;
@@ -462,6 +466,8 @@ export async function executeUpdateTask(
     || fields.output_report_mode !== undefined
     || fields.output_slack_announcement !== undefined
     || fields.output_email_to !== undefined
+    || fields.output_email_as_attachment !== undefined
+    || fields.output_email_body_instructions !== undefined
     || fields.output_notification !== undefined;
 
   if (hasOutputChange) {
@@ -481,6 +487,8 @@ export async function executeUpdateTask(
       oc.email_to = fields.output_email_to.split(',').map(s => s.trim()).filter(Boolean);
       changes.push(oc.email_to.length ? `email recipients → ${oc.email_to.join(', ')}` : 'email recipients cleared (→ you)');
     }
+    if (fields.output_email_as_attachment !== undefined) { oc.email_as_attachment = fields.output_email_as_attachment; changes.push(`email delivery → ${fields.output_email_as_attachment ? 'attachment' : 'body'}`); }
+    if (fields.output_email_body_instructions !== undefined) { oc.email_body_instructions = fields.output_email_body_instructions; changes.push('email body instructions updated'); }
     if (fields.output_slack_announcement !== undefined) { oc.slack_announcement = fields.output_slack_announcement; changes.push('Slack announcement updated'); }
     // legacy alias
     if (fields.output_notification !== undefined) { oc.report_mode = (fields.output_notification === 'silent' ? 'silent' : 'each_run'); changes.push(`report → ${oc.report_mode}`); }
