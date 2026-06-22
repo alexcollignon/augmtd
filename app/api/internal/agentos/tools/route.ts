@@ -5,6 +5,7 @@ import {
   executeWebSearch, executeFetchUrl, executeDeepResearch,
   executeSlackListChannels, executeSlackPostMessage, executeSlackReadMessages, executeSlackListMembers,
   executeFindTeamWork, executeReadTeamWork,
+  executeComposeEmail,
 } from '@/lib/tools';
 import { buildKBContext } from '@/lib/knowledge/build-kb-context';
 import { generateThreadDocument } from '@/lib/work/generate-thread-document';
@@ -94,6 +95,16 @@ export async function POST(request: NextRequest) {
         if (!user_id) return NextResponse.json({ error: 'user_id required' }, { status: 400 });
         result = await executeReadTeamWork(config, user_id, ac);
         break;
+
+      case 'compose_email': {
+        if (!user_id) return NextResponse.json({ error: 'user_id required' }, { status: 400 });
+        const out = await executeComposeEmail(config, user_id, agent_id, ac);
+        // Embed the draft as a marker the bridge parses → email_draft event (mirrors [[artifact:…]]).
+        result = out.draft
+          ? `${out.result}\n[[email_draft:${Buffer.from(JSON.stringify(out.draft)).toString('base64')}]]`
+          : out.result;
+        break;
+      }
 
       // ── User-scoped data tools ──
       case 'get_emails':

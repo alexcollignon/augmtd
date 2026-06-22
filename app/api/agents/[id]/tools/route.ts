@@ -47,10 +47,10 @@ export async function GET(_req: NextRequest, { params }: Params) {
     tools.push({
       provider: 'email',
       name: 'Email',
-      description: `Draft and send email from ${coworkerEmailForRole(role)} (Reply-To you). Off by default — turn on to let this coworker email people.`,
+      description: `Draft and send email from ${coworkerEmailForRole(role)} (Reply-To you). The coworker always drafts for you to review and send — turn off to disable entirely.`,
       scope: 'user',
       connected: true,
-      enabled: settings['email']?.enabled ?? false,
+      enabled: settings['email']?.enabled ?? true,
       config: settings['email']?.config ?? {},
     });
 

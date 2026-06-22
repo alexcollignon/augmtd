@@ -74,7 +74,7 @@ export async function getUserEmailIdentities(admin: Admin, userId: string): Prom
 }
 
 export async function isEmailEnabledForAgent(admin: Admin, agentId: string | undefined): Promise<boolean> {
-  return isToolEnabledForAgent(admin, agentId, 'email', false); // opt-in: off until enabled in Tools tab
+  return isToolEnabledForAgent(admin, agentId, 'email', true); // on by default; can be turned off in the Tools tab
 }
 
 function clean(list: string[] | undefined): string[] {

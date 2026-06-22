@@ -100,4 +100,24 @@ def slack_post_message(run_context: RunContext, channel: str, text: str, thread_
     return _call("slack_post_message", run_context, args)
 
 
-INTEGRATION_TOOLS = [slack_list_channels, slack_post_message, slack_read_messages, slack_list_members]
+@tool
+def compose_email(run_context: RunContext, to: list, subject: str, body: str, cc: list = None) -> str:
+    """Draft an email for the user to review and SEND — you do NOT send it. It shows the
+    user an editable draft (recipients, subject, body) that they edit and click Send.
+    Never claim the email was sent. Use whenever the user asks you to email someone.
+    Recipients can be anyone; for "me"/"us" use the user's own address from the
+    [YOUR EMAIL ADDRESSES] context.
+
+    Args:
+        to: Recipient email address(es).
+        subject: Email subject.
+        body: Email body — plain prose, blank line between paragraphs; **bold** allowed.
+        cc: Optional cc address(es).
+    """
+    args = {"to": to or [], "subject": subject, "body": body}
+    if cc:
+        args["cc"] = cc
+    return _call("compose_email", run_context, args)
+
+
+INTEGRATION_TOOLS = [slack_list_channels, slack_post_message, slack_read_messages, slack_list_members, compose_email]

@@ -39,6 +39,7 @@ const TOOL_LABELS: Record<string, string> = {
   list_worker_documents: 'Listing documents',
   get_worker_document: 'Opening document',
   generate_document: 'Generating document',
+  compose_email: 'Drafting email',
 }
 const toolLabel = (name: string) => TOOL_LABELS[name] ?? name.replace(/_/g, ' ')
 
@@ -57,6 +58,14 @@ function parseArtifactMarker(result: unknown): { id: string; type: string; title
   const m = result.match(/\[\[artifact:([^|]+)\|([^|]+)\|([^\]]+)\]\]/)
   if (!m) return null
   return { id: m[1], type: m[2], title: m[3] }
+}
+
+// compose_email returns a [[email_draft:<base64 json>]] marker — decode it to the draft.
+function parseEmailDraftMarker(result: unknown): Record<string, unknown> | null {
+  if (typeof result !== 'string') return null
+  const m = result.match(/\[\[email_draft:([A-Za-z0-9+/=]+)\]\]/)
+  if (!m) return null
+  try { return JSON.parse(Buffer.from(m[1], 'base64').toString('utf8')) } catch { return null }
 }
 
 // ─── Per-user run context (Phase 3.5) ─────────────────────────────────────────
@@ -102,6 +111,13 @@ async function buildWorkerRunContext(
   if (integrationsBlock) {
     parts.push(integrationsBlock)
   }
+  // Email: the user's own addresses for "me"/"us" resolution in compose_email.
+  try {
+    const { getUserEmailIdentities } = await import('@/lib/tools')
+    const ids = await getUserEmailIdentities(adminClient, userId)
+    const mine = [ids.login, ...ids.connected].filter(Boolean)
+    if (mine.length) parts.push(`[YOUR EMAIL ADDRESSES]\nThe user ("me"/"us") can be reached at: ${mine.join(', ')}. Use these when asked to email the user themselves. To email anyone, call compose_email — it shows the user an editable draft to send; you never send directly.`)
+  } catch { /* non-fatal */ }
   if (agent?.memory_text?.trim()) {
     parts.push(`[MEMORY — things you've learned about this user from past conversations]\n${agent.memory_text.trim()}`)
   }
@@ -244,6 +260,7 @@ export async function streamWorkerViaAgentOS({
   let fullText = ''
   const toolCalls: Array<{ name: string; summary: string }> = []
   const artifactMeta: Record<string, { title: string; type: string }> = {}
+  const emailDrafts: Record<string, unknown>[] = []
 
   const readable = new ReadableStream({
     async start(controller) {
@@ -307,6 +324,8 @@ export async function streamWorkerViaAgentOS({
                 artifactMeta[art.id] = { title: art.title, type: art.type }
                 send({ type: 'artifact_ready', artifact: art })
               }
+              const draft = parseEmailDraftMarker(tool.result)
+              if (draft) { emailDrafts.push(draft); send({ type: 'email_draft', draft }) }
             } else if (kind === 'RunError') {
               send({ type: 'error', message: (evt.content as string) || 'Worker error' })
             }
@@ -332,6 +351,7 @@ export async function streamWorkerViaAgentOS({
               ...(Object.keys(artifactMeta).length > 0
                 ? { artifact_ids: Object.keys(artifactMeta), artifact_meta: artifactMeta }
                 : {}),
+              ...(emailDrafts.length > 0 ? { email_drafts: emailDrafts } : {}),
             },
           })
           await adminClient
