@@ -5,7 +5,7 @@
 
 import { Resend } from 'resend';
 import { randomUUID } from 'crypto';
-import { coworkerEmailForRole } from '@/lib/integrations/registry';
+import { coworkerEmailForRole, EMAIL_LOCAL_BY_ROLE } from '@/lib/integrations/registry';
 import { isToolEnabledForAgent } from '@/lib/integrations/connection';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -83,16 +83,32 @@ function clean(list: string[] | undefined): string[] {
   return [...new Set((list ?? []).map(s => String(s).trim().toLowerCase()).filter(e => EMAIL_RE.test(e)))].slice(0, MAX_RECIPIENTS);
 }
 
-// Light, personal-style HTML (markdown-ish → paragraphs); no big branded header.
-function personalEmailHtml(body: string): string {
-  const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+function escHtml(s: string): string { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+
+// Coworker signature: avatar + name + "{role} to {user}" + the coworker's address.
+function signatureHtml(opts: { role: string | null; coworkerName: string; fromEmail: string; userName: string }): string {
+  const local = EMAIL_LOCAL_BY_ROLE[opts.role ?? ''] || '';
+  const avatar = local ? `https://app.augmtd.ai/workers/${local}.png` : '';
+  const roleLabel = ROLE_LABELS[opts.role ?? ''] || 'Assistant';
+  const sub = opts.userName ? `${roleLabel} to ${escHtml(opts.userName)}` : roleLabel;
+  return `<table cellpadding="0" cellspacing="0" style="margin-top:28px;border-top:1px solid #ededed;padding-top:14px;"><tr>`
+    + (avatar ? `<td style="padding-right:12px;vertical-align:middle;"><img src="${avatar}" width="44" height="44" alt="${escHtml(opts.coworkerName)}" style="display:block;border-radius:10px;" /></td>` : '')
+    + `<td style="vertical-align:middle;">`
+    + `<div style="font-size:13px;font-weight:600;color:#111827;">${escHtml(opts.coworkerName)}</div>`
+    + `<div style="font-size:12px;color:#6b7280;">${sub}</div>`
+    + `<div style="font-size:12px;"><a href="mailto:${opts.fromEmail}" style="color:#4f46e5;text-decoration:none;">${opts.fromEmail}</a></div>`
+    + `</td></tr></table>`;
+}
+
+// Light, personal-style HTML (markdown-ish → paragraphs) + the coworker signature.
+function personalEmailHtml(body: string, sig: string): string {
   const blocks = body.split(/\n{2,}/).map(b => {
     const line = b.trim();
     if (!line) return '';
-    const inner = esc(line).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br/>');
+    const inner = escHtml(line).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br/>');
     return `<p style="margin:0 0 14px;color:#1f2937;font-size:14px;line-height:1.6;">${inner}</p>`;
   }).join('');
-  return `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;max-width:560px;">${blocks}<p style="margin:20px 0 0;color:#9ca3af;font-size:11px;">Sent via AUGMTD</p></div>`;
+  return `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">${blocks}${sig}<p style="margin:18px 0 0;color:#9ca3af;font-size:11px;">Sent via AUGMTD</p></div>`;
 }
 
 export async function sendCoworkerEmail(admin: Admin, userId: string, agentId: string | undefined, input: CoworkerEmailInput): Promise<{ ok: boolean; error?: string }> {
@@ -121,9 +137,11 @@ export async function sendCoworkerEmail(admin: Admin, userId: string, agentId: s
   const fromEmail = coworkerEmailForRole(role);
   const coworkerName = (agent?.name as string) || ROLE_LABELS[role ?? ''] || 'Your assistant';
   const { data: prof } = await admin.from('profiles').select('full_name').eq('id', userId).maybeSingle();
-  const first = (((prof as { full_name?: string } | null)?.full_name) ?? '').trim().split(/\s+/)[0];
+  const fullName = (((prof as { full_name?: string } | null)?.full_name) ?? '').trim();
+  const first = fullName.split(/\s+/)[0];
   const fromName = first ? `${coworkerName} · ${first}'s assistant` : coworkerName;
   const { login: replyTo } = await getUserEmailIdentities(admin, userId);
+  const sig = signatureHtml({ role, coworkerName, fromEmail, userName: fullName });
 
   const resend = new Resend(apiKey);
   const { error } = await resend.emails.send({
@@ -132,7 +150,7 @@ export async function sendCoworkerEmail(admin: Admin, userId: string, agentId: s
     ...(cc.length ? { cc } : {}),
     ...(replyTo ? { replyTo } : {}),
     subject,
-    html: personalEmailHtml(body),
+    html: personalEmailHtml(body, sig),
     text: body,
   });
 
