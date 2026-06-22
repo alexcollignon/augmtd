@@ -2539,25 +2539,46 @@ function OutputEditor({ output, onChange }: { output: OutputConfig; onChange: (o
         </select>
       </Field>
 
-      {home === 'email' && connections.length > 0 && (
-        <Field label="Send to">
-          <div className="space-y-1.5">
-            {connections.map(c => {
-              const checked = (output.email_recipient_ids ?? output.notification_email_ids ?? []).includes(c.id);
-              return (
-                <label key={c.id} className="flex items-center gap-2.5 cursor-pointer">
-                  <input type="checkbox" checked={checked} onChange={() => toggleEmailId(c.id)}
-                    className="w-3.5 h-3.5 rounded accent-indigo-600" />
-                  <span className="text-[13px] text-neutral-700 truncate">{c.email}</span>
-                  <span className={`text-[11px] px-1.5 py-0.5 rounded font-medium ${c.provider === 'gmail' ? 'bg-red-50 text-red-600' : 'bg-blue-50 text-blue-600'}`}>
-                    {c.provider === 'gmail' ? 'Gmail' : 'Outlook'}
-                  </span>
-                </label>
-              );
-            })}
-          </div>
+      {home === 'email' && (
+        <Field label="Send to" hint="The coworker emails these addresses (anyone — no inbox connection needed). Leave empty to email you.">
+          <EmailRecipientsField value={output.email_to ?? []} onChange={v => onChange({ ...output, email_to: v })} />
+          {connections.length > 0 && (
+            <div className="mt-2 space-y-1">
+              <p className="text-[11px] text-neutral-400">Or a connected mailbox:</p>
+              {connections.map(c => {
+                const checked = (output.email_recipient_ids ?? output.notification_email_ids ?? []).includes(c.id);
+                return (
+                  <label key={c.id} className="flex items-center gap-2.5 cursor-pointer">
+                    <input type="checkbox" checked={checked} onChange={() => toggleEmailId(c.id)}
+                      className="w-3.5 h-3.5 rounded accent-indigo-600" />
+                    <span className="text-[13px] text-neutral-700 truncate">{c.email}</span>
+                  </label>
+                );
+              })}
+            </div>
+          )}
         </Field>
       )}
     </>
+  );
+}
+
+function EmailRecipientsField({ value, onChange }: { value: string[]; onChange: (v: string[]) => void }) {
+  const [input, setInput] = useState('');
+  const add = (raw: string) => { const v = raw.trim().replace(/[,;]+$/, ''); if (v && !value.includes(v)) onChange([...value, v]); setInput(''); };
+  return (
+    <div className="flex flex-wrap items-center gap-1 rounded-lg border border-neutral-200 px-2 py-1.5 focus-within:border-indigo-300">
+      {value.map(addr => (
+        <span key={addr} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-neutral-100 text-[12px] text-neutral-700">
+          {addr}
+          <button onClick={() => onChange(value.filter(a => a !== addr))} className="text-neutral-400 hover:text-neutral-600">×</button>
+        </span>
+      ))}
+      <input value={input} onChange={e => setInput(e.target.value)}
+        onKeyDown={e => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); add(input); } }}
+        onBlur={() => add(input)}
+        placeholder={value.length ? '' : 'email@example.com'}
+        className="flex-1 min-w-[140px] bg-transparent text-[13px] text-neutral-800 placeholder:text-neutral-400 outline-none py-0.5" />
+    </div>
   );
 }
