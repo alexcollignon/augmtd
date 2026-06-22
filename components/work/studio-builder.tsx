@@ -2494,6 +2494,19 @@ function OutputEditor({ output, onChange }: { output: OutputConfig; onChange: (o
         <SlackChannelField label="Channel" value={output.slack_channel ?? ''} onChange={v => onChange({ ...output, slack_channel: v })} />
       )}
 
+      {(home === 'document' || home === 'email') && (
+        <Field label={home === 'email' ? 'Subject line' : 'Title template'}>
+          <input type="text" value={output.title_template ?? ''} onChange={e => onChange({ ...output, title_template: e.target.value })}
+            placeholder={home === 'email' ? 'AHK Briefing — {{week_of}}' : 'Weekly Briefing — {{date}}'}
+            className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px]" />
+          <p className="text-[11.5px] text-neutral-500 mt-1">
+            Use <code className="bg-neutral-100 px-1 rounded">{'{{date}}'}</code>,{' '}
+            <code className="bg-neutral-100 px-1 rounded">{'{{week_of}}'}</code>, or{' '}
+            <code className="bg-neutral-100 px-1 rounded">{'{{workflow}}'}</code>.
+          </p>
+        </Field>
+      )}
+
       {home === 'document' && (
         <>
           <Field label="Document type">
@@ -2502,16 +2515,6 @@ function OutputEditor({ output, onChange }: { output: OutputConfig; onChange: (o
               <option value="document">Word document</option>
               <option value="email">Email draft</option>
             </select>
-          </Field>
-          <Field label="Title template">
-            <input type="text" value={output.title_template ?? ''} onChange={e => onChange({ ...output, title_template: e.target.value })}
-              placeholder="Weekly Briefing — {{date}}"
-              className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px]" />
-            <p className="text-[11.5px] text-neutral-500 mt-1">
-              Use <code className="bg-neutral-100 px-1 rounded">{'{{date}}'}</code>,{' '}
-              <code className="bg-neutral-100 px-1 rounded">{'{{week_of}}'}</code>, or{' '}
-              <code className="bg-neutral-100 px-1 rounded">{'{{workflow}}'}</code>.
-            </p>
           </Field>
           <label className="flex items-center gap-2.5 cursor-pointer">
             <input type="checkbox" checked={linkSlack}
