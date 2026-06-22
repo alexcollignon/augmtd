@@ -1,5 +1,7 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
+import { getSessionUser } from '@/lib/supabase/get-session-user';
+import { getMyProfile } from '@/lib/workspace/features';
 import { InboxPageClient } from '@/app/inbox/inbox-page-client';
 import { guardFeaturePage } from '@/lib/workspace/guards';
 import { listGmailAllFolders } from '@/lib/google/gmail';
@@ -11,13 +13,13 @@ export const dynamic = 'force-dynamic';
 export default async function PreparedWorkPage() {
   await guardFeaturePage('email');
 
-  const supabase = await createClient();
-
-  const { data: { user } } = await supabase.auth.getUser();
+  // Cached (deduped with the layout + guard's reads in this render pass).
+  const user = await getSessionUser();
   if (!user) redirect('/login');
 
-  const [{ data: profile }, { data: connections }, { data: inboxItems }] = await Promise.all([
-    supabase.from('profiles').select('full_name').eq('id', user.id).single(),
+  const supabase = await createClient();
+  const [profile, { data: connections }, { data: inboxItems }] = await Promise.all([
+    getMyProfile(user.id),
     supabase.from('connections').select('id, provider, metadata').eq('user_id', user.id).in('provider', ['gmail', 'outlook']).eq('status', 'active'),
     supabase.from('inbox_items').select('*').eq('user_id', user.id).eq('status', 'pending').order('priority', { ascending: false }).order('created_at', { ascending: false }),
   ]);
@@ -61,7 +63,7 @@ export default async function PreparedWorkPage() {
   return (
     <InboxPageClient
       initialUser={user}
-      initialUserFullName={profile?.full_name}
+      initialUserFullName={profile?.full_name ?? undefined}
       initialHasConnection={hasConnection}
       initialInboxItems={inboxItems || []}
       initialFolderSections={folderSections}

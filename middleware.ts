@@ -1,6 +1,5 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { updateSession } from './lib/supabase/middleware';
-import { createServerClient } from '@supabase/ssr';
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -10,36 +9,9 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL('/login', request.url));
   }
 
-  // Update session cookies first
-  let supabaseResponse = await updateSession(request);
-
-  // Get user from the updated session
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return request.cookies.getAll();
-        },
-        setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value }) =>
-            request.cookies.set(name, value)
-          );
-          supabaseResponse = NextResponse.next({
-            request,
-          });
-          cookiesToSet.forEach(({ name, value, options }) =>
-            supabaseResponse.cookies.set(name, value, options)
-          );
-        },
-      },
-    }
-  );
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  // Refresh session cookies AND get the user in ONE auth round-trip — updateSession
+  // already validated the token, so we don't re-fetch it on a second client.
+  const { supabaseResponse, user } = await updateSession(request);
 
   // Protected routes - require authentication. /work, /join and /suspended
   // need auth but have their own server-side logic for orphan / workspace-state

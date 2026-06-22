@@ -373,7 +373,7 @@ export function WorkerTasksTab({ workerId, workerName, isActive, onOpenInChat }:
           {myTasks.length === 0 && buildingTasks.length === 0 ? (
             <EmptyTasks workerName={workerName} workerId={workerId} onNew={() => setShowNewTask(true)} />
           ) : (
-            <div className="rounded-xl border border-neutral-200 divide-y divide-neutral-100 mb-6">
+            <div className="rounded-xl border border-neutral-200 divide-y divide-neutral-100 mb-6 rise-in-stagger">
               {buildingTasks.map(b => (
                 <BuildingRow
                   key={b.tempId}
