@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
+import { toast } from 'sonner';
 import {
   BoltIcon,
   PlayIcon,
@@ -255,14 +256,12 @@ export function WorkerTasksTab({ workerId, workerName, isActive, onOpenInChat }:
     setRunningId(taskId);
     try {
       const res = await fetch(`/api/workflows/${taskId}/run`, { method: 'POST' });
+      // Don't open an empty thread — the coworker reports back when it's done (report-back
+      // posts to the thread + a "From your team" card). Just confirm it's running.
       if (res.ok) {
-        await new Promise(r => setTimeout(r, 1500));
-        const runsRes = await fetch(`/api/workflows/${taskId}/runs?limit=1`);
-        if (runsRes.ok) {
-          const { runs } = await runsRes.json();
-          const threadId = runs?.[0]?.thread_id;
-          if (threadId) onOpenInChat(threadId);
-        }
+        toast.success(`${workerName} is on it — they'll report back when it's done.`);
+      } else {
+        toast.error('Could not start the task. Try again.');
       }
     } finally {
       setRunningId(null);
