@@ -1839,6 +1839,8 @@ async function executeChatTool(
         ...(typeof input.output_slack_channel === 'string' ? { output_slack_channel: input.output_slack_channel } : {}),
         ...(typeof input.output_report_mode === 'string' ? { output_report_mode: input.output_report_mode } : {}),
         ...(typeof input.output_email_to === 'string' ? { output_email_to: input.output_email_to } : {}),
+        ...(typeof input.output_email_as_attachment === 'boolean' ? { output_email_as_attachment: input.output_email_as_attachment } : {}),
+        ...(typeof input.output_email_body_instructions === 'string' ? { output_email_body_instructions: input.output_email_body_instructions } : {}),
         ...(typeof input.output_slack_announcement === 'string' ? { output_slack_announcement: input.output_slack_announcement } : {}),
         ...(typeof input.output_notification === 'string' ? { output_notification: input.output_notification } : {}),
         ...(typeof input.worker_instructions === 'string' ? { worker_instructions: input.worker_instructions } : {}),
