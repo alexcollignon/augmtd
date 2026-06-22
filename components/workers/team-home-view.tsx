@@ -149,7 +149,7 @@ export function TeamHomeView({ userFirstName, onSelectWorker }: TeamHomeViewProp
         </div>
 
         {/* Briefing hero */}
-        <div className="mt-6 rounded-2xl bg-gradient-to-br from-neutral-50 to-neutral-50/40 border border-neutral-100 px-6 py-5">
+        <div className="mt-6 rounded-2xl bg-gradient-to-br from-neutral-50 to-neutral-50/40 border border-neutral-100 px-6 py-5 rise-in">
           {briefing ? (
             <p className="text-[15px] text-neutral-700 leading-relaxed">
               {stripMarkdown(briefing)}
@@ -173,7 +173,7 @@ export function TeamHomeView({ userFirstName, onSelectWorker }: TeamHomeViewProp
         {data?.messages?.length ? (
           <div className="mt-10">
             <SectionLabel>From your team</SectionLabel>
-            <div className="mt-3 space-y-2">
+            <div className="mt-3 space-y-2 rise-in-stagger">
               {data.messages.map(m => (
                 <button
                   key={m.id}
@@ -200,7 +200,7 @@ export function TeamHomeView({ userFirstName, onSelectWorker }: TeamHomeViewProp
         {data?.needsReview?.length ? (
           <div className="mt-10">
             <SectionLabel>Ready for you</SectionLabel>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mt-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mt-3 rise-in-stagger">
               {data.needsReview.map(r => {
                 const Icon = TYPE_ICON[r.type] ?? DocumentTextIcon;
                 return (
@@ -233,7 +233,7 @@ export function TeamHomeView({ userFirstName, onSelectWorker }: TeamHomeViewProp
           {data?.recentActivity?.length ? (
             <div>
               <SectionLabel>Recently</SectionLabel>
-              <div className="mt-2 space-y-0.5">
+              <div className="mt-2 space-y-0.5 rise-in-stagger">
                 {data.recentActivity.map(a => (
                   <button
                     key={a.runId}
@@ -263,7 +263,7 @@ export function TeamHomeView({ userFirstName, onSelectWorker }: TeamHomeViewProp
           {data?.upcoming?.length ? (
             <div>
               <SectionLabel>Coming up</SectionLabel>
-              <div className="mt-2 space-y-0.5">
+              <div className="mt-2 space-y-0.5 rise-in-stagger">
                 {data.upcoming.map((u, i) => (
                   <button
                     key={i}
@@ -292,7 +292,7 @@ export function TeamHomeView({ userFirstName, onSelectWorker }: TeamHomeViewProp
           <div className="mt-10">
             <SectionLabel>Your team</SectionLabel>
             <p className="text-[12.5px] text-neutral-400 mt-1 mb-3">Jump into a conversation with any coworker.</p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 rise-in-stagger">
               {data.workers.map(w => (
                 <button
                   key={w.id}

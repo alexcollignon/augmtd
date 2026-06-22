@@ -39,6 +39,29 @@ body {
   animation: prompt-in 220ms ease-out;
 }
 
+/* ── Canonical entrance: a gentle fade + rise. Use for content/lists/cards on load. ──
+   `rise-in` animates one block; `rise-in-stagger` staggers its direct children so a
+   list/grid cascades in. Honors prefers-reduced-motion. */
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.rise-in { animation: rise-in 360ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+.rise-in-stagger > * { animation: rise-in 360ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+.rise-in-stagger > *:nth-child(1)  { animation-delay: 0ms; }
+.rise-in-stagger > *:nth-child(2)  { animation-delay: 45ms; }
+.rise-in-stagger > *:nth-child(3)  { animation-delay: 90ms; }
+.rise-in-stagger > *:nth-child(4)  { animation-delay: 135ms; }
+.rise-in-stagger > *:nth-child(5)  { animation-delay: 180ms; }
+.rise-in-stagger > *:nth-child(6)  { animation-delay: 225ms; }
+.rise-in-stagger > *:nth-child(7)  { animation-delay: 270ms; }
+.rise-in-stagger > *:nth-child(8)  { animation-delay: 315ms; }
+.rise-in-stagger > *:nth-child(n+9){ animation-delay: 360ms; }
+
+@media (prefers-reduced-motion: reduce) {
+  .rise-in, .rise-in-stagger > *, .animate-prompt-in { animation: none; }
+}
+
 /* Week calendar — expands left from the sidebar edge */
 @keyframes expandWeekGrid {
   from { width: 0; }

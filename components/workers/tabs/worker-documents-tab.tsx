@@ -229,7 +229,7 @@ export function WorkerDocumentsTab({ workerId, workerName, onOpenInChat, onNewVe
             </div>
           </div>
 
-          <div className="space-y-3">
+          <div className="space-y-3 rise-in-stagger">
             {groups.map(group => {
               const key = group.workflowId ?? group.taskName;
               const isExpanded = expandedGroups.has(key);

@@ -209,7 +209,7 @@ export function WorkerActivityTab({ workerId, workerName, onOpenInChat }: Worker
           {/* Vertical line */}
           <div className="absolute left-[13px] top-0 bottom-0 w-px bg-neutral-100" />
 
-          <div className="space-y-1">
+          <div className="space-y-1 rise-in-stagger">
             {entries.map((entry, i) => (
               entry.kind === 'chat'
                 ? <ChatEntryRow key={`chat-${entry.threadId}-${i}`} entry={entry} onOpen={() => onOpenInChat(entry.threadId)} />
