@@ -87,12 +87,15 @@ const STATUS_COLORS: Record<string, string> = {
   suspended: 'bg-red-50 text-red-600',
   deleting:  'bg-neutral-200 text-neutral-600',
 };
+// Labels reflect current product naming. Underlying keys ('agents'/'studio') are kept
+// for back-compat (no migration): 'agents' gates the Coworkers section, 'studio' gates
+// the Tasks/automation builder that now lives inside it.
 const FEATURE_LABEL: Record<FeatureKey, string> = {
   email:    'Email',
   meetings: 'Meetings',
   drive:    'Drive',
-  agents:   'Agents',
-  studio:   'Studio',
+  agents:   'Coworkers',
+  studio:   'Tasks',
 };
 const ROLE_COLORS: Record<string, string> = {
   owner: 'text-indigo-700',
