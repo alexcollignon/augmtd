@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
-import { WrenchScrewdriverIcon } from '@heroicons/react/24/outline';
+import { WrenchScrewdriverIcon, EnvelopeIcon, Cog6ToothIcon } from '@heroicons/react/24/outline';
 import { Badge, Input, SegmentedControl } from '@/components/ui';
 import { cn } from '@/lib/cn';
 
@@ -75,6 +75,8 @@ const LOGOS: Record<string, string> = {
 export function WorkerToolsTab({ workerId, workerName }: { workerId: string; workerName: string }) {
   const [tools, setTools] = useState<ToolSetting[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const toggleExpanded = (p: string) => setExpanded(s => { const n = new Set(s); if (n.has(p)) n.delete(p); else n.add(p); return n; });
 
   useEffect(() => {
     fetch(`/api/agents/${workerId}/tools`)
@@ -124,15 +126,24 @@ export function WorkerToolsTab({ workerId, workerName }: { workerId: string; wor
           <div className="space-y-3">{[1, 2].map(i => <div key={i} className="h-16 rounded-xl bg-neutral-100 animate-pulse" />)}</div>
         ) : (
           <div className="space-y-3">
-            {tools.map(t => (
+            {tools.map(t => {
+              // Extra per-tool settings tuck behind a gear (Slack default target for now).
+              const hasSettings = t.provider === 'slack' && t.connected && t.enabled;
+              const open = expanded.has(t.provider);
+              return (
               <div key={t.provider} className="rounded-xl border border-neutral-200 bg-white px-4 py-3.5">
                 <div className="flex items-start gap-3">
-                  {LOGOS[t.provider] && (
-                    <div className="flex-shrink-0 w-9 h-9 rounded-lg border border-neutral-200 bg-white flex items-center justify-center overflow-hidden mt-0.5">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                  {/* Logo block — always rendered so every card is consistent */}
+                  <div className="flex-shrink-0 w-9 h-9 rounded-lg border border-neutral-200 bg-white flex items-center justify-center overflow-hidden mt-0.5">
+                    {LOGOS[t.provider] ? (
+                      // eslint-disable-next-line @next/next/no-img-element
                       <img src={LOGOS[t.provider]} alt="" className="w-5 h-5 object-contain" onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
-                    </div>
-                  )}
+                    ) : t.provider === 'email' ? (
+                      <EnvelopeIcon className="w-[18px] h-[18px] text-indigo-500" />
+                    ) : (
+                      <WrenchScrewdriverIcon className="w-[18px] h-[18px] text-neutral-400" />
+                    )}
+                  </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <h3 className="text-[13.5px] font-semibold text-neutral-800">{t.name}</h3>
@@ -140,7 +151,13 @@ export function WorkerToolsTab({ workerId, workerName }: { workerId: string; wor
                     </div>
                     <p className="text-[12px] text-neutral-500 mt-0.5">{t.description}</p>
                   </div>
-                  <div className="flex-shrink-0 pt-1">
+                  <div className="flex-shrink-0 flex items-center gap-2.5 pt-0.5">
+                    {hasSettings && (
+                      <button onClick={() => toggleExpanded(t.provider)} title="Settings"
+                        className="p-1 rounded-lg text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100 transition-colors">
+                        <Cog6ToothIcon className={cn('w-4 h-4 transition-transform duration-300 ease-out', open && 'rotate-90 text-neutral-700')} />
+                      </button>
+                    )}
                     {t.connected ? (
                       <button
                         role="switch"
@@ -156,12 +173,17 @@ export function WorkerToolsTab({ workerId, workerName }: { workerId: string; wor
                   </div>
                 </div>
 
-                {/* Per-tool config: Slack default target (only when connected + enabled) */}
-                {t.provider === 'slack' && t.connected && t.enabled && (
-                  <SlackTargetEditor value={t.config.default_channel ?? ''} workerName={workerName} onSave={setSlackTarget} />
+                {/* Per-tool config behind the gear — same animated disclosure as Connections */}
+                {hasSettings && (
+                  <div className={cn('grid transition-[grid-template-rows] duration-300 ease-out', open ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]')}>
+                    <div className="overflow-hidden">
+                      <SlackTargetEditor value={t.config.default_channel ?? ''} workerName={workerName} onSave={setSlackTarget} />
+                    </div>
+                  </div>
                 )}
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
