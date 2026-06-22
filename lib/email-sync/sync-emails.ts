@@ -628,12 +628,16 @@ export async function syncEmailsForConnection(
         console.log(`\n--- Processing email: ${parsed.subject}`);
         console.log(`    From: ${parsed.from_address}`);
 
-        // Check if email already exists (check ALL emails, including sent ones for context)
+        // Check if email already exists FOR THIS USER. Must scope by user_id — message_id is
+        // globally unique per email, so without this filter a copy synced by ANOTHER platform
+        // user (both of you received it) matches here, and we skip storing this user's own
+        // copy. That permanently drops shared emails from whichever account syncs them second.
         const { data: existingEmail } = await adminSupabase
           .from('emails')
           .select('*')
+          .eq('user_id', connection.user_id)
           .eq('message_id', parsed.message_id)
-          .single();
+          .maybeSingle();
 
         if (existingEmail) {
           // Email row exists — but check if an inbox_item was ever created for this thread.
@@ -758,14 +762,16 @@ export async function syncEmailsForConnection(
           .single();
 
         if (emailError) {
-          // 23505 = unique_violation on message_id — parallel sync race condition.
-          // The other sync won the insert; look up the existing row and recover normally.
+          // 23505 = unique_violation on (user_id, message_id) — a parallel sync of THIS user
+          // won the insert. Scope the recovery lookup by user_id too, so we recover our own
+          // row, never another user's copy of the same message.
           if ((emailError as any).code === '23505') {
             const { data: racedEmail } = await adminSupabase
               .from('emails')
               .select('*')
+              .eq('user_id', connection.user_id)
               .eq('message_id', parsed.message_id)
-              .single();
+              .maybeSingle();
             if (racedEmail) {
               console.log(`    ⚡ Race condition — row inserted by parallel sync, recovering`);
               // Reuse the existing-email recovery path by falling through with racedEmail
