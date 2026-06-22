@@ -66,3 +66,48 @@ export async function GET(
 
   return NextResponse.json({ documents });
 }
+
+// DELETE /api/workers/[id]/documents — body { items: [{ artifactId, threadId }] }.
+// Removes each artifact from its thread AND its Drive/KB entry (knowledge_files +
+// knowledge_chunks, keyed by provider_file_id = artifactId).
+export async function DELETE(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  await params;
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const body = await request.json().catch(() => ({}));
+  const items: { artifactId: string; threadId: string }[] = Array.isArray(body.items) ? body.items : [];
+  if (items.length === 0) return NextResponse.json({ error: 'No items' }, { status: 400 });
+
+  const admin = createAdmin(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { auth: { autoRefreshToken: false, persistSession: false } },
+  );
+
+  const artifactIds = [...new Set(items.map(i => i.artifactId))];
+
+  // Remove the artifacts from each owning thread's artifacts array.
+  const byThread = new Map<string, Set<string>>();
+  for (const it of items) {
+    if (!byThread.has(it.threadId)) byThread.set(it.threadId, new Set());
+    byThread.get(it.threadId)!.add(it.artifactId);
+  }
+  for (const [threadId, idSet] of byThread) {
+    const { data: t } = await admin.from('work_threads').select('artifacts').eq('id', threadId).eq('user_id', user.id).maybeSingle();
+    if (!t || !Array.isArray(t.artifacts)) continue;
+    const remaining = (t.artifacts as { id: string }[]).filter(a => !idSet.has(a.id));
+    await admin.from('work_threads').update({ artifacts: remaining }).eq('id', threadId).eq('user_id', user.id);
+  }
+
+  // Remove from Drive / knowledge base.
+  const { data: kfs } = await admin.from('knowledge_files').select('id').eq('user_id', user.id).in('provider_file_id', artifactIds);
+  const fileIds = (kfs ?? []).map((f: { id: string }) => f.id);
+  if (fileIds.length) {
+    await admin.from('knowledge_chunks').delete().in('file_id', fileIds);
+    await admin.from('knowledge_files').delete().in('id', fileIds);
+  }
+
+  return NextResponse.json({ deleted: artifactIds.length });
+}

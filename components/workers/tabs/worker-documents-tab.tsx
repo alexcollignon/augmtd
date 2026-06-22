@@ -6,6 +6,8 @@ import {
   ArrowDownTrayIcon,
   ChevronDownIcon,
   ChevronRightIcon,
+  ArrowPathIcon,
+  TrashIcon,
 } from '@heroicons/react/24/outline';
 import { ArtifactPanel } from '@/components/workers/artifact-panel';
 
@@ -96,6 +98,31 @@ export function WorkerDocumentsTab({ workerId, workerName, onOpenInChat, onNewVe
 
   useEffect(() => { load(); }, [load]);
 
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [deleting, setDeleting] = useState(false);
+  const allDocs = groups.flatMap(g => g.versions);
+
+  function toggleSelect(id: string) {
+    setSelected(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  }
+  function toggleSelectAll() {
+    setSelected(prev => prev.size === allDocs.length ? new Set() : new Set(allDocs.map(d => d.artifactId)));
+  }
+  async function handleDeleteSelected() {
+    if (deleting || selected.size === 0) return;
+    const n = selected.size;
+    if (!window.confirm(`Delete ${n} document${n > 1 ? 's' : ''}? This also removes ${n > 1 ? 'them' : 'it'} from Drive and can't be undone.`)) return;
+    setDeleting(true);
+    try {
+      const items = allDocs.filter(d => selected.has(d.artifactId)).map(d => ({ artifactId: d.artifactId, threadId: d.threadId }));
+      await fetch(`/api/workers/${workerId}/documents`, {
+        method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items }),
+      });
+      setSelected(new Set());
+      await load();
+    } finally { setDeleting(false); }
+  }
+
   function toggleGroup(key: string) {
     setExpandedGroups(prev => {
       const next = new Set(prev);
@@ -157,12 +184,34 @@ export function WorkerDocumentsTab({ workerId, workerName, onOpenInChat, onNewVe
                 All outputs produced by {workerName}&apos;s tasks
               </p>
             </div>
-            <button
-              onClick={load}
-              className="text-[11.5px] text-neutral-400 hover:text-neutral-600 transition-colors"
-            >
-              Refresh
-            </button>
+            <div className="flex items-center gap-1">
+              <label className="flex items-center gap-1.5 text-[11.5px] text-neutral-400 mr-1 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={allDocs.length > 0 && selected.size === allDocs.length}
+                  onChange={toggleSelectAll}
+                  className="w-3.5 h-3.5 rounded accent-indigo-600"
+                />
+                Select all
+              </label>
+              {selected.size > 0 && (
+                <button
+                  onClick={handleDeleteSelected}
+                  disabled={deleting}
+                  title="Delete selected (also removes from Drive)"
+                  className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11.5px] text-red-600 hover:bg-red-50 transition-colors disabled:opacity-40"
+                >
+                  <TrashIcon className="w-3.5 h-3.5" /> Delete ({selected.size})
+                </button>
+              )}
+              <button
+                onClick={load}
+                title="Refresh"
+                className="p-1.5 rounded-lg text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100 transition-colors"
+              >
+                <ArrowPathIcon className="w-3.5 h-3.5" />
+              </button>
+            </div>
           </div>
 
           <div className="space-y-3">
@@ -179,6 +228,13 @@ export function WorkerDocumentsTab({ workerId, workerName, onOpenInChat, onNewVe
                     className="flex items-center gap-3 px-4 py-3.5 hover:bg-neutral-50 transition-colors group cursor-pointer"
                     onClick={() => setOpenArtifact({ artifactId: latest.artifactId, threadId: latest.threadId })}
                   >
+                    <input
+                      type="checkbox"
+                      checked={selected.has(latest.artifactId)}
+                      onClick={e => e.stopPropagation()}
+                      onChange={() => toggleSelect(latest.artifactId)}
+                      className="w-3.5 h-3.5 rounded accent-indigo-600 flex-shrink-0"
+                    />
                     <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center flex-shrink-0">
                       <DocumentTextIcon className="w-4 h-4 text-indigo-500" />
                     </div>
@@ -230,7 +286,14 @@ export function WorkerDocumentsTab({ workerId, workerName, onOpenInChat, onNewVe
                           className={`flex items-center gap-3 px-4 py-2.5 hover:bg-neutral-100/60 transition-colors group cursor-pointer ${idx < olderVersions.length - 1 ? 'border-b border-neutral-100' : ''}`}
                           onClick={() => setOpenArtifact({ artifactId: doc.artifactId, threadId: doc.threadId })}
                         >
-                          <div className="w-6 h-6 rounded-md bg-neutral-100 flex items-center justify-center flex-shrink-0 ml-1">
+                          <input
+                            type="checkbox"
+                            checked={selected.has(doc.artifactId)}
+                            onClick={e => e.stopPropagation()}
+                            onChange={() => toggleSelect(doc.artifactId)}
+                            className="w-3.5 h-3.5 rounded accent-indigo-600 flex-shrink-0 ml-1"
+                          />
+                          <div className="w-6 h-6 rounded-md bg-neutral-100 flex items-center justify-center flex-shrink-0">
                             <DocumentTextIcon className="w-3 h-3 text-neutral-400" />
                           </div>
                           <div className="min-w-0 flex-1">
