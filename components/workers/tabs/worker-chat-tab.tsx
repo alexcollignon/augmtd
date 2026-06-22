@@ -290,7 +290,7 @@ export function WorkerChatTab({ worker, initialThreads, initialMessages, initial
 
       {/* Chat area */}
       <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
-        {showHome ? (
+        {showHome || !activeThread ? (
           <WorkerHomeView
             worker={worker}
             onSend={(text, briefing, mentions) => { handleStarterClick(text, briefing, mentions); }}
@@ -300,7 +300,7 @@ export function WorkerChatTab({ worker, initialThreads, initialMessages, initial
             sidebarOpen={sidebarOpen}
             onToggleSidebar={() => setSidebarOpen(v => !v)}
           />
-        ) : activeThread ? (
+        ) : (
           <ActiveWorkerChat
             key={activeThread.id}
             thread={activeThread}
@@ -318,7 +318,7 @@ export function WorkerChatTab({ worker, initialThreads, initialMessages, initial
             onGoHome={() => setShowHome(true)}
             threadCache={threadCacheRef}
           />
-        ) : null}
+        )}
       </div>
     </div>
   );
