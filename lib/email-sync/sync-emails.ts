@@ -423,6 +423,11 @@ export async function syncEmailsForConnection(
     const maxEmails = options.maxEmails || connection.metadata.max_emails_per_sync || 50;
     const syncWindowDays = options.syncWindowDays || connection.metadata.sync_window_days || 7;
 
+    // Stamp last_sync to BEFORE the fetch (not after slow AI processing) — otherwise mail
+    // that arrives during this run's processing window is timestamped < last_sync and is
+    // missed by the next run. The provider fetch already subtracts a 3-min overlap buffer.
+    const syncStartedAt = new Date().toISOString();
+
     let messages: any[];
     if (options.preloadedMessages) {
       messages = options.preloadedMessages;
@@ -1532,7 +1537,7 @@ export async function syncEmailsForConnection(
       .from('connections')
       .update({
         sync_status: 'completed',
-        last_sync: new Date().toISOString()
+        last_sync: syncStartedAt
       })
       .eq('id', connection.id);
 
