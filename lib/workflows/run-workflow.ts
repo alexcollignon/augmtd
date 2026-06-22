@@ -13,7 +13,7 @@ import { normalizeOutput } from './types';
 import { generateReportBack, fallbackReport, type ReportFacts } from './report-back';
 import { executeSlackPostMessage, sendSlackDM, isDmTarget } from '@/lib/tools/slack';
 import { composeSlackMessage } from './slack-message';
-import { getAIClient } from '@/lib/ai/factory';
+import { getAIClient, aiCreate } from '@/lib/ai/factory';
 import type {
   Workflow, WorkflowRun, StepOutput, TriggerSource, OutputConfig, NormalizedOutput, OutputHome,
 } from './types';
@@ -43,6 +43,30 @@ function renderTitle(template: string | undefined, workflowName: string, now: Da
     .replace(/\{\{\s*datetime\s*\}\}/gi, now.toISOString().slice(0, 16).replace('T', ' '))
     .replace(/\{\{\s*week_of\s*\}\}/gi, `week of ${now.toISOString().slice(0, 10)}`)
     .replace(/\{\{\s*workflow\s*\}\}/gi, workflowName);
+}
+
+// Short email body to accompany an attachment. Follows the optional instructions;
+// falls back to a plain cover line. The coworker signature is appended by the sender.
+async function draftEmailCoverBody(
+  admin: SupabaseClient, userId: string, instructions: string | undefined, title: string, content: string,
+): Promise<string> {
+  const fallback = `Hi,\n\nPlease find attached: ${title}.`;
+  if (!instructions?.trim()) return fallback;
+  try {
+    const { client, model } = await getAIClient(userId, 'summarization', admin);
+    const completion = await aiCreate(client, {
+      model,
+      messages: [
+        { role: 'system', content: 'You write a short, warm email body (2–4 sentences) to accompany an attached document. Output ONLY the body text — no subject line and no sign-off (a signature is added automatically).' },
+        { role: 'user', content: `Attached document: "${title}".\n\nHow to write the body: ${instructions}\n\nDocument content (for context):\n${content.slice(0, 2000)}` },
+      ],
+      max_tokens: 400,
+      temperature: 0.5,
+    });
+    return completion.choices?.[0]?.message?.content?.trim() || fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 // ── Markdown → DocContent (lightweight, for artifact output) ─────────────────
@@ -402,7 +426,17 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
       if (u?.user?.email) to.push(u.user.email);
     }
     const subject = materialised.title || workflow.name;
-    const r = await sendCoworkerEmail(admin, runnerId, agentId, { to, cc: out.emailCc, subject, body: finalText });
+    let body = finalText;
+    let attachments: { filename: string; content: Buffer }[] | undefined;
+    if (out.emailAsAttachment) {
+      // Same materialisation as the document home, then attach the file; the body is a short cover note.
+      const docType: DeliverableType = (out.artifactType as DeliverableType) ?? 'document';
+      const buffer = await buildArtifactFile(docType, textToDocContent(subject, finalText));
+      const safeName = (subject.replace(/[^\w\s.-]/g, '').trim() || 'document').slice(0, 80);
+      attachments = [{ filename: `${safeName}.${getFileExt(docType)}`, content: buffer }];
+      body = await draftEmailCoverBody(admin, runnerId, out.emailBodyInstructions, subject, finalText);
+    }
+    const r = await sendCoworkerEmail(admin, runnerId, agentId, { to, cc: out.emailCc, subject, body, attachments });
     if (home === 'email') {
       channelLabel = to.length ? to.join(', ') : 'you';
       if (!r.ok) problem = r.error ?? 'the email failed to send';

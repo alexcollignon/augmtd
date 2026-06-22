@@ -87,6 +87,8 @@ export interface OutputConfig {
   email_recipient_ids?: string[];     // home=email, or document email link-out (connected mailboxes)
   email_to?: string[];                // home=email: free-text recipient addresses (any address)
   email_cc?: string[];                // home=email: free-text cc addresses
+  email_as_attachment?: boolean;      // home=email: send the deliverable as a document attachment (artifact_type) instead of as the body
+  email_body_instructions?: string;   // home=email + attachment: optional guidance for the coworker on how to draft the short email body
   link_out?: { slack?: boolean; email?: boolean };  // DOCUMENT-only pointer fan-out (a link, never a copy)
   slack_announcement?: string;        // template for the document → Slack link-out post ({{title}}, {{link}}, {{date}}; supports <@Name>)
   report_mode?: ReportMode;           // coworker report-back cadence (default each_run)
@@ -105,6 +107,8 @@ export interface NormalizedOutput {
   emailRecipientIds: string[];
   emailTo: string[];
   emailCc: string[];
+  emailAsAttachment: boolean;
+  emailBodyInstructions?: string;
   linkOut: { slack: boolean; email: boolean };
   slackAnnouncement?: string;
   reportMode: ReportMode;
@@ -137,6 +141,8 @@ export function normalizeOutput(c: OutputConfig | null | undefined): NormalizedO
     slackChannel: oc.slack_channel,
     emailRecipientIds: oc.email_recipient_ids ?? oc.notification_email_ids ?? [],
     emailTo: oc.email_to ?? [],
+    emailAsAttachment: oc.email_as_attachment ?? false,
+    emailBodyInstructions: oc.email_body_instructions,
     emailCc: oc.email_cc ?? [],
     linkOut,
     slackAnnouncement: oc.slack_announcement,
