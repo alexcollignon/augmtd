@@ -376,7 +376,7 @@ async function backfillThreadHistory(params: {
     if (rowsToInsert.length > 0) {
       const { error } = await adminSupabase
         .from('emails')
-        .upsert(rowsToInsert, { onConflict: 'message_id', ignoreDuplicates: true });
+        .upsert(rowsToInsert, { onConflict: 'user_id,message_id', ignoreDuplicates: true });
       if (error) {
         console.warn(`[ThreadBackfill] Insert error for thread ${threadId}:`, error.message);
       } else {
@@ -1527,7 +1527,7 @@ export async function syncEmailsForConnection(
 
         const { error: sentErr } = await adminSupabase
           .from('emails')
-          .upsert(sentRows, { onConflict: 'message_id', ignoreDuplicates: false });
+          .upsert(sentRows, { onConflict: 'user_id,message_id', ignoreDuplicates: false });
         if (sentErr) {
           console.warn(`[SentSync] Upsert error:`, sentErr.message);
         } else {
