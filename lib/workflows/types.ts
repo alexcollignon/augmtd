@@ -84,7 +84,9 @@ export interface OutputConfig {
   artifact_type?: ArtifactType;
   title_template?: string;            // e.g. "AHK Briefing — {{date}}"
   slack_channel?: string;             // home=slack, or document link-out target (id or #name)
-  email_recipient_ids?: string[];     // home=email, or document email link-out
+  email_recipient_ids?: string[];     // home=email, or document email link-out (connected mailboxes)
+  email_to?: string[];                // home=email: free-text recipient addresses (any address)
+  email_cc?: string[];                // home=email: free-text cc addresses
   link_out?: { slack?: boolean; email?: boolean };  // DOCUMENT-only pointer fan-out (a link, never a copy)
   slack_announcement?: string;        // template for the document → Slack link-out post ({{title}}, {{link}}, {{date}}; supports <@Name>)
   report_mode?: ReportMode;           // coworker report-back cadence (default each_run)
@@ -101,6 +103,8 @@ export interface NormalizedOutput {
   titleTemplate?: string;
   slackChannel?: string;
   emailRecipientIds: string[];
+  emailTo: string[];
+  emailCc: string[];
   linkOut: { slack: boolean; email: boolean };
   slackAnnouncement?: string;
   reportMode: ReportMode;
@@ -132,6 +136,8 @@ export function normalizeOutput(c: OutputConfig | null | undefined): NormalizedO
     titleTemplate: oc.title_template,
     slackChannel: oc.slack_channel,
     emailRecipientIds: oc.email_recipient_ids ?? oc.notification_email_ids ?? [],
+    emailTo: oc.email_to ?? [],
+    emailCc: oc.email_cc ?? [],
     linkOut,
     slackAnnouncement: oc.slack_announcement,
     reportMode,

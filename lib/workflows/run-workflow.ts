@@ -7,7 +7,7 @@ import { createClient as createAdminClient, SupabaseClient } from '@supabase/sup
 import { randomUUID } from 'crypto';
 import { executeStep } from './execute-step';
 import { nextRunFromTrigger } from './schedule';
-import { sendWorkflowEmail } from './email-notification';
+import { sendCoworkerEmail } from '@/lib/tools/coworker-email';
 import { buildArtifactFile, getFileExt, getMimeType } from '@/lib/artifacts/builders';
 import { normalizeOutput } from './types';
 import { generateReportBack, fallbackReport, type ReportFacts } from './report-back';
@@ -390,15 +390,25 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
 
   // Email: home=email, or a document email link-out (owner runs only)
   if (home === 'email' || (home === 'document' && out.linkOut.email)) {
-    await sendWorkflowEmail({
-      userId: runnerId,
-      workflowName: workflow.name,
-      messageContent: finalText,
-      artifact: materialised.artifact,
-      notificationEmailIds: out.emailRecipientIds,
-    });
-    if (home === 'email') channelLabel = out.emailRecipientIds.length ? `${out.emailRecipientIds.length} recipient${out.emailRecipientIds.length > 1 ? 's' : ''}` : 'the team';
-    else alsoNote = [alsoNote, 'emailed a copy'].filter(Boolean).join(' and ');
+    // Sends AS the coworker (Resend, Reply-To the user). Recipients: free-text + any
+    // connected-mailbox addresses; default to the user's own address if none set.
+    const to = [...out.emailTo];
+    if (out.emailRecipientIds.length) {
+      const { data: conns } = await admin.from('connections').select('metadata').eq('user_id', runnerId).in('id', out.emailRecipientIds);
+      to.push(...(((conns ?? []) as Array<{ metadata: { email?: string } | null }>).map(c => c.metadata?.email).filter(Boolean) as string[]));
+    }
+    if (to.length === 0) {
+      const { data: u } = await admin.auth.admin.getUserById(runnerId);
+      if (u?.user?.email) to.push(u.user.email);
+    }
+    const subject = materialised.title || workflow.name;
+    const r = await sendCoworkerEmail(admin, runnerId, agentId, { to, cc: out.emailCc, subject, body: finalText });
+    if (home === 'email') {
+      channelLabel = to.length ? to.join(', ') : 'you';
+      if (!r.ok) problem = r.error ?? 'the email failed to send';
+    } else if (r.ok) {
+      alsoNote = [alsoNote, 'emailed a copy'].filter(Boolean).join(' and ');
+    }
   }
 
   // ── In-thread message: message home = the deliverable; else = the report-back ──
