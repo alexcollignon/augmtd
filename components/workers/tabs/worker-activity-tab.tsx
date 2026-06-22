@@ -69,6 +69,7 @@ export function WorkerActivityTab({ workerId, workerName, onOpenInChat }: Worker
   const [entries, setEntries] = useState<HeartbeatEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [clearing, setClearing] = useState(false);
+  const [confirmingClear, setConfirmingClear] = useState(false);
 
   const load = useCallback(async () => {
     setIsLoading(true);
@@ -135,8 +136,8 @@ export function WorkerActivityTab({ workerId, workerName, onOpenInChat }: Worker
 
   async function handleClear() {
     if (clearing) return;
-    if (!window.confirm(`Clear ${workerName}'s run history? Conversations are not affected.`)) return;
     setClearing(true);
+    setConfirmingClear(false);
     try {
       await fetch(`/api/workers/${workerId}/activity`, { method: 'DELETE' });
       await load();
@@ -177,23 +178,30 @@ export function WorkerActivityTab({ workerId, workerName, onOpenInChat }: Worker
           <h2 className="text-[11px] font-semibold text-neutral-400 uppercase tracking-wider">
             Activity
           </h2>
-          <div className="flex items-center gap-1">
-            <button
-              onClick={load}
-              title="Refresh"
-              className="p-1.5 rounded-lg text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100 transition-colors"
-            >
-              <ArrowPathIcon className="w-3.5 h-3.5" />
-            </button>
-            <button
-              onClick={handleClear}
-              disabled={clearing}
-              title="Clear activity"
-              className="p-1.5 rounded-lg text-neutral-400 hover:text-red-600 hover:bg-red-50 transition-colors disabled:opacity-40"
-            >
-              <TrashIcon className="w-3.5 h-3.5" />
-            </button>
-          </div>
+          {confirmingClear ? (
+            <div className="flex items-center gap-1.5">
+              <span className="text-[11.5px] text-neutral-500">Clear run history?</span>
+              <button onClick={handleClear} disabled={clearing}
+                className="px-2 py-1 rounded-lg text-[11.5px] font-medium text-red-600 hover:bg-red-50 transition-colors disabled:opacity-40">
+                {clearing ? 'Clearing…' : 'Clear'}
+              </button>
+              <button onClick={() => setConfirmingClear(false)}
+                className="px-2 py-1 rounded-lg text-[11.5px] text-neutral-500 hover:bg-neutral-100 transition-colors">
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1">
+              <button onClick={load} title="Refresh"
+                className="p-1.5 rounded-lg text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100 transition-colors">
+                <ArrowPathIcon className="w-3.5 h-3.5" />
+              </button>
+              <button onClick={() => setConfirmingClear(true)} title="Clear activity"
+                className="p-1.5 rounded-lg text-neutral-400 hover:text-red-600 hover:bg-red-50 transition-colors">
+                <TrashIcon className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Timeline */}

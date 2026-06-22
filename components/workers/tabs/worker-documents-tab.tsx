@@ -100,19 +100,21 @@ export function WorkerDocumentsTab({ workerId, workerName, onOpenInChat, onNewVe
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const allDocs = groups.flatMap(g => g.versions);
 
   function toggleSelect(id: string) {
+    setConfirmingDelete(false);
     setSelected(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   }
   function toggleSelectAll() {
+    setConfirmingDelete(false);
     setSelected(prev => prev.size === allDocs.length ? new Set() : new Set(allDocs.map(d => d.artifactId)));
   }
   async function handleDeleteSelected() {
     if (deleting || selected.size === 0) return;
-    const n = selected.size;
-    if (!window.confirm(`Delete ${n} document${n > 1 ? 's' : ''}? This also removes ${n > 1 ? 'them' : 'it'} from Drive and can't be undone.`)) return;
     setDeleting(true);
+    setConfirmingDelete(false);
     try {
       const items = allDocs.filter(d => selected.has(d.artifactId)).map(d => ({ artifactId: d.artifactId, threadId: d.threadId }));
       await fetch(`/api/workers/${workerId}/documents`, {
@@ -195,14 +197,27 @@ export function WorkerDocumentsTab({ workerId, workerName, onOpenInChat, onNewVe
                 Select all
               </label>
               {selected.size > 0 && (
-                <button
-                  onClick={handleDeleteSelected}
-                  disabled={deleting}
-                  title="Delete selected (also removes from Drive)"
-                  className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11.5px] text-red-600 hover:bg-red-50 transition-colors disabled:opacity-40"
-                >
-                  <TrashIcon className="w-3.5 h-3.5" /> Delete ({selected.size})
-                </button>
+                confirmingDelete ? (
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[11.5px] text-neutral-500">Delete {selected.size} — also from Drive?</span>
+                    <button onClick={handleDeleteSelected} disabled={deleting}
+                      className="px-2 py-1 rounded-lg text-[11.5px] font-medium text-red-600 hover:bg-red-50 transition-colors disabled:opacity-40">
+                      {deleting ? 'Deleting…' : 'Delete'}
+                    </button>
+                    <button onClick={() => setConfirmingDelete(false)}
+                      className="px-2 py-1 rounded-lg text-[11.5px] text-neutral-500 hover:bg-neutral-100 transition-colors">
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setConfirmingDelete(true)}
+                    title="Delete selected (also removes from Drive)"
+                    className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11.5px] text-red-600 hover:bg-red-50 transition-colors"
+                  >
+                    <TrashIcon className="w-3.5 h-3.5" /> Delete ({selected.size})
+                  </button>
+                )
               )}
               <button
                 onClick={load}
