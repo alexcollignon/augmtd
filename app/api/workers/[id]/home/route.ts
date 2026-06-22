@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { createClient as createAdmin } from '@supabase/supabase-js';
+import { reapOrphanedRuns } from '@/lib/workflows/reap-orphans';
 
 export const runtime = 'nodejs';
 
@@ -18,6 +20,12 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     .eq('is_worker', true)
     .single();
   if (!worker) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+
+  // Self-heal: clear this user's orphaned runs so the activity never shows an endless spinner.
+  await reapOrphanedRuns(
+    createAdmin(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!),
+    { userId: user.id },
+  ).catch(() => {});
 
   // Fetch all tasks for this worker
   const { data: workflows } = await supabase

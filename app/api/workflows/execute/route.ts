@@ -6,7 +6,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { runWorkflow } from '@/lib/workflows/run-workflow';
 import { sanitizeError } from '@/lib/utils/api-error';
 
-export const maxDuration = 300;
+export const maxDuration = 800; // Vercel Pro + Fluid Compute (was 300; heavy briefing tasks ran ~150-300s, too close to the cap)
 
 export async function POST(request: NextRequest) {
   const authHeader = request.headers.get('authorization');
