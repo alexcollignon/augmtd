@@ -88,7 +88,8 @@ function escHtml(s: string): string { return String(s).replace(/&/g, '&amp;').re
 // Coworker signature: avatar + name + "{role} to {user}" + the coworker's address.
 function signatureHtml(opts: { role: string | null; coworkerName: string; fromEmail: string; userName: string }): string {
   const local = EMAIL_LOCAL_BY_ROLE[opts.role ?? ''] || '';
-  const avatar = local ? `https://app.augmtd.ai/workers/${local}.png` : '';
+  // ?v bumped when avatars change — busts Gmail's image-proxy cache (it keys on URL).
+  const avatar = local ? `https://app.augmtd.ai/workers/${local}.png?v=2` : '';
   const roleLabel = ROLE_LABELS[opts.role ?? ''] || 'Assistant';
   const sub = opts.userName ? `${roleLabel} to ${escHtml(opts.userName)}` : roleLabel;
   return `<table cellpadding="0" cellspacing="0" style="margin-top:28px;border-top:1px solid #ededed;padding-top:14px;"><tr>`
