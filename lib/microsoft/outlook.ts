@@ -110,15 +110,33 @@ export async function fetchUnreadEmails(
     ? (() => { const d = new Date(lastSync); d.setMinutes(d.getMinutes() - 3); return d.toISOString(); })()
     : (() => { const d = new Date(); d.setDate(d.getDate() - syncWindowDays); return d.toISOString(); })();
 
-  const messages = await client
+  // Page through ALL messages in the window. Previously a single .top(maxResults) page was
+  // read — if a window held more than the cap, the older overflow was never fetched and the
+  // window then advanced past it, so those emails were lost forever. Now we follow Graph's
+  // @odata.nextLink until the window is exhausted (generous safety cap to bound a backlog).
+  const PAGE = Math.min(Math.max(maxResults, 25), 100);
+  const HARD_CAP = 500;
+  const all: OutlookMessage[] = [];
+
+  let response = (await client
     .api('/me/mailFolders/inbox/messages')
     .filter(`receivedDateTime ge ${dateString}`)
-    .top(maxResults)
+    .top(PAGE)
     .select('id,conversationId,subject,bodyPreview,body,from,toRecipients,ccRecipients,receivedDateTime,internetMessageId,hasAttachments,isRead,internetMessageHeaders')
     .orderby('receivedDateTime desc')
-    .get();
+    .get()) as { value: OutlookMessage[]; ['@odata.nextLink']?: string };
 
-  return messages.value as OutlookMessage[];
+  while (true) {
+    all.push(...(response.value ?? []));
+    const next = response['@odata.nextLink'];
+    if (!next || all.length >= HARD_CAP) {
+      if (next) console.warn(`[Outlook] sync window exceeded ${HARD_CAP} messages — stopping pagination; some older mail in this window not fetched this run`);
+      break;
+    }
+    response = (await client.api(next).get()) as { value: OutlookMessage[]; ['@odata.nextLink']?: string };
+  }
+
+  return all;
 }
 
 export function parseOutlookMessage(message: OutlookMessage) {

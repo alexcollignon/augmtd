@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { syncEmailsForConnection } from '@/lib/email-sync/sync-emails';
 
-export const maxDuration = 300;
+export const maxDuration = 800; // Pro+Fluid — pagination can pull a fuller window per run
 
 /**
  * GET /api/cron/fetch-emails
