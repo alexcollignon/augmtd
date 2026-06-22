@@ -254,18 +254,32 @@ export function WorkerTasksTab({ workerId, workerName, isActive, onOpenInChat }:
   async function handleRunNow(taskId: string) {
     if (runningId) return;
     setRunningId(taskId);
-    try {
-      const res = await fetch(`/api/workflows/${taskId}/run`, { method: 'POST' });
-      // Don't open an empty thread — the coworker reports back when it's done (report-back
-      // posts to the thread + a "From your team" card). Just confirm it's running.
-      if (res.ok) {
-        toast.success(`${workerName} is on it — they'll report back when it's done.`);
-      } else {
-        toast.error('Could not start the task. Try again.');
-      }
-    } finally {
+    const res = await fetch(`/api/workflows/${taskId}/run`, { method: 'POST' }).catch(() => null);
+    if (!res || !res.ok) {
+      toast.error('Could not start the task. Try again.');
       setRunningId(null);
+      return;
     }
+    // Don't open an empty thread — the coworker reports back when it's done. Keep the row
+    // in "Running…" by polling the latest run until it finishes (the POST only dispatches it).
+    toast.success(`${workerName} is on it — they'll report back when it's done.`);
+    const deadline = Date.now() + 15 * 60 * 1000;
+    const poll = async () => {
+      if (Date.now() > deadline) { setRunningId(null); load(); return; }
+      try {
+        const r = await fetch(`/api/workflows/${taskId}/runs?limit=1`);
+        const data = r.ok ? await r.json() : { runs: [] };
+        const status = data.runs?.[0]?.status;
+        if (status && status !== 'running' && status !== 'queued') {
+          setRunningId(null);
+          load(); // refresh last-run time + result
+          if (status === 'failed') toast.error('That run failed — check Activity.');
+          return;
+        }
+      } catch { /* keep polling */ }
+      setTimeout(poll, 4000);
+    };
+    setTimeout(poll, 3000);
   }
 
   // Build the pipeline in the background so the modal can close instantly and the
