@@ -210,6 +210,23 @@ interface BridgeArgs {
  * Response with the translated event-stream, or throws if AgentOS is
  * unreachable (caller falls back to the native loop).
  */
+// Flatten a thread artifact (DocContent / email artifact / string) to plain text.
+function serializeArtifactContent(content: unknown): string {
+  if (typeof content === 'string') return content
+  if (content && typeof content === 'object') {
+    const c = content as { title?: string; subtitle?: string; body?: string; sections?: Array<{ heading?: string; paragraphs?: string[] }> }
+    if (c.body) return c.body // email-type artifact
+    if (Array.isArray(c.sections)) {
+      const lines: string[] = []
+      if (c.title) lines.push(c.title)
+      if (c.subtitle) lines.push(c.subtitle)
+      for (const s of c.sections) { lines.push(`\n## ${s.heading ?? ''}`); for (const p of (s.paragraphs ?? [])) lines.push(p) }
+      return lines.join('\n\n')
+    }
+  }
+  return ''
+}
+
 export async function streamWorkerViaAgentOS({
   workerRole,
   agentId,
@@ -230,8 +247,20 @@ export async function streamWorkerViaAgentOS({
     console.error('[AgentOS bridge] context build failed (continuing):', err)
   }
 
+  // Documents already created in this thread — inject so the worker can SEE and revise
+  // its own output (parity with the native loop, which injects these into context).
+  let docContext = ''
+  try {
+    const { data: t } = await adminClient.from('work_threads').select('artifacts').eq('id', threadId).maybeSingle()
+    const artifacts = (t?.artifacts ?? []) as Array<{ title?: string; content?: unknown }>
+    if (artifacts.length) {
+      const blocks = artifacts.slice(-3).map(a => `### ${a.title ?? 'Document'}\n${serializeArtifactContent(a.content).slice(0, 6000)}`).join('\n\n')
+      docContext = `\n\n[DOCUMENTS ALREADY CREATED IN THIS CONVERSATION — you produced these; reference, summarise, or revise them when asked]\n${blocks}`
+    }
+  } catch { /* best-effort */ }
+
   const form = new URLSearchParams()
-  form.set('message', message)
+  form.set('message', message + docContext)
   form.set('stream', 'true')
   form.set('session_id', threadId)
   form.set('user_id', userId)
