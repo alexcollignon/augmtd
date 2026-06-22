@@ -9,6 +9,8 @@ import {
 } from '@/lib/tools';
 import { buildKBContext } from '@/lib/knowledge/build-kb-context';
 import { generateThreadDocument } from '@/lib/work/generate-thread-document';
+import { getWorkspaceFeatures } from '@/lib/workspace/features';
+import { TOOL_FEATURE } from '@/lib/workspace/tool-capabilities';
 
 export const maxDuration = 60;
 
@@ -60,6 +62,16 @@ export async function POST(request: NextRequest) {
 
   const ac = admin();
   const sb = ac as unknown as Parameters<typeof executeGetEmails>[2];
+
+  // Feature gate (single source: tool-capabilities map) — parity with the native loop's
+  // tool filter. Off-feature tools return a short "unavailable" string so the worker adapts.
+  const reqFeature = TOOL_FEATURE[action];
+  if (reqFeature && user_id) {
+    const features = await getWorkspaceFeatures(user_id, ac);
+    if (features[reqFeature] === false) {
+      return NextResponse.json({ result: `Unavailable — ${reqFeature} is turned off for this workspace.` });
+    }
+  }
 
   try {
     let result: string;

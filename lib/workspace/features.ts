@@ -65,3 +65,11 @@ async function fetchWorkspace(
 
 // React-cached — within a single request/RSC tree, only one DB round-trip.
 export const getMyWorkspace = cache(fetchWorkspace);
+
+// Features-only, works with any client (incl. the admin client used by internal/AgentOS
+// routes that have no cookie session). Falls back to DEFAULT_FEATURES.
+export async function getWorkspaceFeatures(userId: string, supabase: SupabaseClient) {
+  const ws = await fetchWorkspace(userId, supabase);
+  const { DEFAULT_FEATURES } = await import('./types');
+  return ws?.features ?? DEFAULT_FEATURES;
+}
