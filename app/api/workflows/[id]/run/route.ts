@@ -8,7 +8,7 @@ import { createClient as createAdminClient } from '@supabase/supabase-js';
 import { requireFeature, handleWorkspaceError } from '@/lib/workspace/require-feature';
 import { runWorkflow } from '@/lib/workflows/run-workflow';
 
-export const maxDuration = 300;
+export const maxDuration = 800; // Vercel Pro + Fluid Compute (was 300; heavy briefing tasks ran ~150-300s, too close to the cap)
 
 export async function POST(
   request: NextRequest,

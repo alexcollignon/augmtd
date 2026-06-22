@@ -5,10 +5,11 @@
 
 import { NextRequest, NextResponse, after } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { reapOrphanedRuns } from '@/lib/workflows/reap-orphans';
 import { nextRunFromTrigger } from '@/lib/workflows/schedule';
 import { runWorkflow } from '@/lib/workflows/run-workflow';
 
-export const maxDuration = 300;
+export const maxDuration = 800; // Vercel Pro + Fluid Compute (was 300; heavy briefing tasks ran ~150-300s, too close to the cap)
 
 export async function GET(request: NextRequest) {
   // Auth: Vercel Cron sends Bearer CRON_SECRET
@@ -24,6 +25,10 @@ export async function GET(request: NextRequest) {
   );
 
   const now = new Date();
+
+  // Reap orphaned runs (killed mid-execution, stuck at 'running') so they don't spin forever.
+  const reaped = await reapOrphanedRuns(supabase);
+  if (reaped) console.log(`[workflows-dispatch] reaped ${reaped} orphaned run(s)`);
 
   // Fetch due workflows
   const { data: due, error } = await supabase
