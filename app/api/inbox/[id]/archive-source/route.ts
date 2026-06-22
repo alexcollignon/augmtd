@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { archiveGmailThread } from '@/lib/google/gmail';
-import { archiveOutlookMessage } from '@/lib/microsoft/outlook';
+import { archiveOutlookMessage, persistOutlookTokens } from '@/lib/microsoft/outlook';
 
 export async function POST(
   _request: NextRequest,
@@ -83,7 +83,7 @@ export async function POST(
       if (!outlookMessageId) {
         return NextResponse.json({ error: 'Could not resolve Outlook message ID' }, { status: 400 });
       }
-      await archiveOutlookMessage(encryptedTokens, outlookMessageId);
+      await archiveOutlookMessage(encryptedTokens, outlookMessageId, persistOutlookTokens(supabase, connection as { id: string; metadata: { tokens: string } }));
     } else {
       return NextResponse.json({ error: 'Unsupported provider' }, { status: 400 });
     }

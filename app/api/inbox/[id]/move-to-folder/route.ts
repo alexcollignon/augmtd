@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { moveGmailThreadToLabel, createGmailLabel } from '@/lib/google/gmail';
 import { sanitizeError } from '@/lib/utils/api-error';
-import { moveOutlookMessageToFolder, createOutlookFolder } from '@/lib/microsoft/outlook';
+import { moveOutlookMessageToFolder, createOutlookFolder, persistOutlookTokens } from '@/lib/microsoft/outlook';
 
 // POST /api/inbox/[id]/move-to-folder — move email to a folder/label and dismiss inbox item
 export async function POST(
@@ -69,7 +69,7 @@ export async function POST(
         outlookMessageId = email?.metadata?.outlook_id ?? null;
       }
       if (!outlookMessageId) return NextResponse.json({ error: 'Could not resolve Outlook message ID' }, { status: 400 });
-      await moveOutlookMessageToFolder(encryptedTokens, outlookMessageId, folderId);
+      await moveOutlookMessageToFolder(encryptedTokens, outlookMessageId, folderId, persistOutlookTokens(supabase, connection as { id: string; metadata: { tokens: string } }));
     } else {
       return NextResponse.json({ error: 'Unsupported provider' }, { status: 400 });
     }

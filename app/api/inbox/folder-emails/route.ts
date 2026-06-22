@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { listGmailFolderEmails } from '@/lib/google/gmail';
-import { listOutlookFolderEmails } from '@/lib/microsoft/outlook';
+import { listOutlookFolderEmails, persistOutlookTokens } from '@/lib/microsoft/outlook';
 
 // GET /api/inbox/folder-emails?connectionId=xxx&folderId=xxx
 export async function GET(request: NextRequest) {
@@ -32,7 +32,7 @@ export async function GET(request: NextRequest) {
       connection.provider === 'gmail'
         ? await listGmailFolderEmails(connection.metadata.tokens, folderId)
         : connection.provider === 'outlook'
-        ? await listOutlookFolderEmails(connection.metadata.tokens, folderId)
+        ? await listOutlookFolderEmails(connection.metadata.tokens, folderId, undefined, persistOutlookTokens(supabase, connection))
         : [];
 
     return NextResponse.json({ emails });

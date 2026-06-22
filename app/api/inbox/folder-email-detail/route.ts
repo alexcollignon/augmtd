@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { getGmailMessageDetail, moveGmailThreadToLabel } from '@/lib/google/gmail';
-import { getOutlookMessageDetail, moveOutlookMessageToFolder } from '@/lib/microsoft/outlook';
+import { getOutlookMessageDetail, moveOutlookMessageToFolder, persistOutlookTokens } from '@/lib/microsoft/outlook';
 
 // GET /api/inbox/folder-email-detail?connectionId=xxx&messageId=xxx
 export async function GET(request: NextRequest) {
@@ -32,7 +32,7 @@ export async function GET(request: NextRequest) {
       connection.provider === 'gmail'
         ? await getGmailMessageDetail(connection.metadata.tokens, messageId)
         : connection.provider === 'outlook'
-        ? await getOutlookMessageDetail(connection.metadata.tokens, messageId)
+        ? await getOutlookMessageDetail(connection.metadata.tokens, messageId, persistOutlookTokens(supabase, connection))
         : null;
 
     if (!detail) return NextResponse.json({ error: 'Unsupported provider' }, { status: 400 });
@@ -69,7 +69,7 @@ export async function POST(request: NextRequest) {
     if (connection.provider === 'gmail') {
       await moveGmailThreadToLabel(connection.metadata.tokens, messageId, folderId);
     } else if (connection.provider === 'outlook') {
-      await moveOutlookMessageToFolder(connection.metadata.tokens, messageId, folderId);
+      await moveOutlookMessageToFolder(connection.metadata.tokens, messageId, folderId, persistOutlookTokens(supabase, connection));
     } else {
       return NextResponse.json({ error: 'Unsupported provider' }, { status: 400 });
     }
