@@ -3,7 +3,8 @@
 import { useEffect, useState, useCallback } from 'react';
 import Nango from '@nangohq/frontend';
 import { Squares2X2Icon } from '@heroicons/react/24/outline';
-import { Button, Badge } from '@/components/ui';
+import { Button, Badge, Input } from '@/components/ui';
+import { toast } from 'sonner';
 import { SLACK_APP_KEYS } from '@/lib/integrations/registry';
 
 interface Integration {
@@ -208,9 +209,76 @@ export default function IntegrationsSection() {
                   </button>
                 </div>
               )}
+              {i.provider === 'slack' && i.connected && <SlackIdentity />}
             </div>
           ))}
         </div>
+      )}
+    </div>
+  );
+}
+
+// Verify-by-code Slack identity — for DM-to-me when the user's Slack email ≠ login email.
+function SlackIdentity() {
+  const [state, setState] = useState<{ slackUserId: string | null; pending: boolean; pendingName: string | null } | null>(null);
+  const [mode, setMode] = useState<'view' | 'email' | 'code'>('view');
+  const [email, setEmail] = useState('');
+  const [code, setCode] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [sentTo, setSentTo] = useState<string | null>(null);
+
+  const refresh = () => fetch('/api/integrations/slack/identity').then(r => r.json()).then(setState).catch(() => {});
+  useEffect(() => { refresh(); }, []);
+
+  async function post(payload: Record<string, unknown>) {
+    return fetch('/api/integrations/slack/identity', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+  }
+  async function sendCode() {
+    setBusy(true);
+    try {
+      const r = await post({ action: 'start', email });
+      const d = await r.json();
+      if (!r.ok) { toast.error(d.error ?? 'Could not send the code.'); return; }
+      setSentTo(d.sentTo ?? email); setMode('code');
+    } finally { setBusy(false); }
+  }
+  async function verify() {
+    setBusy(true);
+    try {
+      const r = await post({ action: 'confirm', code });
+      const d = await r.json();
+      if (!r.ok) { toast.error(d.error ?? 'Could not verify.'); return; }
+      toast.success('Slack linked.'); setCode(''); setEmail(''); setMode('view'); refresh();
+    } finally { setBusy(false); }
+  }
+  async function unlink() { await post({ action: 'clear' }); setMode('view'); refresh(); }
+
+  if (!state) return null;
+
+  return (
+    <div className="mt-3 pt-3 border-t border-neutral-100">
+      <p className="text-[12.5px] text-neutral-700">Your Slack identity</p>
+      <p className="text-[11px] text-neutral-400 mt-0.5">Needed for DM-to-me if your Slack email differs from your login. We DM you a code to confirm it&apos;s you.</p>
+      {state.slackUserId && mode === 'view' ? (
+        <div className="mt-2 flex items-center gap-3">
+          <span className="text-[12px] text-emerald-600">Linked ✓</span>
+          <button onClick={() => setMode('email')} className="text-[12px] text-neutral-500 hover:text-neutral-700">Change</button>
+          <button onClick={unlink} className="text-[12px] text-neutral-400 hover:text-red-600">Unlink</button>
+        </div>
+      ) : mode === 'code' ? (
+        <div className="mt-2 flex items-center gap-2">
+          <Input value={code} onChange={e => setCode(e.target.value)} placeholder="6-digit code" className="w-32" />
+          <Button size="sm" onClick={verify} disabled={busy || code.trim().length < 6}>Verify</Button>
+          <span className="text-[11px] text-neutral-400">Code sent to {sentTo} in Slack</span>
+        </div>
+      ) : mode === 'email' ? (
+        <div className="mt-2 flex items-center gap-2">
+          <Input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="your Slack email" className="w-52" />
+          <Button size="sm" onClick={sendCode} disabled={busy || !email.trim()}>Send code</Button>
+          {state.slackUserId && <button onClick={() => setMode('view')} className="text-[12px] text-neutral-400 hover:text-neutral-600">Cancel</button>}
+        </div>
+      ) : (
+        <button onClick={() => setMode('email')} className="mt-2 text-[12.5px] text-indigo-600 hover:text-indigo-700">Link my Slack</button>
       )}
     </div>
   );
