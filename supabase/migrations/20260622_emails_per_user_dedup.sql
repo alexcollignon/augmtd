@@ -20,7 +20,7 @@ BEGIN
     JOIN pg_class rel ON rel.oid = con.conrelid
     WHERE rel.relname = 'emails' AND con.contype = 'u'
       AND (
-        SELECT array_agg(a.attname ORDER BY a.attnum)
+        SELECT array_agg(a.attname::text ORDER BY a.attnum)
         FROM unnest(con.conkey) AS k(attnum)
         JOIN pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = k.attnum
       ) = ARRAY['message_id']
@@ -42,7 +42,7 @@ BEGIN
     WHERE tc.relname = 'emails' AND i.indisunique AND NOT i.indisprimary
       AND NOT EXISTS (SELECT 1 FROM pg_constraint c WHERE c.conindid = i.indexrelid)
       AND (
-        SELECT array_agg(a.attname ORDER BY a.attnum)
+        SELECT array_agg(a.attname::text ORDER BY a.attnum)
         FROM unnest(i.indkey) AS k(attnum)
         JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.attnum
       ) = ARRAY['message_id']
