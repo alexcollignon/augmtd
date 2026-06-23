@@ -5,6 +5,7 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
 import {
+  HomeIcon,
   EnvelopeIcon,
   ChatBubbleLeftEllipsisIcon,
   UserGroupIcon,
@@ -48,6 +49,7 @@ export default function SidebarNav({
 
   const [isSuperAdmin] = useState(isSuperAdminProp);
   const navigation = [
+    { name: 'Home',    href: '/home',    icon: HomeIcon },
     ...(features.email    ? [{ name: 'Inbox',    href: '/inbox',    icon: EnvelopeIcon }]              : []),
     { name: 'Workers', href: '/workers', icon: UserGroupIcon },
     { name: 'Chat',    href: '/work',    icon: ChatBubbleLeftEllipsisIcon },
