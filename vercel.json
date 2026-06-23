@@ -15,6 +15,7 @@
     { "path": "/api/cron/renew-push-subscriptions", "schedule": "0 6 * * *" },
     { "path": "/api/cron/fetch-emails", "schedule": "0 */4 * * *" },
     { "path": "/api/cron/workflows-dispatch", "schedule": "0 * * * *" },
-    { "path": "/api/cron/render-memory", "schedule": "0 3 * * *" }
+    { "path": "/api/cron/render-memory", "schedule": "0 3 * * *" },
+    { "path": "/api/cron/commitments-sweep", "schedule": "0 */6 * * *" }
   ]
 }
