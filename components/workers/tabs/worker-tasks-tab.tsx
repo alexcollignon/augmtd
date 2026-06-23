@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { toast } from 'sonner';
+import { describeCron } from '@/lib/workflows/schedule';
 import {
   BoltIcon,
   PlayIcon,
@@ -59,7 +60,7 @@ interface TeamTask {
 function scheduleLabel(trigger: Task['trigger'] | TeamTask['trigger']): string {
   if (trigger.type === 'manual') return 'Manual trigger';
   if (trigger.label) return trigger.label;
-  if (trigger.cron) return trigger.cron;
+  if (trigger.cron) return describeCron(trigger.cron); // natural language, not raw cron
   return 'Scheduled';
 }
 
