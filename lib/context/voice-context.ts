@@ -42,8 +42,10 @@ export async function buildVoiceBlock(
   client: DBClient,
 ): Promise<string> {
   const rcpt = recipientEmail?.toLowerCase().trim() || null;
-  const [skillsRes, recipientRes, relRes] = await Promise.all([
-    client.from('skills').select('content').eq('user_id', userId).eq('kind', 'voice').limit(2),
+  // NB: the inbox voice is NOT tied to a (deletable) skill. Its durable foundation is the
+  // user's real sent emails (exemplars below) + relationship. A distilled voice profile in
+  // Memory (context_profiles) is layered in separately by the drafter when present.
+  const [recipientRes, relRes] = await Promise.all([
     rcpt
       ? client.from('emails')
           .select('subject, body, html_body, received_at')
@@ -80,12 +82,6 @@ export async function buildVoiceBlock(
     if (typeof rel.importance === 'number' && rel.importance >= 75) bits.push('a high-importance contact — be especially considered, precise, and warm');
     if (typeof rel.interaction_frequency === 'number' && rel.interaction_frequency >= 8) bits.push('someone you correspond with often — keep your established rapport (the examples below reflect it)');
     if (bits.length) parts.push(`[ABOUT THIS RECIPIENT]\n${bits.join('; ')}.`);
-  }
-
-  const skills = (skillsRes?.data as Array<{ content: string }> | null) ?? [];
-  const voiceGuidance = skills.map((s) => s.content?.trim()).filter(Boolean).join('\n\n');
-  if (voiceGuidance) {
-    parts.push(`[YOUR VOICE — guidance you set]\n${voiceGuidance}`);
   }
 
   const samples = exemplars.map(bodyOf).filter(Boolean).slice(0, MAX_SAMPLES);
