@@ -5,9 +5,10 @@ import { getAIClient, aiCreate } from '@/lib/ai/factory';
 export const maxDuration = 30;
 
 // POST /api/skills/interview/questions
-// Step A of the skill-builder interview: given a pre-qual (objective + kind), generate a
-// short, tailored set of elicitation questions. Stateless — the client holds the answers.
-// Body: { objective: string, kind?: 'voice'|'domain'|'audience'|'method', hasSamples?: boolean }
+// Step A of the skill-builder interview: given a pre-qual (objective + kinds + optional
+// samples), generate a short, tailored set of elicitation questions. Stateless — the client
+// holds the answers.
+// Body: { objective: string, kinds?: string[], samples?: string }
 // → { questions: [{ id, question, hint, placeholder }] }
 
 const KIND_HINT: Record<string, string> = {
@@ -34,20 +35,26 @@ export async function POST(request: NextRequest) {
   const { data: { user }, error: authError } = await supabase.auth.getUser();
   if (authError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const { objective, kind, hasSamples } = (await request.json()) as {
-    objective?: string; kind?: string; hasSamples?: boolean;
-  };
-  if (!objective?.trim()) return NextResponse.json({ error: 'objective is required' }, { status: 400 });
+  const body = (await request.json()) as { objective?: string; kinds?: string[]; other?: string; samples?: string };
+  if (!body.objective?.trim()) return NextResponse.json({ error: 'objective is required' }, { status: 400 });
 
-  const kindHint = KIND_HINT[kind ?? ''] ?? 'the topic described';
+  const kinds = Array.isArray(body.kinds) ? body.kinds.filter(Boolean) : [];
+  const parts = kinds.filter((k) => KIND_HINT[k]).map((k) => `${k} (${KIND_HINT[k]})`);
+  if (kinds.includes('other') && body.other?.trim()) parts.push(`other — ${body.other.trim()}`);
+  const kindLine = parts.length
+    ? `Kinds to capture (cover all that apply): ${parts.join('; ')}.`
+    : 'Kind: unspecified — infer what to ask from the objective.';
+
+  const samplesBlock = body.samples?.trim()
+    ? `\n\nThe user pasted real examples below. READ them and GROUND your questions in what you actually see — confirm deliberate choices, fill gaps — instead of asking abstract style questions:\n"""\n${body.samples.trim().slice(0, 4000)}\n"""`
+    : '';
 
   const prompt = `You are helping a user build a reusable "skill" — a block of instructions a writing assistant will later follow. You interview the user to capture it well.
 
 Right now, produce ONLY the interview questions.
 
-What this skill should capture: ${objective.trim()}
-Kind of skill: ${kind ?? 'unspecified'} — i.e. ${kindHint}.
-${hasSamples ? 'The user has provided writing samples, so do NOT ask them to describe their style in the abstract — ask questions that complement examples.' : ''}
+What this skill should capture: ${body.objective.trim()}
+${kindLine}${samplesBlock}
 
 Write 5–8 sharp, concrete questions that draw out tacit knowledge. Rules:
 - Specific over generic. Never ask "what is your tone?" — ask for examples, words they use/avoid, decisions, opinions.
@@ -55,6 +62,7 @@ Write 5–8 sharp, concrete questions that draw out tacit knowledge. Rules:
 - domain: what the business does, who it's for (ICP), what makes it different, the offers, the proof points.
 - audience: who they are, what they care about, what they already know, what they're skeptical of.
 - method: the steps, the structure, the must-haves, the common mistakes to avoid.
+- If multiple kinds apply, cover each across the question set.
 - Each question answerable in 1–3 sentences.
 
 Return ONLY JSON, no prose:

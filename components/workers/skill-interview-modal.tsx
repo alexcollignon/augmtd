@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { SparklesIcon, XMarkIcon, ArrowLeftIcon } from '@heroicons/react/24/outline';
+import { AcademicCapIcon, XMarkIcon, ArrowLeftIcon } from '@heroicons/react/24/outline';
 import { Button, IconButton, Input, Textarea } from '@/components/ui';
 import { cn } from '@/lib/cn';
 
@@ -25,11 +25,15 @@ interface Props {
 type Question = { id: string; question: string; hint: string; placeholder: string };
 type Stage = 'prequal' | 'loadingQuestions' | 'questions' | 'synthesizing';
 
+// Kinds are optional + multi-selectable — a single skill can legitimately blend (e.g. a
+// voice + audience block). Selection shapes which questions get asked; for storage we keep
+// the primary kind (first concrete one). 'other' is a catch-all and stores as untyped.
 const KINDS = [
   { value: 'voice', label: 'Voice / tone', hint: 'How you sound' },
   { value: 'domain', label: 'Business / context', hint: 'Facts about your business, product, market' },
   { value: 'audience', label: 'Audience', hint: 'Who you write for' },
   { value: 'method', label: 'Method / format', hint: 'How to structure a kind of output' },
+  { value: 'other', label: 'Other', hint: "Something that doesn't fit above" },
 ];
 
 export function SkillInterviewModal({ workers, onClose, onDraft }: Props) {
@@ -38,7 +42,8 @@ export function SkillInterviewModal({ workers, onClose, onDraft }: Props) {
 
   // pre-qual
   const [objective, setObjective] = useState('');
-  const [kind, setKind] = useState<string>('');
+  const [kinds, setKinds] = useState<string[]>([]);
+  const [otherText, setOtherText] = useState('');
   const [samples, setSamples] = useState('');
   const [assignIds, setAssignIds] = useState<string[]>([]);
 
@@ -46,8 +51,12 @@ export function SkillInterviewModal({ workers, onClose, onDraft }: Props) {
   const [questions, setQuestions] = useState<Question[]>([]);
   const [answers, setAnswers] = useState<Record<string, string>>({});
 
+  const toggleKind = (v: string) =>
+    setKinds((prev) => (prev.includes(v) ? prev.filter((x) => x !== v) : [...prev, v]));
   const toggleWorker = (id: string) =>
     setAssignIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+
+  const wantsSamples = kinds.includes('voice');
 
   async function startInterview() {
     if (!objective.trim() || stage === 'loadingQuestions') return;
@@ -57,7 +66,7 @@ export function SkillInterviewModal({ workers, onClose, onDraft }: Props) {
       const res = await fetch('/api/skills/interview/questions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ objective: objective.trim(), kind: kind || undefined, hasSamples: !!samples.trim() }),
+        body: JSON.stringify({ objective: objective.trim(), kinds, other: otherText.trim() || undefined, samples: samples.trim() || undefined }),
       });
       const data = await res.json();
       if (!res.ok || !data.questions?.length) throw new Error(data.error || 'No questions');
@@ -79,7 +88,8 @@ export function SkillInterviewModal({ workers, onClose, onDraft }: Props) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           objective: objective.trim(),
-          kind: kind || undefined,
+          kinds,
+          other: otherText.trim() || undefined,
           answers: questions.map((q) => ({ question: q.question, answer: answers[q.id] ?? '' })),
           samples: samples.trim() || undefined,
         }),
@@ -90,7 +100,7 @@ export function SkillInterviewModal({ workers, onClose, onDraft }: Props) {
         name: data.draft.name,
         when_to_use: data.draft.when_to_use ?? '',
         content: data.draft.content,
-        kind: data.draft.kind ?? (kind || null),
+        kind: data.draft.kind ?? null,
         source: 'interview',
         assignWorkerIds: assignIds,
       });
@@ -117,7 +127,7 @@ export function SkillInterviewModal({ workers, onClose, onDraft }: Props) {
                 <ArrowLeftIcon className="w-4 h-4" />
               </button>
             )}
-            <SparklesIcon className="w-4 h-4 text-indigo-500" />
+            <AcademicCapIcon className="w-4 h-4 text-indigo-500" />
             <h2 className="text-[14px] font-semibold text-neutral-800">
               {stage === 'questions' ? 'A few questions' : 'Build a skill'}
             </h2>
@@ -139,20 +149,22 @@ export function SkillInterviewModal({ workers, onClose, onDraft }: Props) {
                 <Input
                   value={objective}
                   onChange={(e) => setObjective(e.target.value)}
-                  placeholder="e.g. my LinkedIn voice · my business context · how I write exec summaries"
+                  placeholder="e.g. how I want things written · key facts about my work · a format to follow"
                   autoFocus
                 />
               </div>
               <div>
-                <label className="block text-[12px] font-medium text-neutral-600 mb-1.5">What kind is it? <span className="text-neutral-400 font-normal">— optional</span></label>
+                <label className="block text-[12px] font-medium text-neutral-600 mb-1.5">
+                  What kind is it? <span className="text-neutral-400 font-normal">— optional, pick any that apply</span>
+                </label>
                 <div className="grid grid-cols-2 gap-2">
                   {KINDS.map((k) => (
                     <button
                       key={k.value}
-                      onClick={() => setKind(kind === k.value ? '' : k.value)}
+                      onClick={() => toggleKind(k.value)}
                       className={cn(
                         'text-left rounded-lg border px-3 py-2 transition-colors',
-                        kind === k.value ? 'border-indigo-300 bg-indigo-50' : 'border-neutral-200 hover:bg-neutral-50',
+                        kinds.includes(k.value) ? 'border-indigo-300 bg-indigo-50' : 'border-neutral-200 hover:bg-neutral-50',
                       )}
                     >
                       <div className="text-[12.5px] font-medium text-neutral-800">{k.label}</div>
@@ -160,17 +172,32 @@ export function SkillInterviewModal({ workers, onClose, onDraft }: Props) {
                     </button>
                   ))}
                 </div>
+                {kinds.includes('other') && (
+                  <div className="mt-2">
+                    <Input
+                      value={otherText}
+                      onChange={(e) => setOtherText(e.target.value)}
+                      placeholder="Describe what kind of skill this is…"
+                    />
+                  </div>
+                )}
               </div>
               <div>
                 <label className="block text-[12px] font-medium text-neutral-600 mb-1.5">
-                  {kind === 'voice' ? 'Paste 2–3 things you wrote that sound like you' : 'Examples'}{' '}
-                  <span className="text-neutral-400 font-normal">— optional{kind === 'voice' ? ', but strongly recommended for voice' : ''}</span>
+                  Examples{' '}
+                  <span className="text-neutral-400 font-normal">
+                    — optional{wantsSamples ? ', but strongly recommended for voice' : ''}
+                  </span>
                 </label>
                 <Textarea
                   value={samples}
                   onChange={(e) => setSamples(e.target.value)}
                   rows={4}
-                  placeholder={kind === 'voice' ? 'Paste past posts, emails, or anything in your voice…' : 'Paste any examples that help…'}
+                  placeholder={
+                    wantsSamples
+                      ? 'Paste a few things you wrote that sound like you — posts, emails, anything…'
+                      : 'Paste anything that grounds this — a sample, a past version, a reference…'
+                  }
                 />
               </div>
               {workers.length > 0 && (
