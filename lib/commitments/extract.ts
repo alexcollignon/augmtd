@@ -16,6 +16,10 @@ export type ExtractedCommitment = {
 // Only worth an AI call if the text plausibly contains a promise/deadline.
 const COMMITMENT_HINT = /\b(i'?ll|i will|we'?ll|we will|let me|i'?ll get|send you|get you|send over|follow up|circle back|will send|will get|will have|will share|by (mon|tue|wed|thu|fri|sat|sun|monday|tuesday|wednesday|thursday|friday|tomorrow|eod|cob|end of|next week|this week|end of day|end of week)|deadline|by the end|due |get back to you|revert|by then)\b/i;
 
+// Bulk / newsletter / automated mail — never a source of personal commitments. An "unsubscribe"
+// footer is a near-perfect signal that this is a broadcast, not a 1:1 message.
+const BULK_HINT = /unsubscribe|view (this )?(e?-?mail )?in (your )?browser|manage (your )?(e?mail )?preferences|update your preferences|you'?re receiving this|sent to you because|no longer wish to receive|email preferences|all rights reserved/i;
+
 const norm = (s: string) => s.toLowerCase().replace(/\s+/g, ' ').trim();
 function validDate(d: unknown): string | null {
   if (typeof d !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(d)) return null;
@@ -100,13 +104,17 @@ export async function extractEmailCommitments(opts: {
   const { userId, subject, body, isFromUser, userName, counterparty, sourceId, threadId, client } = opts;
   const text = (body || '').trim();
   if (text.length < 20 || !COMMITMENT_HINT.test(text)) return 0;
+  // Received bulk/newsletter mail never carries a real commitment — skip before the AI call.
+  if (!isFromUser && BULK_HINT.test(text)) return 0;
 
   const who = userName || 'the user';
   const perspective = isFromUser
     ? `This email was SENT BY ${who}. Things ${who} promises to do = direction "you_owe". Things ${who} asks the other party to do (and is now waiting on) = direction "awaiting".`
     : `This email was RECEIVED BY ${who} from ${counterparty || 'someone'}. Things the other party asks ${who} to do = direction "you_owe". Things the other party promises to do for ${who} = direction "awaiting".`;
 
-  const prompt = `Extract concrete COMMITMENTS from this email — specific promises/obligations with a clear owner, optionally a deadline. Ignore pleasantries, vague intentions ("let's catch up sometime"), and anything already done.
+  const prompt = `Extract concrete COMMITMENTS from this email — a specific promise or obligation between ${who} and a REAL person, with a clear owner and optionally a deadline (e.g. "Send the Q3 proposal", "Review the contract by Friday").
+
+STRICTLY EXCLUDE and return an empty array if the message is a newsletter, promotion, receipt, invoice, or automated notification. NEVER treat marketing/newsletter calls-to-action as commitments — e.g. "reply with Q2", "submit your story", "subscribe", "reply for early access", "share your feedback", editorial/publishing schedules, or any mass-email ask. Also ignore pleasantries, vague intentions ("let's catch up sometime"), and anything already done.
 
 ${perspective}
 
