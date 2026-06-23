@@ -3,10 +3,11 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import {
   AcademicCapIcon, PlusIcon, PencilSquareIcon, TrashIcon, XMarkIcon,
-  ArrowUpTrayIcon, ArrowDownTrayIcon, CheckIcon,
+  ArrowUpTrayIcon, ArrowDownTrayIcon, CheckIcon, SparklesIcon,
 } from '@heroicons/react/24/outline';
 import { parseSkillMarkdown, skillToMarkdown, skillFilename } from '@/lib/skills/markdown';
 import { Button, IconButton, Input, Textarea, Card, EmptyState } from '@/components/ui';
+import { SkillInterviewModal, type InterviewDraft } from './skill-interview-modal';
 
 const ROLE_AVATARS: Record<string, string> = {
   personal_assistant: '/workers/clara.png',
@@ -31,7 +32,7 @@ interface SkillsLibraryViewProps {
   workers: RosterWorker[];
 }
 
-type Draft = { id: string | null; name: string; when_to_use: string; content: string; source?: string };
+type Draft = { id: string | null; name: string; when_to_use: string; content: string; source?: string; kind?: string | null; assignWorkerIds?: string[] };
 
 const EMPTY_DRAFT: Draft = { id: null, name: '', when_to_use: '', content: '' };
 
@@ -52,6 +53,8 @@ export function SkillsLibraryView({ workers }: SkillsLibraryViewProps) {
   const [isSaving, setIsSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [assignOpen, setAssignOpen] = useState<string | null>(null);
+  const [interviewOpen, setInterviewOpen] = useState(false);
+  const [newMenuOpen, setNewMenuOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(() => {
@@ -72,15 +75,25 @@ export function SkillsLibraryView({ workers }: SkillsLibraryViewProps) {
     if (!name || !content) return;
     setIsSaving(true);
     try {
-      const payload = { name, when_to_use: draft.when_to_use.trim() || null, content, source: draft.source ?? 'manual' };
+      const payload = { name, when_to_use: draft.when_to_use.trim() || null, content, source: draft.source ?? 'manual', kind: draft.kind ?? null };
       if (draft.id) {
         await fetch(`/api/skills/${draft.id}`, {
           method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
         });
       } else {
-        await fetch('/api/skills', {
+        const res = await fetch('/api/skills', {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
         });
+        // Assign the workers picked during the interview pre-qual to the new skill.
+        const created = await res.json().catch(() => null);
+        const newId = created?.skill?.id;
+        if (newId && draft.assignWorkerIds?.length) {
+          await Promise.all(draft.assignWorkerIds.map(agentId =>
+            fetch(`/api/skills/${newId}/assign`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ agent_id: agentId, assigned: true }),
+            }).catch(() => {})));
+        }
       }
       setDraft(null);
       load();
@@ -156,9 +169,38 @@ export function SkillsLibraryView({ workers }: SkillsLibraryViewProps) {
             <Button variant="secondary" size="sm" onClick={() => fileInputRef.current?.click()} title="Import a .md skill file">
               <ArrowUpTrayIcon className="w-4 h-4" /> Import
             </Button>
-            <Button size="sm" onClick={() => setDraft({ ...EMPTY_DRAFT })}>
-              <PlusIcon className="w-4 h-4" /> New skill
-            </Button>
+            <div className="relative">
+              <Button size="sm" onClick={() => setNewMenuOpen(o => !o)}>
+                <PlusIcon className="w-4 h-4" /> New skill
+              </Button>
+              {newMenuOpen && (
+                <>
+                  <div className="fixed inset-0 z-10" onClick={() => setNewMenuOpen(false)} />
+                  <div className="absolute right-0 top-full mt-2 z-20 w-64 rounded-xl border border-neutral-200 bg-white shadow-lg p-1.5">
+                    <button
+                      onClick={() => { setNewMenuOpen(false); setInterviewOpen(true); }}
+                      className="w-full flex items-start gap-2.5 px-2.5 py-2 rounded-lg hover:bg-neutral-50 text-left transition-colors"
+                    >
+                      <SparklesIcon className="w-4 h-4 text-indigo-500 mt-0.5 flex-shrink-0" />
+                      <div>
+                        <div className="text-[12.5px] font-medium text-neutral-800">Build with interview</div>
+                        <div className="text-[11px] text-neutral-400">Answer a few questions — your coworker writes it</div>
+                      </div>
+                    </button>
+                    <button
+                      onClick={() => { setNewMenuOpen(false); setDraft({ ...EMPTY_DRAFT }); }}
+                      className="w-full flex items-start gap-2.5 px-2.5 py-2 rounded-lg hover:bg-neutral-50 text-left transition-colors"
+                    >
+                      <PencilSquareIcon className="w-4 h-4 text-neutral-400 mt-0.5 flex-shrink-0" />
+                      <div>
+                        <div className="text-[12.5px] font-medium text-neutral-800">Write it myself</div>
+                        <div className="text-[11px] text-neutral-400">Start from a blank skill</div>
+                      </div>
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
           </div>
         </div>
         <p className="text-[13px] text-neutral-500 mb-7">
@@ -177,8 +219,8 @@ export function SkillsLibraryView({ workers }: SkillsLibraryViewProps) {
             title="No skills yet"
             description="Capture how you want a kind of work done once — a writing style, a report format, a research method, a review checklist — and any worker can apply it."
             action={
-              <Button size="sm" onClick={() => setDraft({ ...EMPTY_DRAFT })}>
-                <PlusIcon className="w-4 h-4" /> Create your first skill
+              <Button size="sm" onClick={() => setInterviewOpen(true)}>
+                <SparklesIcon className="w-4 h-4" /> Build your first skill
               </Button>
             }
           />
@@ -338,6 +380,26 @@ export function SkillsLibraryView({ workers }: SkillsLibraryViewProps) {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Interview builder — pre-qual → generated Q&A → hands a draft to the editor above */}
+      {interviewOpen && (
+        <SkillInterviewModal
+          workers={workers}
+          onClose={() => setInterviewOpen(false)}
+          onDraft={(d: InterviewDraft) => {
+            setInterviewOpen(false);
+            setDraft({
+              id: null,
+              name: d.name,
+              when_to_use: d.when_to_use,
+              content: d.content,
+              source: d.source,
+              kind: d.kind,
+              assignWorkerIds: d.assignWorkerIds,
+            });
+          }}
+        />
       )}
     </div>
   );

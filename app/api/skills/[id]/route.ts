@@ -24,6 +24,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       update.content = content;
     }
     if (body.when_to_use !== undefined) update.when_to_use = body.when_to_use ? String(body.when_to_use).trim() : null;
+    if (body.kind !== undefined) update.kind = ['voice', 'domain', 'audience', 'method'].includes(body.kind) ? body.kind : null;
     if (body.icon !== undefined) update.icon = body.icon ?? null;
     if (body.color !== undefined) update.color = body.color ?? null;
 
@@ -32,7 +33,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       .update(update)
       .eq('id', id)
       .eq('user_id', user.id)
-      .select('id, name, when_to_use, content, source, icon, color, created_at, updated_at')
+      .select('id, name, when_to_use, content, source, kind, icon, color, created_at, updated_at')
       .single();
     if (error) throw error;
     if (!skill) return NextResponse.json({ error: 'Skill not found' }, { status: 404 });
