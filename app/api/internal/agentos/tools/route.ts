@@ -118,6 +118,23 @@ export async function POST(request: NextRequest) {
         break;
       }
 
+      case 'present_linkedin_post': {
+        // Display-only: package the worker's post(s) into a [[card:…]] marker the bridge
+        // decodes → render registry (LinkedInPostCard). No external side effects.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const variants = (Array.isArray((config as any)?.variants) ? (config as any).variants : [])
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          .map((v: any) => ({
+            text: String(v?.text ?? '').trim(),
+            hashtags: Array.isArray(v?.hashtags) ? v.hashtags.map((h: unknown) => String(h)) : [],
+          }))
+          .filter((v: { text: string }) => v.text);
+        if (!variants.length) { result = 'No post text provided.'; break; }
+        const payload = { type: 'linkedin_post', variants };
+        result = `Presented the LinkedIn post${variants.length > 1 ? ` (${variants.length} variants)` : ''} to the user for review.\n[[card:${Buffer.from(JSON.stringify(payload)).toString('base64')}]]`;
+        break;
+      }
+
       // ── User-scoped data tools ──
       case 'get_emails':
         if (!user_id) return NextResponse.json({ error: 'user_id required' }, { status: 400 });

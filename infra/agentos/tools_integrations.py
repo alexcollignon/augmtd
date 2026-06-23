@@ -120,4 +120,19 @@ def compose_email(run_context: RunContext, to: list, subject: str, body: str, cc
     return _call("compose_email", run_context, args)
 
 
-INTEGRATION_TOOLS = [slack_list_channels, slack_post_message, slack_read_messages, slack_list_members, compose_email]
+@tool
+def present_linkedin_post(run_context: RunContext, variants: list) -> str:
+    """Present a drafted LinkedIn post to the user as a rich, reviewable card (with a faithful
+    preview, character count, and the "…see more" fold marker). Call this WHEN you've written
+    a LinkedIn post the user should review — put the post text HERE, not in your chat reply.
+    Display-only: it does not publish. After calling it, keep your reply short (e.g. a one-line
+    intro); the card shows the post.
+
+    Args:
+        variants: 1–3 post options, each a dict {"text": "the full post", "hashtags": ["tag", …]}.
+                  Provide multiple only if you genuinely drafted alternative angles.
+    """
+    return _call("present_linkedin_post", run_context, {"variants": variants or []})
+
+
+INTEGRATION_TOOLS = [slack_list_channels, slack_post_message, slack_read_messages, slack_list_members, compose_email, present_linkedin_post]
