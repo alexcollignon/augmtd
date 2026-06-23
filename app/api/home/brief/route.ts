@@ -4,12 +4,13 @@ import { getSystemClient, aiCreate } from '@/lib/ai/factory';
 
 export const maxDuration = 30;
 
-// GET /api/home/brief — the day brief: what needs you, what's aging, today's meetings (with
-// light prep), what was handled, + a cached one-line narration. Reconciles email + meetings +
-// commitments. The coworker feed is fetched separately by the Home (reuses /api/workers/home).
+// GET /api/home/brief — the day brief, LAYERED by topic (not a flat task list).
+// A meeting with N action items is ONE card (items nested); commitments group under their
+// source; emails are one card per thread. The Home stays a brief, not a backlog.
 
 const DAY = 86_400_000;
-const BRIEF_TTL = 3 * 60 * 60 * 1000; // re-narrate at most every 3h
+const BRIEF_TTL = 3 * 60 * 60 * 1000;
+const MAX_PRIORITIES = 6;
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function attendeeEmails(ev: any): string[] {
@@ -24,106 +25,137 @@ export async function GET() {
   const now = new Date();
   const todayStr = now.toISOString().slice(0, 10);
   const endOfDay = `${todayStr}T23:59:59Z`;
+  const self = user.email?.toLowerCase();
 
-  const [needsRes, commitsRes, meetingsRes, handledRes, profileRes] = await Promise.all([
-    // Emails awaiting your reply
+  const [itemsRes, commitsRes, meetingsRes, handledRes, profileRes] = await Promise.all([
     supabase.from('inbox_items')
-      .select('id, work_title, source_data, created_at')
+      .select('id, work_title, source, source_id, source_meeting_transcript_id, source_data, created_at')
       .eq('user_id', user.id).eq('status', 'pending').eq('work_state', 'action_required')
-      .order('created_at', { ascending: false }).limit(8),
-    // Open commitments (both directions)
+      .order('created_at', { ascending: false }).limit(40),
     supabase.from('commitments').select('*').eq('user_id', user.id).eq('status', 'open'),
-    // Today's remaining meetings
     supabase.from('calendar_events')
       .select('id, title, start_time, attendees')
       .eq('user_id', user.id).eq('status', 'confirmed')
       .gte('start_time', new Date(now.getTime() - 30 * 60_000).toISOString())
-      .lte('start_time', endOfDay)
-      .order('start_time', { ascending: true }).limit(6),
-    // Handled in the last 24h (trust)
+      .lte('start_time', endOfDay).order('start_time', { ascending: true }).limit(6),
     supabase.from('commitments').select('id', { count: 'exact', head: true })
       .eq('user_id', user.id).eq('status', 'done').gte('updated_at', new Date(now.getTime() - DAY).toISOString()),
     supabase.from('profiles').select('full_name, home_brief').eq('id', user.id).single(),
   ]);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const items = (itemsRes.data ?? []) as any[];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const commits = (commitsRes.data ?? []) as any[];
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  type Priority = { id: string; type: 'email' | 'meeting' | 'commitment'; title: string; context: string | null; href: string; itemId?: string; items?: { id: string; text: string }[]; overdue?: boolean };
+  const priorities: Priority[] = [];
+
+  // ── Meetings: group action items under their meeting (LAYERED — one card, items nested) ──
+  const byMeeting = new Map<string, { title: string; items: { id: string; text: string }[] }>();
+  for (const it of items) {
+    if (it.source === 'meeting' && it.source_meeting_transcript_id) {
+      const key = it.source_meeting_transcript_id;
+      const m = byMeeting.get(key) ?? { title: (it.source_data?.meeting_title as string) || 'Meeting', items: [] };
+      m.items.push({ id: it.id, text: it.work_title || 'Action item' });
+      byMeeting.set(key, m);
+    }
+  }
+  for (const [tid, m] of byMeeting) {
+    priorities.push({
+      id: `meeting:${tid}`, type: 'meeting', title: m.title,
+      context: `${m.items.length} action item${m.items.length > 1 ? 's' : ''} from this meeting`,
+      href: `/meetings`, items: m.items.slice(0, 6),
+    });
+  }
+
+  // ── Emails needing a reply: one card per item (thread-level) ──
+  for (const it of items) {
+    if (it.source === 'meeting' || it.source === 'commitment') continue;
+    const sd = (it.source_data ?? {}) as Record<string, unknown>;
+    priorities.push({
+      id: `email:${it.id}`, type: 'email',
+      title: it.work_title || (sd.subject as string) || 'Email',
+      context: (sd.from_name as string) || (sd.from as string) || null,
+      href: '/inbox', itemId: it.id,
+    });
+  }
+
+  // ── Commitments you owe (email/standalone — meeting ones already nested above) ──
   const youOwe = commits
-    .filter((c) => c.direction === 'you_owe')
-    .filter((c) => (c.due_date && c.due_date <= todayStr) || (now.getTime() - new Date(c.created_at).getTime()) >= 2 * DAY)
-    .map((c) => ({ id: c.id, description: c.description, due_date: c.due_date, overdue: !!(c.due_date && c.due_date < todayStr), counterparty: c.counterparty }));
+    .filter((c) => c.direction === 'you_owe' && c.source !== 'meeting')
+    .filter((c) => (c.due_date && c.due_date <= todayStr) || (now.getTime() - new Date(c.created_at).getTime()) >= 2 * DAY);
+  for (const c of youOwe) {
+    priorities.push({
+      id: `commit:${c.id}`, type: 'commitment', title: c.description,
+      context: `You owe${c.counterparty ? ` ${c.counterparty}` : ''}${c.due_date ? ` · due ${c.due_date}` : ''}`,
+      href: '/inbox', overdue: !!(c.due_date && c.due_date < todayStr),
+    });
+  }
+
+  // Overdue first, then meetings, then emails. Cap.
+  priorities.sort((a, b) => Number(!!b.overdue) - Number(!!a.overdue));
+  const cappedPriorities = priorities.slice(0, MAX_PRIORITIES);
+
+  // ── Waiting on others (compact, not bloated) ──
   const waitingOn = commits
     .filter((c) => c.direction === 'awaiting')
     .map((c) => ({ id: c.id, description: c.description, counterparty: c.counterparty, ageDays: Math.floor((now.getTime() - new Date(c.created_at).getTime()) / DAY) }))
-    .filter((c) => c.ageDays >= 2)
-    .sort((a, b) => b.ageDays - a.ageDays);
+    .filter((c) => c.ageDays >= 2).sort((a, b) => b.ageDays - a.ageDays).slice(0, 4);
 
-  const needsYou = (needsRes.data ?? []).map((i) => {
-    const sd = (i.source_data ?? {}) as Record<string, unknown>;
-    return { id: i.id, title: i.work_title || (sd.subject as string) || 'Email', from: (sd.from_name as string) || (sd.from as string) || null };
-  });
-
-  // Light, RIGHT-context prep for the next meeting only: who, your last thread with them, open commitments.
+  // ── Today's schedule + light prep on the next meeting ──
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const meetings = (meetingsRes.data ?? []) as any[];
-  let nextPrep: { lastEmail?: { subject: string; date: string }; openCommitments: string[] } | null = null;
+  let nextPrep: { lastEmail?: { subject: string }; openCommitments: string[] } | null = null;
   if (meetings[0]) {
-    const emails = attendeeEmails(meetings[0]);
-    const selfish = new Set([user.email?.toLowerCase()]);
-    const others = emails.filter((e) => !selfish.has(e));
+    const others = attendeeEmails(meetings[0]).filter((e) => e !== self);
     if (others.length) {
-      const [lastEmailRes] = await Promise.all([
-        supabase.from('emails').select('subject, received_at')
-          .eq('user_id', user.id).contains('to_addresses', [others[0]])
-          .order('received_at', { ascending: false }).limit(1),
-      ]);
-      const le = lastEmailRes.data?.[0];
+      const { data: le } = await supabase.from('emails').select('subject')
+        .eq('user_id', user.id).contains('to_addresses', [others[0]])
+        .order('received_at', { ascending: false }).limit(1);
       const related = commits.filter((c) => others.includes((c.counterparty || '').toLowerCase())).map((c) => c.description);
-      nextPrep = {
-        ...(le ? { lastEmail: { subject: le.subject || '(no subject)', date: le.received_at } } : {}),
-        openCommitments: related.slice(0, 3),
-      };
+      nextPrep = { ...(le?.[0] ? { lastEmail: { subject: le[0].subject || '(no subject)' } } : {}), openCommitments: related.slice(0, 3) };
     }
   }
-  const today = meetings.map((m, i) => ({
-    id: m.id, title: m.title || '(untitled)', start: m.start_time,
-    attendees: attendeeEmails(m).filter((e) => e !== user.email?.toLowerCase()).length,
+  const schedule = meetings.map((m, i) => ({
+    id: m.id, time: m.start_time, title: m.title || '(untitled)',
+    attendees: attendeeEmails(m).filter((e) => e !== self).length,
     prep: i === 0 ? nextPrep : null,
   }));
+
+  // ── Status chips (live, alive) ──
+  const emailCount = items.filter((it) => it.source !== 'meeting' && it.source !== 'commitment').length;
+  const status = {
+    needsReply: emailCount,
+    meetingsToday: schedule.length,
+    waitingOn: commits.filter((c) => c.direction === 'awaiting').length,
+    handledToday: handledRes.count ?? 0,
+  };
 
   // ── Cached one-line narration ──
   const fullName = (profileRes.data as { full_name?: string } | null)?.full_name ?? null;
   const firstName = fullName?.split(' ')[0] ?? null;
   const cached = (profileRes.data as { home_brief?: { text: string; generated_at: string } } | null)?.home_brief ?? null;
   let briefLine = cached?.text ?? null;
-  const stale = !cached || (now.getTime() - new Date(cached.generated_at).getTime()) > BRIEF_TTL;
-  if (stale) {
+  if (!cached || (now.getTime() - new Date(cached.generated_at).getTime()) > BRIEF_TTL) {
     try {
       const facts = [
-        `${needsYou.length} email(s) need a reply`,
-        youOwe.length ? `${youOwe.length} thing(s) you owe${youOwe.some((c) => c.overdue) ? ' (some overdue)' : ''}` : '',
-        waitingOn.length ? `${waitingOn.length} you're waiting on (oldest ${waitingOn[0].ageDays}d)` : '',
-        today.length ? `${today.length} meeting(s) today` : 'no meetings today',
+        cappedPriorities.length ? `${cappedPriorities.length} thing(s) need you${cappedPriorities[0]?.overdue ? ' (something overdue)' : ''}` : 'nothing urgent',
+        status.needsReply ? `${status.needsReply} reply needed` : '',
+        status.waitingOn ? `${status.waitingOn} you're waiting on` : '',
+        status.meetingsToday ? `${status.meetingsToday} meeting(s) today` : 'no meetings today',
+        status.handledToday ? `${status.handledToday} handled automatically` : '',
       ].filter(Boolean).join('; ');
       const { client, model } = getSystemClient('summarization');
       const res = await aiCreate(client, {
         model, max_tokens: 90, temperature: 0.5,
-        messages: [{ role: 'user', content: `Write ONE short, warm sentence to ${firstName || 'the user'} summarising their day from these facts. Lead with what matters (overdue / waiting). Natural, specific, no preamble, no "Here's". Facts: ${facts}.` }],
+        messages: [{ role: 'user', content: `One short warm sentence to ${firstName || 'the user'} summarising their day. Lead with what matters. Natural, specific, no preamble. Facts: ${facts}.` }],
       });
       briefLine = res.choices?.[0]?.message?.content?.trim() || briefLine;
-      if (briefLine) {
-        await supabase.from('profiles').update({ home_brief: { text: briefLine, generated_at: now.toISOString() } }).eq('id', user.id).then(() => {}, () => {});
-      }
-    } catch { /* keep cached/none */ }
+      if (briefLine) await supabase.from('profiles').update({ home_brief: { text: briefLine, generated_at: now.toISOString() } }).eq('id', user.id).then(() => {}, () => {});
+    } catch { /* keep */ }
   }
 
-  return NextResponse.json({
-    firstName,
-    briefLine,
-    needsYou,
-    youOwe,
-    waitingOn,
-    today,
-    handled: { commitmentsClosed: handledRes.count ?? 0 },
-  });
+  return NextResponse.json({ firstName, briefLine, status, priorities: cappedPriorities, waitingOn, schedule });
 }
