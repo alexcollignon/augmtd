@@ -7,6 +7,7 @@ import { buildKBContext } from '@/lib/knowledge/build-kb-context';
 import { getCalendarContext } from '@/lib/calendar/calendar-context';
 import { formatCalendarContextForChat } from '@/lib/calendar/format-calendar-context';
 import { buildUserContextBlock } from '@/lib/context/build-user-context';
+import { buildVoiceBlock } from '@/lib/context/voice-context';
 import { checkRateLimit } from '@/lib/utils/rate-limit';
 
 /** Strip HTML tags from a draft body so the AI sees clean text, not markup. */
@@ -201,7 +202,10 @@ Help improve tone, length, subject, clarity. When providing a full revision emit
     // Reply mode addendum
     if (mode === 'reply') {
       const replyForAI = stripHtmlForAI(replyDraft || '');
-      systemPrompt += `\n\nThe user has the reply box open. Current draft:
+      // Voice layer: the user's real sent emails (few-shot) + their voice skill, so drafts
+      // sound like them instead of a generic assistant. Empty string if we have neither.
+      const voiceBlock = await buildVoiceBlock(user.id, emailContext?.from ?? null, supabase).catch(() => '');
+      systemPrompt += `\n\n${voiceBlock ? voiceBlock + '\n\n' : ''}The user has the reply box open. Current draft:
 ${replyForAI || '(empty — not yet drafted)'}
 
 REPLY MODE — follow exactly:
@@ -211,10 +215,8 @@ REPLY MODE — follow exactly:
 
 3. If QUERY intent (asking a question, checking calendar, etc.) → respond normally as a helpful assistant. Do NOT emit REPLY_DRAFT.
 
-4. EMAIL BODY FORMAT — all reply drafts must follow this structure:
-   "Hi Alex,\\n\\nThank you for reaching out...\\n\\nBest regards,\\nAlexandre"
-   Rules: greeting on first line, \\n\\n between paragraphs, sign-off line, name on the line after.
-   Use \\n for newlines inside the JSON string. Use **word** for bold, - item for bullet lists.
+4. VOICE — write in the USER'S voice, matching the "HOW YOU ACTUALLY WRITE" examples and "YOUR VOICE" guidance above: their greeting style, sentence length, directness, warmth, and sign-off. Do NOT default to a generic "Hi {name}, Thank you for reaching out… Best regards" template unless that is genuinely how they write — if their real emails are short and direct, write short and direct; if they skip greetings or sign-offs, do the same. Mirror their actual patterns over any default.
+   FORMAT: greeting (if they use one) on the first line, \\n\\n between paragraphs, their usual sign-off and name at the end. Use \\n for newlines inside the JSON string. **word** for bold, - item for bullet lists.
 
 5. CRITICAL: Never emit ACTION, OPEN_COMPOSE, or UPDATE_DRAFT in reply mode. MEETING_SUGGESTION is allowed only for QUERY intents about scheduling.`;
     }
@@ -230,7 +232,7 @@ REPLY MODE — follow exactly:
         ...history,
         { role: 'user' as const, content: userContent },
       ],
-      temperature: 0.3,
+      temperature: mode === 'reply' ? 0.5 : 0.3,
       max_tokens: mode === 'reply' ? 1200 : 700,
       stream: true as const,
     };
