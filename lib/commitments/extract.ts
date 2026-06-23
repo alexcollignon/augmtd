@@ -114,7 +114,7 @@ export async function extractEmailCommitments(opts: {
 
   const prompt = `Extract concrete COMMITMENTS from this email — a specific promise or obligation between ${who} and a REAL person, with a clear owner and optionally a deadline (e.g. "Send the Q3 proposal", "Review the contract by Friday").
 
-STRICTLY EXCLUDE and return an empty array if the message is a newsletter, promotion, receipt, invoice, or automated notification. NEVER treat marketing/newsletter calls-to-action as commitments — e.g. "reply with Q2", "submit your story", "subscribe", "reply for early access", "share your feedback", editorial/publishing schedules, or any mass-email ask. Also ignore pleasantries, vague intentions ("let's catch up sometime"), and anything already done.
+STRICTLY EXCLUDE and return an empty array if the message is a newsletter, promotion, receipt, invoice, or automated notification. NEVER treat marketing/newsletter calls-to-action as commitments — e.g. "reply with Q2", "submit your story", "subscribe", "reply for early access", "share your feedback", editorial/publishing schedules, or any mass-email ask. Also exclude CONDITIONAL or OPTIONAL offers ("reply if you need…", "let me know if you'd like…", "feel free to…", "happy to … if useful") — these are invitations, not commitments. Ignore pleasantries, vague intentions ("let's catch up sometime"), and anything already done.
 
 ${perspective}
 
