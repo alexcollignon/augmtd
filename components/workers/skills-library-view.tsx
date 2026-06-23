@@ -5,6 +5,7 @@ import {
   AcademicCapIcon, PlusIcon, PencilSquareIcon, TrashIcon, XMarkIcon,
   ArrowUpTrayIcon, ArrowDownTrayIcon, CheckIcon,
 } from '@heroicons/react/24/outline';
+import { toast } from 'sonner';
 import { parseSkillMarkdown, skillToMarkdown, skillFilename } from '@/lib/skills/markdown';
 import { Button, IconButton, Input, Textarea, Card, EmptyState } from '@/components/ui';
 import { SkillInterviewModal, type InterviewDraft } from './skill-interview-modal';
@@ -75,6 +76,16 @@ export function SkillsLibraryView({ workers }: SkillsLibraryViewProps) {
     if (!name || !content) return;
     setIsSaving(true);
     try {
+      // Voice lives in Memory, not the skills library. A new voice-kind draft (from the
+      // interview) routes to the user's durable voice profile instead of becoming a skill.
+      if (!draft.id && draft.kind === 'voice') {
+        await fetch('/api/context/voice', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content }),
+        });
+        setDraft(null);
+        toast.success('Saved to your voice — Settings → Memory');
+        return;
+      }
       const payload = { name, when_to_use: draft.when_to_use.trim() || null, content, source: draft.source ?? 'manual', kind: draft.kind ?? null };
       if (draft.id) {
         await fetch(`/api/skills/${draft.id}`, {

@@ -37,8 +37,13 @@ export async function renderProfile(
   profileData: any,
   confidenceScore: number,
 ): Promise<string | null> {
-  if (confidenceScore < 10) return null
   if (!profileData || Object.keys(profileData).length === 0) return null
+  // The "Communication style" card shows the durable, example-grounded voice when present
+  // (synthesized from real sent emails / the interview) — not the legacy keyword stats.
+  if (profileType === 'email_communication' && profileData.voice_description) {
+    return String(profileData.voice_description)
+  }
+  if (confidenceScore < 10) return null
 
   // Skip work_patterns until it has real data
   if (profileType === 'work_patterns') {

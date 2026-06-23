@@ -1,4 +1,5 @@
 import { SupabaseClient } from '@supabase/supabase-js';
+import { synthesizeVoiceProfile } from './voice-profile';
 
 /**
  * Loads all populated context profiles for a user and formats them into
@@ -41,7 +42,14 @@ export async function buildUserContextBlock(
 
   // ── EMAIL STYLE ──────────────────────────────────────────────────────────────
   const email = byType.email_communication;
-  if (email) {
+  // Prefer the durable, example-grounded voice (synthesized from real sent emails / interview)
+  // over the legacy keyword stats. Lazily build it the first time it's missing.
+  if (email?.voice_description) {
+    sections.push(`HOW YOU WRITE EMAIL (match this voice):\n${email.voice_description}`);
+  } else {
+    // Lazily build the durable voice from sent emails — at most once (guarded by attempt marker).
+    if (email && !email.voice_synth_attempted_at) void synthesizeVoiceProfile(userId, supabase).catch(() => {});
+    if (email) {
     const lines: string[] = ['EMAIL STYLE (learned from sent emails):'];
     const score = email.formalityScore ?? email.tone;
     if (score != null) {
@@ -60,6 +68,7 @@ export async function buildUserContextBlock(
     )].slice(0, 3) as string[];
     if (baseGreetings.length) lines.push(`Greetings: ${baseGreetings.join(', ')}`);
     if (lines.length > 1) sections.push(lines.join('\n'));
+    }
   }
 
   // ── SCHEDULING PREFERENCES ───────────────────────────────────────────────────

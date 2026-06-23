@@ -66,15 +66,21 @@ export async function upsertContacts(params: {
     })
   }
 
+  // Automated senders (no-reply, notifications, mailer-daemon, newsletters…) get a low,
+  // capped importance — they're built from RECEIVED mail, so without this a frequent newsletter
+  // would read as a VIP. Real people keep the frequency-based score.
+  const AUTOMATED = /^(no-?reply|donotreply|do-not-reply|mailer-?daemon|bounce|postmaster|notifications?|notify|automated|alerts?|newsletter|updates?|mailer|noreply)([.\-_+]|$)/i
+
   const records = Array.from(contactMap.entries()).map(([email, c]) => {
     const prev = existingMap.get(email)
     const totalFrequency = (prev?.frequency ?? 0) + c.count
+    const isAutomated = AUTOMATED.test(email.split('@')[0] || '')
     return {
       user_id: userId,
       contact_email: email,
       contact_name: c.contact_name || prev?.name || null,
       interaction_frequency: totalFrequency,
-      importance: Math.min(50 + totalFrequency * 5, 100),
+      importance: isAutomated ? 10 : Math.min(50 + totalFrequency * 5, 100),
       last_interaction: c.last_interaction,
       updated_at: new Date().toISOString(),
     }
