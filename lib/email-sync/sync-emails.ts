@@ -833,6 +833,21 @@ export async function syncEmailsForConnection(
             // Don't break sync if learning fails
           });
 
+          // Capture commitments the user made in this sent email (keyword-gated AI; you-owe).
+          void import('@/lib/commitments/extract').then(({ extractEmailCommitments }) =>
+            extractEmailCommitments({
+              userId: connection.user_id,
+              subject: storedEmail.subject || '',
+              body: storedEmail.body || '',
+              isFromUser: true,
+              userName: null,
+              counterparty: (storedEmail.to_addresses || [])[0] || null,
+              sourceId: storedEmail.id,
+              threadId: storedEmail.thread_id || null,
+              client: adminSupabase,
+            }),
+          ).catch(() => {});
+
           console.log(`    ✓ Learning signals queued, skipping inbox item (sent email)\n`);
           continue; // Skip to next email (already stored for context)
         }

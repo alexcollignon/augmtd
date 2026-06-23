@@ -319,6 +319,14 @@ export async function storeTranscriptAndGenerateWork(
     }
   }
 
+  // Capture meeting action items as commitments (you owe / awaiting) — the don't-drop-the-ball tracker.
+  try {
+    const { writeMeetingCommitments } = await import('@/lib/commitments/extract');
+    await writeMeetingCommitments(userId, insights.actionItems ?? [], { transcriptId: transcriptRecord.id }, supabase);
+  } catch (e) {
+    console.warn('[MeetingBot] Non-fatal: failed to write meeting commitments', e);
+  }
+
   const transcriptUpdate: Record<string, any> = {
     processed: true,
     work_items_generated: workItemsCreated,
