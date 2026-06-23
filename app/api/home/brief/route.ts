@@ -133,27 +133,35 @@ export async function GET() {
     handledToday: handledRes.count ?? 0,
   };
 
-  // ── Cached one-line narration ──
+  // ── Cached one-line narration (type-aware + busts when the day's shape changes) ──
+  const emailP = cappedPriorities.filter((p) => p.type === 'email').length;
+  const meetingP = cappedPriorities.filter((p) => p.type === 'meeting').length;
+  const commitP = cappedPriorities.filter((p) => p.type === 'commitment').length;
+  const overdueP = cappedPriorities.filter((p) => p.overdue).length;
+  const sig = `${emailP}|${meetingP}|${commitP}|${overdueP}|${status.waitingOn}|${schedule.length}`;
+
   const fullName = (profileRes.data as { full_name?: string } | null)?.full_name ?? null;
   const firstName = fullName?.split(' ')[0] ?? null;
-  const cached = (profileRes.data as { home_brief?: { text: string; generated_at: string } } | null)?.home_brief ?? null;
+  const cached = (profileRes.data as { home_brief?: { text: string; generated_at: string; sig?: string } } | null)?.home_brief ?? null;
   let briefLine = cached?.text ?? null;
-  if (!cached || (now.getTime() - new Date(cached.generated_at).getTime()) > BRIEF_TTL) {
+  const stale = !cached || cached.sig !== sig || (now.getTime() - new Date(cached.generated_at).getTime()) > BRIEF_TTL;
+  if (stale) {
     try {
       const facts = [
-        cappedPriorities.length ? `${cappedPriorities.length} thing(s) need you${cappedPriorities[0]?.overdue ? ' (something overdue)' : ''}` : 'nothing urgent',
-        status.needsReply ? `${status.needsReply} reply needed` : '',
-        status.waitingOn ? `${status.waitingOn} you're waiting on` : '',
-        status.meetingsToday ? `${status.meetingsToday} meeting(s) today` : 'no meetings today',
-        status.handledToday ? `${status.handledToday} handled automatically` : '',
+        emailP ? `${emailP} email${emailP > 1 ? 's' : ''} to reply to` : '',
+        meetingP ? `${meetingP} meeting${meetingP > 1 ? 's' : ''} with action items to follow up on` : '',
+        commitP ? `${commitP} commitment${commitP > 1 ? 's' : ''} you owe${overdueP ? ' (some overdue)' : ''}` : '',
+        status.waitingOn ? `${status.waitingOn} thing${status.waitingOn > 1 ? 's' : ''} you're waiting on others for` : '',
+        status.meetingsToday ? `${status.meetingsToday} meeting${status.meetingsToday > 1 ? 's' : ''} scheduled today` : 'no meetings scheduled today',
+        !cappedPriorities.length && !status.waitingOn ? 'nothing urgent needs you' : '',
       ].filter(Boolean).join('; ');
       const { client, model } = getSystemClient('summarization');
       const res = await aiCreate(client, {
         model, max_tokens: 90, temperature: 0.5,
-        messages: [{ role: 'user', content: `One short warm sentence to ${firstName || 'the user'} summarising their day. Lead with what matters. Natural, specific, no preamble. Facts: ${facts}.` }],
+        messages: [{ role: 'user', content: `One short, warm sentence to ${firstName || 'the user'} summarising their day. Lead with what matters most. Be precise — do NOT call meeting action items "emails". Natural, no preamble, no "Here's". Facts: ${facts}.` }],
       });
       briefLine = res.choices?.[0]?.message?.content?.trim() || briefLine;
-      if (briefLine) await supabase.from('profiles').update({ home_brief: { text: briefLine, generated_at: now.toISOString() } }).eq('id', user.id).then(() => {}, () => {});
+      if (briefLine) await supabase.from('profiles').update({ home_brief: { text: briefLine, generated_at: now.toISOString(), sig } }).eq('id', user.id).then(() => {}, () => {});
     } catch { /* keep */ }
   }
 
