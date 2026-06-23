@@ -852,6 +852,24 @@ export async function syncEmailsForConnection(
           continue; // Skip to next email (already stored for context)
         }
 
+        // Capture commitments asked of / promised to the user in this received email
+        // (others' asks → you_owe, others' promises → awaiting). Only actionable mail.
+        if (emailClass === 'process') {
+          void import('@/lib/commitments/extract').then(({ extractEmailCommitments }) =>
+            extractEmailCommitments({
+              userId: connection.user_id,
+              subject: storedEmail.subject || '',
+              body: storedEmail.body || '',
+              isFromUser: false,
+              userName: null,
+              counterparty: storedEmail.from_address || null,
+              sourceId: storedEmail.id,
+              threadId: storedEmail.thread_id || null,
+              client: adminSupabase,
+            }),
+          ).catch(() => {});
+        }
+
         // ── SAFETY NET ──────────────────────────────────────────────────────────────
         // Create a basic inbox item BEFORE any AI processing so the email is always
         // visible even if classification, recipient analysis, or processEmail throws.
