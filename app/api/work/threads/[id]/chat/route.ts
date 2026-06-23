@@ -405,6 +405,7 @@ export async function POST(
             `[YOUR DOCUMENTS]\nlist_worker_documents shows everything you've produced. get_worker_document retrieves the full content. When the user asks to see, revise, or reference something you made, call get_worker_document — don't say you can't retrieve it.`,
             `[TEAM]\nYou work alongside other coworkers. To build on a teammate's output (e.g. research another coworker did), use find_team_work to locate it (by topic, or by coworker name like "Max") and read_team_work to read it — then do your part. Don't ask the user to fetch a teammate's work; get it yourself. The user talks to whoever owns the result they want — so if they ask you for a deliverable that needs a colleague's input, pull it.`,
             `[EMAIL]\nYou can draft and send email as yourself (from your own address). When the user asks you to email someone, call compose_email with to/subject/body — it shows the user an EDITABLE draft to review and send. You NEVER send directly and NEVER say it's sent ("I've drafted it — review and hit Send"). Recipients can be anyone; for "me"/"us" use the user's own address from [YOUR EMAIL ADDRESSES]. The email is **FROM YOU** (the coworker, e.g. your @team.augmtd.ai address) — NOT from the user, so do NOT mimic the user's email style or sign off with the user's name (no "Best, {user}"). Write in your own voice; a signature with your name, role, and address is appended automatically, so **end the body with no sign-off**. If compose_email reports email is off, tell them to enable Email in your Tools tab.`,
+            `[LINKEDIN POST]\nWhenever you write a LinkedIn post for the user, deliver it by calling present_linkedin_post (put the post text in the tool, 1–3 variants only if you genuinely drafted alternatives). It renders a real LinkedIn-style preview card — with the character count and the "see more" fold — instead of a wall of text. After calling it, keep your chat reply to a short intro line; don't also paste the full post into the chat.`,
             `[SKILLS]\nSkills are reusable instructions for how to handle a kind of work — a method, process, format, structure, or style. Any skill assigned to you is already in your context above — apply the matching one automatically. If the user asks you to follow an approach or named skill you don't see assigned, call list_skills to check the library, then apply_skill to pull and follow it. When creating or updating a task, pass skill_names to create_task/update_task to enforce specific skills on that task's output (omit to use your assigned skills); use list_skills first if you're unsure of the exact names.`,
             `Understand intent before acting. "Prepare a weekly X", "every Monday do Y", "set up X for me", or anything you'll be asked to repeat = the user wants a reusable task — call create_task immediately (with a schedule if given, otherwise it's run on demand), confirm, done. "What's X?" or "find me X" or "draft X" = do it now with your tools. Never confuse the two. A human colleague would know the difference instantly.`,
             `Speak like a capable colleague, not a software system. Say "Got it, I'll have that ready every Monday" not "I can create a scheduled automation task." Say "I'm on it" not "I don't have direct access to." When a task is clear, do it. One focused question maximum if truly blocked.`,
@@ -742,6 +743,7 @@ export async function POST(
     const allArtifactIds: string[] = [];
     const allArtifactMeta: Record<string, { title: string; type: string }> = {};
     const allEmailDrafts: EmailDraft[] = [];
+    const allArtifacts: Record<string, unknown>[] = [];
 
     const readable = new ReadableStream({
       async start(controller) {
@@ -948,12 +950,13 @@ export async function POST(
                     calledTools.add(dedupeKey);
 
                     send({ type: 'tool_start', name: tc.function.name, id: tc.id, label: toolLabel(tc.function.name) });
-                    const { result, summary, artifact, citations, clarification, stopStream, emailDraft } = await executeChatTool(tc.function.name, toolInput, sources, runContext);
+                    const { result, summary, artifact, citations, clarification, stopStream, emailDraft, cardArtifact } = await executeChatTool(tc.function.name, toolInput, sources, runContext);
                     send({ type: 'tool_result', name: tc.function.name, id: tc.id, summary, ...(citations?.length ? { citations } : {}) });
                     allToolCalls.push({ name: tc.function.name, summary, ...(citations?.length ? { citations } : {}) });
                     if (clarification) send({ type: 'clarification_request', ...(clarification as object) });
                     if (artifact?.id) { allArtifactIds.push(artifact.id); allArtifactMeta[artifact.id] = { title: artifact.title, type: artifact.type }; send({ type: 'artifact_ready', artifact: { id: artifact.id, type: artifact.type, title: artifact.title } }); }
                     if (emailDraft) { allEmailDrafts.push(emailDraft); send({ type: 'email_draft', draft: emailDraft }); }
+                    if (cardArtifact) { allArtifacts.push(cardArtifact); send({ type: 'artifact', artifact: cardArtifact }); }
                     toolResultMessages.push({ role: 'tool', tool_call_id: tc.id, content: result });
                     toolResultCache.set(dedupeKey, result);
                     if (stopStream) { continueLoop = false; break; }
@@ -1017,7 +1020,7 @@ export async function POST(
 
                   send({ type: 'tool_start', name: tc.function.name, id: tc.id, label: toolLabel(tc.function.name) });
 
-                  const { result, summary, artifact, citations, clarification, stopStream, retryCorrection, emailDraft } = await executeChatTool(
+                  const { result, summary, artifact, citations, clarification, stopStream, retryCorrection, emailDraft, cardArtifact } = await executeChatTool(
                     tc.function.name,
                     toolInput,
                     sources,
@@ -1053,6 +1056,7 @@ export async function POST(
                   }
 
                   if (emailDraft) { allEmailDrafts.push(emailDraft); send({ type: 'email_draft', draft: emailDraft }); }
+                  if (cardArtifact) { allArtifacts.push(cardArtifact); send({ type: 'artifact', artifact: cardArtifact }); }
 
                   toolResultMessages.push({
                     role: 'tool',
@@ -1171,6 +1175,7 @@ export async function POST(
                 artifact_ids: allArtifactIds,
                 ...(Object.keys(allArtifactMeta).length > 0 ? { artifact_meta: allArtifactMeta } : {}),
                 ...(allEmailDrafts.length > 0 ? { email_drafts: allEmailDrafts } : {}),
+                ...(allArtifacts.length > 0 ? { artifacts: allArtifacts } : {}),
                 ...(clarificationCall?.clarification ? { clarification: clarificationCall.clarification } : {}),
               },
             });
@@ -1354,6 +1359,28 @@ function buildChatTools(sources: string[], _provider: string, _modelFamily: stri
       slackListChannelsDefinition, slackPostMessageDefinition, slackReadMessagesDefinition, slackListMembersDefinition,
       findTeamWorkDefinition, readTeamWorkDefinition,
       composeEmailDefinition,
+      {
+        name: 'present_linkedin_post',
+        description: "Present a finished LinkedIn post to the user as a rich, reviewable card (faithful preview, character count, the \"see more\" fold). Call this whenever you've written a LinkedIn post for the user — put the post text HERE, not in your chat reply. Display-only (it does not publish). Provide 1–3 variants only if you genuinely drafted alternatives. After calling it, keep your chat reply to a short intro line.",
+        input_schema: {
+          type: 'object',
+          properties: {
+            variants: {
+              type: 'array',
+              description: '1–3 post options.',
+              items: {
+                type: 'object',
+                properties: {
+                  text: { type: 'string', description: 'The full post text.' },
+                  hashtags: { type: 'array', items: { type: 'string' }, description: 'Optional hashtags (without #).' },
+                },
+                required: ['text'],
+              },
+            },
+          },
+          required: ['variants'],
+        },
+      },
     );
   }
 
@@ -1393,6 +1420,7 @@ function toolLabel(name: string): string {
     list_worker_documents: 'Checking documents',
     get_worker_document: 'Retrieving document…',
     compose_email: 'Drafting email…',
+    present_linkedin_post: 'Preparing LinkedIn post…',
   };
   return labels[name] ?? name;
 }
@@ -1453,11 +1481,30 @@ async function executeChatTool(
   input: Record<string, unknown>,
   sources: string[],
   ctx: RunContext
-): Promise<{ result: string; summary: string; artifact?: DocumentArtifact; citations?: string[]; clarification?: object; stopStream?: boolean; retryCorrection?: string; emailDraft?: EmailDraft }> {
+): Promise<{ result: string; summary: string; artifact?: DocumentArtifact; citations?: string[]; clarification?: object; stopStream?: boolean; retryCorrection?: string; emailDraft?: EmailDraft; cardArtifact?: Record<string, unknown> }> {
   switch (name) {
     case 'compose_email': {
       const { result, draft } = await executeComposeEmail(input, ctx.userId, ctx.agentId, ctx.adminClient);
       return { result, summary: draft ? 'Drafted an email' : 'Email is off', emailDraft: draft ?? undefined };
+    }
+    case 'present_linkedin_post': {
+      // Display-only render-registry card (mirrors the AgentOS present_linkedin_post tool).
+      const raw = Array.isArray(input.variants) ? input.variants : [];
+      const variants = raw
+        .map((v) => {
+          const o = (v ?? {}) as Record<string, unknown>;
+          return {
+            text: String(o.text ?? '').trim(),
+            hashtags: Array.isArray(o.hashtags) ? (o.hashtags as unknown[]).map((h) => String(h)) : [],
+          };
+        })
+        .filter((v) => v.text);
+      if (!variants.length) return { result: 'No post text provided.', summary: 'No post' };
+      return {
+        result: `Presented the LinkedIn post${variants.length > 1 ? ` (${variants.length} variants)` : ''} to the user for review.`,
+        summary: 'Presented LinkedIn post',
+        cardArtifact: { type: 'linkedin_post', variants },
+      };
     }
     case 'request_clarification': {
       // Validate question field before doing anything else

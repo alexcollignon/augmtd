@@ -30,6 +30,7 @@ export const TOOL_FEATURE: Record<string, FeatureKey | null> = {
   rss_feed: null,
   get_pt_tenders: null,
   linkedin_post: null,
+  present_linkedin_post: null,
   get_workflow_output: null,
   generate_document: null,
 
