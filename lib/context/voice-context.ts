@@ -41,15 +41,23 @@ export async function buildVoiceBlock(
   recipientEmail: string | null,
   client: DBClient,
 ): Promise<string> {
-  const [skillsRes, recipientRes] = await Promise.all([
+  const rcpt = recipientEmail?.toLowerCase().trim() || null;
+  const [skillsRes, recipientRes, relRes] = await Promise.all([
     client.from('skills').select('content').eq('user_id', userId).eq('kind', 'voice').limit(2),
-    recipientEmail
+    rcpt
       ? client.from('emails')
           .select('subject, body, html_body, received_at')
           .eq('user_id', userId).eq('is_from_user', true)
-          .contains('to_addresses', [recipientEmail])
+          .contains('to_addresses', [rcpt])
           .order('received_at', { ascending: false }).limit(MAX_SAMPLES)
       : Promise.resolve({ data: [] as SentRow[] }),
+    // Relationship signal — who this is + how much they matter, so the draft's care level
+    // and rapport fit the recipient (per-recipient voice, like Superhuman).
+    rcpt
+      ? client.from('relationship_graph')
+          .select('contact_name, importance, interaction_frequency')
+          .eq('user_id', userId).eq('contact_email', rcpt).maybeSingle()
+      : Promise.resolve({ data: null }),
   ]);
 
   let exemplars: SentRow[] = (recipientRes?.data as SentRow[]) ?? [];
@@ -63,6 +71,16 @@ export async function buildVoiceBlock(
   }
 
   const parts: string[] = [];
+
+  // [ABOUT THIS RECIPIENT] — relationship_graph signal (front, so it frames the draft).
+  const rel = relRes?.data as { contact_name: string | null; importance: number | null; interaction_frequency: number | null } | null;
+  if (rel) {
+    const bits: string[] = [];
+    if (rel.contact_name) bits.push(`${rel.contact_name}`);
+    if (typeof rel.importance === 'number' && rel.importance >= 75) bits.push('a high-importance contact — be especially considered, precise, and warm');
+    if (typeof rel.interaction_frequency === 'number' && rel.interaction_frequency >= 8) bits.push('someone you correspond with often — keep your established rapport (the examples below reflect it)');
+    if (bits.length) parts.push(`[ABOUT THIS RECIPIENT]\n${bits.join('; ')}.`);
+  }
 
   const skills = (skillsRes?.data as Array<{ content: string }> | null) ?? [];
   const voiceGuidance = skills.map((s) => s.content?.trim()).filter(Boolean).join('\n\n');
