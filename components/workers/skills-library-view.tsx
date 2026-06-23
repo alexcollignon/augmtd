@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import {
   AcademicCapIcon, PlusIcon, PencilSquareIcon, TrashIcon, XMarkIcon,
-  ArrowUpTrayIcon, ArrowDownTrayIcon, CheckIcon, SparklesIcon,
+  ArrowUpTrayIcon, ArrowDownTrayIcon, CheckIcon,
 } from '@heroicons/react/24/outline';
 import { parseSkillMarkdown, skillToMarkdown, skillFilename } from '@/lib/skills/markdown';
 import { Button, IconButton, Input, Textarea, Card, EmptyState } from '@/components/ui';
@@ -181,7 +181,7 @@ export function SkillsLibraryView({ workers }: SkillsLibraryViewProps) {
                       onClick={() => { setNewMenuOpen(false); setInterviewOpen(true); }}
                       className="w-full flex items-start gap-2.5 px-2.5 py-2 rounded-lg hover:bg-neutral-50 text-left transition-colors"
                     >
-                      <SparklesIcon className="w-4 h-4 text-indigo-500 mt-0.5 flex-shrink-0" />
+                      <AcademicCapIcon className="w-4 h-4 text-indigo-500 mt-0.5 flex-shrink-0" />
                       <div>
                         <div className="text-[12.5px] font-medium text-neutral-800">Build with interview</div>
                         <div className="text-[11px] text-neutral-400">Answer a few questions — your coworker writes it</div>
@@ -220,7 +220,7 @@ export function SkillsLibraryView({ workers }: SkillsLibraryViewProps) {
             description="Capture how you want a kind of work done once — a writing style, a report format, a research method, a review checklist — and any worker can apply it."
             action={
               <Button size="sm" onClick={() => setInterviewOpen(true)}>
-                <SparklesIcon className="w-4 h-4" /> Build your first skill
+                <AcademicCapIcon className="w-4 h-4" /> Build your first skill
               </Button>
             }
           />
