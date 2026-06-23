@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { getSystemClient, aiCreate } from '@/lib/ai/factory';
+import { isNeedsReply, buildAnsweredSet } from '@/lib/inbox/needs-reply';
 
 export const maxDuration = 30;
 
@@ -29,9 +30,12 @@ export async function GET() {
 
   const [itemsRes, commitsRes, meetingsRes, handledRes, profileRes] = await Promise.all([
     supabase.from('inbox_items')
-      .select('id, work_title, source, source_id, source_meeting_transcript_id, source_data, created_at')
-      .eq('user_id', user.id).eq('status', 'pending').eq('work_state', 'action_required')
-      .order('created_at', { ascending: false }).limit(40),
+      .select('id, work_title, work_state, source, source_id, source_meeting_transcript_id, source_data, created_at')
+      .eq('user_id', user.id).eq('status', 'pending')
+      // reply-via-email states (work_prepared/decision_required) + external tasks (action_required,
+      // which is also where meeting action items live). isNeedsReply sorts out which emails qualify.
+      .in('work_state', ['work_prepared', 'decision_required', 'action_required'])
+      .order('created_at', { ascending: false }).limit(60),
     supabase.from('commitments').select('*').eq('user_id', user.id).eq('status', 'open'),
     supabase.from('calendar_events')
       .select('id, title, start_time, attendees')
@@ -71,10 +75,23 @@ export async function GET() {
     });
   }
 
-  // ── Emails needing a reply: one card per item (thread-level) ──
-  for (const it of items) {
-    if (it.source === 'meeting' || it.source === 'commitment') continue;
+  // ── Emails needing a reply (smart: classifier reply-state + ask signals, never automated) ──
+  const emailCandidates = items.filter((it) =>
+    it.source !== 'meeting' && it.source !== 'commitment' && isNeedsReply(it),
+  );
+  // Drop threads you've already replied to.
+  const candThreadIds = [...new Set(emailCandidates.map((c) => c.source_data?.thread_id).filter(Boolean))] as string[];
+  let answered = new Map<string, string>();
+  if (candThreadIds.length) {
+    const { data: sent } = await supabase.from('emails')
+      .select('thread_id, received_at').eq('user_id', user.id).eq('is_from_user', true).in('thread_id', candThreadIds);
+    answered = buildAnsweredSet(sent ?? []);
+  }
+  for (const it of emailCandidates) {
     const sd = (it.source_data ?? {}) as Record<string, unknown>;
+    const tid = sd.thread_id as string | undefined;
+    const sentAt = tid ? answered.get(tid) : undefined;
+    if (sentAt && sentAt > it.created_at) continue; // already replied — not waiting on you
     priorities.push({
       id: `email:${it.id}`, type: 'email',
       title: it.work_title || (sd.subject as string) || 'Email',
@@ -128,7 +145,7 @@ export async function GET() {
   }));
 
   // ── Status chips (live, alive) ──
-  const emailCount = items.filter((it) => it.source !== 'meeting' && it.source !== 'commitment').length;
+  const emailCount = priorities.filter((p) => p.type === 'email').length;
   const status = {
     needsReply: emailCount,
     meetingsToday: schedule.length,
