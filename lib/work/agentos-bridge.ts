@@ -68,6 +68,20 @@ function parseEmailDraftMarker(result: unknown): Record<string, unknown> | null 
   try { return JSON.parse(Buffer.from(m[1], 'base64').toString('utf8')) } catch { return null }
 }
 
+// present_* tools return [[card:<base64 json {type,...payload}>]] markers — decode to typed
+// artifacts the render registry knows how to display. Tool-result-based (like email/chips),
+// so the model never has to hand-encode anything. Multiple per result allowed.
+function parseCardMarkers(result: unknown): Record<string, unknown>[] {
+  if (typeof result !== 'string') return []
+  const out: Record<string, unknown>[] = []
+  const re = /\[\[card:([A-Za-z0-9+/=]+)\]\]/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(result)) !== null) {
+    try { out.push(JSON.parse(Buffer.from(m[1], 'base64').toString('utf8'))) } catch { /* skip malformed */ }
+  }
+  return out
+}
+
 // ─── Per-user run context (Phase 3.5) ─────────────────────────────────────────
 // The static role prompts live in AgentOS; the genuinely per-user, per-run data
 // is built here — reusing the native builders — and injected into the model via
@@ -290,6 +304,7 @@ export async function streamWorkerViaAgentOS({
   const toolCalls: Array<{ name: string; summary: string }> = []
   const artifactMeta: Record<string, { title: string; type: string }> = {}
   const emailDrafts: Record<string, unknown>[] = []
+  const cardArtifacts: Record<string, unknown>[] = []
 
   const readable = new ReadableStream({
     async start(controller) {
@@ -355,6 +370,11 @@ export async function streamWorkerViaAgentOS({
               }
               const draft = parseEmailDraftMarker(tool.result)
               if (draft) { emailDrafts.push(draft); send({ type: 'email_draft', draft }) }
+              // Rich render-registry cards (e.g. linkedin_post) — display-only artifacts.
+              for (const card of parseCardMarkers(tool.result)) {
+                cardArtifacts.push(card)
+                send({ type: 'artifact', artifact: card })
+              }
             } else if (kind === 'RunError') {
               send({ type: 'error', message: (evt.content as string) || 'Worker error' })
             }
@@ -381,6 +401,7 @@ export async function streamWorkerViaAgentOS({
                 ? { artifact_ids: Object.keys(artifactMeta), artifact_meta: artifactMeta }
                 : {}),
               ...(emailDrafts.length > 0 ? { email_drafts: emailDrafts } : {}),
+              ...(cardArtifacts.length > 0 ? { artifacts: cardArtifacts } : {}),
             },
           })
           await adminClient
