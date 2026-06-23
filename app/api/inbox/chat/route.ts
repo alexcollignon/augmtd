@@ -7,7 +7,7 @@ import { buildKBContext } from '@/lib/knowledge/build-kb-context';
 import { getCalendarContext } from '@/lib/calendar/calendar-context';
 import { formatCalendarContextForChat } from '@/lib/calendar/format-calendar-context';
 import { buildUserContextBlock } from '@/lib/context/build-user-context';
-import { buildVoiceBlock } from '@/lib/context/voice-context';
+import { buildVoiceBlock, buildMeetingFollowupContext } from '@/lib/context/voice-context';
 import { checkRateLimit } from '@/lib/utils/rate-limit';
 
 /** Strip HTML tags from a draft body so the AI sees clean text, not markup. */
@@ -202,10 +202,14 @@ Help improve tone, length, subject, clarity. When providing a full revision emit
     // Reply mode addendum
     if (mode === 'reply') {
       const replyForAI = stripHtmlForAI(replyDraft || '');
-      // Voice layer: the user's real sent emails (few-shot) + their voice skill, so drafts
-      // sound like them instead of a generic assistant. Empty string if we have neither.
-      const voiceBlock = await buildVoiceBlock(user.id, emailContext?.from ?? null, supabase).catch(() => '');
-      systemPrompt += `\n\n${voiceBlock ? voiceBlock + '\n\n' : ''}The user has the reply box open. Current draft:
+      // Voice layer (how to write: few-shot sent emails + voice skill + relationship) and
+      // meeting context (what to say: a recent meeting with this recipient). Both '' if absent.
+      const recipientForVoice = emailContext?.from ?? null;
+      const [voiceBlock, meetingFollowup] = await Promise.all([
+        buildVoiceBlock(user.id, recipientForVoice, supabase).catch(() => ''),
+        buildMeetingFollowupContext(user.id, recipientForVoice, supabase).catch(() => ''),
+      ]);
+      systemPrompt += `\n\n${voiceBlock ? voiceBlock + '\n\n' : ''}${meetingFollowup ? meetingFollowup + '\n\n' : ''}The user has the reply box open. Current draft:
 ${replyForAI || '(empty — not yet drafted)'}
 
 REPLY MODE — follow exactly:

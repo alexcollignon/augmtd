@@ -98,3 +98,50 @@ export async function buildVoiceBlock(
 
   return parts.join('\n\n');
 }
+
+// Meeting context for post-meeting follow-ups: if the recipient was in a recent meeting that
+// has a summary, surface it as the SUBSTANCE of the draft (what was discussed/agreed). The
+// transcript's own attendees list is empty on insert, so we match via the linked calendar event.
+export async function buildMeetingFollowupContext(
+  userId: string,
+  recipientEmail: string | null,
+  client: DBClient,
+): Promise<string> {
+  const rcpt = recipientEmail?.toLowerCase().trim();
+  if (!rcpt) return '';
+
+  const since = new Date();
+  since.setDate(since.getDate() - 21);
+
+  const { data: transcripts } = await client
+    .from('meeting_transcripts')
+    .select('title, summary, created_at, calendar_event_id')
+    .eq('user_id', userId)
+    .gte('created_at', since.toISOString())
+    .not('summary', 'is', null)
+    .order('created_at', { ascending: false })
+    .limit(10);
+
+  const eventIds = (transcripts ?? []).map((t: { calendar_event_id: string | null }) => t.calendar_event_id).filter(Boolean);
+  if (!eventIds.length) return '';
+
+  const { data: events } = await client
+    .from('calendar_events')
+    .select('id, attendees')
+    .in('id', eventIds);
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const matchIds = new Set((events ?? [])
+    .filter((e: any) => (e.attendees ?? []).some((a: any) => (a?.email || '').toLowerCase() === rcpt))
+    .map((e: { id: string }) => e.id));
+  if (!matchIds.size) return '';
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const m = (transcripts ?? []).find((t: any) => matchIds.has(t.calendar_event_id)) as
+    { title: string | null; summary: string | null; created_at: string } | undefined;
+  if (!m?.summary) return '';
+
+  const date = new Date(m.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const summary = m.summary.length > 1200 ? m.summary.slice(0, 1200) + '…' : m.summary;
+  return `[RECENT MEETING WITH THIS PERSON — "${m.title || 'meeting'}" on ${date}. Ground the follow-up in what was actually discussed/agreed here; don't invent.]\n${summary}`;
+}
