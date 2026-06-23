@@ -11,7 +11,7 @@ export async function GET() {
 
     const { data: skills, error } = await supabase
       .from('skills')
-      .select('id, name, when_to_use, content, source, icon, color, created_at, updated_at')
+      .select('id, name, when_to_use, content, source, kind, icon, color, created_at, updated_at')
       .eq('user_id', user.id)
       .order('created_at', { ascending: false });
     if (error) throw error;
@@ -61,11 +61,12 @@ export async function POST(request: NextRequest) {
         name,
         when_to_use: body.when_to_use ? String(body.when_to_use).trim() : null,
         content,
-        source: ['manual', 'extracted', 'imported', 'chat'].includes(body.source) ? body.source : 'manual',
+        source: ['manual', 'extracted', 'imported', 'chat', 'interview'].includes(body.source) ? body.source : 'manual',
+        kind: ['voice', 'domain', 'audience', 'method'].includes(body.kind) ? body.kind : null,
         icon: body.icon ?? null,
         color: body.color ?? null,
       })
-      .select('id, name, when_to_use, content, source, icon, color, created_at, updated_at')
+      .select('id, name, when_to_use, content, source, kind, icon, color, created_at, updated_at')
       .single();
     if (error) throw error;
 
