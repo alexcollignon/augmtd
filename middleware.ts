@@ -16,7 +16,7 @@ export async function middleware(request: NextRequest) {
   // Protected routes - require authentication. /work, /join and /suspended
   // need auth but have their own server-side logic for orphan / workspace-state
   // handling, so they don't appear in authRoutes (won't be redirected away).
-  const protectedRoutes = ['/inbox', '/settings', '/activity', '/company', '/admin', '/platform-admin', '/drive', '/meetings', '/work', '/join', '/onboarding', '/suspended'];
+  const protectedRoutes = ['/home', '/inbox', '/settings', '/activity', '/company', '/admin', '/platform-admin', '/drive', '/meetings', '/work', '/join', '/onboarding', '/suspended'];
   const isProtectedRoute = protectedRoutes.some(route =>
     pathname.startsWith(route)
   );
@@ -49,7 +49,7 @@ export async function middleware(request: NextRequest) {
 
   // Redirect authenticated users away from auth routes
   if (isAuthRoute && user) {
-    return NextResponse.redirect(new URL('/inbox', request.url));
+    return NextResponse.redirect(new URL('/home', request.url));
   }
 
   // Clear stale cookies on auth pages if no valid user
@@ -79,7 +79,7 @@ export async function middleware(request: NextRequest) {
 
   // Redirect authenticated users from root to inbox
   if (pathname === '/' && user) {
-    return NextResponse.redirect(new URL('/inbox', request.url));
+    return NextResponse.redirect(new URL('/home', request.url));
   }
 
   return supabaseResponse;
