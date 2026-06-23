@@ -118,6 +118,7 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
   const replyBoxRef = useRef<HTMLDivElement>(null);
   const replyTextareaRef = useRef<HTMLDivElement>(null);
   const lastExternalReplyBody = useRef<string>('');
+  const aiDraftRef = useRef<string>(''); // the AI draft as injected, to capture the user's edit delta on send
   const attachFileInputRef = useRef<HTMLInputElement>(null);
 
   const [isArchiving, setIsArchiving] = useState(false);
@@ -329,6 +330,7 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
   // Open + fill reply box when a pending draft arrives from chat (Use as reply path)
   useEffect(() => {
     if (pendingReplyDraft != null) {
+      aiDraftRef.current = pendingReplyDraft.body;
       onReplyBodyChange(pendingReplyDraft.body);
       if (pendingReplyDraft.cc) { setReplyCc(pendingReplyDraft.cc); setCcChips(pendingReplyDraft.cc.split(',').map(e => ({ email: e.trim() })).filter(c => c.email)); setShowReplyCc(true); }
       if (pendingReplyDraft.bcc) { setReplyBcc(pendingReplyDraft.bcc); setBccChips(pendingReplyDraft.bcc.split(',').map(e => ({ email: e.trim() })).filter(c => c.email)); setShowReplyBcc(true); }
@@ -532,6 +534,7 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           customMessage: replyBody,
+          aiDraft: aiDraftRef.current || undefined,
           attachments: replyAttachments,
           to: replyTo.trim() || undefined,
           cc: replyCc.trim() || undefined,

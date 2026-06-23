@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { sendGmailReply, EmailAttachment } from '@/lib/google/gmail';
 import { sendOutlookReply } from '@/lib/microsoft/outlook';
+import { ContextService } from '@/lib/context/context-service';
+
+// Plain-text, whitespace-normalised view of a draft for comparing AI vs sent.
+const norm = (s: string) => s.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
 
 export async function POST(
   request: NextRequest,
@@ -16,7 +20,7 @@ export async function POST(
     }
 
     const { id } = await params;
-    const { customMessage, attachments: rawAttachments, cc, bcc, to } = await request.json();
+    const { customMessage, aiDraft, attachments: rawAttachments, cc, bcc, to } = await request.json();
     const attachments: EmailAttachment[] = (rawAttachments || []).map((a: { filename: string; content: string; mimeType: string }) => ({
       filename: a.filename,
       content: Buffer.from(a.content, 'base64'),
@@ -125,6 +129,12 @@ export async function POST(
     if (signalError) {
       console.error('Error logging learning signal:', signalError);
       // Don't fail the request, just log the error
+    }
+
+    // Voice learning: if the user edited our AI draft before sending, capture the delta —
+    // this is the single richest signal for learning their voice (was previously never logged).
+    if (typeof aiDraft === 'string' && aiDraft.trim() && norm(aiDraft) !== norm(customMessage || '')) {
+      ContextService.logDraftEdit(user.id, id, norm(aiDraft), norm(customMessage || '')).catch(() => {});
     }
 
     return NextResponse.json({
