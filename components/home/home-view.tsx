@@ -132,6 +132,8 @@ export function HomeView() {
     st.waitingOn ? { icon: ClockIcon, text: `${st.waitingOn} waiting on` } : null,
     st.handledToday ? { icon: CheckCircleIcon, text: `${st.handledToday} handled` } : null,
   ].filter(Boolean) as { icon: any; text: string }[] : []; // eslint-disable-line @typescript-eslint/no-explicit-any
+  // "Start here" belongs on the first genuine action — never on a finished (past) meeting.
+  const startHereId = b?.priorities.find(p => p.type !== 'meeting')?.id ?? null;
   const nothing = b && !b.priorities.length && !b.waitingOn.length && !b.schedule.length && !(team?.messages.length || team?.needsReview.length);
 
   return (
@@ -171,7 +173,7 @@ export function HomeView() {
                   <div className="space-y-3">
                     {b.priorities.map((p, i) => (
                       <RiseIn key={p.id} delay={i * 60}>
-                        <PriorityCard p={p} first={i === 0} expanded={expanded === p.id} onToggle={() => setExpanded(expanded === p.id ? null : p.id)} />
+                        <PriorityCard p={p} first={p.id === startHereId} expanded={expanded === p.id} onToggle={() => setExpanded(expanded === p.id ? null : p.id)} />
                       </RiseIn>
                     ))}
                   </div>

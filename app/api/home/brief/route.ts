@@ -65,7 +65,8 @@ export async function GET() {
   for (const [tid, m] of byMeeting) {
     priorities.push({
       id: `meeting:${tid}`, type: 'meeting', title: m.title,
-      context: `${m.items.length} action item${m.items.length > 1 ? 's' : ''} from this meeting`,
+      // Past-tense framing — this meeting already happened; these are follow-ups, not a "do this now".
+      context: `You had this meeting · ${m.items.length} follow-up${m.items.length > 1 ? 's' : ''} to consider`,
       href: `/meetings`, items: m.items.slice(0, 6),
     });
   }
@@ -94,8 +95,10 @@ export async function GET() {
     });
   }
 
-  // Overdue first, then meetings, then emails. Cap.
-  priorities.sort((a, b) => Number(!!b.overdue) - Number(!!a.overdue));
+  // Genuine actions first (overdue → email reply → commitment), finished meetings last —
+  // a past meeting is context, not the thing to start with.
+  const rank = (p: Priority) => (p.overdue ? 0 : p.type === 'email' ? 1 : p.type === 'commitment' ? 2 : 3);
+  priorities.sort((a, b) => rank(a) - rank(b));
   const cappedPriorities = priorities.slice(0, MAX_PRIORITIES);
 
   // ── Waiting on others (compact, not bloated) ──
