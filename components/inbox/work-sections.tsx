@@ -6,14 +6,19 @@ import type { InboxItem, VisualSection } from '@/lib/types/inbox';
 import { getSectionDisplayName } from '@/lib/types/inbox';
 import WorkCard from './work-card';
 import { batchInboxItems } from '@/lib/utils/batch-inbox-items';
+import { isNeedsReply } from '@/lib/inbox/needs-reply';
+
+// 'needs_reply' is a computed group (a real person is waiting on your response), surfaced above
+// the cognitive-cost sections. It's not a stored visual_section.
+type SectionKey = VisualSection | 'needs_reply';
 
 interface WorkSectionsProps {
   items: InboxItem[];
 }
 
 export default function WorkSections({ items }: WorkSectionsProps) {
-  const [expandedSections, setExpandedSections] = useState<Set<VisualSection>>(
-    new Set(['prepared', 'suggested'])
+  const [expandedSections, setExpandedSections] = useState<Set<SectionKey>>(
+    new Set(['needs_reply', 'prepared', 'suggested'])
   );
 
   // Apply batching logic to items
@@ -35,15 +40,17 @@ export default function WorkSections({ items }: WorkSectionsProps) {
     return [...unbatched, ...batchItems];
   }, [batches, unbatched]);
 
-  // Group items by visual section
+  // Group items: a "needs reply" item is surfaced in that group (once), everything else falls to
+  // its cognitive-cost section.
   const itemsBySection = displayItems.reduce((acc, item) => {
-    const section = (item as InboxItem).visual_section || 'awareness';
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const section: SectionKey = isNeedsReply(item as any) ? 'needs_reply' : ((item as InboxItem).visual_section || 'awareness');
     if (!acc[section]) acc[section] = [];
     acc[section].push(item);
     return acc;
-  }, {} as Record<VisualSection, any[]>);
+  }, {} as Record<SectionKey, any[]>);
 
-  const toggleSection = (section: VisualSection) => {
+  const toggleSection = (section: SectionKey) => {
     setExpandedSections(prev => {
       const next = new Set(prev);
       if (next.has(section)) {
@@ -57,7 +64,7 @@ export default function WorkSections({ items }: WorkSectionsProps) {
 
   // Section configuration
   const sections: Array<{
-    key: VisualSection;
+    key: SectionKey;
     title: string;
     description: string;
     dotColor: string;
@@ -65,6 +72,15 @@ export default function WorkSections({ items }: WorkSectionsProps) {
     countBg: string;
     countText: string;
   }> = [
+    {
+      key: 'needs_reply',
+      title: 'Needs reply',
+      description: 'A real person is waiting on your response',
+      dotColor: 'bg-rose-500',
+      textColor: 'text-neutral-900',
+      countBg: 'bg-rose-100',
+      countText: 'text-rose-700',
+    },
     {
       key: 'prepared',
       title: 'Prepared Work',
