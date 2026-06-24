@@ -5,21 +5,27 @@ import type { EmailEnvelope } from '@/lib/ai/email-classifier-batch';
 export const maxDuration = 60;
 
 // POST /api/inbox/rules/rerun — re-evaluate the AI rules over the user's existing actionable
-// inbox items and update their type. Rules normally apply as mail syncs (forward-looking); this
-// lets a rule edit reclassify what's already there. DB-only (no inbox mutation).
-export async function POST() {
+// inbox items within a chosen window and update their type. Rules normally apply as mail syncs
+// (forward-looking); this lets a rule edit reclassify what's already there. DB-only (no inbox
+// mutation). Window is capped (≤30 days) + 100 items to bound AI usage.
+export async function POST(request: Request) {
   const supabase = await createClient();
   const { data: { user }, error } = await supabase.auth.getUser();
   if (error || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
+  const { days = 7 } = await request.json().catch(() => ({}));
+  const windowDays = Math.min(Math.max(Number(days) || 7, 1), 30);
+  const since = new Date(Date.now() - windowDays * 86_400_000).toISOString();
+
   const { loadUserRules, activeAiRules } = await import('@/lib/inbox/rules/load');
   const aiRules = activeAiRules(await loadUserRules(user.id, supabase));
-  if (!aiRules.length) return NextResponse.json({ reclassified: 0 });
+  if (!aiRules.length) return NextResponse.json({ reclassified: 0, scanned: 0 });
 
   const { data: items } = await supabase.from('inbox_items')
     .select('id, source_data')
     .eq('user_id', user.id).eq('status', 'pending')
     .in('work_state', ['work_prepared', 'decision_required', 'action_required'])
+    .gte('created_at', since)
     .order('created_at', { ascending: false }).limit(100);
 
   const envelopes: EmailEnvelope[] = (items ?? []).map((it) => {

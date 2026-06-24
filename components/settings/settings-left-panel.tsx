@@ -1,6 +1,8 @@
 'use client';
 
 import Link from 'next/link';
+import { useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { UserIcon, BuildingOffice2Icon, Squares2X2Icon, EnvelopeIcon } from '@heroicons/react/24/outline';
 
 function BrainIcon({ className }: { className?: string }) {
@@ -24,7 +26,23 @@ const NAV_ITEMS = [
   { id: 'memory', label: 'Memory', Icon: BrainIcon },
 ];
 
+const EMAIL_SECTIONS = [
+  { id: 'connections', label: 'Connections' },
+  { id: 'rules', label: 'Rules' },
+  { id: 'drafting', label: 'Drafting & labels' },
+  { id: 'todo', label: 'To-do capture' },
+];
+
 export default function SettingsLeftPanel({ activeTab }: { activeTab: string }) {
+  const searchParams = useSearchParams();
+  const section = searchParams.get('section') || 'connections';
+  const [emailHover, setEmailHover] = useState(false);
+
+  const itemClass = (isActive: boolean) =>
+    `flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] transition-colors ${
+      isActive ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-neutral-500 hover:bg-neutral-50 hover:text-neutral-900'
+    }`;
+
   return (
     <div className="w-[200px] flex-shrink-0 flex flex-col bg-neutral-50 p-2 pl-0">
       <div className="flex-1 flex flex-col rounded-2xl bg-white shadow-sm overflow-hidden">
@@ -34,16 +52,43 @@ export default function SettingsLeftPanel({ activeTab }: { activeTab: string }) 
         <nav className="flex-1 p-2 space-y-0.5">
           {NAV_ITEMS.map(item => {
             const isActive = activeTab === item.id;
+
+            // Email: clicking defaults to Connections; hovering (or being active) reveals sub-items.
+            if (item.id === 'email') {
+              const showSub = emailHover || isActive;
+              return (
+                <div key="email" onMouseEnter={() => setEmailHover(true)} onMouseLeave={() => setEmailHover(false)}>
+                  <Link href="/settings?tab=email&section=connections" className={itemClass(isActive)}>
+                    <item.Icon className={`w-4 h-4 flex-shrink-0 ${isActive ? 'text-indigo-500' : 'text-neutral-400'}`} />
+                    {item.label}
+                  </Link>
+                  {/* Smooth open/close: grid-rows 0fr→1fr animates to natural height. */}
+                  <div className={`grid transition-all duration-200 ease-out ${showSub ? 'grid-rows-[1fr] opacity-100 mt-0.5' : 'grid-rows-[0fr] opacity-0'}`}>
+                    <div className="overflow-hidden">
+                      <div className="ml-[26px] space-y-0.5 border-l border-neutral-100 pl-2">
+                        {EMAIL_SECTIONS.map(s => {
+                          const subActive = isActive && section === s.id;
+                          return (
+                            <Link
+                              key={s.id}
+                              href={`/settings?tab=email&section=${s.id}`}
+                              className={`block px-2.5 py-1.5 rounded-md text-[12.5px] transition-colors ${
+                                subActive ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-neutral-500 hover:bg-neutral-50 hover:text-neutral-800'
+                              }`}
+                            >
+                              {s.label}
+                            </Link>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            }
+
             return (
-              <Link
-                key={item.id}
-                href={`/settings?tab=${item.id}`}
-                className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] transition-colors ${
-                  isActive
-                    ? 'bg-indigo-50 text-indigo-700 font-medium'
-                    : 'text-neutral-500 hover:bg-neutral-50 hover:text-neutral-900'
-                }`}
-              >
+              <Link key={item.id} href={`/settings?tab=${item.id}`} className={itemClass(isActive)}>
                 <item.Icon className={`w-4 h-4 flex-shrink-0 ${isActive ? 'text-indigo-500' : 'text-neutral-400'}`} />
                 {item.label}
               </Link>
