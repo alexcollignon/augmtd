@@ -473,10 +473,11 @@ export async function syncEmailsForConnection(
     console.log(`Fetched ${messages.length} ${connection.provider} emails for user ${connection.user_id}`);
 
     // Fetch user context, calendar context, identity block in parallel
-    const [userContext, calendarContext, userContextBlock] = await Promise.all([
+    const [userContext, calendarContext, userContextBlock, emailSettings] = await Promise.all([
       getUserContext(connection.user_id, adminSupabase),
       getCalendarContext(connection.user_id, adminSupabase),
       buildUserContextBlock(connection.user_id, adminSupabase),
+      (await import('@/lib/inbox/email-settings')).getEmailSettings(connection.user_id, adminSupabase),
     ]);
 
     if (userContext) {
@@ -834,7 +835,7 @@ export async function syncEmailsForConnection(
           });
 
           // Capture commitments the user made in this sent email (keyword-gated AI; you-owe).
-          void import('@/lib/commitments/extract').then(({ extractEmailCommitments }) =>
+          if (emailSettings.todo_auto) void import('@/lib/commitments/extract').then(({ extractEmailCommitments }) =>
             extractEmailCommitments({
               userId: connection.user_id,
               subject: storedEmail.subject || '',
@@ -844,6 +845,7 @@ export async function syncEmailsForConnection(
               counterparty: (storedEmail.to_addresses || [])[0] || null,
               sourceId: storedEmail.id,
               threadId: storedEmail.thread_id || null,
+              instructions: emailSettings.todo_instructions,
               client: adminSupabase,
             }),
           ).catch(() => {});
@@ -864,7 +866,7 @@ export async function syncEmailsForConnection(
 
         // Capture commitments asked of / promised to the user in this received email
         // (others' asks → you_owe, others' promises → awaiting). Only actionable mail.
-        if (emailClass === 'process') {
+        if (emailClass === 'process' && emailSettings.todo_auto) {
           void import('@/lib/commitments/extract').then(({ extractEmailCommitments }) =>
             extractEmailCommitments({
               userId: connection.user_id,
@@ -875,6 +877,7 @@ export async function syncEmailsForConnection(
               counterparty: storedEmail.from_address || null,
               sourceId: storedEmail.id,
               threadId: storedEmail.thread_id || null,
+              instructions: emailSettings.todo_instructions,
               client: adminSupabase,
             }),
           ).catch(() => {});
