@@ -17,6 +17,7 @@ type Brief = {
   briefLine: string | null;
   status: { needsReply: number; meetingsToday: number; waitingOn: number; handledToday: number };
   priorities: Priority[];
+  commitments: { id: string; description: string; counterparty: string | null; dueDate: string | null; overdue: boolean; dueToday: boolean }[];
   waitingOn: { id: string; description: string; counterparty: string | null; ageDays: number }[];
   schedule: { id: string; time: string; title: string; attendees: number; prep: { lastEmail?: { subject: string }; openCommitments: string[]; lastMeeting?: { title: string; date: string; recall: string; person: string } } | null }[];
   handled?: { triaged: number; filtered: number; summarised: number; tracked: number; resolved: number };
@@ -36,6 +37,7 @@ function greeting() {
   return h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
 }
 const timeOf = (iso: string) => new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+const fmtDue = (iso: string | null) => (iso ? new Date(iso + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '');
 
 // Staggered rise-in — keeps the load feeling smooth and consistent with the rest of the app.
 function RiseIn({ delay = 0, children }: { delay?: number; children: React.ReactNode }) {
@@ -161,7 +163,7 @@ export function HomeView() {
   ].filter(Boolean) as { icon: any; text: string }[] : []; // eslint-disable-line @typescript-eslint/no-explicit-any
   // "Start here" belongs on the first genuine action — never on a finished (past) meeting.
   const startHereId = b?.priorities.find(p => p.source !== 'meeting')?.id ?? null;
-  const nothing = b && !b.priorities.length && !b.waitingOn.length && !b.schedule.length && !(team?.messages.length || team?.needsReview.length);
+  const nothing = b && !b.priorities.length && !b.commitments.length && !b.waitingOn.length && !b.schedule.length && !(team?.messages.length || team?.needsReview.length);
 
   return (
     <div className="h-full overflow-y-auto bg-neutral-50/40">
@@ -208,6 +210,29 @@ export function HomeView() {
                     ))}
                   </div>
                 </div>
+              )}
+
+              {b && b.commitments.length > 0 && (
+                <RiseIn delay={90}>
+                  <div className="mb-8">
+                    <Label count={b.commitments.length}>On your plate</Label>
+                    <div className="space-y-2">
+                      {b.commitments.map(c => (
+                        <SideRow key={c.id} href="/inbox" icon={CheckCircleIcon} iconClass={c.overdue ? 'text-red-400' : 'text-neutral-300'}>
+                          <div className="flex items-start justify-between gap-2">
+                            <span className="text-[13px] text-neutral-800 leading-snug">{c.description}</span>
+                            {(c.overdue || c.dueToday || c.dueDate) && (
+                              <span className={`flex-shrink-0 text-[10px] font-semibold uppercase tracking-wide rounded-md px-1.5 py-0.5 ${c.overdue ? 'bg-red-50 text-red-600' : c.dueToday ? 'bg-amber-50 text-amber-600' : 'bg-neutral-100 text-neutral-500'}`}>
+                                {c.overdue ? 'Overdue' : c.dueToday ? 'Today' : fmtDue(c.dueDate)}
+                              </span>
+                            )}
+                          </div>
+                          {c.counterparty && <p className="text-[11.5px] text-neutral-400 mt-0.5">You owe {c.counterparty}</p>}
+                        </SideRow>
+                      ))}
+                    </div>
+                  </div>
+                </RiseIn>
               )}
 
               {b && b.waitingOn.length > 0 && (

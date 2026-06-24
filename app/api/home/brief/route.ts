@@ -117,17 +117,23 @@ export async function GET() {
     });
   }
 
-  // ── Commitments you owe (email/standalone — meeting ones already nested above) ──
-  const youOwe = commits
+  // ── On your plate: commitments you owe — their OWN section (not mixed into Needs you), so the
+  // promises you've made are visible, with due dates. Overdue → due-today → dated → undated.
+  const commitments = commits
     .filter((c) => c.direction === 'you_owe' && c.source !== 'meeting')
-    .filter((c) => (c.due_date && c.due_date <= todayStr) || (now.getTime() - new Date(c.created_at).getTime()) >= 2 * DAY);
-  for (const c of youOwe) {
-    priorities.push({
-      id: `commit:${c.id}`, source: 'email', posture: 'to_do', title: c.description,
-      context: `You owe${c.counterparty ? ` ${c.counterparty}` : ''}${c.due_date ? ` · due ${c.due_date}` : ''}`,
-      href: '/inbox', overdue: !!(c.due_date && c.due_date < todayStr),
-    });
-  }
+    .map((c) => ({
+      id: c.id as string,
+      description: c.description as string,
+      counterparty: (c.counterparty as string | null) ?? null,
+      dueDate: (c.due_date as string | null) ?? null,
+      overdue: !!(c.due_date && c.due_date < todayStr),
+      dueToday: !!(c.due_date && c.due_date === todayStr),
+    }))
+    .sort((a, b) => {
+      const rk = (x: typeof a) => (x.overdue ? 0 : x.dueToday ? 1 : x.dueDate ? 2 : 3);
+      return rk(a) !== rk(b) ? rk(a) - rk(b) : (a.dueDate || '9999').localeCompare(b.dueDate || '9999');
+    })
+    .slice(0, 5);
 
   // Overdue → reply → to-do → finished meetings last (a past meeting is context, not "do this now").
   const rank = (p: Priority) => (p.overdue ? 0 : p.source === 'meeting' ? 4 : p.posture === 'needs_reply' ? 1 : p.posture === 'to_do' ? 2 : 3);
@@ -187,9 +193,10 @@ export async function GET() {
   // ── Cached one-line narration (posture-aware + busts when the day's shape changes) ──
   const emailP = cappedPriorities.filter((p) => p.posture === 'needs_reply').length;
   const meetingP = cappedPriorities.filter((p) => p.source === 'meeting').length;
-  const commitP = cappedPriorities.filter((p) => p.source !== 'meeting' && p.posture === 'to_do').length;
+  const commitP = commitments.length;
+  const overdueC = commitments.filter((c) => c.overdue).length;
   const overdueP = cappedPriorities.filter((p) => p.overdue).length;
-  const sig = `${emailP}|${meetingP}|${commitP}|${overdueP}|${status.waitingOn}|${schedule.length}`;
+  const sig = `${emailP}|${meetingP}|${commitP}|${overdueP}|${overdueC}|${status.waitingOn}|${schedule.length}`;
 
   const fullName = (profileRes.data as { full_name?: string } | null)?.full_name ?? null;
   const firstName = fullName?.split(' ')[0] ?? null;
@@ -201,7 +208,7 @@ export async function GET() {
       const facts = [
         emailP ? `${emailP} email${emailP > 1 ? 's' : ''} to reply to` : '',
         meetingP ? `${meetingP} meeting${meetingP > 1 ? 's' : ''} with action items to follow up on` : '',
-        commitP ? `${commitP} commitment${commitP > 1 ? 's' : ''} you owe${overdueP ? ' (some overdue)' : ''}` : '',
+        commitP ? `${commitP} commitment${commitP > 1 ? 's' : ''} you owe${overdueC ? ' (some overdue)' : ''}` : '',
         status.waitingOn ? `${status.waitingOn} thing${status.waitingOn > 1 ? 's' : ''} you're waiting on others for` : '',
         status.meetingsToday ? `${status.meetingsToday} meeting${status.meetingsToday > 1 ? 's' : ''} scheduled today` : 'no meetings scheduled today',
         !cappedPriorities.length && !status.waitingOn ? 'nothing urgent needs you' : '',
@@ -216,5 +223,5 @@ export async function GET() {
     } catch { /* keep */ }
   }
 
-  return NextResponse.json({ firstName, briefLine, status, priorities: cappedPriorities, waitingOn, schedule, handled });
+  return NextResponse.json({ firstName, briefLine, status, priorities: cappedPriorities, commitments, waitingOn, schedule, handled });
 }
