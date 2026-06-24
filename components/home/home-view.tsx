@@ -21,7 +21,7 @@ type Brief = {
   schedule: { id: string; time: string; title: string; attendees: number; prep: { lastEmail?: { subject: string }; openCommitments: string[] } | null }[];
 };
 type TeamMsg = { workerId?: string; workerName?: string; text?: string };
-type TeamReview = { id: string; title?: string; workerName?: string; workerId?: string };
+type TeamReview = { artifactId?: string; threadId?: string; title?: string; workerName?: string; workerId?: string };
 
 const TYPE = {
   email: { icon: EnvelopeIcon, label: 'Email', tint: 'text-indigo-600', chip: 'bg-indigo-50 text-indigo-700' },
@@ -232,8 +232,8 @@ export function HomeView() {
                         {m.text && <p className="text-[12px] text-neutral-500 mt-0.5 line-clamp-2">{m.text}</p>}
                       </Link>
                     ))}
-                    {team.needsReview.slice(0, 3).map(r => (
-                      <Link key={r.id} href={r.workerId ? `/workers?worker=${r.workerId}` : '/workers'} className="flex items-center gap-2.5 rounded-xl border border-neutral-200 bg-white px-3.5 py-2.5 hover:bg-neutral-50 transition-colors">
+                    {team.needsReview.slice(0, 3).map((r, i) => (
+                      <Link key={r.artifactId ?? r.threadId ?? `r${i}`} href={r.workerId ? `/workers?worker=${r.workerId}` : '/workers'} className="flex items-center gap-2.5 rounded-xl border border-neutral-200 bg-white px-3.5 py-2.5 hover:bg-neutral-50 transition-colors">
                         <UsersIcon className="w-4 h-4 text-neutral-300 flex-shrink-0" />
                         <div className="min-w-0">
                           <span className="text-[12.5px] text-neutral-800 truncate block">{r.title || 'Ready for you'}</span>
