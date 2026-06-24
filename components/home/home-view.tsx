@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import {
   EnvelopeIcon, CalendarDaysIcon, CheckCircleIcon, ClockIcon, UsersIcon,
-  ChevronRightIcon, ArrowRightIcon, BoltIcon, SparklesIcon,
+  ChevronRightIcon, ArrowRightIcon, BoltIcon, SparklesIcon, ExclamationTriangleIcon,
 } from '@heroicons/react/24/outline';
 
 type Priority = {
@@ -12,9 +12,11 @@ type Priority = {
   title: string; context: string | null; href: string;
   itemId?: string; items?: { id: string; text: string }[]; overdue?: boolean;
 };
+type Tldr = { teaser: string; bullets: string[]; dontMiss: string | null };
 type Brief = {
   firstName: string | null;
   briefLine: string | null;
+  tldr?: Tldr | null;
   status: { needsReply: number; meetingsToday: number; waitingOn: number; handledToday: number };
   priorities: Priority[];
   commitments: { id: string; description: string; counterparty: string | null; dueDate: string | null; overdue: boolean; dueToday: boolean }[];
@@ -171,7 +173,29 @@ export function HomeView() {
         {/* Header + narration + live status chips */}
         <RiseIn>
           <h1 className="text-[26px] font-semibold tracking-tight text-neutral-900">{greeting()}{b?.firstName ? `, ${b.firstName}` : ''}</h1>
-          {b?.briefLine && <p className="mt-2 text-[14.5px] text-neutral-500 leading-relaxed max-w-[660px]">{b.briefLine}</p>}
+          {b?.tldr && (b.tldr.bullets.length > 0 || b.tldr.dontMiss) ? (
+            <div className="mt-3 max-w-[660px]">
+              {b.tldr.teaser && <p className="text-[14.5px] text-neutral-500 leading-relaxed mb-2.5">{b.tldr.teaser}</p>}
+              {b.tldr.bullets.length > 0 && (
+                <ul className="space-y-1.5">
+                  {b.tldr.bullets.map((bl, i) => (
+                    <li key={i} className="flex items-start gap-2.5 text-[13.5px] text-neutral-600 leading-relaxed">
+                      <span className="mt-[7px] w-1 h-1 rounded-full bg-neutral-300 flex-shrink-0" />
+                      <span>{bl}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {b.tldr.dontMiss && (
+                <div className="mt-3 flex items-start gap-2 rounded-xl border border-amber-200/70 bg-amber-50/60 px-3 py-2.5">
+                  <ExclamationTriangleIcon className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
+                  <p className="text-[13px] text-amber-900/90 leading-snug"><span className="font-semibold">Don&apos;t miss:</span> {b.tldr.dontMiss}</p>
+                </div>
+              )}
+            </div>
+          ) : b?.briefLine ? (
+            <p className="mt-2 text-[14.5px] text-neutral-500 leading-relaxed max-w-[660px]">{b.briefLine}</p>
+          ) : null}
           {chips.length > 0 && (
             <div className="flex flex-wrap gap-2 mt-4">
               {chips.map((c, i) => (

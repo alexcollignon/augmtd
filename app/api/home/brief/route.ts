@@ -4,6 +4,7 @@ import { getSystemClient, aiCreate } from '@/lib/ai/factory';
 import { buildAnsweredSet } from '@/lib/inbox/needs-reply';
 import { classifyItem } from '@/lib/inbox/classify-item';
 import { lastMeetingRecall } from '@/lib/context/voice-context';
+import { parseModelJSON } from '@/lib/ai/parse-json';
 
 export const maxDuration = 30;
 
@@ -200,28 +201,47 @@ export async function GET() {
 
   const fullName = (profileRes.data as { full_name?: string } | null)?.full_name ?? null;
   const firstName = fullName?.split(' ')[0] ?? null;
-  const cached = (profileRes.data as { home_brief?: { text: string; generated_at: string; sig?: string } } | null)?.home_brief ?? null;
+
+  // ── Daily TLDR brief (Phase 1) — a grounded day-summary: teaser + 3–4 bullets + a "don't miss"
+  // callout. Cached on profiles.home_brief, busts when the day's shape (sig) changes. ──
+  type Tldr = { teaser: string; bullets: string[]; dontMiss: string | null };
+  const cached = (profileRes.data as { home_brief?: { text?: string; tldr?: Tldr; generated_at: string; sig?: string } } | null)?.home_brief ?? null;
+  let tldr: Tldr | null = cached?.tldr ?? null;
   let briefLine = cached?.text ?? null;
   const stale = !cached || cached.sig !== sig || (now.getTime() - new Date(cached.generated_at).getTime()) > BRIEF_TTL;
   if (stale) {
     try {
-      const facts = [
-        emailP ? `${emailP} email${emailP > 1 ? 's' : ''} to reply to` : '',
-        meetingP ? `${meetingP} meeting${meetingP > 1 ? 's' : ''} with action items to follow up on` : '',
-        commitP ? `${commitP} commitment${commitP > 1 ? 's' : ''} you owe${overdueC ? ' (some overdue)' : ''}` : '',
-        status.waitingOn ? `${status.waitingOn} thing${status.waitingOn > 1 ? 's' : ''} you're waiting on others for` : '',
-        status.meetingsToday ? `${status.meetingsToday} meeting${status.meetingsToday > 1 ? 's' : ''} scheduled today` : 'no meetings scheduled today',
-        !cappedPriorities.length && !status.waitingOn ? 'nothing urgent needs you' : '',
-      ].filter(Boolean).join('; ');
+      const grounded = [
+        schedule.length
+          ? `Meetings today: ${schedule.map((s) => `${new Date(s.time).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })} ${s.title}`).join('; ')}`
+          : 'No meetings scheduled today',
+        `Emails needing your reply: ${emailP}`,
+        `Triaged in the last 24h: ${handled.triaged}${handled.filtered ? ` (${handled.filtered} were noise/marketing)` : ''}`,
+        commitP
+          ? `Commitments you owe: ${commitments.map((c) => `"${c.description}"${c.overdue ? ' [OVERDUE]' : c.dueToday ? ' [due today]' : c.dueDate ? ` [due ${c.dueDate}]` : ''}`).join('; ')}`
+          : 'No commitments pending',
+        status.waitingOn ? `Waiting on others: ${status.waitingOn}` : '',
+        cappedPriorities.length
+          ? `Top items needing you: ${cappedPriorities.map((p) => `"${p.title}"${p.overdue ? ' [overdue]' : ''} (${p.posture}, from ${p.source})`).join('; ')}`
+          : '',
+      ].filter(Boolean).join('\n');
       const { client, model } = getSystemClient('summarization');
       const res = await aiCreate(client, {
-        model, max_tokens: 90, temperature: 0.5,
-        messages: [{ role: 'user', content: `One short, warm sentence to ${firstName || 'the user'} summarising their day. Lead with what matters most. Be precise — do NOT call meeting action items "emails". Natural, no preamble, no "Here's". Facts: ${facts}.` }],
+        model, max_tokens: 360, temperature: 0.4,
+        messages: [{ role: 'user', content: `You are ${firstName || 'the user'}'s assistant writing a short TLDR of their day. Use ONLY these facts — be specific with the real numbers and names, and never invent anything.\n\nReturn JSON only:\n{"teaser": "one short sentence summarising the day", "bullets": ["3 to 4 short, scannable bullets — meetings, todos/commitments, emails; lead with what matters most"], "dontMiss": "the SINGLE most time-sensitive or critical thing not to miss today, phrased as a brief warning grounded in a real item — or null if nothing is genuinely critical"}\n\nFacts:\n${grounded}` }],
       });
-      briefLine = res.choices?.[0]?.message?.content?.trim() || briefLine;
-      if (briefLine) await supabase.from('profiles').update({ home_brief: { text: briefLine, generated_at: now.toISOString(), sig } }).eq('id', user.id).then(() => {}, () => {});
-    } catch { /* keep */ }
+      const parsed = parseModelJSON<Tldr>(res.choices?.[0]?.message?.content || '', { teaser: '', bullets: [], dontMiss: null });
+      if ((Array.isArray(parsed.bullets) && parsed.bullets.length) || parsed.teaser) {
+        tldr = {
+          teaser: parsed.teaser || '',
+          bullets: Array.isArray(parsed.bullets) ? parsed.bullets.slice(0, 4) : [],
+          dontMiss: parsed.dontMiss || null,
+        };
+        briefLine = tldr.teaser || briefLine;
+        await supabase.from('profiles').update({ home_brief: { text: briefLine, tldr, generated_at: now.toISOString(), sig } }).eq('id', user.id).then(() => {}, () => {});
+      }
+    } catch { /* keep cached */ }
   }
 
-  return NextResponse.json({ firstName, briefLine, status, priorities: cappedPriorities, commitments, waitingOn, schedule, handled });
+  return NextResponse.json({ firstName, briefLine, tldr, status, priorities: cappedPriorities, commitments, waitingOn, schedule, handled });
 }
