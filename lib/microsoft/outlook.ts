@@ -186,6 +186,9 @@ export function parseOutlookMessage(message: OutlookMessage) {
     // message id so the thread_id COLUMN and the grouping key (thread_id || message_id)
     // can't diverge if Graph ever omits conversationId on a given fetch.
     thread_id: message.conversationId || message.internetMessageId,
+    // List-Unsubscribe is required by spec on bulk/newsletter mail; person-to-person never has it.
+    // (Outlook has no CATEGORY_PROMOTIONS equivalent, so this is the marketing/newsletter signal.)
+    has_unsubscribe: !!getInternetHeader('List-Unsubscribe'),
     hasAttachments: message.hasAttachments || false,
     is_read: message.isRead ?? true,
     outlookInternalId: message.id, // Graph API message ID (needed for attachment calls)

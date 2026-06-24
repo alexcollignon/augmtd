@@ -238,6 +238,8 @@ export function parseGmailMessage(message: GmailMessage) {
     received_at: new Date(parseInt(message.internalDate)).toISOString(),
     thread_id: message.threadId,
     labels: message.labelIds || [],
+    // List-Unsubscribe is required by spec on bulk/newsletter mail; person-to-person never has it.
+    has_unsubscribe: !!getHeader('List-Unsubscribe'),
     attachments,
     metadata: {
       provider: 'gmail',

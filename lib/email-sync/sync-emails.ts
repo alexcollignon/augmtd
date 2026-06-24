@@ -1386,6 +1386,10 @@ export async function syncEmailsForConnection(
                   html_body: ((emailForProcessing as any).html_body as string | null)?.slice(0, 15000) || null,
                   received_at: emailForProcessing.received_at,
                   provider: connection.provider,
+                  // Bulk-mail signals (deterministic): List-Unsubscribe → newsletter; Gmail
+                  // labelIds → marketing (CATEGORY_PROMOTIONS) + native category rules.
+                  has_unsubscribe: !!(parsed as { has_unsubscribe?: boolean }).has_unsubscribe,
+                  gmail_labels: (parsed as { labels?: string[] }).labels ?? [],
                   calendar_event_id: calendarEventId || undefined,
                   isForwarded,
                   thread_history: threadEmails?.map(e => ({

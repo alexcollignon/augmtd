@@ -166,20 +166,22 @@ export async function GET() {
   // ── FYI-by-topic: group the awareness emails by sender; the AI digests each group below. ──
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const fyiRows = (fyiRes.data ?? []) as Array<{ work_title: string | null; source_data: any }>;
-  const fyiBySender = new Map<string, { subjects: string[]; address: string }>();
+  const fyiBySender = new Map<string, { subjects: string[]; address: string; unsub: boolean }>();
   for (const r of fyiRows) {
     const sd = (r.source_data ?? {}) as Record<string, unknown>;
     const label = (sd.from_name as string) || (sd.from as string);
     if (!label) continue;
-    const g = fyiBySender.get(label) ?? { subjects: [], address: ((sd.from as string) || '').toLowerCase() };
+    const g = fyiBySender.get(label) ?? { subjects: [], address: ((sd.from as string) || '').toLowerCase(), unsub: false };
     g.subjects.push(r.work_title || (sd.subject as string) || '');
+    if (sd.has_unsubscribe) g.unsub = true;
     fyiBySender.set(label, g);
   }
-  // People vs newsletters/services — by the sender's local-part. People surface first.
+  // People vs newsletters/services. PRIMARY signal: List-Unsubscribe (captured in sync — definitive
+  // for bulk mail). The sender local-part regex is only a FALLBACK for items synced before that.
   const NEWSLETTER = /(^|[.\-_])(no-?reply|do-?not-?reply|donotreply|newsletter|news|notifications?|notify|updates?|mailer|marketing|digest|hello|team|info|support|alerts?|members?|email|mail)([.\-_+@0-9]|$)/i;
   const isNewsletter = (addr: string) => NEWSLETTER.test((addr.split('@')[0] || ''));
   const fyiGroupsAll = [...fyiBySender.entries()]
-    .map(([label, g]) => ({ label, subjects: g.subjects, count: g.subjects.length, kind: (isNewsletter(g.address) ? 'newsletter' : 'person') as 'newsletter' | 'person' }))
+    .map(([label, g]) => ({ label, subjects: g.subjects, count: g.subjects.length, kind: (g.unsub || isNewsletter(g.address) ? 'newsletter' : 'person') as 'newsletter' | 'person' }))
     .sort((a, b) => b.count - a.count);
   const peopleGroups = fyiGroupsAll.filter((g) => g.kind === 'person').slice(0, 5);
   const newsletterGroups = fyiGroupsAll.filter((g) => g.kind === 'newsletter').slice(0, 5);
