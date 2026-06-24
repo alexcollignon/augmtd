@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { getSystemClient, aiCreate } from '@/lib/ai/factory';
 import { buildAnsweredSet } from '@/lib/inbox/needs-reply';
 import { classifyItem } from '@/lib/inbox/classify-item';
+import { lastMeetingRecall } from '@/lib/context/voice-context';
 
 export const maxDuration = 30;
 
@@ -131,7 +132,7 @@ export async function GET() {
   // ── Today's schedule + light prep on the next meeting ──
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const meetings = (meetingsRes.data ?? []) as any[];
-  let nextPrep: { lastEmail?: { subject: string }; openCommitments: string[] } | null = null;
+  let nextPrep: { lastEmail?: { subject: string }; openCommitments: string[]; lastMeeting?: { title: string; date: string; recall: string; person: string } } | null = null;
   if (meetings[0]) {
     const others = attendeeEmails(meetings[0]).filter((e) => e !== self);
     if (others.length) {
@@ -139,7 +140,13 @@ export async function GET() {
         .eq('user_id', user.id).contains('to_addresses', [others[0]])
         .order('received_at', { ascending: false }).limit(1);
       const related = commits.filter((c) => others.includes((c.counterparty || '').toLowerCase())).map((c) => c.description);
-      nextPrep = { ...(le?.[0] ? { lastEmail: { subject: le[0].subject || '(no subject)' } } : {}), openCommitments: related.slice(0, 3) };
+      // Reminder (Slice C): if you've met this person before, recall what was discussed.
+      const recall = await lastMeetingRecall(user.id, others[0], supabase);
+      nextPrep = {
+        ...(le?.[0] ? { lastEmail: { subject: le[0].subject || '(no subject)' } } : {}),
+        openCommitments: related.slice(0, 3),
+        ...(recall ? { lastMeeting: { ...recall, person: (others[0].split('@')[0] || others[0]) } } : {}),
+      };
     }
   }
   const schedule = meetings.map((m, i) => ({

@@ -18,7 +18,7 @@ type Brief = {
   status: { needsReply: number; meetingsToday: number; waitingOn: number; handledToday: number };
   priorities: Priority[];
   waitingOn: { id: string; description: string; counterparty: string | null; ageDays: number }[];
-  schedule: { id: string; time: string; title: string; attendees: number; prep: { lastEmail?: { subject: string }; openCommitments: string[] } | null }[];
+  schedule: { id: string; time: string; title: string; attendees: number; prep: { lastEmail?: { subject: string }; openCommitments: string[]; lastMeeting?: { title: string; date: string; recall: string; person: string } } | null }[];
 };
 type TeamMsg = { workerId?: string; workerName?: string; text?: string };
 type TeamReview = { artifactId?: string; threadId?: string; title?: string; workerName?: string; workerId?: string };
@@ -212,8 +212,13 @@ export function HomeView() {
                           <span className="text-[12px] font-semibold text-neutral-700 flex-shrink-0">{timeOf(m.time)}</span>
                           <span className="text-[13px] text-neutral-800 truncate">{m.title}</span>
                         </div>
-                        {m.prep && (m.prep.lastEmail || m.prep.openCommitments.length > 0) && (
+                        {m.prep && (m.prep.lastEmail || m.prep.openCommitments.length > 0 || m.prep.lastMeeting) && (
                           <div className="mt-1.5 text-[11.5px] text-neutral-400 space-y-0.5">
+                            {m.prep.lastMeeting && (
+                              <p className="text-violet-500 line-clamp-2">
+                                Last time with {m.prep.lastMeeting.person} ({m.prep.lastMeeting.date}): {m.prep.lastMeeting.recall}
+                              </p>
+                            )}
                             {m.prep.lastEmail && <p className="truncate">Last thread: “{m.prep.lastEmail.subject}”</p>}
                             {m.prep.openCommitments.map((c, i) => <p key={i} className="truncate">Open: {c}</p>)}
                           </div>
