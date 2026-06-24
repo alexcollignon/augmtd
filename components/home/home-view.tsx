@@ -14,11 +14,13 @@ type Priority = {
 };
 type Tldr = { teaser: string; bullets: string[]; dontMiss: string | null };
 type Followups = { teaser: string; items: { who: string; status: string; nextMove: string }[]; closing: string | null };
+type FyiDigest = { groups: { label: string; summary: string }[]; tailGroups: number; tailItems: number };
 type Brief = {
   firstName: string | null;
   briefLine: string | null;
   tldr?: Tldr | null;
   followups?: Followups | null;
+  fyiDigest?: FyiDigest | null;
   status: { needsReply: number; meetingsToday: number; waitingOn: number; handledToday: number };
   priorities: Priority[];
   commitments: { id: string; description: string; counterparty: string | null; dueDate: string | null; overdue: boolean; dueToday: boolean }[];
@@ -349,6 +351,26 @@ export function HomeView() {
                         <p className="text-[11px] text-neutral-400">Ready{r.workerName ? ` · ${r.workerName}` : ''}</p>
                       </SideRow>
                     ))}
+                  </div>
+                </RiseIn>
+              )}
+
+              {/* FYI-by-topic — the awareness pile turned into a few sender digests */}
+              {b?.fyiDigest && b.fyiDigest.groups.length > 0 && (
+                <RiseIn delay={200}>
+                  <Label>For your awareness</Label>
+                  <div className="rounded-xl border border-neutral-200/80 bg-white divide-y divide-neutral-100 overflow-hidden">
+                    {b.fyiDigest.groups.map((g, i) => (
+                      <div key={i} className="px-3.5 py-2.5">
+                        <p className="text-[12.5px] font-semibold text-neutral-700">{g.label}</p>
+                        <p className="text-[12px] text-neutral-500 mt-0.5 leading-snug">{g.summary}</p>
+                      </div>
+                    ))}
+                    {b.fyiDigest.tailItems > 0 && (
+                      <Link href="/inbox" className="block px-3.5 py-2 text-[11.5px] text-neutral-400 hover:text-indigo-600 transition-colors">
+                        +{b.fyiDigest.tailItems} more from {b.fyiDigest.tailGroups} other sender{b.fyiDigest.tailGroups > 1 ? 's' : ''}
+                      </Link>
+                    )}
                   </div>
                 </RiseIn>
               )}

@@ -32,7 +32,7 @@ export async function GET() {
   const self = user.email?.toLowerCase();
 
   const since24 = new Date(now.getTime() - DAY).toISOString();
-  const [itemsRes, commitsRes, meetingsRes, handledRes, profileRes, triagedRes, summarisedRes, trackedRes, filteredRes] = await Promise.all([
+  const [itemsRes, commitsRes, meetingsRes, handledRes, profileRes, triagedRes, summarisedRes, trackedRes, filteredRes, fyiRes] = await Promise.all([
     supabase.from('inbox_items')
       .select('id, work_title, work_state, source, source_id, source_meeting_transcript_id, source_data, created_at')
       .eq('user_id', user.id).eq('status', 'pending')
@@ -59,6 +59,10 @@ export async function GET() {
     supabase.from('inbox_items').select('id', { count: 'exact', head: true })
       .eq('user_id', user.id).gte('created_at', since24)
       .or('work_state.eq.noise,rule_type.eq.marketing,rule_type.eq.notifications'),         // filtered as noise
+    // FYI tier (for the FYI-by-topic brief): awareness emails, grouped by sender downstream.
+    supabase.from('inbox_items').select('work_title, source_data, rule_type')
+      .eq('user_id', user.id).eq('status', 'pending').eq('work_state', 'noted')
+      .order('created_at', { ascending: false }).limit(80),
   ]);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -148,6 +152,23 @@ export async function GET() {
     .map((c) => ({ id: c.id, description: c.description, counterparty: c.counterparty, ageDays: Math.floor((now.getTime() - new Date(c.created_at).getTime()) / DAY) }))
     .sort((a, b) => b.ageDays - a.ageDays).slice(0, 6);
 
+  // ── FYI-by-topic: group the awareness emails by sender; the AI digests each group below. ──
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const fyiRows = (fyiRes.data ?? []) as Array<{ work_title: string | null; source_data: any }>;
+  const fyiBySender = new Map<string, string[]>();
+  for (const r of fyiRows) {
+    const sd = (r.source_data ?? {}) as Record<string, unknown>;
+    const from = (sd.from_name as string) || (sd.from as string);
+    if (!from) continue;
+    const arr = fyiBySender.get(from) ?? [];
+    arr.push(r.work_title || (sd.subject as string) || '');
+    fyiBySender.set(from, arr);
+  }
+  const fyiGroupsAll = [...fyiBySender.entries()].map(([label, subjects]) => ({ label, subjects, count: subjects.length })).sort((a, b) => b.count - a.count);
+  const fyiTop = fyiGroupsAll.slice(0, 6);
+  const fyiTailItems = fyiGroupsAll.slice(6).reduce((n, g) => n + g.count, 0);
+  const fyiTailGroups = Math.max(0, fyiGroupsAll.length - fyiTop.length);
+
   // ── Today's schedule + light prep on the next meeting ──
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const meetings = (meetingsRes.data ?? []) as any[];
@@ -198,7 +219,8 @@ export async function GET() {
   const commitP = commitments.length;
   const overdueC = commitments.filter((c) => c.overdue).length;
   const overdueP = cappedPriorities.filter((p) => p.overdue).length;
-  const sig = `${emailP}|${meetingP}|${commitP}|${overdueP}|${overdueC}|${status.waitingOn}|${schedule.length}`;
+  const fyiSig = fyiTop.map((g) => `${g.label}:${g.count}`).join(',');
+  const sig = `${emailP}|${meetingP}|${commitP}|${overdueP}|${overdueC}|${status.waitingOn}|${schedule.length}|${fyiSig}`;
 
   const fullName = (profileRes.data as { full_name?: string } | null)?.full_name ?? null;
   const firstName = fullName?.split(' ')[0] ?? null;
@@ -208,9 +230,11 @@ export async function GET() {
   type Tldr = { teaser: string; bullets: string[]; dontMiss: string | null };
   type FollowUp = { who: string; status: string; nextMove: string };
   type Followups = { teaser: string; items: FollowUp[]; closing: string | null };
-  const cached = (profileRes.data as { home_brief?: { text?: string; tldr?: Tldr; followups?: Followups | null; generated_at: string; sig?: string } } | null)?.home_brief ?? null;
+  type FyiDigest = { groups: { label: string; summary: string }[]; tailGroups: number; tailItems: number };
+  const cached = (profileRes.data as { home_brief?: { text?: string; tldr?: Tldr; followups?: Followups | null; fyiDigest?: FyiDigest | null; generated_at: string; sig?: string } } | null)?.home_brief ?? null;
   let tldr: Tldr | null = cached?.tldr ?? null;
   let followups: Followups | null = cached?.followups ?? null;
+  let fyiDigest: FyiDigest | null = cached?.fyiDigest ?? null;
   let briefLine = cached?.text ?? null;
   const stale = !cached || cached.sig !== sig || (now.getTime() - new Date(cached.generated_at).getTime()) > BRIEF_TTL;
   if (stale) {
@@ -261,8 +285,26 @@ export async function GET() {
       followups = null;
     }
 
-    await supabase.from('profiles').update({ home_brief: { text: briefLine, tldr, followups, generated_at: now.toISOString(), sig } }).eq('id', user.id).then(() => {}, () => {});
+    // FYI-by-topic brief (phase 2) — one short digest line per sender group, turning the FYI pile
+    // into a few thematic digests.
+    if (fyiTop.length) {
+      try {
+        const input = fyiTop.map((g) => `${g.label} (${g.count}): ${g.subjects.slice(0, 5).filter(Boolean).map((s) => `"${s}"`).join('; ')}`).join('\n');
+        const res = await aiCreate(client, {
+          model, max_tokens: 420, temperature: 0.4,
+          messages: [{ role: 'user', content: `You are ${firstName || 'the user'}'s assistant digesting low-priority FYI emails (no reply needed), grouped by sender. For each group, write ONE short line summarising what these are about. Use ONLY these facts, never invent.\n\nReturn JSON only:\n{"groups":[{"label":"the sender name","summary":"one-line digest of what these are about"}]}\n\nGroups:\n${input}` }],
+        });
+        const p = parseModelJSON<{ groups: { label: string; summary: string }[] }>(res.choices?.[0]?.message?.content || '', { groups: [] });
+        fyiDigest = Array.isArray(p.groups) && p.groups.length
+          ? { groups: p.groups.slice(0, 6), tailGroups: fyiTailGroups, tailItems: fyiTailItems }
+          : null;
+      } catch { /* keep cached */ }
+    } else {
+      fyiDigest = null;
+    }
+
+    await supabase.from('profiles').update({ home_brief: { text: briefLine, tldr, followups, fyiDigest, generated_at: now.toISOString(), sig } }).eq('id', user.id).then(() => {}, () => {});
   }
 
-  return NextResponse.json({ firstName, briefLine, tldr, followups, status, priorities: cappedPriorities, commitments, waitingOn, schedule, handled });
+  return NextResponse.json({ firstName, briefLine, tldr, followups, fyiDigest, status, priorities: cappedPriorities, commitments, waitingOn, schedule, handled });
 }
