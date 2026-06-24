@@ -19,6 +19,7 @@ type Brief = {
   priorities: Priority[];
   waitingOn: { id: string; description: string; counterparty: string | null; ageDays: number }[];
   schedule: { id: string; time: string; title: string; attendees: number; prep: { lastEmail?: { subject: string }; openCommitments: string[]; lastMeeting?: { title: string; date: string; recall: string; person: string } } | null }[];
+  handled?: { triaged: number; filtered: number; summarised: number; tracked: number; resolved: number };
 };
 type TeamMsg = { workerId?: string; workerName?: string; text?: string };
 type TeamReview = { artifactId?: string; threadId?: string; title?: string; workerName?: string; workerId?: string };
@@ -248,6 +249,33 @@ export function HomeView() {
                         </div>
                       </Link>
                     ))}
+                  </div>
+                </RiseIn>
+              )}
+
+              {/* Heartbeat — what the system handled on its own (trust, "always on top of it") */}
+              {b?.handled && (b.handled.triaged > 0 || b.handled.summarised > 0 || b.handled.tracked > 0) && (
+                <RiseIn delay={220}>
+                  <Label>Handled for you · last 24h</Label>
+                  <div className="rounded-xl border border-neutral-200 bg-white px-3.5 py-3 text-[12px] text-neutral-500 space-y-1.5">
+                    {b.handled.triaged > 0 && (
+                      <p className="flex items-start gap-1.5">
+                        <CheckCircleIcon className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0 mt-px" />
+                        <span>Triaged {b.handled.triaged} email{b.handled.triaged > 1 ? 's' : ''}{b.handled.filtered > 0 ? ` · ${b.handled.filtered} filtered as noise` : ''}</span>
+                      </p>
+                    )}
+                    {b.handled.summarised > 0 && (
+                      <p className="flex items-start gap-1.5">
+                        <CheckCircleIcon className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0 mt-px" />
+                        <span>Summarised {b.handled.summarised} meeting{b.handled.summarised > 1 ? 's' : ''}</span>
+                      </p>
+                    )}
+                    {b.handled.tracked > 0 && (
+                      <p className="flex items-start gap-1.5">
+                        <CheckCircleIcon className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0 mt-px" />
+                        <span>Tracked {b.handled.tracked} new commitment{b.handled.tracked > 1 ? 's' : ''}{b.handled.resolved > 0 ? ` · resolved ${b.handled.resolved}` : ''}</span>
+                      </p>
+                    )}
                   </div>
                 </RiseIn>
               )}

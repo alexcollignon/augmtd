@@ -30,7 +30,8 @@ export async function GET() {
   const endOfDay = `${todayStr}T23:59:59Z`;
   const self = user.email?.toLowerCase();
 
-  const [itemsRes, commitsRes, meetingsRes, handledRes, profileRes] = await Promise.all([
+  const since24 = new Date(now.getTime() - DAY).toISOString();
+  const [itemsRes, commitsRes, meetingsRes, handledRes, profileRes, triagedRes, summarisedRes, trackedRes, filteredRes] = await Promise.all([
     supabase.from('inbox_items')
       .select('id, work_title, work_state, source, source_id, source_meeting_transcript_id, source_data, created_at')
       .eq('user_id', user.id).eq('status', 'pending')
@@ -47,6 +48,16 @@ export async function GET() {
     supabase.from('commitments').select('id', { count: 'exact', head: true })
       .eq('user_id', user.id).eq('status', 'done').gte('updated_at', new Date(now.getTime() - DAY).toISOString()),
     supabase.from('profiles').select('full_name, home_brief').eq('id', user.id).single(),
+    // ── Heartbeat (Slice D): what the system handled autonomously in the last 24h ──
+    supabase.from('inbox_items').select('id', { count: 'exact', head: true })
+      .eq('user_id', user.id).gte('created_at', since24),                                  // triaged
+    supabase.from('meeting_transcripts').select('id', { count: 'exact', head: true })
+      .eq('user_id', user.id).gte('created_at', since24),                                  // summarised
+    supabase.from('commitments').select('id', { count: 'exact', head: true })
+      .eq('user_id', user.id).gte('created_at', since24),                                  // tracked
+    supabase.from('inbox_items').select('id', { count: 'exact', head: true })
+      .eq('user_id', user.id).gte('created_at', since24)
+      .or('work_state.eq.noise,rule_type.eq.marketing,rule_type.eq.notifications'),         // filtered as noise
   ]);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -164,6 +175,15 @@ export async function GET() {
     handledToday: handledRes.count ?? 0,
   };
 
+  // ── Heartbeat: what was handled autonomously in the last 24h (the "I'm on top of it" panel) ──
+  const handled = {
+    triaged: triagedRes.count ?? 0,
+    filtered: filteredRes.count ?? 0,
+    summarised: summarisedRes.count ?? 0,
+    tracked: trackedRes.count ?? 0,
+    resolved: handledRes.count ?? 0,
+  };
+
   // ── Cached one-line narration (posture-aware + busts when the day's shape changes) ──
   const emailP = cappedPriorities.filter((p) => p.posture === 'needs_reply').length;
   const meetingP = cappedPriorities.filter((p) => p.source === 'meeting').length;
@@ -196,5 +216,5 @@ export async function GET() {
     } catch { /* keep */ }
   }
 
-  return NextResponse.json({ firstName, briefLine, status, priorities: cappedPriorities, waitingOn, schedule });
+  return NextResponse.json({ firstName, briefLine, status, priorities: cappedPriorities, waitingOn, schedule, handled });
 }
