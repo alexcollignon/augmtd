@@ -113,6 +113,69 @@ function PriorityCard({ p, first, expanded, onToggle }: { p: Priority; first: bo
   );
 }
 
+// Must-respond item — "See draft" generates the reply on click (on-demand, so AI is only spent on
+// replies you actually open), shown inline with copy / open-in-inbox.
+function MustRespondItem({ m, index }: { m: { who: string; ask: string; angle: string; itemId: string }; index: number }) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const seeDraft = async () => {
+    if (draft || loading || !m.itemId) return;
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/inbox/${m.itemId}/draft`, { method: 'POST' });
+      const d = await res.json();
+      setDraft(d.draft || 'Could not draft a reply.');
+    } catch { setDraft('Could not draft a reply.'); } finally { setLoading(false); }
+  };
+  return (
+    <li className="flex flex-col gap-2">
+      <div className="flex gap-2.5">
+        <span className="flex-shrink-0 w-5 h-5 rounded-full bg-rose-50 text-rose-500 text-[11px] font-semibold flex items-center justify-center mt-0.5">{index + 1}</span>
+        <div className="min-w-0 flex-1">
+          <p className="text-[13px] font-semibold text-neutral-800 leading-snug">{m.who}</p>
+          {m.ask && <p className="text-[12.5px] text-neutral-500 mt-0.5 leading-snug">{m.ask}</p>}
+          {m.angle && <p className="text-[12.5px] text-neutral-600 mt-1 leading-snug"><span className="font-medium text-neutral-700">Angle:</span> {m.angle}</p>}
+        </div>
+        {m.itemId && (
+          <button onClick={seeDraft} disabled={loading || !!draft}
+            className="flex-shrink-0 self-start inline-flex items-center gap-1 rounded-lg bg-neutral-50 border border-neutral-200 px-2.5 py-1 text-[12px] font-medium text-neutral-700 hover:bg-indigo-50 hover:text-indigo-700 disabled:opacity-60 transition-colors">
+            {loading ? 'Drafting…' : draft ? 'Drafted' : 'See draft'}
+          </button>
+        )}
+      </div>
+      {loading && <div className="ml-7 h-16 rounded-xl bg-neutral-100 animate-pulse" />}
+      {draft && (
+        <div className="ml-7 rounded-xl border border-neutral-200 bg-neutral-50/70 p-3">
+          <p className="text-[12.5px] text-neutral-700 whitespace-pre-wrap leading-relaxed">{draft}</p>
+          <div className="mt-2.5 flex items-center gap-3">
+            <button onClick={() => { navigator.clipboard?.writeText(draft); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
+              className="text-[12px] font-medium text-indigo-600 hover:text-indigo-700">{copied ? 'Copied' : 'Copy'}</button>
+            <Link href="/inbox" className="text-[12px] text-neutral-500 hover:text-neutral-800">Open in inbox to send →</Link>
+          </div>
+        </div>
+      )}
+    </li>
+  );
+}
+
+// Collapsible feed section — the lower-priority briefs collapse so the Home stays scannable.
+function Collapsible({ title, count, defaultOpen = false, children }: { title: string; count?: number; defaultOpen?: boolean; children: React.ReactNode }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div>
+      <button onClick={() => setOpen(o => !o)} className="group flex items-center gap-1.5 mb-2.5">
+        <ChevronRightIcon className={`w-3.5 h-3.5 text-neutral-300 group-hover:text-neutral-500 transition-transform duration-200 ${open ? 'rotate-90' : ''}`} />
+        <h2 className="text-[11px] font-semibold uppercase tracking-[0.07em] text-neutral-400 group-hover:text-neutral-600 transition-colors">{title}</h2>
+        {count != null && count > 0 && <span className="text-[11px] font-medium text-neutral-300">{count}</span>}
+      </button>
+      <div className={`grid transition-all duration-300 ease-out ${open ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`}>
+        <div className="overflow-hidden">{children}</div>
+      </div>
+    </div>
+  );
+}
+
 // Compact side-panel row — consistent hover, used for waiting-on / schedule / team.
 function SideRow({ href, icon: Icon, iconClass, children }: { href: string; icon?: React.ElementType; iconClass?: string; children: React.ReactNode }) {
   return (
@@ -238,17 +301,9 @@ export function HomeView() {
                     <Label count={b.mustRespond.items.length}>Must respond</Label>
                     <div className="rounded-2xl border border-rose-200/70 bg-white p-4">
                       {b.mustRespond.teaser && <p className="text-[13px] text-neutral-500 mb-3.5 leading-relaxed">{b.mustRespond.teaser}</p>}
-                      <ol className="space-y-3.5">
+                      <ol className="space-y-4">
                         {b.mustRespond.items.map((m, i) => (
-                          <li key={i} className="flex gap-2.5">
-                            <span className="flex-shrink-0 w-5 h-5 rounded-full bg-rose-50 text-rose-500 text-[11px] font-semibold flex items-center justify-center mt-0.5">{i + 1}</span>
-                            <div className="min-w-0 flex-1">
-                              <p className="text-[13px] font-semibold text-neutral-800 leading-snug">{m.who}</p>
-                              {m.ask && <p className="text-[12.5px] text-neutral-500 mt-0.5 leading-snug">{m.ask}</p>}
-                              {m.angle && <p className="text-[12.5px] text-neutral-600 mt-1 leading-snug"><span className="font-medium text-neutral-700">Angle:</span> {m.angle}</p>}
-                            </div>
-                            <Link href="/inbox" className="flex-shrink-0 self-start inline-flex items-center gap-1 rounded-lg bg-neutral-50 border border-neutral-200 px-2.5 py-1 text-[12px] font-medium text-neutral-700 hover:bg-indigo-50 hover:text-indigo-700 transition-colors">Reply<ArrowRightIcon className="w-3 h-3" /></Link>
-                          </li>
+                          <MustRespondItem key={i} m={m} index={i} />
                         ))}
                       </ol>
                     </div>
@@ -366,7 +421,7 @@ export function HomeView() {
 
               {team && (team.messages.length > 0 || team.needsReview.length > 0) && (
                 <RiseIn delay={160}>
-                  <Label>From your team</Label>
+                  <Collapsible title="From your team" count={team.messages.length + team.needsReview.length}>
                   <div className="space-y-2">
                     {team.messages.slice(0, 3).map((m, i) => (
                       <SideRow key={`m${i}`} href={m.workerId ? `/workers?worker=${m.workerId}` : '/workers'}>
@@ -381,13 +436,14 @@ export function HomeView() {
                       </SideRow>
                     ))}
                   </div>
+                  </Collapsible>
                 </RiseIn>
               )}
 
               {/* FYI-by-topic — the awareness pile turned into a few sender digests */}
               {b?.fyiDigest && b.fyiDigest.groups.length > 0 && (
                 <RiseIn delay={200}>
-                  <Label>For your awareness</Label>
+                  <Collapsible title="For your awareness" count={b.fyiDigest.groups.length}>
                   <div className="rounded-xl border border-neutral-200/80 bg-white divide-y divide-neutral-100 overflow-hidden">
                     {b.fyiDigest.groups.map((g, i) => (
                       <div key={i} className="px-3.5 py-2.5">
@@ -401,13 +457,14 @@ export function HomeView() {
                       </Link>
                     )}
                   </div>
+                  </Collapsible>
                 </RiseIn>
               )}
 
               {/* Heartbeat — what the system handled on its own (trust, "always on top of it") */}
               {b?.handled && (b.handled.triaged > 0 || b.handled.summarised > 0 || b.handled.tracked > 0) && (
                 <RiseIn delay={220}>
-                  <Label>Handled for you · 24h</Label>
+                  <Collapsible title="Handled for you · 24h">
                   <div className="rounded-xl border border-neutral-200/80 bg-gradient-to-br from-white to-neutral-50/60 px-3.5 py-3 text-[12px] text-neutral-500 space-y-1.5">
                     {b.handled.triaged > 0 && (
                       <p className="flex items-start gap-1.5">
@@ -428,6 +485,7 @@ export function HomeView() {
                       </p>
                     )}
                   </div>
+                  </Collapsible>
                 </RiseIn>
               )}
             </div>
