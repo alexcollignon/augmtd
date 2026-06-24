@@ -5,14 +5,14 @@
 import type { RuleLabel } from './types';
 
 const LABEL_DISPLAY: Record<RuleLabel, string> = {
-  needs_reply: 'Augmtd/Needs reply',
-  to_do: 'Augmtd/To do',
-  waiting_on: 'Augmtd/Waiting on',
-  meeting: 'Augmtd/Meeting',
-  fyi: 'Augmtd/FYI',
-  notifications: 'Augmtd/Notifications',
-  marketing: 'Augmtd/Marketing',
-  done: 'Augmtd/Done',
+  needs_reply: 'AUGMTD/Needs reply',
+  to_do: 'AUGMTD/To do',
+  waiting_on: 'AUGMTD/Waiting on',
+  meeting: 'AUGMTD/Meeting',
+  fyi: 'AUGMTD/FYI',
+  notifications: 'AUGMTD/Notifications',
+  marketing: 'AUGMTD/Marketing',
+  done: 'AUGMTD/Done',
 };
 
 export function mapWorkStateToLabel(ws?: string | null): RuleLabel {
