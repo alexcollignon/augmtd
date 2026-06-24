@@ -848,6 +848,16 @@ export async function syncEmailsForConnection(
             }),
           ).catch(() => {});
 
+          // Resolution-on-reply (external): a reply went out on this thread — possibly from Gmail/
+          // Outlook directly — so clear any pending needs-reply item on the same thread.
+          if (storedEmail.thread_id) {
+            await adminSupabase.from('inbox_items')
+              .update({ status: 'completed' })
+              .eq('user_id', connection.user_id).eq('status', 'pending')
+              .in('work_state', ['work_prepared', 'decision_required'])
+              .eq('source_data->>thread_id', storedEmail.thread_id);
+          }
+
           console.log(`    ✓ Learning signals queued, skipping inbox item (sent email)\n`);
           continue; // Skip to next email (already stored for context)
         }

@@ -2,23 +2,19 @@
 
 import { useState, useMemo } from 'react';
 import { ChevronDownIcon, ChevronUpIcon } from '@heroicons/react/24/outline';
-import type { InboxItem, VisualSection } from '@/lib/types/inbox';
-import { getSectionDisplayName } from '@/lib/types/inbox';
+import type { InboxItem } from '@/lib/types/inbox';
 import WorkCard from './work-card';
 import { batchInboxItems } from '@/lib/utils/batch-inbox-items';
-import { isNeedsReply } from '@/lib/inbox/needs-reply';
-
-// 'needs_reply' is a computed group (a real person is waiting on your response), surfaced above
-// the cognitive-cost sections. It's not a stored visual_section.
-type SectionKey = VisualSection | 'needs_reply';
+import { classifyItem, TYPE_CONFIG, TYPE_ORDER, type ItemType } from '@/lib/inbox/classify-item';
 
 interface WorkSectionsProps {
   items: InboxItem[];
 }
 
 export default function WorkSections({ items }: WorkSectionsProps) {
-  const [expandedSections, setExpandedSections] = useState<Set<SectionKey>>(
-    new Set(['needs_reply', 'prepared', 'suggested'])
+  // Default-expand the "your move" types + waiting on; context (meetings, FYI) starts collapsed.
+  const [expandedSections, setExpandedSections] = useState<Set<ItemType>>(
+    new Set(['needs_reply', 'to_do', 'waiting_on'])
   );
 
   // Apply batching logic to items
@@ -40,17 +36,19 @@ export default function WorkSections({ items }: WorkSectionsProps) {
     return [...unbatched, ...batchItems];
   }, [batches, unbatched]);
 
-  // Group items: a "needs reply" item is surfaced in that group (once), everything else falls to
-  // its cognitive-cost section.
+  // Group every item by its single legible type (the source of truth). 'hidden' (resolved/noise)
+  // never shows here.
   const itemsBySection = displayItems.reduce((acc, item) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const section: SectionKey = isNeedsReply(item as any) ? 'needs_reply' : ((item as InboxItem).visual_section || 'awareness');
-    if (!acc[section]) acc[section] = [];
-    acc[section].push(item);
+    const type = classifyItem(item as any);
+    if (type === 'hidden') return acc;
+    if (!acc[type]) acc[type] = [];
+    acc[type].push(item);
     return acc;
-  }, {} as Record<SectionKey, any[]>);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  }, {} as Record<ItemType, any[]>);
 
-  const toggleSection = (section: SectionKey) => {
+  const toggleSection = (section: ItemType) => {
     setExpandedSections(prev => {
       const next = new Set(prev);
       if (next.has(section)) {
@@ -62,58 +60,19 @@ export default function WorkSections({ items }: WorkSectionsProps) {
     });
   };
 
-  // Section configuration
-  const sections: Array<{
-    key: SectionKey;
-    title: string;
-    description: string;
-    dotColor: string;
-    textColor: string;
-    countBg: string;
-    countText: string;
-  }> = [
-    {
-      key: 'needs_reply',
-      title: 'Needs reply',
-      description: 'A real person is waiting on your response',
-      dotColor: 'bg-rose-500',
-      textColor: 'text-neutral-900',
-      countBg: 'bg-rose-100',
-      countText: 'text-rose-700',
-    },
-    {
-      key: 'prepared',
-      title: 'Prepared Work',
-      description: 'Ready for your action',
-      dotColor: 'bg-indigo-500',
-      textColor: 'text-neutral-900',
-      countBg: 'bg-indigo-100',
-      countText: 'text-indigo-700',
-    },
-    {
-      key: 'suggested',
-      title: 'Suggested Work',
-      description: 'May need your input — confirm if yours',
-      dotColor: 'bg-amber-500',
-      textColor: 'text-neutral-900',
-      countBg: 'bg-amber-100',
-      countText: 'text-amber-700',
-    },
-    {
-      key: 'awareness',
-      title: 'For Awareness',
-      description: 'For your information only',
-      dotColor: 'bg-neutral-400',
-      textColor: 'text-neutral-700',
-      countBg: 'bg-neutral-100',
-      countText: 'text-neutral-600',
-    },
-  ];
+  // Section configuration comes straight from the single source of truth.
+  const sections = TYPE_ORDER.map(key => ({ key, ...TYPE_CONFIG[key] }));
 
   return (
     <div className="space-y-8">
       {sections.map(section => {
-        const sectionItems = itemsBySection[section.key] || [];
+        let sectionItems = itemsBySection[section.key] || [];
+        // In "Needs reply", a READ-but-unreplied email is the sharpest "you meant to reply and
+        // didn't" — surface those above the ones you haven't even opened. (read ≠ replied.)
+        if (section.key === 'needs_reply') {
+          sectionItems = [...sectionItems].sort((a, b) =>
+            ((a as InboxItem).is_read === true ? 0 : 1) - ((b as InboxItem).is_read === true ? 0 : 1));
+        }
         if (sectionItems.length === 0) return null;
 
         const isExpanded = expandedSections.has(section.key);
@@ -127,11 +86,11 @@ export default function WorkSections({ items }: WorkSectionsProps) {
             >
               <div className="flex items-center gap-3">
                 {/* Status dot */}
-                <div className={`w-2 h-2 rounded-full ${section.dotColor} shadow-sm`} />
+                <div className={`w-2 h-2 rounded-full ${section.dot} shadow-sm`} />
 
                 <div className="flex items-center gap-3">
-                  <h2 className={`text-[15px] font-semibold ${section.textColor}`}>
-                    {section.title}
+                  <h2 className="text-[15px] font-semibold text-neutral-900">
+                    {section.label}
                   </h2>
 
                   {/* Count badge */}

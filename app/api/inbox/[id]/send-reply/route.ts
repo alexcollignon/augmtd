@@ -137,6 +137,21 @@ export async function POST(
       ContextService.logDraftEdit(user.id, id, norm(aiDraft), norm(customMessage || '')).catch(() => {});
     }
 
+    // Resolution-on-reply: the loop is closed — clear this item so it leaves "Needs reply"
+    // (inbox + Home). Replying ≠ reading; this fires only on an actual sent reply.
+    await supabase.from('inbox_items').update({ status: 'completed' }).eq('id', id).eq('user_id', user.id);
+
+    // Chain handoff: a promise inside the reply ("I'll send X Friday") becomes a follow-up
+    // immediately — don't wait for the next sync. Keyword-gated inside the extractor.
+    void import('@/lib/commitments/extract').then(({ extractEmailCommitments }) =>
+      extractEmailCommitments({
+        userId: user.id, subject: sourceData.subject || '', body: norm(messageBody || ''),
+        isFromUser: true, userName: null,
+        counterparty: to || sourceData.from || null,
+        sourceId: sentMessageId, threadId: sourceData.thread_id || null, client: supabase,
+      }),
+    ).catch(() => {});
+
     return NextResponse.json({
       success: true,
       sentMessageId,
