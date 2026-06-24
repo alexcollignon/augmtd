@@ -107,6 +107,18 @@ export default function EmailSettings({ connections }: { connections: any[] }) {
     setEditing(null);
   };
 
+  const [rerunning, setRerunning] = useState(false);
+  const [rerunMsg, setRerunMsg] = useState<string | null>(null);
+  const rerun = async () => {
+    setRerunning(true); setRerunMsg(null);
+    try {
+      const res = await fetch('/api/inbox/rules/rerun', { method: 'POST' });
+      const d = await res.json();
+      setRerunMsg(`Reclassified ${d.reclassified ?? 0} of ${d.scanned ?? 0} recent emails.`);
+    } catch { setRerunMsg('Could not re-run rules.'); }
+    finally { setRerunning(false); }
+  };
+
   const inboxes = (connections ?? []).filter(c => c.status === 'active');
   const sorted = [...rules].sort((a, b) => a.priority - b.priority);
 
@@ -138,13 +150,21 @@ export default function EmailSettings({ connections }: { connections: any[] }) {
       <section className="px-6 py-5 border-b border-neutral-100">
         <div className="flex items-center justify-between mb-1">
           <h3 className="text-[14px] font-semibold text-neutral-900">Triage rules</h3>
-          <button
-            onClick={() => setEditing({ id: '', name: '', enabled: true, priority: 999, trigger: 'received', match_mode: 'all', conditions: [{ field: 'from', value: '' }], ai_match: null, outcome: { set_type: 'fyi' }, source: 'user' })}
-            className="inline-flex items-center gap-1 text-[12.5px] font-medium text-indigo-600 hover:text-indigo-700">
-            <PlusIcon className="w-4 h-4" /> Add rule
-          </button>
+          <div className="flex items-center gap-3">
+            <button onClick={rerun} disabled={rerunning} className="text-[12.5px] text-neutral-500 hover:text-neutral-800 disabled:opacity-50">
+              {rerunning ? 'Re-running…' : 'Re-run on my inbox'}
+            </button>
+            <button
+              onClick={() => setEditing({ id: '', name: '', enabled: true, priority: 999, trigger: 'received', match_mode: 'all', conditions: [{ field: 'from', value: '' }], ai_match: null, outcome: { set_type: 'fyi' }, source: 'user' })}
+              className="inline-flex items-center gap-1 text-[12.5px] font-medium text-indigo-600 hover:text-indigo-700">
+              <PlusIcon className="w-4 h-4" /> Add rule
+            </button>
+          </div>
         </div>
-        <p className="text-[12px] text-neutral-400 mb-3">Evaluated top to bottom — the first match wins. Deterministic rules run before AI ones.</p>
+        <p className="text-[12px] text-neutral-400 mb-3">
+          Evaluated top to bottom — the first match wins. Deterministic rules run before AI ones.
+          {rerunMsg && <span className="ml-1 text-emerald-600">{rerunMsg}</span>}
+        </p>
         <div className="space-y-1.5">
           {sorted.map((rule, i) => {
             const meta = rule.outcome.set_type ? LABEL_META[rule.outcome.set_type] : null;
