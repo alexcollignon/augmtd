@@ -85,7 +85,7 @@ function PriorityCard({ p, first, expanded, onToggle }: { p: Priority; first: bo
 
         <div className="mt-3">
           <Link href={p.href} className="inline-flex items-center gap-1 text-[12.5px] font-medium text-indigo-600 hover:text-indigo-700">
-            {p.type === 'email' ? 'Review & reply' : p.type === 'meeting' ? 'Open meeting' : 'Open'}
+            {p.type === 'email' ? 'Reply' : p.type === 'meeting' ? 'Review' : 'Do'}
             <ArrowRightIcon className="w-3.5 h-3.5" />
           </Link>
         </div>
