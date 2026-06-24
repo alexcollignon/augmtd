@@ -35,6 +35,12 @@ export class GmailLabelCache {
         for (const l of await listGmailLabels(this.encryptedTokens)) this.map.set(l.name, l.id);
         this.loaded = true;
       }
+      // Create the parent first so Gmail NESTS the children under a single collapsible "Augmtd"
+      // group, instead of flat top-level "Augmtd/FYI" labels. Done before the cache hit below so a
+      // pre-existing flat child still gets its parent created (which makes it re-nest).
+      if (name.includes('/') && !this.map.has(name.slice(0, name.lastIndexOf('/')))) {
+        await this.ensure(name.slice(0, name.lastIndexOf('/')));
+      }
       if (this.map.has(name)) return this.map.get(name)!;
       try {
         const created = await createGmailLabel(this.encryptedTokens, name);

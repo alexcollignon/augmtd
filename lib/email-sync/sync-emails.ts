@@ -1411,14 +1411,16 @@ export async function syncEmailsForConnection(
               _batchResult.errors.push(`Failed to update inbox item: ${updateError.message}`);
             } else {
               console.log(`       ✓ Updated inbox item`);
-              // Mirror the triage label into Gmail/Outlook (additive, namespaced) when a rule
-              // matched and label write-back is on. Non-fatal.
-              if (emailSettings.auto_label && qItem.ruleLabel) {
-                void import('@/lib/inbox/rules/write-back').then(({ writeBackLabel }) =>
+              // Mirror the triage label into Gmail/Outlook (additive, namespaced) when write-back
+              // is on. EVERY classified email is labelled — the AI rule's label if one matched,
+              // otherwise the label derived from its work_state — so labels aren't limited to
+              // AI-matched mail. Non-fatal.
+              if (emailSettings.auto_label) {
+                void import('@/lib/inbox/rules/write-back').then(({ writeBackLabel, mapWorkStateToLabel }) =>
                   writeBackLabel({
                     provider: connection.provider,
                     encryptedTokens: connection.metadata?.tokens,
-                    label: qItem.ruleLabel!,
+                    label: qItem.ruleLabel ?? mapWorkStateToLabel(recipient.inferredWorkState),
                     gmailThreadId: qItem.storedEmail.thread_id,
                     gmailCache: gmailLabelCache,
                     outlookMessageId: qItem.storedEmail.metadata?.outlook_id ?? qItem.storedEmail.message_id,
