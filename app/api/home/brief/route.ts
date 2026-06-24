@@ -141,11 +141,12 @@ export async function GET() {
   priorities.sort((a, b) => rank(a) - rank(b));
   const cappedPriorities = priorities.slice(0, MAX_PRIORITIES);
 
-  // ── Waiting on others (compact, not bloated) ──
+  // ── Waiting on others → feeds the Follow-ups brief. All awaiting, freshest-quiet first; the age
+  // cue tells you which are urgent (a tomorrow-meeting confirm matters even at 0 days). ──
   const waitingOn = commits
     .filter((c) => c.direction === 'awaiting')
     .map((c) => ({ id: c.id, description: c.description, counterparty: c.counterparty, ageDays: Math.floor((now.getTime() - new Date(c.created_at).getTime()) / DAY) }))
-    .filter((c) => c.ageDays >= 2).sort((a, b) => b.ageDays - a.ageDays).slice(0, 4);
+    .sort((a, b) => b.ageDays - a.ageDays).slice(0, 6);
 
   // ── Today's schedule + light prep on the next meeting ──
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -205,11 +206,17 @@ export async function GET() {
   // ── Daily TLDR brief (Phase 1) — a grounded day-summary: teaser + 3–4 bullets + a "don't miss"
   // callout. Cached on profiles.home_brief, busts when the day's shape (sig) changes. ──
   type Tldr = { teaser: string; bullets: string[]; dontMiss: string | null };
-  const cached = (profileRes.data as { home_brief?: { text?: string; tldr?: Tldr; generated_at: string; sig?: string } } | null)?.home_brief ?? null;
+  type FollowUp = { who: string; status: string; nextMove: string };
+  type Followups = { teaser: string; items: FollowUp[]; closing: string | null };
+  const cached = (profileRes.data as { home_brief?: { text?: string; tldr?: Tldr; followups?: Followups | null; generated_at: string; sig?: string } } | null)?.home_brief ?? null;
   let tldr: Tldr | null = cached?.tldr ?? null;
+  let followups: Followups | null = cached?.followups ?? null;
   let briefLine = cached?.text ?? null;
   const stale = !cached || cached.sig !== sig || (now.getTime() - new Date(cached.generated_at).getTime()) > BRIEF_TTL;
   if (stale) {
+    const { client, model } = getSystemClient('summarization');
+
+    // Daily TLDR brief (phase 1).
     try {
       const grounded = [
         schedule.length
@@ -225,23 +232,37 @@ export async function GET() {
           ? `Top items needing you: ${cappedPriorities.map((p) => `"${p.title}"${p.overdue ? ' [overdue]' : ''} (${p.posture}, from ${p.source})`).join('; ')}`
           : '',
       ].filter(Boolean).join('\n');
-      const { client, model } = getSystemClient('summarization');
       const res = await aiCreate(client, {
         model, max_tokens: 360, temperature: 0.4,
         messages: [{ role: 'user', content: `You are ${firstName || 'the user'}'s assistant writing a short TLDR of their day. Use ONLY these facts — be specific with the real numbers and names, and never invent anything.\n\nReturn JSON only:\n{"teaser": "one short sentence summarising the day", "bullets": ["3 to 4 short, scannable bullets — meetings, todos/commitments, emails; lead with what matters most"], "dontMiss": "the SINGLE most time-sensitive or critical thing not to miss today, phrased as a brief warning grounded in a real item — or null if nothing is genuinely critical"}\n\nFacts:\n${grounded}` }],
       });
       const parsed = parseModelJSON<Tldr>(res.choices?.[0]?.message?.content || '', { teaser: '', bullets: [], dontMiss: null });
       if ((Array.isArray(parsed.bullets) && parsed.bullets.length) || parsed.teaser) {
-        tldr = {
-          teaser: parsed.teaser || '',
-          bullets: Array.isArray(parsed.bullets) ? parsed.bullets.slice(0, 4) : [],
-          dontMiss: parsed.dontMiss || null,
-        };
+        tldr = { teaser: parsed.teaser || '', bullets: Array.isArray(parsed.bullets) ? parsed.bullets.slice(0, 4) : [], dontMiss: parsed.dontMiss || null };
         briefLine = tldr.teaser || briefLine;
-        await supabase.from('profiles').update({ home_brief: { text: briefLine, tldr, generated_at: now.toISOString(), sig } }).eq('id', user.id).then(() => {}, () => {});
       }
     } catch { /* keep cached */ }
+
+    // Follow-ups brief (phase 2) — "ball in your court": a grounded roundup of the things you're
+    // waiting on, each with a recommended Next move. Only when there's something to nudge.
+    if (waitingOn.length) {
+      try {
+        const threads = waitingOn.map((w) => `${w.counterparty || 'Someone'} — "${w.description}" — ${w.ageDays} day${w.ageDays === 1 ? '' : 's'} quiet`).join('\n');
+        const res = await aiCreate(client, {
+          model, max_tokens: 520, temperature: 0.5,
+          messages: [{ role: 'user', content: `You are ${firstName || 'the user'}'s assistant. Below are threads where ${firstName || 'the user'} is waiting on a reply — the ball is now in their court to nudge. For each, write a short status (how long it's gone quiet, what's pending) and a recommended Next move (brief, specific, actionable). Use ONLY these facts, never invent details.\n\nReturn JSON only:\n{"teaser":"one short line introducing the roundup","items":[{"who":"the person or topic","status":"short status line","nextMove":"the recommended next move"}],"closing":"a short offer to draft these — name the 1-2 you'd tackle first — or null"}\n\nThreads:\n${threads}` }],
+        });
+        const p = parseModelJSON<Followups>(res.choices?.[0]?.message?.content || '', { teaser: '', items: [], closing: null });
+        followups = Array.isArray(p.items) && p.items.length
+          ? { teaser: p.teaser || '', items: p.items.slice(0, 8), closing: p.closing || null }
+          : null;
+      } catch { /* keep cached */ }
+    } else {
+      followups = null;
+    }
+
+    await supabase.from('profiles').update({ home_brief: { text: briefLine, tldr, followups, generated_at: now.toISOString(), sig } }).eq('id', user.id).then(() => {}, () => {});
   }
 
-  return NextResponse.json({ firstName, briefLine, tldr, status, priorities: cappedPriorities, commitments, waitingOn, schedule, handled });
+  return NextResponse.json({ firstName, briefLine, tldr, followups, status, priorities: cappedPriorities, commitments, waitingOn, schedule, handled });
 }

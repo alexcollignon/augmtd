@@ -13,10 +13,12 @@ type Priority = {
   itemId?: string; items?: { id: string; text: string }[]; overdue?: boolean;
 };
 type Tldr = { teaser: string; bullets: string[]; dontMiss: string | null };
+type Followups = { teaser: string; items: { who: string; status: string; nextMove: string }[]; closing: string | null };
 type Brief = {
   firstName: string | null;
   briefLine: string | null;
   tldr?: Tldr | null;
+  followups?: Followups | null;
   status: { needsReply: number; meetingsToday: number; waitingOn: number; handledToday: number };
   priorities: Priority[];
   commitments: { id: string; description: string; counterparty: string | null; dueDate: string | null; overdue: boolean; dueToday: boolean }[];
@@ -259,7 +261,34 @@ export function HomeView() {
                 </RiseIn>
               )}
 
-              {b && b.waitingOn.length > 0 && (
+              {b?.followups && b.followups.items.length > 0 ? (
+                <RiseIn delay={120}>
+                  <div className="mb-8">
+                    <Label count={b.followups.items.length}>Ball in your court</Label>
+                    <div className="rounded-2xl border border-neutral-200/80 bg-white p-4">
+                      {b.followups.teaser && <p className="text-[13px] text-neutral-500 mb-3.5 leading-relaxed">{b.followups.teaser}</p>}
+                      <ol className="space-y-3.5">
+                        {b.followups.items.map((f, i) => (
+                          <li key={i} className="flex gap-2.5">
+                            <span className="flex-shrink-0 w-5 h-5 rounded-full bg-neutral-100 text-neutral-500 text-[11px] font-semibold flex items-center justify-center mt-0.5">{i + 1}</span>
+                            <div className="min-w-0">
+                              <p className="text-[13px] font-semibold text-neutral-800 leading-snug">{f.who}</p>
+                              {f.status && <p className="text-[12.5px] text-neutral-500 mt-0.5 leading-snug">{f.status}</p>}
+                              {f.nextMove && <p className="text-[12.5px] text-indigo-600 mt-1 leading-snug"><span className="font-medium">Next move:</span> {f.nextMove}</p>}
+                            </div>
+                          </li>
+                        ))}
+                      </ol>
+                      {b.followups.closing && (
+                        <div className="mt-3.5 pt-3.5 border-t border-neutral-100 flex items-start gap-2">
+                          <SparklesIcon className="w-4 h-4 text-indigo-400 flex-shrink-0 mt-0.5" />
+                          <p className="text-[12px] text-neutral-500 leading-relaxed">{b.followups.closing}</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </RiseIn>
+              ) : b && b.waitingOn.length > 0 ? (
                 <RiseIn delay={120}>
                   <Label count={b.waitingOn.length}>Waiting on others</Label>
                   <div className="space-y-2">
@@ -271,7 +300,7 @@ export function HomeView() {
                     ))}
                   </div>
                 </RiseIn>
-              )}
+              ) : null}
             </div>
 
             {/* RIGHT — schedule + team + heartbeat */}
