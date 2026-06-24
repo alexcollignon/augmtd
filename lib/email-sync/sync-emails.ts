@@ -536,7 +536,8 @@ export async function syncEmailsForConnection(
       if (aiRules.length) {
         const processEnvelopes = envelopes.filter((_e, i) => classMap.get(String(i)) === 'process');
         const { batchMatchRules } = await import('@/lib/inbox/rules/batch-match');
-        const matched = await batchMatchRules(processEnvelopes, aiRules, connection.user_id, adminSupabase);
+        // Full rule set — batchMatchRules deterministic-filters before the AI call.
+        const matched = await batchMatchRules(processEnvelopes, userRules, connection.user_id, adminSupabase);
         for (const [id, label] of matched) ruleMap.set(id, label);
       }
     } catch (e) { console.warn('[Rules] AI-match pass skipped:', e); }

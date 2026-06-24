@@ -50,7 +50,8 @@ export async function POST(request: Request) {
   if (!envelopes.length) return NextResponse.json({ reclassified: 0 });
 
   const { batchMatchRules } = await import('@/lib/inbox/rules/batch-match');
-  const matched = await batchMatchRules(envelopes, aiRules, user.id, supabase);
+  // Pass the FULL rule set — batchMatchRules deterministic-filters before the AI call.
+  const matched = await batchMatchRules(envelopes, rules, user.id, supabase);
 
   let reclassified = 0;
   for (const [id, label] of matched) {
