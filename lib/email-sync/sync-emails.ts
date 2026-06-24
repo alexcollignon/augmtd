@@ -361,8 +361,8 @@ async function backfillThreadHistory(params: {
     const rowsToInsert = fetchedMessages
       .filter(m => m.message_id && !knownMessageIds.has(m.message_id))
       .map(m => {
-        // Strip parser-only fields before insert
-        const { attachments: _a, hasAttachments: _ha, outlookInternalId: _oid, ...dbFields } = m as any;
+        // Strip parser-only fields before insert (not columns on emails)
+        const { attachments: _a, hasAttachments: _ha, outlookInternalId: _oid, has_unsubscribe: _hu, ...dbFields } = m as any;
         return stripNulls({
           user_id: connection.user_id,
           connection_id: connection.id,
@@ -1603,7 +1603,7 @@ export async function syncEmailsForConnection(
         const userEmail = connection.metadata?.email || connection.provider_account_id;
         const sentRows = sentMessages.map(m => {
           // eslint-disable-next-line @typescript-eslint/no-unused-vars
-          const { attachments, hasAttachments: _ha, outlookInternalId: _oid, ...dbFields } = m as any;
+          const { attachments, hasAttachments: _ha, outlookInternalId: _oid, has_unsubscribe: _hu, ...dbFields } = m as any;
           // Store attachment metadata (filenames/sizes) without downloading content
           const attachmentMeta = Array.isArray(attachments) && attachments.length > 0
             ? attachments.map((a: any) => ({ filename: a.filename, mimeType: a.mimeType, size: a.size ?? null }))
