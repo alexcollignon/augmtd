@@ -473,11 +473,12 @@ export async function syncEmailsForConnection(
     console.log(`Fetched ${messages.length} ${connection.provider} emails for user ${connection.user_id}`);
 
     // Fetch user context, calendar context, identity block in parallel
-    const [userContext, calendarContext, userContextBlock, emailSettings] = await Promise.all([
+    const [userContext, calendarContext, userContextBlock, emailSettings, userRules] = await Promise.all([
       getUserContext(connection.user_id, adminSupabase),
       getCalendarContext(connection.user_id, adminSupabase),
       buildUserContextBlock(connection.user_id, adminSupabase),
       (await import('@/lib/inbox/email-settings')).getEmailSettings(connection.user_id, adminSupabase),
+      (await import('@/lib/inbox/rules/load')).loadUserRules(connection.user_id, adminSupabase),
     ]);
 
     if (userContext) {
@@ -523,6 +524,21 @@ export async function syncEmailsForConnection(
     }));
 
     const classMap = await batchClassifyEmails(envelopes, connection.user_id, adminSupabase);
+
+    // AI-match rules drive the type via ONE batched call (they're shown as AI rules, so they run
+    // as AI — default, edited, or added alike). Heuristics in classifyItem are only the fallback.
+    // Keyed by envelope index; scoped to actionable emails (where the typed label matters).
+    const ruleMap = new Map<string, string>();
+    try {
+      const { activeAiRules } = await import('@/lib/inbox/rules/load');
+      const aiRules = activeAiRules(userRules);
+      if (aiRules.length) {
+        const processEnvelopes = envelopes.filter((_e, i) => classMap.get(String(i)) === 'process');
+        const { batchMatchRules } = await import('@/lib/inbox/rules/batch-match');
+        const matched = await batchMatchRules(processEnvelopes, aiRules, connection.user_id, adminSupabase);
+        for (const [id, label] of matched) ruleMap.set(id, label);
+      }
+    } catch (e) { console.warn('[Rules] AI-match pass skipped:', e); }
 
     // Build routing inputs for process-class emails
     const processEnvelopes = parsedMessages
@@ -615,6 +631,7 @@ export async function syncEmailsForConnection(
       calendarEventId: string | null;
       hasCalendarInvite: boolean;
       isForwarded: boolean;
+      ruleLabel?: string | null;
     }
     const processQueue: _ProcessQueueItem[] = [];
 
@@ -738,6 +755,7 @@ export async function syncEmailsForConnection(
             calendarEventId: null,
             hasCalendarInvite: false,
             isForwarded,
+            ruleLabel: ruleMap.get(String(_msgIdx)) ?? null,
           });
           continue;
         }
@@ -1107,7 +1125,7 @@ export async function syncEmailsForConnection(
         }
 
         // Queue for Phase 2 parallel AI processing
-        processQueue.push({ parsed, storedEmail, processedAttachments, calendarEventId, hasCalendarInvite, isForwarded });
+        processQueue.push({ parsed, storedEmail, processedAttachments, calendarEventId, hasCalendarInvite, isForwarded, ruleLabel: ruleMap.get(String(_msgIdx)) ?? null });
 
       } catch (emailError) {
         console.error('Error processing email:', emailError);
@@ -1325,6 +1343,7 @@ export async function syncEmailsForConnection(
               .update(stripNulls({
                 connection_id: connection.id,
                 work_state: recipient.inferredWorkState,
+                rule_type: qItem.ruleLabel ?? null,
                 work_title: processed.workTitle,
                 item_type: processed.itemType,
 

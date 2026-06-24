@@ -17,7 +17,7 @@ let cachedRules: InboxRule[] | null = null;
 export function setInboxRules(rules: InboxRule[] | null) { cachedRules = rules && rules.length ? rules : null; }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-type Item = SignalItem & { status?: string | null; work_state?: string | null; source?: string | null; type_override?: string | null };
+type Item = SignalItem & { status?: string | null; work_state?: string | null; source?: string | null; type_override?: string | null; rule_type?: string | null };
 
 const OVERRIDABLE = new Set<ItemType>(['needs_reply', 'to_do', 'waiting_on', 'meeting', 'fyi']);
 
@@ -57,6 +57,9 @@ export function classifyItem(item: Item): ItemType {
     const matched = evaluateDeterministic(ruleEmail, cachedRules ?? DEFAULT_RULES);
     if (matched?.outcome.set_type) return LABEL_TO_TYPE[matched.outcome.set_type];
   }
+
+  // A custom AI-match rule's verdict (computed at process time) — after deterministic, before heuristics.
+  if (item.rule_type && item.rule_type in LABEL_TO_TYPE) return LABEL_TO_TYPE[item.rule_type as keyof typeof LABEL_TO_TYPE];
 
   // Your move — the ball is in your court.
   if (isNeedsReply(item)) return 'needs_reply';
