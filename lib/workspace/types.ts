@@ -10,11 +10,12 @@ export interface WorkspaceFeatures {
   drive: boolean;
   agents: boolean;
   studio: boolean;
+  home: boolean;
 }
 
 export type FeatureKey = keyof WorkspaceFeatures;
 
-export const FEATURE_KEYS: FeatureKey[] = ['email', 'meetings', 'drive', 'agents', 'studio'];
+export const FEATURE_KEYS: FeatureKey[] = ['email', 'meetings', 'drive', 'agents', 'studio', 'home'];
 
 // meetings is off by default — bot infrastructure is being replaced (Vexa migration pending).
 // Admin opts IN via platform admin UI.
@@ -24,6 +25,7 @@ export const DEFAULT_FEATURES: WorkspaceFeatures = {
   drive: true,
   agents: true,
   studio: true,
+  home: true,
 };
 
 export const DEFAULT_FEATURES_FOR_TYPE: Record<WorkspaceType, WorkspaceFeatures> = {
@@ -60,5 +62,6 @@ export function normalizeFeatures(raw: unknown): WorkspaceFeatures {
     drive:    typeof input.drive    === 'boolean' ? input.drive    : DEFAULT_FEATURES.drive,
     agents:   typeof input.agents   === 'boolean' ? input.agents   : DEFAULT_FEATURES.agents,
     studio:   typeof input.studio   === 'boolean' ? input.studio   : DEFAULT_FEATURES.studio,
+    home:     typeof input.home     === 'boolean' ? input.home     : DEFAULT_FEATURES.home,
   };
 }

@@ -96,6 +96,7 @@ const FEATURE_LABEL: Record<FeatureKey, string> = {
   drive:    'Drive',
   agents:   'Coworkers',
   studio:   'Tasks',
+  home:     'Home',
 };
 const ROLE_COLORS: Record<string, string> = {
   owner: 'text-indigo-700',
