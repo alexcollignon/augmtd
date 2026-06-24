@@ -15,12 +15,14 @@ type Priority = {
 type Tldr = { teaser: string; bullets: string[]; dontMiss: string | null };
 type Followups = { teaser: string; items: { who: string; status: string; nextMove: string }[]; closing: string | null };
 type FyiDigest = { groups: { label: string; summary: string }[]; tailGroups: number; tailItems: number };
+type MustRespond = { teaser: string; items: { who: string; ask: string; angle: string; itemId: string }[] };
 type Brief = {
   firstName: string | null;
   briefLine: string | null;
   tldr?: Tldr | null;
   followups?: Followups | null;
   fyiDigest?: FyiDigest | null;
+  mustRespond?: MustRespond | null;
   status: { needsReply: number; meetingsToday: number; waitingOn: number; handledToday: number };
   priorities: Priority[];
   commitments: { id: string; description: string; counterparty: string | null; dueDate: string | null; overdue: boolean; dueToday: boolean }[];
@@ -167,8 +169,10 @@ export function HomeView() {
     st.waitingOn ? { icon: ClockIcon, text: `${st.waitingOn} waiting on` } : null,
     st.handledToday ? { icon: CheckCircleIcon, text: `${st.handledToday} handled` } : null,
   ].filter(Boolean) as { icon: any; text: string }[] : []; // eslint-disable-line @typescript-eslint/no-explicit-any
+  // needs_reply lives in the Must-respond brief; "Needs you" cards are the other actions.
+  const cards = (b?.priorities ?? []).filter(p => p.posture !== 'needs_reply');
   // "Start here" belongs on the first genuine action — never on a finished (past) meeting.
-  const startHereId = b?.priorities.find(p => p.source !== 'meeting')?.id ?? null;
+  const startHereId = cards.find(p => p.source !== 'meeting')?.id ?? null;
   const nothing = b && !b.priorities.length && !b.commitments.length && !b.waitingOn.length && !b.schedule.length && !(team?.messages.length || team?.needsReview.length);
 
   return (
@@ -227,11 +231,36 @@ export function HomeView() {
           <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6 mt-8">
             {/* LEFT — what needs you */}
             <div>
-              {b && b.priorities.length > 0 && (
+              {/* Must respond — the replies you owe (needs_reply roundup) */}
+              {b?.mustRespond && b.mustRespond.items.length > 0 && (
+                <RiseIn>
+                  <div className="mb-8">
+                    <Label count={b.mustRespond.items.length}>Must respond</Label>
+                    <div className="rounded-2xl border border-rose-200/70 bg-white p-4">
+                      {b.mustRespond.teaser && <p className="text-[13px] text-neutral-500 mb-3.5 leading-relaxed">{b.mustRespond.teaser}</p>}
+                      <ol className="space-y-3.5">
+                        {b.mustRespond.items.map((m, i) => (
+                          <li key={i} className="flex gap-2.5">
+                            <span className="flex-shrink-0 w-5 h-5 rounded-full bg-rose-50 text-rose-500 text-[11px] font-semibold flex items-center justify-center mt-0.5">{i + 1}</span>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-[13px] font-semibold text-neutral-800 leading-snug">{m.who}</p>
+                              {m.ask && <p className="text-[12.5px] text-neutral-500 mt-0.5 leading-snug">{m.ask}</p>}
+                              {m.angle && <p className="text-[12.5px] text-neutral-600 mt-1 leading-snug"><span className="font-medium text-neutral-700">Angle:</span> {m.angle}</p>}
+                            </div>
+                            <Link href="/inbox" className="flex-shrink-0 self-start inline-flex items-center gap-1 rounded-lg bg-neutral-50 border border-neutral-200 px-2.5 py-1 text-[12px] font-medium text-neutral-700 hover:bg-indigo-50 hover:text-indigo-700 transition-colors">Reply<ArrowRightIcon className="w-3 h-3" /></Link>
+                          </li>
+                        ))}
+                      </ol>
+                    </div>
+                  </div>
+                </RiseIn>
+              )}
+
+              {cards.length > 0 && (
                 <div className="mb-8">
-                  <Label count={b.priorities.length}>Needs you</Label>
+                  <Label count={cards.length}>Needs you</Label>
                   <div className="space-y-3">
-                    {b.priorities.map((p, i) => (
+                    {cards.map((p, i) => (
                       <RiseIn key={p.id} delay={i * 55}>
                         <PriorityCard p={p} first={p.id === startHereId} expanded={expanded === p.id} onToggle={() => setExpanded(expanded === p.id ? null : p.id)} />
                       </RiseIn>

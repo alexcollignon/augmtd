@@ -109,6 +109,8 @@ export async function GET() {
       .select('thread_id, received_at').eq('user_id', user.id).eq('is_from_user', true).in('thread_id', candThreadIds);
     answered = buildAnsweredSet(sent ?? []);
   }
+  // needs_reply items (with content) feed the Must-respond brief; they stay in priorities for counts.
+  const mustRespondRaw: Array<{ itemId: string; from: string; subject: string; snippet: string }> = [];
   for (const { it, posture } of emailCandidates) {
     const sd = (it.source_data ?? {}) as Record<string, unknown>;
     const tid = sd.thread_id as string | undefined;
@@ -120,6 +122,14 @@ export async function GET() {
       context: (sd.from_name as string) || (sd.from as string) || null,
       href: '/inbox', itemId: it.id,
     });
+    if (posture === 'needs_reply') {
+      mustRespondRaw.push({
+        itemId: it.id,
+        from: (sd.from_name as string) || (sd.from as string) || 'Someone',
+        subject: it.work_title || (sd.subject as string) || '(no subject)',
+        snippet: ((sd.body as string) || '').replace(/\s+/g, ' ').trim().slice(0, 400),
+      });
+    }
   }
 
   // ── On your plate: commitments you owe — their OWN section (not mixed into Needs you), so the
@@ -231,10 +241,13 @@ export async function GET() {
   type FollowUp = { who: string; status: string; nextMove: string };
   type Followups = { teaser: string; items: FollowUp[]; closing: string | null };
   type FyiDigest = { groups: { label: string; summary: string }[]; tailGroups: number; tailItems: number };
-  const cached = (profileRes.data as { home_brief?: { text?: string; tldr?: Tldr; followups?: Followups | null; fyiDigest?: FyiDigest | null; generated_at: string; sig?: string } } | null)?.home_brief ?? null;
+  type Reply = { who: string; ask: string; angle: string; itemId: string };
+  type MustRespond = { teaser: string; items: Reply[] };
+  const cached = (profileRes.data as { home_brief?: { text?: string; tldr?: Tldr; followups?: Followups | null; fyiDigest?: FyiDigest | null; mustRespond?: MustRespond | null; generated_at: string; sig?: string } } | null)?.home_brief ?? null;
   let tldr: Tldr | null = cached?.tldr ?? null;
   let followups: Followups | null = cached?.followups ?? null;
   let fyiDigest: FyiDigest | null = cached?.fyiDigest ?? null;
+  let mustRespond: MustRespond | null = cached?.mustRespond ?? null;
   let briefLine = cached?.text ?? null;
   const stale = !cached || cached.sig !== sig || (now.getTime() - new Date(cached.generated_at).getTime()) > BRIEF_TTL;
   if (stale) {
@@ -266,6 +279,25 @@ export async function GET() {
         briefLine = tldr.teaser || briefLine;
       }
     } catch { /* keep cached */ }
+
+    // Must-respond brief (phase 2) — the replies you owe: what each sender is asking + a recommended
+    // angle for the reply. Grounded in the email content.
+    if (mustRespondRaw.length) {
+      try {
+        const input = mustRespondRaw.map((m, i) => `[${i}] ${m.from} — "${m.subject}": ${m.snippet}`).join('\n');
+        const res = await aiCreate(client, {
+          model, max_tokens: 560, temperature: 0.4,
+          messages: [{ role: 'user', content: `You are ${firstName || 'the user'}'s assistant. These emails are awaiting ${firstName || 'the user'}'s reply. For each, write what the sender is asking (one line) and a recommended angle for the reply (one line — the gist of what to say). Use ONLY the email content, never invent.\n\nReturn JSON only:\n{"teaser":"one short line","items":[{"i":<the [i] index from the input>,"who":"sender or topic","ask":"what they're asking","angle":"recommended reply gist"}]}\n\nEmails:\n${input}` }],
+        });
+        const p = parseModelJSON<{ teaser: string; items: { i: number; who: string; ask: string; angle: string }[] }>(res.choices?.[0]?.message?.content || '', { teaser: '', items: [] });
+        const items = (Array.isArray(p.items) ? p.items : [])
+          .map((x) => ({ who: x.who || '', ask: x.ask || '', angle: x.angle || '', itemId: mustRespondRaw[x.i]?.itemId || '' }))
+          .filter((x) => x.who || x.ask);
+        mustRespond = items.length ? { teaser: p.teaser || '', items: items.slice(0, 8) } : null;
+      } catch { /* keep cached */ }
+    } else {
+      mustRespond = null;
+    }
 
     // Follow-ups brief (phase 2) — "ball in your court": a grounded roundup of the things you're
     // waiting on, each with a recommended Next move. Only when there's something to nudge.
@@ -303,8 +335,8 @@ export async function GET() {
       fyiDigest = null;
     }
 
-    await supabase.from('profiles').update({ home_brief: { text: briefLine, tldr, followups, fyiDigest, generated_at: now.toISOString(), sig } }).eq('id', user.id).then(() => {}, () => {});
+    await supabase.from('profiles').update({ home_brief: { text: briefLine, tldr, followups, fyiDigest, mustRespond, generated_at: now.toISOString(), sig } }).eq('id', user.id).then(() => {}, () => {});
   }
 
-  return NextResponse.json({ firstName, briefLine, tldr, followups, fyiDigest, status, priorities: cappedPriorities, commitments, waitingOn, schedule, handled });
+  return NextResponse.json({ firstName, briefLine, tldr, followups, fyiDigest, mustRespond, status, priorities: cappedPriorities, commitments, waitingOn, schedule, handled });
 }
