@@ -22,6 +22,7 @@ type Rule = {
   id: string; name: string; enabled: boolean; priority: number;
   trigger: 'received' | 'sent'; match_mode: 'all' | 'any';
   conditions: Condition[]; ai_match: string | null; outcome: Outcome; source: string;
+  connection_id?: string | null;
 };
 type Settings = {
   auto_draft: boolean; auto_label: boolean; cc_bcc_new: boolean;
@@ -57,6 +58,12 @@ function outcomeChips(o: Outcome): string[] {
   if (o.escalate?.enabled) out.push('escalate');
   if (o.trash) out.push('trash');
   return out;
+}
+
+// A signature of the rules' meaningful state (order + the fields that affect classification), so
+// "changed?" means "differs from the last loaded/applied state" — reverting a change clears it.
+function ruleSig(rs: Rule[]): string {
+  return JSON.stringify(rs.map(r => ({ i: r.id, n: r.name, e: r.enabled, a: r.ai_match, c: r.conditions, o: r.outcome })));
 }
 
 function Toggle({ on, onClick }: { on: boolean; onClick: () => void }) {
@@ -98,23 +105,25 @@ export default function EmailSettings({ connections, section = 'connections' }: 
   const [settings, setSettings] = useState<Settings | null>(null);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<Rule | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const activeConns = (connections ?? []).filter((c: any) => c.status === 'active');
+  const [activeConnId, setActiveConnId] = useState<string | null>(activeConns[0]?.id ?? null);
 
+  // Drafting / To-do settings (user-level) load once.
   useEffect(() => {
-    Promise.all([
-      fetch('/api/inbox/rules').then(r => r.json()).catch(() => ({ rules: [] })),
-      fetch('/api/inbox/email-settings').then(r => r.json()).catch(() => ({ settings: null })),
-    ]).then(([r, s]) => { setRules(r.rules ?? []); setSettings(s.settings); setLoading(false); });
+    fetch('/api/inbox/email-settings').then(r => r.json()).then(s => setSettings(s.settings)).catch(() => {});
   }, []);
 
   const patchRule = async (id: string, body: Partial<Rule>) => {
     await fetch(`/api/inbox/rules/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).catch(() => {});
   };
-  // Rules changed this session? The re-run button only matters once something's changed.
-  const [dirty, setDirty] = useState(false);
+  // Re-run only matters when the rules differ from what was last loaded/applied. Deriving "dirty"
+  // from a baseline means reverting a change (toggle off → on) correctly clears it.
+  const [baseline, setBaseline] = useState('');
+  const dirty = ruleSig(rules) !== baseline;
   const toggleRule = (rule: Rule) => {
     setRules(rs => rs.map(r => r.id === rule.id ? { ...r, enabled: !r.enabled } : r));
     patchRule(rule.id, { enabled: !rule.enabled });
-    setDirty(true);
   };
   // Drag-and-drop reorder (native HTML5). Live reorder as you drag over a row; persist on drop.
   const [dragIndex, setDragIndex] = useState<number | null>(null);
@@ -136,13 +145,11 @@ export default function EmailSettings({ connections, section = 'connections' }: 
       if (r.priority !== p) patchRule(r.id, { priority: p });
     });
     setRules(rs => rs.map((r, i) => ({ ...r, priority: (i + 1) * 10 })));
-    setDirty(true);
   };
   const del = async (rule: Rule) => {
     if (!confirm(`Delete rule "${rule.name}"?`)) return;
     setRules(rs => rs.filter(r => r.id !== rule.id));
     await fetch(`/api/inbox/rules/${rule.id}`, { method: 'DELETE' }).catch(() => {});
-    setDirty(true);
   };
   const setSetting = (key: keyof Settings, val: boolean | string) => {
     setSettings(s => s ? { ...s, [key]: val } : s);
@@ -152,7 +159,6 @@ export default function EmailSettings({ connections, section = 'connections' }: 
   const onSaved = (saved: Rule) => {
     setRules(rs => rs.some(r => r.id === saved.id) ? rs.map(r => r.id === saved.id ? saved : r) : [...rs, saved]);
     setEditing(null);
-    setDirty(true);
   };
 
   const [rerunning, setRerunning] = useState(false);
@@ -161,21 +167,28 @@ export default function EmailSettings({ connections, section = 'connections' }: 
   const rerun = async () => {
     setRerunning(true); setRerunMsg(null);
     try {
-      const res = await fetch('/api/inbox/rules/rerun', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ days: windowDays }) });
+      const res = await fetch('/api/inbox/rules/rerun', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ days: windowDays, connection_id: activeConnId }) });
       const d = await res.json();
       setRerunMsg(`Reclassified ${d.reclassified ?? 0} of ${d.scanned ?? 0} recent emails.`);
-      setDirty(false);
+      setBaseline(ruleSig(rules)); // the current rules are now the applied baseline
     } catch { setRerunMsg('Could not re-run rules.'); }
     finally { setRerunning(false); }
   };
 
+  // Load the selected inbox's rules (server seeds that provider's defaults on first view).
+  useEffect(() => {
+    if (!activeConnId) { setRules([]); setLoading(false); return; }
+    setLoading(true);
+    setRerunMsg(null);
+    fetch(`/api/inbox/rules?connection_id=${activeConnId}`).then(r => r.json())
+      .then(d => { setRules(d.rules ?? []); setBaseline(ruleSig(d.rules ?? [])); })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [activeConnId]);
+
   const gmail = (connections ?? []).filter(c => c.provider === 'gmail');
   const outlook = (connections ?? []).filter(c => c.provider === 'outlook');
   const activeProviders = [...new Set((connections ?? []).filter(c => c.status === 'active').map(c => c.provider as string))];
-
-  if (loading) {
-    return <div className="px-6 py-6 space-y-3">{[1, 2, 3].map(i => <div key={i} className="h-14 rounded-xl bg-neutral-100 animate-pulse" />)}</div>;
-  }
 
   return (
     <div className="flex-1 overflow-y-auto">
@@ -211,6 +224,20 @@ export default function EmailSettings({ connections, section = 'connections' }: 
       {/* Rules */}
       {section === 'rules' && (
       <section className="px-8 py-7">
+        {/* Per-inbox tabs — each inbox has its own provider-appropriate rules. */}
+        {activeConns.length > 1 && (
+          <div className="flex items-center gap-1 mb-4 border-b border-neutral-100">
+            {activeConns.map((c: any) => ( // eslint-disable-line @typescript-eslint/no-explicit-any
+              <button
+                key={c.id}
+                onClick={() => setActiveConnId(c.id)}
+                className={`px-3 py-2 text-[12.5px] border-b-2 -mb-px transition-colors ${activeConnId === c.id ? 'border-indigo-500 text-indigo-700 font-medium' : 'border-transparent text-neutral-500 hover:text-neutral-800'}`}
+              >
+                {c.metadata?.email || c.provider}
+              </button>
+            ))}
+          </div>
+        )}
         <SectionHead
           title="Triage rules"
           desc="Evaluated top to bottom — the first match wins. Deterministic rules run before AI ones."
@@ -236,7 +263,7 @@ export default function EmailSettings({ connections, section = 'connections' }: 
                 <ArrowPathIcon className={`w-4 h-4 ${rerunning ? 'animate-spin' : ''}`} /> {rerunning ? 'Re-running…' : 'Re-run'}
               </button>
               <button
-                onClick={() => setEditing({ id: '', name: '', enabled: true, priority: 999, trigger: 'received', match_mode: 'all', conditions: [{ field: 'from', value: '' }], ai_match: null, outcome: { set_type: 'fyi' }, source: 'user' })}
+                onClick={() => setEditing({ id: '', name: '', enabled: true, priority: 999, trigger: 'received', match_mode: 'all', conditions: [{ field: 'from', value: '' }], ai_match: null, outcome: { set_type: 'fyi' }, source: 'user', connection_id: activeConnId })}
                 className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 px-2.5 py-1.5 text-[12.5px] font-medium text-white hover:bg-indigo-700">
                 <PlusIcon className="w-4 h-4" /> Add rule
               </button>
@@ -244,6 +271,9 @@ export default function EmailSettings({ connections, section = 'connections' }: 
           }
         />
         {rerunMsg && <p className="-mt-3 mb-3 text-[12px] text-emerald-600">{rerunMsg}</p>}
+        {loading ? (
+          <div className="space-y-2">{[1, 2, 3].map(i => <div key={i} className="h-14 rounded-xl bg-neutral-100 animate-pulse" />)}</div>
+        ) : (
         <div className="space-y-2">
           {rules.map((rule, i) => {
             const meta = rule.outcome.set_type ? LABEL_META[rule.outcome.set_type] : null;
@@ -282,6 +312,7 @@ export default function EmailSettings({ connections, section = 'connections' }: 
             );
           })}
         </div>
+        )}
       </section>
       )}
 
@@ -359,6 +390,7 @@ function RuleEditor({ rule, onClose, onSaved }: { rule: Rule; onClose: () => voi
       conditions: mode === 'filters' ? conditions.filter(c => c.value.trim()) : [],
       ai_match: mode === 'ai' ? aiMatch.trim() : null,
       outcome,
+      connection_id: rule.connection_id ?? null,
     };
     try {
       const res = isNew

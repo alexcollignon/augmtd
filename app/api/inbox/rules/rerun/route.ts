@@ -13,20 +13,28 @@ export async function POST(request: Request) {
   const { data: { user }, error } = await supabase.auth.getUser();
   if (error || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const { days = 7 } = await request.json().catch(() => ({}));
+  const { days = 7, connection_id } = await request.json().catch(() => ({}));
   const windowDays = Math.min(Math.max(Number(days) || 7, 1), 30);
   const since = new Date(Date.now() - windowDays * 86_400_000).toISOString();
 
-  const { loadUserRules, activeAiRules } = await import('@/lib/inbox/rules/load');
-  const aiRules = activeAiRules(await loadUserRules(user.id, supabase));
+  const { loadUserRules, loadInboxRules, activeAiRules } = await import('@/lib/inbox/rules/load');
+  let rules;
+  if (connection_id) {
+    const { data: conn } = await supabase.from('connections').select('provider').eq('id', connection_id).eq('user_id', user.id).single();
+    rules = await loadInboxRules(connection_id, conn?.provider ?? 'gmail', supabase);
+  } else {
+    rules = await loadUserRules(user.id, supabase);
+  }
+  const aiRules = activeAiRules(rules);
   if (!aiRules.length) return NextResponse.json({ reclassified: 0, scanned: 0 });
 
-  const { data: items } = await supabase.from('inbox_items')
+  let itemsQuery = supabase.from('inbox_items')
     .select('id, source_data')
     .eq('user_id', user.id).eq('status', 'pending')
     .in('work_state', ['work_prepared', 'decision_required', 'action_required'])
-    .gte('created_at', since)
-    .order('created_at', { ascending: false }).limit(100);
+    .gte('created_at', since);
+  if (connection_id) itemsQuery = itemsQuery.eq('connection_id', connection_id);
+  const { data: items } = await itemsQuery.order('created_at', { ascending: false }).limit(100);
 
   const envelopes: EmailEnvelope[] = (items ?? []).map((it) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

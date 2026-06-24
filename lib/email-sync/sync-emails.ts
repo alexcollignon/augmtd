@@ -478,7 +478,8 @@ export async function syncEmailsForConnection(
       getCalendarContext(connection.user_id, adminSupabase),
       buildUserContextBlock(connection.user_id, adminSupabase),
       (await import('@/lib/inbox/email-settings')).getEmailSettings(connection.user_id, adminSupabase),
-      (await import('@/lib/inbox/rules/load')).loadUserRules(connection.user_id, adminSupabase),
+      // This inbox's own rules (provider-appropriate defaults if not yet customized).
+      (await import('@/lib/inbox/rules/load')).loadInboxRules(connection.id, connection.provider, adminSupabase),
     ]);
 
     if (userContext) {
