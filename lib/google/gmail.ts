@@ -556,6 +556,21 @@ export async function moveGmailThreadToLabel(
   });
 }
 
+// Additive: tag a thread with a label WITHOUT archiving it (keeps it in the inbox). Used for the
+// triage write-back labels so the user sees the AI's call in Gmail without anything being moved.
+export async function addGmailThreadLabel(
+  encryptedTokens: string,
+  threadId: string,
+  labelId: string,
+): Promise<void> {
+  const gmail = await getGmailClient(encryptedTokens);
+  await gmail.users.threads.modify({
+    userId: 'me',
+    id: threadId,
+    requestBody: { addLabelIds: [labelId] },
+  });
+}
+
 export async function archiveGmailThread(
   encryptedTokens: string,
   threadId: string,

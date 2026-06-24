@@ -540,6 +540,13 @@ export async function syncEmailsForConnection(
       }
     } catch (e) { console.warn('[Rules] AI-match pass skipped:', e); }
 
+    // Write-back label cache (Gmail): created once per connection when label mirroring is on.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let gmailLabelCache: any = undefined;
+    if (emailSettings.auto_label && connection.provider === 'gmail') {
+      gmailLabelCache = new (await import('@/lib/inbox/rules/write-back')).GmailLabelCache(connection.metadata?.tokens);
+    }
+
     // Build routing inputs for process-class emails
     const processEnvelopes = parsedMessages
       .map((p, i) => ({ p, i }))
@@ -1402,6 +1409,20 @@ export async function syncEmailsForConnection(
               _batchResult.errors.push(`Failed to update inbox item: ${updateError.message}`);
             } else {
               console.log(`       ✓ Updated inbox item`);
+              // Mirror the triage label into Gmail/Outlook (additive, namespaced) when a rule
+              // matched and label write-back is on. Non-fatal.
+              if (emailSettings.auto_label && qItem.ruleLabel) {
+                void import('@/lib/inbox/rules/write-back').then(({ writeBackLabel }) =>
+                  writeBackLabel({
+                    provider: connection.provider,
+                    encryptedTokens: connection.metadata?.tokens,
+                    label: qItem.ruleLabel!,
+                    gmailThreadId: qItem.storedEmail.thread_id,
+                    gmailCache: gmailLabelCache,
+                    outlookMessageId: qItem.storedEmail.metadata?.outlook_id ?? qItem.storedEmail.message_id,
+                  }),
+                ).catch(() => {});
+              }
             }
 
             continue; // Continue to next recipient

@@ -589,6 +589,21 @@ export async function trashOutlookMessage(
     .post({ destinationId: 'deleteditems' });
 }
 
+// Additive: tag a message with a category WITHOUT moving it. Reads current categories and appends
+// ours, so the user's own categories are never disturbed. Used for the triage write-back labels.
+export async function addOutlookCategory(
+  encryptedTokens: string,
+  outlookMessageId: string,
+  category: string,
+  onTokenRefresh?: TokenRefreshCallback,
+): Promise<void> {
+  const client = await getGraphClient(encryptedTokens, onTokenRefresh);
+  const msg = await client.api(`/me/messages/${outlookMessageId}`).select('categories').get();
+  const current: string[] = msg?.categories ?? [];
+  if (current.includes(category)) return;
+  await client.api(`/me/messages/${outlookMessageId}`).patch({ categories: [...current, category] });
+}
+
 // Build an onTokenRefresh callback that persists refreshed Outlook tokens back to the
 // connection row — pass this into the helpers above so a mid-action refresh isn't lost.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
