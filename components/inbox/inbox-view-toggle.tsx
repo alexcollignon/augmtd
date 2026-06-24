@@ -23,7 +23,7 @@ export default function InboxViewToggle() {
         }`}
       >
         <SparklesIcon className="w-4 h-4" />
-        <span>AI-Filtered</span>
+        <span>Focus</span>
       </button>
       <button
         onClick={() => handleViewChange('all')}
