@@ -49,7 +49,7 @@ export default function SidebarNav({
 
   const [isSuperAdmin] = useState(isSuperAdminProp);
   const navigation = [
-    { name: 'Home',    href: '/home',    icon: HomeIcon },
+    ...(features.home     ? [{ name: 'Home',     href: '/home',     icon: HomeIcon }]                  : []),
     ...(features.email    ? [{ name: 'Inbox',    href: '/inbox',    icon: EnvelopeIcon }]              : []),
     { name: 'Workers', href: '/workers', icon: UserGroupIcon },
     { name: 'Chat',    href: '/work',    icon: ChatBubbleLeftEllipsisIcon },
