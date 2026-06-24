@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { getSystemClient, aiCreate } from '@/lib/ai/factory';
-import { isNeedsReply, buildAnsweredSet } from '@/lib/inbox/needs-reply';
+import { buildAnsweredSet } from '@/lib/inbox/needs-reply';
+import { classifyItem } from '@/lib/inbox/classify-item';
 
 export const maxDuration = 30;
 
@@ -75,9 +76,10 @@ export async function GET() {
     });
   }
 
-  // ── Emails needing a reply (smart: classifier reply-state + ask signals, never automated) ──
+  // ── Emails needing a reply — via the SHARED classifier (rule-aware), not a separate heuristic.
+  // This is the unification: the Home now classifies exactly as the inbox does.
   const emailCandidates = items.filter((it) =>
-    it.source !== 'meeting' && it.source !== 'commitment' && isNeedsReply(it),
+    it.source !== 'meeting' && it.source !== 'commitment' && classifyItem(it as never) === 'needs_reply',
   );
   // Drop threads you've already replied to.
   const candThreadIds = [...new Set(emailCandidates.map((c) => c.source_data?.thread_id).filter(Boolean))] as string[];

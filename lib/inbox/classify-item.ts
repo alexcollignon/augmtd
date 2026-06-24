@@ -8,7 +8,10 @@ import { DEFAULT_RULES } from './rules/defaults';
 import { evaluateDeterministic } from './rules/evaluate';
 import { LABEL_TO_TYPE, type RuleEmail, type InboxRule } from './rules/types';
 
-export type ItemType = 'needs_reply' | 'to_do' | 'waiting_on' | 'meeting' | 'fyi' | 'hidden';
+export type ItemType = 'needs_reply' | 'to_do' | 'waiting_on' | 'reminder' | 'fyi' | 'hidden';
+// Where a work item came from. The digest GROUPS by this; the inbox shows it as a cue. A meeting
+// is a source, not a type — its outputs (action items) are typed to_do/waiting_on.
+export type WorkSource = 'email' | 'meeting' | 'calendar';
 
 // The user's rules, loaded once per session by the inbox page. Until then we fall back to the
 // code defaults — so a user's *edited* deterministic rules drive classification, not just the
@@ -19,7 +22,7 @@ export function setInboxRules(rules: InboxRule[] | null) { cachedRules = rules &
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Item = SignalItem & { status?: string | null; work_state?: string | null; source?: string | null; type_override?: string | null; rule_type?: string | null };
 
-const OVERRIDABLE = new Set<ItemType>(['needs_reply', 'to_do', 'waiting_on', 'meeting', 'fyi']);
+const OVERRIDABLE = new Set<ItemType>(['needs_reply', 'to_do', 'waiting_on', 'fyi']);
 
 // Build the minimal email shape the rules engine evaluates against, from an inbox item.
 function itemToRuleEmail(item: Item): RuleEmail | null {
@@ -47,8 +50,9 @@ export function classifyItem(item: Item): ItemType {
 
   const ws = item.work_state;
 
-  // Meetings are their own context bucket (notes + follow-ups), regardless of work_state.
-  if (item.source === 'meeting') return 'meeting';
+  // A meeting action item is a to-do you own. The meeting is the SOURCE (sourceOf), not the type —
+  // the digest groups it under its meeting; the inbox shows it under To do with a "from {meeting}" cue.
+  if (item.source === 'meeting') return 'to_do';
 
   // Deterministic rules (the editable noise tier — no-reply/automated/marketing senders) run
   // first, so this junk never leaks into "Needs reply" or "To do". Rule-driven, not hardcoded.
@@ -103,9 +107,9 @@ export const TYPE_CONFIG: Record<Exclude<ItemType, 'hidden'>, TypeConfig> = {
     description: "Someone owes you — nudge if it's gone quiet",
     dot: 'bg-amber-500', countBg: 'bg-amber-100', countText: 'text-amber-700', order: 2,
   },
-  meeting: {
-    label: 'Meetings', verb: 'Review',
-    description: 'Notes and follow-ups from your meetings',
+  reminder: {
+    label: 'Reminders', verb: 'Review',
+    description: 'Worth recalling before your next touchpoint',
     dot: 'bg-violet-500', countBg: 'bg-violet-100', countText: 'text-violet-700', order: 3,
   },
   fyi: {
@@ -115,4 +119,18 @@ export const TYPE_CONFIG: Record<Exclude<ItemType, 'hidden'>, TypeConfig> = {
   },
 };
 
-export const TYPE_ORDER: Array<Exclude<ItemType, 'hidden'>> = ['needs_reply', 'to_do', 'waiting_on', 'meeting', 'fyi'];
+export const TYPE_ORDER: Array<Exclude<ItemType, 'hidden'>> = ['needs_reply', 'to_do', 'waiting_on', 'reminder', 'fyi'];
+
+// Source metadata + resolver — the digest groups by source; the inbox shows it as a cue.
+export const SOURCE_META: Record<WorkSource, { label: string }> = {
+  email: { label: 'Email' },
+  meeting: { label: 'Meeting' },
+  calendar: { label: 'Calendar' },
+};
+export function sourceOf(item: Item): WorkSource {
+  return item.source === 'meeting' ? 'meeting' : 'email';
+}
+
+// Types a user can manually re-type an item to (reminder is system-derived from meetings, not a
+// manual target).
+export const RETYPE_OPTIONS: Array<Exclude<ItemType, 'hidden' | 'reminder'>> = ['needs_reply', 'to_do', 'waiting_on', 'fyi'];

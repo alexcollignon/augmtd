@@ -56,7 +56,7 @@ export const LABEL_TO_TYPE: Record<RuleLabel, ItemType> = {
   needs_reply: 'needs_reply',
   to_do: 'to_do',
   waiting_on: 'waiting_on',
-  meeting: 'meeting',
+  meeting: 'fyi', // a "meeting updates" email is awareness; real meetings are a SOURCE, not this type
   fyi: 'fyi',
   notifications: 'fyi', // noise tier — shown under awareness in-app (its own label only for write-back)
   marketing: 'fyi',

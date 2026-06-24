@@ -6,7 +6,7 @@ import {
   PaperClipIcon,
 } from '@heroicons/react/24/outline';
 import type { InboxItem } from '@/lib/types/inbox';
-import { classifyItem, TYPE_CONFIG, TYPE_ORDER, type ItemType } from '@/lib/inbox/classify-item';
+import { classifyItem, TYPE_CONFIG, RETYPE_OPTIONS, sourceOf, type ItemType } from '@/lib/inbox/classify-item';
 import WorkDetailPanel from './work-detail-panel';
 
 interface WorkCardProps {
@@ -21,6 +21,10 @@ export default function WorkCard({ item }: WorkCardProps) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const type = override ?? classifyItem(item as any);
   const cfg = type !== 'hidden' ? TYPE_CONFIG[type] : null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const source = sourceOf(item as any);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const meetingTitle = (item.source_data as any)?.meeting_title as string | undefined;
 
   const handleRetype = async (t: ItemType) => {
     setOverride(t);
@@ -141,7 +145,7 @@ export default function WorkCard({ item }: WorkCardProps) {
                     <div className="fixed inset-0 z-10" onClick={(e) => { e.stopPropagation(); setMenuOpen(false); }} />
                     <div className="absolute z-20 mt-1 left-0 bg-white border border-neutral-200 rounded-lg shadow-lg py-1 min-w-[160px]" onClick={(e) => e.stopPropagation()}>
                       <div className="px-2.5 py-1 text-[10px] uppercase tracking-wide text-neutral-400">Change type</div>
-                      {TYPE_ORDER.map(t => (
+                      {RETYPE_OPTIONS.map(t => (
                         <button
                           key={t}
                           onClick={(e) => { e.stopPropagation(); handleRetype(t); }}
@@ -158,7 +162,9 @@ export default function WorkCard({ item }: WorkCardProps) {
             )}
             <span className="text-neutral-300">•</span>
             <span className="font-medium text-neutral-600 truncate">
-              {sourceData?.from_name || sourceData?.from || 'Unknown'}
+              {source === 'meeting'
+                ? `📅 from ${meetingTitle || 'a meeting'}`
+                : (sourceData?.from_name || sourceData?.from || 'Unknown')}
             </span>
 
             {recipientContext?.suggestionLabel && (
