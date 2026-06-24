@@ -59,10 +59,11 @@ export async function GET() {
     supabase.from('inbox_items').select('id', { count: 'exact', head: true })
       .eq('user_id', user.id).gte('created_at', since24)
       .or('work_state.eq.noise,rule_type.eq.marketing,rule_type.eq.notifications'),         // filtered as noise
-    // FYI tier (for the FYI-by-topic brief): awareness emails, grouped by sender downstream.
+    // FYI tier (for the FYI-by-topic brief): awareness emails, grouped by sender downstream. Wide
+    // window so high-volume people (not just recent newsletters) surface in the people section.
     supabase.from('inbox_items').select('work_title, source_data, rule_type')
       .eq('user_id', user.id).eq('status', 'pending').eq('work_state', 'noted')
-      .order('created_at', { ascending: false }).limit(80),
+      .order('created_at', { ascending: false }).limit(200),
   ]);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -165,18 +166,25 @@ export async function GET() {
   // ── FYI-by-topic: group the awareness emails by sender; the AI digests each group below. ──
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const fyiRows = (fyiRes.data ?? []) as Array<{ work_title: string | null; source_data: any }>;
-  const fyiBySender = new Map<string, string[]>();
+  const fyiBySender = new Map<string, { subjects: string[]; address: string }>();
   for (const r of fyiRows) {
     const sd = (r.source_data ?? {}) as Record<string, unknown>;
-    const from = (sd.from_name as string) || (sd.from as string);
-    if (!from) continue;
-    const arr = fyiBySender.get(from) ?? [];
-    arr.push(r.work_title || (sd.subject as string) || '');
-    fyiBySender.set(from, arr);
+    const label = (sd.from_name as string) || (sd.from as string);
+    if (!label) continue;
+    const g = fyiBySender.get(label) ?? { subjects: [], address: ((sd.from as string) || '').toLowerCase() };
+    g.subjects.push(r.work_title || (sd.subject as string) || '');
+    fyiBySender.set(label, g);
   }
-  const fyiGroupsAll = [...fyiBySender.entries()].map(([label, subjects]) => ({ label, subjects, count: subjects.length })).sort((a, b) => b.count - a.count);
-  const fyiTop = fyiGroupsAll.slice(0, 6);
-  const fyiTailItems = fyiGroupsAll.slice(6).reduce((n, g) => n + g.count, 0);
+  // People vs newsletters/services — by the sender's local-part. People surface first.
+  const NEWSLETTER = /(^|[.\-_])(no-?reply|do-?not-?reply|donotreply|newsletter|news|notifications?|notify|updates?|mailer|marketing|digest|hello|team|info|support|alerts?|members?|email|mail)([.\-_+@0-9]|$)/i;
+  const isNewsletter = (addr: string) => NEWSLETTER.test((addr.split('@')[0] || ''));
+  const fyiGroupsAll = [...fyiBySender.entries()]
+    .map(([label, g]) => ({ label, subjects: g.subjects, count: g.subjects.length, kind: (isNewsletter(g.address) ? 'newsletter' : 'person') as 'newsletter' | 'person' }))
+    .sort((a, b) => b.count - a.count);
+  const peopleGroups = fyiGroupsAll.filter((g) => g.kind === 'person').slice(0, 5);
+  const newsletterGroups = fyiGroupsAll.filter((g) => g.kind === 'newsletter').slice(0, 5);
+  const fyiTop = [...peopleGroups, ...newsletterGroups];
+  const fyiTailItems = fyiGroupsAll.reduce((n, g) => n + g.count, 0) - fyiTop.reduce((n, g) => n + g.count, 0);
   const fyiTailGroups = Math.max(0, fyiGroupsAll.length - fyiTop.length);
 
   // ── Today's schedule + light prep on the next meeting ──
@@ -240,7 +248,7 @@ export async function GET() {
   type Tldr = { teaser: string; bullets: string[]; dontMiss: string | null };
   type FollowUp = { who: string; status: string; nextMove: string };
   type Followups = { teaser: string; items: FollowUp[]; closing: string | null };
-  type FyiDigest = { groups: { label: string; summary: string }[]; tailGroups: number; tailItems: number };
+  type FyiDigest = { groups: { label: string; summary: string; kind: 'person' | 'newsletter' }[]; tailGroups: number; tailItems: number };
   type Reply = { who: string; ask: string; angle: string; itemId: string };
   type MustRespond = { teaser: string; items: Reply[] };
   const cached = (profileRes.data as { home_brief?: { text?: string; tldr?: Tldr; followups?: Followups | null; fyiDigest?: FyiDigest | null; mustRespond?: MustRespond | null; generated_at: string; sig?: string } } | null)?.home_brief ?? null;
@@ -321,15 +329,16 @@ export async function GET() {
     // into a few thematic digests.
     if (fyiTop.length) {
       try {
-        const input = fyiTop.map((g) => `${g.label} (${g.count}): ${g.subjects.slice(0, 5).filter(Boolean).map((s) => `"${s}"`).join('; ')}`).join('\n');
+        const input = fyiTop.map((g, i) => `[${i}] ${g.label} (${g.count}): ${g.subjects.slice(0, 5).filter(Boolean).map((s) => `"${s}"`).join('; ')}`).join('\n');
         const res = await aiCreate(client, {
-          model, max_tokens: 420, temperature: 0.4,
-          messages: [{ role: 'user', content: `You are ${firstName || 'the user'}'s assistant digesting low-priority FYI emails (no reply needed), grouped by sender. For each group, write ONE short line summarising what these are about. Use ONLY these facts, never invent.\n\nReturn JSON only:\n{"groups":[{"label":"the sender name","summary":"one-line digest of what these are about"}]}\n\nGroups:\n${input}` }],
+          model, max_tokens: 460, temperature: 0.4,
+          messages: [{ role: 'user', content: `You are ${firstName || 'the user'}'s assistant digesting low-priority FYI emails (no reply needed), grouped by sender. For each group, write ONE short line summarising what these are about. Use ONLY these facts, never invent.\n\nReturn JSON only:\n{"groups":[{"i":<the [i] index>,"summary":"one-line digest of what these are about"}]}\n\nGroups:\n${input}` }],
         });
-        const p = parseModelJSON<{ groups: { label: string; summary: string }[] }>(res.choices?.[0]?.message?.content || '', { groups: [] });
-        fyiDigest = Array.isArray(p.groups) && p.groups.length
-          ? { groups: p.groups.slice(0, 6), tailGroups: fyiTailGroups, tailItems: fyiTailItems }
-          : null;
+        const p = parseModelJSON<{ groups: { i: number; summary: string }[] }>(res.choices?.[0]?.message?.content || '', { groups: [] });
+        const groups = (Array.isArray(p.groups) ? p.groups : [])
+          .map((x) => (fyiTop[x.i] ? { label: fyiTop[x.i].label, summary: x.summary || '', kind: fyiTop[x.i].kind } : null))
+          .filter((g): g is FyiDigest['groups'][number] => !!g && !!g.summary);
+        fyiDigest = groups.length ? { groups, tailGroups: fyiTailGroups, tailItems: fyiTailItems } : null;
       } catch { /* keep cached */ }
     } else {
       fyiDigest = null;

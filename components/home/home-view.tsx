@@ -14,7 +14,7 @@ type Priority = {
 };
 type Tldr = { teaser: string; bullets: string[]; dontMiss: string | null };
 type Followups = { teaser: string; items: { who: string; status: string; nextMove: string }[]; closing: string | null };
-type FyiDigest = { groups: { label: string; summary: string }[]; tailGroups: number; tailItems: number };
+type FyiDigest = { groups: { label: string; summary: string; kind: 'person' | 'newsletter' }[]; tailGroups: number; tailItems: number };
 type MustRespond = { teaser: string; items: { who: string; ask: string; angle: string; itemId: string }[] };
 type Brief = {
   firstName: string | null;
@@ -211,11 +211,11 @@ export function HomeView() {
   if (loading) {
     return (
       <div className="h-full overflow-y-auto bg-neutral-50/40">
-        <div className="mx-auto max-w-[1040px] px-8 py-10">
+        <div className="px-8 py-10">
           <div className="h-8 w-64 rounded-lg bg-neutral-100 animate-pulse" />
           <div className="h-4 w-[28rem] max-w-full rounded bg-neutral-100 animate-pulse mt-3" />
           <div className="flex gap-2 mt-4">{[1, 2, 3].map(i => <div key={i} className="h-7 w-28 rounded-full bg-neutral-100 animate-pulse" />)}</div>
-          <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6 mt-8">
+          <div className="grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-6 mt-8">
             <div className="space-y-3"><div className="h-3 w-20 rounded bg-neutral-100 animate-pulse mb-1" />{[1, 2, 3].map(i => <SkeletonCard key={i} />)}</div>
             <div className="space-y-3"><div className="h-3 w-24 rounded bg-neutral-100 animate-pulse mb-1" />{[1, 2].map(i => <SkeletonCard key={i} h="h-[60px]" />)}</div>
           </div>
@@ -240,7 +240,7 @@ export function HomeView() {
 
   return (
     <div className="h-full overflow-y-auto bg-neutral-50/40">
-      <div className="mx-auto max-w-[1040px] px-8 py-10">
+      <div className="px-8 py-10">
         {/* Header + narration + live status chips */}
         <RiseIn>
           <h1 className="text-[26px] font-semibold tracking-tight text-neutral-900">{greeting()}{b?.firstName ? `, ${b.firstName}` : ''}</h1>
@@ -291,7 +291,7 @@ export function HomeView() {
         )}
 
         {!nothing && (
-          <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6 mt-8">
+          <div className="grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-6 mt-8">
             {/* LEFT — what needs you */}
             <div>
               {/* Must respond — the replies you owe (needs_reply roundup) */}
@@ -445,10 +445,21 @@ export function HomeView() {
                 <RiseIn delay={200}>
                   <Collapsible title="For your awareness" count={b.fyiDigest.groups.length}>
                   <div className="rounded-xl border border-neutral-200/80 bg-white divide-y divide-neutral-100 overflow-hidden">
-                    {b.fyiDigest.groups.map((g, i) => (
-                      <div key={i} className="px-3.5 py-2.5">
+                    {b.fyiDigest.groups.filter(g => g.kind === 'person').map((g, i) => (
+                      <div key={`p${i}`} className="px-3.5 py-2.5">
                         <p className="text-[12.5px] font-semibold text-neutral-700">{g.label}</p>
                         <p className="text-[12px] text-neutral-500 mt-0.5 leading-snug">{g.summary}</p>
+                      </div>
+                    ))}
+                    {b.fyiDigest.groups.some(g => g.kind === 'newsletter') && (
+                      <div className="px-3.5 pt-2.5 pb-1 bg-neutral-50/60">
+                        <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">Newsletters &amp; services</p>
+                      </div>
+                    )}
+                    {b.fyiDigest.groups.filter(g => g.kind === 'newsletter').map((g, i) => (
+                      <div key={`n${i}`} className="px-3.5 py-2 bg-neutral-50/60">
+                        <p className="text-[12px] font-medium text-neutral-600">{g.label}</p>
+                        <p className="text-[11.5px] text-neutral-400 mt-0.5 leading-snug">{g.summary}</p>
                       </div>
                     ))}
                     {b.fyiDigest.tailItems > 0 && (
