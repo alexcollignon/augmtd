@@ -534,11 +534,19 @@ export async function syncEmailsForConnection(
       const { activeAiRules } = await import('@/lib/inbox/rules/load');
       const aiRules = activeAiRules(userRules);
       if (aiRules.length) {
-        const processEnvelopes = envelopes.filter((_e, i) => classMap.get(String(i)) === 'process');
+        // Run the rules on the fyi tier too (everything except noise), so they're no longer
+        // BYPASSED by the pre-filter — and let an ACTIONABLE rule promote a fyi-classed email up to
+        // full processing. (batchMatchRules deterministic-filters before the AI call, so no-reply
+        // senders never reach it.) Full rule set passed.
+        const ruleEnvelopes = envelopes.filter((_e, i) => classMap.get(String(i)) !== 'noise');
         const { batchMatchRules } = await import('@/lib/inbox/rules/batch-match');
-        // Full rule set — batchMatchRules deterministic-filters before the AI call.
-        const matched = await batchMatchRules(processEnvelopes, userRules, connection.user_id, adminSupabase);
-        for (const [id, label] of matched) ruleMap.set(id, label);
+        const matched = await batchMatchRules(ruleEnvelopes, userRules, connection.user_id, adminSupabase);
+        const ACTIONABLE = new Set(['needs_reply', 'to_do', 'waiting_on']);
+        for (const [id, label] of matched) {
+          ruleMap.set(id, label);
+          // A rule saying "you need to act" overrides a fyi pre-filter verdict → full processing.
+          if (ACTIONABLE.has(label) && classMap.get(id) === 'fyi_only') classMap.set(id, 'process');
+        }
       }
     } catch (e) { console.warn('[Rules] AI-match pass skipped:', e); }
 

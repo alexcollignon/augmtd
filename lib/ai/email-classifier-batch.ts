@@ -45,19 +45,21 @@ CATEGORIES:
 - Calendar invites accepted/declined/updated from known contacts
 - Payment received confirmations (Wise, Stripe, PayPal — money coming IN)
 - Invoice receipts for purchases already made
-- Non-urgent status updates from colleagues or clients
-- FYI-style forwards ("just so you know")
+- Purely passive FYI from a person where NO reply is expected — a heads-up, a "just so you know", a thread you were CC'd on for awareness only, or a plain acknowledgement ("thanks!", "got it", "sounds good")
 - Soft deadlines or reminders that don't require immediate action
 
 "process" — The user must read and likely respond or decide. Use for:
 - A human (not automated) is expecting a reply
 - A client, partner, or colleague is asking a question or requesting action
+- A reply (Re:) or direct message from a REAL PERSON in an ACTIVE conversation — even without an explicit question, an ongoing human exchange addressed to the user usually warrants attention (unless it's a pure acknowledgement)
 - A contract, proposal, or document needs review or signature
 - A meeting request or scheduling negotiation
 - An urgent payment failure or billing issue that needs fixing
 - A legal, compliance, or regulatory notice
 - A job application, interview, or hiring decision
 - Any email where ignoring it has a cost
+
+IMPORTANT BIAS: When unsure between "fyi_only" and "process" for a message from a REAL HUMAN (not an automated/no-reply/bulk sender), choose "process". Reserve "fyi_only" for genuinely passive updates and acknowledgements. Automated/bulk senders never become "process" on this basis — they stay "noise" or "fyi_only".
 
 EXAMPLES:
 - From: noreply@uber.com, Subject: "Your Thursday trip receipt" → noise
@@ -70,6 +72,8 @@ EXAMPLES:
 - From: partner@firm.com, Subject: "Contract revision needed" → process
 - From: failed-payments@stripe.com, Subject: "Payment to Synthesia unsuccessful" → process
 - From: client@company.com, Subject: "Quick update", body_preview: "...wanted to ask if you can confirm the budget before Thursday." → process (body reveals a question despite neutral subject)
+- From: madalena@partner.com, Subject: "Re: Follow up | Project" → process (active thread with a real person, even without an explicit question)
+- From: colleague@company.com, Subject: "Re: Thanks!", body_preview: "Thanks so much, that's perfect." → fyi_only (pure acknowledgement, nothing to do)
 
 Respond ONLY with valid JSON: { "results": [ { "id": "...", "class": "process"|"fyi_only"|"noise" } ] }
 Include every id from the input. No explanations.`;
