@@ -53,8 +53,10 @@ export async function GET() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const commits = (commitsRes.data ?? []) as any[];
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  type Priority = { id: string; type: 'email' | 'meeting' | 'commitment'; title: string; context: string | null; href: string; itemId?: string; items?: { id: string; text: string }[]; overdue?: boolean };
+  // A source card: grouped by where it's from (email thread / meeting), carrying the unified
+  // posture (what it needs) — the digest shape from docs/unified-classifier-digest-plan.md.
+  type Posture = 'needs_reply' | 'to_do' | 'waiting_on';
+  type Priority = { id: string; source: 'email' | 'meeting'; posture: Posture; title: string; context: string | null; href: string; itemId?: string; items?: { id: string; text: string }[]; overdue?: boolean };
   const priorities: Priority[] = [];
 
   // ── Meetings: group action items under their meeting (LAYERED — one card, items nested) ──
@@ -69,33 +71,34 @@ export async function GET() {
   }
   for (const [tid, m] of byMeeting) {
     priorities.push({
-      id: `meeting:${tid}`, type: 'meeting', title: m.title,
+      id: `meeting:${tid}`, source: 'meeting', posture: 'to_do', title: m.title,
       // Past-tense framing — this meeting already happened; these are follow-ups, not a "do this now".
       context: `You had this meeting · ${m.items.length} follow-up${m.items.length > 1 ? 's' : ''} to consider`,
       href: `/meetings`, items: m.items.slice(0, 6),
     });
   }
 
-  // ── Emails needing a reply — via the SHARED classifier (rule-aware), not a separate heuristic.
-  // This is the unification: the Home now classifies exactly as the inbox does.
-  const emailCandidates = items.filter((it) =>
-    it.source !== 'meeting' && it.source !== 'commitment' && classifyItem(it as never) === 'needs_reply',
-  );
-  // Drop threads you've already replied to.
-  const candThreadIds = [...new Set(emailCandidates.map((c) => c.source_data?.thread_id).filter(Boolean))] as string[];
+  // ── Email cards — via the SHARED classifier (rule-aware). needs_reply AND to_do (email tasks),
+  // so the Home is as complete as the inbox, not just replies.
+  const emailCandidates = items
+    .filter((it) => it.source !== 'meeting' && it.source !== 'commitment')
+    .map((it) => ({ it, posture: classifyItem(it as never) }))
+    .filter((x) => x.posture === 'needs_reply' || x.posture === 'to_do');
+  // Drop reply threads you've already answered.
+  const candThreadIds = [...new Set(emailCandidates.map((c) => c.it.source_data?.thread_id).filter(Boolean))] as string[];
   let answered = new Map<string, string>();
   if (candThreadIds.length) {
     const { data: sent } = await supabase.from('emails')
       .select('thread_id, received_at').eq('user_id', user.id).eq('is_from_user', true).in('thread_id', candThreadIds);
     answered = buildAnsweredSet(sent ?? []);
   }
-  for (const it of emailCandidates) {
+  for (const { it, posture } of emailCandidates) {
     const sd = (it.source_data ?? {}) as Record<string, unknown>;
     const tid = sd.thread_id as string | undefined;
     const sentAt = tid ? answered.get(tid) : undefined;
-    if (sentAt && sentAt > it.created_at) continue; // already replied — not waiting on you
+    if (posture === 'needs_reply' && sentAt && sentAt > it.created_at) continue; // already replied
     priorities.push({
-      id: `email:${it.id}`, type: 'email',
+      id: `email:${it.id}`, source: 'email', posture: posture as Posture,
       title: it.work_title || (sd.subject as string) || 'Email',
       context: (sd.from_name as string) || (sd.from as string) || null,
       href: '/inbox', itemId: it.id,
@@ -108,15 +111,14 @@ export async function GET() {
     .filter((c) => (c.due_date && c.due_date <= todayStr) || (now.getTime() - new Date(c.created_at).getTime()) >= 2 * DAY);
   for (const c of youOwe) {
     priorities.push({
-      id: `commit:${c.id}`, type: 'commitment', title: c.description,
+      id: `commit:${c.id}`, source: 'email', posture: 'to_do', title: c.description,
       context: `You owe${c.counterparty ? ` ${c.counterparty}` : ''}${c.due_date ? ` · due ${c.due_date}` : ''}`,
       href: '/inbox', overdue: !!(c.due_date && c.due_date < todayStr),
     });
   }
 
-  // Genuine actions first (overdue → email reply → commitment), finished meetings last —
-  // a past meeting is context, not the thing to start with.
-  const rank = (p: Priority) => (p.overdue ? 0 : p.type === 'email' ? 1 : p.type === 'commitment' ? 2 : 3);
+  // Overdue → reply → to-do → finished meetings last (a past meeting is context, not "do this now").
+  const rank = (p: Priority) => (p.overdue ? 0 : p.source === 'meeting' ? 4 : p.posture === 'needs_reply' ? 1 : p.posture === 'to_do' ? 2 : 3);
   priorities.sort((a, b) => rank(a) - rank(b));
   const cappedPriorities = priorities.slice(0, MAX_PRIORITIES);
 
@@ -147,18 +149,18 @@ export async function GET() {
   }));
 
   // ── Status chips (live, alive) ──
-  const emailCount = priorities.filter((p) => p.type === 'email').length;
+  const replyP = priorities.filter((p) => p.posture === 'needs_reply').length;
   const status = {
-    needsReply: emailCount,
+    needsReply: replyP,
     meetingsToday: schedule.length,
     waitingOn: commits.filter((c) => c.direction === 'awaiting').length,
     handledToday: handledRes.count ?? 0,
   };
 
-  // ── Cached one-line narration (type-aware + busts when the day's shape changes) ──
-  const emailP = cappedPriorities.filter((p) => p.type === 'email').length;
-  const meetingP = cappedPriorities.filter((p) => p.type === 'meeting').length;
-  const commitP = cappedPriorities.filter((p) => p.type === 'commitment').length;
+  // ── Cached one-line narration (posture-aware + busts when the day's shape changes) ──
+  const emailP = cappedPriorities.filter((p) => p.posture === 'needs_reply').length;
+  const meetingP = cappedPriorities.filter((p) => p.source === 'meeting').length;
+  const commitP = cappedPriorities.filter((p) => p.source !== 'meeting' && p.posture === 'to_do').length;
   const overdueP = cappedPriorities.filter((p) => p.overdue).length;
   const sig = `${emailP}|${meetingP}|${commitP}|${overdueP}|${status.waitingOn}|${schedule.length}`;
 

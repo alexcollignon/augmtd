@@ -8,7 +8,7 @@ import {
 } from '@heroicons/react/24/outline';
 
 type Priority = {
-  id: string; type: 'email' | 'meeting' | 'commitment';
+  id: string; source: 'email' | 'meeting'; posture: 'needs_reply' | 'to_do' | 'waiting_on';
   title: string; context: string | null; href: string;
   itemId?: string; items?: { id: string; text: string }[]; overdue?: boolean;
 };
@@ -23,11 +23,12 @@ type Brief = {
 type TeamMsg = { workerId?: string; workerName?: string; text?: string };
 type TeamReview = { artifactId?: string; threadId?: string; title?: string; workerName?: string; workerId?: string };
 
-const TYPE = {
-  email: { icon: EnvelopeIcon, label: 'Email', tint: 'text-indigo-600', chip: 'bg-indigo-50 text-indigo-700' },
-  meeting: { icon: CalendarDaysIcon, label: 'Meeting', tint: 'text-violet-600', chip: 'bg-violet-50 text-violet-700' },
-  commitment: { icon: CheckCircleIcon, label: 'Follow-up', tint: 'text-amber-600', chip: 'bg-amber-50 text-amber-700' },
+// The chip cues the SOURCE; the verb comes from the POSTURE (what it needs).
+const SOURCE = {
+  email: { icon: EnvelopeIcon, label: 'Email', chip: 'bg-indigo-50 text-indigo-700' },
+  meeting: { icon: CalendarDaysIcon, label: 'Meeting', chip: 'bg-violet-50 text-violet-700' },
 } as const;
+const VERB: Record<Priority['posture'], string> = { needs_reply: 'Reply', to_do: 'Do', waiting_on: 'Follow up' };
 
 function greeting() {
   const h = new Date().getHours();
@@ -47,8 +48,9 @@ const Label = ({ children }: { children: React.ReactNode }) => (
 );
 
 function PriorityCard({ p, first, expanded, onToggle }: { p: Priority; first: boolean; expanded: boolean; onToggle: () => void }) {
-  const cfg = TYPE[p.type];
+  const cfg = SOURCE[p.source];
   const Icon = cfg.icon;
+  const verb = p.source === 'meeting' ? 'Review' : VERB[p.posture];
   const hasItems = !!p.items?.length;
   return (
     <div className="rounded-xl border border-neutral-200 bg-white overflow-hidden">
@@ -85,7 +87,7 @@ function PriorityCard({ p, first, expanded, onToggle }: { p: Priority; first: bo
 
         <div className="mt-3">
           <Link href={p.href} className="inline-flex items-center gap-1 text-[12.5px] font-medium text-indigo-600 hover:text-indigo-700">
-            {p.type === 'email' ? 'Reply' : p.type === 'meeting' ? 'Review' : 'Do'}
+            {verb}
             <ArrowRightIcon className="w-3.5 h-3.5" />
           </Link>
         </div>
@@ -133,7 +135,7 @@ export function HomeView() {
     st.handledToday ? { icon: CheckCircleIcon, text: `${st.handledToday} handled` } : null,
   ].filter(Boolean) as { icon: any; text: string }[] : []; // eslint-disable-line @typescript-eslint/no-explicit-any
   // "Start here" belongs on the first genuine action — never on a finished (past) meeting.
-  const startHereId = b?.priorities.find(p => p.type !== 'meeting')?.id ?? null;
+  const startHereId = b?.priorities.find(p => p.source !== 'meeting')?.id ?? null;
   const nothing = b && !b.priorities.length && !b.waitingOn.length && !b.schedule.length && !(team?.messages.length || team?.needsReview.length);
 
   return (
