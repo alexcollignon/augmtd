@@ -10,6 +10,7 @@ import SettingsPageClient from '@/app/settings/settings-page-client';
 import CompanyPageClient from '@/app/company/company-page-client';
 import CompanyPending from '@/app/company/company-pending';
 import MemorySection from '@/components/settings/memory-section';
+import EmailSettings from '@/components/settings/email-settings';
 import IntegrationsSection from '@/components/settings/integrations-section';
 import { getMyCompany } from '@/lib/company/get-my-company';
 
@@ -79,7 +80,7 @@ export default async function SettingsPage({ searchParams }: Props) {
   let connections: any[] = [];
   let profile: any = null;
 
-  if (tab === 'account') {
+  if (tab === 'account' || tab === 'email') {
     const { data: conns } = await supabase
       .from('connections')
       .select('*')
@@ -179,6 +180,10 @@ export default async function SettingsPage({ searchParams }: Props) {
                   <DataManagementSection connections={connections} userEmail={user.email ?? ''} />
                 </section>
               </div>
+            )}
+
+            {tab === 'email' && (
+              <EmailSettings connections={connections} />
             )}
 
             {tab === 'memory' && (

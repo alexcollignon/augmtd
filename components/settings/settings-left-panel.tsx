@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { UserIcon, BuildingOffice2Icon, Squares2X2Icon } from '@heroicons/react/24/outline';
+import { UserIcon, BuildingOffice2Icon, Squares2X2Icon, EnvelopeIcon } from '@heroicons/react/24/outline';
 
 function BrainIcon({ className }: { className?: string }) {
   return (
@@ -18,6 +18,7 @@ function BrainIcon({ className }: { className?: string }) {
 
 const NAV_ITEMS = [
   { id: 'account', label: 'Account', Icon: UserIcon },
+  { id: 'email', label: 'Email', Icon: EnvelopeIcon },
   { id: 'company', label: 'Company', Icon: BuildingOffice2Icon },
   { id: 'connections', label: 'Connections', Icon: Squares2X2Icon },
   { id: 'memory', label: 'Memory', Icon: BrainIcon },
