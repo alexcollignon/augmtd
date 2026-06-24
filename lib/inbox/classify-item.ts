@@ -6,9 +6,15 @@
 import { isNeedsReply, type SignalItem } from './needs-reply';
 import { DEFAULT_RULES } from './rules/defaults';
 import { evaluateDeterministic } from './rules/evaluate';
-import { LABEL_TO_TYPE, type RuleEmail } from './rules/types';
+import { LABEL_TO_TYPE, type RuleEmail, type InboxRule } from './rules/types';
 
 export type ItemType = 'needs_reply' | 'to_do' | 'waiting_on' | 'meeting' | 'fyi' | 'hidden';
+
+// The user's rules, loaded once per session by the inbox page. Until then we fall back to the
+// code defaults — so a user's *edited* deterministic rules drive classification, not just the
+// seeds. (Deterministic only here; AI-match rules are evaluated at process time.)
+let cachedRules: InboxRule[] | null = null;
+export function setInboxRules(rules: InboxRule[] | null) { cachedRules = rules && rules.length ? rules : null; }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Item = SignalItem & { status?: string | null; work_state?: string | null; source?: string | null; type_override?: string | null };
@@ -48,7 +54,7 @@ export function classifyItem(item: Item): ItemType {
   // first, so this junk never leaks into "Needs reply" or "To do". Rule-driven, not hardcoded.
   const ruleEmail = itemToRuleEmail(item);
   if (ruleEmail) {
-    const matched = evaluateDeterministic(ruleEmail, DEFAULT_RULES);
+    const matched = evaluateDeterministic(ruleEmail, cachedRules ?? DEFAULT_RULES);
     if (matched?.outcome.set_type) return LABEL_TO_TYPE[matched.outcome.set_type];
   }
 
