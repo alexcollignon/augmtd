@@ -20,6 +20,16 @@ function fromAddress(item: SignalItem): string {
   return String(sd.from || sd.from_address || sd.fromEmail || '').toLowerCase();
 }
 
+// You're only CC'd, and the CC-aware processor saw nothing personal (no reply-state). A generic
+// "asks" signal — or a rule — shouldn't make this your reply: the ask almost always targets the TO
+// recipient, not you. `is_cc_only` is stamped at sync from the email's to/cc vs your mailbox.
+export function isCcOnlyBystander(item: SignalItem): boolean {
+  const sd = (item.source_data ?? {}) as Record<string, unknown>;
+  if (sd.is_cc_only !== true) return false;
+  const ws = (item as { work_state?: string | null }).work_state;
+  return !(ws === 'work_prepared' || ws === 'decision_required');
+}
+
 export function isNeedsReply(item: SignalItem): boolean {
   const s = (item.source_data?.signals ?? {}) as Record<string, unknown>;
 
@@ -27,6 +37,9 @@ export function isNeedsReply(item: SignalItem): boolean {
   const from = fromAddress(item);
   const local = from.includes('@') ? from.split('@')[0] : from;
   if (AUTOMATED_SENDER.test(local) || s.isAutomatedSender || s.isNotification || s.isMechanicalConfirmation) return false;
+
+  // CC-only and not personally in the loop → awareness, not your reply.
+  if (isCcOnlyBystander(item)) return false;
 
   // Then: the classifier's "respond via email" state, or the email plainly asks something.
   const replyState = item.work_state === 'work_prepared' || item.work_state === 'decision_required';

@@ -1398,6 +1398,9 @@ export async function syncEmailsForConnection(
                   // labelIds → marketing (CATEGORY_PROMOTIONS) + native category rules.
                   has_unsubscribe: !!(parsed as { has_unsubscribe?: boolean }).has_unsubscribe,
                   gmail_labels: (parsed as { labels?: string[] }).labels ?? [],
+                  // Recipient position — lets classifyItem/isNeedsReply avoid marking a thread you're
+                  // only CC'd on (and not personally addressed) as Needs reply.
+                  is_cc_only: recipient.position === 'cc',
                   calendar_event_id: calendarEventId || undefined,
                   isForwarded,
                   thread_history: threadEmails?.map(e => ({
@@ -1518,6 +1521,9 @@ export async function syncEmailsForConnection(
                 html_body: ((parsed as any).html_body as string | null)?.slice(0, 15000) || null,
                 received_at: storedEmail.received_at,
                 provider: connection.provider,
+                // Recipient position — so a thread you're only CC'd on (and not addressed) isn't
+                // marked Needs reply by classifyItem/isNeedsReply.
+                is_cc_only: recipient.position === 'cc',
                 calendar_event_id: calendarEventId || undefined,
                 isForwarded,
                 thread_history: threadEmailsForNew?.map(e => ({
