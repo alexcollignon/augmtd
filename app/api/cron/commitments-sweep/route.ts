@@ -35,8 +35,11 @@ export async function GET(request: NextRequest) {
     // an awaiting resolves when THEY write back (any thread). This also makes follow-up timing
     // context-aware — progressing items close here, so only genuinely-stalled ones survive to aging.
     const youFulfil = c.direction === 'you_owe'; // you fulfil → you send; they fulfil → they reply
-    // Resolve the counterparty's email so we can match across threads.
-    let cpEmail: string | null = c.counterparty && String(c.counterparty).includes('@') ? String(c.counterparty).toLowerCase() : null;
+    // Resolve the counterparty's email so we can match across threads. Counterparty is often stored
+    // as "Name <email>" — extract the address (or a bare email); a name-only value stays null.
+    const cpRaw = c.counterparty ? String(c.counterparty) : '';
+    let cpEmail: string | null = (cpRaw.match(/<\s*([^>\s]+@[^>\s]+)\s*>/)?.[1] || cpRaw.match(/[^\s<>]+@[^\s<>]+/)?.[0] || null);
+    if (cpEmail) cpEmail = cpEmail.toLowerCase();
     if (!cpEmail && c.thread_id) {
       const { data: inc } = await sb.from('emails').select('from_address')
         .eq('user_id', c.user_id).eq('thread_id', c.thread_id).eq('is_from_user', false).limit(1).maybeSingle();
