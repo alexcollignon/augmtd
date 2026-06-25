@@ -46,14 +46,11 @@ export async function batchMatchRules(
     const valid = new Set(aiRules.map(r => r.outcome.set_type));
     const rulesPayload = aiRules.map(r => ({ label: r.outcome.set_type, description: r.ai_match }));
 
-    // Chunk so the response can't be truncated — a single call over 100+ emails overflows the token
-    // cap and returns invalid JSON (→ zero matches). 30 per chunk, run in parallel.
-    const CHUNK = 30;
-    const chunks: EmailEnvelope[][] = [];
-    for (let i = 0; i < unmatched.length; i += CHUNK) chunks.push(unmatched.slice(i, i + CHUNK));
-
-    const maps = await Promise.all(chunks.map(async (chunk) => {
+    // One chunk → one AI call. Returns the matches AND the set of ids the model actually listed —
+    // so an OMITTED id (model skipped/truncated it) is distinguishable from a returned "none".
+    const runChunk = async (chunk: EmailEnvelope[]): Promise<{ m: Map<string, RuleLabel>; returned: Set<string> }> => {
       const m = new Map<string, RuleLabel>();
+      const returned = new Set<string>();
       try {
         const userContent = JSON.stringify({
           rules: rulesPayload,
@@ -61,16 +58,36 @@ export async function batchMatchRules(
         });
         const res = await aiCreate(ai, {
           model, messages: [{ role: 'system', content: `Today is ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}.\n${SYSTEM}` }, { role: 'user', content: userContent }],
-          max_tokens: Math.min(4096, Math.max(512, chunk.length * 45)), temperature: 0,
+          // The model emits pretty-printed JSON (~60 tokens/email). Budget generously — under-budgeting
+          // truncates the response mid-list and silently drops the tail's ids (→ null → misclassified).
+          max_tokens: Math.min(8192, Math.max(1024, chunk.length * 90)), temperature: 0,
         });
         const parsed = parseModelJSON<{ results: Array<{ id: string; label: string }> }>(res.choices[0]?.message?.content || '', { results: [] });
         for (const item of parsed.results) {
+          returned.add(item.id);
           if (item.label && item.label !== 'none' && valid.has(item.label as RuleLabel)) m.set(item.id, item.label as RuleLabel);
         }
       } catch { /* this chunk fails → its emails fall back to heuristics */ }
-      return m;
-    }));
-    for (const m of maps) for (const [id, label] of m) result.set(id, label);
+      return { m, returned };
+    };
+
+    // Smaller chunks (20) keep each response well under the cap, run in parallel.
+    const CHUNK = 20;
+    const chunks: EmailEnvelope[][] = [];
+    for (let i = 0; i < unmatched.length; i += CHUNK) chunks.push(unmatched.slice(i, i + CHUNK));
+    const parts = await Promise.all(chunks.map(runChunk));
+    const returnedAll = new Set<string>();
+    for (const p of parts) { for (const [id, label] of p.m) result.set(id, label); for (const id of p.returned) returnedAll.add(id); }
+
+    // Fill-missing safety net: any email the model OMITTED (not a genuine "none") gets one focused
+    // retry in small chunks, where the model reliably lists every id. Guarantees full coverage.
+    const missing = unmatched.filter(e => !returnedAll.has(e.id));
+    if (missing.length) {
+      const rchunks: EmailEnvelope[][] = [];
+      for (let i = 0; i < missing.length; i += 10) rchunks.push(missing.slice(i, i + 10));
+      const rparts = await Promise.all(rchunks.map(runChunk));
+      for (const p of rparts) for (const [id, label] of p.m) result.set(id, label);
+    }
   } catch {
     /* no matches on failure — heuristics still classify */
   }
