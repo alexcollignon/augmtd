@@ -323,7 +323,6 @@ export default function EmailSettings({ connections, section = 'connections' }: 
           <div className="rounded-xl border border-neutral-200 divide-y divide-neutral-100 px-4">
             <SettingRow title="Automatically draft replies" desc="Draft replies in your voice, ready to review." on={settings.auto_draft} onToggle={() => setSetting('auto_draft', !settings.auto_draft)} />
             <SettingRow title="Label emails in Gmail / Outlook" desc="Mirror the triage labels in your inbox (namespaced, never touches your own labels)." on={settings.auto_label} onToggle={() => setSetting('auto_label', !settings.auto_label)} />
-            <SettingRow title="Allow new CC/BCC in drafts" desc="Let drafts loop in your team by CC/BCC when appropriate." on={settings.cc_bcc_new} onToggle={() => setSetting('cc_bcc_new', !settings.cc_bcc_new)} />
           </div>
         </section>
       )}

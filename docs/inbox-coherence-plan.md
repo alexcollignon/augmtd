@@ -53,44 +53,45 @@ without a 3h wait; the AI prose only regenerates when the shape materially chang
 
 ## 3. Email Settings — coherence + real wiring
 
-**The incoherence:** `app/api/inbox/email-settings` `auto_draft` defaults true with copy
-*"Automatically draft replies — Draft replies in your voice, ready to review,"* and the default
-"Needs reply" rule carries `auto_draft: { enabled: true }` — but **nothing executes auto-draft**. We
-deliberately chose on-demand. So the settings/rules promise behavior we don't do.
+**The model: two MASTER toggles (default ON), each gating per-rule behavior. Rules carry the detail.**
+The rules are the single configuration surface — they classify, and the classification IS the label
+and the per-rule draft decision. The two Settings toggles are **master kill-switches**, not duplicate
+config:
 
-**Decision — ONE three-state draft mode, not two booleans.** Today there are *two* `auto_draft`
-booleans with the same name and no defined relationship: the **Settings** one (global) and the
-default **"Needs reply" rule** one (per-rule). That ambiguity is the bug. Replace both with a single
-three-state control:
+| Master toggle (Settings) | Gates | Off → |
+|---|---|---|
+| **Label emails in Gmail/Outlook** (`auto_label`) | mirroring rule classifications into the mailbox | app identical; no `AUGMTD/…` labels in Gmail/Outlook |
+| **Automatically draft replies** (`auto_draft`) | auto-drafting on rules that have it enabled | no auto-drafts anywhere |
 
-- **Off** — never draft.
-- **Offer (on-demand)** — show **See draft**; generate on click. Cheap. **Default.**
-- **Auto** — generate at sync and **store the draft on the inbox item (in-app, NOT the mailbox)**, so
-  it's already there when the email is opened. This is the Serif/Superhuman "alive" feel; it costs an
-  AI call per reply-needed email, so it's **opt-in**, not default.
+An email is **auto-drafted iff** master `auto_draft` is ON **AND** its matched rule's `auto_draft` is
+enabled. Labels are **written iff** `auto_label` is ON (the rule supplies the label). Both masters
+**default ON**. The toggle being off NEVER degrades the in-app experience — classification, inbox,
+Home, commitments all run off the rules regardless; the masters only control writing to the mailbox /
+generating drafts.
 
-Both modes are worth having — Auto is the magic, Offer is the cheap floor — but they're *states of one
-control*, because a boolean can't say "offer here, auto there."
+**Status of the pieces:**
+- **Per-rule `auto_draft` toggle — ALREADY EXISTS** (`components/settings/email-settings.tsx:476`, with
+  an instructions field). No build needed; just confirm save round-trips.
+- **`auto_label` master — ALREADY WIRED** (sync write-back is `if (emailSettings.auto_label)`). Verify
+  default `true` + off → no write-back, in-app unchanged. (~no change.)
+- **`auto_draft` master + the generation — NOT WIRED** (this is the real work).
 
-**Global default + per-rule override (this is the rules review):**
-- **Settings** holds the **global default mode** (Off / Offer / Auto).
-- **Rules** become an **optional per-category override** — e.g. *Auto-draft client replies, Offer for
-  everything else*. The rule's `auto_draft` boolean is **replaced** by the same three-state (inherit
-  global, optionally override), so it stops duplicating the global and becomes genuinely useful.
-- The default "Needs reply" rule should inherit the global (no override) out of the box.
+**Part 3 — wire auto-draft generation (the substantive piece):**
+- After classification at sync, in a background pass (`after()`, so sync isn't blocked): for each item
+  where master `auto_draft` is ON **AND** the matched rule's `auto_draft.enabled`, generate a reply in
+  the user's voice via the existing drafter (`buildVoiceBlock` + the LLM — extract the core of
+  `/api/inbox/[id]/draft` into a reusable function), honoring the rule's `auto_draft.instructions`.
+- **Store on the item** — `source_data.draft = { to, cc, subject, body, generated_at }`. No migration.
+- Inbox/Home: if a stored draft exists → render `EmailDraftCard` **pre-filled** ("ready to review");
+  else fall back to on-demand "See draft" (item 3 below). Never writes to the mailbox.
+- Low volume (only auto_draft-matched rules), so cost is a non-issue.
 
-**Wiring:**
-- Resolve the effective mode per email = `rule override ?? global default`.
-- **Offer** → See draft affordance (Home brief — already; inbox detail — item 2).
-- **Auto** → at sync, generate via the same drafter and persist on the item metadata (mirror the
-  coworker `email_drafts[]` pattern); the `EmailDraftCard` renders pre-filled instead of click-to-fill.
-- **Never write to the mailbox** in any mode — distinct from Serif writing into your Drafts folder.
-- **Audit the other settings end-to-end** while here: to-do capture actually drives `to_do` surfacing;
-  per-inbox rules editor writes + sync reads (true as of this session — add a "last applied" signal);
-  "re-run rules" backfill uses the fixed `batchMatchRules`.
+**Part 4 — Settings cleanup:** remove **"Allow new CC/BCC in drafts"** (`cc_bcc_new` — never wired).
+Keep the two masters with current copy.
 
-**Acceptance:** one coherent draft-mode control (Off/Offer/Auto) with a clear global→rule relationship;
-every Settings toggle has a verified effect or honest copy; no setting claims behavior we don't perform.
+**Acceptance:** rules are the single config surface; the two master toggles are honest kill-switches
+(default ON) that gate write-back / drafting and never affect the in-app experience when off; an
+auto_draft-enabled rule actually produces a ready-to-review draft when the master is on.
 
 ---
 
