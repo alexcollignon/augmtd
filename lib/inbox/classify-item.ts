@@ -3,7 +3,7 @@
 // (the action) — "follow up" is the VERB on "waiting on", never a type, so it can't be confused
 // with something you owe.
 
-import { isNeedsReply, type SignalItem } from './needs-reply';
+import { isNeedsReply, isCcOnlyBystander, type SignalItem } from './needs-reply';
 import { DEFAULT_RULES } from './rules/defaults';
 import { evaluateDeterministic } from './rules/evaluate';
 import { LABEL_TO_TYPE, type RuleEmail, type InboxRule } from './rules/types';
@@ -63,7 +63,13 @@ export function classifyItem(item: Item): ItemType {
   }
 
   // A custom AI-match rule's verdict (computed at process time) — after deterministic, before heuristics.
-  if (item.rule_type && item.rule_type in LABEL_TO_TYPE) return LABEL_TO_TYPE[item.rule_type as keyof typeof LABEL_TO_TYPE];
+  if (item.rule_type && item.rule_type in LABEL_TO_TYPE) {
+    const t = LABEL_TO_TYPE[item.rule_type as keyof typeof LABEL_TO_TYPE];
+    // A rule can match "needs reply" on a thread you're only CC'd on (the rule-match doesn't see
+    // to/cc). Trust it only if you're personally in the loop; otherwise it's awareness.
+    if (t === 'needs_reply' && isCcOnlyBystander(item)) return 'fyi';
+    return t;
+  }
 
   // Your move — the ball is in your court.
   if (isNeedsReply(item)) return 'needs_reply';
