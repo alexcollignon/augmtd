@@ -42,6 +42,23 @@ export async function GET(request: NextRequest) {
         .eq('user_id', c.user_id).eq('thread_id', c.thread_id).eq('is_from_user', false).limit(1).maybeSingle();
       cpEmail = inc?.from_address ? String(inc.from_address).toLowerCase() : null;
     }
+    // Meeting commitment (no thread, name-based counterparty) — resolve the counterparty's email
+    // from the meeting's attendees, so meeting commitments also auto-resolve cross-source.
+    if (!cpEmail && c.source === 'meeting' && c.source_id && c.counterparty) {
+      const { data: t } = await sb.from('meeting_transcripts').select('calendar_event_id').eq('id', c.source_id).maybeSingle();
+      if (t?.calendar_event_id) {
+        const { data: ev } = await sb.from('calendar_events').select('attendees').eq('id', t.calendar_event_id).maybeSingle();
+        const cp = String(c.counterparty).toLowerCase().trim();
+        const first = cp.split(/\s+/)[0];
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const att = ((ev?.attendees as any[]) || []).find((a) => {
+          const name = String(a?.name || '').toLowerCase();
+          const email = String(a?.email || '').toLowerCase();
+          return email && (name === cp || (first.length > 2 && (name.includes(first) || email.split('@')[0].includes(first))) || (name && cp.includes(name)));
+        });
+        cpEmail = att?.email ? String(att.email).toLowerCase() : null;
+      }
+    }
     let resolved = false;
     if (c.thread_id) {
       const { data } = await sb.from('emails').select('id')

@@ -34,11 +34,12 @@ export async function GET() {
   const since24 = new Date(now.getTime() - DAY).toISOString();
   const [itemsRes, commitsRes, meetingsRes, handledRes, profileRes, triagedRes, summarisedRes, trackedRes, filteredRes, fyiRes] = await Promise.all([
     supabase.from('inbox_items')
-      .select('id, work_title, work_state, source, source_id, source_meeting_transcript_id, source_data, created_at')
+      .select('id, work_title, work_state, rule_type, type_override, source, source_id, source_meeting_transcript_id, source_data, created_at')
       .eq('user_id', user.id).eq('status', 'pending')
-      // reply-via-email states (work_prepared/decision_required) + external tasks (action_required,
-      // which is also where meeting action items live). isNeedsReply sorts out which emails qualify.
-      .in('work_state', ['work_prepared', 'decision_required', 'action_required'])
+      // Action work_states (reply-via-email + external tasks + meeting action items) OR a rule that
+      // classified it actionable (rule_type) — so a needs_reply the RULES found on a 'noted' email
+      // still reaches the Home. classifyItem (which reads rule_type) makes the final call.
+      .or('work_state.in.(work_prepared,decision_required,action_required),rule_type.in.(needs_reply,to_do,waiting_on)')
       .order('created_at', { ascending: false }).limit(60),
     supabase.from('commitments').select('*').eq('user_id', user.id).eq('status', 'open'),
     supabase.from('calendar_events')
