@@ -212,7 +212,9 @@ export async function storeTranscriptAndGenerateWork(
       .update({
         attendee_bot_id: botId,
         bot_state: 'ended',
-        duration_minutes: durationMinutes,
+        // Don't overwrite duration_minutes here — the transcription worker already wrote
+        // the correct value from the actual audio length. Recalculating from start/end
+        // times produces 0 when the recording was confirmed with identical timestamps.
         transcript: transcriptText,
         transcript_segments: normalizedSegments,
       })
@@ -564,7 +566,7 @@ Rules for other fields:
         { role: 'user', content: prompt },
       ],
       temperature: 0.3,
-      max_tokens: 4000,
+      max_tokens: 8000,
       ...(supportsJsonMode ? { response_format: { type: 'json_object' } } : {}),
     });
 
