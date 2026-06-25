@@ -1,14 +1,15 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { getAIClient, aiCreate } from '@/lib/ai/factory';
-import { buildVoiceBlock, buildMeetingFollowupContext } from '@/lib/context/voice-context';
+import { generateReplyDraft } from '@/lib/inbox/draft-reply';
 
 export const maxDuration = 30;
 
-// POST /api/inbox/[id]/draft — generate a voice-grounded reply draft for one inbox item, ON DEMAND
-// (so AI is spent only on replies you actually open). Non-streaming; returns the body text.
-export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+// POST /api/inbox/[id]/draft — a voice-grounded reply draft for one inbox item. Returns the
+// auto-draft if the sweep already produced one (instant, "ready to review"); otherwise generates
+// on demand and caches it on the item so the next open is instant. ?fresh=1 forces regeneration.
+export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  const fresh = new URL(req.url).searchParams.get('fresh') === '1';
   const supabase = await createClient();
   const { data: { user }, error } = await supabase.auth.getUser();
   if (error || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -19,22 +20,14 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const sd = (item.source_data ?? {}) as Record<string, any>;
-  const from = String(sd.from || sd.from_address || '');
-  const subject = String(sd.subject || '');
-  const body = String(sd.body || '');
-
-  const [voiceBlock, meetingFollowup] = await Promise.all([
-    buildVoiceBlock(user.id, from, supabase).catch(() => ''),
-    buildMeetingFollowupContext(user.id, from, supabase).catch(() => ''),
-  ]);
+  // Serve a previously-generated draft (sweep or earlier open) unless a fresh one is requested.
+  if (!fresh && sd.draft?.body) return NextResponse.json({ draft: sd.draft.body as string });
 
   try {
-    const { client, model } = await getAIClient(user.id, 'conversation', supabase);
-    const res = await aiCreate(client, {
-      model, max_tokens: 600, temperature: 0.6,
-      messages: [{ role: 'user', content: `${voiceBlock ? voiceBlock + '\n\n' : ''}${meetingFollowup ? meetingFollowup + '\n\n' : ''}Write a reply to the email below, in the user's voice. Return ONLY the reply body — no subject line, no preamble, no surrounding quotes. Keep it appropriately concise and ready to send.\n\nFrom: ${from}\nSubject: ${subject}\n\n${body.slice(0, 3000)}` }],
-    });
-    const draft = res.choices?.[0]?.message?.content?.trim() || '';
+    const draft = await generateReplyDraft(user.id, sd, supabase);
+    await supabase.from('inbox_items')
+      .update({ source_data: { ...sd, draft: { body: draft, generated_at: new Date().toISOString() } } })
+      .eq('id', id).eq('user_id', user.id);
     return NextResponse.json({ draft });
   } catch {
     return NextResponse.json({ error: 'Could not draft a reply.' }, { status: 500 });
