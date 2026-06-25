@@ -60,7 +60,7 @@ export async function batchMatchRules(
           emails: chunk.map(e => ({ id: e.id, from: e.from, subject: e.subject, snippet: (e.body_preview || e.snippet || '').slice(0, 400) })),
         });
         const res = await aiCreate(ai, {
-          model, messages: [{ role: 'system', content: SYSTEM }, { role: 'user', content: userContent }],
+          model, messages: [{ role: 'system', content: `Today is ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}.\n${SYSTEM}` }, { role: 'user', content: userContent }],
           max_tokens: Math.min(4096, Math.max(512, chunk.length * 45)), temperature: 0,
         });
         const parsed = parseModelJSON<{ results: Array<{ id: string; label: string }> }>(res.choices[0]?.message?.content || '', { results: [] });

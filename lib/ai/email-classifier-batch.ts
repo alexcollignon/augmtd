@@ -106,7 +106,7 @@ async function classifyBatch(
   const response = await ai.chat.completions.create({
     model,
     messages: [
-      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'system', content: `Today is ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })} — use it to judge urgency and deadlines.\n\n${SYSTEM_PROMPT}` },
       { role: 'user', content: userContent },
     ],
     max_tokens: maxTokens,
