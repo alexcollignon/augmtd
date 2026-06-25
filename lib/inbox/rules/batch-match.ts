@@ -43,22 +43,34 @@ export async function batchMatchRules(
 
   try {
     const { client: ai, model } = await getAIClient(userId, 'classification', client);
-    const userContent = JSON.stringify({
-      rules: aiRules.map(r => ({ label: r.outcome.set_type, description: r.ai_match })),
-      emails: unmatched.map(e => ({ id: e.id, from: e.from, subject: e.subject, snippet: (e.body_preview || e.snippet || '').slice(0, 400) })),
-    });
-    const maxTokens = Math.min(4096, Math.max(512, unmatched.length * 40));
-    const res = await ai.chat.completions.create({
-      model, messages: [{ role: 'system', content: SYSTEM }, { role: 'user', content: userContent }],
-      max_tokens: maxTokens, temperature: 0,
-    });
-    const parsed = parseModelJSON<{ results: Array<{ id: string; label: string }> }>(res.choices[0]?.message?.content || '', { results: [] });
     const valid = new Set(aiRules.map(r => r.outcome.set_type));
-    for (const item of parsed.results) {
-      if (item.label && item.label !== 'none' && valid.has(item.label as RuleLabel)) {
-        result.set(item.id, item.label as RuleLabel);
-      }
-    }
+    const rulesPayload = aiRules.map(r => ({ label: r.outcome.set_type, description: r.ai_match }));
+
+    // Chunk so the response can't be truncated — a single call over 100+ emails overflows the token
+    // cap and returns invalid JSON (→ zero matches). 30 per chunk, run in parallel.
+    const CHUNK = 30;
+    const chunks: EmailEnvelope[][] = [];
+    for (let i = 0; i < unmatched.length; i += CHUNK) chunks.push(unmatched.slice(i, i + CHUNK));
+
+    const maps = await Promise.all(chunks.map(async (chunk) => {
+      const m = new Map<string, RuleLabel>();
+      try {
+        const userContent = JSON.stringify({
+          rules: rulesPayload,
+          emails: chunk.map(e => ({ id: e.id, from: e.from, subject: e.subject, snippet: (e.body_preview || e.snippet || '').slice(0, 400) })),
+        });
+        const res = await ai.chat.completions.create({
+          model, messages: [{ role: 'system', content: SYSTEM }, { role: 'user', content: userContent }],
+          max_tokens: Math.min(4096, Math.max(512, chunk.length * 45)), temperature: 0,
+        });
+        const parsed = parseModelJSON<{ results: Array<{ id: string; label: string }> }>(res.choices[0]?.message?.content || '', { results: [] });
+        for (const item of parsed.results) {
+          if (item.label && item.label !== 'none' && valid.has(item.label as RuleLabel)) m.set(item.id, item.label as RuleLabel);
+        }
+      } catch { /* this chunk fails → its emails fall back to heuristics */ }
+      return m;
+    }));
+    for (const m of maps) for (const [id, label] of m) result.set(id, label);
   } catch {
     /* no matches on failure — heuristics still classify */
   }
