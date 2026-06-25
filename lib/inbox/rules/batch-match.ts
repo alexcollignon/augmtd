@@ -2,7 +2,7 @@
 // no per-email cost). Given the ordered AI-match rules, assign each email the label of the FIRST
 // rule whose description matches. Used at process time (sync) for the user's CUSTOM AI rules.
 
-import { getAIClient } from '@/lib/ai/factory';
+import { getAIClient, aiCreate } from '@/lib/ai/factory';
 import { parseModelJSON } from '@/lib/ai/parse-json';
 import { evaluateDeterministic } from './evaluate';
 import type { EmailEnvelope } from '@/lib/ai/email-classifier-batch';
@@ -59,7 +59,7 @@ export async function batchMatchRules(
           rules: rulesPayload,
           emails: chunk.map(e => ({ id: e.id, from: e.from, subject: e.subject, snippet: (e.body_preview || e.snippet || '').slice(0, 400) })),
         });
-        const res = await ai.chat.completions.create({
+        const res = await aiCreate(ai, {
           model, messages: [{ role: 'system', content: SYSTEM }, { role: 'user', content: userContent }],
           max_tokens: Math.min(4096, Math.max(512, chunk.length * 45)), temperature: 0,
         });
