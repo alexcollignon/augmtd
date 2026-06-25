@@ -487,7 +487,7 @@ export async function extractMeetingInsights(
   liveNotes?: string,
 ): Promise<MeetingInsights> {
   try {
-    const { client: openai, model: defaultModel, endpoint } = await getAIClient(userId, 'planning', supabase);
+    const { client: openai, model: defaultModel, endpoint } = await getAIClient(userId, 'generation', supabase);
 
     const userContext = await buildUserContextBlock(userId, supabase);
 
@@ -566,7 +566,7 @@ Rules for other fields:
         { role: 'user', content: prompt },
       ],
       temperature: 0.3,
-      max_tokens: 8000,
+      max_tokens: 8192,
       ...(supportsJsonMode ? { response_format: { type: 'json_object' } } : {}),
     });
 
