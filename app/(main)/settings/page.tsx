@@ -1,24 +1,23 @@
 import { createClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
-import ConnectionCard from '@/components/settings/connection-card';
 import MeetingAssistantCard from '@/components/settings/meeting-assistant-card';
 import DataManagementSection from '@/components/settings/data-management-section';
 import IdentitySection from '@/components/settings/identity-section';
-import SyncAllButton from '@/components/settings/sync-all-button';
 import SettingsLeftPanel from '@/components/settings/settings-left-panel';
 import SettingsPageClient from '@/app/settings/settings-page-client';
 import CompanyPageClient from '@/app/company/company-page-client';
 import CompanyPending from '@/app/company/company-pending';
 import MemorySection from '@/components/settings/memory-section';
+import EmailSettings from '@/components/settings/email-settings';
 import IntegrationsSection from '@/components/settings/integrations-section';
 import { getMyCompany } from '@/lib/company/get-my-company';
 
 interface Props {
-  searchParams: Promise<{ tab?: string }>;
+  searchParams: Promise<{ tab?: string; section?: string }>;
 }
 
 export default async function SettingsPage({ searchParams }: Props) {
-  const { tab = 'account' } = await searchParams;
+  const { tab = 'account', section = 'connections' } = await searchParams;
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/login');
@@ -79,7 +78,7 @@ export default async function SettingsPage({ searchParams }: Props) {
   let connections: any[] = [];
   let profile: any = null;
 
-  if (tab === 'account') {
+  if (tab === 'account' || tab === 'email') {
     const { data: conns } = await supabase
       .from('connections')
       .select('*')
@@ -95,14 +94,7 @@ export default async function SettingsPage({ searchParams }: Props) {
     profile = prof;
   }
 
-  const gmailConnections = connections.filter(c => c.provider === 'gmail');
-  const outlookConnections = connections.filter(c => c.provider === 'outlook');
   const selfHostedConfigured = !!process.env.MEETING_BOT_SERVICE_URL;
-
-  const activeProviders = [
-    ...gmailConnections.filter(c => c.status === 'active').map(() => 'gmail'),
-    ...outlookConnections.filter(c => c.status === 'active').map(() => 'outlook'),
-  ].filter((v, i, a) => a.indexOf(v) === i);
 
   return (
     <SettingsPageClient>
@@ -123,48 +115,6 @@ export default async function SettingsPage({ searchParams }: Props) {
                 </section>
 
                 <section className="px-6 py-5 border-b border-neutral-100">
-                  <div className="flex items-center justify-between mb-1">
-                    <h3 className="text-[14px] font-semibold text-neutral-900">Connections</h3>
-                    <SyncAllButton providers={activeProviders} />
-                  </div>
-                  <p className="text-[12px] text-neutral-400 mb-3">Connect the email accounts you want to use with AUGMTD.</p>
-                  <div className="divide-y divide-neutral-100">
-                    {gmailConnections.length === 0 ? (
-                      <ConnectionCard provider="gmail" connection={null}
-                        connectUrl="/api/auth/gmail/connect" disconnectUrl="/api/auth/gmail/disconnect" />
-                    ) : (
-                      <>
-                        {gmailConnections.map(conn => (
-                          <ConnectionCard key={conn.id} provider="gmail" connection={conn}
-                            connectUrl="/api/auth/gmail/connect" disconnectUrl="/api/auth/gmail/disconnect" />
-                        ))}
-                        <div className="py-3">
-                          <a href="/api/auth/gmail/connect" className="text-[12px] text-neutral-400 hover:text-indigo-600 transition-colors">
-                            + Add another Gmail account
-                          </a>
-                        </div>
-                      </>
-                    )}
-                    {outlookConnections.length === 0 ? (
-                      <ConnectionCard provider="outlook" connection={null}
-                        connectUrl="/api/auth/outlook/connect" disconnectUrl="/api/auth/outlook/disconnect" />
-                    ) : (
-                      <>
-                        {outlookConnections.map(conn => (
-                          <ConnectionCard key={conn.id} provider="outlook" connection={conn}
-                            connectUrl="/api/auth/outlook/connect" disconnectUrl="/api/auth/outlook/disconnect" />
-                        ))}
-                        <div className="py-3">
-                          <a href="/api/auth/outlook/connect" className="text-[12px] text-neutral-400 hover:text-indigo-600 transition-colors">
-                            + Add another Outlook account
-                          </a>
-                        </div>
-                      </>
-                    )}
-                  </div>
-                </section>
-
-                <section className="px-6 py-5 border-b border-neutral-100">
                   <h3 className="text-[14px] font-semibold text-neutral-900 mb-1">Meeting Assistant</h3>
                   <p className="text-[12px] text-neutral-400 mb-3">
                     Automatically join meetings, capture transcripts, and generate action items.
@@ -179,6 +129,10 @@ export default async function SettingsPage({ searchParams }: Props) {
                   <DataManagementSection connections={connections} userEmail={user.email ?? ''} />
                 </section>
               </div>
+            )}
+
+            {tab === 'email' && (
+              <EmailSettings connections={connections} section={section as 'connections' | 'rules' | 'drafting' | 'todo'} />
             )}
 
             {tab === 'memory' && (

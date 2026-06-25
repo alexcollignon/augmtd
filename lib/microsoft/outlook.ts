@@ -186,6 +186,9 @@ export function parseOutlookMessage(message: OutlookMessage) {
     // message id so the thread_id COLUMN and the grouping key (thread_id || message_id)
     // can't diverge if Graph ever omits conversationId on a given fetch.
     thread_id: message.conversationId || message.internetMessageId,
+    // List-Unsubscribe is required by spec on bulk/newsletter mail; person-to-person never has it.
+    // (Outlook has no CATEGORY_PROMOTIONS equivalent, so this is the marketing/newsletter signal.)
+    has_unsubscribe: !!getInternetHeader('List-Unsubscribe'),
     hasAttachments: message.hasAttachments || false,
     is_read: message.isRead ?? true,
     outlookInternalId: message.id, // Graph API message ID (needed for attachment calls)
@@ -587,6 +590,21 @@ export async function trashOutlookMessage(
   await client
     .api(`/me/messages/${outlookMessageId}/move`)
     .post({ destinationId: 'deleteditems' });
+}
+
+// Additive: tag a message with a category WITHOUT moving it. Reads current categories and appends
+// ours, so the user's own categories are never disturbed. Used for the triage write-back labels.
+export async function addOutlookCategory(
+  encryptedTokens: string,
+  outlookMessageId: string,
+  category: string,
+  onTokenRefresh?: TokenRefreshCallback,
+): Promise<void> {
+  const client = await getGraphClient(encryptedTokens, onTokenRefresh);
+  const msg = await client.api(`/me/messages/${outlookMessageId}`).select('categories').get();
+  const current: string[] = msg?.categories ?? [];
+  if (current.includes(category)) return;
+  await client.api(`/me/messages/${outlookMessageId}`).patch({ categories: [...current, category] });
 }
 
 // Build an onTokenRefresh callback that persists refreshed Outlook tokens back to the

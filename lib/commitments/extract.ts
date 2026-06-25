@@ -99,9 +99,10 @@ export async function extractEmailCommitments(opts: {
   counterparty: string | null;  // the other party (recipient if sent, sender if received)
   sourceId: string;
   threadId?: string | null;
+  instructions?: string;   // user's custom extraction guidance (Email tab → To-do capture)
   client: DBClient;
 }): Promise<number> {
-  const { userId, subject, body, isFromUser, userName, counterparty, sourceId, threadId, client } = opts;
+  const { userId, subject, body, isFromUser, userName, counterparty, sourceId, threadId, instructions, client } = opts;
   const text = (body || '').trim();
   if (text.length < 20 || !COMMITMENT_HINT.test(text)) return 0;
   // Received bulk/newsletter mail never carries a real commitment — skip before the AI call.
@@ -118,6 +119,8 @@ STRICTLY EXCLUDE and return an empty array if the message is a newsletter, promo
 
 ${perspective}
 
+Today is ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}. Resolve any relative deadline ("Friday", "next week", "by EOD", "in 3 days") to an absolute YYYY-MM-DD relative to today; null if none is stated.
+${instructions?.trim() ? `\nThe user added this guidance — follow it: ${instructions.trim()}\n` : ''}
 Subject: ${subject || '(none)'}
 Body:
 """

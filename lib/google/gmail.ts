@@ -238,6 +238,8 @@ export function parseGmailMessage(message: GmailMessage) {
     received_at: new Date(parseInt(message.internalDate)).toISOString(),
     thread_id: message.threadId,
     labels: message.labelIds || [],
+    // List-Unsubscribe is required by spec on bulk/newsletter mail; person-to-person never has it.
+    has_unsubscribe: !!getHeader('List-Unsubscribe'),
     attachments,
     metadata: {
       provider: 'gmail',
@@ -553,6 +555,21 @@ export async function moveGmailThreadToLabel(
     userId: 'me',
     id: threadId,
     requestBody: { addLabelIds: [labelId], removeLabelIds: ['INBOX'] },
+  });
+}
+
+// Additive: tag a thread with a label WITHOUT archiving it (keeps it in the inbox). Used for the
+// triage write-back labels so the user sees the AI's call in Gmail without anything being moved.
+export async function addGmailThreadLabel(
+  encryptedTokens: string,
+  threadId: string,
+  labelId: string,
+): Promise<void> {
+  const gmail = await getGmailClient(encryptedTokens);
+  await gmail.users.threads.modify({
+    userId: 'me',
+    id: threadId,
+    requestBody: { addLabelIds: [labelId] },
   });
 }
 

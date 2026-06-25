@@ -142,15 +142,20 @@ export async function POST(
     await supabase.from('inbox_items').update({ status: 'completed' }).eq('id', id).eq('user_id', user.id);
 
     // Chain handoff: a promise inside the reply ("I'll send X Friday") becomes a follow-up
-    // immediately — don't wait for the next sync. Keyword-gated inside the extractor.
-    void import('@/lib/commitments/extract').then(({ extractEmailCommitments }) =>
-      extractEmailCommitments({
+    // immediately — don't wait for the next sync. Gated on the user's To-do capture setting.
+    void (async () => {
+      const { getEmailSettings } = await import('@/lib/inbox/email-settings');
+      const settings = await getEmailSettings(user.id, supabase);
+      if (!settings.todo_auto) return;
+      const { extractEmailCommitments } = await import('@/lib/commitments/extract');
+      await extractEmailCommitments({
         userId: user.id, subject: sourceData.subject || '', body: norm(messageBody || ''),
         isFromUser: true, userName: null,
         counterparty: to || sourceData.from || null,
-        sourceId: sentMessageId, threadId: sourceData.thread_id || null, client: supabase,
-      }),
-    ).catch(() => {});
+        sourceId: sentMessageId, threadId: sourceData.thread_id || null,
+        instructions: settings.todo_instructions, client: supabase,
+      });
+    })().catch(() => {});
 
     return NextResponse.json({
       success: true,

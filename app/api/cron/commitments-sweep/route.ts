@@ -30,19 +30,58 @@ export async function GET(request: NextRequest) {
   let closed = 0, surfaced = 0;
 
   for (const c of open) {
-    // ── 1. Auto-close via thread activity (email commitments only) ─────────────
-    if (c.thread_id) {
-      const isUser = c.direction === 'you_owe'; // you fulfil → you send; they fulfil → they reply
-      const { data: activity } = await sb.from('emails')
-        .select('id').eq('user_id', c.user_id).eq('thread_id', c.thread_id)
-        .eq('is_from_user', isUser).gt('received_at', c.created_at).limit(1);
-      if (activity?.length) {
-        await sb.from('commitments').update({ status: 'done', updated_at: new Date().toISOString() }).eq('id', c.id);
-        // Remove any inbox item we surfaced for it — it's handled now.
-        await sb.from('inbox_items').delete().eq('user_id', c.user_id).eq('source', 'commitment').eq('source_id', c.id);
-        closed++;
-        continue;
+    // ── 1. Auto-close — CROSS-SOURCE: resolved by the right move in ANY thread, not just the
+    // original one. You fulfil a you_owe by SENDING to the counterparty (new email, reply, anywhere);
+    // an awaiting resolves when THEY write back (any thread). This also makes follow-up timing
+    // context-aware — progressing items close here, so only genuinely-stalled ones survive to aging.
+    const youFulfil = c.direction === 'you_owe'; // you fulfil → you send; they fulfil → they reply
+    // Resolve the counterparty's email so we can match across threads. Counterparty is often stored
+    // as "Name <email>" — extract the address (or a bare email); a name-only value stays null.
+    const cpRaw = c.counterparty ? String(c.counterparty) : '';
+    let cpEmail: string | null = (cpRaw.match(/<\s*([^>\s]+@[^>\s]+)\s*>/)?.[1] || cpRaw.match(/[^\s<>]+@[^\s<>]+/)?.[0] || null);
+    if (cpEmail) cpEmail = cpEmail.toLowerCase();
+    if (!cpEmail && c.thread_id) {
+      const { data: inc } = await sb.from('emails').select('from_address')
+        .eq('user_id', c.user_id).eq('thread_id', c.thread_id).eq('is_from_user', false).limit(1).maybeSingle();
+      cpEmail = inc?.from_address ? String(inc.from_address).toLowerCase() : null;
+    }
+    // Meeting commitment (no thread, name-based counterparty) — resolve the counterparty's email
+    // from the meeting's attendees, so meeting commitments also auto-resolve cross-source.
+    if (!cpEmail && c.source === 'meeting' && c.source_id && c.counterparty) {
+      const { data: t } = await sb.from('meeting_transcripts').select('calendar_event_id').eq('id', c.source_id).maybeSingle();
+      if (t?.calendar_event_id) {
+        const { data: ev } = await sb.from('calendar_events').select('attendees').eq('id', t.calendar_event_id).maybeSingle();
+        const cp = String(c.counterparty).toLowerCase().trim();
+        const first = cp.split(/\s+/)[0];
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const att = ((ev?.attendees as any[]) || []).find((a) => {
+          const name = String(a?.name || '').toLowerCase();
+          const email = String(a?.email || '').toLowerCase();
+          return email && (name === cp || (first.length > 2 && (name.includes(first) || email.split('@')[0].includes(first))) || (name && cp.includes(name)));
+        });
+        cpEmail = att?.email ? String(att.email).toLowerCase() : null;
       }
+    }
+    let resolved = false;
+    if (c.thread_id) {
+      const { data } = await sb.from('emails').select('id')
+        .eq('user_id', c.user_id).eq('thread_id', c.thread_id).eq('is_from_user', youFulfil)
+        .gt('received_at', c.created_at).limit(1);
+      if (data?.length) resolved = true;
+    }
+    if (!resolved && cpEmail) {
+      const base = sb.from('emails').select('id').eq('user_id', c.user_id).eq('is_from_user', youFulfil).gt('received_at', c.created_at);
+      const { data } = youFulfil
+        ? await base.contains('to_addresses', [cpEmail]).limit(1)   // you sent to them, any thread
+        : await base.ilike('from_address', cpEmail).limit(1);        // they wrote back, any thread
+      if (data?.length) resolved = true;
+    }
+    if (resolved) {
+      await sb.from('commitments').update({ status: 'done', updated_at: new Date().toISOString() }).eq('id', c.id);
+      // Remove any inbox item we surfaced for it — it's handled now.
+      await sb.from('inbox_items').delete().eq('user_id', c.user_id).eq('source', 'commitment').eq('source_id', c.id);
+      closed++;
+      continue;
     }
 
     // ── 2. Aging? ──────────────────────────────────────────────────────────────

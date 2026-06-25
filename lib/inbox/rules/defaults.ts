@@ -1,24 +1,12 @@
-// Seed default rules — our adaptation of Serif's set. Deterministic noise rules first (cheap,
-// reliable), then AI-match rules. These are the system's behavior out of the box; users can
-// edit/reorder/disable them once the Email tab ships. See docs/email-rules-engine-plan.md.
+// Seed default rules — adapted from Serif. Provider-aware: an inbox is seeded with the rules that
+// make sense for ITS provider on connect, so a user never sees (or has to delete) rules that
+// don't apply to their mailbox. Deterministic noise rules first (cheap), then AI rules.
+// See docs/email-rules-engine-plan.md.
 
 import type { InboxRule } from './types';
 
-export const DEFAULT_RULES: InboxRule[] = [
-  // ── Deterministic (evaluated first, no AI) ──────────────────────────────────
-  {
-    name: 'No-reply / automated senders',
-    enabled: true, priority: 10, trigger: 'received', match_mode: 'any', ai_match: null,
-    conditions: [
-      { field: 'from', value: 'no-reply' },
-      { field: 'from', value: 'noreply' },
-      { field: 'from', value: 'do-not-reply' },
-      { field: 'from', value: 'donotreply' },
-      { field: 'from', value: 'notifications@' },
-      { field: 'from', value: 'mailer-daemon' },
-    ],
-    outcome: { set_type: 'notifications' }, source: 'default',
-  },
+// Gmail-only deterministic rules (Gmail's native category labels).
+const GMAIL_RULES: InboxRule[] = [
   {
     name: 'Gmail Promotions, Social & Forums',
     enabled: true, priority: 20, trigger: 'received', match_mode: 'any', ai_match: null,
@@ -35,8 +23,23 @@ export const DEFAULT_RULES: InboxRule[] = [
     conditions: [{ field: 'has_label', value: 'CATEGORY_UPDATES' }],
     outcome: { set_type: 'notifications' }, source: 'default',
   },
+];
 
-  // ── AI-match (evaluated after deterministic) ────────────────────────────────
+// Rules that apply to any provider.
+const COMMON_RULES: InboxRule[] = [
+  {
+    name: 'No-reply / automated senders',
+    enabled: true, priority: 10, trigger: 'received', match_mode: 'any', ai_match: null,
+    conditions: [
+      { field: 'from', value: 'no-reply' },
+      { field: 'from', value: 'noreply' },
+      { field: 'from', value: 'do-not-reply' },
+      { field: 'from', value: 'donotreply' },
+      { field: 'from', value: 'notifications@' },
+      { field: 'from', value: 'mailer-daemon' },
+    ],
+    outcome: { set_type: 'notifications' }, source: 'default',
+  },
   {
     name: 'Urgent — needs my attention',
     enabled: true, priority: 40, trigger: 'received', match_mode: 'all', conditions: [],
@@ -73,8 +76,6 @@ export const DEFAULT_RULES: InboxRule[] = [
     ai_match: "Contains useful information relevant to me but does not require a reply.",
     outcome: { set_type: 'fyi' }, source: 'default',
   },
-
-  // ── Sent-mail rules (our resolution-on-reply + waiting-on, as rules) ─────────
   {
     name: 'Waiting for reply',
     enabled: true, priority: 100, trigger: 'sent', match_mode: 'all', conditions: [],
@@ -88,3 +89,11 @@ export const DEFAULT_RULES: InboxRule[] = [
     outcome: { set_type: 'done' }, source: 'default',
   },
 ];
+
+// The defaults to seed for a newly-connected inbox, by provider.
+export function defaultRulesForProvider(provider: string): InboxRule[] {
+  return provider === 'gmail' ? [...GMAIL_RULES, ...COMMON_RULES] : [...COMMON_RULES];
+}
+
+// Generic fallback (provider-specific rules self-guard via their conditions).
+export const DEFAULT_RULES: InboxRule[] = [...GMAIL_RULES, ...COMMON_RULES];

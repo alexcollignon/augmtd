@@ -19,6 +19,7 @@ import ComposePanel from '@/components/inbox/compose-panel';
 import { toast } from 'sonner';
 import type { CalendarEvent } from '@/lib/types/meetings';
 import type { InboxItem } from '@/lib/types/inbox';
+import { setInboxRules } from '@/lib/inbox/classify-item';
 import { Button, EmptyState } from '@/components/ui';
 
 
@@ -182,6 +183,15 @@ export function InboxPageClient({
   // without stale closure issues. Updated on every render — intentionally no deps.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { selectedItemRef.current = selectedItem; });
+  // Load the user's triage rules into the classifier cache so their edited (deterministic) rules
+  // drive grouping, not just the seeds. Bumping state re-runs classifyItem with the loaded rules.
+  const [, setRulesVersion] = useState(0);
+  useEffect(() => {
+    fetch('/api/inbox/rules').then(r => r.json()).then(d => {
+      setInboxRules(d.rules ?? null);
+      setRulesVersion(v => v + 1);
+    }).catch(() => {});
+  }, []);
   const [isSyncing, setIsSyncing] = useState(false);
   const [meetings, setMeetings] = useState<CalendarEvent[]>([]);
   const [meetingsLoading, setMeetingsLoading] = useState(true);

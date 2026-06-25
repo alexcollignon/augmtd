@@ -141,3 +141,47 @@ export async function buildMeetingFollowupContext(
   const summary = m.summary.length > 1200 ? m.summary.slice(0, 1200) + '…' : m.summary;
   return `[RECENT MEETING WITH THIS PERSON — "${m.title || 'meeting'}" on ${date}. Ground the follow-up in what was actually discussed/agreed here; don't invent.]\n${summary}`;
 }
+
+// Structured variant for the Home digest reminder: the most recent past meeting with a person,
+// distilled to a one-line recall ("Last time with X: …"). Same match path as above.
+export async function lastMeetingRecall(
+  userId: string,
+  recipientEmail: string | null,
+  client: DBClient,
+): Promise<{ title: string; date: string; recall: string } | null> {
+  const rcpt = recipientEmail?.toLowerCase().trim();
+  if (!rcpt) return null;
+
+  const since = new Date();
+  since.setDate(since.getDate() - 30);
+
+  const { data: transcripts } = await client
+    .from('meeting_transcripts')
+    .select('title, summary, created_at, calendar_event_id')
+    .eq('user_id', userId)
+    .gte('created_at', since.toISOString())
+    .not('summary', 'is', null)
+    .order('created_at', { ascending: false })
+    .limit(10);
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const eventIds = (transcripts ?? []).map((t: any) => t.calendar_event_id).filter(Boolean);
+  if (!eventIds.length) return null;
+
+  const { data: events } = await client.from('calendar_events').select('id, attendees').in('id', eventIds);
+  const matchIds = new Set((events ?? [])
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    .filter((e: any) => (e.attendees ?? []).some((a: any) => (a?.email || '').toLowerCase() === rcpt))
+    .map((e: { id: string }) => e.id));
+  if (!matchIds.size) return null;
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const m = (transcripts ?? []).find((t: any) => matchIds.has(t.calendar_event_id)) as
+    { title: string | null; summary: string | null; created_at: string } | undefined;
+  if (!m?.summary) return null;
+
+  const date = new Date(m.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  // First one or two sentences, capped — the digest wants a glance, not the whole summary.
+  const recall = m.summary.replace(/\s+/g, ' ').trim().split(/(?<=[.!?])\s/).slice(0, 2).join(' ').slice(0, 240);
+  return { title: m.title || 'your last meeting', date, recall };
+}

@@ -361,8 +361,8 @@ async function backfillThreadHistory(params: {
     const rowsToInsert = fetchedMessages
       .filter(m => m.message_id && !knownMessageIds.has(m.message_id))
       .map(m => {
-        // Strip parser-only fields before insert
-        const { attachments: _a, hasAttachments: _ha, outlookInternalId: _oid, ...dbFields } = m as any;
+        // Strip parser-only fields before insert (not columns on emails)
+        const { attachments: _a, hasAttachments: _ha, outlookInternalId: _oid, has_unsubscribe: _hu, ...dbFields } = m as any;
         return stripNulls({
           user_id: connection.user_id,
           connection_id: connection.id,
@@ -473,10 +473,13 @@ export async function syncEmailsForConnection(
     console.log(`Fetched ${messages.length} ${connection.provider} emails for user ${connection.user_id}`);
 
     // Fetch user context, calendar context, identity block in parallel
-    const [userContext, calendarContext, userContextBlock] = await Promise.all([
+    const [userContext, calendarContext, userContextBlock, emailSettings, userRules] = await Promise.all([
       getUserContext(connection.user_id, adminSupabase),
       getCalendarContext(connection.user_id, adminSupabase),
       buildUserContextBlock(connection.user_id, adminSupabase),
+      (await import('@/lib/inbox/email-settings')).getEmailSettings(connection.user_id, adminSupabase),
+      // This inbox's own rules (provider-appropriate defaults if not yet customized).
+      (await import('@/lib/inbox/rules/load')).loadInboxRules(connection.id, connection.provider, adminSupabase),
     ]);
 
     if (userContext) {
@@ -522,6 +525,37 @@ export async function syncEmailsForConnection(
     }));
 
     const classMap = await batchClassifyEmails(envelopes, connection.user_id, adminSupabase);
+
+    // AI-match rules drive the type via ONE batched call (they're shown as AI rules, so they run
+    // as AI — default, edited, or added alike). Heuristics in classifyItem are only the fallback.
+    // Keyed by envelope index; scoped to actionable emails (where the typed label matters).
+    const ruleMap = new Map<string, string>();
+    try {
+      const { activeAiRules } = await import('@/lib/inbox/rules/load');
+      const aiRules = activeAiRules(userRules);
+      if (aiRules.length) {
+        // Run the rules on the fyi tier too (everything except noise), so they're no longer
+        // BYPASSED by the pre-filter — and let an ACTIONABLE rule promote a fyi-classed email up to
+        // full processing. (batchMatchRules deterministic-filters before the AI call, so no-reply
+        // senders never reach it.) Full rule set passed.
+        const ruleEnvelopes = envelopes.filter((_e, i) => classMap.get(String(i)) !== 'noise');
+        const { batchMatchRules } = await import('@/lib/inbox/rules/batch-match');
+        const matched = await batchMatchRules(ruleEnvelopes, userRules, connection.user_id, adminSupabase);
+        const ACTIONABLE = new Set(['needs_reply', 'to_do', 'waiting_on']);
+        for (const [id, label] of matched) {
+          ruleMap.set(id, label);
+          // A rule saying "you need to act" overrides a fyi pre-filter verdict → full processing.
+          if (ACTIONABLE.has(label) && classMap.get(id) === 'fyi_only') classMap.set(id, 'process');
+        }
+      }
+    } catch (e) { console.warn('[Rules] AI-match pass skipped:', e); }
+
+    // Write-back label cache (Gmail): created once per connection when label mirroring is on.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let gmailLabelCache: any = undefined;
+    if (emailSettings.auto_label && connection.provider === 'gmail') {
+      gmailLabelCache = new (await import('@/lib/inbox/rules/write-back')).GmailLabelCache(connection.metadata?.tokens);
+    }
 
     // Build routing inputs for process-class emails
     const processEnvelopes = parsedMessages
@@ -614,6 +648,7 @@ export async function syncEmailsForConnection(
       calendarEventId: string | null;
       hasCalendarInvite: boolean;
       isForwarded: boolean;
+      ruleLabel?: string | null;
     }
     const processQueue: _ProcessQueueItem[] = [];
 
@@ -737,6 +772,7 @@ export async function syncEmailsForConnection(
             calendarEventId: null,
             hasCalendarInvite: false,
             isForwarded,
+            ruleLabel: ruleMap.get(String(_msgIdx)) ?? null,
           });
           continue;
         }
@@ -834,7 +870,7 @@ export async function syncEmailsForConnection(
           });
 
           // Capture commitments the user made in this sent email (keyword-gated AI; you-owe).
-          void import('@/lib/commitments/extract').then(({ extractEmailCommitments }) =>
+          if (emailSettings.todo_auto) void import('@/lib/commitments/extract').then(({ extractEmailCommitments }) =>
             extractEmailCommitments({
               userId: connection.user_id,
               subject: storedEmail.subject || '',
@@ -844,6 +880,7 @@ export async function syncEmailsForConnection(
               counterparty: (storedEmail.to_addresses || [])[0] || null,
               sourceId: storedEmail.id,
               threadId: storedEmail.thread_id || null,
+              instructions: emailSettings.todo_instructions,
               client: adminSupabase,
             }),
           ).catch(() => {});
@@ -864,7 +901,7 @@ export async function syncEmailsForConnection(
 
         // Capture commitments asked of / promised to the user in this received email
         // (others' asks → you_owe, others' promises → awaiting). Only actionable mail.
-        if (emailClass === 'process') {
+        if (emailClass === 'process' && emailSettings.todo_auto) {
           void import('@/lib/commitments/extract').then(({ extractEmailCommitments }) =>
             extractEmailCommitments({
               userId: connection.user_id,
@@ -875,6 +912,7 @@ export async function syncEmailsForConnection(
               counterparty: storedEmail.from_address || null,
               sourceId: storedEmail.id,
               threadId: storedEmail.thread_id || null,
+              instructions: emailSettings.todo_instructions,
               client: adminSupabase,
             }),
           ).catch(() => {});
@@ -1104,7 +1142,7 @@ export async function syncEmailsForConnection(
         }
 
         // Queue for Phase 2 parallel AI processing
-        processQueue.push({ parsed, storedEmail, processedAttachments, calendarEventId, hasCalendarInvite, isForwarded });
+        processQueue.push({ parsed, storedEmail, processedAttachments, calendarEventId, hasCalendarInvite, isForwarded, ruleLabel: ruleMap.get(String(_msgIdx)) ?? null });
 
       } catch (emailError) {
         console.error('Error processing email:', emailError);
@@ -1322,6 +1360,7 @@ export async function syncEmailsForConnection(
               .update(stripNulls({
                 connection_id: connection.id,
                 work_state: recipient.inferredWorkState,
+                rule_type: qItem.ruleLabel ?? null,
                 work_title: processed.workTitle,
                 item_type: processed.itemType,
 
@@ -1355,6 +1394,10 @@ export async function syncEmailsForConnection(
                   html_body: ((emailForProcessing as any).html_body as string | null)?.slice(0, 15000) || null,
                   received_at: emailForProcessing.received_at,
                   provider: connection.provider,
+                  // Bulk-mail signals (deterministic): List-Unsubscribe → newsletter; Gmail
+                  // labelIds → marketing (CATEGORY_PROMOTIONS) + native category rules.
+                  has_unsubscribe: !!(parsed as { has_unsubscribe?: boolean }).has_unsubscribe,
+                  gmail_labels: (parsed as { labels?: string[] }).labels ?? [],
                   calendar_event_id: calendarEventId || undefined,
                   isForwarded,
                   thread_history: threadEmails?.map(e => ({
@@ -1380,6 +1423,22 @@ export async function syncEmailsForConnection(
               _batchResult.errors.push(`Failed to update inbox item: ${updateError.message}`);
             } else {
               console.log(`       ✓ Updated inbox item`);
+              // Mirror the triage label into Gmail/Outlook (additive, namespaced) when write-back
+              // is on. EVERY classified email is labelled — the AI rule's label if one matched,
+              // otherwise the label derived from its work_state — so labels aren't limited to
+              // AI-matched mail. Non-fatal.
+              if (emailSettings.auto_label) {
+                void import('@/lib/inbox/rules/write-back').then(({ writeBackLabel, mapWorkStateToLabel }) =>
+                  writeBackLabel({
+                    provider: connection.provider,
+                    encryptedTokens: connection.metadata?.tokens,
+                    label: qItem.ruleLabel ?? mapWorkStateToLabel(recipient.inferredWorkState),
+                    gmailThreadId: qItem.storedEmail.thread_id,
+                    gmailCache: gmailLabelCache,
+                    outlookMessageId: qItem.storedEmail.metadata?.outlook_id ?? qItem.storedEmail.message_id,
+                  }),
+                ).catch(() => {});
+              }
             }
 
             continue; // Continue to next recipient
@@ -1552,7 +1611,7 @@ export async function syncEmailsForConnection(
         const userEmail = connection.metadata?.email || connection.provider_account_id;
         const sentRows = sentMessages.map(m => {
           // eslint-disable-next-line @typescript-eslint/no-unused-vars
-          const { attachments, hasAttachments: _ha, outlookInternalId: _oid, ...dbFields } = m as any;
+          const { attachments, hasAttachments: _ha, outlookInternalId: _oid, has_unsubscribe: _hu, ...dbFields } = m as any;
           // Store attachment metadata (filenames/sizes) without downloading content
           const attachmentMeta = Array.isArray(attachments) && attachments.length > 0
             ? attachments.map((a: any) => ({ filename: a.filename, mimeType: a.mimeType, size: a.size ?? null }))
