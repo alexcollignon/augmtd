@@ -113,13 +113,21 @@ function PriorityCard({ p, first, expanded, onToggle }: { p: Priority; first: bo
   );
 }
 
-// Must-respond item — "See draft" generates the reply on click (on-demand, so AI is only spent on
-// replies you actually open), shown inline with copy / open-in-inbox.
-function MustRespondItem({ m, index }: { m: { who: string; ask: string; angle: string; itemId: string }; index: number }) {
-  const [draft, setDraft] = useState<string | null>(null);
+// Must-respond item. If the auto-draft sweep already prepared a reply (`m.draft`), the card shows
+// "Draft ready" — open it to review the pre-filled draft, edit, and Send (right here, Home-only).
+// Otherwise "See draft" generates one on demand. Sending posts to /send-reply.
+function MustRespondItem({ m, index }: { m: { who: string; ask: string; angle: string; itemId: string; draft?: string | null }; index: number }) {
+  const [draft, setDraft] = useState<string | null>(m.draft ?? null);
+  const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [sent, setSent] = useState(false);
   const [copied, setCopied] = useState(false);
-  const seeDraft = async () => {
+  const ready = !!m.draft;
+
+  const toggle = async () => {
+    if (open) { setOpen(false); return; }
+    setOpen(true);
     if (draft || loading || !m.itemId) return;
     setLoading(true);
     try {
@@ -128,6 +136,18 @@ function MustRespondItem({ m, index }: { m: { who: string; ask: string; angle: s
       setDraft(d.draft || 'Could not draft a reply.');
     } catch { setDraft('Could not draft a reply.'); } finally { setLoading(false); }
   };
+  const send = async () => {
+    if (!draft || sending || !m.itemId) return;
+    setSending(true);
+    try {
+      const res = await fetch(`/api/inbox/${m.itemId}/send-reply`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ customMessage: draft }),
+      });
+      if (res.ok) { setSent(true); setOpen(false); }
+    } catch { /* leave open to retry */ } finally { setSending(false); }
+  };
+
   return (
     <li className="flex flex-col gap-2">
       <div className="flex gap-2.5">
@@ -137,21 +157,26 @@ function MustRespondItem({ m, index }: { m: { who: string; ask: string; angle: s
           {m.ask && <p className="text-[12.5px] text-neutral-500 mt-0.5 leading-snug">{m.ask}</p>}
           {m.angle && <p className="text-[12.5px] text-neutral-600 mt-1 leading-snug"><span className="font-medium text-neutral-700">Angle:</span> {m.angle}</p>}
         </div>
-        {m.itemId && (
-          <button onClick={seeDraft} disabled={loading || !!draft}
-            className="flex-shrink-0 self-start inline-flex items-center gap-1 rounded-lg bg-neutral-50 border border-neutral-200 px-2.5 py-1 text-[12px] font-medium text-neutral-700 hover:bg-indigo-50 hover:text-indigo-700 disabled:opacity-60 transition-colors">
-            {loading ? 'Drafting…' : draft ? 'Drafted' : 'See draft'}
+        {sent ? (
+          <span className="flex-shrink-0 self-start inline-flex items-center gap-1 text-[12px] font-medium text-emerald-600">Sent ✓</span>
+        ) : m.itemId && (
+          <button onClick={toggle} disabled={loading}
+            className={`flex-shrink-0 self-start inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-[12px] font-medium transition-colors disabled:opacity-60 ${ready && !open ? 'bg-indigo-50 text-indigo-700 border border-indigo-200' : 'bg-neutral-50 border border-neutral-200 text-neutral-700 hover:bg-indigo-50 hover:text-indigo-700'}`}>
+            {loading ? 'Drafting…' : open ? 'Hide' : ready ? '✦ Draft ready' : 'See draft'}
           </button>
         )}
       </div>
       {loading && <div className="ml-7 h-16 rounded-xl bg-neutral-100 animate-pulse" />}
-      {draft && (
+      {open && draft && !sent && (
         <div className="ml-7 rounded-xl border border-neutral-200 bg-neutral-50/70 p-3">
-          <p className="text-[12.5px] text-neutral-700 whitespace-pre-wrap leading-relaxed">{draft}</p>
+          <textarea value={draft} onChange={(e) => setDraft(e.target.value)}
+            rows={Math.min(14, Math.max(4, draft.split('\n').length + 1))}
+            className="w-full bg-transparent text-[12.5px] text-neutral-700 leading-relaxed resize-none focus:outline-none" />
           <div className="mt-2.5 flex items-center gap-3">
-            <button onClick={() => { navigator.clipboard?.writeText(draft); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
-              className="text-[12px] font-medium text-indigo-600 hover:text-indigo-700">{copied ? 'Copied' : 'Copy'}</button>
-            <Link href="/inbox" className="text-[12px] text-neutral-500 hover:text-neutral-800">Open in inbox to send →</Link>
+            <button onClick={send} disabled={sending}
+              className="inline-flex items-center rounded-lg bg-indigo-600 text-white px-3 py-1 text-[12px] font-medium hover:bg-indigo-700 disabled:opacity-60 transition-colors">{sending ? 'Sending…' : 'Send'}</button>
+            <button onClick={() => { if (draft) { navigator.clipboard?.writeText(draft); setCopied(true); setTimeout(() => setCopied(false), 1500); } }}
+              className="text-[12px] font-medium text-neutral-600 hover:text-neutral-800">{copied ? 'Copied' : 'Copy'}</button>
           </div>
         </div>
       )}
