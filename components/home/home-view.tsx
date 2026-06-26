@@ -235,7 +235,7 @@ export function HomeView() {
   // Skeleton MIRRORS the real layout (header + two columns) so there's no reflow on load.
   if (loading) {
     return (
-      <div className="h-full overflow-y-auto bg-neutral-50/40">
+      <div className="flex-1 min-w-0 h-full overflow-y-auto bg-neutral-50/40">
         <div className="px-8 py-10">
           <div className="h-8 w-64 rounded-lg bg-neutral-100 animate-pulse" />
           <div className="h-4 w-[28rem] max-w-full rounded bg-neutral-100 animate-pulse mt-3" />
@@ -264,7 +264,7 @@ export function HomeView() {
   const nothing = b && !b.priorities.length && !b.commitments.length && !b.waitingOn.length && !b.schedule.length && !(team?.messages.length || team?.needsReview.length);
 
   return (
-    <div className="h-full overflow-y-auto bg-neutral-50/40">
+    <div className="flex-1 min-w-0 h-full overflow-y-auto bg-neutral-50/40">
       <div className="px-8 py-10">
         {/* Header + narration + live status chips */}
         <RiseIn>
