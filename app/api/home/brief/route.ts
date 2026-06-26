@@ -350,5 +350,17 @@ export async function GET() {
     await supabase.from('profiles').update({ home_brief: { text: briefLine, tldr, followups, fyiDigest, mustRespond, generated_at: now.toISOString(), sig } }).eq('id', user.id).then(() => {}, () => {});
   }
 
-  return NextResponse.json({ firstName, briefLine, tldr, followups, fyiDigest, mustRespond, status, priorities: cappedPriorities, commitments, waitingOn, schedule, handled });
+  // Attach any prepared auto-draft (from the draft-sweep) to its must-respond item, so the Home can
+  // show "Draft ready" + a pre-filled, editable, sendable reply. Done at response time so it reflects
+  // the latest draft even when the brief prose is served from cache.
+  const draftByItem = new Map<string, string>();
+  for (const it of items) {
+    const b = (it.source_data as { draft?: { body?: string } })?.draft?.body;
+    if (b && it.id) draftByItem.set(it.id, b);
+  }
+  const mustRespondOut = mustRespond
+    ? { ...mustRespond, items: mustRespond.items.map((r) => ({ ...r, draft: draftByItem.get(r.itemId) ?? null })) }
+    : mustRespond;
+
+  return NextResponse.json({ firstName, briefLine, tldr, followups, fyiDigest, mustRespond: mustRespondOut, status, priorities: cappedPriorities, commitments, waitingOn, schedule, handled });
 }

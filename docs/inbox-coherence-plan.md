@@ -121,16 +121,33 @@ as FYI — not Needs reply.
 
 ---
 
-## Sequence
-1. Recipient-aware needs_reply (item 4) — precision fix, cheap, improves everything downstream.
-2. Three-state draft mode + rules review (item 3) — unblocks the draft affordance's gating.
-3. See draft in inbox detail (item 2) — the visible win.
-4. Brief cadence (item 1) — the "feels live" win.
+## Progress
+- ✅ **Recipient-aware needs_reply (item 4)** — shipped + deployed.
+- ✅ **Draft model (item 2)** — two master toggles gating per-rule behavior; per-rule toggle already
+  existed; **auto-draft generation wired** (`draft-sweep` cron + `draft-reply.ts`); CC/BCC toggle
+  removed. Shipped + deployed.
+- ✅ **Prepared drafts in the Home (item 3, scoped to Home only)** — `MustRespondItem` now shows
+  **"✦ Draft ready"** when the sweep prepared a reply, opens to a **pre-filled, editable** draft with
+  **Send** (→ `/send-reply`) + Copy; `/api/home/brief` attaches `source_data.draft.body` per item.
+  **Decision: drafts live ONLY in the Home** — not the inbox detail.
 
-Each is independently shippable. Suggest one commit per item, merge + deploy after each so you can
-eyeball it on real mail before the next.
+## Remaining
+**Item 1 — Home brief cadence → live, WITH an "always alive" visual.**
+- Cadence: fold the latest actionable item's `created_at` + latest `commitments.updated_at` into the
+  brief cache signature (new reply-needed mail busts it immediately); structured sections recompute
+  per load, only AI prose stays cached.
+- **Alive visual (modern/professional, à la Linear/Vercel):** a thin **flowing gradient** accent
+  (indigo→violet→transparent) that slowly drifts along the top edge / under the greeting via a slow CSS
+  keyframe; a small **"Live" pill with a softly pulsing dot**; a **gentle shimmer** on the brief card
+  the moment it refreshes (ties the motion to the cadence — shimmer = "just updated"). Restrained, slow,
+  low-opacity — premium, not a spinner.
+
+**Ops — cover the other users (not a reconnect).** The code is live for everyone for NEW mail, but only
+this account was backfilled, and **2 of 4 active-email users have no rules** (so no auto-draft). Task:
+seed per-inbox rules for users missing them + run the one-time backfill (re-classify, `is_cc_only`,
+labels, pre-drafts) per user. No disconnect/reconnect required.
 
 ## Deferred (not this session)
-- FYI quick-action components (archive/mark-done) — after the draft affordance.
+- FYI quick-action components (archive/mark-done).
 - Semantic exemplars for the voice drafter (Slice 2).
 - The two-way INBOUND phase (Slack + email replies → coworker).
