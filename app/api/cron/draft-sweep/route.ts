@@ -38,10 +38,14 @@ export async function GET(request: NextRequest) {
     const instructions = rules.find(r => r.enabled && r.outcome?.auto_draft?.enabled)?.outcome.auto_draft?.instructions ?? null;
 
     setInboxRules(rules); // so classifyItem uses this user's rules
+    // Fetch the actionable candidates, not just the most recent — needs_reply items can sit well
+    // below a wall of newsletters. rule_type set OR an action work_state covers them; classifyItem
+    // makes the final call. (Plain fyi/noise are excluded by both conditions.)
     const { data: items } = await sb.from('inbox_items')
       .select('id, source_data, work_state, rule_type, type_override, status, source')
       .eq('user_id', p.id).eq('status', 'pending')
-      .order('created_at', { ascending: false }).limit(80);
+      .or('rule_type.not.is.null,work_state.in.(work_prepared,decision_required,action_required)')
+      .order('created_at', { ascending: false }).limit(200);
 
     let any = false;
     for (const it of items ?? []) {
