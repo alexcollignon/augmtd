@@ -241,7 +241,12 @@ export async function GET() {
   const overdueC = commitments.filter((c) => c.overdue).length;
   const overdueP = cappedPriorities.filter((p) => p.overdue).length;
   const fyiSig = fyiTop.map((g) => `${g.label}:${g.count}`).join(',');
-  const sig = `${emailP}|${meetingP}|${commitP}|${overdueP}|${overdueC}|${status.waitingOn}|${schedule.length}|${fyiSig}`;
+  // Freshness: the newest pending item's timestamp (items are ordered created_at desc) + the newest
+  // commitment update. Folding these into the signature makes the brief regenerate the moment new
+  // actionable mail lands — not just every 3h — so it feels live.
+  const freshest = (items[0]?.created_at as string) ?? '';
+  const commitFresh = commits.reduce((mx, c) => (c.updated_at && c.updated_at > mx ? c.updated_at : mx), '');
+  const sig = `${emailP}|${meetingP}|${commitP}|${overdueP}|${overdueC}|${status.waitingOn}|${schedule.length}|${fyiSig}|${freshest}|${commitFresh}`;
 
   const fullName = (profileRes.data as { full_name?: string } | null)?.full_name ?? null;
   const firstName = fullName?.split(' ')[0] ?? null;

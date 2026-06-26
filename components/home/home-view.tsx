@@ -268,7 +268,19 @@ export function HomeView() {
       <div className="px-8 py-10">
         {/* Header + narration + live status chips */}
         <RiseIn>
+          {/* "Always alive" — a Live pill + a slow flowing gradient accent under the greeting. */}
+          <style>{`@keyframes augFlow{0%{background-position:0% 50%}100%{background-position:-200% 50%}}@keyframes augBreathe{0%,100%{opacity:1}50%{opacity:.4}}`}</style>
+          <div className="flex items-center gap-2 mb-3">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-50 border border-indigo-100 px-2 py-0.5 text-[10.5px] font-medium text-indigo-600 tracking-wide uppercase">
+              <span className="relative flex h-1.5 w-1.5">
+                <span className="absolute inline-flex h-full w-full rounded-full bg-indigo-400" style={{ animation: 'augBreathe 1.8s ease-in-out infinite' }} />
+                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-indigo-500" />
+              </span>
+              Live
+            </span>
+          </div>
           <h1 className="text-[26px] font-semibold tracking-tight text-neutral-900">{greeting()}{b?.firstName ? `, ${b.firstName}` : ''}</h1>
+          <div className="mt-3 h-[2px] w-36 rounded-full bg-[linear-gradient(90deg,transparent,#6366f1,#8b5cf6,#6366f1,transparent)] bg-[length:200%_100%]" style={{ animation: 'augFlow 3.5s linear infinite' }} />
           {b?.tldr && (b.tldr.bullets.length > 0 || b.tldr.dontMiss) ? (
             <div className="mt-3 max-w-[660px]">
               {b.tldr.teaser && <p className="text-[14.5px] text-neutral-500 leading-relaxed mb-2.5">{b.tldr.teaser}</p>}
