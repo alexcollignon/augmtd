@@ -268,51 +268,70 @@ export function HomeView() {
       <div className="px-8 py-10">
         {/* Header + narration + live status chips */}
         <RiseIn>
-          {/* "Always alive" — a Live pill + a slow flowing gradient accent under the greeting. */}
-          <style>{`@keyframes augFlow{0%{background-position:0% 50%}100%{background-position:-200% 50%}}@keyframes augBreathe{0%,100%{opacity:1}50%{opacity:.4}}`}</style>
-          <div className="flex items-center gap-2 mb-3">
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-50 border border-indigo-100 px-2 py-0.5 text-[10.5px] font-medium text-indigo-600 tracking-wide uppercase">
-              <span className="relative flex h-1.5 w-1.5">
-                <span className="absolute inline-flex h-full w-full rounded-full bg-indigo-400" style={{ animation: 'augBreathe 1.8s ease-in-out infinite' }} />
-                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-indigo-500" />
-              </span>
-              Live
-            </span>
-          </div>
-          <h1 className="text-[26px] font-semibold tracking-tight text-neutral-900">{greeting()}{b?.firstName ? `, ${b.firstName}` : ''}</h1>
-          <div className="mt-3 h-[2px] w-36 rounded-full bg-[linear-gradient(90deg,transparent,#6366f1,#8b5cf6,#6366f1,transparent)] bg-[length:200%_100%]" style={{ animation: 'augFlow 3.5s linear infinite' }} />
-          {b?.tldr && (b.tldr.bullets.length > 0 || b.tldr.dontMiss) ? (
-            <div className="mt-3 max-w-[660px]">
-              {b.tldr.teaser && <p className="text-[14.5px] text-neutral-500 leading-relaxed mb-2.5">{b.tldr.teaser}</p>}
-              {b.tldr.bullets.length > 0 && (
-                <ul className="space-y-1.5">
-                  {b.tldr.bullets.map((bl, i) => (
-                    <li key={i} className="flex items-start gap-2.5 text-[13.5px] text-neutral-600 leading-relaxed">
-                      <span className="mt-[7px] w-1 h-1 rounded-full bg-neutral-300 flex-shrink-0" />
-                      <span>{bl}</span>
-                    </li>
+          {/* Living orb — abstract morphing glow in the brand spectrum, signalling the brief is
+              continuously alive. Sits left so the greeting + narrative use the full width. */}
+          <style>{`
+            @keyframes augM1{0%,100%{transform:translate(0,0) scale(1)}33%{transform:translate(9px,-5px) scale(1.4)}66%{transform:translate(4px,6px) scale(.7)}}
+            @keyframes augM2{0%,100%{transform:translate(0,0) scale(1)}33%{transform:translate(-8px,6px) scale(.78)}66%{transform:translate(8px,-5px) scale(1.35)}}
+            @keyframes augM3{0%,100%{transform:translate(0,0) scale(.85)}50%{transform:translate(-7px,-6px) scale(1.3)}}
+            @keyframes augSpin{to{transform:rotate(360deg)}}
+            @keyframes augSpinR{to{transform:rotate(-360deg)}}
+            @keyframes augBreathe{0%,100%{opacity:.85;transform:scale(1)}50%{opacity:.45;transform:scale(1.12)}}
+          `}</style>
+          <div className="flex items-start gap-5">
+            <div className="relative flex-shrink-0 w-[72px] h-[72px] mt-1" aria-hidden="true">
+              {/* outer breathing glow */}
+              <div className="absolute -inset-3 rounded-full bg-[radial-gradient(circle,rgba(124,58,237,0.5),transparent_70%)] blur-xl will-change-transform" style={{ animation: 'augBreathe 4s ease-in-out infinite' }} />
+              {/* energy sphere */}
+              <div className="relative w-[72px] h-[72px] rounded-full overflow-hidden bg-[radial-gradient(circle_at_35%_28%,#c4b5fd,#6366f1_38%,#312e81_80%,#1e1b4b)] shadow-[0_10px_30px_-6px_rgba(99,102,241,0.6)]">
+                {/* rotating neural energy swirls (counter-rotating) */}
+                <div className="absolute -inset-4 bg-[conic-gradient(from_0deg,transparent,rgba(167,139,250,0.85),transparent_30%,rgba(96,165,250,0.7),transparent_60%,rgba(244,114,182,0.6),transparent)] will-change-transform" style={{ animation: 'augSpin 9s linear infinite' }} />
+                <div className="absolute -inset-4 mix-blend-screen bg-[conic-gradient(from_120deg,transparent,rgba(99,102,241,0.6),transparent_40%,rgba(167,139,250,0.5),transparent)] will-change-transform" style={{ animation: 'augSpinR 13s linear infinite' }} />
+                {/* drifting plasma cores */}
+                <span className="absolute left-2 top-3 h-9 w-9 rounded-full bg-fuchsia-400/80 blur-md mix-blend-screen will-change-transform" style={{ animation: 'augM1 5s ease-in-out infinite' }} />
+                <span className="absolute left-8 top-6 h-8 w-8 rounded-full bg-sky-400/75 blur-md mix-blend-screen will-change-transform" style={{ animation: 'augM2 6.5s ease-in-out infinite' }} />
+                <span className="absolute left-4 top-2 h-7 w-7 rounded-full bg-violet-200/80 blur-md mix-blend-screen will-change-transform" style={{ animation: 'augM3 7.5s ease-in-out infinite' }} />
+                {/* sphere shine + 3D depth */}
+                <div className="absolute inset-0 rounded-full bg-[radial-gradient(circle_at_30%_24%,rgba(255,255,255,0.55),transparent_38%)]" />
+                <div className="absolute inset-0 rounded-full shadow-[inset_0_-7px_16px_rgba(30,27,75,0.7),inset_0_2px_6px_rgba(255,255,255,0.25)]" />
+              </div>
+            </div>
+            <div className="min-w-0 flex-1">
+              <h1 className="text-[27px] font-semibold tracking-tight text-neutral-900 leading-tight">{greeting()}{b?.firstName ? `, ${b.firstName}` : ''}</h1>
+              {b?.tldr && (b.tldr.bullets.length > 0 || b.tldr.dontMiss) ? (
+                <div className="mt-2.5 max-w-[860px]">
+                  {b.tldr.teaser && <p className="text-[14.5px] text-neutral-500 leading-relaxed mb-2.5">{b.tldr.teaser}</p>}
+                  {b.tldr.bullets.length > 0 && (
+                    <ul className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-1.5">
+                      {b.tldr.bullets.map((bl, i) => (
+                        <li key={i} className="flex items-start gap-2.5 text-[13.5px] text-neutral-600 leading-relaxed">
+                          <span className="mt-[7px] w-1 h-1 rounded-full bg-neutral-300 flex-shrink-0" />
+                          <span>{bl}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {b.tldr.dontMiss && (
+                    <div className="mt-3 flex items-start gap-2 rounded-xl border border-amber-200/70 bg-amber-50/60 px-3 py-2.5">
+                      <ExclamationTriangleIcon className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
+                      <p className="text-[13px] text-amber-900/90 leading-snug"><span className="font-semibold">Don&apos;t miss:</span> {b.tldr.dontMiss}</p>
+                    </div>
+                  )}
+                </div>
+              ) : b?.briefLine ? (
+                <p className="mt-2 text-[14.5px] text-neutral-500 leading-relaxed max-w-[860px]">{b.briefLine}</p>
+              ) : null}
+              {chips.length > 0 && (
+                <div className="flex flex-wrap gap-2 mt-4">
+                  {chips.map((c, i) => (
+                    <span key={i} className="inline-flex items-center gap-1.5 rounded-full bg-white border border-neutral-200/80 px-3 py-1 text-[11.5px] font-medium text-neutral-600 shadow-[0_1px_2px_rgba(0,0,0,0.03)]">
+                      <c.icon className="w-3.5 h-3.5 text-neutral-400" />{c.text}
+                    </span>
                   ))}
-                </ul>
-              )}
-              {b.tldr.dontMiss && (
-                <div className="mt-3 flex items-start gap-2 rounded-xl border border-amber-200/70 bg-amber-50/60 px-3 py-2.5">
-                  <ExclamationTriangleIcon className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
-                  <p className="text-[13px] text-amber-900/90 leading-snug"><span className="font-semibold">Don&apos;t miss:</span> {b.tldr.dontMiss}</p>
                 </div>
               )}
             </div>
-          ) : b?.briefLine ? (
-            <p className="mt-2 text-[14.5px] text-neutral-500 leading-relaxed max-w-[660px]">{b.briefLine}</p>
-          ) : null}
-          {chips.length > 0 && (
-            <div className="flex flex-wrap gap-2 mt-4">
-              {chips.map((c, i) => (
-                <span key={i} className="inline-flex items-center gap-1.5 rounded-full bg-white border border-neutral-200/80 px-3 py-1 text-[11.5px] font-medium text-neutral-600 shadow-[0_1px_2px_rgba(0,0,0,0.03)]">
-                  <c.icon className="w-3.5 h-3.5 text-neutral-400" />{c.text}
-                </span>
-              ))}
-            </div>
-          )}
+          </div>
         </RiseIn>
 
         {nothing && (
