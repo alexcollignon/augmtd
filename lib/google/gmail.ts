@@ -94,6 +94,9 @@ export async function fetchUnreadEmails(
       })
     );
 
+    const _d = fullMessages.map((m) => Number(m.internalDate)).filter(Boolean).sort((a, b) => b - a);
+    console.log(`[GmailFetch] q="${query}" maxResults=${maxResults} est=${response.data.resultSizeEstimate} returned=${fullMessages.length} newest=${_d[0] ? new Date(_d[0]).toISOString() : '?'} oldest=${_d[_d.length - 1] ? new Date(_d[_d.length - 1]).toISOString() : '?'}`);
+
     return fullMessages;
   } catch (error) {
     console.error('Error fetching Gmail messages:', error);

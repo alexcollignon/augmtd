@@ -783,7 +783,7 @@ export async function syncEmailsForConnection(
 
         // Strip parser-only fields that don't exist as DB columns before inserting
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        const { attachments: _att, hasAttachments: _ha, outlookInternalId: _oid, ...emailDbFields } = parsed as any;
+        const { attachments: _att, hasAttachments: _ha, outlookInternalId: _oid, has_unsubscribe: _hu, ...emailDbFields } = parsed as any;
 
         // Store email
         let { data: storedEmail, error: emailError } = await adminSupabase
