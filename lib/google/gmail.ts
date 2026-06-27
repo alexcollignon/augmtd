@@ -57,10 +57,11 @@ export async function fetchUnreadEmails(
   try {
     const gmail = await getGmailClient(encryptedTokens, onTokenRefresh);
 
-    const isPersonalGmail = !accountEmail ||
-      accountEmail.endsWith('@gmail.com') ||
-      accountEmail.endsWith('@googlemail.com');
-    const inboxFilter = isPersonalGmail ? 'category:primary' : 'in:inbox';
+    // Fetch the WHOLE inbox (all tabs — Primary/Promotions/Updates/Social), so newsletters and
+    // promos get classified + AUGMTD-labelled too (parity with Outlook, which fetches all inbox).
+    // Was `category:primary` for personal Gmail, which silently skipped non-Primary mail — the
+    // cause of "Gmail isn't labelling" while Outlook is. Deterministic rules classify promos cheaply.
+    const inboxFilter = 'in:inbox';
 
     // Use last sync timestamp when available so we only fetch emails received
     // since the previous sync, not a fixed window from now.

@@ -97,6 +97,18 @@ Gmail and Outlook integrations live in `lib/google/` and `lib/microsoft/` respec
 
 **Sync correctness invariants** (June 2026 — see memory `project_email_sync_bugs.md`). Four bugs caused recurring "missing emails / split threads", all fixed: (1) **Outlook fetch must paginate** the window via `@odata.nextLink` (`fetchUnreadEmails`), not a single `.top()` page. (2) **Only a full-window sync advances `connections.last_sync`** — a push webhook (`options.preloadedMessages`) updates `sync_status` only; otherwise it jumps the cursor past mail the push never delivered. `last_sync` is stamped to `syncStartedAt` (before the fetch). (3) **Email dedup is per-user**: the `existingEmail` / 23505 lookups in `sync-emails.ts` filter by `user_id` — `message_id` is globally unique, so without it a copy synced by another platform recipient blocks this user's own copy. DB enforces this via per-`(user_id, message_id)` uniqueness (`20260622_emails_per_user_dedup.sql`), NOT a global `UNIQUE(message_id)`. (4) **Outlook push webhook must `$select` `internetMessageHeaders`** so `in_reply_to`/`references_ids` populate for RFC thread stitching. Recovery for missing mail: set `last_sync=null` + trigger `cron/fetch-emails` (now race-proof since pushes don't advance the cursor).
 
+### Inbox classification, AUGMTD labels & auto-draft (Phase 200 — shipped, June 2026)
+
+The **per-inbox rules engine** is the single config surface: rules **classify** (the classification IS the label) and each rule carries `outcome.auto_draft`. See memory `project_inbox_intelligence_v2.md` + `docs/inbox-coherence-plan.md`.
+
+- **Classification** = deterministic-first (`lib/inbox/rules/evaluate.ts`) → AI rule-match (`lib/inbox/rules/batch-match.ts` — uses `aiCreate`, **token budget `chunk.length*90` + fill-missing retry**; under-budgeting truncated the JSON and dropped ids → everything FYI) → heuristics. `bedrock_optimised` classification runs **Bedrock Haiku 4.5** (gpt-oss-120b returned all "none"). `lib/inbox/classify-item.ts` `classifyItem` is the single render-time type resolver (inbox + Home read it).
+- **Recipient-aware needs_reply**: `lib/inbox/needs-reply.ts` `isCcOnlyBystander` — CC-only + no processor reply-state → FYI (guards both the `rule_type` branch of `classifyItem` and `isNeedsReply`). `is_cc_only` stamped in `source_data` at sync from `recipient.position`.
+- **AUGMTD labels** (`lib/inbox/rules/write-back.ts`): Gmail nested `AUGMTD/X`, Outlook `AUGMTD: X` categories. Master kill-switch `profiles.email_settings.auto_label` (off = in-app identical, just no mailbox labels). Same pattern: `email_settings.auto_draft` master + per-rule `auto_draft` gate drafting; the CC/BCC + standalone draft toggles were removed.
+- **Auto-draft**: `app/api/cron/draft-sweep/route.ts` (every 2h) → `lib/inbox/draft-reply.ts` `generateReplyDraft` (voice block + meeting follow-up + rule instructions + a **hard identity anchor** so it signs as the user). Stored on `source_data.draft`; `/api/inbox/[id]/draft` serves it instantly. Home `MustRespondItem` shows "✦ Draft ready" → editable + Send.
+- **Home brief** (`app/api/home/brief/route.ts`): cached in `profiles.home_brief`, signature now includes the freshest item timestamp so it regenerates on new mail. Neural-orb header in `components/home/home-view.tsx`.
+
+⚠️ **OPEN (June 27)**: sync is **stale** — `last_sync` updates but ingests no recent mail (0 new items for 2 days) → the real cause of "context not updating" + "labels not applied". Investigate Gmail push-webhook health + the fetch cursor.
+
 ### Studio workflows
 
 Defined in `lib/workflows/types.ts`. A workflow is a linear pipeline of steps:
