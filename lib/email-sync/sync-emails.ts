@@ -1095,6 +1095,24 @@ export async function syncEmailsForConnection(
             if (fyiErr) console.error(`    ✗ Failed to insert fyi inbox item:`, fyiErr.message);
             else result.inboxItemsCreated++;
           }
+
+          // Label fast-pathed (fyi/noise) mail in Gmail/Outlook too — these skip Phase 2, so without
+          // this they'd never get an AUGMTD label (only process-class mail did, which is why most of
+          // the inbox showed unlabelled). Derive a label from the email's own bulk signals. Non-fatal.
+          if (emailSettings.auto_label) {
+            const _bulk = ((parsed as any).labels ?? []).includes('CATEGORY_PROMOTIONS') || !!(parsed as any).has_unsubscribe;
+            const _label: 'marketing' | 'notifications' | 'fyi' = _bulk ? 'marketing' : (emailClass === 'noise' ? 'notifications' : 'fyi');
+            void import('@/lib/inbox/rules/write-back').then(({ writeBackLabel }) =>
+              writeBackLabel({
+                provider: connection.provider,
+                encryptedTokens: connection.metadata?.tokens,
+                label: _label,
+                gmailThreadId: storedEmail.thread_id,
+                gmailCache: gmailLabelCache,
+                outlookMessageId: (storedEmail as any).metadata?.outlook_id ?? storedEmail.message_id,
+              }),
+            ).catch(() => {});
+          }
           continue;
         }
         // ==== END BATCH AI FAST-PATH ====
