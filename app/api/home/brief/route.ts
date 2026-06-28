@@ -309,7 +309,7 @@ export async function GET() {
         const items = (Array.isArray(p.items) ? p.items : [])
           .map((x) => ({ who: x.who || '', ask: x.ask || '', angle: x.angle || '', itemId: mustRespondRaw[x.i]?.itemId || '' }))
           .filter((x) => x.who || x.ask);
-        mustRespond = items.length ? { teaser: p.teaser || '', items: items.slice(0, 8) } : null;
+        mustRespond = items.length ? { teaser: p.teaser || '', items: items.slice(0, 25) } : null;
       } catch { /* keep cached */ }
     } else {
       mustRespond = null;

@@ -113,6 +113,25 @@ function PriorityCard({ p, first, expanded, onToggle }: { p: Priority; first: bo
   );
 }
 
+// Must-respond list with progressive disclosure — shows the first 5, "Show N more" reveals the rest.
+// Never hides items, just collapses; per-item Done/Dismiss lives on each MustRespondItem.
+function MustRespondList({ items }: { items: Array<{ who: string; ask: string; angle: string; itemId: string; draft?: string | null }> }) {
+  const [showAll, setShowAll] = useState(false);
+  const LIMIT = 5;
+  const visible = showAll ? items : items.slice(0, LIMIT);
+  const more = items.length - LIMIT;
+  return (
+    <>
+      <ol className="space-y-4">
+        {visible.map((m, i) => <MustRespondItem key={m.itemId || i} m={m} index={i} />)}
+      </ol>
+      {!showAll && more > 0 && (
+        <button onClick={() => setShowAll(true)} className="mt-3.5 text-[12.5px] font-medium text-indigo-600 hover:text-indigo-700">Show {more} more</button>
+      )}
+    </>
+  );
+}
+
 // Must-respond item. If the auto-draft sweep already prepared a reply (`m.draft`), the card shows
 // "Draft ready" — open it to review the pre-filled draft, edit, and Send (right here, Home-only).
 // Otherwise "See draft" generates one on demand. Sending posts to /send-reply.
@@ -377,11 +396,7 @@ export function HomeView() {
                     <Label count={b.mustRespond.items.length}>Must respond</Label>
                     <div className="rounded-2xl border border-rose-200/70 bg-white p-4">
                       {b.mustRespond.teaser && <p className="text-[13px] text-neutral-500 mb-3.5 leading-relaxed">{b.mustRespond.teaser}</p>}
-                      <ol className="space-y-4">
-                        {b.mustRespond.items.map((m, i) => (
-                          <MustRespondItem key={i} m={m} index={i} />
-                        ))}
-                      </ol>
+                      <MustRespondList items={b.mustRespond.items} />
                     </div>
                   </div>
                 </RiseIn>
