@@ -124,6 +124,17 @@ function MustRespondItem({ m, index }: { m: { who: string; ask: string; angle: s
   const [sent, setSent] = useState(false);
   const [copied, setCopied] = useState(false);
   const ready = !!m.draft;
+  const [removed, setRemoved] = useState(false);
+  const [acting, setActing] = useState(false);
+
+  // Done / Dismiss — sets the item completed|dismissed; classifyItem hides those, so it never
+  // resurfaces in the Home or inbox. Optimistic.
+  const act = async (kind: 'complete' | 'dismiss') => {
+    if (acting || !m.itemId) return;
+    setActing(true); setRemoved(true);
+    try { await fetch(`/api/inbox/${m.itemId}/${kind}`, { method: 'POST' }); }
+    catch { setRemoved(false); } finally { setActing(false); }
+  };
 
   const toggle = async () => {
     if (open) { setOpen(false); return; }
@@ -148,6 +159,7 @@ function MustRespondItem({ m, index }: { m: { who: string; ask: string; angle: s
     } catch { /* leave open to retry */ } finally { setSending(false); }
   };
 
+  if (removed) return null;
   return (
     <li className="flex flex-col gap-2">
       <div className="flex gap-2.5">
@@ -157,14 +169,22 @@ function MustRespondItem({ m, index }: { m: { who: string; ask: string; angle: s
           {m.ask && <p className="text-[12.5px] text-neutral-500 mt-0.5 leading-snug">{m.ask}</p>}
           {m.angle && <p className="text-[12.5px] text-neutral-600 mt-1 leading-snug"><span className="font-medium text-neutral-700">Angle:</span> {m.angle}</p>}
         </div>
-        {sent ? (
-          <span className="flex-shrink-0 self-start inline-flex items-center gap-1 text-[12px] font-medium text-emerald-600">Sent ✓</span>
-        ) : m.itemId && (
-          <button onClick={toggle} disabled={loading}
-            className={`flex-shrink-0 self-start inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-[12px] font-medium transition-colors disabled:opacity-60 ${ready && !open ? 'bg-indigo-50 text-indigo-700 border border-indigo-200' : 'bg-neutral-50 border border-neutral-200 text-neutral-700 hover:bg-indigo-50 hover:text-indigo-700'}`}>
-            {loading ? 'Drafting…' : open ? 'Hide' : ready ? '✦ Draft ready' : 'See draft'}
-          </button>
-        )}
+        <div className="flex-shrink-0 self-start flex items-center gap-1.5">
+          {sent ? (
+            <span className="inline-flex items-center gap-1 text-[12px] font-medium text-emerald-600">Sent ✓</span>
+          ) : m.itemId && (
+            <>
+              <button onClick={toggle} disabled={loading}
+                className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-[12px] font-medium transition-colors disabled:opacity-60 ${ready && !open ? 'bg-indigo-50 text-indigo-700 border border-indigo-200' : 'bg-neutral-50 border border-neutral-200 text-neutral-700 hover:bg-indigo-50 hover:text-indigo-700'}`}>
+                {loading ? 'Drafting…' : open ? 'Hide' : ready ? '✦ Draft ready' : 'See draft'}
+              </button>
+              <button onClick={() => act('complete')} disabled={acting} title="Mark done"
+                className="w-6 h-6 inline-flex items-center justify-center rounded-lg border border-neutral-200 text-neutral-400 hover:text-emerald-600 hover:border-emerald-200 hover:bg-emerald-50 transition-colors disabled:opacity-60 text-[13px]">✓</button>
+              <button onClick={() => act('dismiss')} disabled={acting} title="Dismiss — won't show again"
+                className="w-6 h-6 inline-flex items-center justify-center rounded-lg border border-neutral-200 text-neutral-400 hover:text-rose-600 hover:border-rose-200 hover:bg-rose-50 transition-colors disabled:opacity-60 text-[13px]">✕</button>
+            </>
+          )}
+        </div>
       </div>
       {loading && <div className="ml-7 h-16 rounded-xl bg-neutral-100 animate-pulse" />}
       {open && draft && !sent && (
