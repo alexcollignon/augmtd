@@ -14,7 +14,7 @@ export async function POST(
     }
 
     const { id } = await params;
-    const { reason } = await request.json();
+    const { reason } = await request.json().catch(() => ({} as { reason?: string }));
 
     // Get current inbox item
     const { data: item, error: fetchError } = await supabase

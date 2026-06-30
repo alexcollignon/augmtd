@@ -74,7 +74,7 @@ function PriorityCard({ p, first, expanded, onToggle }: { p: Priority; first: bo
     const ids = p.itemId ? [p.itemId] : (p.items ?? []).map(it => it.id);
     if (acting || !ids.length) return;
     setActing(true); startExit();
-    Promise.all(ids.map(id => fetch(`/api/inbox/${id}/${kind}`, { method: 'POST' })))
+    Promise.all(ids.map(id => fetch(`/api/inbox/${id}/${kind}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason: 'home' }) })))
       .catch(() => {}).finally(() => setActing(false));
   };
   if (removed) return null;
@@ -253,7 +253,7 @@ function MustRespondItem({ m, index }: { m: { who: string; ask: string; angle: s
   const act = async (kind: 'complete' | 'dismiss') => {
     if (acting || !m.itemId) return;
     setActing(true); startExit();
-    try { await fetch(`/api/inbox/${m.itemId}/${kind}`, { method: 'POST' }); } finally { setActing(false); }
+    try { await fetch(`/api/inbox/${m.itemId}/${kind}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason: 'home' }) }); } finally { setActing(false); }
   };
 
   const toggle = async () => {
