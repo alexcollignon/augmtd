@@ -66,20 +66,20 @@ function PriorityCard({ p, first, expanded, onToggle }: { p: Priority; first: bo
   const Icon = cfg.icon;
   const verb = p.source === 'meeting' ? 'Review' : VERB[p.posture];
   const hasItems = !!p.items?.length;
-  const [removed, setRemoved] = useState(false);
+  const { removed, exiting, startExit } = useExit();
   const [acting, setActing] = useState(false);
   // Done/Dismiss a Needs-you card → act on its inbox item(s): the email's itemId, or all of a
   // meeting's action-item ids. classifyItem hides completed/dismissed, so it never resurfaces.
   const act = (kind: 'complete' | 'dismiss') => {
     const ids = p.itemId ? [p.itemId] : (p.items ?? []).map(it => it.id);
     if (acting || !ids.length) return;
-    setActing(true); setRemoved(true);
+    setActing(true); startExit();
     Promise.all(ids.map(id => fetch(`/api/inbox/${id}/${kind}`, { method: 'POST' })))
-      .catch(() => setRemoved(false)).finally(() => setActing(false));
+      .catch(() => {}).finally(() => setActing(false));
   };
   if (removed) return null;
   return (
-    <div className={`group relative rounded-2xl border bg-white transition-all duration-200 hover:shadow-[0_4px_20px_-4px_rgba(0,0,0,0.08)] ${first ? 'border-indigo-200 ring-1 ring-indigo-100' : 'border-neutral-200/80 hover:border-neutral-300'}`}>
+    <div className={`group relative rounded-2xl border bg-white transition-all duration-300 ease-out hover:shadow-[0_4px_20px_-4px_rgba(0,0,0,0.08)] ${exiting ? 'opacity-0 scale-[0.98]' : 'opacity-100'} ${first ? 'border-indigo-200 ring-1 ring-indigo-100' : 'border-neutral-200/80 hover:border-neutral-300'}`}>
       {first && (
         <div className="absolute -top-2 left-4 inline-flex items-center gap-1 rounded-full bg-indigo-600 px-2 py-0.5 shadow-sm">
           <BoltIcon className="w-3 h-3 text-white" />
@@ -129,27 +129,36 @@ function PriorityCard({ p, first, expanded, onToggle }: { p: Priority; first: bo
   );
 }
 
-// Done ✓ / Dismiss ✕ for a commitment-backed row → PATCH /api/commitments/[id]. Optimistic.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function useCommitmentAct(id?: string): { removed: boolean; acting: boolean; act: (s: 'done' | 'dismissed') => void } {
+// Smooth exit on Done/Dismiss/Send: fade + slight scale, then unmount — consistent with the app's
+// transitions. `startExit` triggers the fade; after the animation the row unmounts.
+function useExit(ms = 300): { removed: boolean; exiting: boolean; startExit: () => void } {
   const [removed, setRemoved] = useState(false);
+  const [exiting, setExiting] = useState(false);
+  const startExit = () => { setExiting(true); setTimeout(() => setRemoved(true), ms); };
+  return { removed, exiting, startExit };
+}
+const exitCls = (exiting: boolean) => `transition-all duration-300 ease-out ${exiting ? 'opacity-0 scale-[0.97]' : 'opacity-100'}`;
+
+// Done ✓ / Dismiss ✕ for a commitment-backed row → PATCH /api/commitments/[id]. Optimistic, animated.
+function useCommitmentAct(id?: string): { removed: boolean; exiting: boolean; acting: boolean; act: (s: 'done' | 'dismissed') => void } {
+  const { removed, exiting, startExit } = useExit();
   const [acting, setActing] = useState(false);
   const act = (status: 'done' | 'dismissed') => {
     if (acting || !id) return;
-    setActing(true); setRemoved(true);
+    setActing(true); startExit();
     fetch(`/api/commitments/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) })
-      .catch(() => setRemoved(false)).finally(() => setActing(false));
+      .catch(() => {}).finally(() => setActing(false));
   };
-  return { removed, acting, act };
+  return { removed, exiting, acting, act };
 }
 
 // Ball-in-your-court item (a commitment you're awaiting) with Done/Dismiss.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function FollowUpItem({ f, index }: { f: { id?: string; who: string; status: string; nextMove: string }; index: number }) {
-  const { removed, acting, act } = useCommitmentAct(f.id);
+  const { removed, exiting, acting, act } = useCommitmentAct(f.id);
   if (removed) return null;
   return (
-    <li className="flex gap-2.5">
+    <li className={`flex gap-2.5 ${exitCls(exiting)}`}>
       <span className="flex-shrink-0 w-5 h-5 rounded-full bg-neutral-100 text-neutral-500 text-[11px] font-semibold flex items-center justify-center mt-0.5">{index + 1}</span>
       <div className="min-w-0 flex-1">
         <p className="text-[13px] font-semibold text-neutral-800 leading-snug">{f.who}</p>
@@ -169,10 +178,10 @@ function FollowUpItem({ f, index }: { f: { id?: string; who: string; status: str
 // On-your-plate / Waiting-on row (commitment) — a SideRow with hover Done/Dismiss.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function CommitmentSideRow({ id, icon, iconClass, children }: { id?: string; icon: any; iconClass?: string; children: any }) {
-  const { removed, acting, act } = useCommitmentAct(id);
+  const { removed, exiting, acting, act } = useCommitmentAct(id);
   if (removed) return null;
   return (
-    <div className="group relative">
+    <div className={`group relative ${exitCls(exiting)}`}>
       <SideRow href="/inbox" icon={icon} iconClass={iconClass}>{children}</SideRow>
       {id && (
         <span className="absolute top-1.5 right-2 hidden group-hover:flex items-center gap-1 rounded-lg bg-white/95 px-1 py-0.5 shadow-sm border border-neutral-100">
@@ -186,18 +195,18 @@ function CommitmentSideRow({ id, icon, iconClass, children }: { id?: string; ico
 
 // FYI digest group with a hover "dismiss all from this sender" (mute). POSTs /api/inbox/dismiss-sender.
 function FyiGroupRow({ g, variant }: { g: { label: string; summary: string; kind: 'person' | 'newsletter' }; variant: 'person' | 'newsletter' }) {
-  const [removed, setRemoved] = useState(false);
+  const { removed, exiting, startExit } = useExit();
   const [acting, setActing] = useState(false);
   if (removed) return null;
   const mute = () => {
     if (acting) return;
-    setActing(true); setRemoved(true);
+    setActing(true); startExit();
     fetch('/api/inbox/dismiss-sender', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sender: g.label }) })
-      .catch(() => setRemoved(false)).finally(() => setActing(false));
+      .catch(() => {}).finally(() => setActing(false));
   };
   const isNl = variant === 'newsletter';
   return (
-    <div className={`group/row relative px-3.5 ${isNl ? 'py-2 bg-neutral-50/60' : 'py-2.5'}`}>
+    <div className={`group/row relative px-3.5 ${exitCls(exiting)} ${isNl ? 'py-2 bg-neutral-50/60' : 'py-2.5'}`}>
       <p className={isNl ? 'text-[12px] font-medium text-neutral-600' : 'text-[12.5px] font-semibold text-neutral-700'}>{g.label}</p>
       <p className={`mt-0.5 leading-snug ${isNl ? 'text-[11.5px] text-neutral-400' : 'text-[12px] text-neutral-500'}`}>{g.summary}</p>
       <button onClick={mute} disabled={acting} title={`Dismiss all from ${g.label}`}
@@ -236,16 +245,15 @@ function MustRespondItem({ m, index }: { m: { who: string; ask: string; angle: s
   const [sent, setSent] = useState(false);
   const [copied, setCopied] = useState(false);
   const ready = !!m.draft;
-  const [removed, setRemoved] = useState(false);
+  const { removed, exiting, startExit } = useExit();
   const [acting, setActing] = useState(false);
 
   // Done / Dismiss — sets the item completed|dismissed; classifyItem hides those, so it never
-  // resurfaces in the Home or inbox. Optimistic.
+  // resurfaces. Optimistic, with a smooth fade-out.
   const act = async (kind: 'complete' | 'dismiss') => {
     if (acting || !m.itemId) return;
-    setActing(true); setRemoved(true);
-    try { await fetch(`/api/inbox/${m.itemId}/${kind}`, { method: 'POST' }); }
-    catch { setRemoved(false); } finally { setActing(false); }
+    setActing(true); startExit();
+    try { await fetch(`/api/inbox/${m.itemId}/${kind}`, { method: 'POST' }); } finally { setActing(false); }
   };
 
   const toggle = async () => {
@@ -267,13 +275,13 @@ function MustRespondItem({ m, index }: { m: { who: string; ask: string; angle: s
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ customMessage: draft }),
       });
-      if (res.ok) { setSent(true); setOpen(false); }
+      if (res.ok) { setSent(true); setOpen(false); setTimeout(startExit, 700); }
     } catch { /* leave open to retry */ } finally { setSending(false); }
   };
 
   if (removed) return null;
   return (
-    <li className="flex flex-col gap-2">
+    <li className={`flex flex-col gap-2 ${exitCls(exiting)}`}>
       <div className="flex gap-2.5">
         <span className="flex-shrink-0 w-5 h-5 rounded-full bg-rose-50 text-rose-500 text-[11px] font-semibold flex items-center justify-center mt-0.5">{index + 1}</span>
         <div className="min-w-0 flex-1">
