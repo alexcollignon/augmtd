@@ -13,7 +13,7 @@ type Priority = {
   itemId?: string; items?: { id: string; text: string }[]; overdue?: boolean;
 };
 type Tldr = { teaser: string; bullets: string[]; dontMiss: string | null };
-type Followups = { teaser: string; items: { who: string; status: string; nextMove: string }[]; closing: string | null };
+type Followups = { teaser: string; items: { id?: string; who: string; status: string; nextMove: string }[]; closing: string | null };
 type FyiDigest = { groups: { label: string; summary: string; kind: 'person' | 'newsletter' }[]; tailGroups: number; tailItems: number };
 type MustRespond = { teaser: string; items: { who: string; ask: string; angle: string; itemId: string }[] };
 type Brief = {
@@ -108,6 +108,61 @@ function PriorityCard({ p, first, expanded, onToggle }: { p: Priority; first: bo
             </ul>
           </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+// Done ✓ / Dismiss ✕ for a commitment-backed row → PATCH /api/commitments/[id]. Optimistic.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function useCommitmentAct(id?: string): { removed: boolean; acting: boolean; act: (s: 'done' | 'dismissed') => void } {
+  const [removed, setRemoved] = useState(false);
+  const [acting, setActing] = useState(false);
+  const act = (status: 'done' | 'dismissed') => {
+    if (acting || !id) return;
+    setActing(true); setRemoved(true);
+    fetch(`/api/commitments/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) })
+      .catch(() => setRemoved(false)).finally(() => setActing(false));
+  };
+  return { removed, acting, act };
+}
+
+// Ball-in-your-court item (a commitment you're awaiting) with Done/Dismiss.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function FollowUpItem({ f, index }: { f: { id?: string; who: string; status: string; nextMove: string }; index: number }) {
+  const { removed, acting, act } = useCommitmentAct(f.id);
+  if (removed) return null;
+  return (
+    <li className="flex gap-2.5">
+      <span className="flex-shrink-0 w-5 h-5 rounded-full bg-neutral-100 text-neutral-500 text-[11px] font-semibold flex items-center justify-center mt-0.5">{index + 1}</span>
+      <div className="min-w-0 flex-1">
+        <p className="text-[13px] font-semibold text-neutral-800 leading-snug">{f.who}</p>
+        {f.status && <p className="text-[12.5px] text-neutral-500 mt-0.5 leading-snug">{f.status}</p>}
+        {f.nextMove && <p className="text-[12.5px] text-indigo-600 mt-1 leading-snug"><span className="font-medium">Next move:</span> {f.nextMove}</p>}
+      </div>
+      {f.id && (
+        <span className="flex-shrink-0 flex items-center gap-1 mt-0.5">
+          <button onClick={() => act('done')} disabled={acting} title="Mark done" className="w-6 h-6 inline-flex items-center justify-center rounded-lg border border-neutral-200 text-neutral-400 hover:text-emerald-600 hover:border-emerald-200 hover:bg-emerald-50 transition-colors text-[13px]">✓</button>
+          <button onClick={() => act('dismissed')} disabled={acting} title="Dismiss" className="w-6 h-6 inline-flex items-center justify-center rounded-lg border border-neutral-200 text-neutral-400 hover:text-rose-600 hover:border-rose-200 hover:bg-rose-50 transition-colors text-[13px]">✕</button>
+        </span>
+      )}
+    </li>
+  );
+}
+
+// On-your-plate / Waiting-on row (commitment) — a SideRow with hover Done/Dismiss.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function CommitmentSideRow({ id, icon, iconClass, children }: { id?: string; icon: any; iconClass?: string; children: any }) {
+  const { removed, acting, act } = useCommitmentAct(id);
+  if (removed) return null;
+  return (
+    <div className="group relative">
+      <SideRow href="/inbox" icon={icon} iconClass={iconClass}>{children}</SideRow>
+      {id && (
+        <span className="absolute top-1.5 right-2 hidden group-hover:flex items-center gap-1 rounded-lg bg-white/95 px-1 py-0.5 shadow-sm border border-neutral-100">
+          <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); act('done'); }} disabled={acting} title="Mark done" className="w-5 h-5 inline-flex items-center justify-center rounded text-neutral-400 hover:text-emerald-600 text-[12px]">✓</button>
+          <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); act('dismissed'); }} disabled={acting} title="Dismiss" className="w-5 h-5 inline-flex items-center justify-center rounded text-neutral-400 hover:text-rose-600 text-[12px]">✕</button>
+        </span>
       )}
     </div>
   );
@@ -421,7 +476,7 @@ export function HomeView() {
                     <Label count={b.commitments.length}>On your plate</Label>
                     <div className="space-y-2">
                       {b.commitments.map(c => (
-                        <SideRow key={c.id} href="/inbox" icon={CheckCircleIcon} iconClass={c.overdue ? 'text-red-400' : 'text-neutral-300'}>
+                        <CommitmentSideRow key={c.id} id={c.id} icon={CheckCircleIcon} iconClass={c.overdue ? 'text-red-400' : 'text-neutral-300'}>
                           <div className="flex items-start justify-between gap-2">
                             <span className="text-[13px] text-neutral-800 leading-snug">{c.description}</span>
                             {(c.overdue || c.dueToday || c.dueDate) && (
@@ -431,7 +486,7 @@ export function HomeView() {
                             )}
                           </div>
                           {c.counterparty && <p className="text-[11.5px] text-neutral-400 mt-0.5">You owe {c.counterparty}</p>}
-                        </SideRow>
+                        </CommitmentSideRow>
                       ))}
                     </div>
                   </div>
@@ -446,14 +501,7 @@ export function HomeView() {
                       {b.followups.teaser && <p className="text-[13px] text-neutral-500 mb-3.5 leading-relaxed">{b.followups.teaser}</p>}
                       <ol className="space-y-3.5">
                         {b.followups.items.map((f, i) => (
-                          <li key={i} className="flex gap-2.5">
-                            <span className="flex-shrink-0 w-5 h-5 rounded-full bg-neutral-100 text-neutral-500 text-[11px] font-semibold flex items-center justify-center mt-0.5">{i + 1}</span>
-                            <div className="min-w-0">
-                              <p className="text-[13px] font-semibold text-neutral-800 leading-snug">{f.who}</p>
-                              {f.status && <p className="text-[12.5px] text-neutral-500 mt-0.5 leading-snug">{f.status}</p>}
-                              {f.nextMove && <p className="text-[12.5px] text-indigo-600 mt-1 leading-snug"><span className="font-medium">Next move:</span> {f.nextMove}</p>}
-                            </div>
-                          </li>
+                          <FollowUpItem key={f.id || i} f={f} index={i} />
                         ))}
                       </ol>
                       {b.followups.closing && (
@@ -470,10 +518,10 @@ export function HomeView() {
                   <Label count={b.waitingOn.length}>Waiting on others</Label>
                   <div className="space-y-2">
                     {b.waitingOn.map(c => (
-                      <SideRow key={c.id} href="/inbox" icon={ClockIcon} iconClass="text-amber-400">
+                      <CommitmentSideRow key={c.id} id={c.id} icon={ClockIcon} iconClass="text-amber-400">
                         <span className="text-[13px] text-neutral-800 truncate block">{c.description}</span>
                         <p className="text-[11.5px] text-neutral-400 mt-0.5">Waiting on {c.counterparty || 'them'} · {c.ageDays}d</p>
-                      </SideRow>
+                      </CommitmentSideRow>
                     ))}
                   </div>
                 </RiseIn>
