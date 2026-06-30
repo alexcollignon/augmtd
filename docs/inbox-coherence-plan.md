@@ -1,5 +1,11 @@
 # Inbox coherence & live-brief plan
 
+> **STATUS (June 30 2026): essentially complete + shipped.** Sync regression fixed (`has_unsubscribe`
+> insert — was breaking ALL mail storage), all-mail labeling (fast-path), live brief + neural-orb header,
+> auto-draft + "✦ Draft ready", recipient-aware needs_reply, per-item **Done/Dismiss across every section**
+> + "Show N more" + smooth fade-out, mute-sender. See memory `project_inbox_intelligence_v2.md` for the
+> authoritative state. Remaining: maxEmails=50 backlog cadence, real-time per-email draft-gen, push freshness.
+
 Next focused session. Three interlinked work items: make the Home brief feel live, wire **See draft**
 everywhere it belongs, and make the email **Settings** coherent + actually wired. All shippable on
 the existing prod pipeline (no AgentOS redeploy). Deploy = merge `dev` → `main` via the worktree
