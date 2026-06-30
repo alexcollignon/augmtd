@@ -107,7 +107,9 @@ The **per-inbox rules engine** is the single config surface: rules **classify** 
 - **Auto-draft**: `app/api/cron/draft-sweep/route.ts` (every 2h) → `lib/inbox/draft-reply.ts` `generateReplyDraft` (voice block + meeting follow-up + rule instructions + a **hard identity anchor** so it signs as the user). Stored on `source_data.draft`; `/api/inbox/[id]/draft` serves it instantly. Home `MustRespondItem` shows "✦ Draft ready" → editable + Send.
 - **Home brief** (`app/api/home/brief/route.ts`): cached in `profiles.home_brief`, signature now includes the freshest item timestamp so it regenerates on new mail. Neural-orb header in `components/home/home-view.tsx`.
 
-⚠️ **OPEN (June 27)**: sync is **stale** — `last_sync` updates but ingests no recent mail (0 new items for 2 days) → the real cause of "context not updating" + "labels not applied". Investigate Gmail push-webhook health + the fetch cursor.
+✅ **Sync regression FIXED (June 28)**: the main email-store path (`sync-emails.ts` ~786) didn't strip `has_unsubscribe` → every `emails` INSERT failed with PGRST204, swallowed by try/catch → NO mail stored since ~06-25 (the real cause of "no new mail / labels not applied / brief stale", both providers). Fixed. Also: Gmail fetch `category:primary`→`in:inbox` (was skipping Promotions/Updates); AUGMTD write-back added to the **fast-path** (fyi/noise) so newsletters/promos label too. **Lesson:** the same parser-only field is stripped in 3 separate destructures (lines 365/786/1620) — adding a field means updating ALL three; prefer a single emails-column allowlist.
+
+**Home per-item actions (June 30)**: Done/Dismiss on EVERY Home brief section + "Show N more" expand + smooth fade-out. New endpoints: `PATCH /api/commitments/[id]` (done|dismissed) and `POST /api/inbox/dismiss-sender` (mute a sender's awareness mail). Actions persist on `inbox_items.status` / `commitments.status`; `classifyItem` hides completed/dismissed so they never resurface. See memory `project_inbox_intelligence_v2.md`.
 
 ### Studio workflows
 
