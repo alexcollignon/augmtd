@@ -66,6 +66,18 @@ function PriorityCard({ p, first, expanded, onToggle }: { p: Priority; first: bo
   const Icon = cfg.icon;
   const verb = p.source === 'meeting' ? 'Review' : VERB[p.posture];
   const hasItems = !!p.items?.length;
+  const [removed, setRemoved] = useState(false);
+  const [acting, setActing] = useState(false);
+  // Done/Dismiss a Needs-you card → act on its inbox item(s): the email's itemId, or all of a
+  // meeting's action-item ids. classifyItem hides completed/dismissed, so it never resurfaces.
+  const act = (kind: 'complete' | 'dismiss') => {
+    const ids = p.itemId ? [p.itemId] : (p.items ?? []).map(it => it.id);
+    if (acting || !ids.length) return;
+    setActing(true); setRemoved(true);
+    Promise.all(ids.map(id => fetch(`/api/inbox/${id}/${kind}`, { method: 'POST' })))
+      .catch(() => setRemoved(false)).finally(() => setActing(false));
+  };
+  if (removed) return null;
   return (
     <div className={`group relative rounded-2xl border bg-white transition-all duration-200 hover:shadow-[0_4px_20px_-4px_rgba(0,0,0,0.08)] ${first ? 'border-indigo-200 ring-1 ring-indigo-100' : 'border-neutral-200/80 hover:border-neutral-300'}`}>
       {first && (
@@ -85,12 +97,16 @@ function PriorityCard({ p, first, expanded, onToggle }: { p: Priority; first: bo
           <p className="text-[14px] font-semibold text-neutral-900 leading-snug">{p.title}</p>
           {p.context && <p className="text-[12.5px] text-neutral-500 mt-0.5 truncate">{p.context}</p>}
         </div>
-        <Link
-          href={p.href}
-          className={`flex-shrink-0 inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-[12.5px] font-medium transition-colors ${first ? 'bg-indigo-600 text-white hover:bg-indigo-700' : 'bg-neutral-50 text-neutral-700 hover:bg-indigo-50 hover:text-indigo-700 border border-neutral-200'}`}
-        >
-          {verb}<ArrowRightIcon className="w-3.5 h-3.5" />
-        </Link>
+        <div className="flex-shrink-0 flex items-center gap-1.5">
+          <Link
+            href={p.href}
+            className={`inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-[12.5px] font-medium transition-colors ${first ? 'bg-indigo-600 text-white hover:bg-indigo-700' : 'bg-neutral-50 text-neutral-700 hover:bg-indigo-50 hover:text-indigo-700 border border-neutral-200'}`}
+          >
+            {verb}<ArrowRightIcon className="w-3.5 h-3.5" />
+          </Link>
+          <button onClick={() => act('complete')} disabled={acting} title="Mark done" className="w-7 h-7 inline-flex items-center justify-center rounded-lg border border-neutral-200 text-neutral-400 hover:text-emerald-600 hover:border-emerald-200 hover:bg-emerald-50 transition-colors text-[13px]">✓</button>
+          <button onClick={() => act('dismiss')} disabled={acting} title="Dismiss" className="w-7 h-7 inline-flex items-center justify-center rounded-lg border border-neutral-200 text-neutral-400 hover:text-rose-600 hover:border-rose-200 hover:bg-rose-50 transition-colors text-[13px]">✕</button>
+        </div>
       </div>
 
       {/* Layered: meeting action items live one layer down — collapsed by default */}
@@ -164,6 +180,28 @@ function CommitmentSideRow({ id, icon, iconClass, children }: { id?: string; ico
           <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); act('dismissed'); }} disabled={acting} title="Dismiss" className="w-5 h-5 inline-flex items-center justify-center rounded text-neutral-400 hover:text-rose-600 text-[12px]">✕</button>
         </span>
       )}
+    </div>
+  );
+}
+
+// FYI digest group with a hover "dismiss all from this sender" (mute). POSTs /api/inbox/dismiss-sender.
+function FyiGroupRow({ g, variant }: { g: { label: string; summary: string; kind: 'person' | 'newsletter' }; variant: 'person' | 'newsletter' }) {
+  const [removed, setRemoved] = useState(false);
+  const [acting, setActing] = useState(false);
+  if (removed) return null;
+  const mute = () => {
+    if (acting) return;
+    setActing(true); setRemoved(true);
+    fetch('/api/inbox/dismiss-sender', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sender: g.label }) })
+      .catch(() => setRemoved(false)).finally(() => setActing(false));
+  };
+  const isNl = variant === 'newsletter';
+  return (
+    <div className={`group/row relative px-3.5 ${isNl ? 'py-2 bg-neutral-50/60' : 'py-2.5'}`}>
+      <p className={isNl ? 'text-[12px] font-medium text-neutral-600' : 'text-[12.5px] font-semibold text-neutral-700'}>{g.label}</p>
+      <p className={`mt-0.5 leading-snug ${isNl ? 'text-[11.5px] text-neutral-400' : 'text-[12px] text-neutral-500'}`}>{g.summary}</p>
+      <button onClick={mute} disabled={acting} title={`Dismiss all from ${g.label}`}
+        className="absolute top-2 right-2.5 hidden group-hover/row:inline-flex items-center justify-center w-5 h-5 rounded text-neutral-300 hover:text-rose-600 hover:bg-rose-50 text-[12px]">✕</button>
     </div>
   );
 }
@@ -585,10 +623,7 @@ export function HomeView() {
                   <Collapsible title="For your awareness" count={b.fyiDigest.groups.length}>
                   <div className="rounded-xl border border-neutral-200/80 bg-white divide-y divide-neutral-100 overflow-hidden">
                     {b.fyiDigest.groups.filter(g => g.kind === 'person').map((g, i) => (
-                      <div key={`p${i}`} className="px-3.5 py-2.5">
-                        <p className="text-[12.5px] font-semibold text-neutral-700">{g.label}</p>
-                        <p className="text-[12px] text-neutral-500 mt-0.5 leading-snug">{g.summary}</p>
-                      </div>
+                      <FyiGroupRow key={`p${i}`} g={g} variant="person" />
                     ))}
                     {b.fyiDigest.groups.some(g => g.kind === 'newsletter') && (
                       <div className="px-3.5 pt-2.5 pb-1 bg-neutral-50/60">
@@ -596,10 +631,7 @@ export function HomeView() {
                       </div>
                     )}
                     {b.fyiDigest.groups.filter(g => g.kind === 'newsletter').map((g, i) => (
-                      <div key={`n${i}`} className="px-3.5 py-2 bg-neutral-50/60">
-                        <p className="text-[12px] font-medium text-neutral-600">{g.label}</p>
-                        <p className="text-[11.5px] text-neutral-400 mt-0.5 leading-snug">{g.summary}</p>
-                      </div>
+                      <FyiGroupRow key={`n${i}`} g={g} variant="newsletter" />
                     ))}
                     {b.fyiDigest.tailItems > 0 && (
                       <Link href="/inbox" className="block px-3.5 py-2 text-[11.5px] text-neutral-400 hover:text-indigo-600 transition-colors">
