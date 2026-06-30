@@ -269,7 +269,11 @@ export async function GET() {
   if (stale) {
     const { client, model } = getSystemClient('summarization');
 
+    // The four briefs are independent → generate them IN PARALLEL (was sequential ≈ 16s; now ≈ the
+    // slowest single call). Each closure assigns its own outer var; failures keep the cached value.
+    await Promise.all([
     // Daily TLDR brief (phase 1).
+    (async () => {
     try {
       const grounded = [
         schedule.length
@@ -295,9 +299,10 @@ export async function GET() {
         briefLine = tldr.teaser || briefLine;
       }
     } catch { /* keep cached */ }
-
+    })(),
     // Must-respond brief (phase 2) — the replies you owe: what each sender is asking + a recommended
     // angle for the reply. Grounded in the email content.
+    (async () => {
     if (mustRespondRaw.length) {
       try {
         const input = mustRespondRaw.map((m, i) => `[${i}] ${m.from} — "${m.subject}": ${m.snippet}`).join('\n');
@@ -314,9 +319,10 @@ export async function GET() {
     } else {
       mustRespond = null;
     }
-
+    })(),
     // Follow-ups brief (phase 2) — "ball in your court": a grounded roundup of the things you're
     // waiting on, each with a recommended Next move. Only when there's something to nudge.
+    (async () => {
     if (waitingOn.length) {
       try {
         const threads = waitingOn.map((w, i) => `[${i}] ${w.counterparty || 'Someone'} — "${w.description}" — ${w.ageDays} day${w.ageDays === 1 ? '' : 's'} quiet`).join('\n');
@@ -332,9 +338,10 @@ export async function GET() {
     } else {
       followups = null;
     }
-
+    })(),
     // FYI-by-topic brief (phase 2) — one short digest line per sender group, turning the FYI pile
     // into a few thematic digests.
+    (async () => {
     if (fyiTop.length) {
       try {
         const input = fyiTop.map((g, i) => `[${i}] ${g.label} (${g.count}): ${g.subjects.slice(0, 5).filter(Boolean).map((s) => `"${s}"`).join('; ')}`).join('\n');
@@ -351,6 +358,8 @@ export async function GET() {
     } else {
       fyiDigest = null;
     }
+    })(),
+    ]);
 
     await supabase.from('profiles').update({ home_brief: { text: briefLine, tldr, followups, fyiDigest, mustRespond, generated_at: now.toISOString(), sig } }).eq('id', user.id).then(() => {}, () => {});
   }
@@ -363,8 +372,13 @@ export async function GET() {
     const b = (it.source_data as { draft?: { body?: string } })?.draft?.body;
     if (b && it.id) draftByItem.set(it.id, b);
   }
+  // Drop must-respond items whose inbox item is no longer pending (dismissed/completed since the
+  // brief prose was cached) — so the list + count reflect actions on reload without a full regen.
+  const pendingItemIds = new Set(items.map((it) => it.id));
   const mustRespondOut = mustRespond
-    ? { ...mustRespond, items: mustRespond.items.map((r) => ({ ...r, draft: draftByItem.get(r.itemId) ?? null })) }
+    ? { ...mustRespond, items: mustRespond.items
+        .filter((r) => !r.itemId || pendingItemIds.has(r.itemId))
+        .map((r) => ({ ...r, draft: draftByItem.get(r.itemId) ?? null })) }
     : mustRespond;
 
   return NextResponse.json({ firstName, briefLine, tldr, followups, fyiDigest, mustRespond: mustRespondOut, status, priorities: cappedPriorities, commitments, waitingOn, schedule, handled });
