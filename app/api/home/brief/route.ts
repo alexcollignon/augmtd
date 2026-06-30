@@ -254,7 +254,7 @@ export async function GET() {
   // ── Daily TLDR brief (Phase 1) — a grounded day-summary: teaser + 3–4 bullets + a "don't miss"
   // callout. Cached on profiles.home_brief, busts when the day's shape (sig) changes. ──
   type Tldr = { teaser: string; bullets: string[]; dontMiss: string | null };
-  type FollowUp = { who: string; status: string; nextMove: string };
+  type FollowUp = { id?: string; who: string; status: string; nextMove: string };
   type Followups = { teaser: string; items: FollowUp[]; closing: string | null };
   type FyiDigest = { groups: { label: string; summary: string; kind: 'person' | 'newsletter' }[]; tailGroups: number; tailItems: number };
   type Reply = { who: string; ask: string; angle: string; itemId: string };
@@ -319,14 +319,14 @@ export async function GET() {
     // waiting on, each with a recommended Next move. Only when there's something to nudge.
     if (waitingOn.length) {
       try {
-        const threads = waitingOn.map((w) => `${w.counterparty || 'Someone'} — "${w.description}" — ${w.ageDays} day${w.ageDays === 1 ? '' : 's'} quiet`).join('\n');
+        const threads = waitingOn.map((w, i) => `[${i}] ${w.counterparty || 'Someone'} — "${w.description}" — ${w.ageDays} day${w.ageDays === 1 ? '' : 's'} quiet`).join('\n');
         const res = await aiCreate(client, {
           model, max_tokens: 520, temperature: 0.5,
-          messages: [{ role: 'user', content: `You are ${firstName || 'the user'}'s assistant. Below are threads where ${firstName || 'the user'} is waiting on a reply — the ball is now in their court to nudge. For each, write a short status (how long it's gone quiet, what's pending) and a recommended Next move (brief, specific, actionable). Use ONLY these facts, never invent details.\n\nReturn JSON only:\n{"teaser":"one short line introducing the roundup","items":[{"who":"the person or topic","status":"short status line","nextMove":"the recommended next move"}],"closing":"a short offer to draft these — name the 1-2 you'd tackle first — or null"}\n\nThreads:\n${threads}` }],
+          messages: [{ role: 'user', content: `You are ${firstName || 'the user'}'s assistant. Below are threads where ${firstName || 'the user'} is waiting on a reply — the ball is now in their court to nudge. For each, write a short status (how long it's gone quiet, what's pending) and a recommended Next move (brief, specific, actionable). Use ONLY these facts, never invent details.\n\nReturn JSON only. Include the [index] of each thread as "i":\n{"teaser":"one short line introducing the roundup","items":[{"i":<the [index] number>,"who":"the person or topic","status":"short status line","nextMove":"the recommended next move"}],"closing":"a short offer to draft these — name the 1-2 you'd tackle first — or null"}\n\nThreads:\n${threads}` }],
         });
-        const p = parseModelJSON<Followups>(res.choices?.[0]?.message?.content || '', { teaser: '', items: [], closing: null });
+        const p = parseModelJSON<{ teaser: string; items: { i?: number; who: string; status: string; nextMove: string }[]; closing: string | null }>(res.choices?.[0]?.message?.content || '', { teaser: '', items: [], closing: null });
         followups = Array.isArray(p.items) && p.items.length
-          ? { teaser: p.teaser || '', items: p.items.slice(0, 8), closing: p.closing || null }
+          ? { teaser: p.teaser || '', items: p.items.slice(0, 8).map((x) => ({ id: typeof x.i === 'number' ? waitingOn[x.i]?.id : undefined, who: x.who || '', status: x.status || '', nextMove: x.nextMove || '' })), closing: p.closing || null }
           : null;
       } catch { /* keep cached */ }
     } else {
