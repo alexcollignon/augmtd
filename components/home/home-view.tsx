@@ -13,7 +13,7 @@ type Priority = {
   itemId?: string; items?: { id: string; text: string }[]; overdue?: boolean;
 };
 type Tldr = { teaser: string; bullets: string[]; dontMiss: string | null };
-type Followups = { teaser: string; items: { who: string; status: string; nextMove: string }[]; closing: string | null };
+type Followups = { teaser: string; items: { id?: string; who: string; status: string; nextMove: string }[]; closing: string | null };
 type FyiDigest = { groups: { label: string; summary: string; kind: 'person' | 'newsletter' }[]; tailGroups: number; tailItems: number };
 type MustRespond = { teaser: string; items: { who: string; ask: string; angle: string; itemId: string }[] };
 type Brief = {
