@@ -1102,16 +1102,20 @@ export async function syncEmailsForConnection(
           if (emailSettings.auto_label) {
             const _bulk = ((parsed as any).labels ?? []).includes('CATEGORY_PROMOTIONS') || !!(parsed as any).has_unsubscribe;
             const _label: 'marketing' | 'notifications' | 'fyi' = _bulk ? 'marketing' : (emailClass === 'noise' ? 'notifications' : 'fyi');
-            void import('@/lib/inbox/rules/write-back').then(({ writeBackLabel }) =>
-              writeBackLabel({
+            void import('@/lib/inbox/rules/write-back').then(async ({ writeBackLabel }) => {
+              const ok = await writeBackLabel({
                 provider: connection.provider,
                 encryptedTokens: connection.metadata?.tokens,
                 label: _label,
                 gmailThreadId: storedEmail.thread_id,
                 gmailCache: gmailLabelCache,
                 outlookMessageId: (storedEmail as any).metadata?.outlook_id ?? storedEmail.message_id,
-              }),
-            ).catch(() => {});
+              });
+              // Record success so the label-sweep skips it; a failure stays unmarked → sweep retries.
+              if (ok) await adminSupabase.from('inbox_items')
+                .update({ source_data: { ...(fastSourceData as Record<string, unknown>), labeled: true } })
+                .eq('source_id', storedEmail.id).eq('user_id', connection.user_id);
+            }).catch(() => {});
           }
           continue;
         }
