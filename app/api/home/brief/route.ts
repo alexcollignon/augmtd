@@ -111,6 +111,19 @@ export async function GET() {
       .select('thread_id, received_at').eq('user_id', user.id).eq('is_from_user', true).in('thread_id', candThreadIds);
     answered = buildAnsweredSet(sent ?? []);
   }
+  // Reconciliation (cross-source): people you already have a meeting with — recently held or upcoming.
+  // A scheduling/confirmation email from one of them is SUPERSEDED by that meeting, so it shouldn't be
+  // a "must respond" (fixes surfacing "confirm a meeting that already happened").
+  const { data: calWide } = await supabase.from('calendar_events')
+    .select('attendees')
+    .eq('user_id', user.id).eq('status', 'confirmed')
+    .gte('start_time', new Date(now.getTime() - 10 * DAY).toISOString())
+    .lte('start_time', new Date(now.getTime() + 21 * DAY).toISOString())
+    .limit(120);
+  const meetingPeople = new Set<string>();
+  for (const ev of (calWide ?? []) as Array<{ attendees?: Array<{ email?: string }> }>)
+    for (const a of ev.attendees ?? []) { const e = (a?.email || '').toLowerCase(); if (e && e !== self) meetingPeople.add(e); }
+  const SCHEDULING = /\b(meeting|schedul|avail|confirm|calendar|invite|slot|reschedul|works for you|time that works)\b/i;
   // needs_reply items (with content) feed the Must-respond brief; they stay in priorities for counts.
   const mustRespondRaw: Array<{ itemId: string; from: string; subject: string; snippet: string }> = [];
   for (const { it, posture } of emailCandidates) {
@@ -118,6 +131,12 @@ export async function GET() {
     const tid = sd.thread_id as string | undefined;
     const sentAt = tid ? answered.get(tid) : undefined;
     if (posture === 'needs_reply' && sentAt && sentAt > it.created_at) continue; // already replied
+    // Superseded by a meeting — a scheduling/confirm email from someone you already meet with is moot.
+    if (posture === 'needs_reply') {
+      const fromRaw = String((sd.from as string) || (sd.from_address as string) || '').toLowerCase();
+      const fromEmail = fromRaw.match(/[^\s<>"]+@[^\s<>"]+/)?.[0] || fromRaw;
+      if (meetingPeople.has(fromEmail) && SCHEDULING.test(`${(sd.subject as string) || ''} ${(sd.body as string) || ''}`)) continue;
+    }
     priorities.push({
       id: `email:${it.id}`, source: 'email', posture: posture as Posture,
       title: it.work_title || (sd.subject as string) || 'Email',
