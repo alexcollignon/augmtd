@@ -1113,7 +1113,7 @@ export async function syncEmailsForConnection(
               });
               // Record success so the label-sweep skips it; a failure stays unmarked → sweep retries.
               if (ok) await adminSupabase.from('inbox_items')
-                .update({ source_data: { ...fastSourceData, labeled: true } })
+                .update({ source_data: { ...(fastSourceData as Record<string, unknown>), labeled: true } })
                 .eq('source_id', storedEmail.id).eq('user_id', connection.user_id);
             }).catch(() => {});
           }
