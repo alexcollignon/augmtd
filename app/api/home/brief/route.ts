@@ -4,6 +4,7 @@ import { getSystemClient, aiCreate } from '@/lib/ai/factory';
 import { buildAnsweredSet } from '@/lib/inbox/needs-reply';
 import { classifyItem } from '@/lib/inbox/classify-item';
 import { lastMeetingRecall } from '@/lib/context/voice-context';
+import { buildBriefContext } from '@/lib/home/brief-context';
 import { parseModelJSON } from '@/lib/ai/parse-json';
 
 export const maxDuration = 30;
@@ -111,18 +112,11 @@ export async function GET() {
       .select('thread_id, received_at').eq('user_id', user.id).eq('is_from_user', true).in('thread_id', candThreadIds);
     answered = buildAnsweredSet(sent ?? []);
   }
-  // Reconciliation (cross-source): people you already have a meeting with — recently held or upcoming.
-  // A scheduling/confirmation email from one of them is SUPERSEDED by that meeting, so it shouldn't be
-  // a "must respond" (fixes surfacing "confirm a meeting that already happened").
-  const { data: calWide } = await supabase.from('calendar_events')
-    .select('attendees')
-    .eq('user_id', user.id).eq('status', 'confirmed')
-    .gte('start_time', new Date(now.getTime() - 10 * DAY).toISOString())
-    .lte('start_time', new Date(now.getTime() + 21 * DAY).toISOString())
-    .limit(120);
-  const meetingPeople = new Set<string>();
-  for (const ev of (calWide ?? []) as Array<{ attendees?: Array<{ email?: string }> }>)
-    for (const a of ev.attendees ?? []) { const e = (a?.email || '').toLowerCase(); if (e && e !== self) meetingPeople.add(e); }
+  // Reconciliation (cross-source): the SHARED brief context assembles the meeting/calendar dimension
+  // (Layer 1). A scheduling/confirmation email from someone you already have a meeting with is
+  // SUPERSEDED by that meeting, so it shouldn't be a "must respond" (fixes "confirm a meeting that
+  // already happened"). buildBriefContext grows to add threads/commitments/timeline for more rules.
+  const { meetingPeople } = await buildBriefContext(user.id, self, now, supabase);
   const SCHEDULING = /\b(meeting|schedul|avail|confirm|calendar|invite|slot|reschedul|works for you|time that works)\b/i;
   // needs_reply items (with content) feed the Must-respond brief; they stay in priorities for counts.
   const mustRespondRaw: Array<{ itemId: string; from: string; subject: string; snippet: string }> = [];
