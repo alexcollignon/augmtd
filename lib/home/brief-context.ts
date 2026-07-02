@@ -64,6 +64,9 @@ export async function buildBriefContext(
   const meetingPeople = new Set<string>();
   const lastMeetingAt = new Map<string, string>();
   const people = new Map<string, PersonContext>();
+  const nameToEmail = new Map<string, string>(); // normalized attendee full name → email
+  const firstTokenToEmail = new Map<string, string | null>(); // first name → email (null = ambiguous)
+  const normName = (s: string) => s.trim().toLowerCase().replace(/[^\w\s]/g, '').replace(/\s+/g, ' ');
   const nowIso = now.toISOString();
 
   const ensure = (key: string, name?: string): PersonContext => {
@@ -80,6 +83,13 @@ export async function buildBriefContext(
       meetingPeople.add(e);
       if (ev.start_time <= nowIso && !lastMeetingAt.has(e)) lastMeetingAt.set(e, ev.start_time);
       const p = ensure(e, a?.name || a?.displayName);
+      const _nm = normName(a?.name || a?.displayName || '');
+      if (_nm) {
+        nameToEmail.set(_nm, e);
+        const _ft = _nm.split(' ')[0];
+        // Track first name → email; mark null (ambiguous) if two different people share it.
+        if (_ft) firstTokenToEmail.set(_ft, firstTokenToEmail.has(_ft) && firstTokenToEmail.get(_ft) !== e ? null : e);
+      }
       p.meetings.push({ start: ev.start_time, title: ev.title });
       if (ev.start_time <= nowIso && (!p.lastMeetingAt || ev.start_time > p.lastMeetingAt)) p.lastMeetingAt = ev.start_time;
     }
@@ -87,7 +97,11 @@ export async function buildBriefContext(
 
   for (const c of (commitRes?.data ?? []) as Array<{ description: string; direction: string; due_date?: string | null; counterparty?: string | null }>) {
     const email = emailOf(c.counterparty);
-    const key = email || (c.counterparty || '').trim().toLowerCase();
+    // Resolve a name-only counterparty to a meeting attendee's email so their commitments + meetings
+    // merge into ONE person (entity resolution) — conservative exact normalized-name match.
+    const nm = c.counterparty ? normName(c.counterparty) : '';
+    const ft = nm.split(' ')[0];
+    const key = email || (nm && nameToEmail.get(nm)) || (ft ? firstTokenToEmail.get(ft) : null) || nm;
     if (!key) continue;
     const p = ensure(key, !email && c.counterparty ? c.counterparty : undefined);
     p.commitments.push({ description: c.description, direction: c.direction, dueDate: c.due_date ?? null });
