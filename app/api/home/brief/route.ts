@@ -246,7 +246,9 @@ export async function GET() {
   // actionable mail lands — not just every 3h — so it feels live.
   const freshest = (items[0]?.created_at as string) ?? '';
   const commitFresh = commits.reduce((mx, c) => (c.updated_at && c.updated_at > mx ? c.updated_at : mx), '');
-  const sig = `${emailP}|${meetingP}|${commitP}|${overdueP}|${overdueC}|${status.waitingOn}|${schedule.length}|${fyiSig}|${freshest}|${commitFresh}`;
+  // Include today's date so the brief re-contextualizes on a day change (ages/overdue shift daily),
+  // not only on the 3h TTL — a true daily recheck.
+  const sig = `${todayStr}|${emailP}|${meetingP}|${commitP}|${overdueP}|${overdueC}|${status.waitingOn}|${schedule.length}|${fyiSig}|${freshest}|${commitFresh}`;
 
   const fullName = (profileRes.data as { full_name?: string } | null)?.full_name ?? null;
   const firstName = fullName?.split(' ')[0] ?? null;
@@ -276,6 +278,7 @@ export async function GET() {
     (async () => {
     try {
       const grounded = [
+        `Today is ${now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}`,
         schedule.length
           ? `Meetings today: ${schedule.map((s) => `${new Date(s.time).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })} ${s.title}`).join('; ')}`
           : 'No meetings scheduled today',
