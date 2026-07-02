@@ -437,6 +437,7 @@ export function HomeView() {
               </div>
             </div>
             <div className="min-w-0 flex-1">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-neutral-400 mb-1.5">{new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</p>
               <h1 className="text-[27px] font-semibold tracking-tight text-neutral-900 leading-tight">{greeting()}{b?.firstName ? `, ${b.firstName}` : ''}</h1>
               {b?.tldr && (b.tldr.bullets.length > 0 || b.tldr.dontMiss) ? (
                 <div className="mt-2.5 max-w-[860px]">
