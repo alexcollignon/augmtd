@@ -6,6 +6,40 @@
 > + "Show N more" + smooth fade-out, mute-sender. See memory `project_inbox_intelligence_v2.md` for the
 > authoritative state. Remaining: maxEmails=50 backlog cadence, real-time per-email draft-gen, push freshness.
 
+---
+
+## NEXT ARC (started July 2): shared-context brief — "assemble → reconcile → synthesize"
+
+The Home brief generates 4 AI briefs over 4 **silos** (emails, meetings, commitments, FYI) that never
+see each other → contradictions (e.g. "confirm a meeting" email surfaced while that meeting is already
+held). Goal: a **personal-assistant** brief built on ONE shared context, not silos. Best-practice shape:
+
+**Layer 1 — `buildBriefContext(userId, supabase)` (deterministic, no AI).** Extract the scattered
+queries in `app/api/home/brief/route.ts` into one function returning a unified, **entity-centric** object:
+- `people[counterparty]` → { emailThreads, meetingsHeld (+summaries+dates), commitments (you_owe/awaiting),
+  calendarEvents, lastInteraction }.
+- `threads/topics`, and a `timeline` (what happened when — held vs upcoming vs stale).
+- Assemble from emails + meeting_transcripts + calendar_events + commitments in parallel.
+
+**Layer 2 — reconciliation (deterministic, the intelligence). One rule shipped; add the rest:**
+- ✅ **Meeting supersession** (SHIPPED `be97740`): scheduling/confirm email from someone with a
+  calendar meeting (−10d…+21d) → dropped from must-respond. (Extend: match meeting_transcripts too.)
+- **Reply/commitment resolution** — generalize the answered-set: a meeting held after the email, or a
+  sent email / fulfilled commitment, resolves the loop (commitment cross-source already exists — unify).
+- **Entity grouping** — collapse N fragments about one person (the 3 Jean-Marie items) into one state.
+- **Relative-time expiry** — "6 PM tomorrow" whose day passed → stale/drop.
+
+**Layer 3 — synthesis (ONE grounded AI pass over the reconciled context, PA voice).** Because it sees
+the whole picture, it writes coherent, cross-aware prose — no scheduling ghosts, no dupes. Keep the
+structured sections but derive them from the reconciled context so they can't contradict.
+
+**Principles:** single source of truth (the context object); deterministic linking for FACTS, AI only for
+LANGUAGE; entity-centric; temporal. Don't build a graph DB — the plain object is enough. Most of the win
+is in Layer 2 (deterministic + testable). Build order: 1 (extract, no behavior change) → 2 (rules) →
+3 (synthesis). Big, structural — do it in a fresh context window end-to-end.
+
+---
+
 Next focused session. Three interlinked work items: make the Home brief feel live, wire **See draft**
 everywhere it belongs, and make the email **Settings** coherent + actually wired. All shippable on
 the existing prod pipeline (no AgentOS redeploy). Deploy = merge `dev` → `main` via the worktree
