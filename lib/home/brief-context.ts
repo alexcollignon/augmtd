@@ -43,7 +43,7 @@ export async function buildBriefContext(
   now: Date,
   client: DBClient,
 ): Promise<BriefContext> {
-  const [calRes, commitRes] = await Promise.all([
+  const [calRes, commitRes, txRes] = await Promise.all([
     client
       .from('calendar_events')
       .select('start_time, title, attendees')
@@ -59,6 +59,13 @@ export async function buildBriefContext(
       .eq('user_id', userId)
       .eq('status', 'open')
       .limit(100),
+    client
+      .from('meeting_transcripts')
+      .select('title, calendar_event_id, created_at')
+      .eq('user_id', userId)
+      .gte('created_at', new Date(now.getTime() - 14 * DAY).toISOString())
+      .not('calendar_event_id', 'is', null)
+      .limit(60),
   ]);
 
   const meetingPeople = new Set<string>();
@@ -92,6 +99,34 @@ export async function buildBriefContext(
       }
       p.meetings.push({ start: ev.start_time, title: ev.title });
       if (ev.start_time <= nowIso && (!p.lastMeetingAt || ev.start_time > p.lastMeetingAt)) p.lastMeetingAt = ev.start_time;
+    }
+  }
+
+  // Data completeness: recorded meetings (transcripts) reference calendar events that may fall outside
+  // the time window above — pull their attendees so a recorded meeting also counts as "met with".
+  const txEventIds = [...new Set((txRes?.data ?? []).map((t: { calendar_event_id?: string }) => t.calendar_event_id).filter(Boolean))] as string[];
+  if (txEventIds.length) {
+    const { data: txEvents } = await client.from('calendar_events').select('id, start_time, title, attendees').in('id', txEventIds);
+    const evById = new Map((txEvents ?? []).map((e: { id: string }) => [e.id, e]));
+    for (const t of (txRes?.data ?? []) as Array<{ title?: string; calendar_event_id: string; created_at: string }>) {
+      const ev = evById.get(t.calendar_event_id) as { start_time?: string; title?: string; attendees?: Array<{ email?: string; name?: string; displayName?: string }> } | undefined;
+      if (!ev) continue;
+      const start = ev.start_time || t.created_at;
+      for (const a of ev.attendees ?? []) {
+        const e = (a?.email || '').toLowerCase();
+        if (!e || e === self) continue;
+        meetingPeople.add(e);
+        if (start <= nowIso && !lastMeetingAt.has(e)) lastMeetingAt.set(e, start);
+        const p = ensure(e, a?.name || a?.displayName);
+        const _nm = normName(a?.name || a?.displayName || '');
+        if (_nm) {
+          nameToEmail.set(_nm, e);
+          const _ft = _nm.split(' ')[0];
+          if (_ft) firstTokenToEmail.set(_ft, firstTokenToEmail.has(_ft) && firstTokenToEmail.get(_ft) !== e ? null : e);
+        }
+        if (!p.meetings.some((m) => m.start === start)) p.meetings.push({ start, title: t.title || ev.title });
+        if (start <= nowIso && (!p.lastMeetingAt || start > p.lastMeetingAt)) p.lastMeetingAt = start;
+      }
     }
   }
 
