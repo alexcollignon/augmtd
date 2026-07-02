@@ -57,18 +57,21 @@ export async function GET(request: NextRequest) {
       if (!tokens) continue;
       const label = labelFor(it);
       if (label === 'done') continue;
-      try {
-        await writeBackLabel({
-          provider: provider as 'gmail' | 'outlook',
-          encryptedTokens: tokens,
-          label: label as never,
-          gmailThreadId: sd.thread_id,
-          gmailCache,
-          outlookMessageId: sd.outlook_id ?? sd.message_id,
-        });
+      const ok = await writeBackLabel({
+        provider: provider as 'gmail' | 'outlook',
+        encryptedTokens: tokens,
+        label: label as never,
+        gmailThreadId: sd.thread_id,
+        gmailCache,
+        outlookMessageId: sd.outlook_id ?? sd.message_id,
+      });
+      // Only record "labeled" when it ACTUALLY landed — a transient failure stays unmarked and is
+      // retried next sweep (the old code marked labeled even when the apply silently failed).
+      if (ok) {
         await sb.from('inbox_items').update({ source_data: { ...sd, labeled: true } }).eq('id', it.id);
         labeled++;
-      } catch { /* leave unmarked → retried next sweep */ }
+      }
+      await new Promise((r) => setTimeout(r, 60)); // gentle throttle — avoid Gmail rate-limit bursts
     }
   }
 

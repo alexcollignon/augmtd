@@ -66,21 +66,26 @@ export async function writeBackLabel(opts: {
   gmailCache?: GmailLabelCache;
   outlookMessageId?: string | null;
   onTokenRefresh?: any;
-}): Promise<void> {
+}): Promise<boolean> {
+  // Returns whether the label was actually applied. NEVER throws (write-back must not break sync) —
+  // but the boolean lets callers (e.g. the label-sweep) know NOT to mark an item "labeled" on a
+  // transient failure, so it retries instead of silently recording a label that never landed.
   const name = LABEL_DISPLAY[opts.label as RuleLabel];
-  if (!name) return;
+  if (!name) return false;
   try {
     if (opts.provider === 'gmail' && opts.gmailThreadId && opts.gmailCache) {
       const id = await opts.gmailCache.ensure(name);
-      if (id) {
-        const { addGmailThreadLabel } = await import('@/lib/google/gmail');
-        await addGmailThreadLabel(opts.encryptedTokens, opts.gmailThreadId, id);
-      }
+      if (!id) return false;
+      const { addGmailThreadLabel } = await import('@/lib/google/gmail');
+      await addGmailThreadLabel(opts.encryptedTokens, opts.gmailThreadId, id);
+      return true;
     } else if (opts.provider === 'outlook' && opts.outlookMessageId) {
       const { addOutlookCategory } = await import('@/lib/microsoft/outlook');
       await addOutlookCategory(opts.encryptedTokens, opts.outlookMessageId, name.replace('/', ': '), opts.onTokenRefresh);
+      return true;
     }
+    return false;
   } catch {
-    /* non-fatal — write-back must never break sync */
+    return false; // transient/permanent failure — caller decides whether to retry
   }
 }
