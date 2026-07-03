@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import {
   EnvelopeIcon, CalendarDaysIcon, CheckCircleIcon, ClockIcon, UsersIcon,
-  ChevronRightIcon, ArrowRightIcon, BoltIcon, SparklesIcon, ExclamationTriangleIcon, EyeIcon,
+  ChevronRightIcon, ArrowRightIcon, BoltIcon, SparklesIcon, EyeIcon,
 } from '@heroicons/react/24/outline';
 
 type Priority = {
@@ -632,13 +632,24 @@ export function HomeView() {
     return (
       <div className="flex-1 min-w-0 h-full overflow-y-auto bg-neutral-50/40">
         <div className="px-8 py-10">
-          <div className="h-8 w-64 rounded-lg bg-neutral-100 animate-pulse" />
-          <div className="h-4 w-[28rem] max-w-full rounded bg-neutral-100 animate-pulse mt-3" />
-          <div className="flex gap-2 mt-4">{[1, 2, 3].map(i => <div key={i} className="h-7 w-28 rounded-full bg-neutral-100 animate-pulse" />)}</div>
-          {/* Mirror the new single flowing column: a focal block, then the "what needs you" flow. */}
-          <div className="mt-9 max-w-[720px] space-y-6">
-            <SkeletonCard h="h-[128px]" />
-            <div className="space-y-3"><div className="h-3 w-24 rounded bg-neutral-100 animate-pulse mb-1" />{[1, 2, 3].map(i => <SkeletonCard key={i} />)}</div>
+          {/* Header: orb-sized block + greeting + one summary line */}
+          <div className="flex items-start gap-5">
+            <div className="w-[72px] h-[72px] mt-1 rounded-full bg-neutral-100 animate-pulse flex-shrink-0" />
+            <div className="min-w-0 flex-1">
+              <div className="h-3 w-40 rounded bg-neutral-100 animate-pulse" />
+              <div className="h-8 w-64 rounded-lg bg-neutral-100 animate-pulse mt-2.5" />
+              <div className="h-4 w-[26rem] max-w-full rounded bg-neutral-100 animate-pulse mt-3" />
+            </div>
+          </div>
+          {/* Mirror the two-zone shape: a main reading column + a ~320px right rail (stacks below lg). */}
+          <div className="mt-9 mx-auto max-w-[1100px] grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px] gap-x-10 gap-y-10 items-start">
+            <div className="min-w-0 space-y-6">
+              <div className="space-y-3"><div className="h-3 w-24 rounded bg-neutral-100 animate-pulse mb-1" />{[1, 2, 3].map(i => <SkeletonCard key={i} />)}</div>
+            </div>
+            <div className="min-w-0 space-y-3">
+              <div className="h-3 w-28 rounded bg-neutral-100 animate-pulse mb-1" />
+              {[1, 2].map(i => <SkeletonCard key={i} h="h-[56px]" />)}
+            </div>
           </div>
         </div>
       </div>
@@ -646,19 +657,10 @@ export function HomeView() {
   }
 
   const b = brief;
-  const st = b?.status;
   const onDismiss = (id: string) => setDismissed((prev) => { const n = new Set(prev); n.add(id); return n; });
   // Live view of Must-respond after this session's Done/Dismiss/Send: the count decrements AND the
   // collapsed list refills from the hidden pool (instead of leaving "1 item + Show N more").
   const mrLive = b?.mustRespond ? b.mustRespond.items.filter((m) => !dismissed.has(m.itemId)) : [];
-  const mrDropped = (b?.mustRespond?.items.length ?? 0) - mrLive.length;
-  const liveNeedsReply = st ? Math.max(0, st.needsReply - mrDropped) : 0;
-  const chips = st ? [
-    liveNeedsReply ? { icon: EnvelopeIcon, text: `${liveNeedsReply} repl${liveNeedsReply > 1 ? 'ies' : 'y'} needed` } : null,
-    st.meetingsToday ? { icon: CalendarDaysIcon, text: `${st.meetingsToday} meeting${st.meetingsToday > 1 ? 's' : ''} today` } : null,
-    st.waitingOn ? { icon: ClockIcon, text: `${st.waitingOn} waiting on` } : null,
-    st.handledToday ? { icon: CheckCircleIcon, text: `${st.handledToday} handled` } : null,
-  ].filter(Boolean) as { icon: any; text: string }[] : []; // eslint-disable-line @typescript-eslint/no-explicit-any
 
   // ── Compose the single flowing brief ────────────────────────────────────────────────────────
   // needs_reply lives in the Must-respond brief; the priority cards are the OTHER actions.
@@ -717,37 +719,11 @@ export function HomeView() {
             <div className="min-w-0 flex-1">
               <p className="text-[11px] font-semibold uppercase tracking-wider text-neutral-400 mb-1.5">{new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</p>
               <h1 className="text-[27px] font-semibold tracking-tight text-neutral-900 leading-tight">{greeting()}{b?.firstName ? `, ${b.firstName}` : ''}</h1>
-              {b?.tldr && (b.tldr.bullets.length > 0 || b.tldr.dontMiss) ? (
-                <div className="mt-2.5 max-w-[860px]">
-                  {b.tldr.teaser && <p className="text-[14.5px] text-neutral-500 leading-relaxed mb-2.5">{b.tldr.teaser}</p>}
-                  {b.tldr.bullets.length > 0 && (
-                    <ul className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-1.5">
-                      {b.tldr.bullets.map((bl, i) => (
-                        <li key={i} className="flex items-start gap-2.5 text-[13.5px] text-neutral-600 leading-relaxed">
-                          <span className="mt-[7px] w-1 h-1 rounded-full bg-neutral-300 flex-shrink-0" />
-                          <span>{bl}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                  {b.tldr.dontMiss && (
-                    <div className="mt-3 flex items-start gap-2 rounded-xl border border-amber-200/70 bg-amber-50/60 px-3 py-2.5">
-                      <ExclamationTriangleIcon className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
-                      <p className="text-[13px] text-amber-900/90 leading-snug"><span className="font-semibold">Don&apos;t miss:</span> {b.tldr.dontMiss}</p>
-                    </div>
-                  )}
-                </div>
-              ) : b?.briefLine ? (
-                <p className="mt-2 text-[14.5px] text-neutral-500 leading-relaxed max-w-[860px]">{b.briefLine}</p>
-              ) : null}
-              {chips.length > 0 && (
-                <div className="flex flex-wrap gap-2 mt-4">
-                  {chips.map((c, i) => (
-                    <span key={i} className="inline-flex items-center gap-1.5 rounded-full bg-white border border-neutral-200/80 px-3 py-1 text-[11.5px] font-medium text-neutral-600 shadow-[0_1px_2px_rgba(0,0,0,0.03)]">
-                      <c.icon className="w-3.5 h-3.5 text-neutral-400" />{c.text}
-                    </span>
-                  ))}
-                </div>
+              {/* ONE tight summary line — the teaser (else the briefLine). No bullets, no "Don't miss"
+                  banner, no status chips: the sections + their Label counts already carry the numbers,
+                  and the first emphasized digest row IS the focal "start here". Straight into the brief. */}
+              {(b?.tldr?.teaser || b?.briefLine) && (
+                <p className="mt-2 text-[14.5px] text-neutral-500 leading-relaxed max-w-[760px]">{b?.tldr?.teaser || b?.briefLine}</p>
               )}
             </div>
           </div>
@@ -766,10 +742,15 @@ export function HomeView() {
         )}
 
         {!nothing && (
-          // One flowing document, read top-to-bottom. A single narrow measure keeps it readable like
-          // a memo (not a dashboard of columns). Altitude falls as you scroll: focal → what needs you
-          // → quieter secondary lanes → the ambient digest last.
-          <div className="mt-9 max-w-[720px] space-y-10">
+          // TWO-ZONE layout — the width is used, not wasted. A centered 1100px measure splits into a
+          // MAIN reading column (everything that needs your ACTION: the focal item, the editorial
+          // "what needs you" digest, then "on your plate") and a calm ~320px RIGHT RAIL of ambient
+          // context (day at a glance: schedule, awareness, waiting-on, team, handled). Stacks to a
+          // single column below `lg`. The digest itself is NEVER split into columns.
+          <div className="mt-9 mx-auto max-w-[1100px] grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px] gap-x-10 gap-y-10 items-start">
+
+            {/* ── MAIN COLUMN — what needs your action ─────────────────────────────────────────── */}
+            <div className="min-w-0 space-y-10">
 
             {/* 1 · START HERE — only when there's no reply to lead with: the top priority, focal */}
             {startHere && (
@@ -806,9 +787,8 @@ export function HomeView() {
               </RiseIn>
             )}
 
-            {/* 3 · SECONDARY LANES — quieter, tucked below. Present but not shouting. */}
-
-            {/* On your plate — commitments you owe */}
+            {/* 3 · ON YOUR PLATE — commitments you owe. The last ACTION lane, so it stays in the
+                main reading column (not the ambient rail). */}
             {b && b.commitments.length > 0 && (
               <RiseIn delay={90}>
                 <section>
@@ -832,159 +812,169 @@ export function HomeView() {
               </RiseIn>
             )}
 
-            {/* Ball in your court / Waiting on — the follow-ups (whichever the synthesis produced) */}
-            {b?.followups && b.followups.items.length > 0 ? (
-              <RiseIn delay={120}>
-                <section>
-                  <Label count={b.followups.items.length}>Ball in your court</Label>
-                  <div className="rounded-2xl border border-neutral-200/80 bg-white p-4">
-                    {b.followups.teaser && <p className="text-[13px] text-neutral-500 mb-3.5 leading-relaxed">{b.followups.teaser}</p>}
-                    <ol className="space-y-3.5">
-                      {b.followups.items.map((f, i) => (
-                        <FollowUpItem key={f.id || i} f={f} index={i} />
-                      ))}
-                    </ol>
-                    {b.followups.closing && (
-                      <div className="mt-3.5 pt-3.5 border-t border-neutral-100 flex items-start gap-2">
-                        <SparklesIcon className="w-4 h-4 text-indigo-400 flex-shrink-0 mt-0.5" />
-                        <p className="text-[12px] text-neutral-500 leading-relaxed">{b.followups.closing}</p>
-                      </div>
-                    )}
-                  </div>
-                </section>
-              </RiseIn>
-            ) : b && b.waitingOn.length > 0 ? (
-              <RiseIn delay={120}>
-                <section>
-                  <Label count={b.waitingOn.length}>Waiting on others</Label>
-                  <div className="space-y-2">
-                    {b.waitingOn.map(c => (
-                      <CommitmentSideRow key={c.id} id={c.id} icon={ClockIcon} iconClass="text-amber-400">
-                        <span className="text-[13px] text-neutral-800 truncate block">{c.description}</span>
-                        <p className="text-[11.5px] text-neutral-400 mt-0.5">Waiting on {c.counterparty || 'them'} · {c.ageDays}d</p>
-                      </CommitmentSideRow>
-                    ))}
-                  </div>
-                </section>
-              </RiseIn>
-            ) : null}
+            </div>{/* ── end MAIN COLUMN ── */}
 
-            {/* Keep an eye on — awareness, no actions */}
-            {b?.keepAnEyeOn && b.keepAnEyeOn.items.length > 0 && (
-              <RiseIn delay={150}>
-                <section>
-                  <Label count={b.keepAnEyeOn.items.length}>Keep an eye on</Label>
-                  <KeepAnEyeOnCard items={b.keepAnEyeOn.items} />
-                </section>
-              </RiseIn>
-            )}
+            {/* ── RIGHT RAIL — calm "day at a glance": ambient context, not a second digest. Denser,
+                quieter. Order: schedule → keep an eye on → ball-in-court/waiting → team → awareness →
+                handled. On lg+ it sits to the right (sticky so it stays in view); below lg it stacks
+                under the main column. */}
+            <aside className="min-w-0 space-y-8 lg:sticky lg:top-6">
 
-            {/* Today's schedule — context for the day, quieter now that it flows below the actions */}
-            {b && b.schedule.length > 0 && (
-              <RiseIn delay={170}>
-                <section>
-                  <Label>Today&apos;s schedule</Label>
-                  <div className="space-y-2">
-                    {b.schedule.map(m => (
-                      <SideRow key={m.id} href="/meetings">
-                        <div className="flex items-baseline gap-2">
-                          <span className="text-[12px] font-semibold text-indigo-600 flex-shrink-0">{timeOf(m.time)}</span>
-                          <span className="text-[13px] text-neutral-800 truncate">{m.title}</span>
-                        </div>
-                        {m.prep && (m.prep.lastEmail || m.prep.openCommitments.length > 0 || m.prep.lastMeeting) && (
-                          <div className="mt-1.5 text-[11.5px] text-neutral-400 space-y-0.5">
-                            {m.prep.lastMeeting && (
-                              <p className="flex items-start gap-1 text-violet-500 line-clamp-2">
-                                <SparklesIcon className="w-3 h-3 flex-shrink-0 mt-0.5" />
-                                <span>Last time with {m.prep.lastMeeting.person} ({m.prep.lastMeeting.date}): {m.prep.lastMeeting.recall}</span>
-                              </p>
-                            )}
-                            {m.prep.lastEmail && <p className="truncate">Last thread: “{m.prep.lastEmail.subject}”</p>}
-                            {m.prep.openCommitments.map((c, i) => <p key={i} className="truncate">Open: {c}</p>)}
+              {/* Today's schedule — the day's shape, top of the rail */}
+              {b && b.schedule.length > 0 && (
+                <RiseIn delay={90}>
+                  <section>
+                    <Label icon={CalendarDaysIcon}>Today&apos;s schedule</Label>
+                    <div className="space-y-2">
+                      {b.schedule.map(m => (
+                        <SideRow key={m.id} href="/meetings">
+                          <div className="flex items-baseline gap-2">
+                            <span className="text-[12px] font-semibold text-indigo-600 flex-shrink-0">{timeOf(m.time)}</span>
+                            <span className="text-[13px] text-neutral-800 truncate">{m.title}</span>
                           </div>
-                        )}
-                      </SideRow>
-                    ))}
-                  </div>
-                </section>
-              </RiseIn>
-            )}
+                          {m.prep && (m.prep.lastEmail || m.prep.openCommitments.length > 0 || m.prep.lastMeeting) && (
+                            <div className="mt-1.5 text-[11.5px] text-neutral-400 space-y-0.5">
+                              {m.prep.lastMeeting && (
+                                <p className="flex items-start gap-1 text-violet-500 line-clamp-2">
+                                  <SparklesIcon className="w-3 h-3 flex-shrink-0 mt-0.5" />
+                                  <span>Last time with {m.prep.lastMeeting.person} ({m.prep.lastMeeting.date}): {m.prep.lastMeeting.recall}</span>
+                                </p>
+                              )}
+                              {m.prep.lastEmail && <p className="truncate">Last thread: “{m.prep.lastEmail.subject}”</p>}
+                              {m.prep.openCommitments.map((c, i) => <p key={i} className="truncate">Open: {c}</p>)}
+                            </div>
+                          )}
+                        </SideRow>
+                      ))}
+                    </div>
+                  </section>
+                </RiseIn>
+              )}
 
-            {/* From your team — coworker report-backs + ready-for-you (collapsible, quiet) */}
-            {team && (team.messages.length > 0 || team.needsReview.length > 0) && (
-              <RiseIn delay={190}>
-                <Collapsible title="From your team" count={team.messages.length + team.needsReview.length}>
-                  <div className="space-y-2">
-                    {team.messages.slice(0, 3).map((m, i) => (
-                      <SideRow key={`m${i}`} href={m.workerId ? `/workers?worker=${m.workerId}` : '/workers'}>
-                        <span className="text-[12px] font-semibold text-neutral-700">{m.workerName ?? 'A coworker'}</span>
-                        {m.text && <p className="text-[12px] text-neutral-500 mt-0.5 line-clamp-2">{m.text}</p>}
-                      </SideRow>
-                    ))}
-                    {team.needsReview.slice(0, 3).map((r, i) => (
-                      <SideRow key={r.artifactId ?? r.threadId ?? `r${i}`} href={r.workerId ? `/workers?worker=${r.workerId}` : '/workers'} icon={UsersIcon}>
-                        <span className="text-[12.5px] text-neutral-800 truncate block">{r.title || 'Ready for you'}</span>
-                        <p className="text-[11px] text-neutral-400">Ready{r.workerName ? ` · ${r.workerName}` : ''}</p>
-                      </SideRow>
-                    ))}
-                  </div>
-                </Collapsible>
-              </RiseIn>
-            )}
+              {/* Keep an eye on — awareness, no actions */}
+              {b?.keepAnEyeOn && b.keepAnEyeOn.items.length > 0 && (
+                <RiseIn delay={120}>
+                  <section>
+                    <Label count={b.keepAnEyeOn.items.length} icon={EyeIcon}>Keep an eye on</Label>
+                    <KeepAnEyeOnCard items={b.keepAnEyeOn.items} />
+                  </section>
+                </RiseIn>
+              )}
 
-            {/* 4 · AMBIENT DIGEST — the quietest tier, last. Collapsed by default. */}
-            {b?.fyiDigest && b.fyiDigest.groups.length > 0 && (
-              <RiseIn delay={210}>
-                <Collapsible title="For your awareness" count={b.fyiDigest.groups.length}>
-                  <div className="rounded-xl border border-neutral-200/80 bg-white divide-y divide-neutral-100 overflow-hidden">
-                    {b.fyiDigest.groups.filter(g => g.kind === 'person').map((g, i) => (
-                      <FyiGroupRow key={`p${i}`} g={g} variant="person" />
-                    ))}
-                    {b.fyiDigest.groups.some(g => g.kind === 'newsletter') && (
-                      <div className="px-3.5 pt-2.5 pb-1 bg-neutral-50/60">
-                        <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">Newsletters &amp; services</p>
-                      </div>
-                    )}
-                    {b.fyiDigest.groups.filter(g => g.kind === 'newsletter').map((g, i) => (
-                      <FyiGroupRow key={`n${i}`} g={g} variant="newsletter" />
-                    ))}
-                    {b.fyiDigest.tailItems > 0 && (
-                      <Link href="/inbox" className="block px-3.5 py-2 text-[11.5px] text-neutral-400 hover:text-indigo-600 transition-colors">
-                        +{b.fyiDigest.tailItems} more from {b.fyiDigest.tailGroups} other sender{b.fyiDigest.tailGroups > 1 ? 's' : ''}
-                      </Link>
-                    )}
-                  </div>
-                </Collapsible>
-              </RiseIn>
-            )}
+              {/* Ball in your court / Waiting on — the follow-ups (whichever the synthesis produced) */}
+              {b?.followups && b.followups.items.length > 0 ? (
+                <RiseIn delay={150}>
+                  <section>
+                    <Label count={b.followups.items.length}>Ball in your court</Label>
+                    <div className="rounded-2xl border border-neutral-200/80 bg-white p-4">
+                      {b.followups.teaser && <p className="text-[12.5px] text-neutral-500 mb-3.5 leading-relaxed">{b.followups.teaser}</p>}
+                      <ol className="space-y-3.5">
+                        {b.followups.items.map((f, i) => (
+                          <FollowUpItem key={f.id || i} f={f} index={i} />
+                        ))}
+                      </ol>
+                      {b.followups.closing && (
+                        <div className="mt-3.5 pt-3.5 border-t border-neutral-100 flex items-start gap-2">
+                          <SparklesIcon className="w-4 h-4 text-indigo-400 flex-shrink-0 mt-0.5" />
+                          <p className="text-[12px] text-neutral-500 leading-relaxed">{b.followups.closing}</p>
+                        </div>
+                      )}
+                    </div>
+                  </section>
+                </RiseIn>
+              ) : b && b.waitingOn.length > 0 ? (
+                <RiseIn delay={150}>
+                  <section>
+                    <Label count={b.waitingOn.length} icon={ClockIcon}>Waiting on others</Label>
+                    <div className="space-y-2">
+                      {b.waitingOn.map(c => (
+                        <CommitmentSideRow key={c.id} id={c.id} icon={ClockIcon} iconClass="text-amber-400">
+                          <span className="text-[13px] text-neutral-800 truncate block">{c.description}</span>
+                          <p className="text-[11.5px] text-neutral-400 mt-0.5">Waiting on {c.counterparty || 'them'} · {c.ageDays}d</p>
+                        </CommitmentSideRow>
+                      ))}
+                    </div>
+                  </section>
+                </RiseIn>
+              ) : null}
 
-            {/* Handled for you — the trust heartbeat, quietest of all */}
-            {b?.handled && (b.handled.triaged > 0 || b.handled.summarised > 0 || b.handled.tracked > 0) && (
-              <RiseIn delay={230}>
-                <Collapsible title="Handled for you · 24h">
-                  <div className="rounded-xl border border-neutral-200/80 bg-gradient-to-br from-white to-neutral-50/60 px-3.5 py-3 text-[12px] text-neutral-500 space-y-1.5">
-                    {b.handled.triaged > 0 && (
-                      <p className="flex items-start gap-1.5">
-                        <CheckCircleIcon className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0 mt-px" />
-                        <span>Triaged {b.handled.triaged} email{b.handled.triaged > 1 ? 's' : ''}{b.handled.filtered > 0 ? ` · ${b.handled.filtered} filtered as noise` : ''}</span>
-                      </p>
-                    )}
-                    {b.handled.summarised > 0 && (
-                      <p className="flex items-start gap-1.5">
-                        <CheckCircleIcon className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0 mt-px" />
-                        <span>Summarised {b.handled.summarised} meeting{b.handled.summarised > 1 ? 's' : ''}</span>
-                      </p>
-                    )}
-                    {b.handled.tracked > 0 && (
-                      <p className="flex items-start gap-1.5">
-                        <CheckCircleIcon className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0 mt-px" />
-                        <span>Tracked {b.handled.tracked} new commitment{b.handled.tracked > 1 ? 's' : ''}{b.handled.resolved > 0 ? ` · resolved ${b.handled.resolved}` : ''}</span>
-                      </p>
-                    )}
-                  </div>
-                </Collapsible>
-              </RiseIn>
-            )}
+              {/* From your team — coworker report-backs + ready-for-you (collapsible, quiet) */}
+              {team && (team.messages.length > 0 || team.needsReview.length > 0) && (
+                <RiseIn delay={180}>
+                  <Collapsible title="From your team" count={team.messages.length + team.needsReview.length}>
+                    <div className="space-y-2">
+                      {team.messages.slice(0, 3).map((m, i) => (
+                        <SideRow key={`m${i}`} href={m.workerId ? `/workers?worker=${m.workerId}` : '/workers'}>
+                          <span className="text-[12px] font-semibold text-neutral-700">{m.workerName ?? 'A coworker'}</span>
+                          {m.text && <p className="text-[12px] text-neutral-500 mt-0.5 line-clamp-2">{m.text}</p>}
+                        </SideRow>
+                      ))}
+                      {team.needsReview.slice(0, 3).map((r, i) => (
+                        <SideRow key={r.artifactId ?? r.threadId ?? `r${i}`} href={r.workerId ? `/workers?worker=${r.workerId}` : '/workers'} icon={UsersIcon}>
+                          <span className="text-[12.5px] text-neutral-800 truncate block">{r.title || 'Ready for you'}</span>
+                          <p className="text-[11px] text-neutral-400">Ready{r.workerName ? ` · ${r.workerName}` : ''}</p>
+                        </SideRow>
+                      ))}
+                    </div>
+                  </Collapsible>
+                </RiseIn>
+              )}
+
+              {/* For your awareness — the ambient FYI digest, quietest. Collapsed by default. */}
+              {b?.fyiDigest && b.fyiDigest.groups.length > 0 && (
+                <RiseIn delay={200}>
+                  <Collapsible title="For your awareness" count={b.fyiDigest.groups.length}>
+                    <div className="rounded-xl border border-neutral-200/80 bg-white divide-y divide-neutral-100 overflow-hidden">
+                      {b.fyiDigest.groups.filter(g => g.kind === 'person').map((g, i) => (
+                        <FyiGroupRow key={`p${i}`} g={g} variant="person" />
+                      ))}
+                      {b.fyiDigest.groups.some(g => g.kind === 'newsletter') && (
+                        <div className="px-3.5 pt-2.5 pb-1 bg-neutral-50/60">
+                          <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">Newsletters &amp; services</p>
+                        </div>
+                      )}
+                      {b.fyiDigest.groups.filter(g => g.kind === 'newsletter').map((g, i) => (
+                        <FyiGroupRow key={`n${i}`} g={g} variant="newsletter" />
+                      ))}
+                      {b.fyiDigest.tailItems > 0 && (
+                        <Link href="/inbox" className="block px-3.5 py-2 text-[11.5px] text-neutral-400 hover:text-indigo-600 transition-colors">
+                          +{b.fyiDigest.tailItems} more from {b.fyiDigest.tailGroups} other sender{b.fyiDigest.tailGroups > 1 ? 's' : ''}
+                        </Link>
+                      )}
+                    </div>
+                  </Collapsible>
+                </RiseIn>
+              )}
+
+              {/* Handled for you — the trust heartbeat, quietest of all, bottom of the rail */}
+              {b?.handled && (b.handled.triaged > 0 || b.handled.summarised > 0 || b.handled.tracked > 0) && (
+                <RiseIn delay={220}>
+                  <Collapsible title="Handled for you · 24h">
+                    <div className="rounded-xl border border-neutral-200/80 bg-gradient-to-br from-white to-neutral-50/60 px-3.5 py-3 text-[12px] text-neutral-500 space-y-1.5">
+                      {b.handled.triaged > 0 && (
+                        <p className="flex items-start gap-1.5">
+                          <CheckCircleIcon className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0 mt-px" />
+                          <span>Triaged {b.handled.triaged} email{b.handled.triaged > 1 ? 's' : ''}{b.handled.filtered > 0 ? ` · ${b.handled.filtered} filtered as noise` : ''}</span>
+                        </p>
+                      )}
+                      {b.handled.summarised > 0 && (
+                        <p className="flex items-start gap-1.5">
+                          <CheckCircleIcon className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0 mt-px" />
+                          <span>Summarised {b.handled.summarised} meeting{b.handled.summarised > 1 ? 's' : ''}</span>
+                        </p>
+                      )}
+                      {b.handled.tracked > 0 && (
+                        <p className="flex items-start gap-1.5">
+                          <CheckCircleIcon className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0 mt-px" />
+                          <span>Tracked {b.handled.tracked} new commitment{b.handled.tracked > 1 ? 's' : ''}{b.handled.resolved > 0 ? ` · resolved ${b.handled.resolved}` : ''}</span>
+                        </p>
+                      )}
+                    </div>
+                  </Collapsible>
+                </RiseIn>
+              )}
+
+            </aside>{/* ── end RIGHT RAIL ── */}
 
             {/* FUTURE: a quiet "history" nav (yesterday ↑ / dated ledger) slots ABOVE the header, and a
                 "Hand to a coworker" action slots alongside each StartHere / body action — both out of
