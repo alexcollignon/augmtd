@@ -41,6 +41,18 @@ export interface FyiGroupCandidate {
   kind: 'person' | 'newsletter';
   subjects: string[];
 }
+// A "keep an eye on" candidate: something happening AROUND the user that carries real substance
+// (a real person / thread / decision — even if the user is only cc'd), as opposed to bulk noise.
+// The synthesis judges which of these are worth surfacing (tier = keep_an_eye_on) vs digest (fyi).
+export interface AwarenessCandidate {
+  itemId: string;
+  from: string;        // display name or address
+  fromEmail: string;   // counterparty email (identity — reconciles against meetings/threads)
+  subject: string;
+  snippet: string;
+  receivedAt: string;  // ISO
+  ccOnly: boolean;     // was the user only cc'd? (context for the judgment, NOT a rule)
+}
 export interface CommitmentFact {
   description: string;
   overdue: boolean;
@@ -66,6 +78,9 @@ export interface SynthesisInput {
   mustRespond: MustRespondCandidate[];
   waiting: WaitingCandidate[];
   fyiGroups: FyiGroupCandidate[];
+  /** awareness/cc'd threads the synthesis may PROMOTE to the "keep an eye on" tier if they carry
+      real substance — general judgment, not a rule. Kept small by the synthesis (2–4). */
+  keepAnEyeOn: AwarenessCandidate[];
 }
 
 // ── Output shapes — identical to what the client already renders ──
@@ -75,12 +90,17 @@ export type Followups = { teaser: string; items: FollowUp[]; closing: string | n
 export type FyiDigest = { groups: { label: string; summary: string; kind: 'person' | 'newsletter' }[]; tailGroups: number; tailItems: number };
 export type Reply = { who: string; ask: string; angle: string; itemId: string };
 export type MustRespond = { teaser: string; items: Reply[] };
+// "Keep an eye on" — glanceable awareness, NO action. Each item traces back to a real inbox item.
+export type KeepAnEye = { who: string; why: string; itemId: string };
+export type KeepAnEyeOn = { items: KeepAnEye[] };
 
 export interface SynthesisResult {
   tldr: Tldr | null;
   mustRespond: MustRespond | null;
   followups: Followups | null;
   fyiDigest: FyiDigest | null;
+  /** the middle awareness tier — real things around the user worth SEEING (no action). Selective. */
+  keepAnEyeOn: KeepAnEyeOn | null;
   /** itemIds the synthesis judged superseded/stale — the route drops them from priorities too, so
       the prose and the cards can't contradict each other. */
   droppedItemIds: string[];
@@ -152,6 +172,9 @@ export async function synthesizeBrief(
   const fyiStr = input.fyiGroups.length
     ? input.fyiGroups.map((g, i) => `[F${i}] ${g.label} (${g.count}, ${g.kind}): ${g.subjects.slice(0, 5).filter(Boolean).map((s) => `"${s}"`).join('; ')}`).join('\n')
     : 'none';
+  const eyeStr = input.keepAnEyeOn.length
+    ? input.keepAnEyeOn.map((k, i) => `[K${i}] from ${k.from} (${k.fromEmail || 'no address'})${k.ccOnly ? ' [you were cc’d]' : ''}, ${daysBetween(iso(now), k.receivedAt)}d ago — "${k.subject}": ${k.snippet}`).join('\n')
+    : 'none';
 
   const prompt = `You are ${me}'s personal assistant. Write today's brief in a warm, first-person PA voice — as if you personally keep ${me}'s day in order (met X, owe Y, waiting on Z). Use ${me}'s first name naturally.
 
@@ -159,7 +182,13 @@ You are given the COMPLETE grounded picture, reconciled per person. Reason over 
 - SUPERSESSION: if an email awaiting a reply is a scheduling/confirmation/logistics message from someone ${me} ALREADY has a meeting with (held or upcoming), the meeting settles it — DROP that reply (do not list it in "mustRespond"). Same for any ask a later interaction already resolved.
 - STALENESS: drop an ask whose moment has passed (e.g. "by 6pm yesterday").
 - GROUPING: never write two separate fragments about the same person — fold everything about them into one coherent thought.
-- GROUNDING: use ONLY the facts below. Never invent names, numbers, asks, or details. Echo the [Rn]/[Wn]/[Fn] tag of every item you keep so it maps back.
+- GROUNDING: use ONLY the facts below. Never invent names, numbers, asks, or details. Echo the [Rn]/[Wn]/[Fn]/[Kn] tag of every item you keep so it maps back.
+
+TIERS — every surfaced item falls into one of three, by how much ACTION it demands of ${me}:
+- "mustRespond" (ACT): a real person is waiting on ${me}'s reply, or ${me} owes something. ${me}'s move.
+- "keepAnEyeOn" (AWARE — NO action): a real thing happening AROUND ${me} that ${me} should SEE but does nothing about — a genuine person/relationship/thread with substance (an urgent meeting request ${me} was cc'd on, a project thread ${me} is on, a decision in ${me}'s orbit). Being cc'd rather than to'd does NOT make something noise — a serious message from a real person or a known relationship still belongs here even if ${me} is only cc'd.
+- "fyiDigest" (SKIM/IGNORE): mailing-list / notification / newsletter / receipt noise. No person really needs ${me}'s attention.
+JUDGE which awareness candidates [Kn] rise to keepAnEyeOn vs stay noise — use your judgment about substance and the sender being a real person/relationship, NOT any fixed sender/domain. If a candidate is a substantive message from a real person (a meeting request, a real project/relationship thread, a decision ${me} is in the loop on) — especially one ${me} was deliberately cc'd on — it SHOULD be surfaced here, even though ${me} takes no action on it. Only drop candidates that are actually bulk/transactional/marketing/receipt noise. Be SELECTIVE about VOLUME: keep AT MOST 2–4 (pick the most substantive; don't pad with marginal ones) — but do surface the genuinely important ones rather than returning an empty tier when real awareness items exist. Give each a one-line "why it matters".
 
 Today is ${dateStr}.
 Meetings today: ${scheduleStr}
@@ -178,6 +207,9 @@ ${mustRespondStr}
 THREADS ${me} IS WAITING ON (ball in ${me}'s court to nudge):
 ${waitingStr}
 
+AWARENESS CANDIDATES (things around ${me}, often cc'd — judge which few rise to "keepAnEyeOn" vs are noise):
+${eyeStr}
+
 FYI EMAILS (low-priority awareness, grouped by sender — one digest line each):
 ${fyiStr}
 
@@ -193,6 +225,9 @@ Return ONLY JSON in this exact shape:
     "items": [{"r": <the [Rn] index kept>, "who": "sender or topic", "ask": "what they're asking (one line)", "angle": "recommended reply gist (one line)"}]
   },
   "droppedReplies": [<the [Rn] indexes you DROPPED as superseded/stale, with none invented>],
+  "keepAnEyeOn": {
+    "items": [{"k": <the [Kn] index>, "who": "person or topic", "why": "one line — why it's worth seeing (no action needed)"}]
+  },
   "followups": {
     "teaser": "one short line introducing the roundup",
     "items": [{"w": <the [Wn] index>, "who": "person or topic", "status": "short status (how long quiet, what's pending)", "nextMove": "recommended next move (brief, specific)"}],
@@ -203,7 +238,7 @@ Return ONLY JSON in this exact shape:
   }
 }
 
-If a section has no items, return it with an empty items/groups array (or null for tldr fields). Keep every "mustRespond" item you did not drop; every "followups" item; and one digest line per FYI group.`;
+If a section has no items, return it with an empty items/groups array (or null for tldr fields). Keep every "mustRespond" item you did not drop; every "followups" item; AT MOST 2–4 "keepAnEyeOn" items (fewer is better); and one digest line per FYI group.`;
 
   try {
     const res = await aiCreate(client, {
@@ -214,6 +249,7 @@ If a section has no items, return it with an empty items/groups array (or null f
       tldr?: { teaser?: string; bullets?: string[]; dontMiss?: string | null };
       mustRespond?: { teaser?: string; items?: { r?: number; who?: string; ask?: string; angle?: string }[] };
       droppedReplies?: number[];
+      keepAnEyeOn?: { items?: { k?: number; who?: string; why?: string }[] };
       followups?: { teaser?: string; items?: { w?: number; who?: string; status?: string; nextMove?: string }[]; closing?: string | null };
       fyiDigest?: { groups?: { f?: number; summary?: string }[] };
     }>(res.choices?.[0]?.message?.content || '', {});
@@ -248,6 +284,20 @@ If a section has no items, return it with an empty items/groups array (or null f
       .filter(({ i }) => !keptR.has(i))
       .map(({ id }) => id);
 
+    // Keep an eye on — the middle awareness tier. Map [Kn] back to real itemIds; hard-cap at 4 so a
+    // chatty model can't turn awareness into a backlog. Deduped by itemId.
+    const eyeSeen = new Set<string>();
+    const eyeItems: KeepAnEye[] = (Array.isArray(parsed.keepAnEyeOn?.items) ? parsed.keepAnEyeOn!.items! : [])
+      .map((x) => {
+        const cand = typeof x.k === 'number' ? input.keepAnEyeOn[x.k] : undefined;
+        if (!cand || eyeSeen.has(cand.itemId)) return null;
+        eyeSeen.add(cand.itemId);
+        return { who: x.who || cand.from, why: x.why || '', itemId: cand.itemId };
+      })
+      .filter((x): x is KeepAnEye => !!x)
+      .slice(0, 4);
+    const keepAnEyeOn: KeepAnEyeOn | null = eyeItems.length ? { items: eyeItems } : null;
+
     // Follow-ups
     const followItems: FollowUp[] = (Array.isArray(parsed.followups?.items) ? parsed.followups!.items! : [])
       .map((x) => {
@@ -273,8 +323,8 @@ If a section has no items, return it with an empty items/groups array (or null f
       ? { groups: fyiGroups, tailGroups: 0, tailItems: 0 }
       : null;
 
-    return { tldr, mustRespond, followups, fyiDigest, droppedItemIds };
+    return { tldr, mustRespond, keepAnEyeOn, followups, fyiDigest, droppedItemIds };
   } catch {
-    return { tldr: null, mustRespond: null, followups: null, fyiDigest: null, droppedItemIds: [] };
+    return { tldr: null, mustRespond: null, keepAnEyeOn: null, followups: null, fyiDigest: null, droppedItemIds: [] };
   }
 }

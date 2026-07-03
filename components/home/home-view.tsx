@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import {
   EnvelopeIcon, CalendarDaysIcon, CheckCircleIcon, ClockIcon, UsersIcon,
-  ChevronRightIcon, ArrowRightIcon, BoltIcon, SparklesIcon, ExclamationTriangleIcon,
+  ChevronRightIcon, ArrowRightIcon, BoltIcon, SparklesIcon, ExclamationTriangleIcon, EyeIcon,
 } from '@heroicons/react/24/outline';
 
 type Priority = {
@@ -16,6 +16,7 @@ type Tldr = { teaser: string; bullets: string[]; dontMiss: string | null };
 type Followups = { teaser: string; items: { id?: string; who: string; status: string; nextMove: string }[]; closing: string | null };
 type FyiDigest = { groups: { label: string; summary: string; kind: 'person' | 'newsletter' }[]; tailGroups: number; tailItems: number };
 type MustRespond = { teaser: string; items: { who: string; ask: string; angle: string; itemId: string }[] };
+type KeepAnEyeOn = { items: { who: string; why: string; itemId: string }[] };
 type Brief = {
   firstName: string | null;
   briefLine: string | null;
@@ -23,6 +24,7 @@ type Brief = {
   followups?: Followups | null;
   fyiDigest?: FyiDigest | null;
   mustRespond?: MustRespond | null;
+  keepAnEyeOn?: KeepAnEyeOn | null;
   status: { needsReply: number; meetingsToday: number; waitingOn: number; handledToday: number };
   priorities: Priority[];
   commitments: { id: string; description: string; counterparty: string | null; dueDate: string | null; overdue: boolean; dueToday: boolean }[];
@@ -327,6 +329,29 @@ function MustRespondItem({ m, index, onDismiss }: { m: { who: string; ask: strin
   );
 }
 
+// "Keep an eye on" — the middle awareness tier: real things happening AROUND you (a cc'd urgent
+// meeting, a thread you're on, a decision in your orbit) that you should SEE but do nothing about.
+// Glanceable one-liners (who + why it matters), NO action buttons — this is awareness, not action.
+// Secondary visual weight: lighter than Must-respond (no rose frame), heavier than the FYI digest.
+function KeepAnEyeOnCard({ items }: { items: { who: string; why: string; itemId: string }[] }) {
+  return (
+    <div className="rounded-2xl border border-neutral-200/80 bg-white divide-y divide-neutral-100 overflow-hidden">
+      {items.map((k, i) => (
+        <Link key={k.itemId || i} href="/inbox" className="group flex items-start gap-2.5 px-4 py-2.5 transition-colors hover:bg-indigo-50/40">
+          <span className="flex-shrink-0 mt-0.5 w-6 h-6 rounded-full bg-indigo-50 flex items-center justify-center">
+            <EyeIcon className="w-3.5 h-3.5 text-indigo-500" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="text-[13px] font-semibold text-neutral-800 leading-snug truncate">{k.who}</p>
+            {k.why && <p className="text-[12.5px] text-neutral-500 mt-0.5 leading-snug">{k.why}</p>}
+          </div>
+          <ChevronRightIcon className="w-3.5 h-3.5 text-neutral-300 group-hover:text-indigo-400 flex-shrink-0 mt-1 transition-colors" />
+        </Link>
+      ))}
+    </div>
+  );
+}
+
 // Collapsible feed section — the lower-priority briefs collapse so the Home stays scannable.
 function Collapsible({ title, count, defaultOpen = false, children }: { title: string; count?: number; defaultOpen?: boolean; children: React.ReactNode }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -411,7 +436,7 @@ export function HomeView() {
   const cards = (b?.priorities ?? []).filter(p => p.posture !== 'needs_reply');
   // "Start here" belongs on the first genuine action — never on a finished (past) meeting.
   const startHereId = cards.find(p => p.source !== 'meeting')?.id ?? null;
-  const nothing = b && !b.priorities.length && !b.commitments.length && !b.waitingOn.length && !b.schedule.length && !(team?.messages.length || team?.needsReview.length);
+  const nothing = b && !b.priorities.length && !b.commitments.length && !b.waitingOn.length && !b.schedule.length && !(b.keepAnEyeOn?.items.length) && !(team?.messages.length || team?.needsReview.length);
 
   return (
     <div className="flex-1 min-w-0 h-full overflow-y-auto bg-neutral-50/40">
@@ -583,6 +608,17 @@ export function HomeView() {
                   </div>
                 </RiseIn>
               ) : null}
+
+              {/* Keep an eye on — awareness of real things around you (no action). Between the action
+                  sections above and the FYI digest below (in the right column), by action gradient. */}
+              {b?.keepAnEyeOn && b.keepAnEyeOn.items.length > 0 && (
+                <RiseIn delay={150}>
+                  <div className="mt-8">
+                    <Label count={b.keepAnEyeOn.items.length}>Keep an eye on</Label>
+                    <KeepAnEyeOnCard items={b.keepAnEyeOn.items} />
+                  </div>
+                </RiseIn>
+              )}
             </div>
 
             {/* RIGHT — schedule + team + heartbeat */}

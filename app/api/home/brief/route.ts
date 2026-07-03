@@ -63,7 +63,8 @@ export async function GET() {
       .or('work_state.eq.noise,rule_type.eq.marketing,rule_type.eq.notifications'),         // filtered as noise
     // FYI tier (for the FYI-by-topic brief): awareness emails, grouped by sender downstream. Wide
     // window so high-volume people (not just recent newsletters) surface in the people section.
-    supabase.from('inbox_items').select('work_title, source_data, rule_type')
+    // (id/created_at carried so a PERSON-kind awareness email can be promoted to "keep an eye on".)
+    supabase.from('inbox_items').select('id, work_title, source_data, rule_type, created_at')
       .eq('user_id', user.id).eq('status', 'pending').eq('work_state', 'noted')
       .order('created_at', { ascending: false }).limit(200),
   ]);
@@ -100,10 +101,27 @@ export async function GET() {
 
   // ── Email cards — via the SHARED classifier (rule-aware). needs_reply AND to_do (email tasks),
   // so the Home is as complete as the inbox, not just replies.
-  const emailCandidates = items
+  const classifiedEmails = items
     .filter((it) => it.source !== 'meeting' && it.source !== 'commitment')
-    .map((it) => ({ it, posture: classifyItem(it as never) }))
+    .map((it) => ({ it, posture: classifyItem(it as never) }));
+  const emailCandidates = classifiedEmails
     .filter((x) => x.posture === 'needs_reply' || x.posture === 'to_do');
+  // Awareness candidates for the "keep an eye on" tier. Two sources:
+  //  (a) cc'd-important items the SHARED classifier demoted to 'fyi' purely because the user is only
+  //      cc'd (isCcOnlyBystander). We do NOT change classify-item.ts (the inbox depends on that blunt
+  //      rule) — instead the Home re-surfaces these as awareness candidates so the synthesis can
+  //      PROMOTE the substantive ones (e.g. a cc'd urgent meeting request). Scoped to the Home only.
+  //  (b) person-kind FYI emails (real senders, not newsletters) — added below where the FYI groups
+  //      are split by sender kind.
+  // The synthesis judges which few of these rise to keep_an_eye_on; the rest stay in the FYI digest.
+  const awarenessRaw = new Map<string, { it: (typeof items)[number]; ccOnly: boolean }>();
+  for (const { it, posture } of classifiedEmails) {
+    if (posture !== 'fyi') continue;
+    const sd = (it.source_data ?? {}) as Record<string, unknown>;
+    // Only worth promoting if there's a real sender AND the user was cc'd (i.e. it was demoted for
+    // being a bystander, not because it's inherently noise). Newsletters have no personal signal.
+    if (sd.is_cc_only === true && (sd.from_address || sd.from)) awarenessRaw.set(it.id, { it, ccOnly: true });
+  }
   // Drop reply threads you've already answered.
   const candThreadIds = [...new Set(emailCandidates.map((c) => c.it.source_data?.thread_id).filter(Boolean))] as string[];
   let answered = new Map<string, string>();
@@ -189,7 +207,7 @@ export async function GET() {
 
   // ── FYI-by-topic: group the awareness emails by sender; the AI digests each group below. ──
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const fyiRows = (fyiRes.data ?? []) as Array<{ work_title: string | null; source_data: any }>;
+  const fyiRows = (fyiRes.data ?? []) as Array<{ id: string; work_title: string | null; source_data: any; created_at: string }>;
   const fyiBySender = new Map<string, { subjects: string[]; address: string; unsub: boolean }>();
   for (const r of fyiRows) {
     const sd = (r.source_data ?? {}) as Record<string, unknown>;
@@ -212,6 +230,39 @@ export async function GET() {
   const fyiTop = [...peopleGroups, ...newsletterGroups];
   const fyiTailItems = fyiGroupsAll.reduce((n, g) => n + g.count, 0) - fyiTop.reduce((n, g) => n + g.count, 0);
   const fyiTailGroups = Math.max(0, fyiGroupsAll.length - fyiTop.length);
+
+  // ── Awareness candidates (source b): FYI emails the digest ITSELF treats as a real person (not a
+  // newsletter/service) — reuse that exact person/newsletter split (labels in `peopleGroups`) so the
+  // pool can't disagree with the digest, and we don't grow a second heuristic. Bulk mail stays in the
+  // digest; only human FYI is offered up for possible promotion. The synthesis makes the final call.
+  const personLabels = new Set(peopleGroups.map((g) => g.label));
+  for (const r of fyiRows) {
+    const sd = (r.source_data ?? {}) as Record<string, unknown>;
+    const label = (sd.from_name as string) || (sd.from as string);
+    if (!label || !personLabels.has(label)) continue; // not a person the digest recognises → digest only
+    if (!awarenessRaw.has(r.id)) awarenessRaw.set(r.id, { it: r as unknown as (typeof items)[number], ccOnly: sd.is_cc_only === true });
+  }
+  const fromEmailFrom = (sd: Record<string, unknown>): string | null => {
+    const raw = String((sd.from_address as string) || (sd.from as string) || '').toLowerCase();
+    return raw.match(/[^\s<>"]+@[^\s<>"]+/)?.[0] || (raw.includes('@') ? raw : null);
+  };
+  // Order cc'd human threads first (someone deliberately looped the user in — the strongest awareness
+  // signal), then freshest. Cap the pool small so the prompt stays lean and selective.
+  const keepAnEyeOnRaw = [...awarenessRaw.values()]
+    .sort((a, b) => (a.ccOnly === b.ccOnly ? b.it.created_at.localeCompare(a.it.created_at) : a.ccOnly ? -1 : 1))
+    .slice(0, 12)
+    .map(({ it, ccOnly }) => {
+    const sd = (it.source_data ?? {}) as Record<string, unknown>;
+    return {
+      itemId: it.id,
+      from: (sd.from_name as string) || (sd.from as string) || 'Someone',
+      fromEmail: fromEmailFrom(sd) || '',
+      subject: it.work_title || (sd.subject as string) || '(no subject)',
+      snippet: ((sd.body as string) || '').replace(/\s+/g, ' ').trim().slice(0, 300),
+      receivedAt: it.created_at,
+      ccOnly,
+    };
+  });
 
   // ── Today's schedule + light prep on the next meeting ──
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -271,7 +322,10 @@ export async function GET() {
   const commitFresh = commits.reduce((mx, c) => (c.updated_at && c.updated_at > mx ? c.updated_at : mx), '');
   // Include today's date so the brief re-contextualizes on a day change (ages/overdue shift daily),
   // not only on the 3h TTL — a true daily recheck.
-  const sig = `${todayStr}|${emailP}|${meetingP}|${commitP}|${overdueP}|${overdueC}|${status.waitingOn}|${schedule.length}|${fyiSig}|${freshest}|${commitFresh}`;
+  // Awareness signature: count + freshest awareness item, so promoting/refreshing "keep an eye on"
+  // regenerates the brief when the awareness pool shifts (not just on the 3h TTL).
+  const eyeFresh = keepAnEyeOnRaw.reduce((mx, k) => (k.receivedAt > mx ? k.receivedAt : mx), '');
+  const sig = `${todayStr}|${emailP}|${meetingP}|${commitP}|${overdueP}|${overdueC}|${status.waitingOn}|${schedule.length}|${fyiSig}|${freshest}|${commitFresh}|${keepAnEyeOnRaw.length}|${eyeFresh}`;
 
   const fullName = (profileRes.data as { full_name?: string } | null)?.full_name ?? null;
   const firstName = fullName?.split(' ')[0] ?? null;
@@ -288,11 +342,13 @@ export async function GET() {
   type FyiDigest = { groups: { label: string; summary: string; kind: 'person' | 'newsletter' }[]; tailGroups: number; tailItems: number };
   type Reply = { who: string; ask: string; angle: string; itemId: string };
   type MustRespond = { teaser: string; items: Reply[] };
-  const cached = (profileRes.data as { home_brief?: { text?: string; tldr?: Tldr; followups?: Followups | null; fyiDigest?: FyiDigest | null; mustRespond?: MustRespond | null; droppedItemIds?: string[]; generated_at: string; sig?: string } } | null)?.home_brief ?? null;
+  type KeepAnEyeOn = { items: { who: string; why: string; itemId: string }[] };
+  const cached = (profileRes.data as { home_brief?: { text?: string; tldr?: Tldr; followups?: Followups | null; fyiDigest?: FyiDigest | null; mustRespond?: MustRespond | null; keepAnEyeOn?: KeepAnEyeOn | null; droppedItemIds?: string[]; generated_at: string; sig?: string } } | null)?.home_brief ?? null;
   let tldr: Tldr | null = cached?.tldr ?? null;
   let followups: Followups | null = cached?.followups ?? null;
   let fyiDigest: FyiDigest | null = cached?.fyiDigest ?? null;
   let mustRespond: MustRespond | null = cached?.mustRespond ?? null;
+  let keepAnEyeOn: KeepAnEyeOn | null = cached?.keepAnEyeOn ?? null;
   let briefLine = cached?.text ?? null;
   let droppedItemIds: string[] = cached?.droppedItemIds ?? [];
   const stale = !cached || cached.sig !== sig || (now.getTime() - new Date(cached.generated_at).getTime()) > BRIEF_TTL;
@@ -306,10 +362,12 @@ export async function GET() {
       mustRespond: mustRespondRaw,
       waiting: waitingOn.map((w) => ({ id: w.id, counterparty: w.counterparty, description: w.description, ageDays: w.ageDays })),
       fyiGroups: fyiTop.map((g) => ({ label: g.label, count: g.count, kind: g.kind, subjects: g.subjects })),
+      keepAnEyeOn: keepAnEyeOnRaw,
     });
     // Keep the cached value on a failed section (nulls only overwrite when we got something).
     if (synth.tldr) { tldr = synth.tldr; briefLine = synth.tldr.teaser || briefLine; }
     if (synth.mustRespond !== null || !mustRespondRaw.length) mustRespond = synth.mustRespond;
+    if (synth.keepAnEyeOn !== null || !keepAnEyeOnRaw.length) keepAnEyeOn = synth.keepAnEyeOn;
     if (synth.followups !== null || !waitingOn.length) followups = synth.followups;
     if (synth.fyiDigest !== null || !fyiTop.length) {
       // Fill the deterministic tail counts (computed over the FULL group set, not just the shown top).
@@ -317,7 +375,7 @@ export async function GET() {
     }
     droppedItemIds = synth.droppedItemIds;
 
-    await supabase.from('profiles').update({ home_brief: { text: briefLine, tldr, followups, fyiDigest, mustRespond, droppedItemIds, generated_at: now.toISOString(), sig } }).eq('id', user.id).then(() => {}, () => {});
+    await supabase.from('profiles').update({ home_brief: { text: briefLine, tldr, followups, fyiDigest, mustRespond, keepAnEyeOn, droppedItemIds, generated_at: now.toISOString(), sig } }).eq('id', user.id).then(() => {}, () => {});
   }
 
   // Apply the synthesis's supersession/staleness verdict to the CARDS too, so the "Needs you" grid
@@ -348,6 +406,11 @@ export async function GET() {
         .filter((r) => !r.itemId || pendingItemIds.has(r.itemId))
         .map((r) => ({ ...r, draft: draftByItem.get(r.itemId) ?? null })) }
     : mustRespond;
+  // "Keep an eye on" is awareness — no action buttons — but still drop items that are no longer
+  // pending (dismissed elsewhere) so a stale cached tier can't show a gone item.
+  const keepAnEyeOnOut = keepAnEyeOn
+    ? { items: keepAnEyeOn.items.filter((k) => !k.itemId || pendingItemIds.has(k.itemId) || awarenessRaw.has(k.itemId)) }
+    : keepAnEyeOn;
 
-  return NextResponse.json({ firstName, briefLine, tldr, followups, fyiDigest, mustRespond: mustRespondOut, status, priorities: cappedPriorities, commitments, waitingOn, schedule, handled });
+  return NextResponse.json({ firstName, briefLine, tldr, followups, fyiDigest, mustRespond: mustRespondOut, keepAnEyeOn: keepAnEyeOnOut, status, priorities: cappedPriorities, commitments, waitingOn, schedule, handled });
 }
