@@ -270,15 +270,17 @@ If a section has no items, return it with an empty items/groups array (or null f
     const droppedR = new Set<number>(
       Array.isArray(parsed.droppedReplies) ? parsed.droppedReplies.filter((n): n is number => typeof n === 'number') : [],
     );
+    const modelItems = Array.isArray(parsed.mustRespond?.items) ? parsed.mustRespond!.items! : [];
     const enrichR = new Map<number, { who?: string; ask?: string; angle?: string }>();
-    for (const x of (Array.isArray(parsed.mustRespond?.items) ? parsed.mustRespond!.items! : [])) {
-      if (typeof x.r === 'number') enrichR.set(x.r, x);
-    }
+    modelItems.forEach((x) => { if (typeof x.r === 'number') enrichR.set(x.r, x); });
     const mustItems: Reply[] = input.mustRespond
       .map((cand, i) => ({ cand, i }))
       .filter(({ i }) => !droppedR.has(i))
-      .map(({ cand, i }) => {
-        const x = enrichR.get(i);
+      .map(({ cand, i }, j) => {
+        // Enrich (who/ask/angle CONTEXT) by the [Rn] index when the model echoed it; else fall back to
+        // POSITION — the model returns the kept items in order but often omits the numeric index, and
+        // without this fallback the ask/angle context is silently lost (bare names only).
+        const x = enrichR.get(i) ?? modelItems[j];
         return { who: x?.who || cand.from, ask: x?.ask || '', angle: x?.angle || '', itemId: cand.itemId };
       })
       .slice(0, 25);
