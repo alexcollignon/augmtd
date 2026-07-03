@@ -179,7 +179,7 @@ export async function synthesizeBrief(
   const prompt = `You are ${me}'s personal assistant. Write today's brief in a warm, first-person PA voice — as if you personally keep ${me}'s day in order (met X, owe Y, waiting on Z). Use ${me}'s first name naturally.
 
 You are given the COMPLETE grounded picture, reconciled per person. Reason over it holistically before writing:
-- SUPERSESSION: if an email awaiting a reply is a scheduling/confirmation/logistics message from someone ${me} ALREADY has a meeting with (held or upcoming), the meeting settles it — DROP that reply (do not list it in "mustRespond"). Same for any ask a later interaction already resolved.
+- SUPERSESSION: if an email awaiting a reply is a scheduling/confirmation/logistics message from someone ${me} ALREADY has a meeting with (held or upcoming), the meeting settles it — DROP that reply by listing its [Rn] index in "droppedReplies". Same for any ask a later interaction already resolved. EVERY reply you do NOT put in droppedReplies is kept and shown — so drop ONLY the genuinely-settled ones, and never drop a real reply just because you didn't mention it.
 - STALENESS: drop an ask whose moment has passed (e.g. "by 6pm yesterday").
 - GROUPING: never write two separate fragments about the same person — fold everything about them into one coherent thought.
 - GROUNDING: use ONLY the facts below. Never invent names, numbers, asks, or details. Echo the [Rn]/[Wn]/[Fn]/[Kn] tag of every item you keep so it maps back.
@@ -242,7 +242,7 @@ If a section has no items, return it with an empty items/groups array (or null f
 
   try {
     const res = await aiCreate(client, {
-      model, max_tokens: 1400, temperature: 0.4,
+      model, max_tokens: 4000, temperature: 0.4,
       messages: [{ role: 'user', content: prompt }],
     });
     const parsed = parseModelJSON<{
@@ -263,26 +263,29 @@ If a section has no items, return it with an empty items/groups array (or null f
         }
       : null;
 
-    // Must-respond — map [Rn] back to real itemIds; anything not returned (or explicitly dropped) is
-    // gone. This is where supersession takes effect deterministically on the cards too.
-    const keptR = new Set<number>();
-    const mustItems: Reply[] = (Array.isArray(parsed.mustRespond?.items) ? parsed.mustRespond!.items! : [])
-      .map((x) => {
-        const cand = typeof x.r === 'number' ? input.mustRespond[x.r] : undefined;
-        if (!cand) return null;
-        keptR.add(x.r as number);
-        return { who: x.who || cand.from, ask: x.ask || '', angle: x.angle || '', itemId: cand.itemId };
+    // Must-respond — KEEP every candidate reply EXCEPT the ones the model explicitly dropped
+    // (droppedReplies, for supersession/staleness). Opt-OUT, not opt-in: a model that forgets to echo
+    // an [Rn], truncates, or returns a malformed items array can NEVER silently nuke a real reply the
+    // user owes. Enrich with the model's who/ask/angle wherever it mapped one back.
+    const droppedR = new Set<number>(
+      Array.isArray(parsed.droppedReplies) ? parsed.droppedReplies.filter((n): n is number => typeof n === 'number') : [],
+    );
+    const enrichR = new Map<number, { who?: string; ask?: string; angle?: string }>();
+    for (const x of (Array.isArray(parsed.mustRespond?.items) ? parsed.mustRespond!.items! : [])) {
+      if (typeof x.r === 'number') enrichR.set(x.r, x);
+    }
+    const mustItems: Reply[] = input.mustRespond
+      .map((cand, i) => ({ cand, i }))
+      .filter(({ i }) => !droppedR.has(i))
+      .map(({ cand, i }) => {
+        const x = enrichR.get(i);
+        return { who: x?.who || cand.from, ask: x?.ask || '', angle: x?.angle || '', itemId: cand.itemId };
       })
-      .filter((x): x is Reply => !!x)
       .slice(0, 25);
     const mustRespond: MustRespond | null = mustItems.length
       ? { teaser: parsed.mustRespond?.teaser || '', items: mustItems }
       : null;
-    // Dropped = explicitly dropped OR simply not kept (the model saw it and left it out).
-    const droppedItemIds: string[] = input.mustRespond
-      .map((m, i) => ({ id: m.itemId, i }))
-      .filter(({ i }) => !keptR.has(i))
-      .map(({ id }) => id);
+    const droppedItemIds: string[] = input.mustRespond.filter((_, i) => droppedR.has(i)).map((m) => m.itemId);
 
     // Keep an eye on — the middle awareness tier. Map [Kn] back to real itemIds; hard-cap at 4 so a
     // chatty model can't turn awareness into a backlog. Deduped by itemId.
