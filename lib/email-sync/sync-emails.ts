@@ -713,6 +713,8 @@ export async function syncEmailsForConnection(
               work_state: 'noise',
               work_title: existingEmail.subject || 'Email',
               item_type: 'notification',
+              // Thread freshness = the message's own time (see 20260703 migration).
+              last_activity_at: existingEmail.received_at || new Date().toISOString(),
               source_data: {
                 email_id: existingEmail.id,
                 message_id: existingEmail.message_id,
@@ -743,6 +745,8 @@ export async function syncEmailsForConnection(
               work_state: 'noted',
               work_title: existingEmail.subject || 'Email',
               item_type: 'fyi',
+              // Thread freshness = the message's own time (see 20260703 migration).
+              last_activity_at: existingEmail.received_at || new Date().toISOString(),
               source_data: {
                 email_id: existingEmail.id,
                 message_id: existingEmail.message_id,
@@ -965,6 +969,7 @@ export async function syncEmailsForConnection(
               is_read: deriveIsRead(storedEmail),
               status: 'pending',
               needs_review: false,
+              last_activity_at: storedEmail.received_at || new Date().toISOString(),
             }) as Record<string, unknown>);
             if (_snErr) console.error(`    ✗ Safety net insert failed:`, _snErr.message);
             else { console.log(`    🛡 Safety net: created placeholder inbox item`); result.inboxItemsCreated++; }
@@ -972,9 +977,10 @@ export async function syncEmailsForConnection(
             // Only update source_data if this email is newer than what's displayed
             const _existingReceived = (_snExisting as any).source_data?.received_at;
             if (!_existingReceived || new Date(storedEmail.received_at) > new Date(_existingReceived)) {
+              // Bump freshness to the new message's time so the brief re-surfaces the thread.
               await adminSupabase
                 .from('inbox_items')
-                .update(stripNulls({ source_data: _snSourceData, source_id: storedEmail.id }) as Record<string, unknown>)
+                .update(stripNulls({ source_data: _snSourceData, source_id: storedEmail.id, last_activity_at: storedEmail.received_at || new Date().toISOString() }) as Record<string, unknown>)
                 .eq('id', _snExisting.id);
             }
           }
@@ -1046,10 +1052,15 @@ export async function syncEmailsForConnection(
                 await adminSupabase
                   .from('inbox_items')
                   .update(stripNulls({
+                    // Re-classify: the batch classifier ran on THIS (new) email's envelope, so a
+                    // reply that flipped noise↔fyi is reflected. A reply that turned actionable
+                    // classifies as 'process' upstream and lands on the process-path instead.
                     work_state: emailClass === 'noise' ? 'noise' : 'noted',
                     item_type: emailClass === 'noise' ? 'notification' : 'fyi',
                     source_data: fastSourceData,
                     source_id: storedEmail.id,
+                    // Bump freshness to the new message's time so the brief re-surfaces the thread.
+                    last_activity_at: storedEmail.received_at || new Date().toISOString(),
                   }) as Record<string, unknown>)
                   .eq('id', fastExisting.id);
               } else {
@@ -1073,6 +1084,7 @@ export async function syncEmailsForConnection(
               is_read: deriveIsRead(storedEmail),
               status: 'pending',
               needs_review: false,
+              last_activity_at: storedEmail.received_at || new Date().toISOString(),
             }) as Record<string, unknown>);
             if (noiseErr) console.error(`    ✗ Failed to insert noise inbox item:`, noiseErr.message);
             else result.inboxItemsCreated++;
@@ -1091,6 +1103,7 @@ export async function syncEmailsForConnection(
               is_read: deriveIsRead(storedEmail),
               status: 'pending',
               needs_review: false,
+              last_activity_at: storedEmail.received_at || new Date().toISOString(),
             }) as Record<string, unknown>);
             if (fyiErr) console.error(`    ✗ Failed to insert fyi inbox item:`, fyiErr.message);
             else result.inboxItemsCreated++;
@@ -1385,6 +1398,9 @@ export async function syncEmailsForConnection(
                 rule_type: qItem.ruleLabel ?? null,
                 work_title: processed.workTitle,
                 item_type: processed.itemType,
+                // Re-classified above (processEmail re-ran on the latest incoming email) and freshness
+                // bumped to that message's time, so a fresh reply re-surfaces the thread in the brief.
+                last_activity_at: emailForProcessing.received_at || storedEmail.received_at || new Date().toISOString(),
 
                 // NEW: Recipient context
                 recipient_context: {
@@ -1511,6 +1527,7 @@ export async function syncEmailsForConnection(
               work_state: recipient.detectedRole === 'irrelevant' ? 'noted' : recipient.inferredWorkState,
               work_title: processed.workTitle,
               item_type: processed.itemType,
+              last_activity_at: storedEmail.received_at || new Date().toISOString(),
 
               // NEW: Recipient context
               recipient_context: {

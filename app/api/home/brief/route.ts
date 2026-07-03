@@ -35,13 +35,16 @@ export async function GET() {
   const since24 = new Date(now.getTime() - DAY).toISOString();
   const [itemsRes, commitsRes, meetingsRes, handledRes, profileRes, triagedRes, summarisedRes, trackedRes, filteredRes, fyiRes] = await Promise.all([
     supabase.from('inbox_items')
-      .select('id, work_title, work_state, rule_type, type_override, source, source_id, source_meeting_transcript_id, source_data, created_at')
+      .select('id, work_title, work_state, rule_type, type_override, source, source_id, source_meeting_transcript_id, source_data, created_at, last_activity_at')
       .eq('user_id', user.id).eq('status', 'pending')
       // Action work_states (reply-via-email + external tasks + meeting action items) OR a rule that
       // classified it actionable (rule_type) — so a needs_reply the RULES found on a 'noted' email
       // still reaches the Home. classifyItem (which reads rule_type) makes the final call.
       .or('work_state.in.(work_prepared,decision_required,action_required),rule_type.in.(needs_reply,to_do,waiting_on)')
-      .order('created_at', { ascending: false }).limit(60),
+      // Order by latest THREAD activity, not first-seen created_at: a fresh reply to an old thread
+      // (sync bumps last_activity_at) must rank as current, not stale. NULLS LAST guards legacy rows
+      // synced before the column existed / before backfill.
+      .order('last_activity_at', { ascending: false, nullsFirst: false }).limit(60),
     supabase.from('commitments').select('*').eq('user_id', user.id).eq('status', 'open'),
     supabase.from('calendar_events')
       .select('id, title, start_time, attendees')
@@ -64,15 +67,23 @@ export async function GET() {
     // FYI tier (for the FYI-by-topic brief): awareness emails, grouped by sender downstream. Wide
     // window so high-volume people (not just recent newsletters) surface in the people section.
     // (id/created_at carried so a PERSON-kind awareness email can be promoted to "keep an eye on".)
-    supabase.from('inbox_items').select('id, work_title, source_data, rule_type, created_at')
+    supabase.from('inbox_items').select('id, work_title, source_data, rule_type, created_at, last_activity_at')
       .eq('user_id', user.id).eq('status', 'pending').eq('work_state', 'noted')
-      .order('created_at', { ascending: false }).limit(200),
+      .order('last_activity_at', { ascending: false, nullsFirst: false }).limit(200),
   ]);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const items = (itemsRes.data ?? []) as any[];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const commits = (commitsRes.data ?? []) as any[];
+
+  // The item's freshness = latest thread activity. Prefer the explicit last_activity_at column
+  // (bumped by sync on every new message), fall back to the newest message time in source_data,
+  // then to created_at. Used for ordering, the "already replied" check, and the cache signature so
+  // a fresh reply to an old thread is treated as current everywhere in the brief.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const activityAt = (it: any): string =>
+    (it?.last_activity_at as string) || (it?.source_data?.received_at as string) || (it?.created_at as string) || '';
 
   // A source card: grouped by where it's from (email thread / meeting), carrying the unified
   // posture (what it needs) — the digest shape from docs/unified-classifier-digest-plan.md.
@@ -146,7 +157,9 @@ export async function GET() {
     const sd = (it.source_data ?? {}) as Record<string, unknown>;
     const tid = sd.thread_id as string | undefined;
     const sentAt = tid ? answered.get(tid) : undefined;
-    if (posture === 'needs_reply' && sentAt && sentAt > it.created_at) continue; // already replied
+    // Answered only if our reply is newer than the latest inbound activity — a fresh reply that
+    // landed AFTER we last sent still needs us.
+    if (posture === 'needs_reply' && sentAt && sentAt > activityAt(it)) continue; // already replied
     const fromEmail = fromEmailOf(sd);
     priorities.push({
       id: `email:${it.id}`, source: 'email', posture: posture as Posture,
@@ -158,7 +171,7 @@ export async function GET() {
     emailSeeds.push({
       itemId: it.id, fromAddress: fromEmail, fromName: (sd.from_name as string) || null,
       subject: it.work_title || (sd.subject as string) || '(no subject)',
-      at: it.created_at, posture,
+      at: activityAt(it), posture,
       snippet: ((sd.body as string) || '').replace(/\s+/g, ' ').trim().slice(0, 240),
     });
     if (posture === 'needs_reply') {
@@ -168,7 +181,7 @@ export async function GET() {
         fromEmail: fromEmail || '',
         subject: it.work_title || (sd.subject as string) || '(no subject)',
         snippet: ((sd.body as string) || '').replace(/\s+/g, ' ').trim().slice(0, 400),
-        receivedAt: it.created_at,
+        receivedAt: activityAt(it),
       });
     }
   }
@@ -249,7 +262,7 @@ export async function GET() {
   // Order cc'd human threads first (someone deliberately looped the user in — the strongest awareness
   // signal), then freshest. Cap the pool small so the prompt stays lean and selective.
   const keepAnEyeOnRaw = [...awarenessRaw.values()]
-    .sort((a, b) => (a.ccOnly === b.ccOnly ? b.it.created_at.localeCompare(a.it.created_at) : a.ccOnly ? -1 : 1))
+    .sort((a, b) => (a.ccOnly === b.ccOnly ? activityAt(b.it).localeCompare(activityAt(a.it)) : a.ccOnly ? -1 : 1))
     .slice(0, 12)
     .map(({ it, ccOnly }) => {
     const sd = (it.source_data ?? {}) as Record<string, unknown>;
@@ -259,7 +272,7 @@ export async function GET() {
       fromEmail: fromEmailFrom(sd) || '',
       subject: it.work_title || (sd.subject as string) || '(no subject)',
       snippet: ((sd.body as string) || '').replace(/\s+/g, ' ').trim().slice(0, 300),
-      receivedAt: it.created_at,
+      receivedAt: activityAt(it),
       ccOnly,
     };
   });
@@ -315,10 +328,10 @@ export async function GET() {
   const overdueC = commitments.filter((c) => c.overdue).length;
   const overdueP = cappedPriorities.filter((p) => p.overdue).length;
   const fyiSig = fyiTop.map((g) => `${g.label}:${g.count}`).join(',');
-  // Freshness: the newest pending item's timestamp (items are ordered created_at desc) + the newest
-  // commitment update. Folding these into the signature makes the brief regenerate the moment new
-  // actionable mail lands — not just every 3h — so it feels live.
-  const freshest = (items[0]?.created_at as string) ?? '';
+  // Freshness: the newest pending item's LATEST-ACTIVITY timestamp + the newest commitment update.
+  // Folding these into the signature makes the brief regenerate the moment new activity lands (a
+  // fresh reply on an old thread now bumps last_activity_at) — not just every 3h — so it feels live.
+  const freshest = items.reduce((mx, it) => { const a = activityAt(it); return a > mx ? a : mx; }, '');
   const commitFresh = commits.reduce((mx, c) => (c.updated_at && c.updated_at > mx ? c.updated_at : mx), '');
   // Include today's date so the brief re-contextualizes on a day change (ages/overdue shift daily),
   // not only on the 3h TTL — a true daily recheck.
