@@ -217,7 +217,7 @@ function FyiGroupRow({ g, variant }: { g: { label: string; summary: string; kind
 
 // Must-respond list with progressive disclosure — shows the first 5, "Show N more" reveals the rest.
 // Never hides items, just collapses; per-item Done/Dismiss lives on each MustRespondItem.
-function MustRespondList({ items }: { items: Array<{ who: string; ask: string; angle: string; itemId: string; draft?: string | null }> }) {
+function MustRespondList({ items, onDismiss }: { items: Array<{ who: string; ask: string; angle: string; itemId: string; draft?: string | null }>; onDismiss?: (id: string) => void }) {
   const [showAll, setShowAll] = useState(false);
   const LIMIT = 5;
   const visible = showAll ? items : items.slice(0, LIMIT);
@@ -225,7 +225,7 @@ function MustRespondList({ items }: { items: Array<{ who: string; ask: string; a
   return (
     <>
       <ol className="space-y-4">
-        {visible.map((m, i) => <MustRespondItem key={m.itemId || i} m={m} index={i} />)}
+        {visible.map((m, i) => <MustRespondItem key={m.itemId || i} m={m} index={i} onDismiss={onDismiss} />)}
       </ol>
       {!showAll && more > 0 && (
         <button onClick={() => setShowAll(true)} className="mt-3.5 text-[12.5px] font-medium text-indigo-600 hover:text-indigo-700">Show {more} more</button>
@@ -237,7 +237,7 @@ function MustRespondList({ items }: { items: Array<{ who: string; ask: string; a
 // Must-respond item. If the auto-draft sweep already prepared a reply (`m.draft`), the card shows
 // "Draft ready" — open it to review the pre-filled draft, edit, and Send (right here, Home-only).
 // Otherwise "See draft" generates one on demand. Sending posts to /send-reply.
-function MustRespondItem({ m, index }: { m: { who: string; ask: string; angle: string; itemId: string; draft?: string | null }; index: number }) {
+function MustRespondItem({ m, index, onDismiss }: { m: { who: string; ask: string; angle: string; itemId: string; draft?: string | null }; index: number; onDismiss?: (id: string) => void }) {
   const [draft, setDraft] = useState<string | null>(m.draft ?? null);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -247,6 +247,9 @@ function MustRespondItem({ m, index }: { m: { who: string; ask: string; angle: s
   const ready = !!m.draft;
   const { removed, exiting, startExit } = useExit();
   const [acting, setActing] = useState(false);
+  // Once the fade-out completes, tell the parent so it drops this from the live list — the count
+  // decrements and a hidden item refills the collapsed window.
+  useEffect(() => { if (removed) onDismiss?.(m.itemId); }, [removed]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Done / Dismiss — sets the item completed|dismissed; classifyItem hides those, so it never
   // resurfaces. Optimistic, with a smooth fade-out.
@@ -360,6 +363,7 @@ export function HomeView() {
   const [team, setTeam] = useState<{ messages: TeamMsg[]; needsReview: TeamReview[] } | null>(null);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [dismissed, setDismissed] = useState<Set<string>>(new Set()); // itemIds acted this session → live count + list refill
 
   useEffect(() => {
     Promise.all([
@@ -391,8 +395,14 @@ export function HomeView() {
 
   const b = brief;
   const st = b?.status;
+  const onDismiss = (id: string) => setDismissed((prev) => { const n = new Set(prev); n.add(id); return n; });
+  // Live view of Must-respond after this session's Done/Dismiss/Send: the count decrements AND the
+  // collapsed list refills from the hidden pool (instead of leaving "1 item + Show N more").
+  const mrLive = b?.mustRespond ? b.mustRespond.items.filter((m) => !dismissed.has(m.itemId)) : [];
+  const mrDropped = (b?.mustRespond?.items.length ?? 0) - mrLive.length;
+  const liveNeedsReply = st ? Math.max(0, st.needsReply - mrDropped) : 0;
   const chips = st ? [
-    st.needsReply ? { icon: EnvelopeIcon, text: `${st.needsReply} repl${st.needsReply > 1 ? 'ies' : 'y'} needed` } : null,
+    liveNeedsReply ? { icon: EnvelopeIcon, text: `${liveNeedsReply} repl${liveNeedsReply > 1 ? 'ies' : 'y'} needed` } : null,
     st.meetingsToday ? { icon: CalendarDaysIcon, text: `${st.meetingsToday} meeting${st.meetingsToday > 1 ? 's' : ''} today` } : null,
     st.waitingOn ? { icon: ClockIcon, text: `${st.waitingOn} waiting on` } : null,
     st.handledToday ? { icon: CheckCircleIcon, text: `${st.handledToday} handled` } : null,
@@ -492,13 +502,13 @@ export function HomeView() {
             {/* LEFT — what needs you */}
             <div>
               {/* Must respond — the replies you owe (needs_reply roundup) */}
-              {b?.mustRespond && b.mustRespond.items.length > 0 && (
+              {b?.mustRespond && mrLive.length > 0 && (
                 <RiseIn>
                   <div className="mb-8">
-                    <Label count={b.mustRespond.items.length}>Must respond</Label>
+                    <Label count={mrLive.length}>Must respond</Label>
                     <div className="rounded-2xl border border-rose-200/70 bg-white p-4">
                       {b.mustRespond.teaser && <p className="text-[13px] text-neutral-500 mb-3.5 leading-relaxed">{b.mustRespond.teaser}</p>}
-                      <MustRespondList items={b.mustRespond.items} />
+                      <MustRespondList items={mrLive} onDismiss={onDismiss} />
                     </div>
                   </div>
                 </RiseIn>
