@@ -353,7 +353,7 @@ export async function GET() {
   type FollowUp = { id?: string; who: string; status: string; nextMove: string };
   type Followups = { teaser: string; items: FollowUp[]; closing: string | null };
   type FyiDigest = { groups: { label: string; summary: string; kind: 'person' | 'newsletter' }[]; tailGroups: number; tailItems: number };
-  type Reply = { who: string; ask: string; angle: string; itemId: string };
+  type Reply = { who: string; ask: string; angle: string; itemId: string; subject?: string; snippet?: string; receivedAt?: string };
   type MustRespond = { teaser: string; items: Reply[] };
   type KeepAnEyeOn = { items: { who: string; why: string; itemId: string }[] };
   const cached = (profileRes.data as { home_brief?: { text?: string; tldr?: Tldr; followups?: Followups | null; fyiDigest?: FyiDigest | null; mustRespond?: MustRespond | null; keepAnEyeOn?: KeepAnEyeOn | null; droppedItemIds?: string[]; generated_at: string; sig?: string } } | null)?.home_brief ?? null;

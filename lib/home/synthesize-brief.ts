@@ -88,7 +88,7 @@ export type Tldr = { teaser: string; bullets: string[]; dontMiss: string | null 
 export type FollowUp = { id?: string; who: string; status: string; nextMove: string };
 export type Followups = { teaser: string; items: FollowUp[]; closing: string | null };
 export type FyiDigest = { groups: { label: string; summary: string; kind: 'person' | 'newsletter' }[]; tailGroups: number; tailItems: number };
-export type Reply = { who: string; ask: string; angle: string; itemId: string };
+export type Reply = { who: string; ask: string; angle: string; itemId: string; subject?: string; snippet?: string; receivedAt?: string };
 export type MustRespond = { teaser: string; items: Reply[] };
 // "Keep an eye on" — glanceable awareness, NO action. Each item traces back to a real inbox item.
 export type KeepAnEye = { who: string; why: string; itemId: string };
@@ -281,7 +281,12 @@ If a section has no items, return it with an empty items/groups array (or null f
         // POSITION — the model returns the kept items in order but often omits the numeric index, and
         // without this fallback the ask/angle context is silently lost (bare names only).
         const x = enrichR.get(i) ?? modelItems[j];
-        return { who: x?.who || cand.from, ask: x?.ask || '', angle: x?.angle || '', itemId: cand.itemId };
+        // Carry the REAL email through to the client (avatar/subject/snippet/date live richness) —
+        // these come straight from the deterministic candidate, not the model, so they can't drift.
+        return {
+          who: x?.who || cand.from, ask: x?.ask || '', angle: x?.angle || '', itemId: cand.itemId,
+          subject: cand.subject, snippet: cand.snippet, receivedAt: cand.receivedAt,
+        };
       })
       .slice(0, 25);
     const mustRespond: MustRespond | null = mustItems.length

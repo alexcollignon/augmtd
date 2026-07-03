@@ -15,7 +15,7 @@ type Priority = {
 type Tldr = { teaser: string; bullets: string[]; dontMiss: string | null };
 type Followups = { teaser: string; items: { id?: string; who: string; status: string; nextMove: string }[]; closing: string | null };
 type FyiDigest = { groups: { label: string; summary: string; kind: 'person' | 'newsletter' }[]; tailGroups: number; tailItems: number };
-type MustRespond = { teaser: string; items: { who: string; ask: string; angle: string; itemId: string; draft?: string | null }[] };
+type MustRespond = { teaser: string; items: { who: string; ask: string; angle: string; itemId: string; draft?: string | null; subject?: string; snippet?: string; receivedAt?: string }[] };
 type KeepAnEyeOn = { items: { who: string; why: string; itemId: string }[] };
 type Brief = {
   firstName: string | null;
@@ -49,6 +49,47 @@ function greeting() {
 const timeOf = (iso: string) => new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 const fmtDue = (iso: string | null) => (iso ? new Date(iso + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '');
 
+// Compact "when" for a digest row — Today shows the time, this year shows Mon D, older adds the year.
+function fmtWhen(iso?: string): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  const now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  if (sameDay) return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  const sameYear = d.getFullYear() === now.getFullYear();
+  return d.toLocaleDateString('en-US', sameYear ? { month: 'short', day: 'numeric' } : { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+// ── Sender avatar — a rounded-full initial chip. Deterministic soft tint from a SMALL on-brand
+// palette (the indigo/violet/rose/emerald family already used across Home), so a "Serif-like" row
+// gets a recognisable sender colour WITHOUT introducing loud new hues. Light, not dark.
+const AVATAR_TINTS = [
+  'bg-indigo-100 text-indigo-700',
+  'bg-violet-100 text-violet-700',
+  'bg-rose-100 text-rose-600',
+  'bg-emerald-100 text-emerald-700',
+] as const;
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return '·';
+  if (parts.length === 1) return parts[0].slice(0, 1).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+function tintFor(seed: string): string {
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
+  return AVATAR_TINTS[h % AVATAR_TINTS.length];
+}
+function SenderAvatar({ name, size = 'md' }: { name: string; size?: 'sm' | 'md' }) {
+  const cls = size === 'sm' ? 'w-6 h-6 text-[10px]' : 'w-7 h-7 text-[11px]';
+  return (
+    <span className={`flex-shrink-0 ${cls} rounded-full inline-flex items-center justify-center font-semibold ${tintFor(name)}`} aria-hidden="true">
+      {initials(name)}
+    </span>
+  );
+}
+
 // Staggered rise-in — keeps the load feeling smooth and consistent with the rest of the app.
 function RiseIn({ delay = 0, children }: { delay?: number; children: React.ReactNode }) {
   const [shown, setShown] = useState(false);
@@ -56,10 +97,11 @@ function RiseIn({ delay = 0, children }: { delay?: number; children: React.React
   return <div className={`transition-all duration-500 ease-out ${shown ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-3'}`}>{children}</div>;
 }
 
-const Label = ({ children, count }: { children: React.ReactNode; count?: number }) => (
-  <div className="flex items-baseline gap-2 mb-3">
+const Label = ({ children, count, icon: Icon }: { children: React.ReactNode; count?: number; icon?: React.ElementType }) => (
+  <div className="flex items-center gap-1.5 mb-3">
+    {Icon && <Icon className="w-3.5 h-3.5 text-neutral-400" />}
     <h2 className="text-[11px] font-semibold uppercase tracking-[0.07em] text-neutral-400">{children}</h2>
-    {count != null && count > 0 && <span className="text-[11px] font-medium text-neutral-300">{count}</span>}
+    {count != null && count > 0 && <span className="text-[11px] font-medium text-neutral-300 ml-0.5">{count}</span>}
   </div>
 );
 
@@ -158,7 +200,7 @@ function useCommitmentAct(id?: string): { removed: boolean; exiting: boolean; ac
 // a bold who · subject, a light one-line ask, and a quiet indigo affordance. Clicking the row opens
 // the depth inline — the suggested angle, the editable draft (Send/Copy), and Open thread. Rows are
 // separated by hair dividers, not boxes, so the whole thing reads like a well-set memo.
-type DigestItem = { who: string; ask: string; angle: string; itemId: string; draft?: string | null };
+type DigestItem = { who: string; ask: string; angle: string; itemId: string; draft?: string | null; subject?: string; snippet?: string; receivedAt?: string };
 
 function DigestList({ items, onDismiss, emphasizeFirst = false }: { items: DigestItem[]; onDismiss?: (id: string) => void; emphasizeFirst?: boolean }) {
   const [showAll, setShowAll] = useState(false);
@@ -223,6 +265,10 @@ function DigestReply({ m, onDismiss, emphasis = false }: { m: DigestItem; onDism
   };
 
   if (removed) return null;
+  // Line 1 = sender · real subject (bold). Line 2 = the synthesized ask (muted context). The avatar
+  // gives the row a "Serif-like" sender identity; the real subject makes it recognisable at a glance.
+  const subject = m.subject?.trim();
+  const when = fmtWhen(m.receivedAt);
   return (
     <div className={`group ${exitCls(exiting)}`}>
       {/* Collapsed line — the whole header is the toggle (a div, not a button, so the ✓/✕ buttons can
@@ -230,9 +276,15 @@ function DigestReply({ m, onDismiss, emphasis = false }: { m: DigestItem; onDism
       <div role="button" tabIndex={0} onClick={toggle}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } }}
         className="w-full flex items-start gap-3 py-3 text-left cursor-pointer">
+        <SenderAvatar name={m.who} size={emphasis ? 'md' : 'sm'} />
         <div className="min-w-0 flex-1">
-          <p className={`${emphasis ? 'text-[15px]' : 'text-[13.5px]'} font-semibold text-neutral-900 leading-snug`}>{m.who}</p>
-          {m.ask && <p className={`${emphasis ? 'text-[13px]' : 'text-[12.5px]'} text-neutral-500 mt-0.5 leading-snug`}>{m.ask}</p>}
+          <div className="flex items-baseline gap-2">
+            <p className={`${emphasis ? 'text-[14.5px]' : 'text-[13.5px]'} font-semibold text-neutral-900 leading-snug min-w-0 truncate`}>
+              {m.who}{subject && <span className="font-normal text-neutral-400"> · </span>}{subject && <span className="font-semibold text-neutral-800">{subject}</span>}
+            </p>
+            {when && <span className="flex-shrink-0 ml-auto text-[11px] text-neutral-300 tabular-nums">{when}</span>}
+          </div>
+          {m.ask && <p className={`${emphasis ? 'text-[12.5px]' : 'text-[12px]'} text-neutral-500 mt-0.5 leading-snug line-clamp-1`}>{m.ask}</p>}
         </div>
         {sent ? (
           <span className="flex-shrink-0 mt-0.5 text-[12px] font-medium text-emerald-600">Sent ✓</span>
@@ -251,9 +303,12 @@ function DigestReply({ m, onDismiss, emphasis = false }: { m: DigestItem; onDism
         )}
       </div>
 
-      {/* Expanded — the real info: suggested angle, the editable draft, and a link out to the thread. */}
+      {/* Expanded — the real email snippet, the suggested angle, the editable draft, and a link out. */}
       {open && !sent && (
-        <div className="pb-3.5 pl-0 pr-0 -mt-1">
+        <div className="pb-3.5 pl-10 pr-0 -mt-1">
+          {m.snippet && (
+            <p className="text-[12.5px] text-neutral-500 leading-relaxed mb-2.5 border-l-2 border-neutral-200 pl-3 line-clamp-3">{m.snippet}</p>
+          )}
           {m.angle && <p className="text-[12.5px] text-neutral-600 leading-snug mb-2.5"><span className="font-medium text-neutral-700">Suggested angle:</span> {m.angle}</p>}
           {loading && <div className="h-20 rounded-xl bg-neutral-100 animate-pulse" />}
           {draft && (
@@ -345,7 +400,7 @@ function FyiGroupRow({ g, variant }: { g: { label: string; summary: string; kind
 // the flowing body (draft/send for a reply; open + done/dismiss for a priority) so nothing regresses.
 // Chosen upstream: a must-respond reply (if any) else the first non-meeting priority. Grounded on a
 // real id in both cases.
-type StartHereReply = { kind: 'reply'; m: { who: string; ask: string; angle: string; itemId: string; draft?: string | null } };
+type StartHereReply = { kind: 'reply'; m: { who: string; ask: string; angle: string; itemId: string; draft?: string | null; subject?: string; snippet?: string; receivedAt?: string } };
 type StartHerePriority = { kind: 'priority'; p: Priority };
 type StartHereData = StartHereReply | StartHerePriority;
 
@@ -368,7 +423,7 @@ function StartHere({ data, teaser, onDismiss }: { data: StartHereData; teaser?: 
 
 // Focal reply — same draft/send/done/dismiss behaviour as MustRespondItem, at focal scale (larger
 // title, draft open by default when one is ready so the primary action is one tap away).
-function StartHereReplyBody({ m, onDismiss }: { m: { who: string; ask: string; angle: string; itemId: string; draft?: string | null }; onDismiss?: (id: string) => void }) {
+function StartHereReplyBody({ m, onDismiss }: { m: { who: string; ask: string; angle: string; itemId: string; draft?: string | null; subject?: string; snippet?: string; receivedAt?: string }; onDismiss?: (id: string) => void }) {
   const [draft, setDraft] = useState<string | null>(m.draft ?? null);
   const [open, setOpen] = useState<boolean>(!!m.draft); // draft-ready → open inline immediately
   const [loading, setLoading] = useState(false);
@@ -415,8 +470,17 @@ function StartHereReplyBody({ m, onDismiss }: { m: { who: string; ask: string; a
           <span className="inline-flex items-center gap-1 rounded-md bg-indigo-50 px-1.5 py-0.5 text-[10px] font-medium text-indigo-600">
             <EnvelopeIcon className="w-3 h-3" />Reply needed
           </span>
-          <p className="text-[17px] font-semibold text-neutral-900 leading-snug mt-2">{m.who}</p>
-          {m.ask && <p className="text-[13.5px] text-neutral-600 mt-1 leading-relaxed">{m.ask}</p>}
+          <div className="flex items-start gap-2.5 mt-2">
+            <SenderAvatar name={m.who} size="md" />
+            <div className="min-w-0 flex-1">
+              <p className="text-[16px] font-semibold text-neutral-900 leading-snug">
+                {m.who}{m.subject?.trim() && <span className="text-neutral-400 font-normal"> · </span>}{m.subject?.trim() && <span className="text-neutral-800">{m.subject.trim()}</span>}
+              </p>
+              {fmtWhen(m.receivedAt) && <p className="text-[11px] text-neutral-400 mt-0.5">{fmtWhen(m.receivedAt)}</p>}
+            </div>
+          </div>
+          {m.snippet && <p className="text-[13px] text-neutral-500 mt-2 leading-relaxed line-clamp-2 border-l-2 border-neutral-200 pl-3">{m.snippet}</p>}
+          {m.ask && <p className="text-[13.5px] text-neutral-600 mt-2 leading-relaxed">{m.ask}</p>}
           {m.angle && <p className="text-[13px] text-neutral-600 mt-1.5 leading-relaxed"><span className="font-medium text-neutral-700">Angle:</span> {m.angle}</p>}
         </div>
         {sent ? (
@@ -721,7 +785,7 @@ export function HomeView() {
             {hasBody && (
               <RiseIn delay={60}>
                 <section>
-                  <Label count={digestReplies.length + bodyCards.length}>What needs you</Label>
+                  <Label count={digestReplies.length + bodyCards.length} icon={BoltIcon}>What needs you</Label>
                   {digestReplies.length > 0 && (
                     <div className="mb-6">
                       {b?.mustRespond?.teaser && <p className="text-[13px] text-neutral-500 leading-relaxed mb-1.5">{b.mustRespond.teaser}</p>}
