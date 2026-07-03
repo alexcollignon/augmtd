@@ -329,6 +329,157 @@ function MustRespondItem({ m, index, onDismiss }: { m: { who: string; ask: strin
   );
 }
 
+// ── "Start here" — the single focal item at the very top of the brief. ONE most-important thing,
+// large and unmissable, with its primary action inline. Reuses the EXACT same action endpoints as
+// the flowing body (draft/send for a reply; open + done/dismiss for a priority) so nothing regresses.
+// Chosen upstream: a must-respond reply (if any) else the first non-meeting priority. Grounded on a
+// real id in both cases.
+type StartHereReply = { kind: 'reply'; m: { who: string; ask: string; angle: string; itemId: string; draft?: string | null } };
+type StartHerePriority = { kind: 'priority'; p: Priority };
+type StartHereData = StartHereReply | StartHerePriority;
+
+function StartHere({ data, teaser, onDismiss }: { data: StartHereData; teaser?: string | null; onDismiss?: (id: string) => void }) {
+  return (
+    <div className="relative rounded-2xl border border-indigo-200 bg-white ring-1 ring-indigo-100 shadow-[0_8px_30px_-10px_rgba(79,70,229,0.25)]">
+      <div className="absolute -top-2.5 left-5 inline-flex items-center gap-1 rounded-full bg-indigo-600 px-2.5 py-0.5 shadow-sm">
+        <BoltIcon className="w-3 h-3 text-white" />
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-white">Start here</span>
+      </div>
+      <div className="p-5 pt-6">
+        {teaser && <p className="text-[12px] text-neutral-400 mb-2.5 leading-relaxed">{teaser}</p>}
+        {data.kind === 'reply'
+          ? <StartHereReplyBody m={data.m} onDismiss={onDismiss} />
+          : <StartHerePriorityBody p={data.p} />}
+      </div>
+    </div>
+  );
+}
+
+// Focal reply — same draft/send/done/dismiss behaviour as MustRespondItem, at focal scale (larger
+// title, draft open by default when one is ready so the primary action is one tap away).
+function StartHereReplyBody({ m, onDismiss }: { m: { who: string; ask: string; angle: string; itemId: string; draft?: string | null }; onDismiss?: (id: string) => void }) {
+  const [draft, setDraft] = useState<string | null>(m.draft ?? null);
+  const [open, setOpen] = useState<boolean>(!!m.draft); // draft-ready → open inline immediately
+  const [loading, setLoading] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const ready = !!m.draft;
+  const { removed, exiting, startExit } = useExit();
+  const [acting, setActing] = useState(false);
+  useEffect(() => { if (removed) onDismiss?.(m.itemId); }, [removed]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const act = async (kind: 'complete' | 'dismiss') => {
+    if (acting || !m.itemId) return;
+    setActing(true); startExit();
+    try { await fetch(`/api/inbox/${m.itemId}/${kind}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason: 'home' }) }); } finally { setActing(false); }
+  };
+  const toggle = async () => {
+    if (open) { setOpen(false); return; }
+    setOpen(true);
+    if (draft || loading || !m.itemId) return;
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/inbox/${m.itemId}/draft`, { method: 'POST' });
+      const d = await res.json();
+      setDraft(d.draft || 'Could not draft a reply.');
+    } catch { setDraft('Could not draft a reply.'); } finally { setLoading(false); }
+  };
+  const send = async () => {
+    if (!draft || sending || !m.itemId) return;
+    setSending(true);
+    try {
+      const res = await fetch(`/api/inbox/${m.itemId}/send-reply`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ customMessage: draft }),
+      });
+      if (res.ok) { setSent(true); setOpen(false); setTimeout(startExit, 700); }
+    } catch { /* leave open to retry */ } finally { setSending(false); }
+  };
+  if (removed) return null;
+  return (
+    <div className={exitCls(exiting)}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <span className="inline-flex items-center gap-1 rounded-md bg-indigo-50 px-1.5 py-0.5 text-[10px] font-medium text-indigo-600">
+            <EnvelopeIcon className="w-3 h-3" />Reply needed
+          </span>
+          <p className="text-[17px] font-semibold text-neutral-900 leading-snug mt-2">{m.who}</p>
+          {m.ask && <p className="text-[13.5px] text-neutral-600 mt-1 leading-relaxed">{m.ask}</p>}
+          {m.angle && <p className="text-[13px] text-neutral-600 mt-1.5 leading-relaxed"><span className="font-medium text-neutral-700">Angle:</span> {m.angle}</p>}
+        </div>
+        {sent ? (
+          <span className="inline-flex items-center gap-1 text-[13px] font-medium text-emerald-600 flex-shrink-0">Sent ✓</span>
+        ) : m.itemId && (
+          <div className="flex-shrink-0 flex items-center gap-1.5">
+            <button onClick={toggle} disabled={loading}
+              className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 text-white px-3.5 py-2 text-[13px] font-medium hover:bg-indigo-700 transition-colors disabled:opacity-60">
+              {loading ? 'Drafting…' : open ? 'Hide draft' : ready ? '✦ Send draft' : 'Draft reply'}
+            </button>
+            <button onClick={() => act('complete')} disabled={acting} title="Mark done" className="w-8 h-8 inline-flex items-center justify-center rounded-lg border border-neutral-200 text-neutral-400 hover:text-emerald-600 hover:border-emerald-200 hover:bg-emerald-50 transition-colors text-[14px]">✓</button>
+            <button onClick={() => act('dismiss')} disabled={acting} title="Dismiss" className="w-8 h-8 inline-flex items-center justify-center rounded-lg border border-neutral-200 text-neutral-400 hover:text-rose-600 hover:border-rose-200 hover:bg-rose-50 transition-colors text-[14px]">✕</button>
+          </div>
+        )}
+      </div>
+      {loading && <div className="mt-3 h-20 rounded-xl bg-neutral-100 animate-pulse" />}
+      {open && draft && !sent && (
+        <div className="mt-3 rounded-xl border border-neutral-200 bg-neutral-50/70 p-3.5">
+          <textarea value={draft} onChange={(e) => setDraft(e.target.value)}
+            rows={Math.min(16, Math.max(5, draft.split('\n').length + 1))}
+            className="w-full bg-transparent text-[13px] text-neutral-700 leading-relaxed resize-none focus:outline-none" />
+          <div className="mt-2.5 flex items-center gap-3">
+            <button onClick={send} disabled={sending}
+              className="inline-flex items-center rounded-lg bg-indigo-600 text-white px-4 py-1.5 text-[13px] font-medium hover:bg-indigo-700 disabled:opacity-60 transition-colors">{sending ? 'Sending…' : 'Send'}</button>
+            <button onClick={() => { if (draft) { navigator.clipboard?.writeText(draft); setCopied(true); setTimeout(() => setCopied(false), 1500); } }}
+              className="text-[13px] font-medium text-neutral-600 hover:text-neutral-800">{copied ? 'Copied' : 'Copy'}</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Focal priority — same open + done/dismiss behaviour as PriorityCard, at focal scale.
+function StartHerePriorityBody({ p }: { p: Priority }) {
+  const cfg = SOURCE[p.source];
+  const Icon = cfg.icon;
+  const verb = p.source === 'meeting' ? 'Review' : VERB[p.posture];
+  const { removed, exiting, startExit } = useExit();
+  const [acting, setActing] = useState(false);
+  const act = (kind: 'complete' | 'dismiss') => {
+    const ids = p.itemId ? [p.itemId] : (p.items ?? []).map(it => it.id);
+    if (acting || !ids.length) return;
+    setActing(true); startExit();
+    Promise.all(ids.map(id => fetch(`/api/inbox/${id}/${kind}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason: 'home' }) })))
+      .catch(() => {}).finally(() => setActing(false));
+  };
+  if (removed) return null;
+  return (
+    <div className={exitCls(exiting)}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium ${cfg.chip}`}><Icon className="w-3 h-3" />{cfg.label}</span>
+            {p.overdue && <span className="inline-flex items-center rounded-md bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-600">Overdue</span>}
+          </div>
+          <p className="text-[17px] font-semibold text-neutral-900 leading-snug mt-2">{p.title}</p>
+          {p.context && <p className="text-[13.5px] text-neutral-600 mt-1 leading-relaxed">{p.context}</p>}
+        </div>
+        <div className="flex-shrink-0 flex items-center gap-1.5">
+          <Link href={p.href} className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 text-white px-3.5 py-2 text-[13px] font-medium hover:bg-indigo-700 transition-colors">{verb}<ArrowRightIcon className="w-3.5 h-3.5" /></Link>
+          <button onClick={() => act('complete')} disabled={acting} title="Mark done" className="w-8 h-8 inline-flex items-center justify-center rounded-lg border border-neutral-200 text-neutral-400 hover:text-emerald-600 hover:border-emerald-200 hover:bg-emerald-50 transition-colors text-[14px]">✓</button>
+          <button onClick={() => act('dismiss')} disabled={acting} title="Dismiss" className="w-8 h-8 inline-flex items-center justify-center rounded-lg border border-neutral-200 text-neutral-400 hover:text-rose-600 hover:border-rose-200 hover:bg-rose-50 transition-colors text-[14px]">✕</button>
+        </div>
+      </div>
+      {!!p.items?.length && (
+        <ul className="mt-3 space-y-1.5 border-l-2 border-indigo-100 pl-3">
+          {p.items.map(it => <li key={it.id} className="text-[13px] text-neutral-600 leading-snug">{it.text}</li>)}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 // "Keep an eye on" — the middle awareness tier: real things happening AROUND you (a cc'd urgent
 // meeting, a thread you're on, a decision in your orbit) that you should SEE but do nothing about.
 // Glanceable one-liners (who + why it matters), NO action buttons — this is awareness, not action.
@@ -409,9 +560,10 @@ export function HomeView() {
           <div className="h-8 w-64 rounded-lg bg-neutral-100 animate-pulse" />
           <div className="h-4 w-[28rem] max-w-full rounded bg-neutral-100 animate-pulse mt-3" />
           <div className="flex gap-2 mt-4">{[1, 2, 3].map(i => <div key={i} className="h-7 w-28 rounded-full bg-neutral-100 animate-pulse" />)}</div>
-          <div className="grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-6 mt-8">
-            <div className="space-y-3"><div className="h-3 w-20 rounded bg-neutral-100 animate-pulse mb-1" />{[1, 2, 3].map(i => <SkeletonCard key={i} />)}</div>
-            <div className="space-y-3"><div className="h-3 w-24 rounded bg-neutral-100 animate-pulse mb-1" />{[1, 2].map(i => <SkeletonCard key={i} h="h-[60px]" />)}</div>
+          {/* Mirror the new single flowing column: a focal block, then the "what needs you" flow. */}
+          <div className="mt-9 max-w-[720px] space-y-6">
+            <SkeletonCard h="h-[128px]" />
+            <div className="space-y-3"><div className="h-3 w-24 rounded bg-neutral-100 animate-pulse mb-1" />{[1, 2, 3].map(i => <SkeletonCard key={i} />)}</div>
           </div>
         </div>
       </div>
@@ -432,11 +584,27 @@ export function HomeView() {
     st.waitingOn ? { icon: ClockIcon, text: `${st.waitingOn} waiting on` } : null,
     st.handledToday ? { icon: CheckCircleIcon, text: `${st.handledToday} handled` } : null,
   ].filter(Boolean) as { icon: any; text: string }[] : []; // eslint-disable-line @typescript-eslint/no-explicit-any
-  // needs_reply lives in the Must-respond brief; "Needs you" cards are the other actions.
+
+  // ── Compose the single flowing brief ────────────────────────────────────────────────────────
+  // needs_reply lives in the Must-respond brief; the priority cards are the OTHER actions.
   const cards = (b?.priorities ?? []).filter(p => p.posture !== 'needs_reply');
-  // "Start here" belongs on the first genuine action — never on a finished (past) meeting.
-  const startHereId = cards.find(p => p.source !== 'meeting')?.id ?? null;
-  const nothing = b && !b.priorities.length && !b.commitments.length && !b.waitingOn.length && !b.schedule.length && !(b.keepAnEyeOn?.items.length) && !(team?.messages.length || team?.needsReview.length);
+  // "Start here" = the ONE most important thing right now. Prefer the top must-respond reply (a live
+  // one, so this session's dismissals don't leave a stale focal), else the first genuine non-meeting
+  // priority (never a finished/past meeting). Grounded on a real id either way.
+  const focalReply = mrLive[0] ?? null;
+  const focalPriority = cards.find(p => p.source !== 'meeting') ?? null;
+  const startHere: StartHereData | null = focalReply
+    ? { kind: 'reply', m: focalReply }
+    : focalPriority ? { kind: 'priority', p: focalPriority } : null;
+  // Everything that needs you, MINUS the focal item, as one ranked flow: the remaining replies, then
+  // the priority cards (non-meeting first, meetings — past follow-ups — last).
+  const bodyReplies = focalReply ? mrLive.slice(1) : mrLive;
+  const bodyCards = startHere?.kind === 'priority'
+    ? cards.filter(p => p.id !== focalPriority!.id)
+    : cards;
+  const hasBody = bodyReplies.length > 0 || bodyCards.length > 0;
+
+  const nothing = b && !b.priorities.length && !b.commitments.length && !b.waitingOn.length && !b.schedule.length && !(b.keepAnEyeOn?.items.length) && !(team?.messages.length || team?.needsReview.length) && !startHere;
 
   return (
     <div className="flex-1 min-w-0 h-full overflow-y-auto bg-neutral-50/40">
@@ -523,80 +691,94 @@ export function HomeView() {
         )}
 
         {!nothing && (
-          <div className="grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-6 mt-8">
-            {/* LEFT — what needs you */}
-            <div>
-              {/* Must respond — the replies you owe (needs_reply roundup) */}
-              {b?.mustRespond && mrLive.length > 0 && (
-                <RiseIn>
-                  <div className="mb-8">
-                    <Label count={mrLive.length}>Must respond</Label>
-                    <div className="rounded-2xl border border-rose-200/70 bg-white p-4">
-                      {b.mustRespond.teaser && <p className="text-[13px] text-neutral-500 mb-3.5 leading-relaxed">{b.mustRespond.teaser}</p>}
-                      <MustRespondList items={mrLive} onDismiss={onDismiss} />
+          // One flowing document, read top-to-bottom. A single narrow measure keeps it readable like
+          // a memo (not a dashboard of columns). Altitude falls as you scroll: focal → what needs you
+          // → quieter secondary lanes → the ambient digest last.
+          <div className="mt-9 max-w-[720px] space-y-10">
+
+            {/* 1 · START HERE — the one thing that matters now, with its action inline */}
+            {startHere && (
+              <RiseIn>
+                <StartHere data={startHere} teaser={focalReply ? b?.mustRespond?.teaser : null} onDismiss={onDismiss} />
+              </RiseIn>
+            )}
+
+            {/* 2 · WHAT NEEDS YOU — remaining replies + the other actions, one ranked flow you work down */}
+            {hasBody && (
+              <RiseIn delay={60}>
+                <section>
+                  <Label count={bodyReplies.length + bodyCards.length}>What needs you</Label>
+                  {/* Remaining replies you owe — the ranked list, each with draft/done/dismiss */}
+                  {bodyReplies.length > 0 && (
+                    <div className="rounded-2xl border border-rose-200/70 bg-white p-4 mb-3">
+                      <MustRespondList items={bodyReplies} onDismiss={onDismiss} />
                     </div>
-                  </div>
-                </RiseIn>
-              )}
-
-              {cards.length > 0 && (
-                <div className="mb-8">
-                  <Label count={cards.length}>Needs you</Label>
-                  <div className="space-y-3">
-                    {cards.map((p, i) => (
-                      <RiseIn key={p.id} delay={i * 55}>
-                        <PriorityCard p={p} first={p.id === startHereId} expanded={expanded === p.id} onToggle={() => setExpanded(expanded === p.id ? null : p.id)} />
-                      </RiseIn>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {b && b.commitments.length > 0 && (
-                <RiseIn delay={90}>
-                  <div className="mb-8">
-                    <Label count={b.commitments.length}>On your plate</Label>
-                    <div className="space-y-2">
-                      {b.commitments.map(c => (
-                        <CommitmentSideRow key={c.id} id={c.id} icon={CheckCircleIcon} iconClass={c.overdue ? 'text-red-400' : 'text-neutral-300'}>
-                          <div className="flex items-start justify-between gap-2">
-                            <span className="text-[13px] text-neutral-800 leading-snug">{c.description}</span>
-                            {(c.overdue || c.dueToday || c.dueDate) && (
-                              <span className={`flex-shrink-0 text-[10px] font-semibold uppercase tracking-wide rounded-md px-1.5 py-0.5 ${c.overdue ? 'bg-red-50 text-red-600' : c.dueToday ? 'bg-amber-50 text-amber-600' : 'bg-neutral-100 text-neutral-500'}`}>
-                                {c.overdue ? 'Overdue' : c.dueToday ? 'Today' : fmtDue(c.dueDate)}
-                              </span>
-                            )}
-                          </div>
-                          {c.counterparty && <p className="text-[11.5px] text-neutral-400 mt-0.5">You owe {c.counterparty}</p>}
-                        </CommitmentSideRow>
+                  )}
+                  {/* The other actions (meeting follow-ups + email to-dos) — same working cards, no
+                      duplicate "Start here" badge (the focal block owns that). */}
+                  {bodyCards.length > 0 && (
+                    <div className="space-y-3">
+                      {bodyCards.map((p, i) => (
+                        <RiseIn key={p.id} delay={i * 45}>
+                          <PriorityCard p={p} first={false} expanded={expanded === p.id} onToggle={() => setExpanded(expanded === p.id ? null : p.id)} />
+                        </RiseIn>
                       ))}
                     </div>
-                  </div>
-                </RiseIn>
-              )}
+                  )}
+                </section>
+              </RiseIn>
+            )}
 
-              {b?.followups && b.followups.items.length > 0 ? (
-                <RiseIn delay={120}>
-                  <div className="mb-8">
-                    <Label count={b.followups.items.length}>Ball in your court</Label>
-                    <div className="rounded-2xl border border-neutral-200/80 bg-white p-4">
-                      {b.followups.teaser && <p className="text-[13px] text-neutral-500 mb-3.5 leading-relaxed">{b.followups.teaser}</p>}
-                      <ol className="space-y-3.5">
-                        {b.followups.items.map((f, i) => (
-                          <FollowUpItem key={f.id || i} f={f} index={i} />
-                        ))}
-                      </ol>
-                      {b.followups.closing && (
-                        <div className="mt-3.5 pt-3.5 border-t border-neutral-100 flex items-start gap-2">
-                          <SparklesIcon className="w-4 h-4 text-indigo-400 flex-shrink-0 mt-0.5" />
-                          <p className="text-[12px] text-neutral-500 leading-relaxed">{b.followups.closing}</p>
+            {/* 3 · SECONDARY LANES — quieter, tucked below. Present but not shouting. */}
+
+            {/* On your plate — commitments you owe */}
+            {b && b.commitments.length > 0 && (
+              <RiseIn delay={90}>
+                <section>
+                  <Label count={b.commitments.length}>On your plate</Label>
+                  <div className="space-y-2">
+                    {b.commitments.map(c => (
+                      <CommitmentSideRow key={c.id} id={c.id} icon={CheckCircleIcon} iconClass={c.overdue ? 'text-red-400' : 'text-neutral-300'}>
+                        <div className="flex items-start justify-between gap-2">
+                          <span className="text-[13px] text-neutral-800 leading-snug">{c.description}</span>
+                          {(c.overdue || c.dueToday || c.dueDate) && (
+                            <span className={`flex-shrink-0 text-[10px] font-semibold uppercase tracking-wide rounded-md px-1.5 py-0.5 ${c.overdue ? 'bg-red-50 text-red-600' : c.dueToday ? 'bg-amber-50 text-amber-600' : 'bg-neutral-100 text-neutral-500'}`}>
+                              {c.overdue ? 'Overdue' : c.dueToday ? 'Today' : fmtDue(c.dueDate)}
+                            </span>
+                          )}
                         </div>
-                      )}
-                    </div>
+                        {c.counterparty && <p className="text-[11.5px] text-neutral-400 mt-0.5">You owe {c.counterparty}</p>}
+                      </CommitmentSideRow>
+                    ))}
                   </div>
-                </RiseIn>
-              ) : b && b.waitingOn.length > 0 ? (
-                <RiseIn delay={120}>
+                </section>
+              </RiseIn>
+            )}
+
+            {/* Ball in your court / Waiting on — the follow-ups (whichever the synthesis produced) */}
+            {b?.followups && b.followups.items.length > 0 ? (
+              <RiseIn delay={120}>
+                <section>
+                  <Label count={b.followups.items.length}>Ball in your court</Label>
+                  <div className="rounded-2xl border border-neutral-200/80 bg-white p-4">
+                    {b.followups.teaser && <p className="text-[13px] text-neutral-500 mb-3.5 leading-relaxed">{b.followups.teaser}</p>}
+                    <ol className="space-y-3.5">
+                      {b.followups.items.map((f, i) => (
+                        <FollowUpItem key={f.id || i} f={f} index={i} />
+                      ))}
+                    </ol>
+                    {b.followups.closing && (
+                      <div className="mt-3.5 pt-3.5 border-t border-neutral-100 flex items-start gap-2">
+                        <SparklesIcon className="w-4 h-4 text-indigo-400 flex-shrink-0 mt-0.5" />
+                        <p className="text-[12px] text-neutral-500 leading-relaxed">{b.followups.closing}</p>
+                      </div>
+                    )}
+                  </div>
+                </section>
+              </RiseIn>
+            ) : b && b.waitingOn.length > 0 ? (
+              <RiseIn delay={120}>
+                <section>
                   <Label count={b.waitingOn.length}>Waiting on others</Label>
                   <div className="space-y-2">
                     {b.waitingOn.map(c => (
@@ -606,25 +788,24 @@ export function HomeView() {
                       </CommitmentSideRow>
                     ))}
                   </div>
-                </RiseIn>
-              ) : null}
+                </section>
+              </RiseIn>
+            ) : null}
 
-              {/* Keep an eye on — awareness of real things around you (no action). Between the action
-                  sections above and the FYI digest below (in the right column), by action gradient. */}
-              {b?.keepAnEyeOn && b.keepAnEyeOn.items.length > 0 && (
-                <RiseIn delay={150}>
-                  <div className="mt-8">
-                    <Label count={b.keepAnEyeOn.items.length}>Keep an eye on</Label>
-                    <KeepAnEyeOnCard items={b.keepAnEyeOn.items} />
-                  </div>
-                </RiseIn>
-              )}
-            </div>
+            {/* Keep an eye on — awareness, no actions */}
+            {b?.keepAnEyeOn && b.keepAnEyeOn.items.length > 0 && (
+              <RiseIn delay={150}>
+                <section>
+                  <Label count={b.keepAnEyeOn.items.length}>Keep an eye on</Label>
+                  <KeepAnEyeOnCard items={b.keepAnEyeOn.items} />
+                </section>
+              </RiseIn>
+            )}
 
-            {/* RIGHT — schedule + team + heartbeat */}
-            <div className="space-y-8">
-              {b && b.schedule.length > 0 && (
-                <RiseIn delay={100}>
+            {/* Today's schedule — context for the day, quieter now that it flows below the actions */}
+            {b && b.schedule.length > 0 && (
+              <RiseIn delay={170}>
+                <section>
                   <Label>Today&apos;s schedule</Label>
                   <div className="space-y-2">
                     {b.schedule.map(m => (
@@ -648,12 +829,14 @@ export function HomeView() {
                       </SideRow>
                     ))}
                   </div>
-                </RiseIn>
-              )}
+                </section>
+              </RiseIn>
+            )}
 
-              {team && (team.messages.length > 0 || team.needsReview.length > 0) && (
-                <RiseIn delay={160}>
-                  <Collapsible title="From your team" count={team.messages.length + team.needsReview.length}>
+            {/* From your team — coworker report-backs + ready-for-you (collapsible, quiet) */}
+            {team && (team.messages.length > 0 || team.needsReview.length > 0) && (
+              <RiseIn delay={190}>
+                <Collapsible title="From your team" count={team.messages.length + team.needsReview.length}>
                   <div className="space-y-2">
                     {team.messages.slice(0, 3).map((m, i) => (
                       <SideRow key={`m${i}`} href={m.workerId ? `/workers?worker=${m.workerId}` : '/workers'}>
@@ -668,14 +851,14 @@ export function HomeView() {
                       </SideRow>
                     ))}
                   </div>
-                  </Collapsible>
-                </RiseIn>
-              )}
+                </Collapsible>
+              </RiseIn>
+            )}
 
-              {/* FYI-by-topic — the awareness pile turned into a few sender digests */}
-              {b?.fyiDigest && b.fyiDigest.groups.length > 0 && (
-                <RiseIn delay={200}>
-                  <Collapsible title="For your awareness" count={b.fyiDigest.groups.length}>
+            {/* 4 · AMBIENT DIGEST — the quietest tier, last. Collapsed by default. */}
+            {b?.fyiDigest && b.fyiDigest.groups.length > 0 && (
+              <RiseIn delay={210}>
+                <Collapsible title="For your awareness" count={b.fyiDigest.groups.length}>
                   <div className="rounded-xl border border-neutral-200/80 bg-white divide-y divide-neutral-100 overflow-hidden">
                     {b.fyiDigest.groups.filter(g => g.kind === 'person').map((g, i) => (
                       <FyiGroupRow key={`p${i}`} g={g} variant="person" />
@@ -694,14 +877,14 @@ export function HomeView() {
                       </Link>
                     )}
                   </div>
-                  </Collapsible>
-                </RiseIn>
-              )}
+                </Collapsible>
+              </RiseIn>
+            )}
 
-              {/* Heartbeat — what the system handled on its own (trust, "always on top of it") */}
-              {b?.handled && (b.handled.triaged > 0 || b.handled.summarised > 0 || b.handled.tracked > 0) && (
-                <RiseIn delay={220}>
-                  <Collapsible title="Handled for you · 24h">
+            {/* Handled for you — the trust heartbeat, quietest of all */}
+            {b?.handled && (b.handled.triaged > 0 || b.handled.summarised > 0 || b.handled.tracked > 0) && (
+              <RiseIn delay={230}>
+                <Collapsible title="Handled for you · 24h">
                   <div className="rounded-xl border border-neutral-200/80 bg-gradient-to-br from-white to-neutral-50/60 px-3.5 py-3 text-[12px] text-neutral-500 space-y-1.5">
                     {b.handled.triaged > 0 && (
                       <p className="flex items-start gap-1.5">
@@ -722,10 +905,13 @@ export function HomeView() {
                       </p>
                     )}
                   </div>
-                  </Collapsible>
-                </RiseIn>
-              )}
-            </div>
+                </Collapsible>
+              </RiseIn>
+            )}
+
+            {/* FUTURE: a quiet "history" nav (yesterday ↑ / dated ledger) slots ABOVE the header, and a
+                "Hand to a coworker" action slots alongside each StartHere / body action — both out of
+                scope for this single-living-TODAY-brief slice (see docs/living-brief-plan.md #3 #4). */}
           </div>
         )}
       </div>
