@@ -15,7 +15,7 @@ type Priority = {
 type Tldr = { teaser: string; bullets: string[]; dontMiss: string | null };
 type Followups = { teaser: string; items: { id?: string; who: string; status: string; nextMove: string }[]; closing: string | null };
 type FyiDigest = { groups: { label: string; summary: string; kind: 'person' | 'newsletter' }[]; tailGroups: number; tailItems: number };
-type MustRespond = { teaser: string; items: { who: string; ask: string; angle: string; itemId: string }[] };
+type MustRespond = { teaser: string; items: { who: string; ask: string; angle: string; itemId: string; draft?: string | null }[] };
 type KeepAnEyeOn = { items: { who: string; why: string; itemId: string }[] };
 type Brief = {
   firstName: string | null;
@@ -154,6 +154,129 @@ function useCommitmentAct(id?: string): { removed: boolean; exiting: boolean; ac
   return { removed, exiting, acting, act };
 }
 
+// ── DIGEST — the editorial "what needs you" list. Each reply is a typeset briefing line, not a card:
+// a bold who · subject, a light one-line ask, and a quiet indigo affordance. Clicking the row opens
+// the depth inline — the suggested angle, the editable draft (Send/Copy), and Open thread. Rows are
+// separated by hair dividers, not boxes, so the whole thing reads like a well-set memo.
+type DigestItem = { who: string; ask: string; angle: string; itemId: string; draft?: string | null };
+
+function DigestList({ items, onDismiss, emphasizeFirst = false }: { items: DigestItem[]; onDismiss?: (id: string) => void; emphasizeFirst?: boolean }) {
+  const [showAll, setShowAll] = useState(false);
+  const LIMIT = 6;
+  const visible = showAll ? items : items.slice(0, LIMIT);
+  const more = items.length - LIMIT;
+  return (
+    <div className="divide-y divide-neutral-100">
+      {visible.map((m, i) => (
+        <DigestReply key={m.itemId || i} m={m} onDismiss={onDismiss} emphasis={emphasizeFirst && i === 0} />
+      ))}
+      {!showAll && more > 0 && (
+        <button onClick={() => setShowAll(true)} className="pt-3.5 text-[12.5px] font-medium text-indigo-600 hover:text-indigo-700">Show {more} more</button>
+      )}
+    </div>
+  );
+}
+
+// One editorial reply row. Collapsed = who + ask (snappy). Expanded = angle + editable draft + thread
+// link. Reuses the exact same endpoints as the old card: /draft (generate on demand), /send-reply
+// (Send), /complete + /dismiss (✓/✕), with useExit fade and onDismiss live-count on removal.
+function DigestReply({ m, onDismiss, emphasis = false }: { m: DigestItem; onDismiss?: (id: string) => void; emphasis?: boolean }) {
+  const [draft, setDraft] = useState<string | null>(m.draft ?? null);
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const ready = !!m.draft;
+  const { removed, exiting, startExit } = useExit();
+  const [acting, setActing] = useState(false);
+  useEffect(() => { if (removed) onDismiss?.(m.itemId); }, [removed]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const act = async (kind: 'complete' | 'dismiss', e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    if (acting || !m.itemId) return;
+    setActing(true); startExit();
+    try { await fetch(`/api/inbox/${m.itemId}/${kind}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason: 'home' }) }); } finally { setActing(false); }
+  };
+  // Open the row → reveal the depth; lazily generate a draft if the sweep didn't already prepare one.
+  const openRow = async () => {
+    setOpen(true);
+    if (draft || loading || !m.itemId) return;
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/inbox/${m.itemId}/draft`, { method: 'POST' });
+      const d = await res.json();
+      setDraft(d.draft || 'Could not draft a reply.');
+    } catch { setDraft('Could not draft a reply.'); } finally { setLoading(false); }
+  };
+  const toggle = () => { if (open) setOpen(false); else openRow(); };
+  const send = async () => {
+    if (!draft || sending || !m.itemId) return;
+    setSending(true);
+    try {
+      const res = await fetch(`/api/inbox/${m.itemId}/send-reply`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ customMessage: draft }),
+      });
+      if (res.ok) { setSent(true); setOpen(false); setTimeout(startExit, 700); }
+    } catch { /* leave open to retry */ } finally { setSending(false); }
+  };
+
+  if (removed) return null;
+  return (
+    <div className={`group ${exitCls(exiting)}`}>
+      {/* Collapsed line — the whole header is the toggle (a div, not a button, so the ✓/✕ buttons can
+          nest legally); the affordance + ✓/✕ sit inline, quiet. */}
+      <div role="button" tabIndex={0} onClick={toggle}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } }}
+        className="w-full flex items-start gap-3 py-3 text-left cursor-pointer">
+        <div className="min-w-0 flex-1">
+          <p className={`${emphasis ? 'text-[15px]' : 'text-[13.5px]'} font-semibold text-neutral-900 leading-snug`}>{m.who}</p>
+          {m.ask && <p className={`${emphasis ? 'text-[13px]' : 'text-[12.5px]'} text-neutral-500 mt-0.5 leading-snug`}>{m.ask}</p>}
+        </div>
+        {sent ? (
+          <span className="flex-shrink-0 mt-0.5 text-[12px] font-medium text-emerald-600">Sent ✓</span>
+        ) : m.itemId && (
+          <span className="flex-shrink-0 flex items-center gap-2.5 mt-0.5">
+            <span onClick={(e) => { e.stopPropagation(); toggle(); }}
+              className="inline-flex items-center gap-1 text-[12.5px] font-medium text-indigo-600 hover:text-indigo-700 cursor-pointer whitespace-nowrap">
+              {loading ? 'Drafting…' : open ? 'Collapse' : ready ? 'Send draft' : 'Draft reply'}
+              {!open && <ArrowRightIcon className="w-3.5 h-3.5" />}
+            </span>
+            <button onClick={(e) => act('complete', e)} disabled={acting} title="Mark done"
+              className="text-neutral-300 hover:text-emerald-600 transition-colors disabled:opacity-50 text-[13px] leading-none">✓</button>
+            <button onClick={(e) => act('dismiss', e)} disabled={acting} title="Dismiss — won't show again"
+              className="text-neutral-300 hover:text-rose-600 transition-colors disabled:opacity-50 text-[13px] leading-none">✕</button>
+          </span>
+        )}
+      </div>
+
+      {/* Expanded — the real info: suggested angle, the editable draft, and a link out to the thread. */}
+      {open && !sent && (
+        <div className="pb-3.5 pl-0 pr-0 -mt-1">
+          {m.angle && <p className="text-[12.5px] text-neutral-600 leading-snug mb-2.5"><span className="font-medium text-neutral-700">Suggested angle:</span> {m.angle}</p>}
+          {loading && <div className="h-20 rounded-xl bg-neutral-100 animate-pulse" />}
+          {draft && (
+            <div className="rounded-xl border border-neutral-200 bg-neutral-50/70 p-3.5">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400 mb-1.5">Draft</p>
+              <textarea value={draft} onChange={(e) => setDraft(e.target.value)}
+                rows={Math.min(16, Math.max(4, draft.split('\n').length + 1))}
+                className="w-full bg-transparent text-[13px] text-neutral-700 leading-relaxed resize-none focus:outline-none" />
+              <div className="mt-2.5 flex items-center gap-4">
+                <button onClick={send} disabled={sending}
+                  className="inline-flex items-center rounded-lg bg-indigo-600 text-white px-3.5 py-1.5 text-[12.5px] font-medium hover:bg-indigo-700 disabled:opacity-60 transition-colors">{sending ? 'Sending…' : 'Send'}</button>
+                <button onClick={() => { if (draft) { navigator.clipboard?.writeText(draft); setCopied(true); setTimeout(() => setCopied(false), 1500); } }}
+                  className="text-[12.5px] font-medium text-neutral-600 hover:text-neutral-800">{copied ? 'Copied' : 'Copy'}</button>
+                <Link href="/inbox" className="inline-flex items-center gap-1 text-[12.5px] font-medium text-neutral-500 hover:text-indigo-600 transition-colors ml-auto">Open thread<ArrowRightIcon className="w-3.5 h-3.5" /></Link>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Ball-in-your-court item (a commitment you're awaiting) with Done/Dismiss.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function FollowUpItem({ f, index }: { f: { id?: string; who: string; status: string; nextMove: string }; index: number }) {
@@ -214,118 +337,6 @@ function FyiGroupRow({ g, variant }: { g: { label: string; summary: string; kind
       <button onClick={mute} disabled={acting} title={`Dismiss all from ${g.label}`}
         className="absolute top-2 right-2.5 hidden group-hover/row:inline-flex items-center justify-center w-5 h-5 rounded text-neutral-300 hover:text-rose-600 hover:bg-rose-50 text-[12px]">✕</button>
     </div>
-  );
-}
-
-// Must-respond list with progressive disclosure — shows the first 5, "Show N more" reveals the rest.
-// Never hides items, just collapses; per-item Done/Dismiss lives on each MustRespondItem.
-function MustRespondList({ items, onDismiss }: { items: Array<{ who: string; ask: string; angle: string; itemId: string; draft?: string | null }>; onDismiss?: (id: string) => void }) {
-  const [showAll, setShowAll] = useState(false);
-  const LIMIT = 5;
-  const visible = showAll ? items : items.slice(0, LIMIT);
-  const more = items.length - LIMIT;
-  return (
-    <>
-      <ol className="space-y-4">
-        {visible.map((m, i) => <MustRespondItem key={m.itemId || i} m={m} index={i} onDismiss={onDismiss} />)}
-      </ol>
-      {!showAll && more > 0 && (
-        <button onClick={() => setShowAll(true)} className="mt-3.5 text-[12.5px] font-medium text-indigo-600 hover:text-indigo-700">Show {more} more</button>
-      )}
-    </>
-  );
-}
-
-// Must-respond item. If the auto-draft sweep already prepared a reply (`m.draft`), the card shows
-// "Draft ready" — open it to review the pre-filled draft, edit, and Send (right here, Home-only).
-// Otherwise "See draft" generates one on demand. Sending posts to /send-reply.
-function MustRespondItem({ m, index, onDismiss }: { m: { who: string; ask: string; angle: string; itemId: string; draft?: string | null }; index: number; onDismiss?: (id: string) => void }) {
-  const [draft, setDraft] = useState<string | null>(m.draft ?? null);
-  const [open, setOpen] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [sending, setSending] = useState(false);
-  const [sent, setSent] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const ready = !!m.draft;
-  const { removed, exiting, startExit } = useExit();
-  const [acting, setActing] = useState(false);
-  // Once the fade-out completes, tell the parent so it drops this from the live list — the count
-  // decrements and a hidden item refills the collapsed window.
-  useEffect(() => { if (removed) onDismiss?.(m.itemId); }, [removed]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Done / Dismiss — sets the item completed|dismissed; classifyItem hides those, so it never
-  // resurfaces. Optimistic, with a smooth fade-out.
-  const act = async (kind: 'complete' | 'dismiss') => {
-    if (acting || !m.itemId) return;
-    setActing(true); startExit();
-    try { await fetch(`/api/inbox/${m.itemId}/${kind}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason: 'home' }) }); } finally { setActing(false); }
-  };
-
-  const toggle = async () => {
-    if (open) { setOpen(false); return; }
-    setOpen(true);
-    if (draft || loading || !m.itemId) return;
-    setLoading(true);
-    try {
-      const res = await fetch(`/api/inbox/${m.itemId}/draft`, { method: 'POST' });
-      const d = await res.json();
-      setDraft(d.draft || 'Could not draft a reply.');
-    } catch { setDraft('Could not draft a reply.'); } finally { setLoading(false); }
-  };
-  const send = async () => {
-    if (!draft || sending || !m.itemId) return;
-    setSending(true);
-    try {
-      const res = await fetch(`/api/inbox/${m.itemId}/send-reply`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ customMessage: draft }),
-      });
-      if (res.ok) { setSent(true); setOpen(false); setTimeout(startExit, 700); }
-    } catch { /* leave open to retry */ } finally { setSending(false); }
-  };
-
-  if (removed) return null;
-  return (
-    <li className={`flex flex-col gap-2 ${exitCls(exiting)}`}>
-      <div className="flex gap-2.5">
-        <span className="flex-shrink-0 w-5 h-5 rounded-full bg-rose-50 text-rose-500 text-[11px] font-semibold flex items-center justify-center mt-0.5">{index + 1}</span>
-        <div className="min-w-0 flex-1">
-          <p className="text-[13px] font-semibold text-neutral-800 leading-snug">{m.who}</p>
-          {m.ask && <p className="text-[12.5px] text-neutral-500 mt-0.5 leading-snug">{m.ask}</p>}
-          {m.angle && <p className="text-[12.5px] text-neutral-600 mt-1 leading-snug"><span className="font-medium text-neutral-700">Angle:</span> {m.angle}</p>}
-        </div>
-        <div className="flex-shrink-0 self-start flex items-center gap-1.5">
-          {sent ? (
-            <span className="inline-flex items-center gap-1 text-[12px] font-medium text-emerald-600">Sent ✓</span>
-          ) : m.itemId && (
-            <>
-              <button onClick={toggle} disabled={loading}
-                className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-[12px] font-medium transition-colors disabled:opacity-60 ${ready && !open ? 'bg-indigo-50 text-indigo-700 border border-indigo-200' : 'bg-neutral-50 border border-neutral-200 text-neutral-700 hover:bg-indigo-50 hover:text-indigo-700'}`}>
-                {loading ? 'Drafting…' : open ? 'Hide' : ready ? '✦ Draft ready' : 'See draft'}
-              </button>
-              <button onClick={() => act('complete')} disabled={acting} title="Mark done"
-                className="w-6 h-6 inline-flex items-center justify-center rounded-lg border border-neutral-200 text-neutral-400 hover:text-emerald-600 hover:border-emerald-200 hover:bg-emerald-50 transition-colors disabled:opacity-60 text-[13px]">✓</button>
-              <button onClick={() => act('dismiss')} disabled={acting} title="Dismiss — won't show again"
-                className="w-6 h-6 inline-flex items-center justify-center rounded-lg border border-neutral-200 text-neutral-400 hover:text-rose-600 hover:border-rose-200 hover:bg-rose-50 transition-colors disabled:opacity-60 text-[13px]">✕</button>
-            </>
-          )}
-        </div>
-      </div>
-      {loading && <div className="ml-7 h-16 rounded-xl bg-neutral-100 animate-pulse" />}
-      {open && draft && !sent && (
-        <div className="ml-7 rounded-xl border border-neutral-200 bg-neutral-50/70 p-3">
-          <textarea value={draft} onChange={(e) => setDraft(e.target.value)}
-            rows={Math.min(14, Math.max(4, draft.split('\n').length + 1))}
-            className="w-full bg-transparent text-[12.5px] text-neutral-700 leading-relaxed resize-none focus:outline-none" />
-          <div className="mt-2.5 flex items-center gap-3">
-            <button onClick={send} disabled={sending}
-              className="inline-flex items-center rounded-lg bg-indigo-600 text-white px-3 py-1 text-[12px] font-medium hover:bg-indigo-700 disabled:opacity-60 transition-colors">{sending ? 'Sending…' : 'Send'}</button>
-            <button onClick={() => { if (draft) { navigator.clipboard?.writeText(draft); setCopied(true); setTimeout(() => setCopied(false), 1500); } }}
-              className="text-[12px] font-medium text-neutral-600 hover:text-neutral-800">{copied ? 'Copied' : 'Copy'}</button>
-          </div>
-        </div>
-      )}
-    </li>
   );
 }
 
@@ -588,21 +599,21 @@ export function HomeView() {
   // ── Compose the single flowing brief ────────────────────────────────────────────────────────
   // needs_reply lives in the Must-respond brief; the priority cards are the OTHER actions.
   const cards = (b?.priorities ?? []).filter(p => p.posture !== 'needs_reply');
-  // "Start here" = the ONE most important thing right now. Prefer the top must-respond reply (a live
-  // one, so this session's dismissals don't leave a stale focal), else the first genuine non-meeting
-  // priority (never a finished/past meeting). Grounded on a real id either way.
-  const focalReply = mrLive[0] ?? null;
+  // The replies you owe are the hero: ALL of them render in one editorial DIGEST under "What needs
+  // you", the first entry emphasized (it carries the "start here" weight without a separate box).
+  const digestReplies = mrLive;
+  // When there's NO reply to lead with, lead the day with the top genuine non-meeting priority as the
+  // focal "Start here" block — same behaviour as before for that path.
   const focalPriority = cards.find(p => p.source !== 'meeting') ?? null;
-  const startHere: StartHereData | null = focalReply
-    ? { kind: 'reply', m: focalReply }
-    : focalPriority ? { kind: 'priority', p: focalPriority } : null;
-  // Everything that needs you, MINUS the focal item, as one ranked flow: the remaining replies, then
-  // the priority cards (non-meeting first, meetings — past follow-ups — last).
-  const bodyReplies = focalReply ? mrLive.slice(1) : mrLive;
+  const startHere: StartHereData | null = digestReplies.length === 0 && focalPriority
+    ? { kind: 'priority', p: focalPriority }
+    : null;
+  // The other actions (meeting follow-ups + email to-dos) flow below the digest. If a priority was
+  // promoted to the focal block, drop it here so it isn't shown twice.
   const bodyCards = startHere?.kind === 'priority'
     ? cards.filter(p => p.id !== focalPriority!.id)
     : cards;
-  const hasBody = bodyReplies.length > 0 || bodyCards.length > 0;
+  const hasBody = digestReplies.length > 0 || bodyCards.length > 0;
 
   const nothing = b && !b.priorities.length && !b.commitments.length && !b.waitingOn.length && !b.schedule.length && !(b.keepAnEyeOn?.items.length) && !(team?.messages.length || team?.needsReview.length) && !startHere;
 
@@ -696,26 +707,28 @@ export function HomeView() {
           // → quieter secondary lanes → the ambient digest last.
           <div className="mt-9 max-w-[720px] space-y-10">
 
-            {/* 1 · START HERE — the one thing that matters now, with its action inline */}
+            {/* 1 · START HERE — only when there's no reply to lead with: the top priority, focal */}
             {startHere && (
               <RiseIn>
-                <StartHere data={startHere} teaser={focalReply ? b?.mustRespond?.teaser : null} onDismiss={onDismiss} />
+                <StartHere data={startHere} teaser={null} onDismiss={onDismiss} />
               </RiseIn>
             )}
 
-            {/* 2 · WHAT NEEDS YOU — remaining replies + the other actions, one ranked flow you work down */}
+            {/* 2 · WHAT NEEDS YOU — the editorial digest of replies you owe (first emphasized, carries
+                the "start here" weight), then the other actions below. Reads like a briefing, not a
+                grid of cards: typeset rows, hair dividers, one indigo affordance each; click to open
+                the angle + editable draft + Open thread. */}
             {hasBody && (
               <RiseIn delay={60}>
                 <section>
-                  <Label count={bodyReplies.length + bodyCards.length}>What needs you</Label>
-                  {/* Remaining replies you owe — the ranked list, each with draft/done/dismiss */}
-                  {bodyReplies.length > 0 && (
-                    <div className="rounded-2xl border border-rose-200/70 bg-white p-4 mb-3">
-                      <MustRespondList items={bodyReplies} onDismiss={onDismiss} />
+                  <Label count={digestReplies.length + bodyCards.length}>What needs you</Label>
+                  {digestReplies.length > 0 && (
+                    <div className="mb-6">
+                      {b?.mustRespond?.teaser && <p className="text-[13px] text-neutral-500 leading-relaxed mb-1.5">{b.mustRespond.teaser}</p>}
+                      <DigestList items={digestReplies} onDismiss={onDismiss} emphasizeFirst={!startHere} />
                     </div>
                   )}
-                  {/* The other actions (meeting follow-ups + email to-dos) — same working cards, no
-                      duplicate "Start here" badge (the focal block owns that). */}
+                  {/* The other actions (meeting follow-ups + email to-dos) — same working cards. */}
                   {bodyCards.length > 0 && (
                     <div className="space-y-3">
                       {bodyCards.map((p, i) => (
