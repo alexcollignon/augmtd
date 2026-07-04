@@ -40,9 +40,12 @@ export async function POST(request: NextRequest) {
         .eq('user_id', user.id);
       if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
+      // Name the specific item so the log reads "Restored: <subject>" (not a vague "Restored an item").
+      const { data: it } = await supabase.from('inbox_items').select('work_title, source_data').eq('id', entityId).eq('user_id', user.id).maybeSingle();
+      const itemTitle = (it?.work_title || (it?.source_data as { subject?: string } | null)?.subject || 'an item') as string;
       await logActivity(supabase, user.id, {
         type: 'restored',
-        title: 'Restored an item',
+        title: `Restored: ${itemTitle}`,
         entityType: 'inbox_item',
         entityId,
       });
@@ -59,9 +62,11 @@ export async function POST(request: NextRequest) {
         .eq('user_id', user.id);
       if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
+      // Name the specific commitment so the log reads "Restored: <description>".
+      const { data: c } = await supabase.from('commitments').select('description').eq('id', entityId).eq('user_id', user.id).maybeSingle();
       await logActivity(supabase, user.id, {
         type: 'restored',
-        title: 'Restored a commitment',
+        title: `Restored: ${c?.description || 'a commitment'}`,
         entityType: 'commitment',
         entityId,
       });
