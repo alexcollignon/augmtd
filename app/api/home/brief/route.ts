@@ -21,6 +21,22 @@ const MAX_PRIORITIES = 6;
 function attendeeEmails(ev: any): string[] {
   return (ev?.attendees ?? []).map((a: any) => (a?.email || '').toLowerCase()).filter(Boolean);
 }
+// Human-friendly display labels for the OTHER attendees (name → email prefix), used to render small
+// avatar chips on the Home agenda. Excludes self; de-duped; capped so a big meeting stays calm.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function attendeeLabels(ev: any, self?: string): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const a of (ev?.attendees ?? [])) {
+    const email = (a?.email || '').toLowerCase();
+    if (!email || email === self || a?.self) continue;
+    if (seen.has(email)) continue;
+    seen.add(email);
+    const name = (a?.name || '').trim();
+    out.push(name || email.split('@')[0] || email);
+  }
+  return out;
+}
 
 export async function GET() {
   const supabase = await createClient();
@@ -297,11 +313,15 @@ export async function GET() {
       };
     }
   }
-  const schedule = meetings.map((m, i) => ({
-    id: m.id, time: m.start_time, title: m.title || '(untitled)',
-    attendees: attendeeEmails(m).filter((e) => e !== self).length,
-    prep: i === 0 ? nextPrep : null,
-  }));
+  const schedule = meetings.map((m, i) => {
+    const people = attendeeLabels(m, self);
+    return {
+      id: m.id, time: m.start_time, title: m.title || '(untitled)',
+      attendees: people.length,
+      attendeeNames: people.slice(0, 4), // avatar chips on the Home agenda
+      prep: i === 0 ? nextPrep : null,
+    };
+  });
 
   // ── Status chips (live, alive) ── waitingOn counts commitments the INGEST flagged awaiting; the
   // synthesis may re-place some, but this pre-synthesis count is a stable input for the cache sig.
