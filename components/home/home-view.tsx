@@ -7,7 +7,6 @@ import {
   ChevronRightIcon, ArrowRightIcon, BoltIcon, SparklesIcon, EyeIcon,
 } from '@heroicons/react/24/outline';
 import ActivityPanel from '@/components/activity/activity-panel';
-import type { CalendarItem } from '@/app/api/calendar/route';
 
 type Priority = {
   id: string; source: 'email' | 'meeting'; posture: 'needs_reply' | 'to_do' | 'waiting_on';
@@ -32,7 +31,7 @@ type Brief = {
   priorities: Priority[];
   commitments: { id: string; description: string; counterparty: string | null; dueDate: string | null; overdue: boolean; dueToday: boolean }[];
   waitingOn: { id: string; description: string; counterparty: string | null; ageDays: number }[];
-  schedule: { id: string; time: string; title: string; attendees: number; attendeeNames?: string[]; prep: { lastEmail?: { subject: string }; openCommitments: string[]; lastMeeting?: { title: string; date: string; recall: string; person: string } } | null }[];
+  schedule: { id: string; time: string; title: string; attendees: number; prep: { lastEmail?: { subject: string }; openCommitments: string[]; lastMeeting?: { title: string; date: string; recall: string; person: string } } | null }[];
   handled?: { triaged: number; filtered: number; summarised: number; tracked: number; resolved: number };
 };
 type TeamMsg = { workerId?: string; workerName?: string; text?: string };
@@ -89,31 +88,6 @@ function SenderAvatar({ name, size = 'md' }: { name: string; size?: 'sm' | 'md' 
   return (
     <span className={`flex-shrink-0 ${cls} rounded-full inline-flex items-center justify-center font-semibold ${tintFor(name)}`} aria-hidden="true">
       {initials(name)}
-    </span>
-  );
-}
-
-// Overlapping attendee avatar cluster for an agenda row — the same tinted-initial treatment as
-// SenderAvatar, at a compact size, with a "+N" overflow chip. Small and calm; a glanceable "who's in
-// this meeting" cue, not a full roster.
-function AvatarChips({ names, max = 3 }: { names: string[]; max?: number }) {
-  if (!names.length) return null;
-  const shown = names.slice(0, max);
-  const extra = names.length - shown.length;
-  return (
-    <span className="flex-shrink-0 flex items-center -space-x-1.5" title={names.join(', ')}>
-      {shown.map((n, i) => (
-        <span key={i}
-          className={`w-5 h-5 rounded-full ring-2 ring-white inline-flex items-center justify-center text-[9px] font-semibold ${tintFor(n)}`}
-          aria-hidden="true">
-          {initials(n)}
-        </span>
-      ))}
-      {extra > 0 && (
-        <span className="w-5 h-5 rounded-full ring-2 ring-white bg-neutral-100 text-neutral-500 inline-flex items-center justify-center text-[9px] font-semibold">
-          +{extra}
-        </span>
-      )}
     </span>
   );
 }
@@ -754,83 +728,6 @@ function SkeletonCard({ h = 'h-[72px]' }: { h?: string }) {
   return <div className={`${h} rounded-2xl border border-neutral-200/60 bg-gradient-to-br from-neutral-100 to-neutral-50 animate-pulse`} />;
 }
 
-// ── "Coming up" — a compact week-peek that lives right under Today, same visual family. Fetches the
-// LIVE unified calendar feed (`GET /api/calendar`, `cache:'no-store'`) for tomorrow…+5 days so new
-// meetings / newly-due commitments appear on reload without any cache. Time-bound items only (meetings
-// + commitments due + quiet follow-ups — exactly what the route returns), grouped by day with a light
-// day header, 1-line rows (time-or-day · title · type dot). A glance at the week, NOT a grid. Renders
-// nothing (the section is omitted upstream) when the window is empty.
-const COMINGUP_DOT: Record<CalendarItem['type'], string> = {
-  meeting: 'bg-indigo-500',
-  commitment: 'bg-amber-500',
-  followup: 'bg-sky-500',
-};
-function pad2(n: number) { return String(n).padStart(2, '0'); }
-function ymd(d: Date) { return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; }
-
-function ComingUp() {
-  const [items, setItems] = useState<CalendarItem[] | null>(null);
-  useEffect(() => {
-    const now = new Date();
-    const from = new Date(now); from.setDate(now.getDate() + 1); // tomorrow
-    const to = new Date(now); to.setDate(now.getDate() + 5);     // …+5 days
-    fetch(`/api/calendar?from=${ymd(from)}&to=${ymd(to)}`, { cache: 'no-store' })
-      .then(r => r.json())
-      .then(d => setItems(Array.isArray(d.items) ? d.items : []))
-      .catch(() => setItems([]));
-  }, []);
-
-  // Loading / empty → render nothing (the parent omits the whole "Coming up" section when empty).
-  if (!items || items.length === 0) return null;
-
-  // Group by local day, ordered; within a day meetings (timed) first by start, then all-day markers.
-  const byDay = new Map<string, CalendarItem[]>();
-  for (const it of items) {
-    const arr = byDay.get(it.date) ?? [];
-    arr.push(it);
-    byDay.set(it.date, arr);
-  }
-  const days = [...byDay.keys()].sort();
-  const dayHeader = (day: string) => {
-    const d = new Date(day + 'T00:00:00');
-    return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-  };
-  const when = (it: CalendarItem) =>
-    it.time ? new Date(it.time).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : 'All day';
-  const href = (it: CalendarItem) => (it.type === 'meeting' ? `/meetings/${it.entityId}` : '/inbox');
-
-  return (
-    <section>
-      <Label icon={CalendarDaysIcon}>Coming up</Label>
-      <div className="space-y-3">
-        {days.map(day => {
-          const rows = byDay.get(day)!.slice().sort((a, b) => {
-            if (a.time && b.time) return a.time.localeCompare(b.time);
-            if (a.time) return -1;
-            if (b.time) return 1;
-            return 0;
-          });
-          return (
-            <div key={day}>
-              <p className="text-[10.5px] font-semibold uppercase tracking-wider text-neutral-400 mb-1.5">{dayHeader(day)}</p>
-              <div className="space-y-1">
-                {rows.map(it => (
-                  <Link key={it.id} href={href(it)}
-                    className="group flex items-center gap-2.5 rounded-lg px-2 py-1.5 -mx-2 transition-colors hover:bg-indigo-50/50">
-                    <span className={`flex-shrink-0 w-1.5 h-1.5 rounded-full ${it.meta.overdue ? 'bg-red-500' : COMINGUP_DOT[it.type]}`} />
-                    <span className="flex-shrink-0 text-[11.5px] font-medium text-neutral-500 tabular-nums w-[52px]">{when(it)}</span>
-                    <span className="min-w-0 flex-1 text-[12.5px] text-neutral-700 truncate">{it.title}</span>
-                  </Link>
-                ))}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </section>
-  );
-}
-
 export function HomeView() {
   const [brief, setBrief] = useState<Brief | null>(null);
   const [team, setTeam] = useState<{ messages: TeamMsg[]; needsReview: TeamReview[] } | null>(null);
@@ -942,30 +839,7 @@ export function HomeView() {
   // an empty lane never renders a bare header. `railNodes` is the ordered, non-empty set; the count
   // then decides the layout (below). The RiseIn delay is by VISIBLE position so stacking stays smooth
   // regardless of which sections are present.
-  // ── "Today" — the live temporal cross-section. Everything TIME-BOUND to today, in one place:
-  //   1. overdue follow-ups (ball-in-your-court that's gone quiet ≥3d — a "nudge" cue)
-  //   2. commitments due today (things you owe, dated today)
-  //   3. meetings today (the existing schedule)
-  // All three derive from the route's LIVE structured fields (schedule / commitments / waitingOn),
-  // which recompute every load — so a new meeting, a newly-due commitment, or a newly-aged follow-up
-  // appears on the next load with no stale cache. Acted items drop live via the SAME clearedIds
-  // wiring the other sections use (CommitmentSideRow / FollowUpItem call onCleared). Empty categories
-  // are omitted; if the whole thing is empty a calm "nothing today" line shows.
-  const NUDGE_AFTER_DAYS = 3; // a follow-up ≥3d quiet is worth a nudge today
-  // Overdue follow-ups: ball-in-court items (from `followups`, id-grounded, carry the nudge draft
-  // affordance) that have gone quiet. `waitingOn` carries ageDays; match follow-ups to it by id so we
-  // only surface the aging ones. Not-yet-cleared this session.
-  const waitAge = new Map((b?.waitingOn ?? []).map((w) => [w.id, w.ageDays] as const));
-  const todayNudges = (b?.followups?.items ?? []).filter(
-    (f) => f.id && !clearedIds.has(f.id) && (waitAge.get(f.id) ?? 0) >= NUDGE_AFTER_DAYS,
-  );
-  // Commitments (things you owe) explicitly dated today. Live: dueToday is recomputed server-side each
-  // load against today's date. Drop any cleared this session so it disappears when acted.
-  const todayDue = (b?.commitments ?? []).filter((c) => c.dueToday && !clearedIds.has(c.id));
-  const todayMeetings = b?.schedule ?? [];
-  const todayCount = todayNudges.length + todayDue.length + todayMeetings.length;
-  const hasToday = todayCount > 0;
-
+  const hasSchedule = !!(b && b.schedule.length > 0);
   const hasEye = !!(b?.keepAnEyeOn && b.keepAnEyeOn.items.length > 0);
   const hasFollowups = !!(b?.followups && b.followups.items.length > 0);
   const hasWaiting = !hasFollowups && !!(b && b.waitingOn.length > 0);
@@ -978,93 +852,32 @@ export function HomeView() {
     railNodes.push(<RiseIn key={key} delay={90 + railNodes.length * 30}>{node}</RiseIn>);
   };
 
-  // ── TODAY — the unified temporal section. Renders, in urgency order: overdue follow-ups (nudge) →
-  // commitments due today → meetings today. Each sub-list only appears when it has items. The section
-  // is the day's temporal anchor, so it renders whenever the Home has ANY content — with a calm
-  // "nothing today" line when nothing is time-bound. (When the whole Home is empty the `nothing` block
-  // above owns the screen, so Today is skipped.) Compact — the "today at a glance" slice, not a full
-  // calendar.
-  if (!nothing) rail('today', (
-    <div className="space-y-6">
+  if (hasSchedule) rail('schedule', (
     <section>
-      <Label count={todayCount} icon={CalendarDaysIcon}>Today</Label>
-      {!hasToday ? (
-        <p className="text-[12.5px] text-neutral-400 leading-relaxed">Nothing scheduled or due today.</p>
-      ) : (
-      <div className="space-y-3">
-
-        {/* 1 · Overdue follow-ups — ball-in-your-court gone quiet. A small "overdue · nudge" cue +
-            the Draft-nudge action (reused FollowUpItem). Most-relevant first. */}
-        {todayNudges.length > 0 && (
-          <div className="rounded-2xl border border-neutral-200/80 bg-white p-4">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-amber-600 mb-2.5">Overdue · nudge</p>
-            <ol className="space-y-3.5">
-              {todayNudges.map((f, i) => (
-                <FollowUpItem key={f.id || i} f={f} index={i} />
-              ))}
-            </ol>
-          </div>
-        )}
-
-        {/* 2 · Commitments due today — things you owe, dated today. Reuses CommitmentSideRow (done/
-            dismiss + live clear). A "due today" cue. */}
-        {todayDue.length > 0 && (
-          <div className="space-y-2">
-            {todayDue.map(c => (
-              <CommitmentSideRow key={c.id} id={c.id} icon={CheckCircleIcon} iconClass="text-amber-400" onCleared={onCleared}>
-                <div className="flex items-start justify-between gap-2">
-                  <span className="text-[13px] text-neutral-800 leading-snug">{c.description}</span>
-                  <span className="flex-shrink-0 text-[10px] font-semibold uppercase tracking-wide rounded-md px-1.5 py-0.5 bg-amber-50 text-amber-600">Due today</span>
-                </div>
-                {c.counterparty && <p className="text-[11.5px] text-neutral-400 mt-0.5">You owe {c.counterparty}</p>}
-              </CommitmentSideRow>
-            ))}
-          </div>
-        )}
-
-        {/* 3 · Meetings today — the agenda: time · title · attendee avatar chips, with a subtle
-            "brief ready" cue + Read-brief link when the next meeting has prep. Time-ordered (server
-            orders schedule by start_time). */}
-        {todayMeetings.length > 0 && (
-          <div className="space-y-2">
-            {todayMeetings.map(m => {
-              const hasPrep = !!(m.prep && (m.prep.lastEmail || m.prep.openCommitments.length > 0 || m.prep.lastMeeting));
-              return (
-              <SideRow key={m.id} href="/meetings">
-                <div className="flex items-center gap-2.5">
-                  <span className="text-[12px] font-semibold text-indigo-600 flex-shrink-0 tabular-nums">{timeOf(m.time)}</span>
-                  <span className="text-[13px] text-neutral-800 truncate min-w-0 flex-1">{m.title}</span>
-                  {m.attendeeNames && m.attendeeNames.length > 0 && <AvatarChips names={m.attendeeNames} />}
-                  {hasPrep && (
-                    <span className="flex-shrink-0 inline-flex items-center gap-1 text-[11px] font-medium text-indigo-600">
-                      <SparklesIcon className="w-3 h-3" />
-                      <span className="hidden sm:inline">Read brief</span>
-                    </span>
-                  )}
-                </div>
-                {hasPrep && (
-                  <div className="mt-1.5 text-[11.5px] text-neutral-400 space-y-0.5">
-                    {m.prep!.lastMeeting && (
-                      <p className="flex items-start gap-1 text-violet-500 line-clamp-2">
-                        <SparklesIcon className="w-3 h-3 flex-shrink-0 mt-0.5" />
-                        <span>Last time with {m.prep!.lastMeeting.person} ({m.prep!.lastMeeting.date}): {m.prep!.lastMeeting.recall}</span>
-                      </p>
-                    )}
-                    {m.prep!.lastEmail && <p className="truncate">Last thread: “{m.prep!.lastEmail.subject}”</p>}
-                    {m.prep!.openCommitments.map((c, i) => <p key={i} className="truncate">Open: {c}</p>)}
-                  </div>
+      <Label icon={CalendarDaysIcon}>Today&apos;s schedule</Label>
+      <div className="space-y-2">
+        {b!.schedule.map(m => (
+          <SideRow key={m.id} href="/meetings">
+            <div className="flex items-baseline gap-2">
+              <span className="text-[12px] font-semibold text-indigo-600 flex-shrink-0">{timeOf(m.time)}</span>
+              <span className="text-[13px] text-neutral-800 truncate">{m.title}</span>
+            </div>
+            {m.prep && (m.prep.lastEmail || m.prep.openCommitments.length > 0 || m.prep.lastMeeting) && (
+              <div className="mt-1.5 text-[11.5px] text-neutral-400 space-y-0.5">
+                {m.prep.lastMeeting && (
+                  <p className="flex items-start gap-1 text-violet-500 line-clamp-2">
+                    <SparklesIcon className="w-3 h-3 flex-shrink-0 mt-0.5" />
+                    <span>Last time with {m.prep.lastMeeting.person} ({m.prep.lastMeeting.date}): {m.prep.lastMeeting.recall}</span>
+                  </p>
                 )}
-              </SideRow>
-            ); })}
-          </div>
-        )}
+                {m.prep.lastEmail && <p className="truncate">Last thread: “{m.prep.lastEmail.subject}”</p>}
+                {m.prep.openCommitments.map((c, i) => <p key={i} className="truncate">Open: {c}</p>)}
+              </div>
+            )}
+          </SideRow>
+        ))}
       </div>
-      )}
     </section>
-    {/* "Coming up" — the compact week peek, fused right under Today. Self-fetches the live calendar
-        feed (tomorrow…+5d) and self-hides when empty, so it's part of the same temporal block. */}
-    <ComingUp />
-    </div>
   ));
 
   if (hasEye) rail('eye', (
