@@ -17,8 +17,6 @@ type Followups = { teaser: string; items: { id?: string; who: string; status: st
 type FyiDigest = { groups: { label: string; summary: string; kind: 'person' | 'newsletter' }[]; tailGroups: number; tailItems: number };
 type MustRespond = { teaser: string; items: { who: string; ask: string; angle: string; itemId: string; draft?: string | null; subject?: string; snippet?: string; receivedAt?: string }[] };
 type KeepAnEyeOn = { items: { who: string; why: string; itemId: string }[] };
-// The LEDE — a short prose intro (2–3 sentences). Plain text: it FRAMES the day and the most-pressing
-// thing. The real items render VISIBLY as enriched lists BELOW it (they carry the actions).
 type Brief = {
   firstName: string | null;
   briefLine: string | null;
@@ -27,7 +25,6 @@ type Brief = {
   fyiDigest?: FyiDigest | null;
   mustRespond?: MustRespond | null;
   keepAnEyeOn?: KeepAnEyeOn | null;
-  lede?: string | null;
   status: { needsReply: number; meetingsToday: number; waitingOn: number; handledToday: number };
   priorities: Priority[];
   commitments: { id: string; description: string; counterparty: string | null; dueDate: string | null; overdue: boolean; dueToday: boolean }[];
@@ -670,6 +667,10 @@ function SideRow({ href, icon: Icon, iconClass, children }: { href: string; icon
   );
 }
 
+function SkeletonCard({ h = 'h-[72px]' }: { h?: string }) {
+  return <div className={`${h} rounded-2xl border border-neutral-200/60 bg-gradient-to-br from-neutral-100 to-neutral-50 animate-pulse`} />;
+}
+
 export function HomeView() {
   const [brief, setBrief] = useState<Brief | null>(null);
   const [team, setTeam] = useState<{ messages: TeamMsg[]; needsReview: TeamReview[] } | null>(null);
@@ -688,27 +689,29 @@ export function HomeView() {
     });
   }, []);
 
-  // Skeleton mirrors the PROSE shape now — a written page: orb + greeting, then a few text lines in a
-  // single centered reading column (no cards, no rail), so there's no reflow into the narrative.
+  // Skeleton MIRRORS the real layout (header + two columns) so there's no reflow on load.
   if (loading) {
     return (
       <div className="flex-1 min-w-0 h-full overflow-y-auto bg-neutral-50/40">
-        <div className="px-8 py-10 mx-auto max-w-[720px]">
+        <div className="px-8 py-10">
+          {/* Header: orb-sized block + greeting + one summary line */}
           <div className="flex items-start gap-5">
             <div className="w-[72px] h-[72px] mt-1 rounded-full bg-neutral-100 animate-pulse flex-shrink-0" />
             <div className="min-w-0 flex-1">
               <div className="h-3 w-40 rounded bg-neutral-100 animate-pulse" />
               <div className="h-8 w-64 rounded-lg bg-neutral-100 animate-pulse mt-2.5" />
+              <div className="h-4 w-[26rem] max-w-full rounded bg-neutral-100 animate-pulse mt-3" />
             </div>
           </div>
-          <div className="mt-10 space-y-3.5">
-            {['w-full', 'w-[95%]', 'w-[88%]', 'w-full', 'w-[70%]'].map((w, i) => (
-              <div key={i} className={`h-4 ${w} rounded bg-neutral-100 animate-pulse`} />
-            ))}
-            <div className="h-2" />
-            {['w-[92%]', 'w-full', 'w-[60%]'].map((w, i) => (
-              <div key={`b${i}`} className={`h-4 ${w} rounded bg-neutral-100 animate-pulse`} />
-            ))}
+          {/* Mirror the two-zone shape: a main reading column + a ~320px right rail (stacks below lg). */}
+          <div className="mt-9 mx-auto max-w-[1100px] grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px] gap-x-10 gap-y-10 items-start">
+            <div className="min-w-0 space-y-6">
+              <div className="space-y-3"><div className="h-3 w-24 rounded bg-neutral-100 animate-pulse mb-1" />{[1, 2, 3].map(i => <SkeletonCard key={i} />)}</div>
+            </div>
+            <div className="min-w-0 space-y-3">
+              <div className="h-3 w-28 rounded bg-neutral-100 animate-pulse mb-1" />
+              {[1, 2].map(i => <SkeletonCard key={i} h="h-[56px]" />)}
+            </div>
           </div>
         </div>
       </div>
@@ -718,51 +721,34 @@ export function HomeView() {
   const b = brief;
   const onDismiss = (id: string) => setDismissed((prev) => { const n = new Set(prev); n.add(id); return n; });
   // Live view of Must-respond after this session's Done/Dismiss/Send: the count decrements AND the
-  // list refills from the hidden pool (instead of leaving "1 item + Show N more").
+  // collapsed list refills from the hidden pool (instead of leaving "1 item + Show N more").
   const mrLive = b?.mustRespond ? b.mustRespond.items.filter((m) => !dismissed.has(m.itemId)) : [];
 
-  // ── The LEDE — the short prose intro (2–3 sentences) the synthesis writes. It FRAMES the day; the
-  // real items render VISIBLY as enriched lists below. Plain text, so nothing to resolve — just show
-  // it. Degrades gracefully to the tldr teaser / briefLine when the synthesis produced no lede.
-  const lede = (b?.lede && b.lede.trim()) || b?.tldr?.teaser || b?.briefLine || null;
-
-  // ── Compose the visible sections ─────────────────────────────────────────────────────────────
-  // The replies you owe are the HERO list (DigestReply rows: avatar + sender·subject + snippet +
-  // Send draft/✓/✕, expand for the draft). needs_reply lives here; the priority cards are OTHER actions.
-  const digestReplies = mrLive;
+  // ── Compose the single flowing brief ────────────────────────────────────────────────────────
+  // needs_reply lives in the Must-respond brief; the priority cards are the OTHER actions.
   const cards = (b?.priorities ?? []).filter(p => p.posture !== 'needs_reply');
+  // The replies you owe are the hero: ALL of them render in one editorial DIGEST under "What needs
+  // you", the first entry emphasized (it carries the "start here" weight without a separate box).
+  const digestReplies = mrLive;
   // When there's NO reply to lead with, lead the day with the top genuine non-meeting priority as the
-  // focal "Start here" block; the rest of the priority cards flow below it.
+  // focal "Start here" block — same behaviour as before for that path.
   const focalPriority = cards.find(p => p.source !== 'meeting') ?? null;
   const startHere: StartHereData | null = digestReplies.length === 0 && focalPriority
     ? { kind: 'priority', p: focalPriority }
     : null;
+  // The other actions (meeting follow-ups + email to-dos) flow below the digest. If a priority was
+  // promoted to the focal block, drop it here so it isn't shown twice.
   const bodyCards = startHere?.kind === 'priority'
     ? cards.filter(p => p.id !== focalPriority!.id)
     : cards;
+  const hasBody = digestReplies.length > 0 || bodyCards.length > 0;
 
-  // "On your plate" = commitments you owe. "Ball in your court" = the follow-ups the synthesis produced
-  // (else the raw waiting-on threads, mapped to the same FollowUpItem shape). "Keep an eye on" =
-  // awareness. All session-dismissals stripped so acted rows never linger.
-  const commitments = (b?.commitments ?? []).filter(c => !dismissed.has(c.id));
-  const followItems = (b?.followups?.items?.length
-    ? b.followups.items
-    : (b?.waitingOn ?? []).map((w) => ({ id: w.id, who: w.counterparty || 'Someone', status: `Waiting ${w.ageDays}d`, nextMove: 'Nudge when it stalls' }))
-  ).filter((f) => !f.id || !dismissed.has(f.id));
-  const awareness = (b?.keepAnEyeOn?.items ?? []).filter((k) => !dismissed.has(k.itemId));
-
-  const hasReplies = digestReplies.length > 0;
-  const hasCards = bodyCards.length > 0 || !!startHere;
-  const nothing = b && !hasReplies && !hasCards && !commitments.length && !followItems.length
-    && !awareness.length && !b.schedule.length && !(team?.messages.length || team?.needsReview.length);
+  const nothing = b && !b.priorities.length && !b.commitments.length && !b.waitingOn.length && !b.schedule.length && !(b.keepAnEyeOn?.items.length) && !(team?.messages.length || team?.needsReview.length) && !startHere;
 
   return (
     <div className="flex-1 min-w-0 h-full overflow-y-auto bg-neutral-50/40">
-      {/* ONE centered reading column (~720px): a short prose LEDE up top for the voice + shape of the
-          day, then the actual enriched item lists shown beneath it. Like Serif's opened digest — a
-          written intro, then your real work. Not a two-zone dashboard, not pure-prose-with-all-hidden. */}
-      <div className="px-8 py-10 mx-auto max-w-[720px]">
-        {/* Header — orb + date eyebrow + greeting */}
+      <div className="px-8 py-10">
+        {/* Header + narration + live status chips */}
         <RiseIn>
           {/* Living orb — abstract morphing glow in the brand spectrum, signalling the brief is
               continuously alive. Sits left so the greeting + narrative use the full width. */}
@@ -795,19 +781,16 @@ export function HomeView() {
             <div className="min-w-0 flex-1">
               <p className="text-[11px] font-semibold uppercase tracking-wider text-neutral-400 mb-1.5">{new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</p>
               <h1 className="text-[27px] font-semibold tracking-tight text-neutral-900 leading-tight">{greeting()}{b?.firstName ? `, ${b.firstName}` : ''}</h1>
+              {/* ONE tight summary line — the teaser (else the briefLine). No bullets, no "Don't miss"
+                  banner, no status chips: the sections + their Label counts already carry the numbers,
+                  and the first emphasized digest row IS the focal "start here". Straight into the brief. */}
+              {(b?.tldr?.teaser || b?.briefLine) && (
+                <p className="mt-2 text-[14.5px] text-neutral-500 leading-relaxed max-w-[760px]">{b?.tldr?.teaser || b?.briefLine}</p>
+              )}
             </div>
           </div>
         </RiseIn>
 
-        {/* ══ THE LEDE — a short prose intro (2–3 sentences) that frames the day + the most-pressing
-            thing. The assistant's voice/judgment. The real items are SHOWN below, not hidden. ══ */}
-        {lede && (
-          <RiseIn delay={50}>
-            <p className="mt-8 text-[18px] leading-[1.7] text-neutral-700 tracking-[-0.005em]">{lede}</p>
-          </RiseIn>
-        )}
-
-        {/* ══ ALL-CLEAR — nothing needs you ══ */}
         {nothing && (
           <RiseIn delay={80}>
             <div className="mt-10 rounded-2xl border border-dashed border-neutral-200 px-6 py-16 text-center">
@@ -820,52 +803,61 @@ export function HomeView() {
           </RiseIn>
         )}
 
-        {/* ══ THE VISIBLE ITEMS — the real work, shown (not hidden behind the lede). Tight sections,
-            each with a small Label, in one column. Replies is the hero list; the rest render only
-            when they have items. Reuses the exact same row components + endpoints as before. ══ */}
         {!nothing && (
-          <div className="mt-9 space-y-9">
+          // TWO-ZONE layout — the width is used, not wasted. A centered 1100px measure splits into a
+          // MAIN reading column (everything that needs your ACTION: the focal item, the editorial
+          // "what needs you" digest, then "on your plate") and a calm ~320px RIGHT RAIL of ambient
+          // context (day at a glance: schedule, awareness, waiting-on, team, handled). Stacks to a
+          // single column below `lg`. The digest itself is NEVER split into columns.
+          <div className="mt-9 mx-auto max-w-[1100px] grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px] gap-x-10 gap-y-10 items-start">
 
-            {/* 1 · REPLIES — the hero. When there's no reply to lead with, StartHere leads instead
-                (top priority, focal), then the other priority cards. */}
+            {/* ── MAIN COLUMN — what needs your action ─────────────────────────────────────────── */}
+            <div className="min-w-0 space-y-10">
+
+            {/* 1 · START HERE — only when there's no reply to lead with: the top priority, focal */}
             {startHere && (
-              <RiseIn delay={70}>
+              <RiseIn>
                 <StartHere data={startHere} teaser={null} onDismiss={onDismiss} />
               </RiseIn>
             )}
 
-            {hasReplies && (
-              <RiseIn delay={70}>
+            {/* 2 · WHAT NEEDS YOU — the editorial digest of replies you owe (first emphasized, carries
+                the "start here" weight), then the other actions below. Reads like a briefing, not a
+                grid of cards: typeset rows, hair dividers, one indigo affordance each; click to open
+                the angle + editable draft + Open thread. */}
+            {hasBody && (
+              <RiseIn delay={60}>
                 <section>
-                  <Label count={digestReplies.length} icon={EnvelopeIcon}>Replies</Label>
-                  <DigestList items={digestReplies} onDismiss={onDismiss} emphasizeFirst={!startHere} />
+                  <Label count={digestReplies.length + bodyCards.length} icon={BoltIcon}>What needs you</Label>
+                  {digestReplies.length > 0 && (
+                    <div className="mb-6">
+                      {b?.mustRespond?.teaser && <p className="text-[13px] text-neutral-500 leading-relaxed mb-1.5">{b.mustRespond.teaser}</p>}
+                      <DigestList items={digestReplies} onDismiss={onDismiss} emphasizeFirst={!startHere} />
+                    </div>
+                  )}
+                  {/* The other actions (meeting follow-ups + email to-dos) — same working cards. */}
+                  {bodyCards.length > 0 && (
+                    <div className="space-y-3">
+                      {bodyCards.map((p, i) => (
+                        <RiseIn key={p.id} delay={i * 45}>
+                          <PriorityCard p={p} first={false} expanded={expanded === p.id} onToggle={() => setExpanded(expanded === p.id ? null : p.id)} />
+                        </RiseIn>
+                      ))}
+                    </div>
+                  )}
                 </section>
               </RiseIn>
             )}
 
-            {/* The other actions (meeting follow-ups + email to-dos) — same working cards. */}
-            {bodyCards.length > 0 && (
+            {/* 3 · ON YOUR PLATE — commitments you owe. The last ACTION lane, so it stays in the
+                main reading column (not the ambient rail). */}
+            {b && b.commitments.length > 0 && (
               <RiseIn delay={90}>
                 <section>
-                  <Label count={bodyCards.length} icon={BoltIcon}>Also needs you</Label>
-                  <div className="space-y-3">
-                    {bodyCards.map((p, i) => (
-                      <RiseIn key={p.id} delay={i * 45}>
-                        <PriorityCard p={p} first={false} expanded={expanded === p.id} onToggle={() => setExpanded(expanded === p.id ? null : p.id)} />
-                      </RiseIn>
-                    ))}
-                  </div>
-                </section>
-              </RiseIn>
-            )}
-
-            {/* 2 · ON YOUR PLATE — commitments you owe */}
-            {commitments.length > 0 && (
-              <RiseIn delay={110}>
-                <section>
-                  <Label count={commitments.length} icon={CheckCircleIcon}>On your plate</Label>
+                  <Label count={b.commitments.length}>On your plate</Label>
+                  <p className="text-[12px] text-neutral-400 -mt-1.5 mb-2.5 leading-snug">Yours to act on — things you owe.</p>
                   <div className="space-y-2">
-                    {commitments.map(c => (
+                    {b.commitments.map(c => (
                       <CommitmentSideRow key={c.id} id={c.id} icon={CheckCircleIcon} iconClass={c.overdue ? 'text-red-400' : 'text-neutral-300'}>
                         <div className="flex items-start justify-between gap-2">
                           <span className="text-[13px] text-neutral-800 leading-snug">{c.description}</span>
@@ -883,113 +875,174 @@ export function HomeView() {
               </RiseIn>
             )}
 
-            {/* 3 · BALL IN YOUR COURT — waiting threads, each with a Draft-nudge action */}
-            {followItems.length > 0 && (
-              <RiseIn delay={130}>
-                <section>
-                  <Label count={followItems.length} icon={ClockIcon}>Ball in your court</Label>
-                  <p className="text-[12px] text-neutral-400 -mt-1.5 mb-2.5 leading-snug">Waiting on others — nudge when it stalls.</p>
-                  <div className="rounded-2xl border border-neutral-200/80 bg-white p-4">
-                    {b?.followups?.teaser && <p className="text-[12.5px] text-neutral-500 mb-3.5 leading-relaxed">{b.followups.teaser}</p>}
-                    <ol className="space-y-3.5">
-                      {followItems.map((f, i) => (
-                        <FollowUpItem key={f.id || i} f={f} index={i} />
+            </div>{/* ── end MAIN COLUMN ── */}
+
+            {/* ── RIGHT RAIL — calm "day at a glance": ambient context, not a second digest. Denser,
+                quieter. Order: schedule → keep an eye on → ball-in-court/waiting → team → awareness →
+                handled. On lg+ it sits to the right (sticky so it stays in view); below lg it stacks
+                under the main column. */}
+            <aside className="min-w-0 space-y-8 lg:sticky lg:top-6">
+
+              {/* Today's schedule — the day's shape, top of the rail */}
+              {b && b.schedule.length > 0 && (
+                <RiseIn delay={90}>
+                  <section>
+                    <Label icon={CalendarDaysIcon}>Today&apos;s schedule</Label>
+                    <div className="space-y-2">
+                      {b.schedule.map(m => (
+                        <SideRow key={m.id} href="/meetings">
+                          <div className="flex items-baseline gap-2">
+                            <span className="text-[12px] font-semibold text-indigo-600 flex-shrink-0">{timeOf(m.time)}</span>
+                            <span className="text-[13px] text-neutral-800 truncate">{m.title}</span>
+                          </div>
+                          {m.prep && (m.prep.lastEmail || m.prep.openCommitments.length > 0 || m.prep.lastMeeting) && (
+                            <div className="mt-1.5 text-[11.5px] text-neutral-400 space-y-0.5">
+                              {m.prep.lastMeeting && (
+                                <p className="flex items-start gap-1 text-violet-500 line-clamp-2">
+                                  <SparklesIcon className="w-3 h-3 flex-shrink-0 mt-0.5" />
+                                  <span>Last time with {m.prep.lastMeeting.person} ({m.prep.lastMeeting.date}): {m.prep.lastMeeting.recall}</span>
+                                </p>
+                              )}
+                              {m.prep.lastEmail && <p className="truncate">Last thread: “{m.prep.lastEmail.subject}”</p>}
+                              {m.prep.openCommitments.map((c, i) => <p key={i} className="truncate">Open: {c}</p>)}
+                            </div>
+                          )}
+                        </SideRow>
                       ))}
-                    </ol>
-                    {b?.followups?.closing && (
-                      <div className="mt-3.5 pt-3.5 border-t border-neutral-100 flex items-start gap-2">
-                        <SparklesIcon className="w-4 h-4 text-indigo-400 flex-shrink-0 mt-0.5" />
-                        <p className="text-[12px] text-neutral-500 leading-relaxed">{b.followups.closing}</p>
-                      </div>
-                    )}
-                  </div>
-                </section>
-              </RiseIn>
-            )}
+                    </div>
+                  </section>
+                </RiseIn>
+              )}
 
-            {/* 4 · KEEP AN EYE ON — awareness, no actions */}
-            {awareness.length > 0 && (
-              <RiseIn delay={150}>
-                <section>
-                  <Label count={awareness.length} icon={EyeIcon}>Keep an eye on</Label>
-                  <KeepAnEyeOnCard items={awareness} />
-                </section>
-              </RiseIn>
-            )}
+              {/* Keep an eye on — awareness, no actions */}
+              {b?.keepAnEyeOn && b.keepAnEyeOn.items.length > 0 && (
+                <RiseIn delay={120}>
+                  <section>
+                    <Label count={b.keepAnEyeOn.items.length} icon={EyeIcon}>Keep an eye on</Label>
+                    <KeepAnEyeOnCard items={b.keepAnEyeOn.items} />
+                  </section>
+                </RiseIn>
+              )}
 
-            {/* From your team — coworker report-backs + ready-for-you (collapsible, quiet) */}
-            {team && (team.messages.length > 0 || team.needsReview.length > 0) && (
-              <RiseIn delay={170}>
-                <Collapsible title="From your team" count={team.messages.length + team.needsReview.length}>
-                  <div className="space-y-2">
-                    {team.messages.slice(0, 3).map((m, i) => (
-                      <SideRow key={`m${i}`} href={m.workerId ? `/workers?worker=${m.workerId}` : '/workers'}>
-                        <span className="text-[12px] font-semibold text-neutral-700">{m.workerName ?? 'A coworker'}</span>
-                        {m.text && <p className="text-[12px] text-neutral-500 mt-0.5 line-clamp-2">{m.text}</p>}
-                      </SideRow>
-                    ))}
-                    {team.needsReview.slice(0, 3).map((r, i) => (
-                      <SideRow key={r.artifactId ?? r.threadId ?? `r${i}`} href={r.workerId ? `/workers?worker=${r.workerId}` : '/workers'} icon={UsersIcon}>
-                        <span className="text-[12.5px] text-neutral-800 truncate block">{r.title || 'Ready for you'}</span>
-                        <p className="text-[11px] text-neutral-400">Ready{r.workerName ? ` · ${r.workerName}` : ''}</p>
-                      </SideRow>
-                    ))}
-                  </div>
-                </Collapsible>
-              </RiseIn>
-            )}
+              {/* Ball in your court / Waiting on — the follow-ups (whichever the synthesis produced) */}
+              {b?.followups && b.followups.items.length > 0 ? (
+                <RiseIn delay={150}>
+                  <section>
+                    <Label count={b.followups.items.length} icon={ClockIcon}>Ball in your court</Label>
+                    <p className="text-[12px] text-neutral-400 -mt-1.5 mb-2.5 leading-snug">Waiting on others — nudge when it stalls.</p>
+                    <div className="rounded-2xl border border-neutral-200/80 bg-white p-4">
+                      {b.followups.teaser && <p className="text-[12.5px] text-neutral-500 mb-3.5 leading-relaxed">{b.followups.teaser}</p>}
+                      <ol className="space-y-3.5">
+                        {b.followups.items.map((f, i) => (
+                          <FollowUpItem key={f.id || i} f={f} index={i} />
+                        ))}
+                      </ol>
+                      {b.followups.closing && (
+                        <div className="mt-3.5 pt-3.5 border-t border-neutral-100 flex items-start gap-2">
+                          <SparklesIcon className="w-4 h-4 text-indigo-400 flex-shrink-0 mt-0.5" />
+                          <p className="text-[12px] text-neutral-500 leading-relaxed">{b.followups.closing}</p>
+                        </div>
+                      )}
+                    </div>
+                  </section>
+                </RiseIn>
+              ) : b && b.waitingOn.length > 0 ? (
+                <RiseIn delay={150}>
+                  <section>
+                    <Label count={b.waitingOn.length} icon={ClockIcon}>Waiting on others</Label>
+                    <div className="space-y-2">
+                      {b.waitingOn.map(c => (
+                        <CommitmentSideRow key={c.id} id={c.id} icon={ClockIcon} iconClass="text-amber-400">
+                          <span className="text-[13px] text-neutral-800 truncate block">{c.description}</span>
+                          <p className="text-[11.5px] text-neutral-400 mt-0.5">Waiting on {c.counterparty || 'them'} · {c.ageDays}d</p>
+                        </CommitmentSideRow>
+                      ))}
+                    </div>
+                  </section>
+                </RiseIn>
+              ) : null}
 
-            {/* For your awareness — the ambient FYI digest, quietest. Collapsed by default. */}
-            {b?.fyiDigest && b.fyiDigest.groups.length > 0 && (
-              <RiseIn delay={190}>
-                <Collapsible title="For your awareness" count={b.fyiDigest.groups.length}>
-                  <div className="rounded-xl border border-neutral-200/80 bg-white divide-y divide-neutral-100 overflow-hidden">
-                    {b.fyiDigest.groups.filter(g => g.kind === 'person').map((g, i) => (
-                      <FyiGroupRow key={`p${i}`} g={g} variant="person" />
-                    ))}
-                    {b.fyiDigest.groups.some(g => g.kind === 'newsletter') && (
-                      <div className="px-3.5 pt-2.5 pb-1 bg-neutral-50/60">
-                        <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">Newsletters &amp; services</p>
-                      </div>
-                    )}
-                    {b.fyiDigest.groups.filter(g => g.kind === 'newsletter').map((g, i) => (
-                      <FyiGroupRow key={`n${i}`} g={g} variant="newsletter" />
-                    ))}
-                    {b.fyiDigest.tailItems > 0 && (
-                      <Link href="/inbox" className="block px-3.5 py-2 text-[11.5px] text-neutral-400 hover:text-indigo-600 transition-colors">
-                        +{b.fyiDigest.tailItems} more from {b.fyiDigest.tailGroups} other sender{b.fyiDigest.tailGroups > 1 ? 's' : ''}
-                      </Link>
-                    )}
-                  </div>
-                </Collapsible>
-              </RiseIn>
-            )}
+              {/* From your team — coworker report-backs + ready-for-you (collapsible, quiet) */}
+              {team && (team.messages.length > 0 || team.needsReview.length > 0) && (
+                <RiseIn delay={180}>
+                  <Collapsible title="From your team" count={team.messages.length + team.needsReview.length}>
+                    <div className="space-y-2">
+                      {team.messages.slice(0, 3).map((m, i) => (
+                        <SideRow key={`m${i}`} href={m.workerId ? `/workers?worker=${m.workerId}` : '/workers'}>
+                          <span className="text-[12px] font-semibold text-neutral-700">{m.workerName ?? 'A coworker'}</span>
+                          {m.text && <p className="text-[12px] text-neutral-500 mt-0.5 line-clamp-2">{m.text}</p>}
+                        </SideRow>
+                      ))}
+                      {team.needsReview.slice(0, 3).map((r, i) => (
+                        <SideRow key={r.artifactId ?? r.threadId ?? `r${i}`} href={r.workerId ? `/workers?worker=${r.workerId}` : '/workers'} icon={UsersIcon}>
+                          <span className="text-[12.5px] text-neutral-800 truncate block">{r.title || 'Ready for you'}</span>
+                          <p className="text-[11px] text-neutral-400">Ready{r.workerName ? ` · ${r.workerName}` : ''}</p>
+                        </SideRow>
+                      ))}
+                    </div>
+                  </Collapsible>
+                </RiseIn>
+              )}
 
-            {/* ══ QUIET FOOTER — the schedule line (if meetings) + what was triaged/filed. Ambient
-                closure: read the lede for the voice, the items for your work, this for the heartbeat. ══ */}
-            {b && (b.schedule.length > 0 || (b.handled && (b.handled.triaged > 0 || b.handled.filtered > 0 || b.handled.summarised > 0))) && (
-              <RiseIn delay={210}>
-                <div className="pt-6 border-t border-neutral-100 space-y-2.5">
-                  {b.schedule.length > 0 && (
-                    <p className="text-[13px] text-neutral-500 leading-relaxed">
-                      <CalendarDaysIcon className="inline w-3.5 h-3.5 text-neutral-400 mr-1.5 -mt-0.5" />
-                      Today: {b.schedule.slice(0, 3).map((m, i) => (
-                        <span key={m.id}>{i > 0 && ', '}<Link href="/meetings" className="text-neutral-600 hover:text-indigo-600 transition-colors">{timeOf(m.time)} {m.title}</Link></span>
-                      ))}{b.schedule.length > 3 && <span className="text-neutral-400"> +{b.schedule.length - 3} more</span>}
-                    </p>
-                  )}
-                  {b.handled && (b.handled.triaged > 0 || b.handled.filtered > 0 || b.handled.summarised > 0) && (
-                    <p className="text-[12.5px] text-neutral-400 leading-relaxed">
-                      <CheckCircleIcon className="inline w-3.5 h-3.5 text-emerald-400 mr-1.5 -mt-0.5" />
-                      {b.handled.triaged > 0 && `Triaged ${b.handled.triaged} email${b.handled.triaged > 1 ? 's' : ''}`}
-                      {b.handled.filtered > 0 && `${b.handled.triaged > 0 ? ' · ' : ''}${b.handled.filtered} newsletters & receipts filed`}
-                      {b.handled.summarised > 0 && ` · ${b.handled.summarised} meeting${b.handled.summarised > 1 ? 's' : ''} summarised`}
-                    </p>
-                  )}
-                </div>
-              </RiseIn>
-            )}
+              {/* For your awareness — the ambient FYI digest, quietest. Collapsed by default. */}
+              {b?.fyiDigest && b.fyiDigest.groups.length > 0 && (
+                <RiseIn delay={200}>
+                  <Collapsible title="For your awareness" count={b.fyiDigest.groups.length}>
+                    <div className="rounded-xl border border-neutral-200/80 bg-white divide-y divide-neutral-100 overflow-hidden">
+                      {b.fyiDigest.groups.filter(g => g.kind === 'person').map((g, i) => (
+                        <FyiGroupRow key={`p${i}`} g={g} variant="person" />
+                      ))}
+                      {b.fyiDigest.groups.some(g => g.kind === 'newsletter') && (
+                        <div className="px-3.5 pt-2.5 pb-1 bg-neutral-50/60">
+                          <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">Newsletters &amp; services</p>
+                        </div>
+                      )}
+                      {b.fyiDigest.groups.filter(g => g.kind === 'newsletter').map((g, i) => (
+                        <FyiGroupRow key={`n${i}`} g={g} variant="newsletter" />
+                      ))}
+                      {b.fyiDigest.tailItems > 0 && (
+                        <Link href="/inbox" className="block px-3.5 py-2 text-[11.5px] text-neutral-400 hover:text-indigo-600 transition-colors">
+                          +{b.fyiDigest.tailItems} more from {b.fyiDigest.tailGroups} other sender{b.fyiDigest.tailGroups > 1 ? 's' : ''}
+                        </Link>
+                      )}
+                    </div>
+                  </Collapsible>
+                </RiseIn>
+              )}
 
+              {/* Handled for you — the trust heartbeat, quietest of all, bottom of the rail */}
+              {b?.handled && (b.handled.triaged > 0 || b.handled.summarised > 0 || b.handled.tracked > 0) && (
+                <RiseIn delay={220}>
+                  <Collapsible title="Handled for you · 24h">
+                    <div className="rounded-xl border border-neutral-200/80 bg-gradient-to-br from-white to-neutral-50/60 px-3.5 py-3 text-[12px] text-neutral-500 space-y-1.5">
+                      {b.handled.triaged > 0 && (
+                        <p className="flex items-start gap-1.5">
+                          <CheckCircleIcon className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0 mt-px" />
+                          <span>Triaged {b.handled.triaged} email{b.handled.triaged > 1 ? 's' : ''}{b.handled.filtered > 0 ? ` · ${b.handled.filtered} filtered as noise` : ''}</span>
+                        </p>
+                      )}
+                      {b.handled.summarised > 0 && (
+                        <p className="flex items-start gap-1.5">
+                          <CheckCircleIcon className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0 mt-px" />
+                          <span>Summarised {b.handled.summarised} meeting{b.handled.summarised > 1 ? 's' : ''}</span>
+                        </p>
+                      )}
+                      {b.handled.tracked > 0 && (
+                        <p className="flex items-start gap-1.5">
+                          <CheckCircleIcon className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0 mt-px" />
+                          <span>Tracked {b.handled.tracked} new commitment{b.handled.tracked > 1 ? 's' : ''}{b.handled.resolved > 0 ? ` · resolved ${b.handled.resolved}` : ''}</span>
+                        </p>
+                      )}
+                    </div>
+                  </Collapsible>
+                </RiseIn>
+              )}
+
+            </aside>{/* ── end RIGHT RAIL ── */}
+
+            {/* FUTURE: a quiet "history" nav (yesterday ↑ / dated ledger) slots ABOVE the header, and a
+                "Hand to a coworker" action slots alongside each StartHere / body action — both out of
+                scope for this single-living-TODAY-brief slice (see docs/living-brief-plan.md #3 #4). */}
           </div>
         )}
       </div>

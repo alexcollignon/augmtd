@@ -358,16 +358,12 @@ export async function GET() {
   type MustRespond = { teaser: string; items: Reply[] };
   type KeepAnEyeOn = { items: { who: string; why: string; itemId: string }[] };
   type CommitmentPlacement = 'on_your_plate' | 'ball_in_court' | 'informational';
-  // The LEDE — a short prose intro (see synthesize-brief). Cached + served verbatim; plain text, no
-  // grounded refs (the visible enriched lists below carry the real items + actions).
-  type Lede = string;
-  const cached = (profileRes.data as { home_brief?: { text?: string; tldr?: Tldr; followups?: Followups | null; fyiDigest?: FyiDigest | null; mustRespond?: MustRespond | null; keepAnEyeOn?: KeepAnEyeOn | null; lede?: Lede | null; droppedItemIds?: string[]; commitmentPlacements?: Record<string, CommitmentPlacement>; generated_at: string; sig?: string } } | null)?.home_brief ?? null;
+  const cached = (profileRes.data as { home_brief?: { text?: string; tldr?: Tldr; followups?: Followups | null; fyiDigest?: FyiDigest | null; mustRespond?: MustRespond | null; keepAnEyeOn?: KeepAnEyeOn | null; droppedItemIds?: string[]; commitmentPlacements?: Record<string, CommitmentPlacement>; generated_at: string; sig?: string } } | null)?.home_brief ?? null;
   let tldr: Tldr | null = cached?.tldr ?? null;
   let followups: Followups | null = cached?.followups ?? null;
   let fyiDigest: FyiDigest | null = cached?.fyiDigest ?? null;
   let mustRespond: MustRespond | null = cached?.mustRespond ?? null;
   let keepAnEyeOn: KeepAnEyeOn | null = cached?.keepAnEyeOn ?? null;
-  let lede: Lede | null = cached?.lede ?? null;
   let briefLine = cached?.text ?? null;
   let droppedItemIds: string[] = cached?.droppedItemIds ?? [];
   // The synthesis's per-commitment placement verdict (Bug #1). Cached so a cache-hit routes the same
@@ -403,11 +399,8 @@ export async function GET() {
     }
     droppedItemIds = synth.droppedItemIds;
     if (Object.keys(synth.commitmentPlacements).length) commitmentPlacements = synth.commitmentPlacements;
-    // The lede — only overwrite the cache when the model produced one (a miss keeps the last good
-    // lede rather than blanking the intro; the lists below still render regardless).
-    if (synth.lede) lede = synth.lede;
 
-    await supabase.from('profiles').update({ home_brief: { text: briefLine, tldr, followups, fyiDigest, mustRespond, keepAnEyeOn, lede, droppedItemIds, commitmentPlacements, generated_at: now.toISOString(), sig } }).eq('id', user.id).then(() => {}, () => {});
+    await supabase.from('profiles').update({ home_brief: { text: briefLine, tldr, followups, fyiDigest, mustRespond, keepAnEyeOn, droppedItemIds, commitmentPlacements, generated_at: now.toISOString(), sig } }).eq('id', user.id).then(() => {}, () => {});
   }
 
   // ── Route each open commitment by the synthesis's VERDICT (fallback = the ingest-direction default).
@@ -492,10 +485,5 @@ export async function GET() {
     ? { items: keepAnEyeOn.items.filter((k) => (!k.itemId || pendingItemIds.has(k.itemId) || awarenessRaw.has(k.itemId)) && !mustItemIds.has(k.itemId)) }
     : keepAnEyeOn;
 
-  // ── LEDE — the short prose intro. Plain text, so it's served verbatim (no ref resolution): the
-  // visible enriched lists below (mustRespond / waitingOn / commitments / keepAnEyeOn) carry every
-  // real, executable item, and they self-heal against acted/dropped ids above. The lede is framing.
-  const ledeOut: Lede | null = lede;
-
-  return NextResponse.json({ firstName, briefLine, tldr, followups, fyiDigest, mustRespond: mustRespondOut, keepAnEyeOn: keepAnEyeOnOut, lede: ledeOut, status, priorities: cappedPriorities, commitments, waitingOn, schedule, handled });
+  return NextResponse.json({ firstName, briefLine, tldr, followups, fyiDigest, mustRespond: mustRespondOut, keepAnEyeOn: keepAnEyeOnOut, status, priorities: cappedPriorities, commitments, waitingOn, schedule, handled });
 }

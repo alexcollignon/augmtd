@@ -111,12 +111,6 @@ export type MustRespond = { teaser: string; items: Reply[] };
 export type KeepAnEye = { who: string; why: string; itemId: string };
 export type KeepAnEyeOn = { items: KeepAnEye[] };
 
-// ── The LEDE — a short prose intro (2–3 sentences) that frames the day and the single most-pressing
-// thing. This is the WARMTH / JUDGMENT / OVERVIEW layer. It is NOT the whole brief — the actual items
-// render VISIBLY beneath it (enriched lists). The lede's job is framing, not listing: read it for the
-// voice + the shape of the day, then see your real work below. Plain text, first-person PA voice.
-export type Lede = string;
-
 export interface SynthesisResult {
   tldr: Tldr | null;
   mustRespond: MustRespond | null;
@@ -124,10 +118,6 @@ export interface SynthesisResult {
   fyiDigest: FyiDigest | null;
   /** the middle awareness tier — real things around the user worth SEEING (no action). Selective. */
   keepAnEyeOn: KeepAnEyeOn | null;
-  /** the LEDE — a short (2–3 sentence) prose intro that frames the day. Rendered above the visible
-      enriched item lists. Null when the model didn't produce one → the UI degrades gracefully (just
-      shows the lists). Plain text, no grounded refs — the items themselves carry the actions. */
-  lede: Lede | null;
   /** itemIds the synthesis judged superseded/stale — the route drops them from priorities too, so
       the prose and the cards can't contradict each other. */
   droppedItemIds: string[];
@@ -256,28 +246,8 @@ ${eyeStr}
 FYI EMAILS (low-priority awareness, grouped by sender — one digest line each):
 ${fyiStr}
 
-THE LEDE — a SHORT prose intro (2–3 sentences), in flowing first-person PA voice — the way you'd
-actually open if you spoke to ${me}. Its job is to FRAME the day and name the single most-pressing
-thing — NOT to list everything. The real items render VISIBLY as enriched lists BELOW this lede, so
-you do NOT need to name every reply, every thread, or every category. Keep it to 2–3 sentences.
-
-- Read the shape of the day and the ONE most-pressing thing (usually the top reply): e.g. "It's a busy
-  Saturday — six replies waiting, the most pressing to TECNICLIMA on the proposal (drafted)."
-- You MAY lightly touch one or two other notable things if it reads naturally ("The refund's in
-  Youssef's court now, and Jean-Marie's gone quiet on two threads.") — but this is FRAMING, not a
-  roster. Do NOT enumerate every item; the lists below show them.
-- Plain sentences only. NO headers, NO bullets, NO clickable tags/refs — just warm, human prose. Use
-  ${me}'s first name naturally if it fits. If there is genuinely almost nothing, a single calm
-  all-clear sentence is right ("Quiet morning, ${me} — nothing pressing; I've filed the rest.").
-
-Return the lede as a plain string in "lede". Still fill "droppedReplies", "mustRespond",
-"commitmentPlacements", "keepAnEyeOn", "followups", and "fyiDigest" as specified below — those
-STRUCTURED outputs drive the visible lists the user actually acts on, so they must stay complete and
-grounded (echo the [Rn]/[Wn]/[Cn]/[Kn]/[Fn] tags exactly as before).
-
 Return ONLY JSON in this exact shape:
 {
-  "lede": "It's a busy Saturday, ${me} — six replies waiting, the most pressing to TECNICLIMA on the proposal (I've drafted it). The refund's in Youssef's court now, and Jean-Marie's gone quiet on a couple of threads. Everything else I've filed.",
   "tldr": {
     "teaser": "one short sentence summarising the day",
     "bullets": ["3-4 short scannable bullets — meetings, todos/commitments, replies; lead with what matters most"],
@@ -302,15 +272,14 @@ Return ONLY JSON in this exact shape:
   }
 }
 
-If a section has no items, return it with an empty items/groups array (or null for tldr fields). Keep every "mustRespond" item you did not drop; every "followups" item; AT MOST 2–4 "keepAnEyeOn" items (fewer is better); and one digest line per FYI group. The "lede" is REQUIRED — always write a short 2–3 sentence intro (a single warm all-clear sentence when there is genuinely nothing).`;
+If a section has no items, return it with an empty items/groups array (or null for tldr fields). Keep every "mustRespond" item you did not drop; every "followups" item; AT MOST 2–4 "keepAnEyeOn" items (fewer is better); and one digest line per FYI group.`;
 
   try {
     const res = await aiCreate(client, {
-      model, max_tokens: 8000, temperature: 0.4,
+      model, max_tokens: 5000, temperature: 0.4,
       messages: [{ role: 'user', content: prompt }],
     });
     const parsed = parseModelJSON<{
-      lede?: string;
       tldr?: { teaser?: string; bullets?: string[]; dontMiss?: string | null };
       mustRespond?: { teaser?: string; items?: { r?: number; who?: string; ask?: string; angle?: string }[] };
       droppedReplies?: number[];
@@ -416,14 +385,8 @@ If a section has no items, return it with an empty items/groups array (or null f
       ? { groups: fyiGroups, tailGroups: 0, tailItems: 0 }
       : null;
 
-    // ── LEDE — a short prose intro. Plain text (no grounded refs — the visible enriched lists below
-    // carry the real, executable items). We just take the model's string, trim it, and gate it to a
-    // sane length so a runaway generation can't dump the whole brief here. Empty → null (UI degrades).
-    const rawLede = typeof parsed.lede === 'string' ? parsed.lede.trim() : '';
-    const lede: Lede | null = rawLede ? rawLede.slice(0, 900) : null;
-
-    return { tldr, mustRespond, keepAnEyeOn, followups, fyiDigest, droppedItemIds, commitmentPlacements, lede };
+    return { tldr, mustRespond, keepAnEyeOn, followups, fyiDigest, droppedItemIds, commitmentPlacements };
   } catch {
-    return { tldr: null, mustRespond: null, keepAnEyeOn: null, followups: null, fyiDigest: null, droppedItemIds: [], commitmentPlacements: {}, lede: null };
+    return { tldr: null, mustRespond: null, keepAnEyeOn: null, followups: null, fyiDigest: null, droppedItemIds: [], commitmentPlacements: {} };
   }
 }
