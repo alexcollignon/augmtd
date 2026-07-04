@@ -883,7 +883,13 @@ export function HomeView() {
   // calendar.
   if (!nothing) rail('today', (
     <section>
-      <Label count={todayCount} icon={CalendarDaysIcon}>Today</Label>
+      {/* "Today" header doubles as the calendar entry — click through to the unified week view. */}
+      <div className="flex items-center justify-between">
+        <Label count={todayCount} icon={CalendarDaysIcon}>Today</Label>
+        <Link href="/calendar" className="group mb-3 inline-flex items-center gap-1 text-[11px] font-medium text-neutral-400 hover:text-indigo-600 transition-colors">
+          Calendar <ChevronRightIcon className="w-3 h-3 transition-transform group-hover:translate-x-0.5" />
+        </Link>
+      </div>
       {!hasToday ? (
         <p className="text-[12.5px] text-neutral-400 leading-relaxed">Nothing scheduled or due today.</p>
       ) : (
@@ -1118,6 +1124,17 @@ export function HomeView() {
                 arranged cleanly on one row. */}
             <div className="flex-shrink-0 flex items-center gap-2.5">
               {showRing && <DayClearedRing cleared={ringCleared} needYou={ringNeedYou} />}
+              {/* Calendar — the unified week view (meetings + due + follow-ups). No sidebar item; the
+                  Home is its launch surface, next to the Activity trigger. */}
+              <Link
+                href="/calendar"
+                title="Calendar"
+                aria-label="Open calendar"
+                className="mt-0.5 inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 text-[12px] font-medium text-neutral-500 hover:text-indigo-700 hover:border-indigo-200 hover:bg-indigo-50/60 transition-all duration-200"
+              >
+                <CalendarDaysIcon className="w-4 h-4" />
+                <span className="hidden sm:inline">Calendar</span>
+              </Link>
               <button
                 onClick={() => setActivityOpen(true)}
                 title="Activity"
