@@ -839,7 +839,30 @@ export function HomeView() {
   // an empty lane never renders a bare header. `railNodes` is the ordered, non-empty set; the count
   // then decides the layout (below). The RiseIn delay is by VISIBLE position so stacking stays smooth
   // regardless of which sections are present.
-  const hasSchedule = !!(b && b.schedule.length > 0);
+  // ── "Today" — the live temporal cross-section. Everything TIME-BOUND to today, in one place:
+  //   1. overdue follow-ups (ball-in-your-court that's gone quiet ≥3d — a "nudge" cue)
+  //   2. commitments due today (things you owe, dated today)
+  //   3. meetings today (the existing schedule)
+  // All three derive from the route's LIVE structured fields (schedule / commitments / waitingOn),
+  // which recompute every load — so a new meeting, a newly-due commitment, or a newly-aged follow-up
+  // appears on the next load with no stale cache. Acted items drop live via the SAME clearedIds
+  // wiring the other sections use (CommitmentSideRow / FollowUpItem call onCleared). Empty categories
+  // are omitted; if the whole thing is empty a calm "nothing today" line shows.
+  const NUDGE_AFTER_DAYS = 3; // a follow-up ≥3d quiet is worth a nudge today
+  // Overdue follow-ups: ball-in-court items (from `followups`, id-grounded, carry the nudge draft
+  // affordance) that have gone quiet. `waitingOn` carries ageDays; match follow-ups to it by id so we
+  // only surface the aging ones. Not-yet-cleared this session.
+  const waitAge = new Map((b?.waitingOn ?? []).map((w) => [w.id, w.ageDays] as const));
+  const todayNudges = (b?.followups?.items ?? []).filter(
+    (f) => f.id && !clearedIds.has(f.id) && (waitAge.get(f.id) ?? 0) >= NUDGE_AFTER_DAYS,
+  );
+  // Commitments (things you owe) explicitly dated today. Live: dueToday is recomputed server-side each
+  // load against today's date. Drop any cleared this session so it disappears when acted.
+  const todayDue = (b?.commitments ?? []).filter((c) => c.dueToday && !clearedIds.has(c.id));
+  const todayMeetings = b?.schedule ?? [];
+  const todayCount = todayNudges.length + todayDue.length + todayMeetings.length;
+  const hasToday = todayCount > 0;
+
   const hasEye = !!(b?.keepAnEyeOn && b.keepAnEyeOn.items.length > 0);
   const hasFollowups = !!(b?.followups && b.followups.items.length > 0);
   const hasWaiting = !hasFollowups && !!(b && b.waitingOn.length > 0);
@@ -852,31 +875,77 @@ export function HomeView() {
     railNodes.push(<RiseIn key={key} delay={90 + railNodes.length * 30}>{node}</RiseIn>);
   };
 
-  if (hasSchedule) rail('schedule', (
+  // ── TODAY — the unified temporal section. Renders, in urgency order: overdue follow-ups (nudge) →
+  // commitments due today → meetings today. Each sub-list only appears when it has items. The section
+  // is the day's temporal anchor, so it renders whenever the Home has ANY content — with a calm
+  // "nothing today" line when nothing is time-bound. (When the whole Home is empty the `nothing` block
+  // above owns the screen, so Today is skipped.) Compact — the "today at a glance" slice, not a full
+  // calendar.
+  if (!nothing) rail('today', (
     <section>
-      <Label icon={CalendarDaysIcon}>Today&apos;s schedule</Label>
-      <div className="space-y-2">
-        {b!.schedule.map(m => (
-          <SideRow key={m.id} href="/meetings">
-            <div className="flex items-baseline gap-2">
-              <span className="text-[12px] font-semibold text-indigo-600 flex-shrink-0">{timeOf(m.time)}</span>
-              <span className="text-[13px] text-neutral-800 truncate">{m.title}</span>
-            </div>
-            {m.prep && (m.prep.lastEmail || m.prep.openCommitments.length > 0 || m.prep.lastMeeting) && (
-              <div className="mt-1.5 text-[11.5px] text-neutral-400 space-y-0.5">
-                {m.prep.lastMeeting && (
-                  <p className="flex items-start gap-1 text-violet-500 line-clamp-2">
-                    <SparklesIcon className="w-3 h-3 flex-shrink-0 mt-0.5" />
-                    <span>Last time with {m.prep.lastMeeting.person} ({m.prep.lastMeeting.date}): {m.prep.lastMeeting.recall}</span>
-                  </p>
+      <Label count={todayCount} icon={CalendarDaysIcon}>Today</Label>
+      {!hasToday ? (
+        <p className="text-[12.5px] text-neutral-400 leading-relaxed">Nothing scheduled or due today.</p>
+      ) : (
+      <div className="space-y-3">
+
+        {/* 1 · Overdue follow-ups — ball-in-your-court gone quiet. A small "overdue · nudge" cue +
+            the Draft-nudge action (reused FollowUpItem). Most-relevant first. */}
+        {todayNudges.length > 0 && (
+          <div className="rounded-2xl border border-neutral-200/80 bg-white p-4">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-amber-600 mb-2.5">Overdue · nudge</p>
+            <ol className="space-y-3.5">
+              {todayNudges.map((f, i) => (
+                <FollowUpItem key={f.id || i} f={f} index={i} />
+              ))}
+            </ol>
+          </div>
+        )}
+
+        {/* 2 · Commitments due today — things you owe, dated today. Reuses CommitmentSideRow (done/
+            dismiss + live clear). A "due today" cue. */}
+        {todayDue.length > 0 && (
+          <div className="space-y-2">
+            {todayDue.map(c => (
+              <CommitmentSideRow key={c.id} id={c.id} icon={CheckCircleIcon} iconClass="text-amber-400" onCleared={onCleared}>
+                <div className="flex items-start justify-between gap-2">
+                  <span className="text-[13px] text-neutral-800 leading-snug">{c.description}</span>
+                  <span className="flex-shrink-0 text-[10px] font-semibold uppercase tracking-wide rounded-md px-1.5 py-0.5 bg-amber-50 text-amber-600">Due today</span>
+                </div>
+                {c.counterparty && <p className="text-[11.5px] text-neutral-400 mt-0.5">You owe {c.counterparty}</p>}
+              </CommitmentSideRow>
+            ))}
+          </div>
+        )}
+
+        {/* 3 · Meetings today — time-ordered (server orders schedule by start_time), with light prep
+            on the next one. Unchanged from the old "Today's schedule". */}
+        {todayMeetings.length > 0 && (
+          <div className="space-y-2">
+            {todayMeetings.map(m => (
+              <SideRow key={m.id} href="/meetings">
+                <div className="flex items-baseline gap-2">
+                  <span className="text-[12px] font-semibold text-indigo-600 flex-shrink-0">{timeOf(m.time)}</span>
+                  <span className="text-[13px] text-neutral-800 truncate">{m.title}</span>
+                </div>
+                {m.prep && (m.prep.lastEmail || m.prep.openCommitments.length > 0 || m.prep.lastMeeting) && (
+                  <div className="mt-1.5 text-[11.5px] text-neutral-400 space-y-0.5">
+                    {m.prep.lastMeeting && (
+                      <p className="flex items-start gap-1 text-violet-500 line-clamp-2">
+                        <SparklesIcon className="w-3 h-3 flex-shrink-0 mt-0.5" />
+                        <span>Last time with {m.prep.lastMeeting.person} ({m.prep.lastMeeting.date}): {m.prep.lastMeeting.recall}</span>
+                      </p>
+                    )}
+                    {m.prep.lastEmail && <p className="truncate">Last thread: “{m.prep.lastEmail.subject}”</p>}
+                    {m.prep.openCommitments.map((c, i) => <p key={i} className="truncate">Open: {c}</p>)}
+                  </div>
                 )}
-                {m.prep.lastEmail && <p className="truncate">Last thread: “{m.prep.lastEmail.subject}”</p>}
-                {m.prep.openCommitments.map((c, i) => <p key={i} className="truncate">Open: {c}</p>)}
-              </div>
-            )}
-          </SideRow>
-        ))}
+              </SideRow>
+            ))}
+          </div>
+        )}
       </div>
+      )}
     </section>
   ));
 
