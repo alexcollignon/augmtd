@@ -358,12 +358,16 @@ export async function GET() {
   type MustRespond = { teaser: string; items: Reply[] };
   type KeepAnEyeOn = { items: { who: string; why: string; itemId: string }[] };
   type CommitmentPlacement = 'on_your_plate' | 'ball_in_court' | 'informational';
-  const cached = (profileRes.data as { home_brief?: { text?: string; tldr?: Tldr; followups?: Followups | null; fyiDigest?: FyiDigest | null; mustRespond?: MustRespond | null; keepAnEyeOn?: KeepAnEyeOn | null; droppedItemIds?: string[]; commitmentPlacements?: Record<string, CommitmentPlacement>; generated_at: string; sig?: string } } | null)?.home_brief ?? null;
+  // The narrative parts (see synthesize-brief). Cached + served verbatim; each `ref` is a REAL id.
+  type NarrativePart = { text: string } | { ref: string; text: string; kind: 'send' | 'nudge' | 'open' };
+  type Narrative = NarrativePart[][];
+  const cached = (profileRes.data as { home_brief?: { text?: string; tldr?: Tldr; followups?: Followups | null; fyiDigest?: FyiDigest | null; mustRespond?: MustRespond | null; keepAnEyeOn?: KeepAnEyeOn | null; narrative?: Narrative | null; droppedItemIds?: string[]; commitmentPlacements?: Record<string, CommitmentPlacement>; generated_at: string; sig?: string } } | null)?.home_brief ?? null;
   let tldr: Tldr | null = cached?.tldr ?? null;
   let followups: Followups | null = cached?.followups ?? null;
   let fyiDigest: FyiDigest | null = cached?.fyiDigest ?? null;
   let mustRespond: MustRespond | null = cached?.mustRespond ?? null;
   let keepAnEyeOn: KeepAnEyeOn | null = cached?.keepAnEyeOn ?? null;
+  let narrative: Narrative | null = cached?.narrative ?? null;
   let briefLine = cached?.text ?? null;
   let droppedItemIds: string[] = cached?.droppedItemIds ?? [];
   // The synthesis's per-commitment placement verdict (Bug #1). Cached so a cache-hit routes the same
@@ -399,8 +403,11 @@ export async function GET() {
     }
     droppedItemIds = synth.droppedItemIds;
     if (Object.keys(synth.commitmentPlacements).length) commitmentPlacements = synth.commitmentPlacements;
+    // The prose brief — only overwrite the cache when the model produced one (a miss keeps the last
+    // good narrative rather than blanking the page).
+    if (synth.narrative) narrative = synth.narrative;
 
-    await supabase.from('profiles').update({ home_brief: { text: briefLine, tldr, followups, fyiDigest, mustRespond, keepAnEyeOn, droppedItemIds, commitmentPlacements, generated_at: now.toISOString(), sig } }).eq('id', user.id).then(() => {}, () => {});
+    await supabase.from('profiles').update({ home_brief: { text: briefLine, tldr, followups, fyiDigest, mustRespond, keepAnEyeOn, narrative, droppedItemIds, commitmentPlacements, generated_at: now.toISOString(), sig } }).eq('id', user.id).then(() => {}, () => {});
   }
 
   // ── Route each open commitment by the synthesis's VERDICT (fallback = the ingest-direction default).
@@ -485,5 +492,35 @@ export async function GET() {
     ? { items: keepAnEyeOn.items.filter((k) => (!k.itemId || pendingItemIds.has(k.itemId) || awarenessRaw.has(k.itemId)) && !mustItemIds.has(k.itemId)) }
     : keepAnEyeOn;
 
-  return NextResponse.json({ firstName, briefLine, tldr, followups, fyiDigest, mustRespond: mustRespondOut, keepAnEyeOn: keepAnEyeOnOut, status, priorities: cappedPriorities, commitments, waitingOn, schedule, handled });
+  // ── NARRATIVE — the prose brief. Serve it verbatim, but keep it HONEST with the live data: a
+  // `ref` whose id was dropped (superseded reply) OR is no longer pending (acted-on since caching)
+  // degrades to a plain text run, so a stale span never renders an action on a gone item. A `nudge`
+  // ref keeps its span only if that commitment is still ball_in_court / waiting. Grounding backstop.
+  const liveSendIds = new Set((mustRespondOut?.items ?? []).map((r) => r.itemId).filter(Boolean));
+  const liveNudgeIds = new Set([...(followups?.items ?? []).map((f) => f.id), ...waitingOn.map((w) => w.id)].filter(Boolean) as string[]);
+  const narrativeOut: NarrativePart[][] | null = narrative
+    ? narrative
+        .map((para) =>
+          para.map((part) => {
+            if (!('ref' in part) || !part.ref) return part;
+            const ok = part.kind === 'send' ? liveSendIds.has(part.ref)
+              : part.kind === 'nudge' ? liveNudgeIds.has(part.ref)
+              : true; // 'open' (awareness) links stay — they only open the inbox
+            return ok ? part : { text: part.text };
+          }),
+        )
+        // Coalesce adjacent plain-text parts so a downgraded ref reads smoothly, then drop empties.
+        .map((para) => {
+          const merged: NarrativePart[] = [];
+          for (const p of para) {
+            const last = merged[merged.length - 1];
+            if (!('ref' in p) && last && !('ref' in last)) last.text += p.text;
+            else merged.push({ ...p });
+          }
+          return merged;
+        })
+        .filter((para) => para.length > 0)
+    : null;
+
+  return NextResponse.json({ firstName, briefLine, tldr, followups, fyiDigest, mustRespond: mustRespondOut, keepAnEyeOn: keepAnEyeOnOut, narrative: narrativeOut, status, priorities: cappedPriorities, commitments, waitingOn, schedule, handled });
 }

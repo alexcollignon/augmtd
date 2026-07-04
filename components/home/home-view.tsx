@@ -17,6 +17,11 @@ type Followups = { teaser: string; items: { id?: string; who: string; status: st
 type FyiDigest = { groups: { label: string; summary: string; kind: 'person' | 'newsletter' }[]; tailGroups: number; tailItems: number };
 type MustRespond = { teaser: string; items: { who: string; ask: string; angle: string; itemId: string; draft?: string | null; subject?: string; snippet?: string; receivedAt?: string }[] };
 type KeepAnEyeOn = { items: { who: string; why: string; itemId: string }[] };
+// The prose brief: ordered paragraphs of parts. A part is a plain text run OR a grounded mention of a
+// real item ({ ref: itemId, text: display, kind }). `send` = a reply (expand to draft), `nudge` = a
+// commitment/waiting thread (expand to nudge), `open` = awareness (link out to inbox).
+type NarrativePart = { text: string } | { ref: string; text: string; kind: 'send' | 'nudge' | 'open' };
+type Narrative = NarrativePart[][];
 type Brief = {
   firstName: string | null;
   briefLine: string | null;
@@ -25,6 +30,7 @@ type Brief = {
   fyiDigest?: FyiDigest | null;
   mustRespond?: MustRespond | null;
   keepAnEyeOn?: KeepAnEyeOn | null;
+  narrative?: Narrative | null;
   status: { needsReply: number; meetingsToday: number; waitingOn: number; handledToday: number };
   priorities: Priority[];
   commitments: { id: string; description: string; counterparty: string | null; dueDate: string | null; overdue: boolean; dueToday: boolean }[];
@@ -671,6 +677,197 @@ function SkeletonCard({ h = 'h-[72px]' }: { h?: string }) {
   return <div className={`${h} rounded-2xl border border-neutral-200/60 bg-gradient-to-br from-neutral-100 to-neutral-50 animate-pulse`} />;
 }
 
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// PROSE-FIRST NARRATIVE BRIEF — the Home as a WRITTEN report, not a dashboard.
+//
+// The synthesis returns `narrative`: ordered paragraphs of parts. A part is plain text OR a grounded
+// item mention ({ ref: itemId, text, kind }). We render the paragraphs as flowing prose in one
+// centered reading column; each mention becomes a subtle indigo inline link with a tiny action right
+// after it (Send / Nudge / ↗). Clicking a mention EXPANDS the real item — the editable draft + Send/
+// Copy/Open-thread (send) or the nudge draft (nudge) — inline beneath its paragraph. Reuses the exact
+// same endpoints as the old cards, so nothing regresses; the labeled lanes dissolve into the writing.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+// Expanded REPLY panel — the real snippet + suggested angle + editable draft + Send/Copy/Open-thread.
+// Lifted from DigestReply's expanded body so the narrative can open the SAME depth inline. Lazily
+// drafts if the sweep didn't already prepare one. onSent/onDismiss keep the live count honest.
+function ReplyPanel({ m, onSent, onDismiss }: { m: MustRespond['items'][number]; onSent?: () => void; onDismiss?: () => void }) {
+  const [draft, setDraft] = useState<string | null>(m.draft ?? null);
+  const [loading, setLoading] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (draft || loading || !m.itemId) return;
+    setLoading(true);
+    fetch(`/api/inbox/${m.itemId}/draft`, { method: 'POST' })
+      .then((r) => r.json()).then((d) => setDraft(d.draft || 'Could not draft a reply.'))
+      .catch(() => setDraft('Could not draft a reply.')).finally(() => setLoading(false));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const send = async () => {
+    if (!draft || sending || !m.itemId) return;
+    setSending(true);
+    try {
+      const res = await fetch(`/api/inbox/${m.itemId}/send-reply`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ customMessage: draft }),
+      });
+      if (res.ok) { setSent(true); setTimeout(() => onSent?.(), 700); }
+    } catch { /* leave open to retry */ } finally { setSending(false); }
+  };
+  const act = async (kind: 'complete' | 'dismiss') => {
+    if (!m.itemId) return;
+    try { await fetch(`/api/inbox/${m.itemId}/${kind}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason: 'home' }) }); } finally { onDismiss?.(); }
+  };
+  if (sent) return <p className="mt-2 text-[12.5px] font-medium text-emerald-600">Sent ✓</p>;
+  return (
+    <div className="mt-3 rounded-2xl border border-neutral-200 bg-neutral-50/60 p-4">
+      <div className="flex items-start gap-2.5 mb-2.5">
+        <SenderAvatar name={m.who} size="sm" />
+        <div className="min-w-0 flex-1">
+          <p className="text-[13px] font-semibold text-neutral-900 leading-snug">
+            {m.who}{m.subject?.trim() && <span className="text-neutral-400 font-normal"> · </span>}{m.subject?.trim() && <span className="text-neutral-800">{m.subject.trim()}</span>}
+          </p>
+          {fmtWhen(m.receivedAt) && <p className="text-[11px] text-neutral-400 mt-0.5">{fmtWhen(m.receivedAt)}</p>}
+        </div>
+        <span className="flex-shrink-0 flex items-center gap-2 mt-0.5">
+          <button onClick={() => act('complete')} title="Mark done" className="text-neutral-300 hover:text-emerald-600 transition-colors text-[13px] leading-none">✓</button>
+          <button onClick={() => act('dismiss')} title="Dismiss — won't show again" className="text-neutral-300 hover:text-rose-600 transition-colors text-[13px] leading-none">✕</button>
+        </span>
+      </div>
+      {m.snippet && <p className="text-[12.5px] text-neutral-500 leading-relaxed mb-2.5 border-l-2 border-neutral-200 pl-3 line-clamp-3">{m.snippet}</p>}
+      {m.angle && <p className="text-[12.5px] text-neutral-600 leading-snug mb-2.5"><span className="font-medium text-neutral-700">Suggested angle:</span> {m.angle}</p>}
+      {loading && <div className="h-20 rounded-xl bg-neutral-100 animate-pulse" />}
+      {draft && (
+        <div className="rounded-xl border border-neutral-200 bg-white p-3.5">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400 mb-1.5">Draft</p>
+          <textarea value={draft} onChange={(e) => setDraft(e.target.value)}
+            rows={Math.min(16, Math.max(4, draft.split('\n').length + 1))}
+            className="w-full bg-transparent text-[13px] text-neutral-700 leading-relaxed resize-none focus:outline-none" />
+          <div className="mt-2.5 flex items-center gap-4">
+            <button onClick={send} disabled={sending} className="inline-flex items-center rounded-lg bg-indigo-600 text-white px-3.5 py-1.5 text-[12.5px] font-medium hover:bg-indigo-700 disabled:opacity-60 transition-colors">{sending ? 'Sending…' : 'Send'}</button>
+            <button onClick={() => { if (draft) { navigator.clipboard?.writeText(draft); setCopied(true); setTimeout(() => setCopied(false), 1500); } }} className="text-[12.5px] font-medium text-neutral-600 hover:text-neutral-800">{copied ? 'Copied' : 'Copy'}</button>
+            <Link href="/inbox" className="inline-flex items-center gap-1 text-[12.5px] font-medium text-neutral-500 hover:text-indigo-600 transition-colors ml-auto">Open thread<ArrowRightIcon className="w-3.5 h-3.5" /></Link>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Expanded NUDGE panel — the voice-grounded follow-up to a stalled commitment, editable, then Send
+// (PATCH sends it as a reply on the original thread + closes the commitment). Lifted from FollowUpItem.
+function NudgePanel({ id, who, status, onSent }: { id: string; who: string; status?: string; onSent?: () => void }) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    setLoading(true); setErr(null);
+    fetch(`/api/commitments/${id}/nudge`, { method: 'POST' })
+      .then((r) => r.json()).then((d) => setDraft(d.draft || 'Could not draft a nudge.'))
+      .catch(() => setDraft('Could not draft a nudge.')).finally(() => setLoading(false));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const send = async () => {
+    if (!draft || sending) return;
+    setSending(true); setErr(null);
+    try {
+      const res = await fetch(`/api/commitments/${id}/nudge`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ body: draft }) });
+      if (res.ok) { setSent(true); setTimeout(() => onSent?.(), 700); }
+      else { const d = await res.json().catch(() => ({})); setErr(d.error || 'Could not send the nudge.'); }
+    } catch { setErr('Could not send the nudge.'); } finally { setSending(false); }
+  };
+  if (sent) return <p className="mt-2 text-[12.5px] font-medium text-emerald-600">Nudge sent ✓</p>;
+  return (
+    <div className="mt-3 rounded-2xl border border-neutral-200 bg-neutral-50/60 p-4">
+      <p className="text-[13px] font-semibold text-neutral-800 leading-snug">{who}</p>
+      {status && <p className="text-[12px] text-neutral-500 mt-0.5 mb-2.5 leading-snug">{status}</p>}
+      {loading && <div className="h-16 rounded-xl bg-neutral-100 animate-pulse" />}
+      {draft && (
+        <div className="rounded-xl border border-neutral-200 bg-white p-3.5">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400 mb-1.5">Nudge draft</p>
+          <textarea value={draft} onChange={(e) => setDraft(e.target.value)}
+            rows={Math.min(12, Math.max(4, draft.split('\n').length + 1))}
+            className="w-full bg-transparent text-[12.5px] text-neutral-700 leading-relaxed resize-none focus:outline-none" />
+          {err && <p className="text-[11.5px] text-rose-600 mt-1.5 leading-snug">{err}</p>}
+          <div className="mt-2.5 flex items-center gap-4">
+            <button onClick={send} disabled={sending} className="inline-flex items-center rounded-lg bg-indigo-600 text-white px-3.5 py-1.5 text-[12.5px] font-medium hover:bg-indigo-700 disabled:opacity-60 transition-colors">{sending ? 'Sending…' : 'Send'}</button>
+            <button onClick={() => { if (draft) { navigator.clipboard?.writeText(draft); setCopied(true); setTimeout(() => setCopied(false), 1500); } }} className="text-[12.5px] font-medium text-neutral-600 hover:text-neutral-800">{copied ? 'Copied' : 'Copy'}</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// One inline mention — the display text as a subtle indigo link + a tiny action cue right after it
+// (Send / Nudge / ↗). Clicking toggles expansion (managed by the parent, so only one item is open at
+// a time). `open` (awareness) mentions link straight to the inbox rather than expanding.
+function Mention({ part, expanded, onToggle }: { part: Extract<NarrativePart, { ref: string }>; expanded: boolean; onToggle: () => void }) {
+  if (part.kind === 'open') {
+    return (
+      <Link href="/inbox" className="font-medium text-indigo-600 hover:text-indigo-700 underline decoration-indigo-200 decoration-1 underline-offset-2 transition-colors">
+        {part.text}<span className="text-[0.85em] text-indigo-400 ml-0.5">↗</span>
+      </Link>
+    );
+  }
+  const cue = part.kind === 'send' ? 'Send' : 'Nudge';
+  return (
+    <button onClick={onToggle}
+      className={`font-medium underline decoration-1 underline-offset-2 transition-colors ${expanded ? 'text-indigo-700 decoration-indigo-400' : 'text-indigo-600 decoration-indigo-200 hover:text-indigo-700'}`}>
+      {part.text}
+      <span className="ml-1 text-[0.72em] font-semibold uppercase tracking-wide align-baseline text-indigo-400 group-hover:text-indigo-500">
+        {expanded ? 'Close' : cue}
+      </span>
+    </button>
+  );
+}
+
+// The whole prose brief. Renders paragraphs of flowing text; each mention is an inline affordance.
+// A single `expanded` ref is open at a time; its panel renders beneath the paragraph it lives in.
+// Lookups (send → reply data, nudge → follow-up data) join refs back to the full structured items so
+// the panel has subject/snippet/draft/status. onActed decrements the live count when a ref is resolved.
+function NarrativeBrief({ narrative, replies, follows, onActed }: {
+  narrative: Narrative;
+  replies: Map<string, MustRespond['items'][number]>;
+  follows: Map<string, { who: string; status?: string }>;
+  onActed: (ref: string) => void;
+}) {
+  const [expanded, setExpanded] = useState<string | null>(null);
+  return (
+    <div className="space-y-5">
+      {narrative.map((para, pi) => {
+        // Which mention (if any) in THIS paragraph is expanded → render its panel right after the text.
+        const openPart = para.find((p) => 'ref' in p && p.ref === expanded) as Extract<NarrativePart, { ref: string }> | undefined;
+        return (
+          <div key={pi} className="group">
+            <p className="text-[17px] leading-[1.75] text-neutral-700 tracking-[-0.005em]">
+              {para.map((part, i) =>
+                'ref' in part ? (
+                  <Mention key={i} part={part} expanded={expanded === part.ref}
+                    onToggle={() => setExpanded(expanded === part.ref ? null : part.ref)} />
+                ) : (
+                  <span key={i}>{part.text}</span>
+                ),
+              )}
+            </p>
+            {openPart && openPart.kind === 'send' && replies.get(openPart.ref) && (
+              <ReplyPanel m={replies.get(openPart.ref)!}
+                onSent={() => { setExpanded(null); onActed(openPart.ref); }}
+                onDismiss={() => { setExpanded(null); onActed(openPart.ref); }} />
+            )}
+            {openPart && openPart.kind === 'nudge' && follows.get(openPart.ref) && (
+              <NudgePanel id={openPart.ref} who={follows.get(openPart.ref)!.who} status={follows.get(openPart.ref)!.status}
+                onSent={() => { setExpanded(null); onActed(openPart.ref); }} />
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export function HomeView() {
   const [brief, setBrief] = useState<Brief | null>(null);
   const [team, setTeam] = useState<{ messages: TeamMsg[]; needsReview: TeamReview[] } | null>(null);
@@ -689,29 +886,27 @@ export function HomeView() {
     });
   }, []);
 
-  // Skeleton MIRRORS the real layout (header + two columns) so there's no reflow on load.
+  // Skeleton mirrors the PROSE shape now — a written page: orb + greeting, then a few text lines in a
+  // single centered reading column (no cards, no rail), so there's no reflow into the narrative.
   if (loading) {
     return (
       <div className="flex-1 min-w-0 h-full overflow-y-auto bg-neutral-50/40">
-        <div className="px-8 py-10">
-          {/* Header: orb-sized block + greeting + one summary line */}
+        <div className="px-8 py-10 mx-auto max-w-[720px]">
           <div className="flex items-start gap-5">
             <div className="w-[72px] h-[72px] mt-1 rounded-full bg-neutral-100 animate-pulse flex-shrink-0" />
             <div className="min-w-0 flex-1">
               <div className="h-3 w-40 rounded bg-neutral-100 animate-pulse" />
               <div className="h-8 w-64 rounded-lg bg-neutral-100 animate-pulse mt-2.5" />
-              <div className="h-4 w-[26rem] max-w-full rounded bg-neutral-100 animate-pulse mt-3" />
             </div>
           </div>
-          {/* Mirror the two-zone shape: a main reading column + a ~320px right rail (stacks below lg). */}
-          <div className="mt-9 mx-auto max-w-[1100px] grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px] gap-x-10 gap-y-10 items-start">
-            <div className="min-w-0 space-y-6">
-              <div className="space-y-3"><div className="h-3 w-24 rounded bg-neutral-100 animate-pulse mb-1" />{[1, 2, 3].map(i => <SkeletonCard key={i} />)}</div>
-            </div>
-            <div className="min-w-0 space-y-3">
-              <div className="h-3 w-28 rounded bg-neutral-100 animate-pulse mb-1" />
-              {[1, 2].map(i => <SkeletonCard key={i} h="h-[56px]" />)}
-            </div>
+          <div className="mt-10 space-y-3.5">
+            {['w-full', 'w-[95%]', 'w-[88%]', 'w-full', 'w-[70%]'].map((w, i) => (
+              <div key={i} className={`h-4 ${w} rounded bg-neutral-100 animate-pulse`} />
+            ))}
+            <div className="h-2" />
+            {['w-[92%]', 'w-full', 'w-[60%]'].map((w, i) => (
+              <div key={`b${i}`} className={`h-4 ${w} rounded bg-neutral-100 animate-pulse`} />
+            ))}
           </div>
         </div>
       </div>
@@ -723,6 +918,30 @@ export function HomeView() {
   // Live view of Must-respond after this session's Done/Dismiss/Send: the count decrements AND the
   // collapsed list refills from the hidden pool (instead of leaving "1 item + Show N more").
   const mrLive = b?.mustRespond ? b.mustRespond.items.filter((m) => !dismissed.has(m.itemId)) : [];
+
+  // ── PROSE-FIRST: if the synthesis produced a narrative, the Home is a WRITTEN brief (below). The
+  // narrative's inline mentions join back to the full structured items for their expanded panels:
+  //   send  → the reply data (subject/snippet/draft/angle) keyed by itemId
+  //   nudge → the follow-up data (who/status) keyed by commitment id (from followups or waitingOn)
+  // A ref with no live match simply renders as plain text (server already downgrades stale refs).
+  const replyMap = new Map<string, MustRespond['items'][number]>();
+  for (const m of b?.mustRespond?.items ?? []) if (m.itemId) replyMap.set(m.itemId, m);
+  const followMap = new Map<string, { who: string; status?: string }>();
+  for (const f of b?.followups?.items ?? []) if (f.id) followMap.set(f.id, { who: f.who, status: f.status });
+  for (const w of b?.waitingOn ?? []) if (w.id && !followMap.has(w.id)) followMap.set(w.id, { who: w.counterparty || 'Someone', status: `Waiting ${w.ageDays}d — nudge when it stalls` });
+  // Keep the narrative live with this session's actions: hide a mention's ref (→ plain text) once its
+  // item is acted on, and drop paragraphs that become entirely empty.
+  const narrativeLive: Narrative | null = b?.narrative
+    ? b.narrative
+        .map((para) => para.map((p) => ('ref' in p && dismissed.has(p.ref) ? { text: p.text } : p)))
+        .map((para) => {
+          const merged: NarrativePart[] = [];
+          for (const p of para) { const last = merged[merged.length - 1]; if (!('ref' in p) && last && !('ref' in last)) last.text += p.text; else merged.push({ ...p }); }
+          return merged;
+        })
+        .filter((para) => para.some((p) => ('ref' in p ? true : p.text.trim().length > 0)))
+    : null;
+  const hasNarrative = !!(narrativeLive && narrativeLive.length);
 
   // ── Compose the single flowing brief ────────────────────────────────────────────────────────
   // needs_reply lives in the Must-respond brief; the priority cards are the OTHER actions.
@@ -747,7 +966,8 @@ export function HomeView() {
 
   return (
     <div className="flex-1 min-w-0 h-full overflow-y-auto bg-neutral-50/40">
-      <div className="px-8 py-10">
+      {/* PROSE-FIRST → one centered reading column (a written page). Dashboard fallback → full width. */}
+      <div className={`px-8 py-10 ${hasNarrative ? 'mx-auto max-w-[720px]' : ''}`}>
         {/* Header + narration + live status chips */}
         <RiseIn>
           {/* Living orb — abstract morphing glow in the brand spectrum, signalling the brief is
@@ -781,17 +1001,54 @@ export function HomeView() {
             <div className="min-w-0 flex-1">
               <p className="text-[11px] font-semibold uppercase tracking-wider text-neutral-400 mb-1.5">{new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</p>
               <h1 className="text-[27px] font-semibold tracking-tight text-neutral-900 leading-tight">{greeting()}{b?.firstName ? `, ${b.firstName}` : ''}</h1>
-              {/* ONE tight summary line — the teaser (else the briefLine). No bullets, no "Don't miss"
-                  banner, no status chips: the sections + their Label counts already carry the numbers,
-                  and the first emphasized digest row IS the focal "start here". Straight into the brief. */}
-              {(b?.tldr?.teaser || b?.briefLine) && (
+              {/* One tight summary line — the teaser (else the briefLine). SUPPRESSED in prose mode:
+                  the narrative's own opening sentence reads the day, so a teaser here would echo it.
+                  In the dashboard fallback it stays (the sections carry the numbers, this sets the tone). */}
+              {!hasNarrative && (b?.tldr?.teaser || b?.briefLine) && (
                 <p className="mt-2 text-[14.5px] text-neutral-500 leading-relaxed max-w-[760px]">{b?.tldr?.teaser || b?.briefLine}</p>
               )}
             </div>
           </div>
         </RiseIn>
 
-        {nothing && (
+        {/* ══ PROSE BRIEF — the written report. Flowing paragraphs with inline, executable mentions;
+            a single quiet footer. The dashboard lanes below are the FALLBACK (no narrative). ══ */}
+        {hasNarrative && (
+          <>
+            <RiseIn delay={60}>
+              <div className="mt-9">
+                <NarrativeBrief narrative={narrativeLive!} replies={replyMap} follows={followMap} onActed={onDismiss} />
+              </div>
+            </RiseIn>
+
+            {/* Quiet footer — what was filed/handled + an optional single schedule line. No lanes, no
+                rail: everything actionable lives in the prose above; this is just ambient closure. */}
+            {b && (b.schedule.length > 0 || (b.handled && (b.handled.triaged > 0 || b.handled.filtered > 0))) && (
+              <RiseIn delay={140}>
+                <div className="mt-10 pt-6 border-t border-neutral-100 space-y-2.5">
+                  {b.schedule.length > 0 && (
+                    <p className="text-[13px] text-neutral-500 leading-relaxed">
+                      <CalendarDaysIcon className="inline w-3.5 h-3.5 text-neutral-400 mr-1.5 -mt-0.5" />
+                      Today: {b.schedule.slice(0, 3).map((m, i) => (
+                        <span key={m.id}>{i > 0 && ', '}<Link href="/meetings" className="text-neutral-600 hover:text-indigo-600 transition-colors">{timeOf(m.time)} {m.title}</Link></span>
+                      ))}{b.schedule.length > 3 && <span className="text-neutral-400"> +{b.schedule.length - 3} more</span>}
+                    </p>
+                  )}
+                  {b.handled && (b.handled.triaged > 0 || b.handled.filtered > 0) && (
+                    <p className="text-[12.5px] text-neutral-400 leading-relaxed">
+                      <CheckCircleIcon className="inline w-3.5 h-3.5 text-emerald-400 mr-1.5 -mt-0.5" />
+                      {b.handled.triaged > 0 && `Triaged ${b.handled.triaged} email${b.handled.triaged > 1 ? 's' : ''}`}
+                      {b.handled.filtered > 0 && `${b.handled.triaged > 0 ? ' · ' : ''}${b.handled.filtered} newsletters & receipts filed`}
+                      {b.handled.summarised > 0 && ` · ${b.handled.summarised} meeting${b.handled.summarised > 1 ? 's' : ''} summarised`}
+                    </p>
+                  )}
+                </div>
+              </RiseIn>
+            )}
+          </>
+        )}
+
+        {!hasNarrative && nothing && (
           <RiseIn delay={80}>
             <div className="mt-10 rounded-2xl border border-dashed border-neutral-200 px-6 py-16 text-center">
               <div className="w-12 h-12 rounded-full bg-emerald-50 flex items-center justify-center mx-auto mb-3">
@@ -803,7 +1060,7 @@ export function HomeView() {
           </RiseIn>
         )}
 
-        {!nothing && (
+        {!hasNarrative && !nothing && (
           // TWO-ZONE layout — the width is used, not wasted. A centered 1100px measure splits into a
           // MAIN reading column (everything that needs your ACTION: the focal item, the editorial
           // "what needs you" digest, then "on your plate") and a calm ~320px RIGHT RAIL of ambient

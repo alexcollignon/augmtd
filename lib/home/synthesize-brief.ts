@@ -111,6 +111,20 @@ export type MustRespond = { teaser: string; items: Reply[] };
 export type KeepAnEye = { who: string; why: string; itemId: string };
 export type KeepAnEyeOn = { items: KeepAnEye[] };
 
+// ── The NARRATIVE brief — the written report the Home renders as flowing prose ──
+// A paragraph is an ordered array of "parts". A part is EITHER a plain run of text, OR a grounded
+// mention of a real item that the UI turns into an interactive inline span (link + a small inline
+// action + expand-to-draft). The model WRITES the prose but may only `ref` an itemId it was given —
+// grounding is preserved: it can't invent an item or an action. `kind` cues the affordance:
+//   send  → a reply that has / needs a draft (expands to the editable draft + Send/Copy/Open-thread)
+//   nudge → a commitment / waiting thread (expands to the nudge draft)
+//   open  → just expandable / a link out (no draft)
+export type NarrativePart =
+  | { text: string }
+  | { ref: string; text: string; kind: 'send' | 'nudge' | 'open' };
+export type NarrativeParagraph = NarrativePart[];
+export type Narrative = NarrativeParagraph[];
+
 export interface SynthesisResult {
   tldr: Tldr | null;
   mustRespond: MustRespond | null;
@@ -118,6 +132,10 @@ export interface SynthesisResult {
   fyiDigest: FyiDigest | null;
   /** the middle awareness tier — real things around the user worth SEEING (no action). Selective. */
   keepAnEyeOn: KeepAnEyeOn | null;
+  /** the PROSE-FIRST written brief — ordered paragraphs of parts (plain text + grounded item
+      mentions). The UI renders this as a flowing page with inline, executable affordances. Null when
+      the model didn't produce it (older cache / miss) → the UI falls back to the structured render. */
+  narrative: Narrative | null;
   /** itemIds the synthesis judged superseded/stale — the route drops them from priorities too, so
       the prose and the cards can't contradict each other. */
   droppedItemIds: string[];
@@ -246,8 +264,41 @@ ${eyeStr}
 FYI EMAILS (low-priority awareness, grouped by sender — one digest line each):
 ${fyiStr}
 
+THE NARRATIVE — the MAIN output. Write today's brief as a short WRITTEN REPORT to ${me}, in flowing
+first-person PA prose — the way you'd actually brief them if you spoke: a warm opening that reads the
+day ("It's busy — six replies waiting and a couple of things drifting. Where things stand:"), then a
+few paragraphs that WEAVE the real items into sentences, most-pressing first, connective and human.
+This is NOT a list of labels — the tiers above (must-respond / ball-in-court / awareness / fyi) DISSOLVE
+into the writing. Do not write headers or bullet lists; write paragraphs.
+
+Every time you name a real item in the prose, emit it as a MENTION part (not plain text) so it becomes
+a clickable inline affordance, using the item's tag:
+- A reply ${me} owes → a mention with the [Rn] tag and kind "send" (drafts exist/can be drafted).
+- A commitment/thread ${me} is waiting on or should nudge → a mention with the [Wn] or [Cn] tag and
+  kind "nudge".
+- Something ${me} should just SEE (a [Kn] awareness item) → a mention with kind "open".
+The mention's "text" is the DISPLAY label ${me} reads (e.g. "TECNICLIMA on proposal 23679",
+"Thorsten — Executive Briefing", "the refund", "Jean-Marie") — natural, short, woven into the sentence.
+The "ref" is the tag ([R0], [W1], [C2], [K0] …). GROUNDING IS SACRED: only ref tags that appear above;
+never invent an item, a person, a number, or an action. Plain connective words ("Your most pressing
+reply is", ", I've drafted it.", "all drafts ready.") are text parts around the mentions.
+
+Lead with the single most pressing reply, then fold the remaining replies into one flowing sentence
+(each its own mention). Then the drifting / waiting things ([Wn]/[Cn]) as a natural paragraph
+("On the refund: you asked … so that's their court now — you may want to nudge them."). Mention any
+[Kn] awareness item that genuinely matters in a light closing clause. Close with ONE quiet line about
+what you filed/handled ("Everything else — newsletters, receipts — I've filed."). Aim for 3–5 short
+paragraphs. Reference EVERY [Rn] you did not drop (each as a mention) so nothing the user owes is lost
+from the prose. Keep it tight — a brief, not an essay.
+
 Return ONLY JSON in this exact shape:
 {
+  "narrative": [
+    [ {"text": "Saturday — good afternoon, ${me}. It's busy — "}, {"ref": "R0", "text": "TECNICLIMA on the proposal", "kind": "send"}, {"text": " is your most pressing reply; I've drafted it."} ],
+    [ {"text": "Also queued: "}, {"ref": "R1", "text": "Thorsten — Executive Briefing", "kind": "send"}, {"text": " and "}, {"ref": "R2", "text": "Caroline on the meeting", "kind": "send"}, {"text": ", drafts ready."} ],
+    [ {"text": "On "}, {"ref": "C0", "text": "the refund", "kind": "nudge"}, {"text": ": you handed it off, so that's their court — you may want to nudge."} ],
+    [ {"text": "Everything else — newsletters, receipts — I've filed."} ]
+  ],
   "tldr": {
     "teaser": "one short sentence summarising the day",
     "bullets": ["3-4 short scannable bullets — meetings, todos/commitments, replies; lead with what matters most"],
@@ -272,14 +323,15 @@ Return ONLY JSON in this exact shape:
   }
 }
 
-If a section has no items, return it with an empty items/groups array (or null for tldr fields). Keep every "mustRespond" item you did not drop; every "followups" item; AT MOST 2–4 "keepAnEyeOn" items (fewer is better); and one digest line per FYI group.`;
+If a section has no items, return it with an empty items/groups array (or null for tldr fields). Keep every "mustRespond" item you did not drop; every "followups" item; AT MOST 2–4 "keepAnEyeOn" items (fewer is better); and one digest line per FYI group. The "narrative" is REQUIRED and is the primary output — always write it (unless there is genuinely nothing at all, in which case return a single warm all-clear paragraph).`;
 
   try {
     const res = await aiCreate(client, {
-      model, max_tokens: 5000, temperature: 0.4,
+      model, max_tokens: 8000, temperature: 0.4,
       messages: [{ role: 'user', content: prompt }],
     });
     const parsed = parseModelJSON<{
+      narrative?: Array<Array<{ text?: string; ref?: string; kind?: string }>>;
       tldr?: { teaser?: string; bullets?: string[]; dontMiss?: string | null };
       mustRespond?: { teaser?: string; items?: { r?: number; who?: string; ask?: string; angle?: string }[] };
       droppedReplies?: number[];
@@ -385,8 +437,66 @@ If a section has no items, return it with an empty items/groups array (or null f
       ? { groups: fyiGroups, tailGroups: 0, tailItems: 0 }
       : null;
 
-    return { tldr, mustRespond, keepAnEyeOn, followups, fyiDigest, droppedItemIds, commitmentPlacements };
+    // ── NARRATIVE — map each mention's tag ([Rn]/[Wn]/[Cn]/[Kn]) back to a REAL id, so an inline
+    // span is always grounded + executable. GROUNDING: a mention whose tag we can't resolve (unknown
+    // tag, dropped reply, or an id the model invented) degrades to a PLAIN text run — the prose reads
+    // fine, we just never render a fake action. The itemIds we expose match what the structured tiers
+    // return: [Rn] → the must-respond itemId (a `send` reply), [Kn] → the keep-an-eye itemId (`open`),
+    // [Wn]/[Cn] → a commitment id (a `nudge`). This is the crux: the model writes, we guarantee links.
+    const droppedItemIdSet = new Set(droppedItemIds);
+    const parseTag = (raw: string): { letter: string; n: number } | null => {
+      const m = String(raw).trim().match(/^\[?\s*([RWCK])\s*(\d+)\s*\]?$/i);
+      return m ? { letter: m[1].toUpperCase(), n: parseInt(m[2], 10) } : null;
+    };
+    // Resolve a tag → { id, kind } or null (→ render as plain text). Kind is forced by the tag family
+    // so it always matches the id's action surface, regardless of what the model claimed.
+    const resolveRef = (raw: string): { id: string; kind: 'send' | 'nudge' | 'open' } | null => {
+      const t = parseTag(raw);
+      if (!t) return null;
+      if (t.letter === 'R') {
+        const cand = input.mustRespond[t.n];
+        // A reply the synthesis dropped as superseded is gone from the cards — don't link it either.
+        if (!cand || droppedItemIdSet.has(cand.itemId)) return null;
+        return { id: cand.itemId, kind: 'send' };
+      }
+      if (t.letter === 'K') {
+        const cand = input.keepAnEyeOn[t.n];
+        return cand ? { id: cand.itemId, kind: 'open' } : null;
+      }
+      if (t.letter === 'W') {
+        const cand = input.waiting[t.n];
+        return cand?.id ? { id: cand.id, kind: 'nudge' } : null;
+      }
+      if (t.letter === 'C') {
+        const cand = input.commitmentCandidates[t.n];
+        return cand?.id ? { id: cand.id, kind: 'nudge' } : null;
+      }
+      return null;
+    };
+    const rawNarrative = Array.isArray(parsed.narrative) ? parsed.narrative : [];
+    const narrativeParas: Narrative = rawNarrative
+      .map((para) => {
+        if (!Array.isArray(para)) return [] as NarrativeParagraph;
+        const parts: NarrativeParagraph = [];
+        for (const raw of para) {
+          if (!raw || typeof raw !== 'object') continue;
+          const text = typeof raw.text === 'string' ? raw.text : '';
+          if (raw.ref) {
+            const resolved = resolveRef(raw.ref);
+            const display = text || String(raw.ref);
+            if (resolved) parts.push({ ref: resolved.id, text: display, kind: resolved.kind });
+            else if (display.trim()) parts.push({ text: display }); // ungrounded → plain run
+          } else if (text) {
+            parts.push({ text });
+          }
+        }
+        return parts;
+      })
+      .filter((para) => para.length > 0);
+    const narrative: Narrative | null = narrativeParas.length ? narrativeParas : null;
+
+    return { tldr, mustRespond, keepAnEyeOn, followups, fyiDigest, droppedItemIds, commitmentPlacements, narrative };
   } catch {
-    return { tldr: null, mustRespond: null, keepAnEyeOn: null, followups: null, fyiDigest: null, droppedItemIds: [], commitmentPlacements: {} };
+    return { tldr: null, mustRespond: null, keepAnEyeOn: null, followups: null, fyiDigest: null, droppedItemIds: [], commitmentPlacements: {}, narrative: null };
   }
 }
