@@ -23,6 +23,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'entityType and entityId required' }, { status: 400 });
     }
 
+    // Bust the cached Home brief so the next load regenerates WITH the restored item. The
+    // must-respond synthesis is cached in profiles.home_brief; an item dismissed before the last
+    // regen isn't in that cache, so un-hiding it client-side does nothing until the brief is fresh.
+    // Undo is infrequent → a regen on next load is fine. Non-fatal: ignore any error.
+    const bustBriefCache = async () => {
+      try { await supabase.from('profiles').update({ home_brief: null }).eq('id', user.id); } catch { /* non-fatal */ }
+    };
+
     if (entityType === 'inbox_item') {
       // Flip the item back to pending so classifyItem surfaces it again on the Home.
       const { error } = await supabase
@@ -38,6 +46,7 @@ export async function POST(request: NextRequest) {
         entityType: 'inbox_item',
         entityId,
       });
+      await bustBriefCache();
       return NextResponse.json({ success: true });
     }
 
@@ -56,6 +65,7 @@ export async function POST(request: NextRequest) {
         entityType: 'commitment',
         entityId,
       });
+      await bustBriefCache();
       return NextResponse.json({ success: true });
     }
 
@@ -79,6 +89,7 @@ export async function POST(request: NextRequest) {
         entityType: 'sender',
         entityId: sender,
       });
+      await bustBriefCache();
       return NextResponse.json({ success: true });
     }
 

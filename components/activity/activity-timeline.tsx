@@ -58,7 +58,7 @@ function clockTime(iso: string): string {
 // The chronological activity log (grouped by date), reusable across surfaces.
 // Fetches its own data from GET /api/activity on mount — mount it only when it's
 // shown (e.g. keyed to the drawer's open state) to keep the fetch lazy.
-export default function ActivityTimeline() {
+export default function ActivityTimeline({ onRestored }: { onRestored?: (entityType: string, entityId: string) => void } = {}) {
   const [events, setEvents] = useState<ActivityEvent[]>([]);
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -78,9 +78,14 @@ export default function ActivityTimeline() {
     setUndoErr((prev) => { const n = new Set(prev); n.delete(ev.id); return n; });
     const ok = await restoreByType(ev.entity_type as string, ev.entity_id);
     setUndoing((prev) => { const n = new Set(prev); n.delete(ev.id); return n; });
-    if (ok) setUndone((prev) => new Set(prev).add(ev.id));
-    else setUndoErr((prev) => new Set(prev).add(ev.id));
-  }, [undoing, undone]);
+    if (ok) {
+      setUndone((prev) => new Set(prev).add(ev.id));
+      // Notify the Home (via the panel) so it un-hides the restored item and refetches immediately —
+      // this component can't reach HomeView's session-filter state, so without this the item stays
+      // hidden until the next background poll. The brief cache was busted server-side by /api/restore.
+      onRestored?.(ev.entity_type as string, ev.entity_id as string);
+    } else setUndoErr((prev) => new Set(prev).add(ev.id));
+  }, [undoing, undone, onRestored]);
 
   // Initial load — happens on mount (when the caller mounts the component only
   // on first open, `lazy` naturally defers the fetch to that first render).

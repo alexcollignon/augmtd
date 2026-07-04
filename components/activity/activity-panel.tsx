@@ -18,7 +18,7 @@ import ActivityTimeline from './activity-timeline';
 // a collapse chevron (`ChevronRightIcon`), identical to the inbox's `MeetingsColumn` header
 // (`h-10 border-b border-neutral-200`). The timeline mounts only after first open (lazy fetch)
 // and stays mounted so re-opening is instant.
-export default function ActivityPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
+export default function ActivityPanel({ open, onClose, onRestored }: { open: boolean; onClose: () => void; onRestored?: (entityType: string, entityId: string) => void }) {
   // Once opened, keep the timeline mounted so its data isn't re-fetched on reopen.
   const [everOpened, setEverOpened] = useState(open);
   if (open && !everOpened) setEverOpened(true);
@@ -54,7 +54,7 @@ export default function ActivityPanel({ open, onClose }: { open: boolean; onClos
 
           {/* Timeline — mounted only after first open (lazy fetch), kept mounted after. */}
           <div className="flex-1 min-h-0 overflow-y-auto px-4 py-5">
-            {everOpened && <ActivityTimeline />}
+            {everOpened && <ActivityTimeline onRestored={onRestored} />}
           </div>
         </div>
       </div>

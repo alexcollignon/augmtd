@@ -710,6 +710,12 @@ export function HomeView() {
   const [activityOpen, setActivityOpen] = useState(false); // right-side Activity slide-over
 
   const aliveRef = useRef(true);
+  // Timestamp of the last client action (Done/Dismiss/Send). A background refetch that lands within a
+  // short window of an action must NOT reset the session filter sets — the server write may not have
+  // committed yet, so a reset could briefly resurface an item the user just cleared. Outside that
+  // window the server data is authoritative and we reset (which is what makes RESTORED items reappear).
+  const lastActionRef = useRef(0);
+  const markActed = () => { lastActionRef.current = Date.now(); };
   // The background/foreground brief loader, lifted to component scope so an Undo can trigger an
   // immediate refresh (bringing a just-restored item back on screen without waiting for the poll).
   const load = useCallback((background = false) => {
@@ -719,11 +725,20 @@ export function HomeView() {
       fetch('/api/workers/home').then(r => r.json()).catch(() => null),
     ]).then(([b, t]) => {
       if (!aliveRef.current) return;
-      // Background refresh only SWAPS in fresh data — it never blanks the view. dismissed/clearedIds
-      // keep filtering acted items, so nothing the user cleared reappears mid-session.
+      // Background refresh only SWAPS in fresh data — it never blanks the view.
       if (b && !b.error) setBrief(b);
       else if (!background) setBrief(null);
       if (t) setTeam({ messages: t.messages ?? [], needsReview: t.needsReview ?? [] });
+      // RESET the session filter sets on a settled refetch — the server data is authoritative
+      // (dismissed/done items are already excluded server-side), so clearing dismissed/clearedIds is
+      // safe AND makes a just-RESTORED item reappear on the next poll/focus even without the explicit
+      // onRestored callback. Guarded: skip the reset if an action fired in the last few seconds so an
+      // in-flight write can't be briefly un-hidden by a racing refetch.
+      const settled = Date.now() - lastActionRef.current > 4000;
+      if (settled) {
+        setDismissed(new Set());
+        setClearedIds(new Set());
+      }
       // On a background refresh the server now counts this session's actions, so drop the transient
       // client ring bump to avoid double-counting.
       if (background) setSessionCleared(0);
@@ -777,6 +792,7 @@ export function HomeView() {
   // may fire twice during its exit animation). All three action surfaces route through this so the ring
   // rises instantly on Done/Dismiss/Send, no reload.
   const bumpCleared = (id: string) => setClearedIds((prev) => {
+    markActed(); // note the action time so a racing background refetch won't reset the filter sets
     if (prev.has(id)) return prev;
     const n = new Set(prev); n.add(id);
     setSessionCleared((c) => c + 1);
@@ -784,6 +800,7 @@ export function HomeView() {
   });
   // Reply rows (must-respond digest / focal): remove from the live list AND raise the ring.
   const onDismiss = (id: string) => {
+    markActed();
     setDismissed((prev) => { const n = new Set(prev); n.add(id); return n; });
     bumpCleared(id);
   };
@@ -817,6 +834,25 @@ export function HomeView() {
   // (best-effort, via the sender restore path) and background-refreshes so they reappear.
   const toastSenderMuted = (sender: string) =>
     showUndoToast({ message: `Muted ${sender}`, entityType: 'sender', entityId: sender, onUndo: () => load(true) });
+
+  // Called by the Activity-log Undo (which lives in a separate component tree and can't reach this
+  // state). After a restore succeeds there, this un-hides the item on the Home for ANY type: drop its
+  // id from the session filter sets, un-bump the ring, and refetch immediately so the restored item
+  // reappears without waiting for the next poll. The brief cache was already busted server-side by
+  // /api/restore, so this load() regenerates a fresh brief that INCLUDES the restored item. The
+  // entity_id is the session key for inbox items (must-respond replies) and commitments alike; any
+  // priority-card p.id is covered by the settled-refetch reset in load(). NOT marking lastActionRef
+  // here is deliberate — this is an UN-clear, so the refetch SHOULD reset and re-surface.
+  const onRestored = (_entityType: string, entityId: string) => {
+    setDismissed((prev) => { const n = new Set(prev); n.delete(entityId); return n; });
+    setClearedIds((prev) => {
+      if (!prev.has(entityId)) return prev;
+      const n = new Set(prev); n.delete(entityId);
+      setSessionCleared((c) => Math.max(0, c - 1));
+      return n;
+    });
+    load(true); // pull the restored item back on screen right away (brief cache already busted)
+  };
   // Live view of Must-respond after this session's Done/Dismiss/Send: the count decrements AND the
   // collapsed list refills from the hidden pool (instead of leaving "1 item + Show N more").
   const mrLive = b?.mustRespond ? b.mustRespond.items.filter((m) => !dismissed.has(m.itemId)) : [];
@@ -1233,7 +1269,7 @@ export function HomeView() {
       {/* Activity panel — a width-animated SIBLING column (NOT a fixed overlay): w-0 closed →
           w-[360px] open, `transition-[width]` so opening reflows the main column left. Self-contained
           with its own header + collapse, so it reads as one cohesive unit — the inbox treatment. */}
-      <ActivityPanel open={activityOpen} onClose={() => setActivityOpen(false)} />
+      <ActivityPanel open={activityOpen} onClose={() => setActivityOpen(false)} onRestored={onRestored} />
     </div>
   );
 }
