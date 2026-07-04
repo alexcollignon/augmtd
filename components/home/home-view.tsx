@@ -742,14 +742,33 @@ export function HomeView() {
   const [activityOpen, setActivityOpen] = useState(false); // right-side Activity slide-over
 
   useEffect(() => {
-    Promise.all([
-      fetch('/api/home/brief').then(r => r.json()).catch(() => null),
-      fetch('/api/workers/home').then(r => r.json()).catch(() => null),
-    ]).then(([b, t]) => {
-      setBrief(b && !b.error ? b : null);
-      setTeam(t ? { messages: t.messages ?? [], needsReview: t.needsReview ?? [] } : null);
-      setLoading(false);
-    });
+    let alive = true;
+    const load = (background = false) => {
+      if (!background) setLoading(true);
+      Promise.all([
+        fetch('/api/home/brief').then(r => r.json()).catch(() => null),
+        fetch('/api/workers/home').then(r => r.json()).catch(() => null),
+      ]).then(([b, t]) => {
+        if (!alive) return;
+        // Background refresh only SWAPS in fresh data — it never blanks the view. dismissed/clearedIds
+        // keep filtering acted items, so nothing the user cleared reappears mid-session.
+        if (b && !b.error) setBrief(b);
+        else if (!background) setBrief(null);
+        if (t) setTeam({ messages: t.messages ?? [], needsReview: t.needsReview ?? [] });
+        // On a background refresh the server now counts this session's actions, so drop the transient
+        // client ring bump to avoid double-counting.
+        if (background) setSessionCleared(0);
+        setLoading(false);
+      });
+    };
+    load();
+    // Keep the Home ALIVE: background-refetch when the tab regains focus/visibility, and on a gentle
+    // interval while visible — so new mail / items / the ring update without a manual reload.
+    const onVisible = () => { if (document.visibilityState === 'visible') load(true); };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onVisible);
+    const id = window.setInterval(() => { if (document.visibilityState === 'visible') load(true); }, 90_000);
+    return () => { alive = false; document.removeEventListener('visibilitychange', onVisible); window.removeEventListener('focus', onVisible); window.clearInterval(id); };
   }, []);
 
   // Skeleton MIRRORS the real layout (header + two columns) so there's no reflow on load.
