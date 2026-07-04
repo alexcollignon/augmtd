@@ -99,42 +99,44 @@ function RiseIn({ delay = 0, children }: { delay?: number; children: React.React
   return <div className={`transition-all duration-500 ease-out ${shown ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-3'}`}>{children}</div>;
 }
 
-// ── "Day cleared" progress ring — a small, professional circular gauge for the Home header.
-// Meaning: cleared / (cleared + needYou) for TODAY. `needYou` is re-derived live from the same
-// section data the dashboard shows; `cleared` counts what the user handled today (route baseline +
-// this session's Done/Dismiss/Send). The stroke has a CSS transition on stroke-dashoffset so the
-// fill rises smoothly (~450ms) as the user acts — the rise feels satisfying, never a childish badge.
-// Light + indigo tokens. When there's nothing left (cleared+needYou==0) it reads a calm "All clear".
+// ── "Day cleared" progress ring — a refined circular gauge for the Home header. Meaning:
+// cleared / (cleared + needYou) for TODAY. `needYou` is re-derived live from the same section data
+// the dashboard shows; `cleared` counts what the user handled today (route baseline + this session's
+// Done/Dismiss/Send). The stroke has a CSS transition on stroke-dashoffset so the fill rises smoothly
+// (~450ms) as the user acts — the rise feels satisfying, never a childish badge. Presentation: a thin,
+// smooth stroke with the % prominently set in the centre, a calm uppercase micro-label + quiet
+// "N need you" beside it. Low-chrome: no hard bordered pill — a soft neutral-50 surface. Light +
+// indigo tokens. When there's nothing left (cleared+needYou==0) it reads a calm "All clear".
 function DayClearedRing({ cleared, needYou }: { cleared: number; needYou: number }) {
   const total = cleared + needYou;
   const allClear = total === 0 || needYou === 0;
   const pct = total === 0 ? 100 : Math.round((cleared / total) * 100);
-  const R = 20;
+  const R = 21;
   const C = 2 * Math.PI * R;
   const offset = C * (1 - pct / 100);
-  const label = allClear ? 'all clear' : `${needYou} need${needYou === 1 ? 's' : ''} you`;
+  const label = allClear ? 'All clear' : `${needYou} need${needYou === 1 ? 's' : ''} you`;
   return (
     <div
-      className="flex-shrink-0 mt-0.5 inline-flex items-center gap-2.5 rounded-xl border border-neutral-200 bg-white px-3 py-1.5"
+      className="flex-shrink-0 inline-flex items-center gap-3 rounded-2xl bg-neutral-50 px-3.5 py-2"
       title={allClear ? 'Your day is clear' : `${cleared} cleared · ${needYou} still need you today`}
-      aria-label={`Day cleared ${pct} percent, ${label}`}
+      aria-label={`Day cleared ${pct} percent, ${label.toLowerCase()}`}
     >
-      <div className="relative w-[46px] h-[46px]">
+      <div className="relative w-11 h-11">
         <svg viewBox="0 0 48 48" className="w-full h-full -rotate-90">
-          <circle cx="24" cy="24" r={R} fill="none" stroke="currentColor" strokeWidth="4" className="text-neutral-100" />
+          <circle cx="24" cy="24" r={R} fill="none" stroke="currentColor" strokeWidth="2.5" className="text-neutral-200/80" />
           <circle
-            cx="24" cy="24" r={R} fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round"
+            cx="24" cy="24" r={R} fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"
             className={allClear ? 'text-emerald-500' : 'text-indigo-600'}
             strokeDasharray={C}
             strokeDashoffset={offset}
             style={{ transition: 'stroke-dashoffset 450ms cubic-bezier(0.22,1,0.36,1), stroke 300ms ease' }}
           />
         </svg>
-        <span className="absolute inset-0 flex items-center justify-center text-[12px] font-semibold tabular-nums text-neutral-800">{pct}%</span>
+        <span className="absolute inset-0 flex items-center justify-center text-[13px] font-semibold tabular-nums tracking-tight text-neutral-900">{pct}<span className="text-[8px] font-medium text-neutral-400 ml-px">%</span></span>
       </div>
       <div className="hidden sm:flex flex-col leading-tight pr-0.5">
-        <span className="text-[11px] font-semibold uppercase tracking-wider text-neutral-400">Day cleared</span>
-        <span className={`text-[12px] font-medium ${allClear ? 'text-emerald-600' : 'text-neutral-600'}`}>{label}</span>
+        <span className="text-[10px] font-semibold uppercase tracking-[0.09em] text-neutral-400">Day cleared</span>
+        <span className={`text-[12.5px] font-medium mt-0.5 ${allClear ? 'text-emerald-600' : 'text-neutral-700'}`}>{label}</span>
       </div>
     </div>
   );
@@ -1103,16 +1105,17 @@ export function HomeView() {
                 <p className="mt-2 text-[14.5px] text-neutral-500 leading-relaxed max-w-[760px]">{b?.tldr?.teaser || b?.briefLine}</p>
               )}
             </div>
-            {/* Top-right of the header, opposite the greeting: the "day cleared" progress ring (how
-                much of what needs you is handled today — live) + the quiet Activity trigger. Both kept,
-                arranged cleanly on one row. */}
-            <div className="flex-shrink-0 flex items-center gap-2.5">
+            {/* Top-right of the header, opposite the greeting: ONE tidy cluster — the "day cleared"
+                progress ring (how much of what needs you is handled today — live) + a quiet, matching
+                Activity affordance. Both share the same soft low-chrome treatment and sit on one
+                evenly-spaced row, aligned to the date eyebrow. */}
+            <div className="flex-shrink-0 flex items-center gap-2 self-start mt-0.5">
               {showRing && <DayClearedRing cleared={ringCleared} needYou={ringNeedYou} />}
               <button
                 onClick={() => setActivityOpen(true)}
                 title="Activity"
                 aria-label="Open activity"
-                className={`mt-0.5 inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 text-[12px] font-medium text-neutral-500 hover:text-indigo-700 hover:border-indigo-200 hover:bg-indigo-50/60 transition-all duration-200 ${activityOpen ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
+                className={`inline-flex items-center gap-1.5 rounded-full bg-neutral-50 h-9 px-3.5 text-[12.5px] font-medium text-neutral-500 hover:bg-indigo-50 hover:text-indigo-700 transition-all duration-200 ${activityOpen ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
               >
                 <ClockIcon className="w-4 h-4" />
                 <span className="hidden sm:inline">Activity</span>
