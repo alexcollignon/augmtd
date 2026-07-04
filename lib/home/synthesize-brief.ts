@@ -203,7 +203,7 @@ export async function synthesizeBrief(
   const prompt = `You are ${me}'s personal assistant. Write today's brief in a warm, first-person PA voice — as if you personally keep ${me}'s day in order (met X, owe Y, waiting on Z). Use ${me}'s first name naturally.
 
 You are given the COMPLETE grounded picture, reconciled per person. Reason over it holistically before writing:
-- SUPERSESSION: if an email awaiting a reply is a scheduling/confirmation/logistics message from someone ${me} ALREADY has a meeting with (held or upcoming), the meeting settles it — DROP that reply by listing its [Rn] index in "droppedReplies". Same for any ask a later interaction already resolved. EVERY reply you do NOT put in droppedReplies is kept and shown — so drop ONLY the genuinely-settled ones, and never drop a real reply just because you didn't mention it.
+- SUPERSESSION: if an email awaiting a reply is a scheduling/confirmation/logistics message from someone ${me} ALREADY has a meeting with (held or upcoming), the meeting settles it — DROP that reply by listing its [Rn] index in "droppedReplies". Same for any ask a later interaction already resolved. EVERY reply you do NOT put in droppedReplies is KEPT and shown — this is opt-OUT: the default is to keep. droppedReplies must be RARE (usually empty, at most one or two). Drop ONLY a reply that is GENUINELY settled by a concrete later fact you can see (a meeting held after it, a reply already sent). NEVER drop a real, still-open reply just because you didn't write about it, ran low on space, or it felt minor — when unsure, KEEP it.
 - STALENESS: drop an ask whose moment has passed (e.g. "by 6pm yesterday").
 - GROUPING: never write two separate fragments about the same person — fold everything about them into one coherent thought.
 - GROUNDING: use ONLY the facts below. Never invent names, numbers, asks, or details. Echo the [Rn]/[Wn]/[Fn]/[Kn] tag of every item you keep so it maps back.
@@ -216,7 +216,7 @@ JUDGE which awareness candidates [Kn] rise to keepAnEyeOn vs stay noise — use 
 
 COMMITMENT PLACEMENT — for EACH open commitment [Cn], judge where it belongs by WHO must act, from the description + the per-person context (the "system guessed" flag is only a HINT — it is often WRONG, so re-decide from the meaning):
 - "on_your_plate" — ${me} genuinely OWES an action here (a promise ${me} made, a task assigned to ${me}). ${me} must do it.
-- "ball_in_court" — ${me} is WAITING on someone else to do it (${me} requested it, delegated it, or is owed it). The next move is a NUDGE, not doing the work. NOTE: if the commitment describes someone else doing something ${me} asked for or requested (e.g. ${me} requested a refund and the other party must process it), that is ball_in_court — ${me} does NOT owe the work.
+- "ball_in_court" — ${me} is WAITING on someone else to do it (${me} requested it, delegated it, handed it off, or is owed it). The next move is a NUDGE, not doing the work. THIS IS COMMON and easy to miss — read the description for who actually performs the action: if the WORK is someone else's (a refund ${me} requested and a vendor must process; a task ${me} delegated to a colleague; a document ${me} is owed), it is ball_in_court, NOT on_your_plate — even when the "system guessed" you owe it. ${me} does NOT owe work that is physically someone else's to do.
 - "informational" — just awareness; nobody is really blocked on ${me} and no nudge is warranted (already resolved, trivial, or purely FYI).
 Return a verdict for every [Cn]. Echo the index. Do NOT invent commitments.
 
@@ -276,7 +276,7 @@ If a section has no items, return it with an empty items/groups array (or null f
 
   try {
     const res = await aiCreate(client, {
-      model, max_tokens: 4000, temperature: 0.4,
+      model, max_tokens: 5000, temperature: 0.4,
       messages: [{ role: 'user', content: prompt }],
     });
     const parsed = parseModelJSON<{
@@ -328,6 +328,10 @@ If a section has no items, return it with an empty items/groups array (or null f
       ? { teaser: parsed.mustRespond?.teaser || '', items: mustItems }
       : null;
     const droppedItemIds: string[] = input.mustRespond.filter((_, i) => droppedR.has(i)).map((m) => m.itemId);
+    // Cross-tier dedup (Bug #2): an item may live in EXACTLY ONE tier. Must-respond WINS — anything
+    // the user must reply to is action, not just awareness, so it must never also appear in
+    // "keep an eye on". Collect the surfaced must-respond itemIds; keep-an-eye-on filters them out.
+    const mustItemIds = new Set(mustItems.map((m) => m.itemId).filter(Boolean));
 
     // Commitment placements — map [Cn] verdicts back to real commitment ids. Only accept the three
     // valid placements; anything else is ignored and the route falls back to the ingest direction.
@@ -346,7 +350,9 @@ If a section has no items, return it with an empty items/groups array (or null f
     const eyeItems: KeepAnEye[] = (Array.isArray(parsed.keepAnEyeOn?.items) ? parsed.keepAnEyeOn!.items! : [])
       .map((x) => {
         const cand = typeof x.k === 'number' ? input.keepAnEyeOn[x.k] : undefined;
-        if (!cand || eyeSeen.has(cand.itemId)) return null;
+        // Skip if unmapped, already-seen (dedup within tier), OR already surfaced as a must-respond
+        // reply (cross-tier dedup — must-respond wins, Bug #2).
+        if (!cand || eyeSeen.has(cand.itemId) || mustItemIds.has(cand.itemId)) return null;
         eyeSeen.add(cand.itemId);
         return { who: x.who || cand.from, why: x.why || '', itemId: cand.itemId };
       })

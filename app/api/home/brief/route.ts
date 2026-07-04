@@ -476,9 +476,13 @@ export async function GET() {
         .map((r) => ({ ...r, draft: draftByItem.get(r.itemId) ?? null })) }
     : mustRespond;
   // "Keep an eye on" is awareness — no action buttons — but still drop items that are no longer
-  // pending (dismissed elsewhere) so a stale cached tier can't show a gone item.
+  // pending (dismissed elsewhere) so a stale cached tier can't show a gone item. Also enforce the
+  // cross-tier dedup (Bug #2) HERE too, as a route-level backstop: even if the cache mixes a fresh
+  // mustRespond with a stale keepAnEyeOn (or vice-versa), an itemId that surfaces as a must-respond
+  // reply must never ALSO appear in keep-an-eye-on. Must-respond wins.
+  const mustItemIds = new Set((mustRespondOut?.items ?? []).map((r) => r.itemId).filter(Boolean));
   const keepAnEyeOnOut = keepAnEyeOn
-    ? { items: keepAnEyeOn.items.filter((k) => !k.itemId || pendingItemIds.has(k.itemId) || awarenessRaw.has(k.itemId)) }
+    ? { items: keepAnEyeOn.items.filter((k) => (!k.itemId || pendingItemIds.has(k.itemId) || awarenessRaw.has(k.itemId)) && !mustItemIds.has(k.itemId)) }
     : keepAnEyeOn;
 
   return NextResponse.json({ firstName, briefLine, tldr, followups, fyiDigest, mustRespond: mustRespondOut, keepAnEyeOn: keepAnEyeOnOut, status, priorities: cappedPriorities, commitments, waitingOn, schedule, handled });
