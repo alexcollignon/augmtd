@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { ArrowLeftIcon } from '@heroicons/react/24/outline';
-import { ItemDetail } from './item-detail';
+import { ItemDetail, type ItemKind } from './item-detail';
 
 // ── The item-detail rendered as a DEEP DIVE IN the Home — NOT a centered popup. Mounted by the
 // intercepting route (@modal/(.)item/[id]) on soft-navigation from the Home. It covers the Home's
@@ -17,7 +17,10 @@ export function ItemDetailModal({ id }: { id: string }) {
   const router = useRouter();
   // The suggested angle is only known on the Home (it's brief-generated, not stored) — the row
   // passes it through as a query param so the deep-dive shows it. A direct page visit omits it.
-  const angle = useSearchParams().get('angle');
+  const params = useSearchParams();
+  const angle = params.get('angle');
+  // `kind` selects the variant (email | meeting | commitment | followup). Absent → email (default).
+  const kind = (params.get('kind') as ItemKind | null) ?? 'email';
 
   // Mount → animate in. `closing` triggers the exit animation before we actually pop the route.
   const [entered, setEntered] = useState(false);
@@ -70,7 +73,7 @@ export function ItemDetailModal({ id }: { id: string }) {
         {/* Deep-dive body — the ItemDetail owns its own scroll (thread scrolls, composer docks). */}
         <div className="flex-1 min-h-0 flex flex-col">
           <div className="mx-auto max-w-3xl w-full flex-1 min-h-0 flex flex-col">
-            <ItemDetail id={id} angle={angle} />
+            <ItemDetail id={id} angle={angle} kind={kind} />
           </div>
         </div>
       </div>

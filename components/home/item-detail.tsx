@@ -4,8 +4,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   EnvelopeIcon,
+  CalendarDaysIcon,
   ClipboardDocumentIcon,
   CheckIcon,
+  CheckCircleIcon,
+  ClockIcon,
 } from '@heroicons/react/24/outline';
 import { ThreadMessages, type ThreadMessage } from '@/components/inbox/thread-messages';
 import ReplyEditor from '@/components/inbox/reply-editor';
@@ -21,18 +24,49 @@ function draftToHTML(text: string): string {
     .join('');
 }
 
-// ── The full-context email item detail — the roomy, focused view opened from the Home as a
-// DEEP DIVE (in-content, not a boxed popup). Shows: (1) header (subject + sender + date), (2) the
-// WHOLE thread rendered by the SHARED inbox <ThreadMessages/> component — the SAME component the
-// inbox uses (sender AVATARS, per-message collapse with latest expanded, "Show earlier" fold,
-// To/CC recipients, HTML/plain body) so an email here looks EXACTLY like it does in the inbox,
-// (3) the suggested angle as a light line, (4) the prepared draft in an editable composer with
-// Send + Copy. Reuses the Home's own endpoints: POST /api/inbox/[id]/draft (draft),
-// /api/inbox/[id]/send-reply (send), and GET /api/inbox/[id]/thread (the thread messages, loaded
-// from the `emails` table — one row per message, with html_body + to/cc for full parity).
+// ── The full-context Home item detail — the roomy, focused view opened from the Home as a DEEP DIVE
+// (in-content, not a boxed popup). ONE shell (header / scrolling body / docked action footer) that
+// BRANCHES on `kind`:
+//   • email      — the whole thread (shared <ThreadMessages/>) + suggested angle + editable reply
+//                  (shared <ReplyEditor/>, docked) with Send + Copy. The original, unchanged.
+//   • meeting    — the meeting's summary + decisions/risks/next step + its action items, each with a
+//                  light Done/Dismiss action row (the items are inbox_items → /complete + /dismiss).
+//   • commitment — the commitment (what + counterparty + due) + its source context (the email/meeting
+//                  it was extracted from), with Mark done / Dismiss (PATCH /api/commitments/[id]).
+//   • followup   — the thread you're waiting on (shared <ThreadMessages/>) + a nudge draft in the
+//                  shared <ReplyEditor/> (docked); Send nudge via /api/commitments/[id]/nudge.
 //
-// v1: EMAIL items only. Meeting / commitment / follow-up variants come later (they'd branch here on
-// a `kind` and render their own body while keeping the same URL contract + deep-dive shell).
+// All variants reuse the same endpoints the Home rows already use, so nothing regresses.
+
+export type ItemKind = 'email' | 'meeting' | 'commitment' | 'followup';
+
+function fmtWhen(iso?: string | null): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleString('en-US', {
+    month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true,
+  });
+}
+function fmtDate(iso?: string | null): string {
+  if (!iso) return '';
+  const d = new Date(iso.length <= 10 ? iso + 'T00:00:00' : iso);
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
+// ── Top-level router — reads `kind` and renders the right variant inside the shared shell. Email is
+// the default (the current behaviour + a hard visit with no `kind`).
+export function ItemDetail({ id, angle, kind = 'email' }: { id: string; angle?: string | null; kind?: ItemKind }) {
+  if (kind === 'meeting') return <MeetingDetail id={id} />;
+  if (kind === 'commitment') return <CommitmentDetail id={id} />;
+  if (kind === 'followup') return <FollowUpDetail id={id} />;
+  return <EmailDetail id={id} angle={angle} />;
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// EMAIL — the original deep-dive: full thread + suggested angle + editable reply. Unchanged behaviour.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
 
 type ThreadMsg = {
   id: string;
@@ -55,18 +89,10 @@ type ThreadData = {
   receivedAt: string | null;
   messages: ThreadMsg[];
   body: string | null;
+  counterparty?: string | null;
 };
 
-function fmtWhen(iso?: string | null): string {
-  if (!iso) return '';
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return '';
-  return d.toLocaleString('en-US', {
-    month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true,
-  });
-}
-
-export function ItemDetail({ id, angle }: { id: string; angle?: string | null }) {
+function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
   const router = useRouter();
   const [thread, setThread] = useState<ThreadData | null>(null);
   const [threadErr, setThreadErr] = useState(false);
@@ -244,6 +270,449 @@ export function ItemDetail({ id, angle }: { id: string; angle?: string | null })
                     className="inline-flex items-center rounded-lg bg-indigo-600 text-white px-5 py-2 text-[13.5px] font-medium hover:bg-indigo-700 disabled:opacity-60 transition-colors"
                   >
                     {sending ? 'Sending…' : 'Send'}
+                  </button>
+                  <button
+                    onClick={copy}
+                    className="inline-flex items-center gap-1.5 text-[13px] font-medium text-neutral-600 hover:text-neutral-800"
+                  >
+                    {copied ? <CheckIcon className="w-3.5 h-3.5 text-emerald-500" /> : <ClipboardDocumentIcon className="w-3.5 h-3.5" />}
+                    {copied ? 'Copied' : 'Copy'}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// MEETING — the meeting's context (summary + decisions/risks/next step) and its action items, each
+// with a light Done/Dismiss row. Reuses /api/meetings/[id]/full (works with a transcript id) for the
+// content and /api/inbox/[id]/{complete,dismiss} for the action items (they are inbox_items).
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+type MeetingActionItem = { id: string; workTitle: string; whyMatters?: string | null; category?: string };
+type MeetingFull = {
+  event: { title: string; start_time: string | null } | null;
+  transcript: {
+    summary: string | null;
+    decisions: string[];
+    risks: string[];
+    suggestedNextStep: string | null;
+    durationMinutes: number;
+  } | null;
+  actionItems: MeetingActionItem[];
+};
+
+function MeetingDetail({ id }: { id: string }) {
+  const [data, setData] = useState<MeetingFull | null>(null);
+  const [err, setErr] = useState(false);
+  // Per-item cleared state (Done/Dismiss) → the row fades then hides. Keyed by inbox item id.
+  const [cleared, setCleared] = useState<Set<string>>(new Set());
+  const [acting, setActing] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    let alive = true;
+    fetch(`/api/meetings/${id}/full`)
+      .then(r => (r.ok ? r.json() : Promise.reject()))
+      .then((d: MeetingFull) => { if (alive) setData(d); })
+      .catch(() => { if (alive) setErr(true); });
+    return () => { alive = false; };
+  }, [id]);
+
+  const act = (itemId: string, kind: 'complete' | 'dismiss') => {
+    if (acting.has(itemId) || cleared.has(itemId)) return;
+    setActing(prev => new Set(prev).add(itemId));
+    fetch(`/api/inbox/${itemId}/${kind}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason: 'home' }) })
+      .catch(() => {})
+      .finally(() => {
+        setActing(prev => { const n = new Set(prev); n.delete(itemId); return n; });
+        setCleared(prev => new Set(prev).add(itemId));
+      });
+  };
+
+  const title = data?.event?.title || data?.transcript?.summary?.slice(0, 60) || 'Meeting';
+  const when = data?.event?.start_time;
+  const tr = data?.transcript;
+  const items = (data?.actionItems ?? []).filter(it => !cleared.has(it.id));
+  const allCleared = !!data && (data.actionItems.length > 0) && items.length === 0;
+
+  return (
+    <div className="flex flex-col h-full min-h-0">
+      {/* Header */}
+      <div className="flex-shrink-0 px-7 pt-6 pb-5 border-b border-neutral-200">
+        <div className="flex items-center gap-1.5 mb-2">
+          <span className="inline-flex items-center gap-1 rounded-md bg-violet-50 px-1.5 py-0.5 text-[10px] font-medium text-violet-600">
+            <CalendarDaysIcon className="w-3 h-3" />Meeting
+          </span>
+        </div>
+        <h1 className="text-[20px] font-semibold text-neutral-900 leading-tight">{title}</h1>
+        <div className="flex items-center gap-2 mt-1.5 text-[13px]">
+          {when && <span className="text-neutral-500">{fmtDate(when)}</span>}
+          {tr?.durationMinutes ? <span className="text-neutral-400">· {tr.durationMinutes} min</span> : null}
+        </div>
+      </div>
+
+      {/* Scrolling body — summary + decisions/risks/next step + action items (no docked composer). */}
+      <div className="flex-1 min-h-0 overflow-y-auto px-7 py-6 space-y-6">
+        {err ? (
+          <p className="text-[13px] text-neutral-400">Could not load this meeting.</p>
+        ) : !data ? (
+          <div className="space-y-3 animate-pulse">
+            <div className="h-4 w-40 rounded bg-neutral-100" />
+            <div className="h-20 rounded-lg bg-neutral-100" />
+            <div className="h-16 rounded-lg bg-neutral-100" />
+          </div>
+        ) : (
+          <>
+            {tr?.summary && (
+              <section>
+                <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2">Summary</h2>
+                <p className="text-[13.5px] text-neutral-700 leading-relaxed whitespace-pre-wrap">{tr.summary}</p>
+              </section>
+            )}
+
+            {tr?.suggestedNextStep && (
+              <section className="rounded-xl border border-indigo-100 bg-indigo-50/40 px-4 py-3">
+                <h2 className="text-[11px] font-semibold text-indigo-600 uppercase tracking-wide mb-1">Suggested next step</h2>
+                <p className="text-[13px] text-neutral-700 leading-relaxed">{tr.suggestedNextStep}</p>
+              </section>
+            )}
+
+            {tr && tr.decisions.length > 0 && (
+              <section>
+                <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2">Decisions</h2>
+                <ul className="space-y-1.5 border-l-2 border-emerald-100 pl-3">
+                  {tr.decisions.map((d, i) => <li key={i} className="text-[13px] text-neutral-700 leading-snug">{typeof d === 'string' ? d : JSON.stringify(d)}</li>)}
+                </ul>
+              </section>
+            )}
+
+            {tr && tr.risks.length > 0 && (
+              <section>
+                <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2">Risks &amp; open questions</h2>
+                <ul className="space-y-1.5 border-l-2 border-amber-100 pl-3">
+                  {tr.risks.map((r, i) => <li key={i} className="text-[13px] text-neutral-700 leading-snug">{typeof r === 'string' ? r : JSON.stringify(r)}</li>)}
+                </ul>
+              </section>
+            )}
+
+            {/* Action items — the inline actions. Each item is an inbox_item → /complete + /dismiss. */}
+            <section>
+              <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2.5">
+                Action items{data.actionItems.length > 0 ? ` · ${items.length}` : ''}
+              </h2>
+              {data.actionItems.length === 0 ? (
+                <p className="text-[13px] text-neutral-400">No follow-ups from this meeting.</p>
+              ) : allCleared ? (
+                <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50/60 px-4 py-3">
+                  <CheckCircleIcon className="w-4 h-4 text-emerald-600" />
+                  <p className="text-[13px] font-medium text-emerald-700">All follow-ups cleared.</p>
+                </div>
+              ) : (
+                <ul className="space-y-2">
+                  {items.map(it => (
+                    <li key={it.id} className="group flex items-start gap-3 rounded-xl border border-neutral-200/80 bg-white px-4 py-3 transition-all duration-200 hover:border-neutral-300">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[13px] text-neutral-800 leading-snug">{it.workTitle}</p>
+                        {it.whyMatters && <p className="text-[11.5px] text-neutral-400 mt-0.5 leading-snug">{it.whyMatters}</p>}
+                      </div>
+                      <span className="flex-shrink-0 flex items-center gap-1">
+                        <button onClick={() => act(it.id, 'complete')} disabled={acting.has(it.id)} title="Mark done"
+                          className="w-7 h-7 inline-flex items-center justify-center rounded-lg border border-neutral-200 text-neutral-400 hover:text-emerald-600 hover:border-emerald-200 hover:bg-emerald-50 transition-colors text-[13px]">✓</button>
+                        <button onClick={() => act(it.id, 'dismiss')} disabled={acting.has(it.id)} title="Dismiss"
+                          className="w-7 h-7 inline-flex items-center justify-center rounded-lg border border-neutral-200 text-neutral-400 hover:text-rose-600 hover:border-rose-200 hover:bg-rose-50 transition-colors text-[13px]">✕</button>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// COMMITMENT — the commitment (what + counterparty + due) + its source context (the email/meeting it
+// was extracted from). Inline actions: Mark done / Dismiss via PATCH /api/commitments/[id].
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+type CommitmentData = {
+  id: string;
+  direction: string;
+  description: string;
+  counterparty: string | null;
+  dueDate: string | null;
+  source: string | null;
+  createdAt: string | null;
+  sourceContext: { kind: 'email' | 'meeting'; subject: string | null; snippet: string | null; from: string | null; when: string | null } | null;
+};
+
+function CommitmentDetail({ id }: { id: string }) {
+  const router = useRouter();
+  const [data, setData] = useState<CommitmentData | null>(null);
+  const [err, setErr] = useState(false);
+  const [acting, setActing] = useState(false);
+  const [done, setDone] = useState<'done' | 'dismissed' | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    fetch(`/api/commitments/${id}`)
+      .then(r => (r.ok ? r.json() : Promise.reject()))
+      .then((d: CommitmentData) => { if (alive) setData(d); })
+      .catch(() => { if (alive) setErr(true); });
+    return () => { alive = false; };
+  }, [id]);
+
+  const act = async (status: 'done' | 'dismissed') => {
+    if (acting) return;
+    setActing(true);
+    try {
+      await fetch(`/api/commitments/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) });
+      setDone(status);
+      setTimeout(() => router.back(), 800);
+    } catch {
+      setActing(false);
+    }
+  };
+
+  const overdue = !!(data?.dueDate && data.dueDate < new Date().toISOString().slice(0, 10));
+  const src = data?.sourceContext;
+
+  return (
+    <div className="flex flex-col h-full min-h-0">
+      {/* Header */}
+      <div className="flex-shrink-0 px-7 pt-6 pb-5 border-b border-neutral-200">
+        <div className="flex items-center gap-1.5 mb-2">
+          <span className="inline-flex items-center gap-1 rounded-md bg-indigo-50 px-1.5 py-0.5 text-[10px] font-medium text-indigo-600">
+            <CheckCircleIcon className="w-3 h-3" />{data?.direction === 'awaiting' ? 'Waiting on someone' : 'On your plate'}
+          </span>
+          {overdue && <span className="inline-flex items-center rounded-md bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-600">Overdue</span>}
+        </div>
+        <h1 className="text-[19px] font-semibold text-neutral-900 leading-snug">{data?.description || 'Commitment'}</h1>
+        <div className="flex items-center gap-2 mt-1.5 text-[13px] text-neutral-500">
+          {data?.counterparty && <span>{data.direction === 'awaiting' ? 'Waiting on' : 'You owe'} {data.counterparty}</span>}
+          {data?.dueDate && <span className={overdue ? 'text-red-500' : 'text-neutral-400'}>· Due {fmtDate(data.dueDate)}</span>}
+        </div>
+      </div>
+
+      {/* Scrolling body — source context */}
+      <div className="flex-1 min-h-0 overflow-y-auto px-7 py-6 space-y-6">
+        {err ? (
+          <p className="text-[13px] text-neutral-400">Could not load this commitment.</p>
+        ) : !data ? (
+          <div className="space-y-3 animate-pulse">
+            <div className="h-4 w-32 rounded bg-neutral-100" />
+            <div className="h-24 rounded-lg bg-neutral-100" />
+          </div>
+        ) : src ? (
+          <section>
+            <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2.5">
+              {src.kind === 'meeting' ? 'From this meeting' : 'From this email'}
+            </h2>
+            <div className="rounded-xl border border-neutral-200/80 bg-white px-4 py-3.5">
+              <div className="flex items-center gap-1.5 text-[10px] font-medium text-neutral-400 mb-1.5">
+                {src.kind === 'meeting'
+                  ? <CalendarDaysIcon className="w-3 h-3 text-violet-400" />
+                  : <EnvelopeIcon className="w-3 h-3 text-indigo-400" />}
+                {src.from && <span className="text-neutral-500">{src.from}</span>}
+                {src.when && <span className="ml-auto tabular-nums text-neutral-300">{fmtWhen(src.when)}</span>}
+              </div>
+              {src.subject && <p className="text-[13.5px] font-semibold text-neutral-800 leading-snug">{src.subject}</p>}
+              {src.snippet && <p className="text-[13px] text-neutral-600 mt-1.5 leading-relaxed">{src.snippet}</p>}
+              {!src.subject && !src.snippet && <p className="text-[13px] text-neutral-400">No further context available.</p>}
+            </div>
+          </section>
+        ) : (
+          <p className="text-[13px] text-neutral-400 leading-relaxed">
+            This commitment was tracked from your activity. No linked source to show.
+          </p>
+        )}
+      </div>
+
+      {/* Docked action footer — Mark done / Dismiss */}
+      <div className="flex-shrink-0 border-t border-neutral-200 bg-neutral-50/80 backdrop-blur px-7 py-4">
+        {done ? (
+          <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50/60 px-4 py-3">
+            <CheckIcon className="w-4 h-4 text-emerald-600" />
+            <p className="text-[13px] font-medium text-emerald-700">{done === 'done' ? 'Marked done.' : 'Dismissed.'}</p>
+          </div>
+        ) : (
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => act('done')}
+              disabled={acting}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 text-white px-5 py-2 text-[13.5px] font-medium hover:bg-indigo-700 disabled:opacity-60 transition-colors"
+            >
+              <CheckIcon className="w-4 h-4" />Mark done
+            </button>
+            <button
+              onClick={() => act('dismissed')}
+              disabled={acting}
+              className="inline-flex items-center text-[13px] font-medium text-neutral-500 hover:text-rose-600 disabled:opacity-60 transition-colors"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// FOLLOW-UP — the thread you're waiting on (shared <ThreadMessages/>) + a nudge draft in the shared
+// <ReplyEditor/> (docked). Send nudge via /api/commitments/[id]/nudge (POST draft → PATCH send).
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+function FollowUpDetail({ id }: { id: string }) {
+  const router = useRouter();
+  const [thread, setThread] = useState<ThreadData | null>(null);
+  const [threadErr, setThreadErr] = useState(false);
+
+  const [draft, setDraft] = useState<string | null>(null);   // the plain-text nudge draft (seed + Copy)
+  const [draftLoading, setDraftLoading] = useState(true);
+  const [sending, setSending] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [sendErr, setSendErr] = useState<string | null>(null);
+  const editorRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    let alive = true;
+    fetch(`/api/commitments/${id}/thread`)
+      .then(r => (r.ok ? r.json() : Promise.reject()))
+      .then((d: ThreadData) => { if (alive) setThread(d); })
+      .catch(() => { if (alive) setThreadErr(true); });
+
+    // Draft a nudge (plain text) — same endpoint the Home "Draft nudge" uses.
+    fetch(`/api/commitments/${id}/nudge`, { method: 'POST' })
+      .then(r => r.json())
+      .then(d => { if (alive) setDraft(d.draft || 'Could not draft a nudge.'); })
+      .catch(() => { if (alive) setDraft('Could not draft a nudge.'); })
+      .finally(() => { if (alive) setDraftLoading(false); });
+
+    return () => { alive = false; };
+  }, [id]);
+
+  // The nudge PATCH expects a PLAIN-TEXT body (it sends via the mailbox reply APIs), so send the
+  // editor's text, not its HTML — mirrors the Home FollowUpItem's textarea → PATCH { body }.
+  const send = async () => {
+    const text = (editorRef.current?.innerText?.trim()) || draft || '';
+    if (!text || sending) return;
+    setSending(true); setSendErr(null);
+    try {
+      const res = await fetch(`/api/commitments/${id}/nudge`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ body: text }),
+      });
+      if (res.ok) {
+        setSent(true);
+        setTimeout(() => router.back(), 900);
+      } else {
+        const d = await res.json().catch(() => ({}));
+        setSendErr(d.error || 'Could not send the nudge.');
+      }
+    } catch {
+      setSendErr('Could not send the nudge.');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const copy = () => {
+    const text = editorRef.current?.innerText?.trim() || draft || '';
+    if (!text) return;
+    navigator.clipboard?.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
+  const title = thread?.subject || 'Follow-up';
+  const who = thread?.counterparty || thread?.fromName;
+
+  const threadMessages: ThreadMessage[] | null = useMemo(() => {
+    if (threadErr) return [];
+    if (!thread) return null; // loading
+    return (thread.messages ?? []).map((m) => ({
+      id: m.id,
+      from_name: m.fromName ?? null,
+      from_address: m.from ?? null,
+      received_at: m.receivedAt ?? null,
+      body: m.body ?? null,
+      html_body: m.html_body ?? null,
+      is_from_user: !!m.isFromUser,
+      to_addresses: m.to_addresses ?? null,
+      cc_addresses: m.cc_addresses ?? null,
+    }));
+  }, [thread, threadErr]);
+
+  const hasMessages = !threadErr && (thread?.messages?.length ?? 0) > 0;
+
+  return (
+    <div className="flex flex-col h-full min-h-0">
+      {/* Header */}
+      <div className="flex-shrink-0 px-7 pt-6 pb-5 border-b border-neutral-200">
+        <div className="flex items-center gap-1.5 mb-2">
+          <span className="inline-flex items-center gap-1 rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-600">
+            <ClockIcon className="w-3 h-3" />Ball in your court
+          </span>
+        </div>
+        <h1 className="text-[19px] font-semibold text-neutral-900 leading-snug">{title}</h1>
+        {who && <p className="text-[13px] text-neutral-500 mt-1.5">Waiting on {who}</p>}
+      </div>
+
+      {/* Scrolling thread */}
+      <div className="flex-1 min-h-0 overflow-y-auto px-7 py-6 space-y-6">
+        <div>
+          {hasMessages && (
+            <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2.5">Conversation</h2>
+          )}
+          {threadErr ? (
+            <p className="text-[13px] text-neutral-400">Could not load the conversation.</p>
+          ) : !hasMessages && thread ? (
+            <p className="text-[13px] text-neutral-400 leading-relaxed">No linked email thread — write a nudge below.</p>
+          ) : (
+            <ThreadMessages messages={threadMessages} fallback={null} />
+          )}
+        </div>
+      </div>
+
+      {/* Docked nudge composer */}
+      <div className="flex-shrink-0 border-t border-neutral-200 bg-neutral-50/80 backdrop-blur px-7 py-4 max-h-[45vh] overflow-y-auto">
+        <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2.5">Your nudge</h2>
+        {sent ? (
+          <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50/60 px-4 py-4">
+            <CheckIcon className="w-4 h-4 text-emerald-600" />
+            <p className="text-[13px] font-medium text-emerald-700">Nudge sent.</p>
+          </div>
+        ) : (
+          <div className="rounded-xl border border-neutral-200 bg-white p-4">
+            {draft == null ? (
+              <div className="h-28 rounded-lg bg-neutral-100 animate-pulse" />
+            ) : (
+              <>
+                <ReplyEditor
+                  ref={editorRef}
+                  initialHTML={draftToHTML(draft)}
+                  placeholder="Write your nudge…"
+                  minHeight={110}
+                  maxHeight={260}
+                />
+                {sendErr && <p className="text-[12px] text-rose-600 mt-2">{sendErr}</p>}
+                <div className="mt-3 flex items-center gap-4">
+                  <button
+                    onClick={send}
+                    disabled={sending || draftLoading}
+                    className="inline-flex items-center rounded-lg bg-indigo-600 text-white px-5 py-2 text-[13.5px] font-medium hover:bg-indigo-700 disabled:opacity-60 transition-colors"
+                  >
+                    {sending ? 'Sending…' : 'Send nudge'}
                   </button>
                   <button
                     onClick={copy}

@@ -1,21 +1,22 @@
 import Link from 'next/link';
 import { ArrowLeftIcon } from '@heroicons/react/24/outline';
 import { guardFeaturePage } from '@/lib/workspace/guards';
-import { ItemDetail } from '@/components/home/item-detail';
+import { ItemDetail, type ItemKind } from '@/components/home/item-detail';
 
-// ── The URL-addressed email item detail as a FULL PAGE — rendered on a direct visit / refresh /
+// ── The URL-addressed Home item detail as a FULL PAGE — rendered on a direct visit / refresh /
 // deep-link (when NOT soft-navigated from the Home, so the intercepting @modal slot doesn't catch
 // it). Renders the SAME ItemDetail as the in-content deep-dive (with a ← Back to Home bar), on the
-// page background with the app sidebar already visible from the layout. v1: email items only.
+// page background with the app sidebar already visible from the layout. `kind` (email | meeting |
+// commitment | followup) selects the variant; absent → email (the default).
 export default async function ItemPage({
   params, searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ angle?: string }>;
+  searchParams: Promise<{ angle?: string; kind?: string }>;
 }) {
   await guardFeaturePage('home');
   const { id } = await params;
-  const { angle } = await searchParams;
+  const { angle, kind } = await searchParams;
 
   return (
     <div className="flex-1 min-w-0 h-full flex flex-col bg-white">
@@ -31,7 +32,7 @@ export default async function ItemPage({
       {/* Body — the ItemDetail owns its own scroll (thread scrolls, composer docks at the bottom). */}
       <div className="flex-1 min-h-0 flex flex-col">
         <div className="mx-auto max-w-3xl w-full flex-1 min-h-0 flex flex-col">
-          <ItemDetail id={id} angle={angle ?? null} />
+          <ItemDetail id={id} angle={angle ?? null} kind={(kind as ItemKind) ?? 'email'} />
         </div>
       </div>
     </div>

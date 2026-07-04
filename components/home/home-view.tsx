@@ -164,13 +164,28 @@ function SectionCleared({ line }: { line: string }) {
   );
 }
 
+// Where a priority row's primary action opens. Meetings + email to-dos now open the in-content
+// DEEP DIVE (/item/[id]?kind=…) instead of redirecting to /meetings or /inbox: a meeting → its
+// summary + action items (kind=meeting, id = transcript id parsed from `meeting:<tid>`); an email
+// to-do → the full-context email view (kind=email, id = the inbox itemId). Falls back to p.href.
+function priorityHref(p: Priority): string {
+  if (p.source === 'meeting') {
+    const tid = p.id.startsWith('meeting:') ? p.id.slice('meeting:'.length) : p.id;
+    return `/item/${tid}?kind=meeting`;
+  }
+  if (p.itemId) return `/item/${p.itemId}`; // email item → the email deep-dive (kind defaults to email)
+  return p.href;
+}
+
 function PriorityCard({ p, first, expanded, onToggle, onCleared }: { p: Priority; first: boolean; expanded: boolean; onToggle: () => void; onCleared?: (id: string) => void }) {
+  const router = useRouter();
   const cfg = SOURCE[p.source];
   const Icon = cfg.icon;
   const verb = p.source === 'meeting' ? 'Review' : VERB[p.posture];
   const hasItems = !!p.items?.length;
   const { removed, exiting, startExit } = useExit();
   const [acting, setActing] = useState(false);
+  const open = () => router.push(priorityHref(p));
   // Done/Dismiss a Needs-you card → act on its inbox item(s): the email's itemId, or all of a
   // meeting's action-item ids. classifyItem hides completed/dismissed, so it never resurfaces.
   const act = (kind: 'complete' | 'dismiss') => {
@@ -190,7 +205,11 @@ function PriorityCard({ p, first, expanded, onToggle, onCleared }: { p: Priority
         </div>
       )}
       <div className="flex items-start gap-3 p-4">
-        <div className="min-w-0 flex-1">
+        {/* The title/context area opens the deep-dive (row click); the ✓/✕ + Review stay inline for
+            fast triage. A div (not a button) so the nested action buttons remain legal. */}
+        <div role="button" tabIndex={0} onClick={open}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } }}
+          className="min-w-0 flex-1 cursor-pointer">
           <div className="flex items-center gap-2 mb-1.5">
             <span className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium ${cfg.chip}`}>
               <Icon className="w-3 h-3" />{cfg.label}
@@ -202,7 +221,7 @@ function PriorityCard({ p, first, expanded, onToggle, onCleared }: { p: Priority
         </div>
         <div className="flex-shrink-0 flex items-center gap-1.5">
           <Link
-            href={p.href}
+            href={priorityHref(p)}
             className={`inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-[12.5px] font-medium transition-colors ${first ? 'bg-indigo-600 text-white hover:bg-indigo-700' : 'bg-neutral-50 text-neutral-700 hover:bg-indigo-50 hover:text-indigo-700 border border-neutral-200'}`}
           >
             {verb}<ArrowRightIcon className="w-3.5 h-3.5" />
@@ -347,8 +366,12 @@ function DigestReply({ m, onDismiss, emphasis = false }: { m: DigestItem; onDism
 // digest's Send-draft pattern; on components/ui indigo tokens.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function FollowUpItem({ f, index, onCleared }: { f: { id?: string; who: string; status: string; nextMove: string }; index: number; onCleared?: (id: string) => void }) {
+  const router = useRouter();
   const { removed, exiting, acting, act } = useCommitmentAct(f.id, onCleared);
   const [open, setOpen] = useState(false);
+  // Open the follow-up deep-dive — the thread you're waiting on + a nudge composer (kind=followup,
+  // id = the commitment id). The inline "Draft nudge" + ✓/✕ stay for fast triage without opening.
+  const openDeepDive = () => { if (f.id) router.push(`/item/${f.id}?kind=followup`); };
   const [draft, setDraft] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
@@ -383,7 +406,9 @@ function FollowUpItem({ f, index, onCleared }: { f: { id?: string; who: string; 
     <li className={`flex gap-2.5 ${exitCls(exiting)}`}>
       <span className="flex-shrink-0 w-5 h-5 rounded-full bg-neutral-100 text-neutral-500 text-[11px] font-semibold flex items-center justify-center mt-0.5">{index + 1}</span>
       <div className="min-w-0 flex-1">
-        <p className="text-[13px] font-semibold text-neutral-800 leading-snug">{f.who}</p>
+        <p role="button" tabIndex={f.id ? 0 : -1} onClick={openDeepDive}
+          onKeyDown={(e) => { if (f.id && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openDeepDive(); } }}
+          className={`text-[13px] font-semibold text-neutral-800 leading-snug ${f.id ? 'cursor-pointer hover:text-indigo-700 transition-colors' : ''}`}>{f.who}</p>
         {f.status && <p className="text-[12.5px] text-neutral-500 mt-0.5 leading-snug">{f.status}</p>}
         {sent ? (
           <p className="text-[12.5px] text-emerald-600 mt-1 leading-snug font-medium">Nudge sent ✓</p>
@@ -427,12 +452,12 @@ function FollowUpItem({ f, index, onCleared }: { f: { id?: string; who: string; 
 
 // On-your-plate / Waiting-on row (commitment) — a SideRow with hover Done/Dismiss.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function CommitmentSideRow({ id, icon, iconClass, children, onCleared }: { id?: string; icon: any; iconClass?: string; children: any; onCleared?: (id: string) => void }) {
+function CommitmentSideRow({ id, icon, iconClass, children, onCleared, href = '/inbox' }: { id?: string; icon: any; iconClass?: string; children: any; onCleared?: (id: string) => void; href?: string }) {
   const { removed, exiting, acting, act } = useCommitmentAct(id, onCleared);
   if (removed) return null;
   return (
     <div className={`group relative ${exitCls(exiting)}`}>
-      <SideRow href="/inbox" icon={icon} iconClass={iconClass}>{children}</SideRow>
+      <SideRow href={href} icon={icon} iconClass={iconClass}>{children}</SideRow>
       {id && (
         <span className="absolute top-1.5 right-2 hidden group-hover:flex items-center gap-1 rounded-lg bg-white/95 px-1 py-0.5 shadow-sm border border-neutral-100">
           <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); act('done'); }} disabled={acting} title="Mark done" className="w-5 h-5 inline-flex items-center justify-center rounded text-neutral-400 hover:text-emerald-600 text-[12px]">✓</button>
@@ -551,11 +576,13 @@ function StartHereReplyBody({ m, onDismiss }: { m: { who: string; ask: string; a
 
 // Focal priority — same open + done/dismiss behaviour as PriorityCard, at focal scale.
 function StartHerePriorityBody({ p, onCleared }: { p: Priority; onCleared?: (id: string) => void }) {
+  const router = useRouter();
   const cfg = SOURCE[p.source];
   const Icon = cfg.icon;
   const verb = p.source === 'meeting' ? 'Review' : VERB[p.posture];
   const { removed, exiting, startExit } = useExit();
   const [acting, setActing] = useState(false);
+  const open = () => router.push(priorityHref(p));
   const act = (kind: 'complete' | 'dismiss') => {
     const ids = p.itemId ? [p.itemId] : (p.items ?? []).map(it => it.id);
     if (acting || !ids.length) return;
@@ -567,7 +594,9 @@ function StartHerePriorityBody({ p, onCleared }: { p: Priority; onCleared?: (id:
   return (
     <div className={exitCls(exiting)}>
       <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
+        <div role="button" tabIndex={0} onClick={open}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } }}
+          className="min-w-0 flex-1 cursor-pointer">
           <div className="flex items-center gap-2">
             <span className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium ${cfg.chip}`}><Icon className="w-3 h-3" />{cfg.label}</span>
             {p.overdue && <span className="inline-flex items-center rounded-md bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-600">Overdue</span>}
@@ -576,7 +605,7 @@ function StartHerePriorityBody({ p, onCleared }: { p: Priority; onCleared?: (id:
           {p.context && <p className="text-[13.5px] text-neutral-600 mt-1 leading-relaxed">{p.context}</p>}
         </div>
         <div className="flex-shrink-0 flex items-center gap-1.5">
-          <Link href={p.href} className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 text-white px-3.5 py-2 text-[13px] font-medium hover:bg-indigo-700 transition-colors">{verb}<ArrowRightIcon className="w-3.5 h-3.5" /></Link>
+          <Link href={priorityHref(p)} className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 text-white px-3.5 py-2 text-[13px] font-medium hover:bg-indigo-700 transition-colors">{verb}<ArrowRightIcon className="w-3.5 h-3.5" /></Link>
           <button onClick={() => act('complete')} disabled={acting} title="Mark done" className="w-8 h-8 inline-flex items-center justify-center rounded-lg border border-neutral-200 text-neutral-400 hover:text-emerald-600 hover:border-emerald-200 hover:bg-emerald-50 transition-colors text-[14px]">✓</button>
           <button onClick={() => act('dismiss')} disabled={acting} title="Dismiss" className="w-8 h-8 inline-flex items-center justify-center rounded-lg border border-neutral-200 text-neutral-400 hover:text-rose-600 hover:border-rose-200 hover:bg-rose-50 transition-colors text-[14px]">✕</button>
         </div>
@@ -1114,7 +1143,7 @@ export function HomeView() {
                   ) : (
                   <div className="space-y-2">
                     {b.commitments.map(c => (
-                      <CommitmentSideRow key={c.id} id={c.id} icon={CheckCircleIcon} iconClass={c.overdue ? 'text-red-400' : 'text-neutral-300'} onCleared={onCleared}>
+                      <CommitmentSideRow key={c.id} id={c.id} href={`/item/${c.id}?kind=commitment`} icon={CheckCircleIcon} iconClass={c.overdue ? 'text-red-400' : 'text-neutral-300'} onCleared={onCleared}>
                         <div className="flex items-start justify-between gap-2">
                           <span className="text-[13px] text-neutral-800 leading-snug">{c.description}</span>
                           {(c.overdue || c.dueToday || c.dueDate) && (
