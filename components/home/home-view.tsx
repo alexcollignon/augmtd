@@ -148,6 +148,19 @@ const Label = ({ children, count, icon: Icon }: { children: React.ReactNode; cou
   </div>
 );
 
+// ── Per-section "you just cleared this" empty state. ONE shared element so every section matches:
+// a small emerald check + a short encouraging line. Shown ONLY when a section HAD server items and the
+// user cleared them all this session (live count → 0) — never for a section that was empty to begin
+// with (those stay hidden). The incremental sibling of the whole-Home "You're all caught up".
+function SectionCleared({ line }: { line: string }) {
+  return (
+    <div className="flex items-center gap-2 rounded-xl border border-neutral-200/70 bg-white px-3.5 py-3">
+      <CheckCircleIcon className="w-4 h-4 flex-shrink-0 text-emerald-500" />
+      <p className="text-[12.5px] text-neutral-500">{line}</p>
+    </div>
+  );
+}
+
 function PriorityCard({ p, first, expanded, onToggle, onCleared }: { p: Priority; first: boolean; expanded: boolean; onToggle: () => void; onCleared?: (id: string) => void }) {
   const cfg = SOURCE[p.source];
   const Icon = cfg.icon;
@@ -381,8 +394,8 @@ function DigestReply({ m, onDismiss, emphasis = false }: { m: DigestItem; onDism
 // thread and closes the commitment. A draft the user reviews + sends — never auto-sent. Mirrors the
 // digest's Send-draft pattern; on components/ui indigo tokens.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function FollowUpItem({ f, index }: { f: { id?: string; who: string; status: string; nextMove: string }; index: number }) {
-  const { removed, exiting, acting, act } = useCommitmentAct(f.id);
+function FollowUpItem({ f, index, onCleared }: { f: { id?: string; who: string; status: string; nextMove: string }; index: number; onCleared?: (id: string) => void }) {
+  const { removed, exiting, acting, act } = useCommitmentAct(f.id, onCleared);
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -839,7 +852,19 @@ export function HomeView() {
   const bodyCards = startHere?.kind === 'priority'
     ? cards.filter(p => p.id !== focalPriority!.id)
     : cards;
-  const hasBody = digestReplies.length > 0 || bodyCards.length > 0;
+  // Live view of the body cards after this session's Done/Dismiss (they clear via clearedIds). The
+  // cards still RENDER off `bodyCards` (each unmounts itself via useExit); this filtered set is what
+  // drives the header count + the "you cleared this" empty state so the count matches what's on screen.
+  const liveBodyCards = bodyCards.filter(p => !clearedIds.has(p.id));
+  // Did "What needs you" have ANY server items to begin with? Uses the RAW server data (not the
+  // dismissed/cleared-filtered lists) so the section stays mounted — and can show the "you cleared
+  // this" empty state — even after every reply/card is cleared this session. serverReplies is the
+  // unfiltered must-respond pool; the priority cards are non-meeting + meeting to-dos here.
+  const serverReplies = b?.mustRespond?.items ?? [];
+  const hadBody = serverReplies.length > 0 || bodyCards.length > 0;
+  // LIVE count = replies still owed (dismissed removed) + body cards not yet cleared. Header shows THIS.
+  const bodyLiveCount = digestReplies.length + liveBodyCards.length;
+  const hasBody = hadBody; // keep the section mounted after clearing so the empty state can show
 
   const nothing = b && !b.priorities.length && !b.commitments.length && !b.waitingOn.length && !b.schedule.length && !(b.keepAnEyeOn?.items.length) && !(team?.messages.length || team?.needsReview.length) && !startHere;
 
@@ -851,6 +876,13 @@ export function HomeView() {
   const liveNeedYouCards = cards.filter((p) => p.source !== 'meeting' && !clearedIds.has(p.id)).length;
   const liveNeedYouCommitments = (b?.commitments ?? []).filter((c) => !clearedIds.has(c.id)).length;
   const ringNeedYou = digestReplies.length + liveNeedYouCards + liveNeedYouCommitments;
+
+  // ── Per-section LIVE counts — same clearedIds/dismissed derivation as the ring, applied per lane so
+  // each section header shows what's actually left after this session's clears (not the stale server
+  // length), and so a section cleared to 0 can swap its body for the shared "you cleared this" state.
+  const plateLive = (b?.commitments ?? []).filter((c) => !clearedIds.has(c.id)).length;
+  const followupsLive = (b?.followups?.items ?? []).filter((f) => !(f.id && clearedIds.has(f.id))).length;
+  const waitingLive = (b?.waitingOn ?? []).filter((c) => !clearedIds.has(c.id)).length;
   const ringCleared = (b?.dayProgress?.cleared ?? 0) + sessionCleared;
   const showRing = !!b?.dayProgress; // non-fatal: hide gracefully if counts are missing
 
@@ -908,13 +940,16 @@ export function HomeView() {
 
   if (hasFollowups) rail('followups', (
     <section>
-      <Label count={b!.followups!.items.length} icon={ClockIcon}>Ball in your court</Label>
+      <Label count={followupsLive} icon={ClockIcon}>Ball in your court</Label>
       <p className="text-[12px] text-neutral-400 -mt-1.5 mb-2.5 leading-snug">Waiting on others — nudge when it stalls.</p>
+      {followupsLive === 0 ? (
+        <SectionCleared line="All caught up here — nothing waiting on you." />
+      ) : (
       <div className="rounded-2xl border border-neutral-200/80 bg-white p-4">
         {b!.followups!.teaser && <p className="text-[12.5px] text-neutral-500 mb-3.5 leading-relaxed">{b!.followups!.teaser}</p>}
         <ol className="space-y-3.5">
           {b!.followups!.items.map((f, i) => (
-            <FollowUpItem key={f.id || i} f={f} index={i} />
+            <FollowUpItem key={f.id || i} f={f} index={i} onCleared={onCleared} />
           ))}
         </ol>
         {b!.followups!.closing && (
@@ -924,20 +959,25 @@ export function HomeView() {
           </div>
         )}
       </div>
+      )}
     </section>
   ));
 
   if (hasWaiting) rail('waiting', (
     <section>
-      <Label count={b!.waitingOn.length} icon={ClockIcon}>Waiting on others</Label>
+      <Label count={waitingLive} icon={ClockIcon}>Waiting on others</Label>
+      {waitingLive === 0 ? (
+        <SectionCleared line="All caught up here." />
+      ) : (
       <div className="space-y-2">
         {b!.waitingOn.map(c => (
-          <CommitmentSideRow key={c.id} id={c.id} icon={ClockIcon} iconClass="text-amber-400">
+          <CommitmentSideRow key={c.id} id={c.id} icon={ClockIcon} iconClass="text-amber-400" onCleared={onCleared}>
             <span className="text-[13px] text-neutral-800 truncate block">{c.description}</span>
             <p className="text-[11.5px] text-neutral-400 mt-0.5">Waiting on {c.counterparty || 'them'} · {c.ageDays}d</p>
           </CommitmentSideRow>
         ))}
       </div>
+      )}
     </section>
   ));
 
@@ -1119,33 +1159,41 @@ export function HomeView() {
             {hasBody && (
               <RiseIn delay={60}>
                 <section>
-                  <Label count={digestReplies.length + bodyCards.length} icon={BoltIcon}>What needs you</Label>
+                  <Label count={bodyLiveCount} icon={BoltIcon}>What needs you</Label>
                   {b?.mustRespond?.teaser && digestReplies.length > 0 && (
                     <p className="text-[13px] text-neutral-500 leading-relaxed mb-2.5">{b.mustRespond.teaser}</p>
                   )}
-                  {/* One consistent set: email reply cards + the other action cards (meeting follow-ups +
-                      email to-dos) — same radius, border, padding rhythm and hover. */}
-                  <div className="space-y-2.5">
-                    {digestReplies.length > 0 && (
-                      <DigestList items={digestReplies} onDismiss={onDismiss} emphasizeFirst={!startHere} />
-                    )}
-                    {bodyCards.map((p, i) => (
-                      <RiseIn key={p.id} delay={i * 45}>
-                        <PriorityCard p={p} first={false} expanded={expanded === p.id} onToggle={() => setExpanded(expanded === p.id ? null : p.id)} onCleared={onCleared} />
-                      </RiseIn>
-                    ))}
-                  </div>
+                  {bodyLiveCount === 0 ? (
+                    <SectionCleared line="All replies handled — nothing else needs you." />
+                  ) : (
+                    /* One consistent set: email reply cards + the other action cards (meeting follow-ups +
+                       email to-dos) — same radius, border, padding rhythm and hover. */
+                    <div className="space-y-2.5">
+                      {digestReplies.length > 0 && (
+                        <DigestList items={digestReplies} onDismiss={onDismiss} emphasizeFirst={!startHere} />
+                      )}
+                      {bodyCards.map((p, i) => (
+                        <RiseIn key={p.id} delay={i * 45}>
+                          <PriorityCard p={p} first={false} expanded={expanded === p.id} onToggle={() => setExpanded(expanded === p.id ? null : p.id)} onCleared={onCleared} />
+                        </RiseIn>
+                      ))}
+                    </div>
+                  )}
                 </section>
               </RiseIn>
             )}
 
             {/* 3 · ON YOUR PLATE — commitments you owe. The last ACTION lane, so it stays in the
-                main reading column (not the ambient rail). */}
+                main reading column (not the ambient rail). Live count = server commitments minus this
+                session's clears; when it hits 0 (all cleared this session) the empty state shows. */}
             {b && b.commitments.length > 0 && (
               <RiseIn delay={90}>
                 <section>
-                  <Label count={b.commitments.length}>On your plate</Label>
+                  <Label count={plateLive}>On your plate</Label>
                   <p className="text-[12px] text-neutral-400 -mt-1.5 mb-2.5 leading-snug">Yours to act on — things you owe.</p>
+                  {plateLive === 0 ? (
+                    <SectionCleared line="Nothing on your plate — you cleared it all." />
+                  ) : (
                   <div className="space-y-2">
                     {b.commitments.map(c => (
                       <CommitmentSideRow key={c.id} id={c.id} icon={CheckCircleIcon} iconClass={c.overdue ? 'text-red-400' : 'text-neutral-300'} onCleared={onCleared}>
@@ -1161,6 +1209,7 @@ export function HomeView() {
                       </CommitmentSideRow>
                     ))}
                   </div>
+                  )}
                 </section>
               </RiseIn>
             )}
