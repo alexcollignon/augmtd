@@ -5,7 +5,8 @@ import { ItemDetail } from '@/components/home/item-detail';
 
 // ── The URL-addressed email item detail as a FULL PAGE — rendered on a direct visit / refresh /
 // deep-link (when NOT soft-navigated from the Home, so the intercepting @modal slot doesn't catch
-// it). Same content component as the modal (components/home/item-detail). v1: email items only.
+// it). Renders the SAME ItemDetail as the in-content deep-dive (with a ← Back to Home bar), on the
+// page background with the app sidebar already visible from the layout. v1: email items only.
 export default async function ItemPage({
   params, searchParams,
 }: {
@@ -17,15 +18,18 @@ export default async function ItemPage({
   const { angle } = await searchParams;
 
   return (
-    <div className="flex-1 min-w-0 h-full overflow-y-auto bg-neutral-50/40">
-      <div className="mx-auto max-w-3xl px-4 sm:px-6 py-6">
+    <div className="flex-1 min-w-0 h-full flex flex-col bg-white">
+      {/* Back bar — mirrors the deep-dive shell */}
+      <div className="flex-shrink-0 flex items-center px-5 py-3 border-b border-neutral-200 bg-white/95 backdrop-blur">
         <Link
           href="/home"
-          className="inline-flex items-center gap-1.5 text-[13px] font-medium text-neutral-500 hover:text-indigo-600 transition-colors mb-4"
+          className="inline-flex items-center gap-1.5 text-[13px] font-medium text-neutral-500 hover:text-indigo-600 transition-colors"
         >
           <ArrowLeftIcon className="w-4 h-4" />Back to Home
         </Link>
-        <div className="rounded-2xl border border-neutral-200 bg-white shadow-sm overflow-hidden">
+      </div>
+      <div className="flex-1 min-h-0 overflow-y-auto">
+        <div className="mx-auto max-w-3xl w-full">
           <ItemDetail id={id} angle={angle ?? null} />
         </div>
       </div>

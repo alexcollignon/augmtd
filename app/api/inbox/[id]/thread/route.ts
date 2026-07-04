@@ -4,9 +4,10 @@ import { createClient } from '@/lib/supabase/server';
 export const maxDuration = 15;
 
 // GET /api/inbox/[id]/thread — the full email thread for one inbox item, RLS-safe (cookie client).
-// Returns exactly the fields the item-detail needs to render the inbox's collapsed thread + header:
-// subject, sender, date, the latest full body, and the thread_history array (older messages collapsed).
-// Reuses the same `source_data` shape the inbox WorkDetailPanel already renders — no new data model.
+// Loads the thread AS THE INBOX DOES: it resolves the item's thread_id, then queries the `emails`
+// table for every message sharing that thread (user-scoped, oldest→newest by received_at) and
+// returns them as SEPARATE messages — so the item-detail can render collapsible message cards
+// (latest expanded, older collapsed), exactly like the inbox WorkDetailPanel, instead of one blob.
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const supabase = await createClient();
@@ -23,15 +24,65 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const sd = (item.source_data ?? {}) as Record<string, any>;
+  const threadId: string | null = sd.thread_id ?? null;
+  const emailId: string | null = sd.email_id ?? null;
 
+  const subject = item.work_title || sd.subject || '(no subject)';
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  type EmailRow = Record<string, any>;
+  let rows: EmailRow[] = [];
+
+  const SELECT = 'id, message_id, from_address, from_name, subject, body, received_at, is_from_user';
+
+  // Primary path: all emails sharing this thread_id, ordered oldest→newest (the inbox pattern).
+  if (threadId) {
+    const { data } = await supabase
+      .from('emails')
+      .select(SELECT)
+      .eq('user_id', user.id)
+      .eq('thread_id', threadId)
+      .order('received_at', { ascending: true });
+    rows = data ?? [];
+  }
+
+  // Fallback: single message by its email_id (thread never stitched / single-message thread).
+  if (rows.length === 0 && emailId) {
+    const { data } = await supabase
+      .from('emails')
+      .select(SELECT)
+      .eq('user_id', user.id)
+      .eq('id', emailId)
+      .maybeSingle();
+    if (data) rows = [data];
+  }
+
+  // Render-ready messages — one card per message, like the inbox thread cards.
+  const messages = rows.map((e) => {
+    const body: string | null = typeof e.body === 'string' ? e.body : null;
+    return {
+      id: e.id as string,
+      from: (e.from_address as string) ?? null,
+      fromName: (e.from_name as string) ?? null,
+      subject: (e.subject as string) ?? null,
+      receivedAt: (e.received_at as string) ?? null,
+      body,
+      snippet: body ? body.replace(/\s+/g, ' ').trim().slice(0, 240) : '',
+      isFromUser: !!e.is_from_user,
+    };
+  });
+
+  // Header fields come from the newest message when we have one, else the inbox item's source_data.
+  const newest = messages[messages.length - 1];
   return NextResponse.json({
     id: item.id,
-    subject: item.work_title || sd.subject || '(no subject)',
-    fromName: sd.from_name ?? null,
-    fromAddress: sd.from ?? null,
-    receivedAt: sd.received_at ?? item.created_at ?? null,
+    subject,
+    fromName: newest?.fromName ?? sd.from_name ?? null,
+    fromAddress: newest?.from ?? sd.from ?? null,
+    receivedAt: newest?.receivedAt ?? sd.received_at ?? item.created_at ?? null,
+    // Separate messages (oldest→newest). Empty when neither thread_id nor email_id resolved.
+    messages,
+    // Legacy fallback body (used only if messages is empty) — the inbox item's own stored body.
     body: typeof sd.body === 'string' ? sd.body : null,
-    // The collapsed thread cards (latest expanded, older collapsed) — same shape the inbox uses.
-    threadHistory: Array.isArray(sd.thread_history) ? sd.thread_history : [],
   });
 }

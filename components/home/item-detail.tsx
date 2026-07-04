@@ -9,22 +9,27 @@ import {
   CheckIcon,
 } from '@heroicons/react/24/outline';
 
-// ── The full-context email item detail — the wide, focused view opened from the Home.
-// Shows: (1) header (subject + sender + date), (2) the WHOLE thread rendered collapsed like the
-// inbox (latest expanded, older collapsed — the SAME pattern as components/inbox/work-detail-panel),
+// ── The full-context email item detail — the roomy, focused view opened from the Home as a
+// DEEP DIVE (in-content, not a boxed popup). Shows: (1) header (subject + sender + date), (2) the
+// WHOLE thread rendered as SEPARATE collapsible message cards like the inbox (latest expanded,
+// older collapsed — the SAME pattern as components/inbox/work-detail-panel, one card per message),
 // (3) the suggested angle as a light line, (4) the prepared draft in an editable composer with
 // Send + Copy. Reuses the Home's own endpoints: GET/POST /api/inbox/[id]/draft (draft),
-// /api/inbox/[id]/send-reply (send), and GET /api/inbox/[id]/thread (the thread messages).
+// /api/inbox/[id]/send-reply (send), and GET /api/inbox/[id]/thread (the thread messages, now
+// loaded from the `emails` table by thread_id — one row per message).
 //
 // v1: EMAIL items only. Meeting / commitment / follow-up variants come later (they'd branch here on
-// a `kind` and render their own body while keeping the same URL contract + modal shell).
+// a `kind` and render their own body while keeping the same URL contract + deep-dive shell).
 
 type ThreadMsg = {
-  from_name?: string;
-  from?: string;
-  subject?: string;
-  received_at?: string;
+  id: string;
+  from?: string | null;
+  fromName?: string | null;
+  subject?: string | null;
+  receivedAt?: string | null;
+  body?: string | null;
   snippet?: string;
+  isFromUser?: boolean;
 };
 type ThreadData = {
   id: string;
@@ -32,8 +37,8 @@ type ThreadData = {
   fromName: string | null;
   fromAddress: string | null;
   receivedAt: string | null;
+  messages: ThreadMsg[];
   body: string | null;
-  threadHistory: ThreadMsg[];
 };
 
 function fmtWhen(iso?: string | null): string {
@@ -45,26 +50,27 @@ function fmtWhen(iso?: string | null): string {
   });
 }
 
-// One thread card — collapsed shows sender + a 2-line snippet; expanded shows the full body.
-// Mirrors the inbox WorkDetailPanel thread card exactly (latest is "Latest" + full body).
+// One thread message card — collapsed shows sender + a 2-line snippet; expanded shows the full body.
+// Mirrors the inbox WorkDetailPanel thread card exactly (latest is "Latest").
 function ThreadCard({
-  msg, isLast, fullBody, subject, expanded, onToggle, threadLen,
+  msg, isLast, subject, expanded, onToggle, threadLen,
 }: {
-  msg: ThreadMsg; isLast: boolean; fullBody: string | null; subject: string;
+  msg: ThreadMsg; isLast: boolean; subject: string;
   expanded: boolean; onToggle: () => void; threadLen: number;
 }) {
-  const body = isLast && fullBody ? fullBody : msg.snippet;
+  const senderLabel = msg.isFromUser ? 'You' : (msg.fromName || msg.from || 'Unknown');
+  const body = msg.body || msg.snippet || '';
   return (
     <div className={`rounded-lg border text-[12.5px] ${isLast ? 'border-neutral-300 bg-white' : 'border-neutral-200 bg-neutral-50'}`}>
       <button onClick={onToggle} className="w-full flex items-center justify-between px-3.5 py-3 text-left">
         <div className="flex items-center gap-2 min-w-0">
-          <span className="font-medium text-neutral-900 truncate">{msg.from_name || msg.from || 'Unknown'}</span>
+          <span className="font-medium text-neutral-900 truncate">{senderLabel}</span>
           {isLast && threadLen > 1 && (
             <span className="flex-shrink-0 text-[10px] font-medium text-neutral-400 uppercase tracking-wide">Latest</span>
           )}
         </div>
         <div className="flex items-center gap-2 flex-shrink-0 ml-2">
-          <span className="text-neutral-400 tabular-nums">{fmtWhen(msg.received_at)}</span>
+          <span className="text-neutral-400 tabular-nums">{fmtWhen(msg.receivedAt)}</span>
           <ChevronRightIcon className={`w-3.5 h-3.5 text-neutral-400 transition-transform duration-150 ${expanded ? 'rotate-90' : ''}`} />
         </div>
       </button>
@@ -106,7 +112,7 @@ export function ItemDetail({ id, angle }: { id: string; angle?: string | null })
         if (!alive) return;
         setThread(d);
         // Expand the latest message by default.
-        const len = d.threadHistory?.length ?? 0;
+        const len = d.messages?.length ?? 0;
         setExpanded(len > 0 ? { [len - 1]: true } : {});
       })
       .catch(() => { if (alive) setThreadErr(true); });
@@ -153,18 +159,18 @@ export function ItemDetail({ id, angle }: { id: string; angle?: string | null })
   const subject = thread?.subject || 'Email';
   const senderLine = [thread?.fromName, thread?.fromAddress && `<${thread.fromAddress}>`]
     .filter(Boolean).join(' ');
-  const history = thread?.threadHistory ?? [];
+  const messages = thread?.messages ?? [];
 
   return (
     <div className="flex flex-col">
       {/* 1 — Header: subject + sender + date */}
-      <div className="px-7 pt-7 pb-5 border-b border-neutral-200">
+      <div className="px-7 pt-6 pb-5 border-b border-neutral-200">
         <div className="flex items-center gap-1.5 mb-2">
           <span className="inline-flex items-center gap-1 rounded-md bg-indigo-50 px-1.5 py-0.5 text-[10px] font-medium text-indigo-600">
             <EnvelopeIcon className="w-3 h-3" />Reply needed
           </span>
         </div>
-        <h1 className="text-[19px] font-semibold text-neutral-900 leading-tight">{subject}</h1>
+        <h1 className="text-[20px] font-semibold text-neutral-900 leading-tight">{subject}</h1>
         <div className="flex items-center gap-2 mt-1.5 text-[13px]">
           {senderLine && <span className="text-neutral-600 min-w-0 truncate">From: {senderLine}</span>}
           {thread?.receivedAt && (
@@ -173,11 +179,11 @@ export function ItemDetail({ id, angle }: { id: string; angle?: string | null })
         </div>
       </div>
 
-      {/* Scrollable body — thread + angle + draft */}
-      <div className="px-7 py-6 space-y-6 overflow-y-auto max-h-[calc(85vh-9rem)]">
-        {/* 2 — The whole thread, collapsed like the inbox */}
+      {/* Body — thread + angle + draft (page/shell handles scrolling) */}
+      <div className="px-7 py-6 space-y-6">
+        {/* 2 — The whole thread, one card per message, collapsed like the inbox */}
         <div>
-          {history.length > 1 && (
+          {messages.length > 1 && (
             <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2.5">Thread</h2>
           )}
           {threadErr && <p className="text-[13px] text-neutral-400">Could not load the thread.</p>}
@@ -187,25 +193,26 @@ export function ItemDetail({ id, angle }: { id: string; angle?: string | null })
               <div className="h-14 rounded-lg bg-neutral-100 animate-pulse" />
             </div>
           )}
-          {thread && history.length === 0 && thread.body && (
+          {thread && messages.length === 0 && thread.body && (
             <div className="rounded-lg border border-neutral-300 bg-white px-3.5 py-3">
               <p className="text-[12.5px] text-neutral-700 leading-relaxed whitespace-pre-wrap">{thread.body}</p>
             </div>
           )}
-          {thread && history.length > 0 && (
+          {thread && messages.length > 0 && (
             <div className="space-y-2">
-              {history.slice(0, 8).map((msg, i) => {
-                const isLast = i === Math.min(history.length, 8) - 1;
+              {messages.slice(-12).map((msg, i, arr) => {
+                const isLast = i === arr.length - 1;
+                // Index into the shared expanded map by original position so toggles are stable.
+                const origIdx = messages.length - arr.length + i;
                 return (
                   <ThreadCard
-                    key={i}
+                    key={msg.id || origIdx}
                     msg={msg}
                     isLast={isLast}
-                    fullBody={thread.body}
                     subject={subject}
-                    threadLen={history.length}
-                    expanded={!!expanded[i]}
-                    onToggle={() => setExpanded(prev => ({ ...prev, [i]: !prev[i] }))}
+                    threadLen={messages.length}
+                    expanded={!!expanded[origIdx]}
+                    onToggle={() => setExpanded(prev => ({ ...prev, [origIdx]: !prev[origIdx] }))}
                   />
                 );
               })}
