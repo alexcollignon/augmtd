@@ -17,10 +17,16 @@ type Followups = { teaser: string; items: { id?: string; who: string; status: st
 type FyiDigest = { groups: { label: string; summary: string; kind: 'person' | 'newsletter' }[]; tailGroups: number; tailItems: number };
 type MustRespond = { teaser: string; items: { who: string; ask: string; angle: string; itemId: string; draft?: string | null; subject?: string; snippet?: string; receivedAt?: string }[] };
 type KeepAnEyeOn = { items: { who: string; why: string; itemId: string }[] };
-// The prose brief: ordered paragraphs of parts. A part is a plain text run OR a grounded mention of a
-// real item ({ ref: itemId, text: display, kind }). `send` = a reply (expand to draft), `nudge` = a
-// commitment/waiting thread (expand to nudge), `open` = awareness (link out to inbox).
-type NarrativePart = { text: string } | { ref: string; text: string; kind: 'send' | 'nudge' | 'open' };
+// The prose brief: ordered paragraphs of parts. A part is a plain text run, a grounded mention of a
+// SINGLE real item ({ ref: itemId, text, kind }), OR a grounded mention of a whole CATEGORY
+// ({ kind: 'group', category, text }). `send` = a reply (expand to draft), `nudge` = a commitment/
+// waiting thread (expand to nudge), `open` = awareness (link out). `group` expands inline to the FULL
+// enriched avatar'd list for that category (the "complete coverage" detail layer).
+type NarrativeCategory = 'replies' | 'waiting' | 'awareness';
+type NarrativePart =
+  | { text: string }
+  | { ref: string; text: string; kind: 'send' | 'nudge' | 'open' }
+  | { kind: 'group'; category: NarrativeCategory; text: string };
 type Narrative = NarrativePart[][];
 type Brief = {
   firstName: string | null;
@@ -824,42 +830,111 @@ function Mention({ part, expanded, onToggle }: { part: Extract<NarrativePart, { 
   );
 }
 
+// A GROUP mention — grounds a whole category ("six replies", "two threads waiting", "keep an eye on").
+// A dashed-underline count affordance; clicking expands the FULL enriched list for that category
+// beneath the paragraph. A small chevron rotates to signal expandability, so it reads differently from
+// a single-item mention (no Send/Nudge verb — it opens a list, it doesn't act on one item).
+function GroupMention({ part, expanded, onToggle }: { part: Extract<NarrativePart, { kind: 'group' }>; expanded: boolean; onToggle: () => void }) {
+  return (
+    <button onClick={onToggle}
+      className={`font-medium underline decoration-dotted decoration-1 underline-offset-2 transition-colors ${expanded ? 'text-indigo-700 decoration-indigo-400' : 'text-indigo-600 decoration-indigo-300 hover:text-indigo-700'}`}>
+      {part.text}
+      <ChevronRightIcon className={`inline w-3 h-3 ml-0.5 -mt-px align-baseline text-indigo-400 transition-transform duration-200 ${expanded ? 'rotate-90' : ''}`} />
+    </button>
+  );
+}
+
+// The expanded panel for a GROUP — the FULL enriched, avatar'd list for a category, reusing the exact
+// same row components (and endpoints) as the dashboard lanes so nothing is rebuilt:
+//   replies   → DigestList (DigestReply rows: avatar + sender·subject + snippet + Send/✓/✕)
+//   waiting   → FollowUpItem rows (Draft nudge + Send + ✓/✕)
+//   awareness → KeepAnEyeOnCard rows (avatar + who + why, link out)
+// This is the "complete coverage" detail layer: the prose names the count, the group expands the list.
+function GroupPanel({ category, replies, follows, awareness, onActed }: {
+  category: NarrativeCategory;
+  replies: DigestItem[];
+  follows: { id?: string; who: string; status: string; nextMove: string }[];
+  awareness: { who: string; why: string; itemId: string }[];
+  onActed: (id: string) => void;
+}) {
+  if (category === 'replies') {
+    if (!replies.length) return null;
+    return (
+      <div className="mt-3 rounded-2xl border border-neutral-200 bg-neutral-50/60 px-4 py-1">
+        <DigestList items={replies} onDismiss={onActed} />
+      </div>
+    );
+  }
+  if (category === 'waiting') {
+    if (!follows.length) return null;
+    return (
+      <div className="mt-3 rounded-2xl border border-neutral-200 bg-neutral-50/60 p-4">
+        <ol className="space-y-3.5">
+          {follows.map((f, i) => <FollowUpItem key={f.id || i} f={f} index={i} />)}
+        </ol>
+      </div>
+    );
+  }
+  // awareness
+  if (!awareness.length) return null;
+  return <div className="mt-3"><KeepAnEyeOnCard items={awareness} /></div>;
+}
+
 // The whole prose brief. Renders paragraphs of flowing text; each mention is an inline affordance.
-// A single `expanded` ref is open at a time; its panel renders beneath the paragraph it lives in.
-// Lookups (send → reply data, nudge → follow-up data) join refs back to the full structured items so
-// the panel has subject/snippet/draft/status. onActed decrements the live count when a ref is resolved.
-function NarrativeBrief({ narrative, replies, follows, onActed }: {
+// A single expansion key is open at a time (a `ref:<id>` for a single item, or a `group:<category>`
+// for a set); its panel renders beneath the paragraph it lives in. Single-item lookups join refs back
+// to the full structured items (send → reply, nudge → follow-up); group lookups pass the WHOLE category
+// list to GroupPanel (the enriched avatar'd rows). onActed decrements the live count when acted on.
+function NarrativeBrief({ narrative, replies, follows, groupData, onActed }: {
   narrative: Narrative;
   replies: Map<string, MustRespond['items'][number]>;
   follows: Map<string, { who: string; status?: string }>;
+  groupData: {
+    replies: DigestItem[];
+    follows: { id?: string; who: string; status: string; nextMove: string }[];
+    awareness: { who: string; why: string; itemId: string }[];
+  };
   onActed: (ref: string) => void;
 }) {
+  // One expansion open at a time, keyed to avoid ref/category collisions.
   const [expanded, setExpanded] = useState<string | null>(null);
+  const keyOf = (part: NarrativePart): string | null =>
+    'ref' in part ? `ref:${part.ref}` : 'kind' in part && part.kind === 'group' ? `group:${part.category}` : null;
   return (
     <div className="space-y-5">
       {narrative.map((para, pi) => {
         // Which mention (if any) in THIS paragraph is expanded → render its panel right after the text.
-        const openPart = para.find((p) => 'ref' in p && p.ref === expanded) as Extract<NarrativePart, { ref: string }> | undefined;
+        const openPart = para.find((p) => keyOf(p) && keyOf(p) === expanded);
         return (
           <div key={pi} className="group">
             <p className="text-[17px] leading-[1.75] text-neutral-700 tracking-[-0.005em]">
-              {para.map((part, i) =>
-                'ref' in part ? (
-                  <Mention key={i} part={part} expanded={expanded === part.ref}
-                    onToggle={() => setExpanded(expanded === part.ref ? null : part.ref)} />
-                ) : (
-                  <span key={i}>{part.text}</span>
-                ),
-              )}
+              {para.map((part, i) => {
+                if ('kind' in part && part.kind === 'group') {
+                  const k = `group:${part.category}`;
+                  return <GroupMention key={i} part={part} expanded={expanded === k}
+                    onToggle={() => setExpanded(expanded === k ? null : k)} />;
+                }
+                if ('ref' in part) {
+                  const k = `ref:${part.ref}`;
+                  return <Mention key={i} part={part} expanded={expanded === k}
+                    onToggle={() => setExpanded(expanded === k ? null : k)} />;
+                }
+                return <span key={i}>{part.text}</span>;
+              })}
             </p>
-            {openPart && openPart.kind === 'send' && replies.get(openPart.ref) && (
+            {openPart && 'ref' in openPart && openPart.kind === 'send' && replies.get(openPart.ref) && (
               <ReplyPanel m={replies.get(openPart.ref)!}
                 onSent={() => { setExpanded(null); onActed(openPart.ref); }}
                 onDismiss={() => { setExpanded(null); onActed(openPart.ref); }} />
             )}
-            {openPart && openPart.kind === 'nudge' && follows.get(openPart.ref) && (
+            {openPart && 'ref' in openPart && openPart.kind === 'nudge' && follows.get(openPart.ref) && (
               <NudgePanel id={openPart.ref} who={follows.get(openPart.ref)!.who} status={follows.get(openPart.ref)!.status}
                 onSent={() => { setExpanded(null); onActed(openPart.ref); }} />
+            )}
+            {openPart && 'kind' in openPart && openPart.kind === 'group' && (
+              <GroupPanel category={openPart.category}
+                replies={groupData.replies} follows={groupData.follows} awareness={groupData.awareness}
+                onActed={onActed} />
             )}
           </div>
         );
@@ -929,17 +1004,34 @@ export function HomeView() {
   const followMap = new Map<string, { who: string; status?: string }>();
   for (const f of b?.followups?.items ?? []) if (f.id) followMap.set(f.id, { who: f.who, status: f.status });
   for (const w of b?.waitingOn ?? []) if (w.id && !followMap.has(w.id)) followMap.set(w.id, { who: w.counterparty || 'Someone', status: `Waiting ${w.ageDays}d — nudge when it stalls` });
-  // Keep the narrative live with this session's actions: hide a mention's ref (→ plain text) once its
-  // item is acted on, and drop paragraphs that become entirely empty.
+
+  // ── GROUP DATA — the FULL enriched list per category, so a `group` mention expands to the complete,
+  // avatar'd, scannable detail (the same rows the dashboard lanes render). Replies = the live
+  // must-respond set (session-dismissals already stripped via mrLive). Waiting = the follow-ups the
+  // synthesis produced (else the raw waiting-on threads, mapped to the same FollowUpItem shape).
+  // Awareness = keep-an-eye-on. Each list drives the same endpoints — nothing rebuilt.
+  const groupData = {
+    replies: mrLive as DigestItem[],
+    follows: (b?.followups?.items?.length
+      ? b.followups.items
+      : (b?.waitingOn ?? []).map((w) => ({ id: w.id, who: w.counterparty || 'Someone', status: `Waiting ${w.ageDays}d`, nextMove: 'Nudge when it stalls' }))
+    ).filter((f) => !f.id || !dismissed.has(f.id)),
+    awareness: (b?.keepAnEyeOn?.items ?? []).filter((k) => !dismissed.has(k.itemId)),
+  };
+  // A plain text run — the only part with a mergeable `text` and neither `ref` nor `group`.
+  const isPlain = (p: NarrativePart): p is { text: string } => !('ref' in p) && !('kind' in p && p.kind === 'group');
+  // Keep the narrative live with this session's actions: hide a single mention's ref (→ plain text)
+  // once its item is acted on, and drop paragraphs that become entirely empty. Group parts survive —
+  // their rows self-filter on action inside GroupPanel — and are never merged into text.
   const narrativeLive: Narrative | null = b?.narrative
     ? b.narrative
         .map((para) => para.map((p) => ('ref' in p && dismissed.has(p.ref) ? { text: p.text } : p)))
         .map((para) => {
           const merged: NarrativePart[] = [];
-          for (const p of para) { const last = merged[merged.length - 1]; if (!('ref' in p) && last && !('ref' in last)) last.text += p.text; else merged.push({ ...p }); }
+          for (const p of para) { const last = merged[merged.length - 1]; if (isPlain(p) && last && isPlain(last)) last.text += p.text; else merged.push({ ...p }); }
           return merged;
         })
-        .filter((para) => para.some((p) => ('ref' in p ? true : p.text.trim().length > 0)))
+        .filter((para) => para.some((p) => (isPlain(p) ? p.text.trim().length > 0 : true)))
     : null;
   const hasNarrative = !!(narrativeLive && narrativeLive.length);
 
@@ -1017,7 +1109,7 @@ export function HomeView() {
           <>
             <RiseIn delay={60}>
               <div className="mt-9">
-                <NarrativeBrief narrative={narrativeLive!} replies={replyMap} follows={followMap} onActed={onDismiss} />
+                <NarrativeBrief narrative={narrativeLive!} replies={replyMap} follows={followMap} groupData={groupData} onActed={onDismiss} />
               </div>
             </RiseIn>
 

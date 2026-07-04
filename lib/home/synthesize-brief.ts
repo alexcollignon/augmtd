@@ -112,16 +112,22 @@ export type KeepAnEye = { who: string; why: string; itemId: string };
 export type KeepAnEyeOn = { items: KeepAnEye[] };
 
 // ── The NARRATIVE brief — the written report the Home renders as flowing prose ──
-// A paragraph is an ordered array of "parts". A part is EITHER a plain run of text, OR a grounded
-// mention of a real item that the UI turns into an interactive inline span (link + a small inline
-// action + expand-to-draft). The model WRITES the prose but may only `ref` an itemId it was given —
-// grounding is preserved: it can't invent an item or an action. `kind` cues the affordance:
+// A paragraph is an ordered array of "parts". A part is EITHER a plain run of text, a grounded
+// mention of a SINGLE real item, OR a grounded mention of a whole CATEGORY (a set). The model WRITES
+// the prose but may only `ref` an itemId it was given, or `category` a real tier — grounding is
+// preserved: it can't invent an item, a set, or an action. `kind` cues the affordance:
 //   send  → a reply that has / needs a draft (expands to the editable draft + Send/Copy/Open-thread)
 //   nudge → a commitment / waiting thread (expands to the nudge draft)
 //   open  → just expandable / a link out (no draft)
+//   group → a SET (e.g. "six replies", "two threads waiting", "keep an eye on") grounded by CATEGORY,
+//           not an itemId. The UI expands it inline to the FULL enriched list for that category (the
+//           avatar'd rows). This is the "complete coverage" layer: the prose names + counts every
+//           category, and the group expands to the scannable detail.
+export type NarrativeCategory = 'replies' | 'waiting' | 'awareness';
 export type NarrativePart =
   | { text: string }
-  | { ref: string; text: string; kind: 'send' | 'nudge' | 'open' };
+  | { ref: string; text: string; kind: 'send' | 'nudge' | 'open' }
+  | { kind: 'group'; category: NarrativeCategory; text: string };
 export type NarrativeParagraph = NarrativePart[];
 export type Narrative = NarrativeParagraph[];
 
@@ -271,8 +277,10 @@ few paragraphs that WEAVE the real items into sentences, most-pressing first, co
 This is NOT a list of labels — the tiers above (must-respond / ball-in-court / awareness / fyi) DISSOLVE
 into the writing. Do not write headers or bullet lists; write paragraphs.
 
-Every time you name a real item in the prose, emit it as a MENTION part (not plain text) so it becomes
-a clickable inline affordance, using the item's tag:
+There are TWO kinds of mention part, and you use BOTH:
+
+(1) A SINGLE-ITEM mention — when you name one specific item in the prose, emit it (not plain text) so
+it becomes a clickable inline affordance, using the item's tag:
 - A reply ${me} owes → a mention with the [Rn] tag and kind "send" (drafts exist/can be drafted).
 - A commitment/thread ${me} is waiting on or should nudge → a mention with the [Wn] or [Cn] tag and
   kind "nudge".
@@ -280,23 +288,44 @@ a clickable inline affordance, using the item's tag:
 The mention's "text" is the DISPLAY label ${me} reads (e.g. "TECNICLIMA on proposal 23679",
 "Thorsten — Executive Briefing", "the refund", "Jean-Marie") — natural, short, woven into the sentence.
 The "ref" is the tag ([R0], [W1], [C2], [K0] …). GROUNDING IS SACRED: only ref tags that appear above;
-never invent an item, a person, a number, or an action. Plain connective words ("Your most pressing
-reply is", ", I've drafted it.", "all drafts ready.") are text parts around the mentions.
+never invent an item, a person, a number, or an action.
 
-Lead with the single most pressing reply, then fold the remaining replies into one flowing sentence
-(each its own mention). Then the drifting / waiting things ([Wn]/[Cn]) as a natural paragraph
-("On the refund: you asked … so that's their court now — you may want to nudge them."). Mention any
-[Kn] awareness item that genuinely matters in a light closing clause. Close with ONE quiet line about
-what you filed/handled ("Everything else — newsletters, receipts — I've filed."). Aim for 3–5 short
-paragraphs. Reference EVERY [Rn] you did not drop (each as a mention) so nothing the user owes is lost
-from the prose. Keep it tight — a brief, not an essay.
+(2) A GROUP mention — when you refer to a WHOLE SET rather than one item ("six replies waiting", "two
+threads waiting on Jean-Marie", "keep an eye on"), emit a GROUP part: {"group": "replies"|"waiting"|
+"awareness", "text": "<the words you wrote, e.g. six replies>"}. It has NO ref/kind — it is grounded by
+CATEGORY, and the UI turns it into an expandable affordance that reveals the FULL enriched list for that
+category (every avatar'd row) beneath the paragraph. Map the three categories to the tiers:
+- "replies"  → the full must-respond set ([Rn] you kept)
+- "waiting"  → the full ball-in-court / waiting set ([Wn]/[Cn] you placed as waiting)
+- "awareness" → the full keep-an-eye-on set ([Kn] you surfaced)
+Only emit a group whose category actually has items. The "text" is the natural phrase in your sentence.
+
+COMPLETE COVERAGE — this is a HARD requirement. The prose must TOUCH EVERY non-empty category and give
+its full SHAPE with a COUNT, even if you only name the top one or two items inline. The user must never
+be surprised that something existed. Concretely:
+- Replies: state the total ("Six replies waiting — ") as a GROUP mention on "six replies", then name the
+  top one or two as single [Rn] "send" mentions ("I've teed up TECNICLIMA and Thorsten"). The group
+  carries the rest; do NOT list all six inline.
+- Waiting / ball-in-court: state the count ("two threads still waiting on Jean-Marie") — a GROUP mention
+  on that phrase if there are several, or a single [Wn]/[Cn] "nudge" mention when it's just one
+  ("the refund's in Youssef's court now").
+- Awareness (keep an eye on): if any, name it with a GROUP mention ("one to keep an eye on from Rene") or
+  a single [Kn] "open" mention when it's just one.
+Never silently drop a category that has items — if it exists, its count is in the prose.
+
+Lead with the most pressing single reply (a [Rn] "send" mention), give the reply COUNT as a group, then
+weave the waiting things and any awareness, most-pressing first. Close with ONE quiet line about what you
+filed/handled ("Everything else — newsletters, receipts — I've filed."). Aim for 3–5 short, tight
+paragraphs — a brief, not an essay. Reference EVERY category that has items (via a group and/or its top
+single mentions); reference EVERY [Rn] you did not drop at least through its group so nothing the user
+owes is lost from the prose.
 
 Return ONLY JSON in this exact shape:
 {
   "narrative": [
-    [ {"text": "Saturday — good afternoon, ${me}. It's busy — "}, {"ref": "R0", "text": "TECNICLIMA on the proposal", "kind": "send"}, {"text": " is your most pressing reply; I've drafted it."} ],
-    [ {"text": "Also queued: "}, {"ref": "R1", "text": "Thorsten — Executive Briefing", "kind": "send"}, {"text": " and "}, {"ref": "R2", "text": "Caroline on the meeting", "kind": "send"}, {"text": ", drafts ready."} ],
-    [ {"text": "On "}, {"ref": "C0", "text": "the refund", "kind": "nudge"}, {"text": ": you handed it off, so that's their court — you may want to nudge."} ],
+    [ {"text": "Saturday — good afternoon, ${me}. It's busy — "}, {"group": "replies", "text": "six replies"}, {"text": " waiting. Most pressing is "}, {"ref": "R0", "text": "TECNICLIMA on the proposal", "kind": "send"}, {"text": "; I've drafted it, and teed up "}, {"ref": "R1", "text": "Thorsten's briefing", "kind": "send"}, {"text": " too."} ],
+    [ {"text": "You've also got "}, {"group": "waiting", "text": "two threads still waiting"}, {"text": " — "}, {"ref": "C0", "text": "the refund", "kind": "nudge"}, {"text": " is in Youssef's court now; a nudge wouldn't hurt."} ],
+    [ {"text": "And "}, {"group": "awareness", "text": "one to keep an eye on"}, {"text": " from Rene — nothing to do, just so you know."} ],
     [ {"text": "Everything else — newsletters, receipts — I've filed."} ]
   ],
   "tldr": {
@@ -331,7 +360,7 @@ If a section has no items, return it with an empty items/groups array (or null f
       messages: [{ role: 'user', content: prompt }],
     });
     const parsed = parseModelJSON<{
-      narrative?: Array<Array<{ text?: string; ref?: string; kind?: string }>>;
+      narrative?: Array<Array<{ text?: string; ref?: string; kind?: string; group?: string; category?: string }>>;
       tldr?: { teaser?: string; bullets?: string[]; dontMiss?: string | null };
       mustRespond?: { teaser?: string; items?: { r?: number; who?: string; ask?: string; angle?: string }[] };
       droppedReplies?: number[];
@@ -473,6 +502,20 @@ If a section has no items, return it with an empty items/groups array (or null f
       }
       return null;
     };
+    // Which CATEGORIES have real items — a `group` part only survives if its category is non-empty
+    // (so the UI always has rows to expand). `replies` = the kept must-respond set; `waiting` = the
+    // ball-in-court follow-ups (the waiting-tier commitments the route materializes from followItems +
+    // ball_in_court placements); `awareness` = keep-an-eye-on. If the model emits a group for an empty
+    // category (or an unknown one), it degrades to a plain text run — never a dead affordance.
+    const ballInCourtCount = Object.values(commitmentPlacements).filter((p) => p === 'ball_in_court').length;
+    const categoryHasItems: Record<NarrativeCategory, boolean> = {
+      replies: mustItems.length > 0,
+      waiting: followItems.length > 0 || ballInCourtCount > 0,
+      awareness: eyeItems.length > 0,
+    };
+    const isCategory = (c: unknown): c is NarrativeCategory =>
+      c === 'replies' || c === 'waiting' || c === 'awareness';
+
     const rawNarrative = Array.isArray(parsed.narrative) ? parsed.narrative : [];
     const narrativeParas: Narrative = rawNarrative
       .map((para) => {
@@ -481,7 +524,17 @@ If a section has no items, return it with an empty items/groups array (or null f
         for (const raw of para) {
           if (!raw || typeof raw !== 'object') continue;
           const text = typeof raw.text === 'string' ? raw.text : '';
-          if (raw.ref) {
+          // GROUP part — grounded by category, not an itemId. Accept either `group` or `category` as the
+          // key the model used; keep only if the category is real AND has items, else degrade to text.
+          const groupCat = raw.group ?? (raw.kind === 'group' ? raw.category : undefined);
+          if (groupCat !== undefined) {
+            const display = text || String(groupCat);
+            if (isCategory(groupCat) && categoryHasItems[groupCat]) {
+              parts.push({ kind: 'group', category: groupCat, text: display });
+            } else if (display.trim()) {
+              parts.push({ text: display }); // empty/unknown category → plain run
+            }
+          } else if (raw.ref) {
             const resolved = resolveRef(raw.ref);
             const display = text || String(raw.ref);
             if (resolved) parts.push({ ref: resolved.id, text: display, kind: resolved.kind });
