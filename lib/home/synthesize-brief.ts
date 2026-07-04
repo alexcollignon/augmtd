@@ -111,25 +111,11 @@ export type MustRespond = { teaser: string; items: Reply[] };
 export type KeepAnEye = { who: string; why: string; itemId: string };
 export type KeepAnEyeOn = { items: KeepAnEye[] };
 
-// ── The NARRATIVE brief — the written report the Home renders as flowing prose ──
-// A paragraph is an ordered array of "parts". A part is EITHER a plain run of text, a grounded
-// mention of a SINGLE real item, OR a grounded mention of a whole CATEGORY (a set). The model WRITES
-// the prose but may only `ref` an itemId it was given, or `category` a real tier — grounding is
-// preserved: it can't invent an item, a set, or an action. `kind` cues the affordance:
-//   send  → a reply that has / needs a draft (expands to the editable draft + Send/Copy/Open-thread)
-//   nudge → a commitment / waiting thread (expands to the nudge draft)
-//   open  → just expandable / a link out (no draft)
-//   group → a SET (e.g. "six replies", "two threads waiting", "keep an eye on") grounded by CATEGORY,
-//           not an itemId. The UI expands it inline to the FULL enriched list for that category (the
-//           avatar'd rows). This is the "complete coverage" layer: the prose names + counts every
-//           category, and the group expands to the scannable detail.
-export type NarrativeCategory = 'replies' | 'waiting' | 'awareness';
-export type NarrativePart =
-  | { text: string }
-  | { ref: string; text: string; kind: 'send' | 'nudge' | 'open' }
-  | { kind: 'group'; category: NarrativeCategory; text: string };
-export type NarrativeParagraph = NarrativePart[];
-export type Narrative = NarrativeParagraph[];
+// ── The LEDE — a short prose intro (2–3 sentences) that frames the day and the single most-pressing
+// thing. This is the WARMTH / JUDGMENT / OVERVIEW layer. It is NOT the whole brief — the actual items
+// render VISIBLY beneath it (enriched lists). The lede's job is framing, not listing: read it for the
+// voice + the shape of the day, then see your real work below. Plain text, first-person PA voice.
+export type Lede = string;
 
 export interface SynthesisResult {
   tldr: Tldr | null;
@@ -138,10 +124,10 @@ export interface SynthesisResult {
   fyiDigest: FyiDigest | null;
   /** the middle awareness tier — real things around the user worth SEEING (no action). Selective. */
   keepAnEyeOn: KeepAnEyeOn | null;
-  /** the PROSE-FIRST written brief — ordered paragraphs of parts (plain text + grounded item
-      mentions). The UI renders this as a flowing page with inline, executable affordances. Null when
-      the model didn't produce it (older cache / miss) → the UI falls back to the structured render. */
-  narrative: Narrative | null;
+  /** the LEDE — a short (2–3 sentence) prose intro that frames the day. Rendered above the visible
+      enriched item lists. Null when the model didn't produce one → the UI degrades gracefully (just
+      shows the lists). Plain text, no grounded refs — the items themselves carry the actions. */
+  lede: Lede | null;
   /** itemIds the synthesis judged superseded/stale — the route drops them from priorities too, so
       the prose and the cards can't contradict each other. */
   droppedItemIds: string[];
@@ -270,64 +256,28 @@ ${eyeStr}
 FYI EMAILS (low-priority awareness, grouped by sender — one digest line each):
 ${fyiStr}
 
-THE NARRATIVE — the MAIN output. Write today's brief as a short WRITTEN REPORT to ${me}, in flowing
-first-person PA prose — the way you'd actually brief them if you spoke: a warm opening that reads the
-day ("It's busy — six replies waiting and a couple of things drifting. Where things stand:"), then a
-few paragraphs that WEAVE the real items into sentences, most-pressing first, connective and human.
-This is NOT a list of labels — the tiers above (must-respond / ball-in-court / awareness / fyi) DISSOLVE
-into the writing. Do not write headers or bullet lists; write paragraphs.
+THE LEDE — a SHORT prose intro (2–3 sentences), in flowing first-person PA voice — the way you'd
+actually open if you spoke to ${me}. Its job is to FRAME the day and name the single most-pressing
+thing — NOT to list everything. The real items render VISIBLY as enriched lists BELOW this lede, so
+you do NOT need to name every reply, every thread, or every category. Keep it to 2–3 sentences.
 
-There are TWO kinds of mention part, and you use BOTH:
+- Read the shape of the day and the ONE most-pressing thing (usually the top reply): e.g. "It's a busy
+  Saturday — six replies waiting, the most pressing to TECNICLIMA on the proposal (drafted)."
+- You MAY lightly touch one or two other notable things if it reads naturally ("The refund's in
+  Youssef's court now, and Jean-Marie's gone quiet on two threads.") — but this is FRAMING, not a
+  roster. Do NOT enumerate every item; the lists below show them.
+- Plain sentences only. NO headers, NO bullets, NO clickable tags/refs — just warm, human prose. Use
+  ${me}'s first name naturally if it fits. If there is genuinely almost nothing, a single calm
+  all-clear sentence is right ("Quiet morning, ${me} — nothing pressing; I've filed the rest.").
 
-(1) A SINGLE-ITEM mention — when you name one specific item in the prose, emit it (not plain text) so
-it becomes a clickable inline affordance, using the item's tag:
-- A reply ${me} owes → a mention with the [Rn] tag and kind "send" (drafts exist/can be drafted).
-- A commitment/thread ${me} is waiting on or should nudge → a mention with the [Wn] or [Cn] tag and
-  kind "nudge".
-- Something ${me} should just SEE (a [Kn] awareness item) → a mention with kind "open".
-The mention's "text" is the DISPLAY label ${me} reads (e.g. "TECNICLIMA on proposal 23679",
-"Thorsten — Executive Briefing", "the refund", "Jean-Marie") — natural, short, woven into the sentence.
-The "ref" is the tag ([R0], [W1], [C2], [K0] …). GROUNDING IS SACRED: only ref tags that appear above;
-never invent an item, a person, a number, or an action.
-
-(2) A GROUP mention — when you refer to a WHOLE SET rather than one item ("six replies waiting", "two
-threads waiting on Jean-Marie", "keep an eye on"), emit a GROUP part: {"group": "replies"|"waiting"|
-"awareness", "text": "<the words you wrote, e.g. six replies>"}. It has NO ref/kind — it is grounded by
-CATEGORY, and the UI turns it into an expandable affordance that reveals the FULL enriched list for that
-category (every avatar'd row) beneath the paragraph. Map the three categories to the tiers:
-- "replies"  → the full must-respond set ([Rn] you kept)
-- "waiting"  → the full ball-in-court / waiting set ([Wn]/[Cn] you placed as waiting)
-- "awareness" → the full keep-an-eye-on set ([Kn] you surfaced)
-Only emit a group whose category actually has items. The "text" is the natural phrase in your sentence.
-
-COMPLETE COVERAGE — this is a HARD requirement. The prose must TOUCH EVERY non-empty category and give
-its full SHAPE with a COUNT, even if you only name the top one or two items inline. The user must never
-be surprised that something existed. Concretely:
-- Replies: state the total ("Six replies waiting — ") as a GROUP mention on "six replies", then name the
-  top one or two as single [Rn] "send" mentions ("I've teed up TECNICLIMA and Thorsten"). The group
-  carries the rest; do NOT list all six inline.
-- Waiting / ball-in-court: state the count ("two threads still waiting on Jean-Marie") — a GROUP mention
-  on that phrase if there are several, or a single [Wn]/[Cn] "nudge" mention when it's just one
-  ("the refund's in Youssef's court now").
-- Awareness (keep an eye on): if any, name it with a GROUP mention ("one to keep an eye on from Rene") or
-  a single [Kn] "open" mention when it's just one.
-Never silently drop a category that has items — if it exists, its count is in the prose.
-
-Lead with the most pressing single reply (a [Rn] "send" mention), give the reply COUNT as a group, then
-weave the waiting things and any awareness, most-pressing first. Close with ONE quiet line about what you
-filed/handled ("Everything else — newsletters, receipts — I've filed."). Aim for 3–5 short, tight
-paragraphs — a brief, not an essay. Reference EVERY category that has items (via a group and/or its top
-single mentions); reference EVERY [Rn] you did not drop at least through its group so nothing the user
-owes is lost from the prose.
+Return the lede as a plain string in "lede". Still fill "droppedReplies", "mustRespond",
+"commitmentPlacements", "keepAnEyeOn", "followups", and "fyiDigest" as specified below — those
+STRUCTURED outputs drive the visible lists the user actually acts on, so they must stay complete and
+grounded (echo the [Rn]/[Wn]/[Cn]/[Kn]/[Fn] tags exactly as before).
 
 Return ONLY JSON in this exact shape:
 {
-  "narrative": [
-    [ {"text": "Saturday — good afternoon, ${me}. It's busy — "}, {"group": "replies", "text": "six replies"}, {"text": " waiting. Most pressing is "}, {"ref": "R0", "text": "TECNICLIMA on the proposal", "kind": "send"}, {"text": "; I've drafted it, and teed up "}, {"ref": "R1", "text": "Thorsten's briefing", "kind": "send"}, {"text": " too."} ],
-    [ {"text": "You've also got "}, {"group": "waiting", "text": "two threads still waiting"}, {"text": " — "}, {"ref": "C0", "text": "the refund", "kind": "nudge"}, {"text": " is in Youssef's court now; a nudge wouldn't hurt."} ],
-    [ {"text": "And "}, {"group": "awareness", "text": "one to keep an eye on"}, {"text": " from Rene — nothing to do, just so you know."} ],
-    [ {"text": "Everything else — newsletters, receipts — I've filed."} ]
-  ],
+  "lede": "It's a busy Saturday, ${me} — six replies waiting, the most pressing to TECNICLIMA on the proposal (I've drafted it). The refund's in Youssef's court now, and Jean-Marie's gone quiet on a couple of threads. Everything else I've filed.",
   "tldr": {
     "teaser": "one short sentence summarising the day",
     "bullets": ["3-4 short scannable bullets — meetings, todos/commitments, replies; lead with what matters most"],
@@ -352,7 +302,7 @@ Return ONLY JSON in this exact shape:
   }
 }
 
-If a section has no items, return it with an empty items/groups array (or null for tldr fields). Keep every "mustRespond" item you did not drop; every "followups" item; AT MOST 2–4 "keepAnEyeOn" items (fewer is better); and one digest line per FYI group. The "narrative" is REQUIRED and is the primary output — always write it (unless there is genuinely nothing at all, in which case return a single warm all-clear paragraph).`;
+If a section has no items, return it with an empty items/groups array (or null for tldr fields). Keep every "mustRespond" item you did not drop; every "followups" item; AT MOST 2–4 "keepAnEyeOn" items (fewer is better); and one digest line per FYI group. The "lede" is REQUIRED — always write a short 2–3 sentence intro (a single warm all-clear sentence when there is genuinely nothing).`;
 
   try {
     const res = await aiCreate(client, {
@@ -360,7 +310,7 @@ If a section has no items, return it with an empty items/groups array (or null f
       messages: [{ role: 'user', content: prompt }],
     });
     const parsed = parseModelJSON<{
-      narrative?: Array<Array<{ text?: string; ref?: string; kind?: string; group?: string; category?: string }>>;
+      lede?: string;
       tldr?: { teaser?: string; bullets?: string[]; dontMiss?: string | null };
       mustRespond?: { teaser?: string; items?: { r?: number; who?: string; ask?: string; angle?: string }[] };
       droppedReplies?: number[];
@@ -466,90 +416,14 @@ If a section has no items, return it with an empty items/groups array (or null f
       ? { groups: fyiGroups, tailGroups: 0, tailItems: 0 }
       : null;
 
-    // ── NARRATIVE — map each mention's tag ([Rn]/[Wn]/[Cn]/[Kn]) back to a REAL id, so an inline
-    // span is always grounded + executable. GROUNDING: a mention whose tag we can't resolve (unknown
-    // tag, dropped reply, or an id the model invented) degrades to a PLAIN text run — the prose reads
-    // fine, we just never render a fake action. The itemIds we expose match what the structured tiers
-    // return: [Rn] → the must-respond itemId (a `send` reply), [Kn] → the keep-an-eye itemId (`open`),
-    // [Wn]/[Cn] → a commitment id (a `nudge`). This is the crux: the model writes, we guarantee links.
-    const droppedItemIdSet = new Set(droppedItemIds);
-    const parseTag = (raw: string): { letter: string; n: number } | null => {
-      const m = String(raw).trim().match(/^\[?\s*([RWCK])\s*(\d+)\s*\]?$/i);
-      return m ? { letter: m[1].toUpperCase(), n: parseInt(m[2], 10) } : null;
-    };
-    // Resolve a tag → { id, kind } or null (→ render as plain text). Kind is forced by the tag family
-    // so it always matches the id's action surface, regardless of what the model claimed.
-    const resolveRef = (raw: string): { id: string; kind: 'send' | 'nudge' | 'open' } | null => {
-      const t = parseTag(raw);
-      if (!t) return null;
-      if (t.letter === 'R') {
-        const cand = input.mustRespond[t.n];
-        // A reply the synthesis dropped as superseded is gone from the cards — don't link it either.
-        if (!cand || droppedItemIdSet.has(cand.itemId)) return null;
-        return { id: cand.itemId, kind: 'send' };
-      }
-      if (t.letter === 'K') {
-        const cand = input.keepAnEyeOn[t.n];
-        return cand ? { id: cand.itemId, kind: 'open' } : null;
-      }
-      if (t.letter === 'W') {
-        const cand = input.waiting[t.n];
-        return cand?.id ? { id: cand.id, kind: 'nudge' } : null;
-      }
-      if (t.letter === 'C') {
-        const cand = input.commitmentCandidates[t.n];
-        return cand?.id ? { id: cand.id, kind: 'nudge' } : null;
-      }
-      return null;
-    };
-    // Which CATEGORIES have real items — a `group` part only survives if its category is non-empty
-    // (so the UI always has rows to expand). `replies` = the kept must-respond set; `waiting` = the
-    // ball-in-court follow-ups (the waiting-tier commitments the route materializes from followItems +
-    // ball_in_court placements); `awareness` = keep-an-eye-on. If the model emits a group for an empty
-    // category (or an unknown one), it degrades to a plain text run — never a dead affordance.
-    const ballInCourtCount = Object.values(commitmentPlacements).filter((p) => p === 'ball_in_court').length;
-    const categoryHasItems: Record<NarrativeCategory, boolean> = {
-      replies: mustItems.length > 0,
-      waiting: followItems.length > 0 || ballInCourtCount > 0,
-      awareness: eyeItems.length > 0,
-    };
-    const isCategory = (c: unknown): c is NarrativeCategory =>
-      c === 'replies' || c === 'waiting' || c === 'awareness';
+    // ── LEDE — a short prose intro. Plain text (no grounded refs — the visible enriched lists below
+    // carry the real, executable items). We just take the model's string, trim it, and gate it to a
+    // sane length so a runaway generation can't dump the whole brief here. Empty → null (UI degrades).
+    const rawLede = typeof parsed.lede === 'string' ? parsed.lede.trim() : '';
+    const lede: Lede | null = rawLede ? rawLede.slice(0, 900) : null;
 
-    const rawNarrative = Array.isArray(parsed.narrative) ? parsed.narrative : [];
-    const narrativeParas: Narrative = rawNarrative
-      .map((para) => {
-        if (!Array.isArray(para)) return [] as NarrativeParagraph;
-        const parts: NarrativeParagraph = [];
-        for (const raw of para) {
-          if (!raw || typeof raw !== 'object') continue;
-          const text = typeof raw.text === 'string' ? raw.text : '';
-          // GROUP part — grounded by category, not an itemId. Accept either `group` or `category` as the
-          // key the model used; keep only if the category is real AND has items, else degrade to text.
-          const groupCat = raw.group ?? (raw.kind === 'group' ? raw.category : undefined);
-          if (groupCat !== undefined) {
-            const display = text || String(groupCat);
-            if (isCategory(groupCat) && categoryHasItems[groupCat]) {
-              parts.push({ kind: 'group', category: groupCat, text: display });
-            } else if (display.trim()) {
-              parts.push({ text: display }); // empty/unknown category → plain run
-            }
-          } else if (raw.ref) {
-            const resolved = resolveRef(raw.ref);
-            const display = text || String(raw.ref);
-            if (resolved) parts.push({ ref: resolved.id, text: display, kind: resolved.kind });
-            else if (display.trim()) parts.push({ text: display }); // ungrounded → plain run
-          } else if (text) {
-            parts.push({ text });
-          }
-        }
-        return parts;
-      })
-      .filter((para) => para.length > 0);
-    const narrative: Narrative | null = narrativeParas.length ? narrativeParas : null;
-
-    return { tldr, mustRespond, keepAnEyeOn, followups, fyiDigest, droppedItemIds, commitmentPlacements, narrative };
+    return { tldr, mustRespond, keepAnEyeOn, followups, fyiDigest, droppedItemIds, commitmentPlacements, lede };
   } catch {
-    return { tldr: null, mustRespond: null, keepAnEyeOn: null, followups: null, fyiDigest: null, droppedItemIds: [], commitmentPlacements: {}, narrative: null };
+    return { tldr: null, mustRespond: null, keepAnEyeOn: null, followups: null, fyiDigest: null, droppedItemIds: [], commitmentPlacements: {}, lede: null };
   }
 }
