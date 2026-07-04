@@ -166,7 +166,7 @@ function PriorityCard({ p, first, expanded, onToggle, onCleared }: { p: Priority
   };
   if (removed) return null;
   return (
-    <div className={`group relative rounded-2xl border bg-white transition-all duration-300 ease-out hover:shadow-[0_4px_20px_-4px_rgba(0,0,0,0.08)] ${exiting ? 'opacity-0 scale-[0.98]' : 'opacity-100'} ${first ? 'border-indigo-200 ring-1 ring-indigo-100' : 'border-neutral-200/80 hover:border-neutral-300'}`}>
+    <div className={`group relative rounded-xl border bg-white transition-all duration-300 ease-out hover:shadow-[0_4px_20px_-4px_rgba(0,0,0,0.08)] ${exiting ? 'opacity-0 scale-[0.98]' : 'opacity-100'} ${first ? 'border-indigo-200 ring-1 ring-indigo-100' : 'border-neutral-200/70 hover:border-neutral-300'}`}>
       {first && (
         <div className="absolute -top-2 left-4 inline-flex items-center gap-1 rounded-full bg-indigo-600 px-2 py-0.5 shadow-sm">
           <BoltIcon className="w-3 h-3 text-white" />
@@ -251,12 +251,12 @@ function DigestList({ items, onDismiss, emphasizeFirst = false }: { items: Diges
   const visible = showAll ? items : items.slice(0, LIMIT);
   const more = items.length - LIMIT;
   return (
-    <div className="divide-y divide-neutral-100">
+    <div className="space-y-2.5">
       {visible.map((m, i) => (
         <DigestReply key={m.itemId || i} m={m} onDismiss={onDismiss} emphasis={emphasizeFirst && i === 0} />
       ))}
       {!showAll && more > 0 && (
-        <button onClick={() => setShowAll(true)} className="pt-3.5 text-[12.5px] font-medium text-indigo-600 hover:text-indigo-700">Show {more} more</button>
+        <button onClick={() => setShowAll(true)} className="pt-1 text-[12.5px] font-medium text-indigo-600 hover:text-indigo-700">Show {more} more</button>
       )}
     </div>
   );
@@ -313,12 +313,12 @@ function DigestReply({ m, onDismiss, emphasis = false }: { m: DigestItem; onDism
   const subject = m.subject?.trim();
   const when = fmtWhen(m.receivedAt);
   return (
-    <div className={`group ${exitCls(exiting)}`}>
+    <div className={`group rounded-xl border bg-white transition-all duration-300 ease-out hover:shadow-[0_4px_20px_-4px_rgba(0,0,0,0.08)] ${exiting ? 'opacity-0 scale-[0.98]' : 'opacity-100'} ${emphasis ? 'border-indigo-200 ring-1 ring-indigo-100' : 'border-neutral-200/70 hover:border-neutral-300'}`}>
       {/* Collapsed line — the whole header is the toggle (a div, not a button, so the ✓/✕ buttons can
           nest legally); the affordance + ✓/✕ sit inline, quiet. */}
       <div role="button" tabIndex={0} onClick={toggle}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } }}
-        className="w-full flex items-start gap-3 py-3 text-left cursor-pointer">
+        className="w-full flex items-start gap-3 p-4 text-left cursor-pointer">
         <SenderAvatar name={m.who} size={emphasis ? 'md' : 'sm'} />
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline gap-2">
@@ -348,7 +348,7 @@ function DigestReply({ m, onDismiss, emphasis = false }: { m: DigestItem; onDism
 
       {/* Expanded — the real email snippet, the suggested angle, the editable draft, and a link out. */}
       {open && !sent && (
-        <div className="pb-3.5 pl-10 pr-0 -mt-1">
+        <div className="px-4 pb-4 pl-[3.25rem] pr-4 -mt-1">
           {m.snippet && (
             <p className="text-[12.5px] text-neutral-500 leading-relaxed mb-2.5 border-l-2 border-neutral-200 pl-3 line-clamp-3">{m.snippet}</p>
           )}
@@ -1120,22 +1120,21 @@ export function HomeView() {
               <RiseIn delay={60}>
                 <section>
                   <Label count={digestReplies.length + bodyCards.length} icon={BoltIcon}>What needs you</Label>
-                  {digestReplies.length > 0 && (
-                    <div className="mb-6">
-                      {b?.mustRespond?.teaser && <p className="text-[13px] text-neutral-500 leading-relaxed mb-1.5">{b.mustRespond.teaser}</p>}
+                  {b?.mustRespond?.teaser && digestReplies.length > 0 && (
+                    <p className="text-[13px] text-neutral-500 leading-relaxed mb-2.5">{b.mustRespond.teaser}</p>
+                  )}
+                  {/* One consistent set: email reply cards + the other action cards (meeting follow-ups +
+                      email to-dos) — same radius, border, padding rhythm and hover. */}
+                  <div className="space-y-2.5">
+                    {digestReplies.length > 0 && (
                       <DigestList items={digestReplies} onDismiss={onDismiss} emphasizeFirst={!startHere} />
-                    </div>
-                  )}
-                  {/* The other actions (meeting follow-ups + email to-dos) — same working cards. */}
-                  {bodyCards.length > 0 && (
-                    <div className="space-y-3">
-                      {bodyCards.map((p, i) => (
-                        <RiseIn key={p.id} delay={i * 45}>
-                          <PriorityCard p={p} first={false} expanded={expanded === p.id} onToggle={() => setExpanded(expanded === p.id ? null : p.id)} onCleared={onCleared} />
-                        </RiseIn>
-                      ))}
-                    </div>
-                  )}
+                    )}
+                    {bodyCards.map((p, i) => (
+                      <RiseIn key={p.id} delay={i * 45}>
+                        <PriorityCard p={p} first={false} expanded={expanded === p.id} onToggle={() => setExpanded(expanded === p.id ? null : p.id)} onCleared={onCleared} />
+                      </RiseIn>
+                    ))}
+                  </div>
                 </section>
               </RiseIn>
             )}
