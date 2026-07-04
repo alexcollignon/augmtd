@@ -30,6 +30,9 @@ export async function GET() {
   const now = new Date();
   const todayStr = now.toISOString().slice(0, 10);
   const endOfDay = `${todayStr}T23:59:59Z`;
+  // Start-of-today (UTC approximation) — the boundary for "cleared TODAY" counts. Computed fresh
+  // per request so the ring's `cleared` half rises as the day goes on and resets each morning.
+  const startOfDay = `${todayStr}T00:00:00Z`;
   const self = user.email?.toLowerCase();
 
   const since24 = new Date(now.getTime() - DAY).toISOString();
@@ -491,5 +494,28 @@ export async function GET() {
     ? { items: keepAnEyeOn.items.filter((k) => (!k.itemId || pendingItemIds.has(k.itemId) || awarenessRaw.has(k.itemId)) && !mustItemIds.has(k.itemId)) }
     : keepAnEyeOn;
 
-  return NextResponse.json({ firstName, briefLine, tldr, followups, fyiDigest, mustRespond: mustRespondOut, keepAnEyeOn: keepAnEyeOnOut, status, priorities: cappedPriorities, commitments, waitingOn, schedule, handled });
+  // ── "Day cleared" progress ring — the LIVE half. `cleared` = things the user handled TODAY.
+  // Computed fresh here (NOT baked into the cached AI blob) via a cheap batch of head-count queries,
+  // so new activity moves the ring on the very next load. `needYou` is the current count of things
+  // still on the user's plate — the same live section data the dashboard already shows (must-respond
+  // replies + non-meeting/needs-you priority cards + on-your-plate commitments). The client re-derives
+  // `needYou` from its own live state and increments `cleared` as the user acts, so the ring rises
+  // instantly without a reload. This route value is the fresh baseline on each load.
+  const [inboxClearedRes, commitClearedRes, repliesSentRes] = await Promise.all([
+    supabase.from('inbox_items').select('id', { count: 'exact', head: true })
+      .eq('user_id', user.id).in('status', ['completed', 'dismissed']).gte('updated_at', startOfDay),
+    supabase.from('commitments').select('id', { count: 'exact', head: true })
+      .eq('user_id', user.id).in('status', ['done', 'dismissed']).gte('updated_at', startOfDay),
+    supabase.from('emails').select('id', { count: 'exact', head: true })
+      .eq('user_id', user.id).eq('is_from_user', true).gte('received_at', startOfDay),
+  ]);
+  const clearedToday = (inboxClearedRes.count ?? 0) + (commitClearedRes.count ?? 0) + (repliesSentRes.count ?? 0);
+  // needYou baseline = live counts already computed above: replies you owe (mustRespondOut) +
+  // non-meeting/needs-you priority cards + on-your-plate commitments still pending.
+  const needYouReplies = (mustRespondOut?.items ?? []).length;
+  const needYouCards = cappedPriorities.filter((p) => p.posture !== 'needs_reply' && p.source !== 'meeting').length;
+  const needYou = needYouReplies + needYouCards + commitments.length;
+  const dayProgress = { cleared: clearedToday, needYou };
+
+  return NextResponse.json({ firstName, briefLine, tldr, followups, fyiDigest, mustRespond: mustRespondOut, keepAnEyeOn: keepAnEyeOnOut, status, priorities: cappedPriorities, commitments, waitingOn, schedule, handled, dayProgress });
 }

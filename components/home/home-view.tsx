@@ -27,6 +27,7 @@ type Brief = {
   mustRespond?: MustRespond | null;
   keepAnEyeOn?: KeepAnEyeOn | null;
   status: { needsReply: number; meetingsToday: number; waitingOn: number; handledToday: number };
+  dayProgress?: { cleared: number; needYou: number };
   priorities: Priority[];
   commitments: { id: string; description: string; counterparty: string | null; dueDate: string | null; overdue: boolean; dueToday: boolean }[];
   waitingOn: { id: string; description: string; counterparty: string | null; ageDays: number }[];
@@ -98,6 +99,47 @@ function RiseIn({ delay = 0, children }: { delay?: number; children: React.React
   return <div className={`transition-all duration-500 ease-out ${shown ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-3'}`}>{children}</div>;
 }
 
+// ── "Day cleared" progress ring — a small, professional circular gauge for the Home header.
+// Meaning: cleared / (cleared + needYou) for TODAY. `needYou` is re-derived live from the same
+// section data the dashboard shows; `cleared` counts what the user handled today (route baseline +
+// this session's Done/Dismiss/Send). The stroke has a CSS transition on stroke-dashoffset so the
+// fill rises smoothly (~450ms) as the user acts — the rise feels satisfying, never a childish badge.
+// Light + indigo tokens. When there's nothing left (cleared+needYou==0) it reads a calm "All clear".
+function DayClearedRing({ cleared, needYou }: { cleared: number; needYou: number }) {
+  const total = cleared + needYou;
+  const allClear = total === 0 || needYou === 0;
+  const pct = total === 0 ? 100 : Math.round((cleared / total) * 100);
+  const R = 20;
+  const C = 2 * Math.PI * R;
+  const offset = C * (1 - pct / 100);
+  const label = allClear ? 'all clear' : `${needYou} need${needYou === 1 ? 's' : ''} you`;
+  return (
+    <div
+      className="flex-shrink-0 mt-0.5 inline-flex items-center gap-2.5 rounded-xl border border-neutral-200 bg-white px-3 py-1.5"
+      title={allClear ? 'Your day is clear' : `${cleared} cleared · ${needYou} still need you today`}
+      aria-label={`Day cleared ${pct} percent, ${label}`}
+    >
+      <div className="relative w-[46px] h-[46px]">
+        <svg viewBox="0 0 48 48" className="w-full h-full -rotate-90">
+          <circle cx="24" cy="24" r={R} fill="none" stroke="currentColor" strokeWidth="4" className="text-neutral-100" />
+          <circle
+            cx="24" cy="24" r={R} fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round"
+            className={allClear ? 'text-emerald-500' : 'text-indigo-600'}
+            strokeDasharray={C}
+            strokeDashoffset={offset}
+            style={{ transition: 'stroke-dashoffset 450ms cubic-bezier(0.22,1,0.36,1), stroke 300ms ease' }}
+          />
+        </svg>
+        <span className="absolute inset-0 flex items-center justify-center text-[12px] font-semibold tabular-nums text-neutral-800">{pct}%</span>
+      </div>
+      <div className="hidden sm:flex flex-col leading-tight pr-0.5">
+        <span className="text-[11px] font-semibold uppercase tracking-wider text-neutral-400">Day cleared</span>
+        <span className={`text-[12px] font-medium ${allClear ? 'text-emerald-600' : 'text-neutral-600'}`}>{label}</span>
+      </div>
+    </div>
+  );
+}
+
 const Label = ({ children, count, icon: Icon }: { children: React.ReactNode; count?: number; icon?: React.ElementType }) => (
   <div className="flex items-center gap-1.5 mb-3">
     {Icon && <Icon className="w-3.5 h-3.5 text-neutral-400" />}
@@ -106,7 +148,7 @@ const Label = ({ children, count, icon: Icon }: { children: React.ReactNode; cou
   </div>
 );
 
-function PriorityCard({ p, first, expanded, onToggle }: { p: Priority; first: boolean; expanded: boolean; onToggle: () => void }) {
+function PriorityCard({ p, first, expanded, onToggle, onCleared }: { p: Priority; first: boolean; expanded: boolean; onToggle: () => void; onCleared?: (id: string) => void }) {
   const cfg = SOURCE[p.source];
   const Icon = cfg.icon;
   const verb = p.source === 'meeting' ? 'Review' : VERB[p.posture];
@@ -118,7 +160,7 @@ function PriorityCard({ p, first, expanded, onToggle }: { p: Priority; first: bo
   const act = (kind: 'complete' | 'dismiss') => {
     const ids = p.itemId ? [p.itemId] : (p.items ?? []).map(it => it.id);
     if (acting || !ids.length) return;
-    setActing(true); startExit();
+    setActing(true); startExit(); onCleared?.(p.id); // raise the day-cleared ring live
     Promise.all(ids.map(id => fetch(`/api/inbox/${id}/${kind}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason: 'home' }) })))
       .catch(() => {}).finally(() => setActing(false));
   };
@@ -185,12 +227,12 @@ function useExit(ms = 300): { removed: boolean; exiting: boolean; startExit: () 
 const exitCls = (exiting: boolean) => `transition-all duration-300 ease-out ${exiting ? 'opacity-0 scale-[0.97]' : 'opacity-100'}`;
 
 // Done ✓ / Dismiss ✕ for a commitment-backed row → PATCH /api/commitments/[id]. Optimistic, animated.
-function useCommitmentAct(id?: string): { removed: boolean; exiting: boolean; acting: boolean; act: (s: 'done' | 'dismissed') => void } {
+function useCommitmentAct(id?: string, onCleared?: (id: string) => void): { removed: boolean; exiting: boolean; acting: boolean; act: (s: 'done' | 'dismissed') => void } {
   const { removed, exiting, startExit } = useExit();
   const [acting, setActing] = useState(false);
   const act = (status: 'done' | 'dismissed') => {
     if (acting || !id) return;
-    setActing(true); startExit();
+    setActing(true); startExit(); onCleared?.(id); // raise the day-cleared ring live
     fetch(`/api/commitments/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) })
       .catch(() => {}).finally(() => setActing(false));
   };
@@ -420,8 +462,8 @@ function FollowUpItem({ f, index }: { f: { id?: string; who: string; status: str
 
 // On-your-plate / Waiting-on row (commitment) — a SideRow with hover Done/Dismiss.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function CommitmentSideRow({ id, icon, iconClass, children }: { id?: string; icon: any; iconClass?: string; children: any }) {
-  const { removed, exiting, acting, act } = useCommitmentAct(id);
+function CommitmentSideRow({ id, icon, iconClass, children, onCleared }: { id?: string; icon: any; iconClass?: string; children: any; onCleared?: (id: string) => void }) {
+  const { removed, exiting, acting, act } = useCommitmentAct(id, onCleared);
   if (removed) return null;
   return (
     <div className={`group relative ${exitCls(exiting)}`}>
@@ -478,7 +520,7 @@ function StartHere({ data, teaser, onDismiss }: { data: StartHereData; teaser?: 
         {teaser && <p className="text-[12px] text-neutral-400 mb-2.5 leading-relaxed">{teaser}</p>}
         {data.kind === 'reply'
           ? <StartHereReplyBody m={data.m} onDismiss={onDismiss} />
-          : <StartHerePriorityBody p={data.p} />}
+          : <StartHerePriorityBody p={data.p} onCleared={onDismiss} />}
       </div>
     </div>
   );
@@ -578,7 +620,7 @@ function StartHereReplyBody({ m, onDismiss }: { m: { who: string; ask: string; a
 }
 
 // Focal priority — same open + done/dismiss behaviour as PriorityCard, at focal scale.
-function StartHerePriorityBody({ p }: { p: Priority }) {
+function StartHerePriorityBody({ p, onCleared }: { p: Priority; onCleared?: (id: string) => void }) {
   const cfg = SOURCE[p.source];
   const Icon = cfg.icon;
   const verb = p.source === 'meeting' ? 'Review' : VERB[p.posture];
@@ -587,7 +629,7 @@ function StartHerePriorityBody({ p }: { p: Priority }) {
   const act = (kind: 'complete' | 'dismiss') => {
     const ids = p.itemId ? [p.itemId] : (p.items ?? []).map(it => it.id);
     if (acting || !ids.length) return;
-    setActing(true); startExit();
+    setActing(true); startExit(); onCleared?.(p.id); // raise the day-cleared ring live
     Promise.all(ids.map(id => fetch(`/api/inbox/${id}/${kind}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason: 'home' }) })))
       .catch(() => {}).finally(() => setActing(false));
   };
@@ -692,6 +734,11 @@ export function HomeView() {
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [dismissed, setDismissed] = useState<Set<string>>(new Set()); // itemIds acted this session → live count + list refill
+  // Ids of priority CARDS + commitments cleared this session (Done/Dismiss). Separate from `dismissed`
+  // (which is keyed on must-respond reply itemIds) so we can decrement `needYou` for cards/commitments
+  // without disturbing the digest's own refill logic. Keyed by the row's own id → idempotent counting.
+  const [clearedIds, setClearedIds] = useState<Set<string>>(new Set());
+  const [sessionCleared, setSessionCleared] = useState(0); // this session's Done/Dismiss/Send → ring `cleared`
   const [activityOpen, setActivityOpen] = useState(false); // right-side Activity slide-over
 
   useEffect(() => {
@@ -735,7 +782,23 @@ export function HomeView() {
   }
 
   const b = brief;
-  const onDismiss = (id: string) => setDismissed((prev) => { const n = new Set(prev); n.add(id); return n; });
+  // Bump the ring's `cleared` by one the first time a given row is acted on (idempotent — a component
+  // may fire twice during its exit animation). All three action surfaces route through this so the ring
+  // rises instantly on Done/Dismiss/Send, no reload.
+  const bumpCleared = (id: string) => setClearedIds((prev) => {
+    if (prev.has(id)) return prev;
+    const n = new Set(prev); n.add(id);
+    setSessionCleared((c) => c + 1);
+    return n;
+  });
+  // Reply rows (must-respond digest / focal): remove from the live list AND raise the ring.
+  const onDismiss = (id: string) => {
+    setDismissed((prev) => { const n = new Set(prev); n.add(id); return n; });
+    bumpCleared(id);
+  };
+  // Priority cards + commitments act internally (their own useExit/useCommitmentAct); this callback
+  // is how they tell the ring they were cleared so `needYou--` / `cleared++` happens live.
+  const onCleared = (id: string) => bumpCleared(id);
   // Live view of Must-respond after this session's Done/Dismiss/Send: the count decrements AND the
   // collapsed list refills from the hidden pool (instead of leaving "1 item + Show N more").
   const mrLive = b?.mustRespond ? b.mustRespond.items.filter((m) => !dismissed.has(m.itemId)) : [];
@@ -760,6 +823,17 @@ export function HomeView() {
   const hasBody = digestReplies.length > 0 || bodyCards.length > 0;
 
   const nothing = b && !b.priorities.length && !b.commitments.length && !b.waitingOn.length && !b.schedule.length && !(b.keepAnEyeOn?.items.length) && !(team?.messages.length || team?.needsReview.length) && !startHere;
+
+  // ── Day-cleared ring inputs — DERIVED LIVE from the same section data the dashboard renders, so the
+  // number is never stale. needYou = replies you still owe (dismissed removed) + non-meeting/needs-you
+  // priority cards (cleared removed) + on-your-plate commitments (cleared removed). cleared = the
+  // route's fresh today-baseline + this session's Done/Dismiss/Send (sessionCleared). As the user acts,
+  // needYou drops and cleared climbs → the ring fill rises without a reload.
+  const liveNeedYouCards = cards.filter((p) => p.source !== 'meeting' && !clearedIds.has(p.id)).length;
+  const liveNeedYouCommitments = (b?.commitments ?? []).filter((c) => !clearedIds.has(c.id)).length;
+  const ringNeedYou = digestReplies.length + liveNeedYouCards + liveNeedYouCommitments;
+  const ringCleared = (b?.dayProgress?.cleared ?? 0) + sessionCleared;
+  const showRing = !!b?.dayProgress; // non-fatal: hide gracefully if counts are missing
 
   // ── AMBIENT RAIL — the calm "day at a glance" sections. Each is built ONLY when it has content, so
   // an empty lane never renders a bare header. `railNodes` is the ordered, non-empty set; the count
@@ -970,17 +1044,21 @@ export function HomeView() {
                 <p className="mt-2 text-[14.5px] text-neutral-500 leading-relaxed max-w-[760px]">{b?.tldr?.teaser || b?.briefLine}</p>
               )}
             </div>
-            {/* Activity trigger — a quiet clock button at the top-right of the header, opposite the
-                greeting. Opens the right-side slide-over. */}
-            <button
-              onClick={() => setActivityOpen(true)}
-              title="Activity"
-              aria-label="Open activity"
-              className={`flex-shrink-0 mt-1 inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 text-[12px] font-medium text-neutral-500 hover:text-indigo-700 hover:border-indigo-200 hover:bg-indigo-50/60 transition-all duration-200 ${activityOpen ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
-            >
-              <ClockIcon className="w-4 h-4" />
-              <span className="hidden sm:inline">Activity</span>
-            </button>
+            {/* Top-right of the header, opposite the greeting: the "day cleared" progress ring (how
+                much of what needs you is handled today — live) + the quiet Activity trigger. Both kept,
+                arranged cleanly on one row. */}
+            <div className="flex-shrink-0 flex items-center gap-2.5">
+              {showRing && <DayClearedRing cleared={ringCleared} needYou={ringNeedYou} />}
+              <button
+                onClick={() => setActivityOpen(true)}
+                title="Activity"
+                aria-label="Open activity"
+                className={`mt-0.5 inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 text-[12px] font-medium text-neutral-500 hover:text-indigo-700 hover:border-indigo-200 hover:bg-indigo-50/60 transition-all duration-200 ${activityOpen ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
+              >
+                <ClockIcon className="w-4 h-4" />
+                <span className="hidden sm:inline">Activity</span>
+              </button>
+            </div>
           </div>
         </RiseIn>
 
@@ -1034,7 +1112,7 @@ export function HomeView() {
                     <div className="space-y-3">
                       {bodyCards.map((p, i) => (
                         <RiseIn key={p.id} delay={i * 45}>
-                          <PriorityCard p={p} first={false} expanded={expanded === p.id} onToggle={() => setExpanded(expanded === p.id ? null : p.id)} />
+                          <PriorityCard p={p} first={false} expanded={expanded === p.id} onToggle={() => setExpanded(expanded === p.id ? null : p.id)} onCleared={onCleared} />
                         </RiseIn>
                       ))}
                     </div>
@@ -1052,7 +1130,7 @@ export function HomeView() {
                   <p className="text-[12px] text-neutral-400 -mt-1.5 mb-2.5 leading-snug">Yours to act on — things you owe.</p>
                   <div className="space-y-2">
                     {b.commitments.map(c => (
-                      <CommitmentSideRow key={c.id} id={c.id} icon={CheckCircleIcon} iconClass={c.overdue ? 'text-red-400' : 'text-neutral-300'}>
+                      <CommitmentSideRow key={c.id} id={c.id} icon={CheckCircleIcon} iconClass={c.overdue ? 'text-red-400' : 'text-neutral-300'} onCleared={onCleared}>
                         <div className="flex items-start justify-between gap-2">
                           <span className="text-[13px] text-neutral-800 leading-snug">{c.description}</span>
                           {(c.overdue || c.dueToday || c.dueDate) && (
