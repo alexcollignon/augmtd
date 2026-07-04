@@ -923,7 +923,12 @@ export function HomeView() {
   const useSidebar = railNodes.length >= RAIL_MIN_FOR_SIDEBAR;
 
   return (
-    <div className="flex-1 min-w-0 h-full overflow-y-auto bg-neutral-50/40">
+    // Flex-row SHELL (mirrors the inbox `app/inbox/inbox-page-client.tsx` ~1470): a scrolling MAIN
+    // column (`flex-1 min-w-0 overflow-y-auto`) as a SIBLING to the width-animated Activity panel
+    // column. Opening the panel grows its width → the `flex-1` main genuinely shrinks/reflows left
+    // (NOT an overlay). `h-full` fills the `(main)` layout's `flex h-screen` container.
+    <div className="relative flex-1 min-w-0 h-full flex overflow-hidden bg-neutral-50/40">
+      <div className="flex-1 min-w-0 overflow-y-auto">
       <div className="px-8 py-10">
         {/* Header + narration + live status chips */}
         <RiseIn>
@@ -1091,8 +1096,11 @@ export function HomeView() {
           </div>
         )}
       </div>
+      </div>{/* ── end MAIN scrolling column ── */}
 
-      {/* Right-side Activity panel — inbox right-panel treatment (inset, rounded, animated width) */}
+      {/* Activity panel — a width-animated SIBLING column (NOT a fixed overlay): w-0 closed →
+          w-[360px] open, `transition-[width]` so opening reflows the main column left. Self-contained
+          with its own header + collapse, so it reads as one cohesive unit — the inbox treatment. */}
       <ActivityPanel open={activityOpen} onClose={() => setActivityOpen(false)} />
     </div>
   );
