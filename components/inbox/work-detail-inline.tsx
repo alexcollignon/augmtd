@@ -23,7 +23,7 @@ import type { ConnectionFolders } from '@/components/inbox/folder-rail';
 
 import RsvpButtons from './rsvp-buttons';
 import KbFilePicker from './kb-file-picker';
-import FormatToolbar from './format-toolbar';
+import ReplyEditor from './reply-editor';
 import { ThreadMessages } from './thread-messages';
 import { Button, IconButton } from '@/components/ui';
 import { createClient } from '@/lib/supabase/client';
@@ -846,41 +846,6 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
                 </div>
               </div>
             )}
-            <div className="px-4 pt-3 pb-2">
-              <div
-                ref={replyTextareaRef}
-                contentEditable
-                suppressContentEditableWarning
-                // eslint-disable-next-line jsx-a11y/no-autofocus
-                autoFocus
-                onInput={() => {
-                  const html = replyTextareaRef.current?.innerHTML ?? '';
-                  lastExternalReplyBody.current = html;
-                  onReplyBodyChange(html);
-                }}
-                data-placeholder="Write your reply…"
-                className="w-full text-[13px] text-neutral-800 border-0 outline-none leading-relaxed overflow-y-auto"
-                style={{ minHeight: '120px', maxHeight: '400px' }}
-              />
-            </div>
-            {/* Attachment chips */}
-            {replyAttachments.length > 0 && (
-              <div className="flex flex-wrap gap-1.5 px-4 pb-2">
-                {replyAttachments.map((att, i) => (
-                  <span key={i} className="inline-flex items-center gap-1 px-2 py-0.5 bg-neutral-100 rounded text-[11px] text-neutral-700">
-                    <PaperClipIcon className="w-3 h-3 flex-shrink-0" />
-                    <span className="max-w-[140px] truncate">{att.filename}</span>
-                    <button
-                      onClick={() => setReplyAttachments(prev => prev.filter((_, j) => j !== i))}
-                      className="hover:text-red-500 transition-colors ml-0.5"
-                    >
-                      <XMarkIcon className="w-3 h-3" />
-                    </button>
-                  </span>
-                ))}
-              </div>
-            )}
-
             {/* Hidden file input */}
             <input
               ref={attachFileInputRef}
@@ -890,9 +855,17 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
               onChange={handleLocalFileAttach}
             />
 
-            <div className="flex items-center justify-between gap-2 px-4 pb-3">
-              {/* Attach + format toolbar */}
-              <div className="flex items-center gap-1 flex-1 min-w-0">
+            {/* Shared rich reply editor (contentEditable + FormatToolbar). Host keeps its own
+                attach / Sig / Send controls via the toolbar slots + attachment chips via children. */}
+            <ReplyEditor
+              ref={replyTextareaRef}
+              autoFocus
+              placeholder="Write your reply…"
+              minHeight={120}
+              maxHeight={400}
+              className="px-4 pt-3 pb-3"
+              onInput={handleReplySync}
+              toolbarLeading={
                 <div className="relative flex-shrink-0">
                   <button
                     type="button"
@@ -919,43 +892,59 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
                     </div>
                   )}
                 </div>
-
-                <div className="w-px h-4 bg-neutral-200 flex-shrink-0" />
-                <FormatToolbar editorRef={replyTextareaRef} onSync={handleReplySync} />
-                <div className="w-px h-4 bg-neutral-200 flex-shrink-0" />
-                <button
-                  type="button"
-                  onClick={() => setShowSignature(v => !v)}
-                  disabled={!signatureHtml}
-                  className={`text-[11px] font-medium transition-colors ${showSignature && signatureHtml ? 'text-indigo-600' : 'text-neutral-400 hover:text-neutral-600 disabled:opacity-40 disabled:cursor-not-allowed'}`}
-                  title={!signatureHtml ? 'No signature configured' : showSignature ? 'Remove signature' : 'Add signature'}
-                >
-                  Sig
-                </button>
-              </div>
-
-              <div className="flex items-center gap-2 flex-shrink-0">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => { setReplyOpen(false); onReplyOpenChange?.(false); onReplyBodyChange(''); setReplyAttachments([]); setReplyCc(''); setReplyBcc(''); setShowReplyCc(false); setShowReplyBcc(false); setCcChips([]); setBccChips([]); setToChips([]); setReplyTo(''); }}
-                  disabled={isSendingReply}
-                >
-                  Discard
-                </Button>
-                <Button
-                  variant="primary"
-                  size="sm"
-                  onClick={handleSendReply}
-                  disabled={isSendingReply || !replyBody.replace(/<[^>]*>/g, '').trim()}
-                >
-                  {isSendingReply
-                    ? <><div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />Sending…</>
-                    : <><PaperAirplaneIcon className="w-3.5 h-3.5" />Send</>
-                  }
-                </Button>
-              </div>
-            </div>
+              }
+              toolbarTrailing={
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setShowSignature(v => !v)}
+                    disabled={!signatureHtml}
+                    className={`text-[11px] font-medium transition-colors ${showSignature && signatureHtml ? 'text-indigo-600' : 'text-neutral-400 hover:text-neutral-600 disabled:opacity-40 disabled:cursor-not-allowed'}`}
+                    title={!signatureHtml ? 'No signature configured' : showSignature ? 'Remove signature' : 'Add signature'}
+                  >
+                    Sig
+                  </button>
+                  <div className="w-px h-4 bg-neutral-200 flex-shrink-0" />
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => { setReplyOpen(false); onReplyOpenChange?.(false); onReplyBodyChange(''); setReplyAttachments([]); setReplyCc(''); setReplyBcc(''); setShowReplyCc(false); setShowReplyBcc(false); setCcChips([]); setBccChips([]); setToChips([]); setReplyTo(''); }}
+                    disabled={isSendingReply}
+                  >
+                    Discard
+                  </Button>
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={handleSendReply}
+                    disabled={isSendingReply || !replyBody.replace(/<[^>]*>/g, '').trim()}
+                  >
+                    {isSendingReply
+                      ? <><div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />Sending…</>
+                      : <><PaperAirplaneIcon className="w-3.5 h-3.5" />Send</>
+                    }
+                  </Button>
+                </div>
+              }
+            >
+              {/* Attachment chips (between editor and toolbar) */}
+              {replyAttachments.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 pb-2 mt-2">
+                  {replyAttachments.map((att, i) => (
+                    <span key={i} className="inline-flex items-center gap-1 px-2 py-0.5 bg-neutral-100 rounded text-[11px] text-neutral-700">
+                      <PaperClipIcon className="w-3 h-3 flex-shrink-0" />
+                      <span className="max-w-[140px] truncate">{att.filename}</span>
+                      <button
+                        onClick={() => setReplyAttachments(prev => prev.filter((_, j) => j !== i))}
+                        className="hover:text-red-500 transition-colors ml-0.5"
+                      >
+                        <XMarkIcon className="w-3 h-3" />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+            </ReplyEditor>
           </div>
         )}
 

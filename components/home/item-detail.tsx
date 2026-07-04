@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   EnvelopeIcon,
@@ -8,6 +8,18 @@ import {
   CheckIcon,
 } from '@heroicons/react/24/outline';
 import { ThreadMessages, type ThreadMessage } from '@/components/inbox/thread-messages';
+import ReplyEditor from '@/components/inbox/reply-editor';
+
+// Escape + convert a plain-text draft to simple HTML so it seeds the rich editor: blank lines split
+// paragraphs, single newlines become <br>. Keeps the AI draft's shape while making it editable rich.
+function draftToHTML(text: string): string {
+  const esc = (s: string) =>
+    s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const paras = text.replace(/\r\n/g, '\n').split(/\n{2,}/);
+  return paras
+    .map((p) => `<p>${esc(p).replace(/\n/g, '<br>')}</p>`)
+    .join('');
+}
 
 // ── The full-context email item detail — the roomy, focused view opened from the Home as a
 // DEEP DIVE (in-content, not a boxed popup). Shows: (1) header (subject + sender + date), (2) the
@@ -59,12 +71,14 @@ export function ItemDetail({ id, angle }: { id: string; angle?: string | null })
   const [thread, setThread] = useState<ThreadData | null>(null);
   const [threadErr, setThreadErr] = useState(false);
 
-  const [draft, setDraft] = useState<string | null>(null);
+  const [draft, setDraft] = useState<string | null>(null);   // the prepared plain-text draft (seed + Copy)
+  const [bodyHTML, setBodyHTML] = useState('');               // the editor's live HTML (what we send)
   const [draftLoading, setDraftLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
   const [copied, setCopied] = useState(false);
   const [sendErr, setSendErr] = useState<string | null>(null);
+  const editorRef = useRef<HTMLDivElement>(null);
 
   // Load the thread + the prepared draft in parallel — same endpoints the Home uses.
   useEffect(() => {
@@ -87,12 +101,14 @@ export function ItemDetail({ id, angle }: { id: string; angle?: string | null })
   }, [id]);
 
   const send = async () => {
-    if (!draft || sending) return;
+    // Send the editor's HTML (fall back to the live ref, then the seeded draft).
+    const html = bodyHTML || editorRef.current?.innerHTML || (draft ? draftToHTML(draft) : '');
+    if (!html.replace(/<[^>]*>/g, '').trim() || sending) return;
     setSending(true); setSendErr(null);
     try {
       const res = await fetch(`/api/inbox/${id}/send-reply`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ customMessage: draft }),
+        body: JSON.stringify({ customMessage: html }),
       });
       if (res.ok) {
         setSent(true);
@@ -110,8 +126,10 @@ export function ItemDetail({ id, angle }: { id: string; angle?: string | null })
   };
 
   const copy = () => {
-    if (!draft) return;
-    navigator.clipboard?.writeText(draft);
+    // Copy the editor's current text (strip HTML), falling back to the prepared draft.
+    const text = editorRef.current?.innerText?.trim() || draft || '';
+    if (!text) return;
+    navigator.clipboard?.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   };
@@ -208,11 +226,15 @@ export function ItemDetail({ id, angle }: { id: string; angle?: string | null })
               <div className="h-32 rounded-lg bg-neutral-100 animate-pulse" />
             ) : (
               <>
-                <textarea
-                  value={draft}
-                  onChange={(e) => setDraft(e.target.value)}
-                  rows={Math.min(12, Math.max(5, draft.split('\n').length + 1))}
-                  className="w-full max-h-[28vh] overflow-y-auto bg-transparent text-[13.5px] text-neutral-700 leading-relaxed resize-none focus:outline-none"
+                {/* The SAME rich editor the inbox uses (bold/italic/underline/font size/lists),
+                    seeded with the prepared draft converted to simple HTML. */}
+                <ReplyEditor
+                  ref={editorRef}
+                  initialHTML={draftToHTML(draft)}
+                  onInput={setBodyHTML}
+                  placeholder="Write your reply…"
+                  minHeight={120}
+                  maxHeight={280}
                 />
                 {sendErr && <p className="text-[12px] text-rose-600 mt-2">{sendErr}</p>}
                 <div className="mt-3 flex items-center gap-4">
