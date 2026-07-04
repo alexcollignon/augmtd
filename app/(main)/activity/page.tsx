@@ -1,6 +1,12 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
-import ActivityPageClient from '@/app/activity/activity-page-client';
+import ActivityPageClient, { type ActivityEvent } from '@/app/activity/activity-page-client';
+
+// Activity timeline — a chronological log of the user's actions, backed by activity_events.
+// RLS-safe (cookie session). Renders inside the (main) layout so it gets the sidebar.
+export const dynamic = 'force-dynamic';
+
+const PAGE_SIZE = 200;
 
 export default async function ActivityPage() {
   const supabase = await createClient();
@@ -8,31 +14,22 @@ export default async function ActivityPage() {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/login');
 
-  const { data: activityItems, error: fetchError } = await supabase
-    .from('inbox_items')
-    .select('*')
+  // Fetch one extra to detect "load more". Degrades gracefully to empty if the table
+  // isn't there yet (migration not applied).
+  const { data, error } = await supabase
+    .from('activity_events')
+    .select('id, type, title, entity_type, entity_id, metadata, created_at')
     .eq('user_id', user.id)
-    .in('status', ['completed', 'dismissed'])
-    .order('updated_at', { ascending: false })
-    .limit(100);
+    .order('created_at', { ascending: false })
+    .limit(PAGE_SIZE + 1);
 
-  if (fetchError) {
-    console.error('Error fetching activity items:', fetchError);
+  if (error) {
+    console.error('[activity] page fetch failed:', error.message);
   }
 
-  return (
-    <main className="flex-1 overflow-y-auto bg-gradient-to-br from-neutral-50 to-white">
-      <div className="max-w-7xl mx-auto px-6 lg:px-8 py-8 lg:py-12">
-        <div className="mb-10">
-          <h1 className="text-2xl lg:text-3xl font-bold text-neutral-900 mb-2">
-            Activity Log
-          </h1>
-          <p className="text-[15px] text-neutral-600">
-            Execution history of all completed and dismissed items
-          </p>
-        </div>
-        <ActivityPageClient activityItems={activityItems || []} />
-      </div>
-    </main>
-  );
+  const rows = (data || []) as ActivityEvent[];
+  const hasMore = rows.length > PAGE_SIZE;
+  const events = hasMore ? rows.slice(0, PAGE_SIZE) : rows;
+
+  return <ActivityPageClient initialEvents={events} initialHasMore={hasMore} />;
 }

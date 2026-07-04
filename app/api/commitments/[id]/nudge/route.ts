@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { generateNudgeDraft } from '@/lib/inbox/draft-reply';
+import { logActivity } from '@/lib/activity/log';
 
 export const maxDuration = 30;
 
@@ -119,5 +120,16 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   // Sent → the ball moved; close the commitment so it leaves "Ball in your court".
   await supabase.from('commitments').update({ status: 'done', last_nudged_at: new Date().toISOString(), updated_at: new Date().toISOString() })
     .eq('id', id).eq('user_id', user.id).then(() => {}, () => {});
+
+  // Activity timeline (non-fatal).
+  const who = (commitment.counterparty && String(commitment.counterparty).trim()) || 'a contact';
+  await logActivity(supabase, user.id, {
+    type: 'nudge_sent',
+    title: `Nudged ${who}${commitment.description ? ` — ${commitment.description}` : ''}`,
+    entityType: 'commitment',
+    entityId: id,
+    metadata: { direction: commitment.direction, source: commitment.source },
+  });
+
   return NextResponse.json({ success: true, sent: true });
 }

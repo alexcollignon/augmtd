@@ -53,6 +53,7 @@ export default function SidebarNav({
     ...(features.email    ? [{ name: 'Inbox',    href: '/inbox',    icon: EnvelopeIcon }]              : []),
     { name: 'Workers', href: '/workers', icon: UserGroupIcon },
     { name: 'Chat',    href: '/work',    icon: ChatBubbleLeftEllipsisIcon },
+    { name: 'Activity', href: '/activity', icon: ClockIcon },
     ...(features.meetings ? [{ name: 'Meetings', href: '/meetings', icon: VideoCameraIcon }] : []),
     ...(features.drive    ? [{ name: 'Drive',    href: '/drive',    icon: FolderIcon }]      : []),
     ...(isSuperAdmin ? [{ name: 'Platform Admin', href: '/platform-admin', icon: ShieldCheckIcon }] : []),

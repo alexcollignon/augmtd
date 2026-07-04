@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { sendGmailReply, EmailAttachment } from '@/lib/google/gmail';
 import { sendOutlookReply } from '@/lib/microsoft/outlook';
 import { ContextService } from '@/lib/context/context-service';
+import { logActivity } from '@/lib/activity/log';
 
 // Plain-text, whitespace-normalised view of a draft for comparing AI vs sent.
 const norm = (s: string) => s.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
@@ -156,6 +157,19 @@ export async function POST(
         instructions: settings.todo_instructions, client: supabase,
       });
     })().catch(() => {});
+
+    // Activity timeline (non-fatal). "Replied to <who>" — recipient, sender name, or subject.
+    const who = (() => {
+      const pick = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : '');
+      return pick(to) || pick(sourceData.from_name) || pick(sourceData.from) || pick(sourceData.subject) || 'a message';
+    })();
+    await logActivity(supabase, user.id, {
+      type: 'reply_sent',
+      title: `Replied to ${who}`,
+      entityType: 'inbox_item',
+      entityId: id,
+      metadata: { provider: sourceData.provider, used_ai_draft: !customMessage },
+    });
 
     return NextResponse.json({
       success: true,

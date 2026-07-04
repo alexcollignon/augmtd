@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { logActivity } from '@/lib/activity/log';
 
 // PATCH /api/commitments/[id] — set a commitment's status (done | dismissed) for the user's own
 // commitment. Powers the Home's per-item Done/Dismiss on On-your-plate + Ball-in-your-court.
@@ -20,6 +21,12 @@ export async function PATCH(
       return NextResponse.json({ error: 'Invalid status' }, { status: 400 });
     }
 
+    // Load the description first (for a readable activity title) — cheap, owner-scoped.
+    const { data: commitment } = await supabase
+      .from('commitments')
+      .select('description')
+      .eq('id', id).eq('user_id', user.id).maybeSingle();
+
     const { error } = await supabase
       .from('commitments')
       .update({ status, updated_at: new Date().toISOString() })
@@ -30,6 +37,15 @@ export async function PATCH(
     // Clean up any inbox item the aging sweep surfaced for this commitment — it's handled now.
     await supabase.from('inbox_items').delete()
       .eq('user_id', user.id).eq('source', 'commitment').eq('source_id', id);
+
+    // Activity timeline (non-fatal).
+    const desc = (commitment?.description && String(commitment.description).trim()) || 'a commitment';
+    await logActivity(supabase, user.id, {
+      type: status === 'done' ? 'commitment_done' : 'commitment_dismissed',
+      title: `${status === 'done' ? 'Completed' : 'Dismissed'} commitment: ${desc}`,
+      entityType: 'commitment',
+      entityId: id,
+    });
 
     return NextResponse.json({ success: true });
   } catch (error) {
