@@ -369,7 +369,13 @@ export async function GET() {
   // The synthesis's per-commitment placement verdict (Bug #1). Cached so a cache-hit routes the same
   // way it did when generated. Falls back to the ingest-direction default per-commitment below.
   let commitmentPlacements: Record<string, CommitmentPlacement> = cached?.commitmentPlacements ?? {};
-  const stale = !cached || cached.sig !== sig || (now.getTime() - new Date(cached.generated_at).getTime()) > BRIEF_TTL;
+  // A cache blob written BEFORE the placement fix has no `commitmentPlacements` field at all (a code
+  // revert doesn't touch cached data). Serving it makes every open commitment fall back to the ingest
+  // direction — so a REQUESTED action (e.g. a refund you're owed) wrongly sits in "On your plate". Force
+  // a one-time regen for such legacy caches when there are open commitments to (re-)place, so the
+  // synthesis verdict actually takes without a manual cache wipe. General — no hardcoded item.
+  const legacyPlacements = cached != null && cached.commitmentPlacements === undefined && commitmentCands.length > 0;
+  const stale = !cached || cached.sig !== sig || legacyPlacements || (now.getTime() - new Date(cached.generated_at).getTime()) > BRIEF_TTL;
   if (stale) {
     // Owed-context for the prose = the ingest-default owed set (re-placement happens inside).
     const owedFacts = owedByIngest.map((c) => ({ description: c.description, overdue: c.overdue, dueToday: c.dueToday, dueDate: c.dueDate }));

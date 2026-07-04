@@ -640,17 +640,31 @@ function KeepAnEyeOnCard({ items }: { items: { who: string; why: string; itemId:
   );
 }
 
-// Collapsible feed section — the lower-priority briefs collapse so the Home stays scannable.
-function Collapsible({ title, count, defaultOpen = false, children }: { title: string; count?: number; defaultOpen?: boolean; children: React.ReactNode }) {
+// Collapsible feed section — the lower-priority briefs collapse so the Home stays scannable. A real
+// header treatment (not a bare `>` label): a small leading icon, the label, a count pill, and a
+// chevron that rotates on open. The whole header is a hover target with a subtle indigo-tinted
+// surface so a quiet rail section still reads as an intentional card, not floating text. On the
+// components/ui tokens — indigo accent, the type scale, rounded-xl.
+function Collapsible({ title, count, icon: Icon, defaultOpen = false, children }: { title: string; count?: number; icon?: React.ElementType; defaultOpen?: boolean; children: React.ReactNode }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
     <div>
-      <button onClick={() => setOpen(o => !o)} className="group flex items-center gap-1.5 mb-2.5">
-        <ChevronRightIcon className={`w-3.5 h-3.5 text-neutral-300 group-hover:text-neutral-500 transition-transform duration-200 ${open ? 'rotate-90' : ''}`} />
-        <h2 className="text-[11px] font-semibold uppercase tracking-[0.07em] text-neutral-400 group-hover:text-neutral-600 transition-colors">{title}</h2>
-        {count != null && count > 0 && <span className="text-[11px] font-medium text-neutral-300">{count}</span>}
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="group flex w-full items-center gap-2 rounded-xl border border-neutral-200/70 bg-white px-3 py-2 text-left transition-colors hover:border-indigo-200 hover:bg-indigo-50/40"
+      >
+        {Icon && (
+          <span className="flex-shrink-0 inline-flex items-center justify-center w-5 h-5 rounded-lg bg-neutral-100 text-neutral-400 group-hover:bg-indigo-100 group-hover:text-indigo-600 transition-colors">
+            <Icon className="w-3.5 h-3.5" />
+          </span>
+        )}
+        <h2 className="text-[11px] font-semibold uppercase tracking-[0.07em] text-neutral-500 group-hover:text-neutral-700 transition-colors">{title}</h2>
+        {count != null && count > 0 && (
+          <span className="inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1.5 rounded-full bg-neutral-100 text-[10.5px] font-semibold text-neutral-500 group-hover:bg-indigo-100 group-hover:text-indigo-600 transition-colors">{count}</span>
+        )}
+        <ChevronRightIcon className={`ml-auto w-4 h-4 text-neutral-300 group-hover:text-indigo-500 transition-all duration-200 ${open ? 'rotate-90' : ''}`} />
       </button>
-      <div className={`grid transition-all duration-300 ease-out ${open ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`}>
+      <div className={`grid transition-all duration-300 ease-out ${open ? 'grid-rows-[1fr] opacity-100 mt-2' : 'grid-rows-[0fr] opacity-0'}`}>
         <div className="overflow-hidden">{children}</div>
       </div>
     </div>
@@ -745,6 +759,167 @@ export function HomeView() {
 
   const nothing = b && !b.priorities.length && !b.commitments.length && !b.waitingOn.length && !b.schedule.length && !(b.keepAnEyeOn?.items.length) && !(team?.messages.length || team?.needsReview.length) && !startHere;
 
+  // ── AMBIENT RAIL — the calm "day at a glance" sections. Each is built ONLY when it has content, so
+  // an empty lane never renders a bare header. `railNodes` is the ordered, non-empty set; the count
+  // then decides the layout (below). The RiseIn delay is by VISIBLE position so stacking stays smooth
+  // regardless of which sections are present.
+  const hasSchedule = !!(b && b.schedule.length > 0);
+  const hasEye = !!(b?.keepAnEyeOn && b.keepAnEyeOn.items.length > 0);
+  const hasFollowups = !!(b?.followups && b.followups.items.length > 0);
+  const hasWaiting = !hasFollowups && !!(b && b.waitingOn.length > 0);
+  const hasTeam = !!(team && (team.messages.length > 0 || team.needsReview.length > 0));
+  const hasFyi = !!(b?.fyiDigest && b.fyiDigest.groups.length > 0);
+  const hasHandled = !!(b?.handled && (b.handled.triaged > 0 || b.handled.summarised > 0 || b.handled.tracked > 0));
+
+  const railNodes: React.ReactNode[] = [];
+  const rail = (key: string, node: React.ReactNode) => {
+    railNodes.push(<RiseIn key={key} delay={90 + railNodes.length * 30}>{node}</RiseIn>);
+  };
+
+  if (hasSchedule) rail('schedule', (
+    <section>
+      <Label icon={CalendarDaysIcon}>Today&apos;s schedule</Label>
+      <div className="space-y-2">
+        {b!.schedule.map(m => (
+          <SideRow key={m.id} href="/meetings">
+            <div className="flex items-baseline gap-2">
+              <span className="text-[12px] font-semibold text-indigo-600 flex-shrink-0">{timeOf(m.time)}</span>
+              <span className="text-[13px] text-neutral-800 truncate">{m.title}</span>
+            </div>
+            {m.prep && (m.prep.lastEmail || m.prep.openCommitments.length > 0 || m.prep.lastMeeting) && (
+              <div className="mt-1.5 text-[11.5px] text-neutral-400 space-y-0.5">
+                {m.prep.lastMeeting && (
+                  <p className="flex items-start gap-1 text-violet-500 line-clamp-2">
+                    <SparklesIcon className="w-3 h-3 flex-shrink-0 mt-0.5" />
+                    <span>Last time with {m.prep.lastMeeting.person} ({m.prep.lastMeeting.date}): {m.prep.lastMeeting.recall}</span>
+                  </p>
+                )}
+                {m.prep.lastEmail && <p className="truncate">Last thread: “{m.prep.lastEmail.subject}”</p>}
+                {m.prep.openCommitments.map((c, i) => <p key={i} className="truncate">Open: {c}</p>)}
+              </div>
+            )}
+          </SideRow>
+        ))}
+      </div>
+    </section>
+  ));
+
+  if (hasEye) rail('eye', (
+    <section>
+      <Label count={b!.keepAnEyeOn!.items.length} icon={EyeIcon}>Keep an eye on</Label>
+      <KeepAnEyeOnCard items={b!.keepAnEyeOn!.items} />
+    </section>
+  ));
+
+  if (hasFollowups) rail('followups', (
+    <section>
+      <Label count={b!.followups!.items.length} icon={ClockIcon}>Ball in your court</Label>
+      <p className="text-[12px] text-neutral-400 -mt-1.5 mb-2.5 leading-snug">Waiting on others — nudge when it stalls.</p>
+      <div className="rounded-2xl border border-neutral-200/80 bg-white p-4">
+        {b!.followups!.teaser && <p className="text-[12.5px] text-neutral-500 mb-3.5 leading-relaxed">{b!.followups!.teaser}</p>}
+        <ol className="space-y-3.5">
+          {b!.followups!.items.map((f, i) => (
+            <FollowUpItem key={f.id || i} f={f} index={i} />
+          ))}
+        </ol>
+        {b!.followups!.closing && (
+          <div className="mt-3.5 pt-3.5 border-t border-neutral-100 flex items-start gap-2">
+            <SparklesIcon className="w-4 h-4 text-indigo-400 flex-shrink-0 mt-0.5" />
+            <p className="text-[12px] text-neutral-500 leading-relaxed">{b!.followups!.closing}</p>
+          </div>
+        )}
+      </div>
+    </section>
+  ));
+
+  if (hasWaiting) rail('waiting', (
+    <section>
+      <Label count={b!.waitingOn.length} icon={ClockIcon}>Waiting on others</Label>
+      <div className="space-y-2">
+        {b!.waitingOn.map(c => (
+          <CommitmentSideRow key={c.id} id={c.id} icon={ClockIcon} iconClass="text-amber-400">
+            <span className="text-[13px] text-neutral-800 truncate block">{c.description}</span>
+            <p className="text-[11.5px] text-neutral-400 mt-0.5">Waiting on {c.counterparty || 'them'} · {c.ageDays}d</p>
+          </CommitmentSideRow>
+        ))}
+      </div>
+    </section>
+  ));
+
+  if (hasTeam) rail('team', (
+    <Collapsible title="From your team" count={team!.messages.length + team!.needsReview.length} icon={UsersIcon}>
+      <div className="space-y-2">
+        {team!.messages.slice(0, 3).map((m, i) => (
+          <SideRow key={`m${i}`} href={m.workerId ? `/workers?worker=${m.workerId}` : '/workers'}>
+            <span className="text-[12px] font-semibold text-neutral-700">{m.workerName ?? 'A coworker'}</span>
+            {m.text && <p className="text-[12px] text-neutral-500 mt-0.5 line-clamp-2">{m.text}</p>}
+          </SideRow>
+        ))}
+        {team!.needsReview.slice(0, 3).map((r, i) => (
+          <SideRow key={r.artifactId ?? r.threadId ?? `r${i}`} href={r.workerId ? `/workers?worker=${r.workerId}` : '/workers'} icon={UsersIcon}>
+            <span className="text-[12.5px] text-neutral-800 truncate block">{r.title || 'Ready for you'}</span>
+            <p className="text-[11px] text-neutral-400">Ready{r.workerName ? ` · ${r.workerName}` : ''}</p>
+          </SideRow>
+        ))}
+      </div>
+    </Collapsible>
+  ));
+
+  if (hasFyi) rail('fyi', (
+    <Collapsible title="For your awareness" count={b!.fyiDigest!.groups.length} icon={EnvelopeIcon}>
+      <div className="rounded-xl border border-neutral-200/80 bg-white divide-y divide-neutral-100 overflow-hidden">
+        {b!.fyiDigest!.groups.filter(g => g.kind === 'person').map((g, i) => (
+          <FyiGroupRow key={`p${i}`} g={g} variant="person" />
+        ))}
+        {b!.fyiDigest!.groups.some(g => g.kind === 'newsletter') && (
+          <div className="px-3.5 pt-2.5 pb-1 bg-neutral-50/60">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">Newsletters &amp; services</p>
+          </div>
+        )}
+        {b!.fyiDigest!.groups.filter(g => g.kind === 'newsletter').map((g, i) => (
+          <FyiGroupRow key={`n${i}`} g={g} variant="newsletter" />
+        ))}
+        {b!.fyiDigest!.tailItems > 0 && (
+          <Link href="/inbox" className="block px-3.5 py-2 text-[11.5px] text-neutral-400 hover:text-indigo-600 transition-colors">
+            +{b!.fyiDigest!.tailItems} more from {b!.fyiDigest!.tailGroups} other sender{b!.fyiDigest!.tailGroups > 1 ? 's' : ''}
+          </Link>
+        )}
+      </div>
+    </Collapsible>
+  ));
+
+  if (hasHandled) rail('handled', (
+    <Collapsible title="Handled for you · 24h" icon={CheckCircleIcon}>
+      <div className="rounded-xl border border-neutral-200/80 bg-gradient-to-br from-white to-neutral-50/60 px-3.5 py-3 text-[12px] text-neutral-500 space-y-1.5">
+        {b!.handled!.triaged > 0 && (
+          <p className="flex items-start gap-1.5">
+            <CheckCircleIcon className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0 mt-px" />
+            <span>Triaged {b!.handled!.triaged} email{b!.handled!.triaged > 1 ? 's' : ''}{b!.handled!.filtered > 0 ? ` · ${b!.handled!.filtered} filtered as noise` : ''}</span>
+          </p>
+        )}
+        {b!.handled!.summarised > 0 && (
+          <p className="flex items-start gap-1.5">
+            <CheckCircleIcon className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0 mt-px" />
+            <span>Summarised {b!.handled!.summarised} meeting{b!.handled!.summarised > 1 ? 's' : ''}</span>
+          </p>
+        )}
+        {b!.handled!.tracked > 0 && (
+          <p className="flex items-start gap-1.5">
+            <CheckCircleIcon className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0 mt-px" />
+            <span>Tracked {b!.handled!.tracked} new commitment{b!.handled!.tracked > 1 ? 's' : ''}{b!.handled!.resolved > 0 ? ` · resolved ${b!.handled!.resolved}` : ''}</span>
+          </p>
+        )}
+      </div>
+    </Collapsible>
+  ));
+
+  // THIN-RAIL FOLD THRESHOLD — the two-zone split only earns its keep when the rail has enough
+  // ambient content to balance a full main column. With ≤2 non-empty rail sections a sidebar reads
+  // thin/unbalanced, so we fold those sections to the BOTTOM of the main column and render one column.
+  // 3+ sections → keep the calm right rail.
+  const RAIL_MIN_FOR_SIDEBAR = 3;
+  const useSidebar = railNodes.length >= RAIL_MIN_FOR_SIDEBAR;
+
   return (
     <div className="flex-1 min-w-0 h-full overflow-y-auto bg-neutral-50/40">
       <div className="px-8 py-10">
@@ -804,12 +979,13 @@ export function HomeView() {
         )}
 
         {!nothing && (
-          // TWO-ZONE layout — the width is used, not wasted. A centered 1100px measure splits into a
-          // MAIN reading column (everything that needs your ACTION: the focal item, the editorial
-          // "what needs you" digest, then "on your plate") and a calm ~320px RIGHT RAIL of ambient
-          // context (day at a glance: schedule, awareness, waiting-on, team, handled). Stacks to a
-          // single column below `lg`. The digest itself is NEVER split into columns.
-          <div className="mt-9 mx-auto max-w-[1100px] grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px] gap-x-10 gap-y-10 items-start">
+          // ADAPTIVE layout. When the ambient rail has enough content (≥3 non-empty sections) we use
+          // the TWO-ZONE split: a MAIN reading column (everything that needs your ACTION) + a calm
+          // ~320px RIGHT RAIL of "day at a glance" context. When the rail is THIN (≤2 sections) a
+          // sidebar reads unbalanced against a full main column, so we drop to a SINGLE column and
+          // FOLD the few rail sections to the bottom of the main column. Stacks to one column below
+          // `lg` regardless. The digest itself is NEVER split into columns.
+          <div className={`mt-9 mx-auto max-w-[1100px] grid grid-cols-1 gap-x-10 gap-y-10 items-start ${useSidebar ? 'lg:grid-cols-[minmax(0,1fr)_320px]' : ''}`}>
 
             {/* ── MAIN COLUMN — what needs your action ─────────────────────────────────────────── */}
             <div className="min-w-0 space-y-10">
@@ -875,170 +1051,26 @@ export function HomeView() {
               </RiseIn>
             )}
 
+            {/* THIN-RAIL FOLD — when the rail is too thin to justify a sidebar, its sections render
+                here, at the bottom of the main column (single column). A quiet hairline separates the
+                ambient context from the action lanes above. */}
+            {!useSidebar && railNodes.length > 0 && (
+              <div className="pt-2 border-t border-neutral-200/60 space-y-8">
+                {railNodes}
+              </div>
+            )}
+
             </div>{/* ── end MAIN COLUMN ── */}
 
-            {/* ── RIGHT RAIL — calm "day at a glance": ambient context, not a second digest. Denser,
-                quieter. Order: schedule → keep an eye on → ball-in-court/waiting → team → awareness →
-                handled. On lg+ it sits to the right (sticky so it stays in view); below lg it stacks
-                under the main column. */}
-            <aside className="min-w-0 space-y-8 lg:sticky lg:top-6">
-
-              {/* Today's schedule — the day's shape, top of the rail */}
-              {b && b.schedule.length > 0 && (
-                <RiseIn delay={90}>
-                  <section>
-                    <Label icon={CalendarDaysIcon}>Today&apos;s schedule</Label>
-                    <div className="space-y-2">
-                      {b.schedule.map(m => (
-                        <SideRow key={m.id} href="/meetings">
-                          <div className="flex items-baseline gap-2">
-                            <span className="text-[12px] font-semibold text-indigo-600 flex-shrink-0">{timeOf(m.time)}</span>
-                            <span className="text-[13px] text-neutral-800 truncate">{m.title}</span>
-                          </div>
-                          {m.prep && (m.prep.lastEmail || m.prep.openCommitments.length > 0 || m.prep.lastMeeting) && (
-                            <div className="mt-1.5 text-[11.5px] text-neutral-400 space-y-0.5">
-                              {m.prep.lastMeeting && (
-                                <p className="flex items-start gap-1 text-violet-500 line-clamp-2">
-                                  <SparklesIcon className="w-3 h-3 flex-shrink-0 mt-0.5" />
-                                  <span>Last time with {m.prep.lastMeeting.person} ({m.prep.lastMeeting.date}): {m.prep.lastMeeting.recall}</span>
-                                </p>
-                              )}
-                              {m.prep.lastEmail && <p className="truncate">Last thread: “{m.prep.lastEmail.subject}”</p>}
-                              {m.prep.openCommitments.map((c, i) => <p key={i} className="truncate">Open: {c}</p>)}
-                            </div>
-                          )}
-                        </SideRow>
-                      ))}
-                    </div>
-                  </section>
-                </RiseIn>
-              )}
-
-              {/* Keep an eye on — awareness, no actions */}
-              {b?.keepAnEyeOn && b.keepAnEyeOn.items.length > 0 && (
-                <RiseIn delay={120}>
-                  <section>
-                    <Label count={b.keepAnEyeOn.items.length} icon={EyeIcon}>Keep an eye on</Label>
-                    <KeepAnEyeOnCard items={b.keepAnEyeOn.items} />
-                  </section>
-                </RiseIn>
-              )}
-
-              {/* Ball in your court / Waiting on — the follow-ups (whichever the synthesis produced) */}
-              {b?.followups && b.followups.items.length > 0 ? (
-                <RiseIn delay={150}>
-                  <section>
-                    <Label count={b.followups.items.length} icon={ClockIcon}>Ball in your court</Label>
-                    <p className="text-[12px] text-neutral-400 -mt-1.5 mb-2.5 leading-snug">Waiting on others — nudge when it stalls.</p>
-                    <div className="rounded-2xl border border-neutral-200/80 bg-white p-4">
-                      {b.followups.teaser && <p className="text-[12.5px] text-neutral-500 mb-3.5 leading-relaxed">{b.followups.teaser}</p>}
-                      <ol className="space-y-3.5">
-                        {b.followups.items.map((f, i) => (
-                          <FollowUpItem key={f.id || i} f={f} index={i} />
-                        ))}
-                      </ol>
-                      {b.followups.closing && (
-                        <div className="mt-3.5 pt-3.5 border-t border-neutral-100 flex items-start gap-2">
-                          <SparklesIcon className="w-4 h-4 text-indigo-400 flex-shrink-0 mt-0.5" />
-                          <p className="text-[12px] text-neutral-500 leading-relaxed">{b.followups.closing}</p>
-                        </div>
-                      )}
-                    </div>
-                  </section>
-                </RiseIn>
-              ) : b && b.waitingOn.length > 0 ? (
-                <RiseIn delay={150}>
-                  <section>
-                    <Label count={b.waitingOn.length} icon={ClockIcon}>Waiting on others</Label>
-                    <div className="space-y-2">
-                      {b.waitingOn.map(c => (
-                        <CommitmentSideRow key={c.id} id={c.id} icon={ClockIcon} iconClass="text-amber-400">
-                          <span className="text-[13px] text-neutral-800 truncate block">{c.description}</span>
-                          <p className="text-[11.5px] text-neutral-400 mt-0.5">Waiting on {c.counterparty || 'them'} · {c.ageDays}d</p>
-                        </CommitmentSideRow>
-                      ))}
-                    </div>
-                  </section>
-                </RiseIn>
-              ) : null}
-
-              {/* From your team — coworker report-backs + ready-for-you (collapsible, quiet) */}
-              {team && (team.messages.length > 0 || team.needsReview.length > 0) && (
-                <RiseIn delay={180}>
-                  <Collapsible title="From your team" count={team.messages.length + team.needsReview.length}>
-                    <div className="space-y-2">
-                      {team.messages.slice(0, 3).map((m, i) => (
-                        <SideRow key={`m${i}`} href={m.workerId ? `/workers?worker=${m.workerId}` : '/workers'}>
-                          <span className="text-[12px] font-semibold text-neutral-700">{m.workerName ?? 'A coworker'}</span>
-                          {m.text && <p className="text-[12px] text-neutral-500 mt-0.5 line-clamp-2">{m.text}</p>}
-                        </SideRow>
-                      ))}
-                      {team.needsReview.slice(0, 3).map((r, i) => (
-                        <SideRow key={r.artifactId ?? r.threadId ?? `r${i}`} href={r.workerId ? `/workers?worker=${r.workerId}` : '/workers'} icon={UsersIcon}>
-                          <span className="text-[12.5px] text-neutral-800 truncate block">{r.title || 'Ready for you'}</span>
-                          <p className="text-[11px] text-neutral-400">Ready{r.workerName ? ` · ${r.workerName}` : ''}</p>
-                        </SideRow>
-                      ))}
-                    </div>
-                  </Collapsible>
-                </RiseIn>
-              )}
-
-              {/* For your awareness — the ambient FYI digest, quietest. Collapsed by default. */}
-              {b?.fyiDigest && b.fyiDigest.groups.length > 0 && (
-                <RiseIn delay={200}>
-                  <Collapsible title="For your awareness" count={b.fyiDigest.groups.length}>
-                    <div className="rounded-xl border border-neutral-200/80 bg-white divide-y divide-neutral-100 overflow-hidden">
-                      {b.fyiDigest.groups.filter(g => g.kind === 'person').map((g, i) => (
-                        <FyiGroupRow key={`p${i}`} g={g} variant="person" />
-                      ))}
-                      {b.fyiDigest.groups.some(g => g.kind === 'newsletter') && (
-                        <div className="px-3.5 pt-2.5 pb-1 bg-neutral-50/60">
-                          <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">Newsletters &amp; services</p>
-                        </div>
-                      )}
-                      {b.fyiDigest.groups.filter(g => g.kind === 'newsletter').map((g, i) => (
-                        <FyiGroupRow key={`n${i}`} g={g} variant="newsletter" />
-                      ))}
-                      {b.fyiDigest.tailItems > 0 && (
-                        <Link href="/inbox" className="block px-3.5 py-2 text-[11.5px] text-neutral-400 hover:text-indigo-600 transition-colors">
-                          +{b.fyiDigest.tailItems} more from {b.fyiDigest.tailGroups} other sender{b.fyiDigest.tailGroups > 1 ? 's' : ''}
-                        </Link>
-                      )}
-                    </div>
-                  </Collapsible>
-                </RiseIn>
-              )}
-
-              {/* Handled for you — the trust heartbeat, quietest of all, bottom of the rail */}
-              {b?.handled && (b.handled.triaged > 0 || b.handled.summarised > 0 || b.handled.tracked > 0) && (
-                <RiseIn delay={220}>
-                  <Collapsible title="Handled for you · 24h">
-                    <div className="rounded-xl border border-neutral-200/80 bg-gradient-to-br from-white to-neutral-50/60 px-3.5 py-3 text-[12px] text-neutral-500 space-y-1.5">
-                      {b.handled.triaged > 0 && (
-                        <p className="flex items-start gap-1.5">
-                          <CheckCircleIcon className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0 mt-px" />
-                          <span>Triaged {b.handled.triaged} email{b.handled.triaged > 1 ? 's' : ''}{b.handled.filtered > 0 ? ` · ${b.handled.filtered} filtered as noise` : ''}</span>
-                        </p>
-                      )}
-                      {b.handled.summarised > 0 && (
-                        <p className="flex items-start gap-1.5">
-                          <CheckCircleIcon className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0 mt-px" />
-                          <span>Summarised {b.handled.summarised} meeting{b.handled.summarised > 1 ? 's' : ''}</span>
-                        </p>
-                      )}
-                      {b.handled.tracked > 0 && (
-                        <p className="flex items-start gap-1.5">
-                          <CheckCircleIcon className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0 mt-px" />
-                          <span>Tracked {b.handled.tracked} new commitment{b.handled.tracked > 1 ? 's' : ''}{b.handled.resolved > 0 ? ` · resolved ${b.handled.resolved}` : ''}</span>
-                        </p>
-                      )}
-                    </div>
-                  </Collapsible>
-                </RiseIn>
-              )}
-
-            </aside>{/* ── end RIGHT RAIL ── */}
+            {/* ── RIGHT RAIL — calm "day at a glance": ambient context, not a second digest. Only
+                rendered when it has enough sections to balance the main column (see useSidebar). Each
+                section is built above and included ONLY when non-empty, so no empty header ever shows.
+                On lg+ it sits to the right (sticky so it stays in view); below lg it stacks under. */}
+            {useSidebar && (
+              <aside className="min-w-0 space-y-8 lg:sticky lg:top-6">
+                {railNodes}
+              </aside>
+            )}
 
             {/* FUTURE: a quiet "history" nav (yesterday ↑ / dated ledger) slots ABOVE the header, and a
                 "Hand to a coworker" action slots alongside each StartHere / body action — both out of
