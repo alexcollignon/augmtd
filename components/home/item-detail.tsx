@@ -1,22 +1,23 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   EnvelopeIcon,
-  ChevronRightIcon,
   ClipboardDocumentIcon,
   CheckIcon,
 } from '@heroicons/react/24/outline';
+import { ThreadMessages, type ThreadMessage } from '@/components/inbox/thread-messages';
 
 // ── The full-context email item detail — the roomy, focused view opened from the Home as a
 // DEEP DIVE (in-content, not a boxed popup). Shows: (1) header (subject + sender + date), (2) the
-// WHOLE thread rendered as SEPARATE collapsible message cards like the inbox (latest expanded,
-// older collapsed — the SAME pattern as components/inbox/work-detail-panel, one card per message),
+// WHOLE thread rendered by the SHARED inbox <ThreadMessages/> component — the SAME component the
+// inbox uses (sender AVATARS, per-message collapse with latest expanded, "Show earlier" fold,
+// To/CC recipients, HTML/plain body) so an email here looks EXACTLY like it does in the inbox,
 // (3) the suggested angle as a light line, (4) the prepared draft in an editable composer with
-// Send + Copy. Reuses the Home's own endpoints: GET/POST /api/inbox/[id]/draft (draft),
-// /api/inbox/[id]/send-reply (send), and GET /api/inbox/[id]/thread (the thread messages, now
-// loaded from the `emails` table by thread_id — one row per message).
+// Send + Copy. Reuses the Home's own endpoints: POST /api/inbox/[id]/draft (draft),
+// /api/inbox/[id]/send-reply (send), and GET /api/inbox/[id]/thread (the thread messages, loaded
+// from the `emails` table — one row per message, with html_body + to/cc for full parity).
 //
 // v1: EMAIL items only. Meeting / commitment / follow-up variants come later (they'd branch here on
 // a `kind` and render their own body while keeping the same URL contract + deep-dive shell).
@@ -28,8 +29,11 @@ type ThreadMsg = {
   subject?: string | null;
   receivedAt?: string | null;
   body?: string | null;
+  html_body?: string | null;
   snippet?: string;
   isFromUser?: boolean;
+  to_addresses?: string[] | null;
+  cc_addresses?: string[] | null;
 };
 type ThreadData = {
   id: string;
@@ -50,51 +54,10 @@ function fmtWhen(iso?: string | null): string {
   });
 }
 
-// One thread message card — collapsed shows sender + a 2-line snippet; expanded shows the full body.
-// Mirrors the inbox WorkDetailPanel thread card exactly (latest is "Latest").
-function ThreadCard({
-  msg, isLast, subject, expanded, onToggle, threadLen,
-}: {
-  msg: ThreadMsg; isLast: boolean; subject: string;
-  expanded: boolean; onToggle: () => void; threadLen: number;
-}) {
-  const senderLabel = msg.isFromUser ? 'You' : (msg.fromName || msg.from || 'Unknown');
-  const body = msg.body || msg.snippet || '';
-  return (
-    <div className={`rounded-lg border text-[12.5px] ${isLast ? 'border-neutral-300 bg-white' : 'border-neutral-200 bg-neutral-50'}`}>
-      <button onClick={onToggle} className="w-full flex items-center justify-between px-3.5 py-3 text-left">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="font-medium text-neutral-900 truncate">{senderLabel}</span>
-          {isLast && threadLen > 1 && (
-            <span className="flex-shrink-0 text-[10px] font-medium text-neutral-400 uppercase tracking-wide">Latest</span>
-          )}
-        </div>
-        <div className="flex items-center gap-2 flex-shrink-0 ml-2">
-          <span className="text-neutral-400 tabular-nums">{fmtWhen(msg.receivedAt)}</span>
-          <ChevronRightIcon className={`w-3.5 h-3.5 text-neutral-400 transition-transform duration-150 ${expanded ? 'rotate-90' : ''}`} />
-        </div>
-      </button>
-      {!expanded && msg.snippet && (
-        <p className="px-3.5 pb-3 text-neutral-500 line-clamp-2 text-[12.5px]">{msg.snippet}</p>
-      )}
-      {expanded && (
-        <div className="px-3.5 pb-3.5 border-t border-neutral-100 pt-3 space-y-2">
-          {msg.subject && msg.subject !== subject && (
-            <p className="text-neutral-400 text-[11px]">{msg.subject}</p>
-          )}
-          <p className="text-[12.5px] text-neutral-700 leading-relaxed whitespace-pre-wrap">{body}</p>
-        </div>
-      )}
-    </div>
-  );
-}
-
 export function ItemDetail({ id, angle }: { id: string; angle?: string | null }) {
   const router = useRouter();
   const [thread, setThread] = useState<ThreadData | null>(null);
   const [threadErr, setThreadErr] = useState(false);
-  // Latest is expanded by default; older messages collapsed — same as the inbox.
-  const [expanded, setExpanded] = useState<Record<number, boolean>>({});
 
   const [draft, setDraft] = useState<string | null>(null);
   const [draftLoading, setDraftLoading] = useState(true);
@@ -111,9 +74,6 @@ export function ItemDetail({ id, angle }: { id: string; angle?: string | null })
       .then((d: ThreadData) => {
         if (!alive) return;
         setThread(d);
-        // Expand the latest message by default.
-        const len = d.messages?.length ?? 0;
-        setExpanded(len > 0 ? { [len - 1]: true } : {});
       })
       .catch(() => { if (alive) setThreadErr(true); });
 
@@ -159,7 +119,36 @@ export function ItemDetail({ id, angle }: { id: string; angle?: string | null })
   const subject = thread?.subject || 'Email';
   const senderLine = [thread?.fromName, thread?.fromAddress && `<${thread.fromAddress}>`]
     .filter(Boolean).join(' ');
-  const messages = thread?.messages ?? [];
+
+  // Map the Home thread payload onto the shared inbox <ThreadMessages/> shape (the `emails`-column
+  // field names). null while loading → the shared component shows its own skeleton. The `fallback`
+  // supplies header/body when the thread resolved to zero rows but the item still has a stored body.
+  const threadMessages: ThreadMessage[] | null = useMemo(() => {
+    if (threadErr) return [];
+    if (!thread) return null; // loading
+    return (thread.messages ?? []).map((m) => ({
+      id: m.id,
+      from_name: m.fromName ?? null,
+      from_address: m.from ?? null,
+      received_at: m.receivedAt ?? null,
+      body: m.body ?? null,
+      html_body: m.html_body ?? null,
+      is_from_user: !!m.isFromUser,
+      to_addresses: m.to_addresses ?? null,
+      cc_addresses: m.cc_addresses ?? null,
+    }));
+  }, [thread, threadErr]);
+
+  const fallback = thread
+    ? {
+        from_name: thread.fromName,
+        from: thread.fromAddress,
+        received_at: thread.receivedAt,
+        body: thread.body,
+      }
+    : null;
+
+  const hasThread = !threadErr && (thread?.messages?.length ?? 0) > 1;
 
   return (
     <div className="flex flex-col">
@@ -181,42 +170,15 @@ export function ItemDetail({ id, angle }: { id: string; angle?: string | null })
 
       {/* Body — thread + angle + draft (page/shell handles scrolling) */}
       <div className="px-7 py-6 space-y-6">
-        {/* 2 — The whole thread, one card per message, collapsed like the inbox */}
+        {/* 2 — The whole thread, rendered by the SHARED inbox component (avatars + collapse + fold) */}
         <div>
-          {messages.length > 1 && (
+          {hasThread && (
             <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2.5">Thread</h2>
           )}
-          {threadErr && <p className="text-[13px] text-neutral-400">Could not load the thread.</p>}
-          {!threadErr && !thread && (
-            <div className="space-y-2">
-              <div className="h-14 rounded-lg bg-neutral-100 animate-pulse" />
-              <div className="h-14 rounded-lg bg-neutral-100 animate-pulse" />
-            </div>
-          )}
-          {thread && messages.length === 0 && thread.body && (
-            <div className="rounded-lg border border-neutral-300 bg-white px-3.5 py-3">
-              <p className="text-[12.5px] text-neutral-700 leading-relaxed whitespace-pre-wrap">{thread.body}</p>
-            </div>
-          )}
-          {thread && messages.length > 0 && (
-            <div className="space-y-2">
-              {messages.slice(-12).map((msg, i, arr) => {
-                const isLast = i === arr.length - 1;
-                // Index into the shared expanded map by original position so toggles are stable.
-                const origIdx = messages.length - arr.length + i;
-                return (
-                  <ThreadCard
-                    key={msg.id || origIdx}
-                    msg={msg}
-                    isLast={isLast}
-                    subject={subject}
-                    threadLen={messages.length}
-                    expanded={!!expanded[origIdx]}
-                    onToggle={() => setExpanded(prev => ({ ...prev, [origIdx]: !prev[origIdx] }))}
-                  />
-                );
-              })}
-            </div>
+          {threadErr ? (
+            <p className="text-[13px] text-neutral-400">Could not load the thread.</p>
+          ) : (
+            <ThreadMessages messages={threadMessages} fallback={fallback} />
           )}
         </div>
 

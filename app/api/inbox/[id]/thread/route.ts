@@ -33,7 +33,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   type EmailRow = Record<string, any>;
   let rows: EmailRow[] = [];
 
-  const SELECT = 'id, message_id, from_address, from_name, subject, body, received_at, is_from_user';
+  const SELECT = 'id, message_id, from_address, from_name, subject, body, html_body, received_at, is_from_user, to_addresses, cc_addresses';
 
   // Primary path: all emails sharing this thread_id, ordered oldest→newest (the inbox pattern).
   if (threadId) {
@@ -57,7 +57,9 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     if (data) rows = [data];
   }
 
-  // Render-ready messages — one card per message, like the inbox thread cards.
+  // Render-ready messages — one card per message, like the inbox thread cards. Field names mirror
+  // the `emails` columns so the shared <ThreadMessages/> component (used by both the inbox and the
+  // Home item-detail) can consume these rows directly, including HTML bodies + To/CC recipients.
   const messages = rows.map((e) => {
     const body: string | null = typeof e.body === 'string' ? e.body : null;
     return {
@@ -67,8 +69,11 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       subject: (e.subject as string) ?? null,
       receivedAt: (e.received_at as string) ?? null,
       body,
+      html_body: typeof e.html_body === 'string' ? (e.html_body as string) : null,
       snippet: body ? body.replace(/\s+/g, ' ').trim().slice(0, 240) : '',
       isFromUser: !!e.is_from_user,
+      to_addresses: Array.isArray(e.to_addresses) ? (e.to_addresses as string[]) : null,
+      cc_addresses: Array.isArray(e.cc_addresses) ? (e.cc_addresses as string[]) : null,
     };
   });
 
