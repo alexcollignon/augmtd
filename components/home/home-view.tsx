@@ -976,7 +976,7 @@ export function HomeView() {
               onClick={() => setActivityOpen(true)}
               title="Activity"
               aria-label="Open activity"
-              className="flex-shrink-0 mt-1 inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 text-[12px] font-medium text-neutral-500 hover:text-indigo-700 hover:border-indigo-200 hover:bg-indigo-50/60 transition-colors"
+              className={`flex-shrink-0 mt-1 inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 text-[12px] font-medium text-neutral-500 hover:text-indigo-700 hover:border-indigo-200 hover:bg-indigo-50/60 transition-all duration-200 ${activityOpen ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
             >
               <ClockIcon className="w-4 h-4" />
               <span className="hidden sm:inline">Activity</span>
