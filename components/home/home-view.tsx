@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import {
   EnvelopeIcon, CalendarDaysIcon, CheckCircleIcon, ClockIcon, UsersIcon,
   ChevronRightIcon, ArrowRightIcon, BoltIcon, SparklesIcon, EyeIcon,
@@ -277,16 +278,14 @@ function DigestList({ items, onDismiss, emphasizeFirst = false }: { items: Diges
   );
 }
 
-// One editorial reply row. Collapsed = who + ask (snappy). Expanded = angle + editable draft + thread
-// link. Reuses the exact same endpoints as the old card: /draft (generate on demand), /send-reply
-// (Send), /complete + /dismiss (✓/✕), with useExit fade and onDismiss live-count on removal.
+// One editorial reply row. Collapsed = who + ask (snappy). Clicking the row OPENS THE ITEM DETAIL —
+// the full-context email view (whole thread rendered collapsed + suggested angle + editable draft +
+// Send) at /item/[itemId], presented as a wide modal over the Home via an intercepting route (real
+// URL → back/refresh/deep-link work). The quiet inline ✓/✕ (Done/Dismiss) stay on the row for fast
+// triage without opening. Reuses /complete + /dismiss (✓/✕), with useExit fade + onDismiss live-count
+// on removal; the draft/send now live in the item detail (which reuses /draft + /send-reply).
 function DigestReply({ m, onDismiss, emphasis = false }: { m: DigestItem; onDismiss?: (id: string) => void; emphasis?: boolean }) {
-  const [draft, setDraft] = useState<string | null>(m.draft ?? null);
-  const [open, setOpen] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [sending, setSending] = useState(false);
-  const [sent, setSent] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const router = useRouter();
   const ready = !!m.draft;
   const { removed, exiting, startExit } = useExit();
   const [acting, setActing] = useState(false);
@@ -298,29 +297,9 @@ function DigestReply({ m, onDismiss, emphasis = false }: { m: DigestItem; onDism
     setActing(true); startExit();
     try { await fetch(`/api/inbox/${m.itemId}/${kind}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason: 'home' }) }); } finally { setActing(false); }
   };
-  // Open the row → reveal the depth; lazily generate a draft if the sweep didn't already prepare one.
-  const openRow = async () => {
-    setOpen(true);
-    if (draft || loading || !m.itemId) return;
-    setLoading(true);
-    try {
-      const res = await fetch(`/api/inbox/${m.itemId}/draft`, { method: 'POST' });
-      const d = await res.json();
-      setDraft(d.draft || 'Could not draft a reply.');
-    } catch { setDraft('Could not draft a reply.'); } finally { setLoading(false); }
-  };
-  const toggle = () => { if (open) setOpen(false); else openRow(); };
-  const send = async () => {
-    if (!draft || sending || !m.itemId) return;
-    setSending(true);
-    try {
-      const res = await fetch(`/api/inbox/${m.itemId}/send-reply`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ customMessage: draft }),
-      });
-      if (res.ok) { setSent(true); setOpen(false); setTimeout(startExit, 700); }
-    } catch { /* leave open to retry */ } finally { setSending(false); }
-  };
+  // Open the item detail — the suggested angle rides along as a query param (it's brief-generated,
+  // not stored on the item, so the modal can show it; a hard visit simply omits it).
+  const open = () => { if (m.itemId) router.push(`/item/${m.itemId}${m.angle ? `?angle=${encodeURIComponent(m.angle)}` : ''}`); };
 
   if (removed) return null;
   // Line 1 = sender · real subject (bold). Line 2 = the synthesized ask (muted context). The avatar
@@ -329,10 +308,10 @@ function DigestReply({ m, onDismiss, emphasis = false }: { m: DigestItem; onDism
   const when = fmtWhen(m.receivedAt);
   return (
     <div className={`group rounded-xl border bg-white transition-all duration-300 ease-out hover:shadow-[0_4px_20px_-4px_rgba(0,0,0,0.08)] ${exiting ? 'opacity-0 scale-[0.98]' : 'opacity-100'} ${emphasis ? 'border-indigo-200 ring-1 ring-indigo-100' : 'border-neutral-200/70 hover:border-neutral-300'}`}>
-      {/* Collapsed line — the whole header is the toggle (a div, not a button, so the ✓/✕ buttons can
-          nest legally); the affordance + ✓/✕ sit inline, quiet. */}
-      <div role="button" tabIndex={0} onClick={toggle}
-        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } }}
+      {/* The whole row opens the item detail (a div, not a button, so the ✓/✕ buttons can nest
+          legally); the affordance + ✓/✕ sit inline, quiet. */}
+      <div role="button" tabIndex={0} onClick={open}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } }}
         className="w-full flex items-start gap-3 p-4 text-left cursor-pointer">
         <SenderAvatar name={m.who} size={emphasis ? 'md' : 'sm'} />
         <div className="min-w-0 flex-1">
@@ -344,14 +323,11 @@ function DigestReply({ m, onDismiss, emphasis = false }: { m: DigestItem; onDism
           </div>
           {m.ask && <p className={`${emphasis ? 'text-[12.5px]' : 'text-[12px]'} text-neutral-500 mt-0.5 leading-snug line-clamp-1`}>{m.ask}</p>}
         </div>
-        {sent ? (
-          <span className="flex-shrink-0 mt-0.5 text-[12px] font-medium text-emerald-600">Sent ✓</span>
-        ) : m.itemId && (
+        {m.itemId && (
           <span className="flex-shrink-0 flex items-center gap-2.5 mt-0.5">
-            <span onClick={(e) => { e.stopPropagation(); toggle(); }}
-              className="inline-flex items-center gap-1 text-[12.5px] font-medium text-indigo-600 hover:text-indigo-700 cursor-pointer whitespace-nowrap">
-              {loading ? 'Drafting…' : open ? 'Collapse' : ready ? 'Send draft' : 'Draft reply'}
-              {!open && <ArrowRightIcon className="w-3.5 h-3.5" />}
+            <span className="inline-flex items-center gap-1 text-[12.5px] font-medium text-indigo-600 hover:text-indigo-700 whitespace-nowrap">
+              {ready ? 'Send draft' : 'Open'}
+              <ArrowRightIcon className="w-3.5 h-3.5" />
             </span>
             <button onClick={(e) => act('complete', e)} disabled={acting} title="Mark done"
               className="text-neutral-300 hover:text-emerald-600 transition-colors disabled:opacity-50 text-[13px] leading-none">✓</button>
@@ -360,32 +336,6 @@ function DigestReply({ m, onDismiss, emphasis = false }: { m: DigestItem; onDism
           </span>
         )}
       </div>
-
-      {/* Expanded — the real email snippet, the suggested angle, the editable draft, and a link out. */}
-      {open && !sent && (
-        <div className="px-4 pb-4 pl-[3.25rem] pr-4 -mt-1">
-          {m.snippet && (
-            <p className="text-[12.5px] text-neutral-500 leading-relaxed mb-2.5 border-l-2 border-neutral-200 pl-3 line-clamp-3">{m.snippet}</p>
-          )}
-          {m.angle && <p className="text-[12.5px] text-neutral-600 leading-snug mb-2.5"><span className="font-medium text-neutral-700">Suggested angle:</span> {m.angle}</p>}
-          {loading && <div className="h-20 rounded-xl bg-neutral-100 animate-pulse" />}
-          {draft && (
-            <div className="rounded-xl border border-neutral-200 bg-neutral-50/70 p-3.5">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400 mb-1.5">Draft</p>
-              <textarea value={draft} onChange={(e) => setDraft(e.target.value)}
-                rows={Math.min(16, Math.max(4, draft.split('\n').length + 1))}
-                className="w-full bg-transparent text-[13px] text-neutral-700 leading-relaxed resize-none focus:outline-none" />
-              <div className="mt-2.5 flex items-center gap-4">
-                <button onClick={send} disabled={sending}
-                  className="inline-flex items-center rounded-lg bg-indigo-600 text-white px-3.5 py-1.5 text-[12.5px] font-medium hover:bg-indigo-700 disabled:opacity-60 transition-colors">{sending ? 'Sending…' : 'Send'}</button>
-                <button onClick={() => { if (draft) { navigator.clipboard?.writeText(draft); setCopied(true); setTimeout(() => setCopied(false), 1500); } }}
-                  className="text-[12.5px] font-medium text-neutral-600 hover:text-neutral-800">{copied ? 'Copied' : 'Copy'}</button>
-                <Link href="/inbox" className="inline-flex items-center gap-1 text-[12.5px] font-medium text-neutral-500 hover:text-indigo-600 transition-colors ml-auto">Open thread<ArrowRightIcon className="w-3.5 h-3.5" /></Link>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
     </div>
   );
 }
@@ -541,51 +491,32 @@ function StartHere({ data, teaser, onDismiss }: { data: StartHereData; teaser?: 
   );
 }
 
-// Focal reply — same draft/send/done/dismiss behaviour as MustRespondItem, at focal scale (larger
-// title, draft open by default when one is ready so the primary action is one tap away).
+// Focal reply — the single "Start here" item. Opens the full-context item detail (/item/[itemId],
+// as a wide modal over the Home) with its primary action ("Send draft" when one is ready) + the quiet
+// ✓/✕ kept inline for fast triage. The thread + editable draft + Send now live in the item detail.
 function StartHereReplyBody({ m, onDismiss }: { m: { who: string; ask: string; angle: string; itemId: string; draft?: string | null; subject?: string; snippet?: string; receivedAt?: string }; onDismiss?: (id: string) => void }) {
-  const [draft, setDraft] = useState<string | null>(m.draft ?? null);
-  const [open, setOpen] = useState<boolean>(!!m.draft); // draft-ready → open inline immediately
-  const [loading, setLoading] = useState(false);
-  const [sending, setSending] = useState(false);
-  const [sent, setSent] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const router = useRouter();
   const ready = !!m.draft;
   const { removed, exiting, startExit } = useExit();
   const [acting, setActing] = useState(false);
   useEffect(() => { if (removed) onDismiss?.(m.itemId); }, [removed]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const act = async (kind: 'complete' | 'dismiss') => {
+  const act = async (kind: 'complete' | 'dismiss', e?: React.MouseEvent) => {
+    e?.stopPropagation();
     if (acting || !m.itemId) return;
     setActing(true); startExit();
     try { await fetch(`/api/inbox/${m.itemId}/${kind}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason: 'home' }) }); } finally { setActing(false); }
   };
-  const toggle = async () => {
-    if (open) { setOpen(false); return; }
-    setOpen(true);
-    if (draft || loading || !m.itemId) return;
-    setLoading(true);
-    try {
-      const res = await fetch(`/api/inbox/${m.itemId}/draft`, { method: 'POST' });
-      const d = await res.json();
-      setDraft(d.draft || 'Could not draft a reply.');
-    } catch { setDraft('Could not draft a reply.'); } finally { setLoading(false); }
-  };
-  const send = async () => {
-    if (!draft || sending || !m.itemId) return;
-    setSending(true);
-    try {
-      const res = await fetch(`/api/inbox/${m.itemId}/send-reply`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ customMessage: draft }),
-      });
-      if (res.ok) { setSent(true); setOpen(false); setTimeout(startExit, 700); }
-    } catch { /* leave open to retry */ } finally { setSending(false); }
-  };
+  const open = () => { if (m.itemId) router.push(`/item/${m.itemId}${m.angle ? `?angle=${encodeURIComponent(m.angle)}` : ''}`); };
+
   if (removed) return null;
   return (
     <div className={exitCls(exiting)}>
-      <div className="flex items-start justify-between gap-3">
+      <div
+        role="button" tabIndex={0} onClick={open}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } }}
+        className="flex items-start justify-between gap-3 cursor-pointer"
+      >
         <div className="min-w-0 flex-1">
           <span className="inline-flex items-center gap-1 rounded-md bg-indigo-50 px-1.5 py-0.5 text-[10px] font-medium text-indigo-600">
             <EnvelopeIcon className="w-3 h-3" />Reply needed
@@ -603,33 +534,17 @@ function StartHereReplyBody({ m, onDismiss }: { m: { who: string; ask: string; a
           {m.ask && <p className="text-[13.5px] text-neutral-600 mt-2 leading-relaxed">{m.ask}</p>}
           {m.angle && <p className="text-[13px] text-neutral-600 mt-1.5 leading-relaxed"><span className="font-medium text-neutral-700">Angle:</span> {m.angle}</p>}
         </div>
-        {sent ? (
-          <span className="inline-flex items-center gap-1 text-[13px] font-medium text-emerald-600 flex-shrink-0">Sent ✓</span>
-        ) : m.itemId && (
+        {m.itemId && (
           <div className="flex-shrink-0 flex items-center gap-1.5">
-            <button onClick={toggle} disabled={loading}
-              className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 text-white px-3.5 py-2 text-[13px] font-medium hover:bg-indigo-700 transition-colors disabled:opacity-60">
-              {loading ? 'Drafting…' : open ? 'Hide draft' : ready ? '✦ Send draft' : 'Draft reply'}
-            </button>
-            <button onClick={() => act('complete')} disabled={acting} title="Mark done" className="w-8 h-8 inline-flex items-center justify-center rounded-lg border border-neutral-200 text-neutral-400 hover:text-emerald-600 hover:border-emerald-200 hover:bg-emerald-50 transition-colors text-[14px]">✓</button>
-            <button onClick={() => act('dismiss')} disabled={acting} title="Dismiss" className="w-8 h-8 inline-flex items-center justify-center rounded-lg border border-neutral-200 text-neutral-400 hover:text-rose-600 hover:border-rose-200 hover:bg-rose-50 transition-colors text-[14px]">✕</button>
+            <span className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 text-white px-3.5 py-2 text-[13px] font-medium hover:bg-indigo-700 transition-colors">
+              {ready ? '✦ Send draft' : 'Open'}
+              <ArrowRightIcon className="w-3.5 h-3.5" />
+            </span>
+            <button onClick={(e) => act('complete', e)} disabled={acting} title="Mark done" className="w-8 h-8 inline-flex items-center justify-center rounded-lg border border-neutral-200 text-neutral-400 hover:text-emerald-600 hover:border-emerald-200 hover:bg-emerald-50 transition-colors text-[14px]">✓</button>
+            <button onClick={(e) => act('dismiss', e)} disabled={acting} title="Dismiss" className="w-8 h-8 inline-flex items-center justify-center rounded-lg border border-neutral-200 text-neutral-400 hover:text-rose-600 hover:border-rose-200 hover:bg-rose-50 transition-colors text-[14px]">✕</button>
           </div>
         )}
       </div>
-      {loading && <div className="mt-3 h-20 rounded-xl bg-neutral-100 animate-pulse" />}
-      {open && draft && !sent && (
-        <div className="mt-3 rounded-xl border border-neutral-200 bg-neutral-50/70 p-3.5">
-          <textarea value={draft} onChange={(e) => setDraft(e.target.value)}
-            rows={Math.min(16, Math.max(5, draft.split('\n').length + 1))}
-            className="w-full bg-transparent text-[13px] text-neutral-700 leading-relaxed resize-none focus:outline-none" />
-          <div className="mt-2.5 flex items-center gap-3">
-            <button onClick={send} disabled={sending}
-              className="inline-flex items-center rounded-lg bg-indigo-600 text-white px-4 py-1.5 text-[13px] font-medium hover:bg-indigo-700 disabled:opacity-60 transition-colors">{sending ? 'Sending…' : 'Send'}</button>
-            <button onClick={() => { if (draft) { navigator.clipboard?.writeText(draft); setCopied(true); setTimeout(() => setCopied(false), 1500); } }}
-              className="text-[13px] font-medium text-neutral-600 hover:text-neutral-800">{copied ? 'Copied' : 'Copy'}</button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
