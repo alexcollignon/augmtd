@@ -151,9 +151,10 @@ export function ItemDetail({ id, angle }: { id: string; angle?: string | null })
   const hasThread = !threadErr && (thread?.messages?.length ?? 0) > 1;
 
   return (
-    <div className="flex flex-col">
-      {/* 1 — Header: subject + sender + date */}
-      <div className="px-7 pt-6 pb-5 border-b border-neutral-200">
+    // Fills the shell height: header (top) / scrolling thread (middle) / docked reply composer (bottom).
+    <div className="flex flex-col h-full min-h-0">
+      {/* 1 — Header: subject + sender + date (fixed at top) */}
+      <div className="flex-shrink-0 px-7 pt-6 pb-5 border-b border-neutral-200">
         <div className="flex items-center gap-1.5 mb-2">
           <span className="inline-flex items-center gap-1 rounded-md bg-indigo-50 px-1.5 py-0.5 text-[10px] font-medium text-indigo-600">
             <EnvelopeIcon className="w-3 h-3" />Reply needed
@@ -168,9 +169,9 @@ export function ItemDetail({ id, angle }: { id: string; angle?: string | null })
         </div>
       </div>
 
-      {/* Body — thread + angle + draft (page/shell handles scrolling) */}
-      <div className="px-7 py-6 space-y-6">
-        {/* 2 — The whole thread, rendered by the SHARED inbox component (avatars + collapse + fold) */}
+      {/* 2 — Scrolling thread + angle (the only scroll area; composer stays docked below) */}
+      <div className="flex-1 min-h-0 overflow-y-auto px-7 py-6 space-y-6">
+        {/* The whole thread, rendered by the SHARED inbox component (avatars + collapse + fold) */}
         <div>
           {hasThread && (
             <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2.5">Thread</h2>
@@ -182,50 +183,58 @@ export function ItemDetail({ id, angle }: { id: string; angle?: string | null })
           )}
         </div>
 
-        {/* 3 — Suggested angle (light line) */}
+        {/* Suggested angle (light line) — kept just above the docked composer */}
         {angle && (
           <p className="text-[13px] text-neutral-600 leading-relaxed">
             <span className="font-medium text-neutral-700">Suggested angle:</span> {angle}
           </p>
         )}
+      </div>
 
-        {/* 4 — The prepared draft in an editable composer */}
-        <div>
-          <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2.5">Your reply</h2>
-          {draftLoading && !draft && <div className="h-40 rounded-xl bg-neutral-100 animate-pulse" />}
-          {sent ? (
-            <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50/60 px-4 py-4">
-              <CheckIcon className="w-4 h-4 text-emerald-600" />
-              <p className="text-[13px] font-medium text-emerald-700">Reply sent.</p>
-            </div>
-          ) : draft != null && (
-            <div className="rounded-xl border border-neutral-200 bg-neutral-50/70 p-4">
-              <textarea
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                rows={Math.min(20, Math.max(6, draft.split('\n').length + 1))}
-                className="w-full bg-transparent text-[13.5px] text-neutral-700 leading-relaxed resize-none focus:outline-none"
-              />
-              {sendErr && <p className="text-[12px] text-rose-600 mt-2">{sendErr}</p>}
-              <div className="mt-3 flex items-center gap-4">
-                <button
-                  onClick={send}
-                  disabled={sending}
-                  className="inline-flex items-center rounded-lg bg-indigo-600 text-white px-5 py-2 text-[13.5px] font-medium hover:bg-indigo-700 disabled:opacity-60 transition-colors"
-                >
-                  {sending ? 'Sending…' : 'Send'}
-                </button>
-                <button
-                  onClick={copy}
-                  className="inline-flex items-center gap-1.5 text-[13px] font-medium text-neutral-600 hover:text-neutral-800"
-                >
-                  {copied ? <CheckIcon className="w-3.5 h-3.5 text-emerald-500" /> : <ClipboardDocumentIcon className="w-3.5 h-3.5" />}
-                  {copied ? 'Copied' : 'Copy'}
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
+      {/* 3 — Docked reply composer: pinned to the bottom, always visible. Subtle top border +
+          elevated bg so it reads as a docked reply bar. On short viewports it caps its own height
+          and scrolls internally so Send never leaves the screen. */}
+      <div className="flex-shrink-0 border-t border-neutral-200 bg-neutral-50/80 backdrop-blur px-7 py-4 max-h-[45vh] overflow-y-auto">
+        <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2.5">Your reply</h2>
+        {sent ? (
+          <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50/60 px-4 py-4">
+            <CheckIcon className="w-4 h-4 text-emerald-600" />
+            <p className="text-[13px] font-medium text-emerald-700">Reply sent.</p>
+          </div>
+        ) : (
+          <div className="rounded-xl border border-neutral-200 bg-white p-4">
+            {draft == null ? (
+              // Composer renders even while the draft loads — a boxed loading state, never absent.
+              <div className="h-32 rounded-lg bg-neutral-100 animate-pulse" />
+            ) : (
+              <>
+                <textarea
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  rows={Math.min(12, Math.max(5, draft.split('\n').length + 1))}
+                  className="w-full max-h-[28vh] overflow-y-auto bg-transparent text-[13.5px] text-neutral-700 leading-relaxed resize-none focus:outline-none"
+                />
+                {sendErr && <p className="text-[12px] text-rose-600 mt-2">{sendErr}</p>}
+                <div className="mt-3 flex items-center gap-4">
+                  <button
+                    onClick={send}
+                    disabled={sending || draftLoading}
+                    className="inline-flex items-center rounded-lg bg-indigo-600 text-white px-5 py-2 text-[13.5px] font-medium hover:bg-indigo-700 disabled:opacity-60 transition-colors"
+                  >
+                    {sending ? 'Sending…' : 'Send'}
+                  </button>
+                  <button
+                    onClick={copy}
+                    className="inline-flex items-center gap-1.5 text-[13px] font-medium text-neutral-600 hover:text-neutral-800"
+                  >
+                    {copied ? <CheckIcon className="w-3.5 h-3.5 text-emerald-500" /> : <ClipboardDocumentIcon className="w-3.5 h-3.5" />}
+                    {copied ? 'Copied' : 'Copy'}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

@@ -28,8 +28,9 @@ export default async function ItemPage({
           <ArrowLeftIcon className="w-4 h-4" />Back to Home
         </Link>
       </div>
-      <div className="flex-1 min-h-0 overflow-y-auto">
-        <div className="mx-auto max-w-3xl w-full">
+      {/* Body — the ItemDetail owns its own scroll (thread scrolls, composer docks at the bottom). */}
+      <div className="flex-1 min-h-0 flex flex-col">
+        <div className="mx-auto max-w-3xl w-full flex-1 min-h-0 flex flex-col">
           <ItemDetail id={id} angle={angle ?? null} />
         </div>
       </div>
