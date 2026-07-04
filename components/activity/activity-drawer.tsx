@@ -1,95 +1,84 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useState } from 'react';
+import { Dialog, Transition } from '@headlessui/react';
 import { XMarkIcon } from '@heroicons/react/24/outline';
 import ActivityTimeline from './activity-timeline';
 
 // ─── ActivityDrawer ───────────────────────────────────────────────────────────
-// A right-side slide-over panel showing the activity timeline. Opens with a
-// translate-x (full → 0) + opacity slide over ~300ms ease-out (matching the app's
-// transition feel), a fading semi-transparent backdrop, closes on backdrop click,
-// Esc, or the ✕. Body scroll is locked while open. The timeline is mounted only
-// once opened (lazy fetch) and stays mounted for the session so re-opening is
-// instant; a `mounted` gate delays the enter transition one frame so it animates.
+// A right-side slide-over panel showing the activity timeline. Built on Headless
+// UI `Transition`/`Dialog` — the same slide-over pattern used by the inbox and
+// meeting detail panels: a backdrop opacity fade + a panel that slides in from
+// the right (translate-x-full → translate-x-0). Esc and backdrop clicks close via
+// `Dialog onClose`, and body scroll is locked automatically while open. The
+// timeline is mounted only after the drawer is first opened (lazy fetch) and stays
+// mounted for the session so re-opening is instant.
 export default function ActivityDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
-  // Keep the panel in the tree through the closing animation, then unmount.
-  const [present, setPresent] = useState(open);
-  // Drives the enter/exit transition classes (flipped a frame after mount).
-  const [shown, setShown] = useState(false);
   // Once opened, keep the timeline mounted so its data isn't re-fetched on reopen.
   const [everOpened, setEverOpened] = useState(open);
-  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    if (open) {
-      if (closeTimer.current) clearTimeout(closeTimer.current);
-      setPresent(true);
-      setEverOpened(true);
-      // Next frame → flip to shown so the transition runs from the closed state.
-      const id = requestAnimationFrame(() => setShown(true));
-      return () => cancelAnimationFrame(id);
-    } else {
-      setShown(false);
-      // Unmount after the slide-out finishes (matches the 300ms duration).
-      closeTimer.current = setTimeout(() => setPresent(false), 320);
-      return () => { if (closeTimer.current) clearTimeout(closeTimer.current); };
-    }
-  }, [open]);
-
-  // Esc to close.
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
-
-  // Lock body scroll while present.
-  useEffect(() => {
-    if (!present) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => { document.body.style.overflow = prev; };
-  }, [present]);
-
-  if (!present) return null;
+  if (open && !everOpened) setEverOpened(true);
 
   return (
-    <div className="fixed inset-0 z-50" aria-hidden={!open}>
-      {/* Backdrop — fades in/out */}
-      <div
-        onClick={onClose}
-        className={`absolute inset-0 bg-neutral-900/20 transition-opacity duration-300 ease-out ${shown ? 'opacity-100' : 'opacity-0'}`}
-      />
+    <Transition.Root show={open} as={Fragment}>
+      <Dialog as="div" className="relative z-50" onClose={onClose}>
+        <Transition.Child
+          as={Fragment}
+          enter="ease-in-out duration-300"
+          enterFrom="opacity-0"
+          enterTo="opacity-100"
+          leave="ease-in-out duration-300"
+          leaveFrom="opacity-100"
+          leaveTo="opacity-0"
+        >
+          <div className="fixed inset-0 bg-neutral-900/20 transition-opacity" />
+        </Transition.Child>
 
-      {/* Panel — slides in from the right */}
-      <aside
-        role="dialog"
-        aria-modal="true"
-        aria-label="Activity"
-        className={`absolute right-0 top-0 h-full w-[400px] max-w-[90vw] bg-white border-l border-neutral-200 shadow-2xl flex flex-col transition-all duration-300 ease-out ${shown ? 'translate-x-0 opacity-100' : 'translate-x-full opacity-0'}`}
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between px-5 h-14 border-b border-neutral-100 flex-shrink-0">
-          <div>
-            <h2 className="text-[15px] font-semibold text-neutral-900 leading-none">Activity</h2>
-            <p className="text-[11.5px] text-neutral-400 mt-1 leading-none">Everything you&rsquo;ve done</p>
+        <div className="fixed inset-0 overflow-hidden">
+          <div className="absolute inset-0 overflow-hidden">
+            <div className="pointer-events-none fixed inset-y-0 right-0 flex max-w-full pl-10">
+              <Transition.Child
+                as={Fragment}
+                enter="transform transition ease-in-out duration-300"
+                enterFrom="translate-x-full"
+                enterTo="translate-x-0"
+                leave="transform transition ease-in-out duration-300"
+                leaveFrom="translate-x-0"
+                leaveTo="translate-x-full"
+              >
+                <Dialog.Panel className="pointer-events-auto w-screen max-w-md">
+                  <div className="flex h-full flex-col bg-white border-l border-neutral-200 shadow-2xl">
+                    {/* Header */}
+                    <div className="flex items-center justify-between px-5 h-14 border-b border-neutral-100 flex-shrink-0">
+                      <div>
+                        <Dialog.Title className="text-[15px] font-semibold text-neutral-900 leading-none">
+                          Activity
+                        </Dialog.Title>
+                        <p className="text-[11.5px] text-neutral-400 mt-1 leading-none">
+                          Everything you&rsquo;ve done
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={onClose}
+                        title="Close"
+                        aria-label="Close activity"
+                        className="inline-flex items-center justify-center w-8 h-8 rounded-lg text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100 transition-colors"
+                      >
+                        <XMarkIcon className="w-5 h-5" />
+                      </button>
+                    </div>
+
+                    {/* Timeline — mounted only after first open (lazy fetch), kept mounted after. */}
+                    <div className="flex-1 overflow-y-auto px-5 py-6">
+                      {everOpened && <ActivityTimeline />}
+                    </div>
+                  </div>
+                </Dialog.Panel>
+              </Transition.Child>
+            </div>
           </div>
-          <button
-            onClick={onClose}
-            title="Close"
-            aria-label="Close activity"
-            className="inline-flex items-center justify-center w-8 h-8 rounded-lg text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100 transition-colors"
-          >
-            <XMarkIcon className="w-5 h-5" />
-          </button>
         </div>
-
-        {/* Timeline — mounted only after first open (lazy fetch), kept mounted after. */}
-        <div className="flex-1 overflow-y-auto px-5 py-6">
-          {everOpened && <ActivityTimeline />}
-        </div>
-      </aside>
-    </div>
+      </Dialog>
+    </Transition.Root>
   );
 }
