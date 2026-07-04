@@ -59,6 +59,20 @@ export interface CommitmentFact {
   dueToday: boolean;
   dueDate: string | null;
 }
+// An OPEN commitment fed to the synthesis for it to JUDGE placement (framing), rather than the route
+// trusting the raw ingest `direction`. The synthesis decides — grounded, echoing the id — whether the
+// user genuinely owes an action, is waiting on someone, or it's just awareness.
+export interface CommitmentCandidate {
+  id: string;
+  description: string;
+  counterparty: string | null;
+  direction: string;      // the ingest guess (you_owe | awaiting) — a HINT, not the verdict
+  dueDate: string | null;
+  overdue: boolean;
+  dueToday: boolean;
+  ageDays: number;
+}
+export type CommitmentPlacement = 'on_your_plate' | 'ball_in_court' | 'informational';
 export interface ScheduleFact {
   time: string;   // ISO
   title: string;
@@ -70,6 +84,9 @@ export interface SynthesisInput {
   ctx: BriefContext;
   schedule: ScheduleFact[];
   commitments: CommitmentFact[];
+  /** open commitments for the synthesis to JUDGE into on_your_plate / ball_in_court / informational
+      — the route routes by this verdict instead of the raw ingest direction (Bug #1 fix). */
+  commitmentCandidates: CommitmentCandidate[];
   waitingOnCount: number;
   triaged: number;
   filtered: number;
@@ -104,6 +121,10 @@ export interface SynthesisResult {
   /** itemIds the synthesis judged superseded/stale — the route drops them from priorities too, so
       the prose and the cards can't contradict each other. */
   droppedItemIds: string[];
+  /** commitmentId → placement verdict. The route routes each open commitment by THIS (not the raw
+      ingest direction): on_your_plate (user owes, acts), ball_in_court (waiting/nudge), or
+      informational (awareness only). Missing id → route falls back to the ingest direction. */
+  commitmentPlacements: Record<string, CommitmentPlacement>;
 }
 
 const iso = (d: Date | string) => (typeof d === 'string' ? d : d.toISOString());
@@ -175,6 +196,9 @@ export async function synthesizeBrief(
   const eyeStr = input.keepAnEyeOn.length
     ? input.keepAnEyeOn.map((k, i) => `[K${i}] from ${k.from} (${k.fromEmail || 'no address'})${k.ccOnly ? ' [you were cc’d]' : ''}, ${daysBetween(iso(now), k.receivedAt)}d ago — "${k.subject}": ${k.snippet}`).join('\n')
     : 'none';
+  const commitCandStr = input.commitmentCandidates.length
+    ? input.commitmentCandidates.map((c, i) => `[C${i}] "${c.description}"${c.counterparty ? ` — with ${c.counterparty}` : ''}${c.dueDate ? ` (due ${c.dueDate}${c.overdue ? ', OVERDUE' : c.dueToday ? ', today' : ''})` : ''} — ${c.ageDays}d old — system guessed: ${c.direction === 'awaiting' ? 'you are waiting on them' : 'you owe it'}`).join('\n')
+    : 'none';
 
   const prompt = `You are ${me}'s personal assistant. Write today's brief in a warm, first-person PA voice — as if you personally keep ${me}'s day in order (met X, owe Y, waiting on Z). Use ${me}'s first name naturally.
 
@@ -190,6 +214,12 @@ TIERS — every surfaced item falls into one of three, by how much ACTION it dem
 - "fyiDigest" (SKIM/IGNORE): mailing-list / notification / newsletter / receipt noise. No person really needs ${me}'s attention.
 JUDGE which awareness candidates [Kn] rise to keepAnEyeOn vs stay noise — use your judgment about substance and the sender being a real person/relationship, NOT any fixed sender/domain. If a candidate is a substantive message from a real person (a meeting request, a real project/relationship thread, a decision ${me} is in the loop on) — especially one ${me} was deliberately cc'd on — it SHOULD be surfaced here, even though ${me} takes no action on it. Only drop candidates that are actually bulk/transactional/marketing/receipt noise. Be SELECTIVE about VOLUME: keep AT MOST 2–4 (pick the most substantive; don't pad with marginal ones) — but do surface the genuinely important ones rather than returning an empty tier when real awareness items exist. Give each a one-line "why it matters".
 
+COMMITMENT PLACEMENT — for EACH open commitment [Cn], judge where it belongs by WHO must act, from the description + the per-person context (the "system guessed" flag is only a HINT — it is often WRONG, so re-decide from the meaning):
+- "on_your_plate" — ${me} genuinely OWES an action here (a promise ${me} made, a task assigned to ${me}). ${me} must do it.
+- "ball_in_court" — ${me} is WAITING on someone else to do it (${me} requested it, delegated it, or is owed it). The next move is a NUDGE, not doing the work. NOTE: if the commitment describes someone else doing something ${me} asked for or requested (e.g. ${me} requested a refund and the other party must process it), that is ball_in_court — ${me} does NOT owe the work.
+- "informational" — just awareness; nobody is really blocked on ${me} and no nudge is warranted (already resolved, trivial, or purely FYI).
+Return a verdict for every [Cn]. Echo the index. Do NOT invent commitments.
+
 Today is ${dateStr}.
 Meetings today: ${scheduleStr}
 Emails needing ${me}'s reply: ${input.emailReplyCount}
@@ -203,6 +233,9 @@ ${peopleStr}
 
 EMAILS AWAITING ${me}'s REPLY (candidates — keep only the genuine ones after supersession/staleness):
 ${mustRespondStr}
+
+OPEN COMMITMENTS to place (judge on_your_plate / ball_in_court / informational for each [Cn]):
+${commitCandStr}
 
 THREADS ${me} IS WAITING ON (ball in ${me}'s court to nudge):
 ${waitingStr}
@@ -225,6 +258,7 @@ Return ONLY JSON in this exact shape:
     "items": [{"r": <the [Rn] index kept>, "who": "sender or topic", "ask": "what they're asking (one line)", "angle": "recommended reply gist (one line)"}]
   },
   "droppedReplies": [<the [Rn] indexes you DROPPED as superseded/stale, with none invented>],
+  "commitmentPlacements": [{"c": <the [Cn] index>, "placement": "on_your_plate|ball_in_court|informational"}],
   "keepAnEyeOn": {
     "items": [{"k": <the [Kn] index>, "who": "person or topic", "why": "one line — why it's worth seeing (no action needed)"}]
   },
@@ -249,6 +283,7 @@ If a section has no items, return it with an empty items/groups array (or null f
       tldr?: { teaser?: string; bullets?: string[]; dontMiss?: string | null };
       mustRespond?: { teaser?: string; items?: { r?: number; who?: string; ask?: string; angle?: string }[] };
       droppedReplies?: number[];
+      commitmentPlacements?: { c?: number; placement?: string }[];
       keepAnEyeOn?: { items?: { k?: number; who?: string; why?: string }[] };
       followups?: { teaser?: string; items?: { w?: number; who?: string; status?: string; nextMove?: string }[]; closing?: string | null };
       fyiDigest?: { groups?: { f?: number; summary?: string }[] };
@@ -294,6 +329,17 @@ If a section has no items, return it with an empty items/groups array (or null f
       : null;
     const droppedItemIds: string[] = input.mustRespond.filter((_, i) => droppedR.has(i)).map((m) => m.itemId);
 
+    // Commitment placements — map [Cn] verdicts back to real commitment ids. Only accept the three
+    // valid placements; anything else is ignored and the route falls back to the ingest direction.
+    const commitmentPlacements: Record<string, CommitmentPlacement> = {};
+    for (const x of Array.isArray(parsed.commitmentPlacements) ? parsed.commitmentPlacements : []) {
+      const cand = typeof x.c === 'number' ? input.commitmentCandidates[x.c] : undefined;
+      const pl = x.placement;
+      if (cand && (pl === 'on_your_plate' || pl === 'ball_in_court' || pl === 'informational')) {
+        commitmentPlacements[cand.id] = pl;
+      }
+    }
+
     // Keep an eye on — the middle awareness tier. Map [Kn] back to real itemIds; hard-cap at 4 so a
     // chatty model can't turn awareness into a backlog. Deduped by itemId.
     const eyeSeen = new Set<string>();
@@ -333,8 +379,8 @@ If a section has no items, return it with an empty items/groups array (or null f
       ? { groups: fyiGroups, tailGroups: 0, tailItems: 0 }
       : null;
 
-    return { tldr, mustRespond, keepAnEyeOn, followups, fyiDigest, droppedItemIds };
+    return { tldr, mustRespond, keepAnEyeOn, followups, fyiDigest, droppedItemIds, commitmentPlacements };
   } catch {
-    return { tldr: null, mustRespond: null, keepAnEyeOn: null, followups: null, fyiDigest: null, droppedItemIds: [] };
+    return { tldr: null, mustRespond: null, keepAnEyeOn: null, followups: null, fyiDigest: null, droppedItemIds: [], commitmentPlacements: {} };
   }
 }

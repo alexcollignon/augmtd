@@ -188,35 +188,32 @@ export async function GET() {
   // Layer 1: assemble the reconciled per-person context (meetings + commitments + these emails).
   const briefCtx = await buildBriefContext(user.id, self, now, supabase, emailSeeds);
 
-  // ── On your plate: commitments you owe — their OWN section (not mixed into Needs you), so the
-  // promises you've made are visible, with due dates. Overdue → due-today → dated → undated.
-  const commitments = commits
-    .filter((c) => c.direction === 'you_owe' && c.source !== 'meeting')
+  // ── Commitment CANDIDATES — every open non-meeting commitment, normalized. The raw ingest
+  // `direction` is only a DEFAULT hint here: the grounded synthesis (Layer 3) re-judges each one's
+  // placement (on_your_plate / ball_in_court / informational) so a REQUESTED action (the user is
+  // waiting on someone) can't sit in "On your plate" just because the extractor guessed you_owe.
+  // See docs/brief-and-labeling-plan.md ("DIRECTION corrected July 2") + Bug #1.
+  const commitmentCands = commits
+    .filter((c) => c.source !== 'meeting')
     .map((c) => ({
       id: c.id as string,
       description: c.description as string,
       counterparty: (c.counterparty as string | null) ?? null,
+      direction: (c.direction as string) || 'you_owe',
       dueDate: (c.due_date as string | null) ?? null,
       overdue: !!(c.due_date && c.due_date < todayStr),
       dueToday: !!(c.due_date && c.due_date === todayStr),
-    }))
-    .sort((a, b) => {
-      const rk = (x: typeof a) => (x.overdue ? 0 : x.dueToday ? 1 : x.dueDate ? 2 : 3);
-      return rk(a) !== rk(b) ? rk(a) - rk(b) : (a.dueDate || '9999').localeCompare(b.dueDate || '9999');
-    })
-    .slice(0, 5);
+      ageDays: Math.floor((now.getTime() - new Date(c.created_at).getTime()) / DAY),
+    }));
+  // Default placement from the ingest direction — used as the fallback when the synthesis has no
+  // verdict for a commitment (failure / not enumerated), so behavior degrades to the old routing.
+  const defaultPlacement = (dir: string): 'on_your_plate' | 'ball_in_court' | 'informational' =>
+    dir === 'awaiting' ? 'ball_in_court' : 'on_your_plate';
 
   // Overdue → reply → to-do → finished meetings last (a past meeting is context, not "do this now").
   const rank = (p: Priority) => (p.overdue ? 0 : p.source === 'meeting' ? 4 : p.posture === 'needs_reply' ? 1 : p.posture === 'to_do' ? 2 : 3);
   priorities.sort((a, b) => rank(a) - rank(b));
   const cappedPriorities = priorities.slice(0, MAX_PRIORITIES);
-
-  // ── Waiting on others → feeds the Follow-ups brief. All awaiting, freshest-quiet first; the age
-  // cue tells you which are urgent (a tomorrow-meeting confirm matters even at 0 days). ──
-  const waitingOn = commits
-    .filter((c) => c.direction === 'awaiting')
-    .map((c) => ({ id: c.id, description: c.description, counterparty: c.counterparty, ageDays: Math.floor((now.getTime() - new Date(c.created_at).getTime()) / DAY) }))
-    .sort((a, b) => b.ageDays - a.ageDays).slice(0, 6);
 
   // ── FYI-by-topic: group the awareness emails by sender; the AI digests each group below. ──
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -303,12 +300,13 @@ export async function GET() {
     prep: i === 0 ? nextPrep : null,
   }));
 
-  // ── Status chips (live, alive) ──
+  // ── Status chips (live, alive) ── waitingOn counts commitments the INGEST flagged awaiting; the
+  // synthesis may re-place some, but this pre-synthesis count is a stable input for the cache sig.
   const replyP = priorities.filter((p) => p.posture === 'needs_reply').length;
   const status = {
     needsReply: replyP,
     meetingsToday: schedule.length,
-    waitingOn: commits.filter((c) => c.direction === 'awaiting').length,
+    waitingOn: commitmentCands.filter((c) => c.direction === 'awaiting').length,
     handledToday: handledRes.count ?? 0,
   };
 
@@ -324,8 +322,11 @@ export async function GET() {
   // ── Cached one-line narration (posture-aware + busts when the day's shape changes) ──
   const emailP = cappedPriorities.filter((p) => p.posture === 'needs_reply').length;
   const meetingP = cappedPriorities.filter((p) => p.source === 'meeting').length;
-  const commitP = commitments.length;
-  const overdueC = commitments.filter((c) => c.overdue).length;
+  // Sig uses the pre-synthesis (ingest-default) owed set — stable regardless of the AI verdict, so the
+  // signature is deterministic. Placements are cached alongside so a cache-hit still routes correctly.
+  const owedByIngest = commitmentCands.filter((c) => c.direction !== 'awaiting');
+  const commitP = owedByIngest.length;
+  const overdueC = owedByIngest.filter((c) => c.overdue).length;
   const overdueP = cappedPriorities.filter((p) => p.overdue).length;
   const fyiSig = fyiTop.map((g) => `${g.label}:${g.count}`).join(',');
   // Freshness: the newest pending item's LATEST-ACTIVITY timestamp + the newest commitment update.
@@ -356,7 +357,8 @@ export async function GET() {
   type Reply = { who: string; ask: string; angle: string; itemId: string; subject?: string; snippet?: string; receivedAt?: string };
   type MustRespond = { teaser: string; items: Reply[] };
   type KeepAnEyeOn = { items: { who: string; why: string; itemId: string }[] };
-  const cached = (profileRes.data as { home_brief?: { text?: string; tldr?: Tldr; followups?: Followups | null; fyiDigest?: FyiDigest | null; mustRespond?: MustRespond | null; keepAnEyeOn?: KeepAnEyeOn | null; droppedItemIds?: string[]; generated_at: string; sig?: string } } | null)?.home_brief ?? null;
+  type CommitmentPlacement = 'on_your_plate' | 'ball_in_court' | 'informational';
+  const cached = (profileRes.data as { home_brief?: { text?: string; tldr?: Tldr; followups?: Followups | null; fyiDigest?: FyiDigest | null; mustRespond?: MustRespond | null; keepAnEyeOn?: KeepAnEyeOn | null; droppedItemIds?: string[]; commitmentPlacements?: Record<string, CommitmentPlacement>; generated_at: string; sig?: string } } | null)?.home_brief ?? null;
   let tldr: Tldr | null = cached?.tldr ?? null;
   let followups: Followups | null = cached?.followups ?? null;
   let fyiDigest: FyiDigest | null = cached?.fyiDigest ?? null;
@@ -364,16 +366,25 @@ export async function GET() {
   let keepAnEyeOn: KeepAnEyeOn | null = cached?.keepAnEyeOn ?? null;
   let briefLine = cached?.text ?? null;
   let droppedItemIds: string[] = cached?.droppedItemIds ?? [];
+  // The synthesis's per-commitment placement verdict (Bug #1). Cached so a cache-hit routes the same
+  // way it did when generated. Falls back to the ingest-direction default per-commitment below.
+  let commitmentPlacements: Record<string, CommitmentPlacement> = cached?.commitmentPlacements ?? {};
   const stale = !cached || cached.sig !== sig || (now.getTime() - new Date(cached.generated_at).getTime()) > BRIEF_TTL;
   if (stale) {
+    // Owed-context for the prose = the ingest-default owed set (re-placement happens inside).
+    const owedFacts = owedByIngest.map((c) => ({ description: c.description, overdue: c.overdue, dueToday: c.dueToday, dueDate: c.dueDate }));
     const synth = await synthesizeBrief(getSystemClient('summarization'), {
       firstName, now, ctx: briefCtx, schedule,
-      commitments: commitments.map((c) => ({ description: c.description, overdue: c.overdue, dueToday: c.dueToday, dueDate: c.dueDate })),
+      commitments: owedFacts,
+      commitmentCandidates: commitmentCands,
       waitingOnCount: status.waitingOn, triaged: handled.triaged, filtered: handled.filtered,
       emailReplyCount: emailP,
       topPriorities: cappedPriorities.map((p) => ({ title: p.title, posture: p.posture, source: p.source, overdue: !!p.overdue })),
       mustRespond: mustRespondRaw,
-      waiting: waitingOn.map((w) => ({ id: w.id, counterparty: w.counterparty, description: w.description, ageDays: w.ageDays })),
+      // Waiting candidates = the ingest-awaiting commitments — the synthesis writes the follow-up
+      // prose (status + nextMove) over these. Final lane routing is by the placement verdict below;
+      // a commitment re-placed to ball_in_court that wasn't here still appears via the raw fallback.
+      waiting: commitmentCands.filter((c) => c.direction === 'awaiting').map((c) => ({ id: c.id, counterparty: c.counterparty, description: c.description, ageDays: c.ageDays })),
       fyiGroups: fyiTop.map((g) => ({ label: g.label, count: g.count, kind: g.kind, subjects: g.subjects })),
       keepAnEyeOn: keepAnEyeOnRaw,
     });
@@ -381,14 +392,59 @@ export async function GET() {
     if (synth.tldr) { tldr = synth.tldr; briefLine = synth.tldr.teaser || briefLine; }
     if (synth.mustRespond !== null || !mustRespondRaw.length) mustRespond = synth.mustRespond;
     if (synth.keepAnEyeOn !== null || !keepAnEyeOnRaw.length) keepAnEyeOn = synth.keepAnEyeOn;
-    if (synth.followups !== null || !waitingOn.length) followups = synth.followups;
+    if (synth.followups !== null || !commitmentCands.some((c) => c.direction === 'awaiting')) followups = synth.followups;
     if (synth.fyiDigest !== null || !fyiTop.length) {
       // Fill the deterministic tail counts (computed over the FULL group set, not just the shown top).
       fyiDigest = synth.fyiDigest ? { ...synth.fyiDigest, tailGroups: fyiTailGroups, tailItems: fyiTailItems } : null;
     }
     droppedItemIds = synth.droppedItemIds;
+    if (Object.keys(synth.commitmentPlacements).length) commitmentPlacements = synth.commitmentPlacements;
 
-    await supabase.from('profiles').update({ home_brief: { text: briefLine, tldr, followups, fyiDigest, mustRespond, keepAnEyeOn, droppedItemIds, generated_at: now.toISOString(), sig } }).eq('id', user.id).then(() => {}, () => {});
+    await supabase.from('profiles').update({ home_brief: { text: briefLine, tldr, followups, fyiDigest, mustRespond, keepAnEyeOn, droppedItemIds, commitmentPlacements, generated_at: now.toISOString(), sig } }).eq('id', user.id).then(() => {}, () => {});
+  }
+
+  // ── Route each open commitment by the synthesis's VERDICT (fallback = the ingest-direction default).
+  // on_your_plate → "On your plate" (you owe, act) · ball_in_court → "Ball in your court" (waiting,
+  // nudge) · informational → neither lane (awareness only). This is the real Bug #1/#3 fix: a REQUESTED
+  // action the extractor mislabeled you_owe now lands in ball_in_court (or informational), never in the
+  // action lane. General — driven by grounded judgment, no hardcoded senders/subjects.
+  const placementOf = (c: (typeof commitmentCands)[number]): CommitmentPlacement =>
+    commitmentPlacements[c.id] ?? defaultPlacement(c.direction);
+  const commitments = commitmentCands
+    .filter((c) => placementOf(c) === 'on_your_plate')
+    .map((c) => ({ id: c.id, description: c.description, counterparty: c.counterparty, dueDate: c.dueDate, overdue: c.overdue, dueToday: c.dueToday }))
+    .sort((a, b) => {
+      const rk = (x: typeof a) => (x.overdue ? 0 : x.dueToday ? 1 : x.dueDate ? 2 : 3);
+      return rk(a) !== rk(b) ? rk(a) - rk(b) : (a.dueDate || '9999').localeCompare(b.dueDate || '9999');
+    })
+    .slice(0, 5);
+  const waitingOn = commitmentCands
+    .filter((c) => placementOf(c) === 'ball_in_court')
+    .map((c) => ({ id: c.id, description: c.description, counterparty: c.counterparty, ageDays: c.ageDays }))
+    .sort((a, b) => b.ageDays - a.ageDays)
+    .slice(0, 6);
+  // Keep the status chip honest with the routed set.
+  status.waitingOn = waitingOn.length;
+
+  // Reconcile the synthesized follow-up prose with the ball_in_court routing so the "Ball in your
+  // court" lane and the counts agree. Keep only follow-up items whose commitment is ball_in_court,
+  // then append any ball_in_court commitment the prose didn't cover (with a plain status/nextMove) so
+  // a re-placed you_owe→waiting item still surfaces with a nudge affordance. General, id-grounded.
+  const ballIds = new Set(waitingOn.map((w) => w.id));
+  {
+    const covered = new Set<string>();
+    const keptItems = (followups?.items ?? []).filter((f) => {
+      if (!f.id || !ballIds.has(f.id)) return false;
+      covered.add(f.id);
+      return true;
+    });
+    const extras = waitingOn
+      .filter((w) => !covered.has(w.id))
+      .map((w) => ({ id: w.id, who: w.counterparty || 'Someone', status: `Waiting ${w.ageDays}d`, nextMove: 'Send a nudge' }));
+    const allItems = [...keptItems, ...extras];
+    followups = allItems.length
+      ? { teaser: followups?.teaser || '', items: allItems, closing: followups?.closing ?? null }
+      : null;
   }
 
   // Apply the synthesis's supersession/staleness verdict to the CARDS too, so the "Needs you" grid

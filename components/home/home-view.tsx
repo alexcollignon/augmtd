@@ -332,10 +332,44 @@ function DigestReply({ m, onDismiss, emphasis = false }: { m: DigestItem; onDism
   );
 }
 
-// Ball-in-your-court item (a commitment you're awaiting) with Done/Dismiss.
+// Ball-in-your-court item (a commitment you're WAITING on) with Done/Dismiss + a real "Draft nudge"
+// affordance (Bug #2): generates a voice-grounded follow-up to the counterparty (POST
+// /api/commitments/[id]/nudge), shown editable, then Send (PATCH) sends it as a reply on the original
+// thread and closes the commitment. A draft the user reviews + sends — never auto-sent. Mirrors the
+// digest's Send-draft pattern; on components/ui indigo tokens.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function FollowUpItem({ f, index }: { f: { id?: string; who: string; status: string; nextMove: string }; index: number }) {
   const { removed, exiting, acting, act } = useCommitmentAct(f.id);
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const openNudge = async () => {
+    setOpen(true);
+    if (draft || loading || !f.id) return;
+    setLoading(true); setErr(null);
+    try {
+      const res = await fetch(`/api/commitments/${f.id}/nudge`, { method: 'POST' });
+      const d = await res.json();
+      setDraft(d.draft || 'Could not draft a nudge.');
+    } catch { setDraft('Could not draft a nudge.'); } finally { setLoading(false); }
+  };
+  const send = async () => {
+    if (!draft || sending || !f.id) return;
+    setSending(true); setErr(null);
+    try {
+      const res = await fetch(`/api/commitments/${f.id}/nudge`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ body: draft }),
+      });
+      if (res.ok) { setSent(true); setOpen(false); }
+      else { const d = await res.json().catch(() => ({})); setErr(d.error || 'Could not send the nudge.'); }
+    } catch { setErr('Could not send the nudge.'); } finally { setSending(false); }
+  };
+
   if (removed) return null;
   return (
     <li className={`flex gap-2.5 ${exitCls(exiting)}`}>
@@ -343,9 +377,37 @@ function FollowUpItem({ f, index }: { f: { id?: string; who: string; status: str
       <div className="min-w-0 flex-1">
         <p className="text-[13px] font-semibold text-neutral-800 leading-snug">{f.who}</p>
         {f.status && <p className="text-[12.5px] text-neutral-500 mt-0.5 leading-snug">{f.status}</p>}
-        {f.nextMove && <p className="text-[12.5px] text-indigo-600 mt-1 leading-snug"><span className="font-medium">Next move:</span> {f.nextMove}</p>}
+        {sent ? (
+          <p className="text-[12.5px] text-emerald-600 mt-1 leading-snug font-medium">Nudge sent ✓</p>
+        ) : f.id && (
+          <button onClick={() => (open ? setOpen(false) : openNudge())}
+            className="inline-flex items-center gap-1 text-[12.5px] font-medium text-indigo-600 hover:text-indigo-700 mt-1 transition-colors">
+            {loading ? 'Drafting…' : open ? 'Collapse' : 'Draft nudge'}
+            {!open && !loading && <ArrowRightIcon className="w-3.5 h-3.5" />}
+          </button>
+        )}
+        {open && !sent && (
+          <div className="mt-2">
+            {loading && <div className="h-16 rounded-xl bg-neutral-100 animate-pulse" />}
+            {draft && (
+              <div className="rounded-xl border border-neutral-200 bg-neutral-50/70 p-3">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400 mb-1.5">Nudge draft</p>
+                <textarea value={draft} onChange={(e) => setDraft(e.target.value)}
+                  rows={Math.min(12, Math.max(4, draft.split('\n').length + 1))}
+                  className="w-full bg-transparent text-[12.5px] text-neutral-700 leading-relaxed resize-none focus:outline-none" />
+                {err && <p className="text-[11.5px] text-rose-600 mt-1.5 leading-snug">{err}</p>}
+                <div className="mt-2 flex items-center gap-3">
+                  <button onClick={send} disabled={sending}
+                    className="inline-flex items-center rounded-lg bg-indigo-600 text-white px-3 py-1.5 text-[12px] font-medium hover:bg-indigo-700 disabled:opacity-60 transition-colors">{sending ? 'Sending…' : 'Send'}</button>
+                  <button onClick={() => { if (draft) { navigator.clipboard?.writeText(draft); setCopied(true); setTimeout(() => setCopied(false), 1500); } }}
+                    className="text-[12px] font-medium text-neutral-600 hover:text-neutral-800">{copied ? 'Copied' : 'Copy'}</button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
-      {f.id && (
+      {f.id && !sent && (
         <span className="flex-shrink-0 flex items-center gap-1 mt-0.5">
           <button onClick={() => act('done')} disabled={acting} title="Mark done" className="w-6 h-6 inline-flex items-center justify-center rounded-lg border border-neutral-200 text-neutral-400 hover:text-emerald-600 hover:border-emerald-200 hover:bg-emerald-50 transition-colors text-[13px]">✓</button>
           <button onClick={() => act('dismissed')} disabled={acting} title="Dismiss" className="w-6 h-6 inline-flex items-center justify-center rounded-lg border border-neutral-200 text-neutral-400 hover:text-rose-600 hover:border-rose-200 hover:bg-rose-50 transition-colors text-[13px]">✕</button>
@@ -793,6 +855,7 @@ export function HomeView() {
               <RiseIn delay={90}>
                 <section>
                   <Label count={b.commitments.length}>On your plate</Label>
+                  <p className="text-[12px] text-neutral-400 -mt-1.5 mb-2.5 leading-snug">Yours to act on — things you owe.</p>
                   <div className="space-y-2">
                     {b.commitments.map(c => (
                       <CommitmentSideRow key={c.id} id={c.id} icon={CheckCircleIcon} iconClass={c.overdue ? 'text-red-400' : 'text-neutral-300'}>
@@ -865,7 +928,8 @@ export function HomeView() {
               {b?.followups && b.followups.items.length > 0 ? (
                 <RiseIn delay={150}>
                   <section>
-                    <Label count={b.followups.items.length}>Ball in your court</Label>
+                    <Label count={b.followups.items.length} icon={ClockIcon}>Ball in your court</Label>
+                    <p className="text-[12px] text-neutral-400 -mt-1.5 mb-2.5 leading-snug">Waiting on others — nudge when it stalls.</p>
                     <div className="rounded-2xl border border-neutral-200/80 bg-white p-4">
                       {b.followups.teaser && <p className="text-[12.5px] text-neutral-500 mb-3.5 leading-relaxed">{b.followups.teaser}</p>}
                       <ol className="space-y-3.5">
