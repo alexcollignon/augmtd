@@ -13,6 +13,7 @@ import {
   BoltIcon,
 } from '@heroicons/react/24/outline';
 import { EmptyState, Button } from '@/components/ui';
+import { isReversibleType, restoreByType } from '@/lib/activity/restore';
 
 export interface ActivityEvent {
   id: string;
@@ -62,6 +63,24 @@ export default function ActivityTimeline() {
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  // Reversible entries the user has undone this session (struck/greyed) + those mid-request.
+  const [undone, setUndone] = useState<Set<string>>(new Set());
+  const [undoing, setUndoing] = useState<Set<string>>(new Set());
+  const [undoErr, setUndoErr] = useState<Set<string>>(new Set());
+
+  // Undo one reversible entry → flip its entity's status back via the shared restore endpoint. On
+  // success the entry reads "Undone" (struck/greyed); the Home shows the item again on its next
+  // auto-refresh. Non-fatal: a failure marks the row with a tiny inline error, nothing breaks.
+  const undo = useCallback(async (ev: ActivityEvent) => {
+    if (!ev.entity_id || !isReversibleType(ev.type)) return;
+    if (undoing.has(ev.id) || undone.has(ev.id)) return;
+    setUndoing((prev) => new Set(prev).add(ev.id));
+    setUndoErr((prev) => { const n = new Set(prev); n.delete(ev.id); return n; });
+    const ok = await restoreByType(ev.entity_type as string, ev.entity_id);
+    setUndoing((prev) => { const n = new Set(prev); n.delete(ev.id); return n; });
+    if (ok) setUndone((prev) => new Set(prev).add(ev.id));
+    else setUndoErr((prev) => new Set(prev).add(ev.id));
+  }, [undoing, undone]);
 
   // Initial load — happens on mount (when the caller mounts the component only
   // on first open, `lazy` naturally defers the fetch to that first render).
@@ -148,8 +167,14 @@ export default function ActivityTimeline() {
             {group.items.map((ev) => {
               const meta = TYPE_META[ev.type] || DEFAULT_META;
               const Icon = meta.icon;
+              // Undo is offered ONLY on reversible types that carry an entity_id. Sends
+              // (reply_sent / nudge_sent) are not in the reversible set → no undo ever.
+              const canUndo = isReversibleType(ev.type) && !!ev.entity_id;
+              const isUndone = undone.has(ev.id);
+              const isUndoing = undoing.has(ev.id);
+              const hasErr = undoErr.has(ev.id);
               return (
-                <li key={ev.id} className="relative pl-6 pb-5 last:pb-0">
+                <li key={ev.id} className="group/act relative pl-6 pb-5 last:pb-0">
                   <span
                     className={`absolute -left-[13px] top-0 flex h-6 w-6 items-center justify-center rounded-full ring-4 ring-white ${meta.ring} ring-inset`}
                     aria-hidden
@@ -159,15 +184,28 @@ export default function ActivityTimeline() {
                     </span>
                   </span>
                   <div className="flex items-start justify-between gap-3">
-                    <p className="text-[13px] text-neutral-800 leading-snug">{ev.title}</p>
-                    <time
-                      className="text-[11px] text-neutral-400 tabular-nums whitespace-nowrap pt-0.5"
-                      dateTime={ev.created_at}
-                      title={new Date(ev.created_at).toLocaleString()}
-                    >
-                      {clockTime(ev.created_at)}
-                    </time>
+                    <p className={`text-[13px] leading-snug ${isUndone ? 'text-neutral-400 line-through' : 'text-neutral-800'}`}>{ev.title}</p>
+                    <div className="flex items-center gap-2 flex-shrink-0 pt-0.5">
+                      {canUndo && !isUndone && (
+                        <button
+                          onClick={() => undo(ev)}
+                          disabled={isUndoing}
+                          className="text-[11px] font-medium text-indigo-600 hover:text-indigo-700 disabled:opacity-50 opacity-0 group-hover/act:opacity-100 focus:opacity-100 transition-opacity"
+                        >
+                          {isUndoing ? 'Undoing…' : 'Undo'}
+                        </button>
+                      )}
+                      {isUndone && <span className="text-[11px] font-medium text-neutral-400">Undone</span>}
+                      <time
+                        className="text-[11px] text-neutral-400 tabular-nums whitespace-nowrap"
+                        dateTime={ev.created_at}
+                        title={new Date(ev.created_at).toLocaleString()}
+                      >
+                        {clockTime(ev.created_at)}
+                      </time>
+                    </div>
                   </div>
+                  {hasErr && <p className="text-[11px] text-rose-500 mt-0.5">Couldn&apos;t undo — try again.</p>}
                 </li>
               );
             })}

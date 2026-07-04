@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { showUndoToast } from '@/lib/activity/undo-toast';
 import {
   EnvelopeIcon, CalendarDaysIcon, CheckCircleIcon, ClockIcon, UsersIcon,
   ChevronRightIcon, ArrowRightIcon, BoltIcon, SparklesIcon, EyeIcon,
@@ -177,7 +178,7 @@ function priorityHref(p: Priority): string {
   return p.href;
 }
 
-function PriorityCard({ p, first, expanded, onToggle, onCleared }: { p: Priority; first: boolean; expanded: boolean; onToggle: () => void; onCleared?: (id: string) => void }) {
+function PriorityCard({ p, first, expanded, onToggle, onCleared, onUndoInbox }: { p: Priority; first: boolean; expanded: boolean; onToggle: () => void; onCleared?: (id: string) => void; onUndoInbox?: (message: string, entityId: string, sessionKeys: string[]) => void }) {
   const router = useRouter();
   const cfg = SOURCE[p.source];
   const Icon = cfg.icon;
@@ -188,12 +189,15 @@ function PriorityCard({ p, first, expanded, onToggle, onCleared }: { p: Priority
   const open = () => router.push(priorityHref(p));
   // Done/Dismiss a Needs-you card → act on its inbox item(s): the email's itemId, or all of a
   // meeting's action-item ids. classifyItem hides completed/dismissed, so it never resurfaces.
+  // Reversible → after acting, show a "…· Undo" toast (restores the single-item case cleanly).
   const act = (kind: 'complete' | 'dismiss') => {
     const ids = p.itemId ? [p.itemId] : (p.items ?? []).map(it => it.id);
     if (acting || !ids.length) return;
     setActing(true); startExit(); onCleared?.(p.id); // raise the day-cleared ring live
     Promise.all(ids.map(id => fetch(`/api/inbox/${id}/${kind}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason: 'home' }) })))
       .catch(() => {}).finally(() => setActing(false));
+    // Undo restores the first (usually only) acted item; clears both the itemId and the card's p.id.
+    onUndoInbox?.(kind === 'complete' ? 'Marked done' : 'Dismissed', ids[0], [ids[0], p.id]);
   };
   if (removed) return null;
   return (
@@ -262,7 +266,7 @@ function useExit(ms = 300): { removed: boolean; exiting: boolean; startExit: () 
 const exitCls = (exiting: boolean) => `transition-all duration-300 ease-out ${exiting ? 'opacity-0 scale-[0.97]' : 'opacity-100'}`;
 
 // Done ✓ / Dismiss ✕ for a commitment-backed row → PATCH /api/commitments/[id]. Optimistic, animated.
-function useCommitmentAct(id?: string, onCleared?: (id: string) => void): { removed: boolean; exiting: boolean; acting: boolean; act: (s: 'done' | 'dismissed') => void } {
+function useCommitmentAct(id?: string, onCleared?: (id: string) => void, onUndoCommitment?: (message: string, id: string) => void): { removed: boolean; exiting: boolean; acting: boolean; act: (s: 'done' | 'dismissed') => void } {
   const { removed, exiting, startExit } = useExit();
   const [acting, setActing] = useState(false);
   const act = (status: 'done' | 'dismissed') => {
@@ -270,6 +274,7 @@ function useCommitmentAct(id?: string, onCleared?: (id: string) => void): { remo
     setActing(true); startExit(); onCleared?.(id); // raise the day-cleared ring live
     fetch(`/api/commitments/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) })
       .catch(() => {}).finally(() => setActing(false));
+    onUndoCommitment?.(status === 'done' ? 'Marked done' : 'Dismissed', id);
   };
   return { removed, exiting, acting, act };
 }
@@ -280,7 +285,7 @@ function useCommitmentAct(id?: string, onCleared?: (id: string) => void): { remo
 // separated by hair dividers, not boxes, so the whole thing reads like a well-set memo.
 type DigestItem = { who: string; ask: string; angle: string; itemId: string; draft?: string | null; subject?: string; snippet?: string; receivedAt?: string };
 
-function DigestList({ items, onDismiss, emphasizeFirst = false }: { items: DigestItem[]; onDismiss?: (id: string) => void; emphasizeFirst?: boolean }) {
+function DigestList({ items, onDismiss, emphasizeFirst = false, onUndoInbox }: { items: DigestItem[]; onDismiss?: (id: string) => void; emphasizeFirst?: boolean; onUndoInbox?: (message: string, entityId: string, sessionKeys: string[]) => void }) {
   const [showAll, setShowAll] = useState(false);
   const LIMIT = 6;
   const visible = showAll ? items : items.slice(0, LIMIT);
@@ -288,7 +293,7 @@ function DigestList({ items, onDismiss, emphasizeFirst = false }: { items: Diges
   return (
     <div className="space-y-2.5">
       {visible.map((m, i) => (
-        <DigestReply key={m.itemId || i} m={m} onDismiss={onDismiss} emphasis={emphasizeFirst && i === 0} />
+        <DigestReply key={m.itemId || i} m={m} onDismiss={onDismiss} emphasis={emphasizeFirst && i === 0} onUndoInbox={onUndoInbox} />
       ))}
       {!showAll && more > 0 && (
         <button onClick={() => setShowAll(true)} className="pt-1 text-[12.5px] font-medium text-indigo-600 hover:text-indigo-700">Show {more} more</button>
@@ -303,7 +308,7 @@ function DigestList({ items, onDismiss, emphasizeFirst = false }: { items: Diges
 // URL → back/refresh/deep-link work). The quiet inline ✓/✕ (Done/Dismiss) stay on the row for fast
 // triage without opening. Reuses /complete + /dismiss (✓/✕), with useExit fade + onDismiss live-count
 // on removal; the draft/send now live in the item detail (which reuses /draft + /send-reply).
-function DigestReply({ m, onDismiss, emphasis = false }: { m: DigestItem; onDismiss?: (id: string) => void; emphasis?: boolean }) {
+function DigestReply({ m, onDismiss, emphasis = false, onUndoInbox }: { m: DigestItem; onDismiss?: (id: string) => void; emphasis?: boolean; onUndoInbox?: (message: string, entityId: string, sessionKeys: string[]) => void }) {
   const router = useRouter();
   const ready = !!m.draft;
   const { removed, exiting, startExit } = useExit();
@@ -314,6 +319,7 @@ function DigestReply({ m, onDismiss, emphasis = false }: { m: DigestItem; onDism
     e?.stopPropagation();
     if (acting || !m.itemId) return;
     setActing(true); startExit();
+    onUndoInbox?.(kind === 'complete' ? 'Marked done' : 'Dismissed', m.itemId, [m.itemId]);
     try { await fetch(`/api/inbox/${m.itemId}/${kind}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason: 'home' }) }); } finally { setActing(false); }
   };
   // Open the item detail — the suggested angle rides along as a query param (it's brief-generated,
@@ -365,9 +371,9 @@ function DigestReply({ m, onDismiss, emphasis = false }: { m: DigestItem; onDism
 // thread and closes the commitment. A draft the user reviews + sends — never auto-sent. Mirrors the
 // digest's Send-draft pattern; on components/ui indigo tokens.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function FollowUpItem({ f, index, onCleared }: { f: { id?: string; who: string; status: string; nextMove: string }; index: number; onCleared?: (id: string) => void }) {
+function FollowUpItem({ f, index, onCleared, onUndoCommitment }: { f: { id?: string; who: string; status: string; nextMove: string }; index: number; onCleared?: (id: string) => void; onUndoCommitment?: (message: string, id: string) => void }) {
   const router = useRouter();
-  const { removed, exiting, acting, act } = useCommitmentAct(f.id, onCleared);
+  const { removed, exiting, acting, act } = useCommitmentAct(f.id, onCleared, onUndoCommitment);
   const [open, setOpen] = useState(false);
   // Open the follow-up deep-dive — the thread you're waiting on + a nudge composer (kind=followup,
   // id = the commitment id). The inline "Draft nudge" + ✓/✕ stay for fast triage without opening.
@@ -452,8 +458,8 @@ function FollowUpItem({ f, index, onCleared }: { f: { id?: string; who: string; 
 
 // On-your-plate / Waiting-on row (commitment) — a SideRow with hover Done/Dismiss.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function CommitmentSideRow({ id, icon, iconClass, children, onCleared, href = '/inbox' }: { id?: string; icon: any; iconClass?: string; children: any; onCleared?: (id: string) => void; href?: string }) {
-  const { removed, exiting, acting, act } = useCommitmentAct(id, onCleared);
+function CommitmentSideRow({ id, icon, iconClass, children, onCleared, onUndoCommitment, href = '/inbox' }: { id?: string; icon: any; iconClass?: string; children: any; onCleared?: (id: string) => void; onUndoCommitment?: (message: string, id: string) => void; href?: string }) {
+  const { removed, exiting, acting, act } = useCommitmentAct(id, onCleared, onUndoCommitment);
   if (removed) return null;
   return (
     <div className={`group relative ${exitCls(exiting)}`}>
@@ -469,7 +475,7 @@ function CommitmentSideRow({ id, icon, iconClass, children, onCleared, href = '/
 }
 
 // FYI digest group with a hover "dismiss all from this sender" (mute). POSTs /api/inbox/dismiss-sender.
-function FyiGroupRow({ g, variant }: { g: { label: string; summary: string; kind: 'person' | 'newsletter' }; variant: 'person' | 'newsletter' }) {
+function FyiGroupRow({ g, variant, onMuted }: { g: { label: string; summary: string; kind: 'person' | 'newsletter' }; variant: 'person' | 'newsletter'; onMuted?: (sender: string) => void }) {
   const { removed, exiting, startExit } = useExit();
   const [acting, setActing] = useState(false);
   if (removed) return null;
@@ -478,6 +484,7 @@ function FyiGroupRow({ g, variant }: { g: { label: string; summary: string; kind
     setActing(true); startExit();
     fetch('/api/inbox/dismiss-sender', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sender: g.label }) })
       .catch(() => {}).finally(() => setActing(false));
+    onMuted?.(g.label); // reversible — surface a "Muted · Undo" toast
   };
   const isNl = variant === 'newsletter';
   return (
@@ -499,7 +506,7 @@ type StartHereReply = { kind: 'reply'; m: { who: string; ask: string; angle: str
 type StartHerePriority = { kind: 'priority'; p: Priority };
 type StartHereData = StartHereReply | StartHerePriority;
 
-function StartHere({ data, teaser, onDismiss }: { data: StartHereData; teaser?: string | null; onDismiss?: (id: string) => void }) {
+function StartHere({ data, teaser, onDismiss, onUndoInbox }: { data: StartHereData; teaser?: string | null; onDismiss?: (id: string) => void; onUndoInbox?: (message: string, entityId: string, sessionKeys: string[]) => void }) {
   return (
     <div className="relative rounded-2xl border border-indigo-200 bg-white ring-1 ring-indigo-100 shadow-[0_8px_30px_-10px_rgba(79,70,229,0.25)]">
       <div className="absolute -top-2.5 left-5 inline-flex items-center gap-1 rounded-full bg-indigo-600 px-2.5 py-0.5 shadow-sm">
@@ -509,8 +516,8 @@ function StartHere({ data, teaser, onDismiss }: { data: StartHereData; teaser?: 
       <div className="p-5 pt-6">
         {teaser && <p className="text-[12px] text-neutral-400 mb-2.5 leading-relaxed">{teaser}</p>}
         {data.kind === 'reply'
-          ? <StartHereReplyBody m={data.m} onDismiss={onDismiss} />
-          : <StartHerePriorityBody p={data.p} onCleared={onDismiss} />}
+          ? <StartHereReplyBody m={data.m} onDismiss={onDismiss} onUndoInbox={onUndoInbox} />
+          : <StartHerePriorityBody p={data.p} onCleared={onDismiss} onUndoInbox={onUndoInbox} />}
       </div>
     </div>
   );
@@ -519,7 +526,7 @@ function StartHere({ data, teaser, onDismiss }: { data: StartHereData; teaser?: 
 // Focal reply — the single "Start here" item. Opens the full-context item detail (/item/[itemId],
 // as a wide modal over the Home) with its primary action ("Send draft" when one is ready) + the quiet
 // ✓/✕ kept inline for fast triage. The thread + editable draft + Send now live in the item detail.
-function StartHereReplyBody({ m, onDismiss }: { m: { who: string; ask: string; angle: string; itemId: string; draft?: string | null; subject?: string; snippet?: string; receivedAt?: string }; onDismiss?: (id: string) => void }) {
+function StartHereReplyBody({ m, onDismiss, onUndoInbox }: { m: { who: string; ask: string; angle: string; itemId: string; draft?: string | null; subject?: string; snippet?: string; receivedAt?: string }; onDismiss?: (id: string) => void; onUndoInbox?: (message: string, entityId: string, sessionKeys: string[]) => void }) {
   const router = useRouter();
   const ready = !!m.draft;
   const { removed, exiting, startExit } = useExit();
@@ -530,6 +537,7 @@ function StartHereReplyBody({ m, onDismiss }: { m: { who: string; ask: string; a
     e?.stopPropagation();
     if (acting || !m.itemId) return;
     setActing(true); startExit();
+    onUndoInbox?.(kind === 'complete' ? 'Marked done' : 'Dismissed', m.itemId, [m.itemId]);
     try { await fetch(`/api/inbox/${m.itemId}/${kind}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason: 'home' }) }); } finally { setActing(false); }
   };
   const open = () => { if (m.itemId) router.push(`/item/${m.itemId}${m.angle ? `?angle=${encodeURIComponent(m.angle)}` : ''}`); };
@@ -575,7 +583,7 @@ function StartHereReplyBody({ m, onDismiss }: { m: { who: string; ask: string; a
 }
 
 // Focal priority — same open + done/dismiss behaviour as PriorityCard, at focal scale.
-function StartHerePriorityBody({ p, onCleared }: { p: Priority; onCleared?: (id: string) => void }) {
+function StartHerePriorityBody({ p, onCleared, onUndoInbox }: { p: Priority; onCleared?: (id: string) => void; onUndoInbox?: (message: string, entityId: string, sessionKeys: string[]) => void }) {
   const router = useRouter();
   const cfg = SOURCE[p.source];
   const Icon = cfg.icon;
@@ -589,6 +597,7 @@ function StartHerePriorityBody({ p, onCleared }: { p: Priority; onCleared?: (id:
     setActing(true); startExit(); onCleared?.(p.id); // raise the day-cleared ring live
     Promise.all(ids.map(id => fetch(`/api/inbox/${id}/${kind}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason: 'home' }) })))
       .catch(() => {}).finally(() => setActing(false));
+    onUndoInbox?.(kind === 'complete' ? 'Marked done' : 'Dismissed', ids[0], [ids[0], p.id]);
   };
   if (removed) return null;
   return (
@@ -700,26 +709,30 @@ export function HomeView() {
   const [sessionCleared, setSessionCleared] = useState(0); // this session's Done/Dismiss/Send → ring `cleared`
   const [activityOpen, setActivityOpen] = useState(false); // right-side Activity slide-over
 
+  const aliveRef = useRef(true);
+  // The background/foreground brief loader, lifted to component scope so an Undo can trigger an
+  // immediate refresh (bringing a just-restored item back on screen without waiting for the poll).
+  const load = useCallback((background = false) => {
+    if (!background) setLoading(true);
+    Promise.all([
+      fetch('/api/home/brief').then(r => r.json()).catch(() => null),
+      fetch('/api/workers/home').then(r => r.json()).catch(() => null),
+    ]).then(([b, t]) => {
+      if (!aliveRef.current) return;
+      // Background refresh only SWAPS in fresh data — it never blanks the view. dismissed/clearedIds
+      // keep filtering acted items, so nothing the user cleared reappears mid-session.
+      if (b && !b.error) setBrief(b);
+      else if (!background) setBrief(null);
+      if (t) setTeam({ messages: t.messages ?? [], needsReview: t.needsReview ?? [] });
+      // On a background refresh the server now counts this session's actions, so drop the transient
+      // client ring bump to avoid double-counting.
+      if (background) setSessionCleared(0);
+      setLoading(false);
+    });
+  }, []);
+
   useEffect(() => {
-    let alive = true;
-    const load = (background = false) => {
-      if (!background) setLoading(true);
-      Promise.all([
-        fetch('/api/home/brief').then(r => r.json()).catch(() => null),
-        fetch('/api/workers/home').then(r => r.json()).catch(() => null),
-      ]).then(([b, t]) => {
-        if (!alive) return;
-        // Background refresh only SWAPS in fresh data — it never blanks the view. dismissed/clearedIds
-        // keep filtering acted items, so nothing the user cleared reappears mid-session.
-        if (b && !b.error) setBrief(b);
-        else if (!background) setBrief(null);
-        if (t) setTeam({ messages: t.messages ?? [], needsReview: t.needsReview ?? [] });
-        // On a background refresh the server now counts this session's actions, so drop the transient
-        // client ring bump to avoid double-counting.
-        if (background) setSessionCleared(0);
-        setLoading(false);
-      });
-    };
+    aliveRef.current = true;
     load();
     // Keep the Home ALIVE: background-refetch when the tab regains focus/visibility, and on a gentle
     // interval while visible — so new mail / items / the ring update without a manual reload.
@@ -727,8 +740,8 @@ export function HomeView() {
     document.addEventListener('visibilitychange', onVisible);
     window.addEventListener('focus', onVisible);
     const id = window.setInterval(() => { if (document.visibilityState === 'visible') load(true); }, 90_000);
-    return () => { alive = false; document.removeEventListener('visibilitychange', onVisible); window.removeEventListener('focus', onVisible); window.clearInterval(id); };
-  }, []);
+    return () => { aliveRef.current = false; document.removeEventListener('visibilitychange', onVisible); window.removeEventListener('focus', onVisible); window.clearInterval(id); };
+  }, [load]);
 
   // Skeleton MIRRORS the real layout (header + two columns) so there's no reflow on load.
   if (loading) {
@@ -777,6 +790,33 @@ export function HomeView() {
   // Priority cards + commitments act internally (their own useExit/useCommitmentAct); this callback
   // is how they tell the ring they were cleared so `needYou--` / `cleared++` happens live.
   const onCleared = (id: string) => bumpCleared(id);
+
+  // ── UNDO wiring ────────────────────────────────────────────────────────────────────────────────
+  // Reverse the session state a reversible action set: drop the id(s) from `dismissed`/`clearedIds`
+  // and un-bump the ring, then background-refresh so the restored item reappears IMMEDIATELY (not
+  // only on the next poll). Idempotent-safe. `sessionKeys` are the row keys used in the session sets
+  // (the reply itemId, the priority card's p.id, or the commitment id).
+  const undoSessionState = (sessionKeys: string[]) => {
+    setDismissed((prev) => { const n = new Set(prev); sessionKeys.forEach((k) => n.delete(k)); return n; });
+    setClearedIds((prev) => {
+      const n = new Set(prev); let removed = 0;
+      sessionKeys.forEach((k) => { if (n.delete(k)) removed++; });
+      if (removed) setSessionCleared((c) => Math.max(0, c - removed));
+      return n;
+    });
+    load(true); // pull the restored item back on screen right away
+  };
+  // Show the "…· Undo" toast after a reversible INBOX action. `entityId` = the inbox item restored;
+  // `sessionKeys` = the keys to clear on undo (itemId + optionally the card's p.id).
+  const toastInbox = (message: string, entityId: string, sessionKeys: string[]) =>
+    showUndoToast({ message, entityType: 'inbox_item', entityId, onUndo: () => undoSessionState(sessionKeys) });
+  // Show the "…· Undo" toast after a reversible COMMITMENT action.
+  const toastCommitment = (message: string, id: string) =>
+    showUndoToast({ message, entityType: 'commitment', entityId: id, onUndo: () => undoSessionState([id]) });
+  // Show the "Muted · Undo" toast after muting a sender. Undo restores that sender's awareness items
+  // (best-effort, via the sender restore path) and background-refreshes so they reappear.
+  const toastSenderMuted = (sender: string) =>
+    showUndoToast({ message: `Muted ${sender}`, entityType: 'sender', entityId: sender, onUndo: () => load(true) });
   // Live view of Must-respond after this session's Done/Dismiss/Send: the count decrements AND the
   // collapsed list refills from the hidden pool (instead of leaving "1 item + Show N more").
   const mrLive = b?.mustRespond ? b.mustRespond.items.filter((m) => !dismissed.has(m.itemId)) : [];
@@ -895,7 +935,7 @@ export function HomeView() {
         {b!.followups!.teaser && <p className="text-[12.5px] text-neutral-500 mb-3.5 leading-relaxed">{b!.followups!.teaser}</p>}
         <ol className="space-y-3.5">
           {b!.followups!.items.map((f, i) => (
-            <FollowUpItem key={f.id || i} f={f} index={i} onCleared={onCleared} />
+            <FollowUpItem key={f.id || i} f={f} index={i} onCleared={onCleared} onUndoCommitment={toastCommitment} />
           ))}
         </ol>
         {b!.followups!.closing && (
@@ -917,7 +957,7 @@ export function HomeView() {
       ) : (
       <div className="space-y-2">
         {b!.waitingOn.map(c => (
-          <CommitmentSideRow key={c.id} id={c.id} icon={ClockIcon} iconClass="text-amber-400" onCleared={onCleared}>
+          <CommitmentSideRow key={c.id} id={c.id} icon={ClockIcon} iconClass="text-amber-400" onCleared={onCleared} onUndoCommitment={toastCommitment}>
             <span className="text-[13px] text-neutral-800 truncate block">{c.description}</span>
             <p className="text-[11.5px] text-neutral-400 mt-0.5">Waiting on {c.counterparty || 'them'} · {c.ageDays}d</p>
           </CommitmentSideRow>
@@ -950,7 +990,7 @@ export function HomeView() {
     <Collapsible title="For your awareness" count={b!.fyiDigest!.groups.length} icon={EnvelopeIcon}>
       <div className="rounded-xl border border-neutral-200/80 bg-white divide-y divide-neutral-100 overflow-hidden">
         {b!.fyiDigest!.groups.filter(g => g.kind === 'person').map((g, i) => (
-          <FyiGroupRow key={`p${i}`} g={g} variant="person" />
+          <FyiGroupRow key={`p${i}`} g={g} variant="person" onMuted={toastSenderMuted} />
         ))}
         {b!.fyiDigest!.groups.some(g => g.kind === 'newsletter') && (
           <div className="px-3.5 pt-2.5 pb-1 bg-neutral-50/60">
@@ -958,7 +998,7 @@ export function HomeView() {
           </div>
         )}
         {b!.fyiDigest!.groups.filter(g => g.kind === 'newsletter').map((g, i) => (
-          <FyiGroupRow key={`n${i}`} g={g} variant="newsletter" />
+          <FyiGroupRow key={`n${i}`} g={g} variant="newsletter" onMuted={toastSenderMuted} />
         ))}
         {b!.fyiDigest!.tailItems > 0 && (
           <Link href="/inbox" className="block px-3.5 py-2 text-[11.5px] text-neutral-400 hover:text-indigo-600 transition-colors">
@@ -1095,7 +1135,7 @@ export function HomeView() {
             {/* 1 · START HERE — only when there's no reply to lead with: the top priority, focal */}
             {startHere && (
               <RiseIn>
-                <StartHere data={startHere} teaser={null} onDismiss={onDismiss} />
+                <StartHere data={startHere} teaser={null} onDismiss={onDismiss} onUndoInbox={toastInbox} />
               </RiseIn>
             )}
 
@@ -1117,11 +1157,11 @@ export function HomeView() {
                        email to-dos) — same radius, border, padding rhythm and hover. */
                     <div className="space-y-2.5">
                       {digestReplies.length > 0 && (
-                        <DigestList items={digestReplies} onDismiss={onDismiss} emphasizeFirst={!startHere} />
+                        <DigestList items={digestReplies} onDismiss={onDismiss} emphasizeFirst={!startHere} onUndoInbox={toastInbox} />
                       )}
                       {bodyCards.map((p, i) => (
                         <RiseIn key={p.id} delay={i * 45}>
-                          <PriorityCard p={p} first={false} expanded={expanded === p.id} onToggle={() => setExpanded(expanded === p.id ? null : p.id)} onCleared={onCleared} />
+                          <PriorityCard p={p} first={false} expanded={expanded === p.id} onToggle={() => setExpanded(expanded === p.id ? null : p.id)} onCleared={onCleared} onUndoInbox={toastInbox} />
                         </RiseIn>
                       ))}
                     </div>
@@ -1143,7 +1183,7 @@ export function HomeView() {
                   ) : (
                   <div className="space-y-2">
                     {b.commitments.map(c => (
-                      <CommitmentSideRow key={c.id} id={c.id} href={`/item/${c.id}?kind=commitment`} icon={CheckCircleIcon} iconClass={c.overdue ? 'text-red-400' : 'text-neutral-300'} onCleared={onCleared}>
+                      <CommitmentSideRow key={c.id} id={c.id} href={`/item/${c.id}?kind=commitment`} icon={CheckCircleIcon} iconClass={c.overdue ? 'text-red-400' : 'text-neutral-300'} onCleared={onCleared} onUndoCommitment={toastCommitment}>
                         <div className="flex items-start justify-between gap-2">
                           <span className="text-[13px] text-neutral-800 leading-snug">{c.description}</span>
                           {(c.overdue || c.dueToday || c.dueDate) && (

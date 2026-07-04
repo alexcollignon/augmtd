@@ -12,7 +12,8 @@ export type ActivityType =
   | 'nudge_sent'
   | 'commitment_done'
   | 'commitment_dismissed'
-  | 'sender_muted';
+  | 'sender_muted'
+  | 'restored';
 
 export interface LogActivityInput {
   type: ActivityType | string;
