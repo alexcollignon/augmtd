@@ -6,6 +6,7 @@ import {
   EnvelopeIcon, CalendarDaysIcon, CheckCircleIcon, ClockIcon, UsersIcon,
   ChevronRightIcon, ArrowRightIcon, BoltIcon, SparklesIcon, EyeIcon,
 } from '@heroicons/react/24/outline';
+import ActivityDrawer from '@/components/activity/activity-drawer';
 
 type Priority = {
   id: string; source: 'email' | 'meeting'; posture: 'needs_reply' | 'to_do' | 'waiting_on';
@@ -691,6 +692,7 @@ export function HomeView() {
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [dismissed, setDismissed] = useState<Set<string>>(new Set()); // itemIds acted this session → live count + list refill
+  const [activityOpen, setActivityOpen] = useState(false); // right-side Activity slide-over
 
   useEffect(() => {
     Promise.all([
@@ -963,6 +965,17 @@ export function HomeView() {
                 <p className="mt-2 text-[14.5px] text-neutral-500 leading-relaxed max-w-[760px]">{b?.tldr?.teaser || b?.briefLine}</p>
               )}
             </div>
+            {/* Activity trigger — a quiet clock button at the top-right of the header, opposite the
+                greeting. Opens the right-side slide-over. */}
+            <button
+              onClick={() => setActivityOpen(true)}
+              title="Activity"
+              aria-label="Open activity"
+              className="flex-shrink-0 mt-1 inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 text-[12px] font-medium text-neutral-500 hover:text-indigo-700 hover:border-indigo-200 hover:bg-indigo-50/60 transition-colors"
+            >
+              <ClockIcon className="w-4 h-4" />
+              <span className="hidden sm:inline">Activity</span>
+            </button>
           </div>
         </RiseIn>
 
@@ -1078,6 +1091,9 @@ export function HomeView() {
           </div>
         )}
       </div>
+
+      {/* Right-side Activity slide-over */}
+      <ActivityDrawer open={activityOpen} onClose={() => setActivityOpen(false)} />
     </div>
   );
 }

@@ -11,7 +11,6 @@ import {
   UserGroupIcon,
   VideoCameraIcon,
   FolderIcon,
-  ClockIcon,
   Cog6ToothIcon,
   ArrowRightOnRectangleIcon,
   ShieldCheckIcon,
@@ -53,7 +52,6 @@ export default function SidebarNav({
     ...(features.email    ? [{ name: 'Inbox',    href: '/inbox',    icon: EnvelopeIcon }]              : []),
     { name: 'Workers', href: '/workers', icon: UserGroupIcon },
     { name: 'Chat',    href: '/work',    icon: ChatBubbleLeftEllipsisIcon },
-    { name: 'Activity', href: '/activity', icon: ClockIcon },
     ...(features.meetings ? [{ name: 'Meetings', href: '/meetings', icon: VideoCameraIcon }] : []),
     ...(features.drive    ? [{ name: 'Drive',    href: '/drive',    icon: FolderIcon }]      : []),
     ...(isSuperAdmin ? [{ name: 'Platform Admin', href: '/platform-admin', icon: ShieldCheckIcon }] : []),
@@ -142,18 +140,6 @@ export default function SidebarNav({
         {showUserMenu && (
           <div className="absolute bottom-full left-1 mb-1.5 w-44 bg-white border border-neutral-200 shadow-lg z-50 rounded-lg overflow-hidden">
             <div className="py-1">
-              <Link
-                href="/activity"
-                onClick={() => setShowUserMenu(false)}
-                className={`flex items-center gap-2.5 px-3 py-2 text-[12.5px] transition-colors ${
-                  pathname === '/activity'
-                    ? 'text-indigo-700 bg-indigo-50'
-                    : 'text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900'
-                }`}
-              >
-                <ClockIcon className="w-4 h-4 text-neutral-400 flex-shrink-0" />
-                Activity Log
-              </Link>
               <Link
                 href="/settings"
                 onClick={() => setShowUserMenu(false)}
