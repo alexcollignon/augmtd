@@ -295,17 +295,39 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 type MeetingActionItem = { id: string; workTitle: string; whyMatters?: string | null; category?: string };
+// decisions/risks come from /api/meetings/[id]/full as arrays of OBJECTS (mirrors the meetings page's
+// Decision/Risk shapes) — but be robust: an item may be a plain string or a partial object.
+type MeetingDecision = { text?: string | null; owner?: string | null; date?: string | null } | string;
+type MeetingRisk = { text?: string | null; severity?: 'low' | 'medium' | 'high' | null } | string;
 type MeetingFull = {
   event: { title: string; start_time: string | null } | null;
   transcript: {
     summary: string | null;
-    decisions: string[];
-    risks: string[];
+    decisions: MeetingDecision[];
+    risks: MeetingRisk[];
     suggestedNextStep: string | null;
     durationMinutes: number;
   } | null;
   actionItems: MeetingActionItem[];
 };
+
+// Severity badge — mirrors the meetings page (inline-note-view.tsx): red / amber / neutral(slate) with
+// a matching colored dot. Rendered only when a severity is present.
+const RISK_BADGE: Record<string, { pill: string; dot: string; label: string }> = {
+  high: { pill: 'bg-red-50 text-red-700 border-red-200', dot: 'bg-red-500', label: 'High' },
+  medium: { pill: 'bg-amber-50 text-amber-700 border-amber-200', dot: 'bg-amber-400', label: 'Medium' },
+  low: { pill: 'bg-slate-100 text-slate-600 border-slate-200', dot: 'bg-slate-400', label: 'Low' },
+};
+
+// Normalize a decision/risk item (string OR object OR partial) to its display text — never dump JSON.
+function itemText(x: unknown): string {
+  if (typeof x === 'string') return x;
+  if (x && typeof x === 'object') {
+    const t = (x as { text?: unknown }).text;
+    if (typeof t === 'string') return t;
+  }
+  return '';
+}
 
 function MeetingDetail({ id }: { id: string }) {
   const [data, setData] = useState<MeetingFull | null>(null);
@@ -368,37 +390,85 @@ function MeetingDetail({ id }: { id: string }) {
           </div>
         ) : (
           <>
+            {/* Suggested next step — the one call-to-action, kept prominent up top (indigo accent). */}
+            {tr?.suggestedNextStep && (
+              <section className="rounded-xl border border-indigo-100 bg-indigo-50/40 px-4 py-3.5">
+                <h2 className="text-[11px] font-semibold text-indigo-600 uppercase tracking-wide mb-1.5">Suggested next step</h2>
+                <p className="text-[13.5px] text-neutral-700 leading-relaxed">{tr.suggestedNextStep}</p>
+              </section>
+            )}
+
             {tr?.summary && (
               <section>
-                <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2">Summary</h2>
+                <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2.5">Summary</h2>
                 <p className="text-[13.5px] text-neutral-700 leading-relaxed whitespace-pre-wrap">{tr.summary}</p>
               </section>
             )}
 
-            {tr?.suggestedNextStep && (
-              <section className="rounded-xl border border-indigo-100 bg-indigo-50/40 px-4 py-3">
-                <h2 className="text-[11px] font-semibold text-indigo-600 uppercase tracking-wide mb-1">Suggested next step</h2>
-                <p className="text-[13px] text-neutral-700 leading-relaxed">{tr.suggestedNextStep}</p>
-              </section>
-            )}
+            {/* Decisions — each item is { text, owner?, date? } (or a bare string). Render the text as
+                the line; owner/date show as subtle muted metadata ONLY when present. Never JSON. */}
+            {(() => {
+              const decisions = (tr?.decisions ?? []).filter(d => itemText(d).trim());
+              if (decisions.length === 0) return null;
+              return (
+                <section>
+                  <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2.5">Decisions</h2>
+                  <ul className="space-y-2.5">
+                    {decisions.map((d, i) => {
+                      const obj = typeof d === 'object' && d ? d : null;
+                      const owner = obj?.owner?.trim() || null;
+                      const date = obj?.date ? fmtDate(obj.date) : null;
+                      return (
+                        <li key={i} className="flex gap-2.5">
+                          <span className="mt-[7px] h-1.5 w-1.5 flex-shrink-0 rounded-full bg-emerald-400" />
+                          <div className="min-w-0">
+                            <p className="text-[13.5px] text-neutral-700 leading-relaxed">{itemText(d)}</p>
+                            {(owner || date) && (
+                              <p className="mt-0.5 text-[11.5px] text-neutral-400 leading-snug">
+                                {owner && <span>{owner}</span>}
+                                {owner && date && <span className="mx-1">·</span>}
+                                {date && <span>{date}</span>}
+                              </p>
+                            )}
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </section>
+              );
+            })()}
 
-            {tr && tr.decisions.length > 0 && (
-              <section>
-                <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2">Decisions</h2>
-                <ul className="space-y-1.5 border-l-2 border-emerald-100 pl-3">
-                  {tr.decisions.map((d, i) => <li key={i} className="text-[13px] text-neutral-700 leading-snug">{typeof d === 'string' ? d : JSON.stringify(d)}</li>)}
-                </ul>
-              </section>
-            )}
-
-            {tr && tr.risks.length > 0 && (
-              <section>
-                <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2">Risks &amp; open questions</h2>
-                <ul className="space-y-1.5 border-l-2 border-amber-100 pl-3">
-                  {tr.risks.map((r, i) => <li key={i} className="text-[13px] text-neutral-700 leading-snug">{typeof r === 'string' ? r : JSON.stringify(r)}</li>)}
-                </ul>
-              </section>
-            )}
+            {/* Risks & open questions — each item is { text, severity? } (or a bare string). Render the
+                text + a small severity badge (low=slate, medium=amber, high=red) when present. */}
+            {(() => {
+              const risks = (tr?.risks ?? []).filter(r => itemText(r).trim());
+              if (risks.length === 0) return null;
+              return (
+                <section>
+                  <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2.5">Risks &amp; open questions</h2>
+                  <ul className="space-y-2.5">
+                    {risks.map((r, i) => {
+                      const sev = typeof r === 'object' && r?.severity ? r.severity : null;
+                      const badge = sev ? RISK_BADGE[sev] : null;
+                      return (
+                        <li key={i} className="flex gap-2.5">
+                          <span className="mt-[7px] h-1.5 w-1.5 flex-shrink-0 rounded-full bg-amber-400" />
+                          <div className="min-w-0 flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                            <p className="text-[13.5px] text-neutral-700 leading-relaxed">{itemText(r)}</p>
+                            {badge && (
+                              <span className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-medium ${badge.pill}`}>
+                                <span className={`h-1 w-1 rounded-full ${badge.dot}`} />{badge.label}
+                              </span>
+                            )}
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </section>
+              );
+            })()}
 
             {/* Action items — the inline actions. Each item is an inbox_item → /complete + /dismiss. */}
             <section>
