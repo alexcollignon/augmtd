@@ -6,7 +6,7 @@ import {
   EnvelopeIcon, CalendarDaysIcon, CheckCircleIcon, ClockIcon, UsersIcon,
   ChevronRightIcon, ArrowRightIcon, BoltIcon, SparklesIcon, EyeIcon,
 } from '@heroicons/react/24/outline';
-import ActivityDrawer from '@/components/activity/activity-drawer';
+import ActivityPanel from '@/components/activity/activity-panel';
 
 type Priority = {
   id: string; source: 'email' | 'meeting'; posture: 'needs_reply' | 'to_do' | 'waiting_on';
@@ -1092,8 +1092,8 @@ export function HomeView() {
         )}
       </div>
 
-      {/* Right-side Activity slide-over */}
-      <ActivityDrawer open={activityOpen} onClose={() => setActivityOpen(false)} />
+      {/* Right-side Activity panel — inbox right-panel treatment (inset, rounded, animated width) */}
+      <ActivityPanel open={activityOpen} onClose={() => setActivityOpen(false)} />
     </div>
   );
 }
