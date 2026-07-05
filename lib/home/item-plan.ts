@@ -120,12 +120,19 @@ export async function generateItemPlan(
   try {
     const { client: ai, model } = await getAIClient(userId, 'planning', client);
     const res = await aiCreate(ai, {
+      // Headroom for REASONING models (bedrock_optimised planning = Kimi, a reasoning model): at 700 it
+      // spent the whole budget in the `reasoning` channel and emitted EMPTY content (finish_reason=length)
+      // → parse failed → the fallback "Handle this" every time. Non-reasoning tiers just stop after the
+      // ~200-token JSON, so a high cap is safe/cheap.
       model,
-      max_tokens: 700,
+      max_tokens: 8000,
       temperature: 0.3,
       messages: [{ role: 'user', content: prompt }],
     });
-    const raw = res.choices?.[0]?.message?.content?.trim() || '';
+    const msg = res.choices?.[0]?.message as { content?: string; reasoning?: string } | undefined;
+    // Prefer content; fall back to the reasoning channel (parseTasks extracts the JSON object wherever
+    // it sits) in case a provider streamed the answer there.
+    const raw = (msg?.content?.trim() || msg?.reasoning?.trim() || '');
     const tasks = parseTasks(raw);
     return tasks ? { tasks } : fallbackPlan();
   } catch (e) {
