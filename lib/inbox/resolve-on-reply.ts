@@ -1,0 +1,151 @@
+// Reply/closure resolution — when the user has structurally responded on a thread (a sent message
+// after the open item/commitment was created), auto-resolve the answered needs-reply item AND the
+// user's own "you owe" commitment on that thread. AGNOSTIC by construction: the decision comes only
+// from computeThreadReplyState (direction + time) — NO keyword/phrase/regex matching of email text.
+//
+// Conservative: resolves ONLY on a clear structural user reply, ONLY touches open needs-reply-ish
+// items and open `you_owe` commitments (never FYI/awareness, never waiting_on/ball-in-court — a user
+// reply doesn't fulfil something SOMEONE ELSE owes). Everything is logged via logActivity so it shows
+// in the Activity timeline AND is undoable through the existing /api/restore paths (status flip). The
+// home brief cache is busted so the Home drops the resolved item on next load. Fully non-fatal.
+
+import { logActivity } from '@/lib/activity/log';
+import { computeThreadReplyState, type ThreadMessage } from './thread-resolution';
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type DBClient = any;
+
+// The work_states that represent a reply the user owes (mirrors isNeedsReply's reply-state gate). A
+// user reply on the thread settles exactly these — never a plain FYI/awareness item.
+const REPLY_STATES = ['work_prepared', 'decision_required'];
+
+/**
+ * Resolve the open needs-reply item + open you-owe commitment on a thread the user has replied to.
+ *
+ * @param opts.threadEmails  the thread's messages (is_from_user + received_at) — the SAME set the
+ *   update path already assembles. If empty/undefined we cannot judge structurally → no-op (unless a
+ *   single confirmed sent message is passed as the whole thread).
+ * @param opts.repliedAt     optional: the timestamp of the user's just-sent message, used as a
+ *   fallback single-message thread when threadEmails isn't assembled in this path.
+ */
+export async function resolveThreadOnReply(opts: {
+  userId: string;
+  threadId: string | null;
+  threadEmails?: ThreadMessage[];
+  repliedAt?: string | null;
+  client: DBClient;
+  /** best-effort cache bust (profiles.home_brief=null) so the Home drops it next load. */
+  bustBriefCache?: () => Promise<void>;
+}): Promise<{ resolvedItems: number; resolvedCommitments: number }> {
+  const { userId, threadId, client } = opts;
+  const out = { resolvedItems: 0, resolvedCommitments: 0 };
+  if (!threadId) return out;
+
+  try {
+    // The thread messages we reason over. Prefer the assembled thread; otherwise treat the single
+    // sent message as a one-message thread (a from-user message IS a reply — structural).
+    const messages: ThreadMessage[] =
+      opts.threadEmails && opts.threadEmails.length
+        ? opts.threadEmails
+        : opts.repliedAt
+          ? [{ is_from_user: true, received_at: opts.repliedAt }]
+          : [];
+
+    // ── inbox item: resolve the OPEN needs-reply item on this thread if the user replied after it
+    // was created. We fetch first (need created_at as the `since` window + the subject for the log). ──
+    const { data: openItems } = await client
+      .from('inbox_items')
+      .select('id, created_at, work_title, source_data')
+      .eq('user_id', userId)
+      .eq('source', 'email')
+      .eq('status', 'pending')
+      .in('work_state', REPLY_STATES)
+      .eq('source_data->>thread_id', threadId);
+
+    for (const it of (openItems ?? []) as Array<{ id: string; created_at: string; work_title?: string; source_data?: { subject?: string } }>) {
+      const state = computeThreadReplyState(messages, it.created_at ? new Date(it.created_at) : null);
+      if (!state.userReplied) continue; // conservative: no clear structural reply → leave it
+
+      const resolvedAt = new Date().toISOString();
+      const sd = (it.source_data ?? {}) as Record<string, unknown>;
+      const { error } = await client
+        .from('inbox_items')
+        .update({
+          status: 'completed',
+          // Reason + timestamp so it's auditable and the UI can explain WHY it cleared.
+          source_data: { ...sd, resolved_reason: 'replied', resolved_at: resolvedAt },
+          updated_at: resolvedAt,
+        })
+        .eq('id', it.id)
+        .eq('user_id', userId)
+        .eq('status', 'pending'); // guard against a concurrent flip
+      if (error) continue;
+
+      out.resolvedItems++;
+      const subject = it.work_title || (it.source_data?.subject as string) || 'a thread';
+      // marked_done → reversible via /api/restore (inbox_item → status='pending'), reappears on Home.
+      await logActivity(client, userId, {
+        type: 'marked_done',
+        title: `Resolved (you replied): ${subject}`,
+        entityType: 'inbox_item',
+        entityId: it.id,
+        metadata: { reason: 'replied', auto: true },
+      });
+    }
+
+    // ── commitment: resolve the user's OWN open you-owe commitment on this thread. A user reply
+    // fulfils something the USER owed. We deliberately do NOT touch `awaiting` (ball-in-their-court)
+    // commitments — a user reply doesn't complete what someone else owes. ──
+    const { data: openCommits } = await client
+      .from('commitments')
+      .select('id, created_at, description, direction')
+      .eq('user_id', userId)
+      .eq('status', 'open')
+      .eq('direction', 'you_owe')
+      .eq('thread_id', threadId);
+
+    for (const c of (openCommits ?? []) as Array<{ id: string; created_at: string; description: string }>) {
+      const state = computeThreadReplyState(messages, c.created_at ? new Date(c.created_at) : null);
+      if (!state.userReplied) continue;
+
+      const resolvedAt = new Date().toISOString();
+      const { error } = await client
+        .from('commitments')
+        .update({ status: 'done', resolved_reason: 'replied', resolved_at: resolvedAt, updated_at: resolvedAt })
+        .eq('id', c.id)
+        .eq('user_id', userId)
+        .eq('status', 'open');
+      if (error) {
+        // `resolved_reason`/`resolved_at` may not exist as columns on older schemas — retry status-only
+        // so resolution still lands (and stays reversible). Non-fatal either way.
+        const retry = await client
+          .from('commitments')
+          .update({ status: 'done', updated_at: resolvedAt })
+          .eq('id', c.id)
+          .eq('user_id', userId)
+          .eq('status', 'open');
+        if (retry.error) continue;
+      }
+
+      out.resolvedCommitments++;
+      // commitment_done → reversible via /api/restore (commitment → status='open'), reappears on Home.
+      await logActivity(client, userId, {
+        type: 'commitment_done',
+        title: `Resolved (you replied): ${c.description}`,
+        entityType: 'commitment',
+        entityId: c.id,
+        metadata: { reason: 'replied', auto: true },
+      });
+    }
+
+    // Bust the Home brief cache once, only if something actually resolved, so the Home drops it.
+    if ((out.resolvedItems || out.resolvedCommitments) && opts.bustBriefCache) {
+      await opts.bustBriefCache().catch(() => {});
+    }
+  } catch (e) {
+    // Fully non-fatal — never break sync.
+    console.error('[resolve-on-reply] non-fatal error:', e);
+  }
+
+  return out;
+}

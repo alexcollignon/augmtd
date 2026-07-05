@@ -20,6 +20,13 @@ const COMMITMENT_HINT = /\b(i'?ll|i will|we'?ll|we will|let me|i'?ll get|send yo
 // footer is a near-perfect signal that this is a broadcast, not a 1:1 message.
 const BULK_HINT = /unsubscribe|view (this )?(e?-?mail )?in (your )?browser|manage (your )?(e?mail )?preferences|update your preferences|you'?re receiving this|sent to you because|no longer wish to receive|email preferences|all rights reserved/i;
 
+// A first-person promise BY the sender — the only shape that keeps a from-user commitment as
+// "you_owe". Anything else the sender writes (an imperative/request aimed at the recipient) is the
+// OTHER party's obligation. Descriptions are short imperatives ("Send the Q3 proposal"), so we also
+// accept a bare leading verb of sending/sharing that the user is the natural subject of — but the
+// structural rule is: no first-person promise marker on a from-user email ⇒ treat as awaiting.
+const FIRST_PERSON_PROMISE = /\b(i'?ll|i will|i'?m going to|i am going to|i shall|let me|we'?ll|we will|we'?re going to|we are going to|on my end|i'?ve|i have|i can|i'?d|i would)\b/i;
+
 const norm = (s: string) => s.toLowerCase().replace(/\s+/g, ' ').trim();
 function validDate(d: unknown): string | null {
   if (typeof d !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(d)) return null;
@@ -110,7 +117,7 @@ export async function extractEmailCommitments(opts: {
 
   const who = userName || 'the user';
   const perspective = isFromUser
-    ? `This email was SENT BY ${who}. Things ${who} promises to do = direction "you_owe". Things ${who} asks the other party to do (and is now waiting on) = direction "awaiting".`
+    ? `This email was SENT BY ${who}. Things ${who} promises to do = direction "you_owe". Things ${who} asks or requests the other party to do (and is now waiting on) = direction "awaiting". CRITICAL: because ${who} is the SENDER, an imperative or request aimed at the other party ("process the refund", "please send X", "can you review Y") is something the OTHER party owes — direction "awaiting" — NOT something ${who} owes. Only a first-person promise by ${who} ("I'll…", "I will…", "let me…", "we'll…") is "you_owe".`
     : `This email was RECEIVED BY ${who} from ${counterparty || 'someone'}. Things the other party asks ${who} to do = direction "you_owe". Things the other party promises to do for ${who} = direction "awaiting".`;
 
   const prompt = `Extract concrete COMMITMENTS from this email — a specific promise or obligation between ${who} and a REAL person, with a clear owner and optionally a deadline (e.g. "Send the Q3 proposal", "Review the contract by Friday").
@@ -134,8 +141,17 @@ Return ONLY JSON. Empty array if there are no real commitments:
     const { client: ai, model } = await getAIClient(userId, 'summarization', client);
     const res = await aiCreate(ai, { model, messages: [{ role: 'user', content: prompt }], max_tokens: 500, temperature: 0.2 });
     const parsed = parseJson(res.choices?.[0]?.message?.content ?? '');
-    const list = (parsed.commitments ?? []) as ExtractedCommitment[];
+    let list = (parsed.commitments ?? []) as ExtractedCommitment[];
     if (!list.length) return 0;
+    // Structural backstop — a hard directional signal the model's text-inference cannot override.
+    // When the email is FROM the user, an ask/imperative directed OUTWARD ("process the refund",
+    // "send me X") is something the counterparty owes → "awaiting", NOT "you_owe". Only a clear
+    // first-person promise ("I'll…", "we'll…", "let me…") stays "you_owe". This is general (no
+    // names/subjects) — it keys purely off who sent the email + the grammatical shape of the task,
+    // so a requested action can never land in the user's "on your plate" lane.
+    if (isFromUser) {
+      list = list.map((c) => (c.direction === 'you_owe' && !FIRST_PERSON_PROMISE.test(c.description) ? { ...c, direction: 'awaiting' } : c));
+    }
     await writeCommitments(userId, list, { source: 'email', sourceId, threadId, counterparty }, client);
     return list.length;
   } catch {

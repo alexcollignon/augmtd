@@ -4,14 +4,35 @@
 // an actual meeting, or group everything about one person into a single coherent unit.
 // See docs/inbox-coherence-plan.md + docs/brief-and-labeling-plan.md.
 //
-// B1: assembles the MEETING/CALENDAR + COMMITMENTS dimensions into a per-person map, keyed by email
-// (falling back to a normalized name). It's designed to keep growing — add per-person email threads
-// and a richer timeline here — and the reconciliation rules (entity grouping, resolution) + the
-// eventual single synthesis pass all read from this one object.
+// Assembles the MEETING/CALENDAR + COMMITMENTS + EMAIL dimensions into a per-person map, keyed by
+// email (the identity carried through the pipeline; falling back to a normalized name only when no
+// email is available). This one object feeds the reconciliation (entity grouping, resolution) and,
+// most importantly, the single Layer-3 SYNTHESIS pass — which reasons over the complete grounded
+// per-person context (emails, meetings, commitments, timestamps) to judge supersession / staleness /
+// relevance / grouping holistically. No AI here; this layer is deterministic + parallel.
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type DBClient = any;
 const DAY = 86_400_000;
+
+export interface PersonEmail {
+  /** the inbox_items.id, so the synthesis can point back to the exact item (drop/keep). */
+  itemId?: string;
+  subject: string;
+  /** received (ISO) — for supersession vs a meeting/held date. */
+  at: string;
+  /** needs_reply | to_do | waiting_on | fyi — the classifier's posture for this thread. */
+  posture: string;
+  /** short body snippet, for grounding the "what they're asking". */
+  snippet?: string;
+  /** STRUCTURAL reply-state (computeThreadReplyState — direction+time, no keywords): the user has
+      sent a message on this thread after it was created → already handled. Lets the synthesis REASON
+      "the user already responded → drop/deprioritize", covering the fuzzy closure case grounded in
+      the real thread rather than any text match. */
+  userResponded?: boolean;
+  /** the most recent message on the thread is from the user (ball is in the other court). */
+  lastFromUser?: boolean;
+}
 
 export interface PersonContext {
   /** email (preferred) or normalized name — the grouping key. */
@@ -19,6 +40,8 @@ export interface PersonContext {
   name?: string;
   meetings: Array<{ start: string; title?: string }>;
   commitments: Array<{ description: string; direction: string; dueDate?: string | null }>;
+  /** recent inbox threads from/with this person (identity carried by email where possible). */
+  emails: PersonEmail[];
   /** most recent PAST meeting start (ISO) with this person. */
   lastMeetingAt?: string;
 }
@@ -28,7 +51,7 @@ export interface BriefContext {
   meetingPeople: Set<string>;
   /** email → most recent PAST meeting start (ISO) — for resolving threads a meeting already covered. */
   lastMeetingAt: Map<string, string>;
-  /** Per-person entity map (email/name → meetings + commitments) — for grouping + synthesis. */
+  /** Per-person entity map (email/name → meetings + commitments + emails) — for grouping + synthesis. */
   people: Map<string, PersonContext>;
 }
 
@@ -37,11 +60,28 @@ const emailOf = (s?: string | null): string | null => {
   return (s.match(/[^\s<>"]+@[^\s<>"]+/)?.[0] || '').toLowerCase() || null;
 };
 
+// Per-person recent inbox threads. Passed IN by the route (it already selects the pending items),
+// so we don't double-query. Each entry carries the counterparty email (identity) + its posture.
+export interface EmailSeed {
+  itemId?: string;
+  fromAddress: string | null;
+  fromName?: string | null;
+  subject: string;
+  at: string;
+  posture: string;
+  snippet?: string;
+  /** structural reply-state for this thread — computed by the route via computeThreadReplyState over
+      the same sent-message data it already loads. Carried through to PersonEmail for the synthesis. */
+  userResponded?: boolean;
+  lastFromUser?: boolean;
+}
+
 export async function buildBriefContext(
   userId: string,
   self: string | undefined,
   now: Date,
   client: DBClient,
+  emailSeeds: EmailSeed[] = [],
 ): Promise<BriefContext> {
   const [calRes, commitRes, txRes] = await Promise.all([
     client
@@ -71,16 +111,25 @@ export async function buildBriefContext(
   const meetingPeople = new Set<string>();
   const lastMeetingAt = new Map<string, string>();
   const people = new Map<string, PersonContext>();
-  const nameToEmail = new Map<string, string>(); // normalized attendee full name → email
+  const nameToEmail = new Map<string, string>(); // normalized attendee full name → email (identity fallback)
   const firstTokenToEmail = new Map<string, string | null>(); // first name → email (null = ambiguous)
   const normName = (s: string) => s.trim().toLowerCase().replace(/[^\w\s]/g, '').replace(/\s+/g, ' ');
   const nowIso = now.toISOString();
 
   const ensure = (key: string, name?: string): PersonContext => {
     let p = people.get(key);
-    if (!p) { p = { key, name, meetings: [], commitments: [] }; people.set(key, p); }
+    if (!p) { p = { key, name, meetings: [], commitments: [], emails: [] }; people.set(key, p); }
     if (name && !p.name) p.name = name;
     return p;
+  };
+
+  const learnName = (e: string, rawName?: string | null) => {
+    const _nm = normName(rawName || '');
+    if (!_nm) return;
+    nameToEmail.set(_nm, e);
+    const _ft = _nm.split(' ')[0];
+    // Track first name → email; mark null (ambiguous) if two different people share it.
+    if (_ft) firstTokenToEmail.set(_ft, firstTokenToEmail.has(_ft) && firstTokenToEmail.get(_ft) !== e ? null : e);
   };
 
   for (const ev of (calRes?.data ?? []) as Array<{ start_time: string; title?: string; attendees?: Array<{ email?: string; name?: string; displayName?: string }> }>) {
@@ -90,13 +139,7 @@ export async function buildBriefContext(
       meetingPeople.add(e);
       if (ev.start_time <= nowIso && !lastMeetingAt.has(e)) lastMeetingAt.set(e, ev.start_time);
       const p = ensure(e, a?.name || a?.displayName);
-      const _nm = normName(a?.name || a?.displayName || '');
-      if (_nm) {
-        nameToEmail.set(_nm, e);
-        const _ft = _nm.split(' ')[0];
-        // Track first name → email; mark null (ambiguous) if two different people share it.
-        if (_ft) firstTokenToEmail.set(_ft, firstTokenToEmail.has(_ft) && firstTokenToEmail.get(_ft) !== e ? null : e);
-      }
+      learnName(e, a?.name || a?.displayName);
       p.meetings.push({ start: ev.start_time, title: ev.title });
       if (ev.start_time <= nowIso && (!p.lastMeetingAt || ev.start_time > p.lastMeetingAt)) p.lastMeetingAt = ev.start_time;
     }
@@ -118,22 +161,32 @@ export async function buildBriefContext(
         meetingPeople.add(e);
         if (start <= nowIso && !lastMeetingAt.has(e)) lastMeetingAt.set(e, start);
         const p = ensure(e, a?.name || a?.displayName);
-        const _nm = normName(a?.name || a?.displayName || '');
-        if (_nm) {
-          nameToEmail.set(_nm, e);
-          const _ft = _nm.split(' ')[0];
-          if (_ft) firstTokenToEmail.set(_ft, firstTokenToEmail.has(_ft) && firstTokenToEmail.get(_ft) !== e ? null : e);
-        }
+        learnName(e, a?.name || a?.displayName);
         if (!p.meetings.some((m) => m.start === start)) p.meetings.push({ start, title: t.title || ev.title });
         if (start <= nowIso && (!p.lastMeetingAt || start > p.lastMeetingAt)) p.lastMeetingAt = start;
       }
     }
   }
 
+  // EMAIL dimension — recent inbox threads folded into the person map by their counterparty EMAIL
+  // (identity carried from source_data.from_address). This is what lets the synthesis see, per
+  // person, "you have a meeting with them AND this scheduling email arrived before it" → superseded.
+  for (const seed of emailSeeds) {
+    const e = (seed.fromAddress || '').toLowerCase();
+    if (!e || e === self) continue;
+    const p = ensure(e, seed.fromName || undefined);
+    learnName(e, seed.fromName);
+    p.emails.push({
+      itemId: seed.itemId, subject: seed.subject, at: seed.at, posture: seed.posture, snippet: seed.snippet,
+      userResponded: seed.userResponded, lastFromUser: seed.lastFromUser,
+    });
+  }
+
   for (const c of (commitRes?.data ?? []) as Array<{ description: string; direction: string; due_date?: string | null; counterparty?: string | null }>) {
     const email = emailOf(c.counterparty);
-    // Resolve a name-only counterparty to a meeting attendee's email so their commitments + meetings
-    // merge into ONE person (entity resolution) — conservative exact normalized-name match.
+    // Resolve a name-only counterparty to a known email so their commitments + meetings + emails
+    // merge into ONE person (entity resolution). Prefer email-carried identity; the normalized-name
+    // match is a conservative fallback for legacy commitments that stored only a name string.
     const nm = c.counterparty ? normName(c.counterparty) : '';
     const ft = nm.split(' ')[0];
     const key = email || (nm && nameToEmail.get(nm)) || (ft ? firstTokenToEmail.get(ft) : null) || nm;

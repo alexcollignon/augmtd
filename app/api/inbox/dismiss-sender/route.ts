@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { logActivity } from '@/lib/activity/log';
 
 // POST /api/inbox/dismiss-sender — "mute sender": dismiss ALL pending awareness (fyi/noise) items
 // from one sender. Powers the Home FYI digest's per-group dismiss. Matches the group's label against
@@ -25,6 +26,14 @@ export async function POST(request: NextRequest) {
         .in('work_state', ['noted', 'noise'])
         .eq(`source_data->>${col}`, sender);
     }
+
+    // Activity timeline (non-fatal).
+    await logActivity(supabase, user.id, {
+      type: 'sender_muted',
+      title: `Muted sender: ${sender}`,
+      entityType: 'sender',
+      entityId: sender,
+    });
 
     return NextResponse.json({ success: true });
   } catch (error) {

@@ -43,3 +43,36 @@ export async function generateReplyDraft(
   });
   return res.choices?.[0]?.message?.content?.trim() || '';
 }
+
+// Voice-grounded NUDGE draft — a polite follow-up from the user to a counterparty they are WAITING
+// ON (ball-in-your-court commitment). Reuses the same voice block so it sounds like the user. Used by
+// the Home's "Ball in your court" section (Bug #2) — a draft the user reviews + sends, never auto-sent.
+export async function generateNudgeDraft(
+  userId: string,
+  opts: { counterparty: string | null; description: string; ageDays?: number },
+  client: DBClient,
+): Promise<string> {
+  const recipientEmail = (opts.counterparty || '').match(/[^\s<>"]+@[^\s<>"]+/)?.[0] || null;
+  const [voiceBlock] = await Promise.all([
+    buildVoiceBlock(userId, recipientEmail, client).catch(() => ''),
+  ]);
+  let userName = 'me';
+  try {
+    const { data: prof } = await client.from('profiles').select('full_name').eq('id', userId).maybeSingle();
+    if (prof?.full_name) userName = String(prof.full_name);
+  } catch { /* keep default */ }
+
+  const who = opts.counterparty || 'the recipient';
+  const aged = typeof opts.ageDays === 'number' && opts.ageDays > 0 ? ` It has been about ${opts.ageDays} day${opts.ageDays === 1 ? '' : 's'} without a response.` : '';
+  const { client: ai, model } = await getAIClient(userId, 'conversation', client);
+  const res = await aiCreate(ai, {
+    model, max_tokens: 400, temperature: 0.6,
+    messages: [{ role: 'user', content:
+      `${voiceBlock ? voiceBlock + '\n\n' : ''}` +
+      `You are ${userName}. Write a brief, friendly NUDGE from ${userName} to ${who}, following up on ` +
+      `something ${userName} is waiting on them for: "${opts.description}".${aged} Keep it warm, low-pressure, ` +
+      `and short — a gentle check-in, not a demand. Address ${who} and sign as ${userName} — NEVER sign as ` +
+      `the recipient. Return ONLY the message body — no subject line, no preamble, no surrounding quotes.` }],
+  });
+  return res.choices?.[0]?.message?.content?.trim() || '';
+}

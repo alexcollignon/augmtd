@@ -30,6 +30,28 @@ without waiting for the cron. Smoke-test read-only against a fresh item.
 
 ---
 
+## DIRECTION (corrected July 2) — general system, not per-case patches
+
+The reconciliation drifted into **bandaids**: a scheduling-email **regex** (supersession) and a
+**name-token matcher** (entity resolution) — each patching one observed case (Jean-Marie), brittle, and
+validated on one inbox's screenshots. Correct the approach:
+
+1. **Identity, not fuzzy strings.** Resolve people by **email**, carried through the pipeline. The real
+   fix for "Jean-Marie won't merge" is **commitments (and every derived record) storing the counterparty
+   email at extraction time** — then resolution is exact, for everyone. Retire the name-token matcher
+   once emails are carried. Do NOT grow name heuristics.
+2. **Minimal deterministic Layer 2** — only true data ops (dedup/group **by email**). No per-pattern rules.
+3. **Reasoning lives in Layer 3 (synthesis).** Give a capable model the **complete grounded per-person
+   context** (emails, meetings, commitments, timestamps) and let it judge supersession / staleness /
+   relevance / grouping holistically — general for any phrasing, any person, grounded so it can't invent
+   facts. **The scheduling-regex supersession is subsumed by this and then DELETED** (not removed before
+   synthesis exists — that would regress).
+4. **Evaluate across users/data, not one screenshot.** The screenshot loop is what produced the bandaids.
+
+Retire-as-scaffolding list (remove when synthesis + identity cover them): the `SCHEDULING` regex +
+meeting-supersession `continue` in `brief/route.ts`; the `nameToEmail`/`firstTokenToEmail` matcher in
+`brief-context.ts` (replace with email-carried identity).
+
 ## Part B — Shared-context briefing (assemble → reconcile → synthesize)
 
 Foundation shipped: `lib/home/brief-context.ts` (`buildBriefContext` v1 = meeting/calendar dimension)

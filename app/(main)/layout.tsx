@@ -6,7 +6,7 @@ import { getMyWorkspace, getMyProfile } from '@/lib/workspace/features';
 import { WorkspaceProvider } from '@/context/workspace-context';
 import { DEFAULT_FEATURES } from '@/lib/workspace/types';
 
-export default async function MainLayout({ children }: { children: React.ReactNode }) {
+export default async function MainLayout({ children, modal }: { children: React.ReactNode; modal: React.ReactNode }) {
   const user = await getSessionUser();
   if (!user) redirect('/login');
 
@@ -48,6 +48,8 @@ export default async function MainLayout({ children }: { children: React.ReactNo
           features={features}
         />
         {children}
+        {/* @modal parallel slot — filled only by the intercepting /item/[id] route (modal over Home) */}
+        {modal}
       </div>
     </WorkspaceProvider>
   );

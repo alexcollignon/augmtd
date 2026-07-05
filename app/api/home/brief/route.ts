@@ -1,11 +1,12 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { getSystemClient, aiCreate } from '@/lib/ai/factory';
+import { getSystemClient } from '@/lib/ai/factory';
 import { buildAnsweredSet } from '@/lib/inbox/needs-reply';
+import { computeThreadReplyState } from '@/lib/inbox/thread-resolution';
 import { classifyItem } from '@/lib/inbox/classify-item';
 import { lastMeetingRecall } from '@/lib/context/voice-context';
-import { buildBriefContext } from '@/lib/home/brief-context';
-import { parseModelJSON } from '@/lib/ai/parse-json';
+import { buildBriefContext, type EmailSeed } from '@/lib/home/brief-context';
+import { synthesizeBrief, type MustRespondCandidate } from '@/lib/home/synthesize-brief';
 
 export const maxDuration = 30;
 
@@ -30,18 +31,24 @@ export async function GET() {
   const now = new Date();
   const todayStr = now.toISOString().slice(0, 10);
   const endOfDay = `${todayStr}T23:59:59Z`;
+  // Start-of-today (UTC approximation) — the boundary for "cleared TODAY" counts. Computed fresh
+  // per request so the ring's `cleared` half rises as the day goes on and resets each morning.
+  const startOfDay = `${todayStr}T00:00:00Z`;
   const self = user.email?.toLowerCase();
 
   const since24 = new Date(now.getTime() - DAY).toISOString();
   const [itemsRes, commitsRes, meetingsRes, handledRes, profileRes, triagedRes, summarisedRes, trackedRes, filteredRes, fyiRes] = await Promise.all([
     supabase.from('inbox_items')
-      .select('id, work_title, work_state, rule_type, type_override, source, source_id, source_meeting_transcript_id, source_data, created_at')
+      .select('id, work_title, work_state, rule_type, type_override, source, source_id, source_meeting_transcript_id, source_data, created_at, last_activity_at')
       .eq('user_id', user.id).eq('status', 'pending')
       // Action work_states (reply-via-email + external tasks + meeting action items) OR a rule that
       // classified it actionable (rule_type) — so a needs_reply the RULES found on a 'noted' email
       // still reaches the Home. classifyItem (which reads rule_type) makes the final call.
       .or('work_state.in.(work_prepared,decision_required,action_required),rule_type.in.(needs_reply,to_do,waiting_on)')
-      .order('created_at', { ascending: false }).limit(60),
+      // Order by latest THREAD activity, not first-seen created_at: a fresh reply to an old thread
+      // (sync bumps last_activity_at) must rank as current, not stale. NULLS LAST guards legacy rows
+      // synced before the column existed / before backfill.
+      .order('last_activity_at', { ascending: false, nullsFirst: false }).limit(60),
     supabase.from('commitments').select('*').eq('user_id', user.id).eq('status', 'open'),
     supabase.from('calendar_events')
       .select('id, title, start_time, attendees')
@@ -63,15 +70,24 @@ export async function GET() {
       .or('work_state.eq.noise,rule_type.eq.marketing,rule_type.eq.notifications'),         // filtered as noise
     // FYI tier (for the FYI-by-topic brief): awareness emails, grouped by sender downstream. Wide
     // window so high-volume people (not just recent newsletters) surface in the people section.
-    supabase.from('inbox_items').select('work_title, source_data, rule_type')
+    // (id/created_at carried so a PERSON-kind awareness email can be promoted to "keep an eye on".)
+    supabase.from('inbox_items').select('id, work_title, source_data, rule_type, created_at, last_activity_at')
       .eq('user_id', user.id).eq('status', 'pending').eq('work_state', 'noted')
-      .order('created_at', { ascending: false }).limit(200),
+      .order('last_activity_at', { ascending: false, nullsFirst: false }).limit(200),
   ]);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const items = (itemsRes.data ?? []) as any[];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const commits = (commitsRes.data ?? []) as any[];
+
+  // The item's freshness = latest thread activity. Prefer the explicit last_activity_at column
+  // (bumped by sync on every new message), fall back to the newest message time in source_data,
+  // then to created_at. Used for ordering, the "already replied" check, and the cache signature so
+  // a fresh reply to an old thread is treated as current everywhere in the brief.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const activityAt = (it: any): string =>
+    (it?.last_activity_at as string) || (it?.source_data?.received_at as string) || (it?.created_at as string) || '';
 
   // A source card: grouped by where it's from (email thread / meeting), carrying the unified
   // posture (what it needs) — the digest shape from docs/unified-classifier-digest-plan.md.
@@ -100,86 +116,133 @@ export async function GET() {
 
   // ── Email cards — via the SHARED classifier (rule-aware). needs_reply AND to_do (email tasks),
   // so the Home is as complete as the inbox, not just replies.
-  const emailCandidates = items
+  const classifiedEmails = items
     .filter((it) => it.source !== 'meeting' && it.source !== 'commitment')
-    .map((it) => ({ it, posture: classifyItem(it as never) }))
+    .map((it) => ({ it, posture: classifyItem(it as never) }));
+  const emailCandidates = classifiedEmails
     .filter((x) => x.posture === 'needs_reply' || x.posture === 'to_do');
-  // Drop reply threads you've already answered.
+  // Awareness candidates for the "keep an eye on" tier. Two sources:
+  //  (a) cc'd-important items the SHARED classifier demoted to 'fyi' purely because the user is only
+  //      cc'd (isCcOnlyBystander). We do NOT change classify-item.ts (the inbox depends on that blunt
+  //      rule) — instead the Home re-surfaces these as awareness candidates so the synthesis can
+  //      PROMOTE the substantive ones (e.g. a cc'd urgent meeting request). Scoped to the Home only.
+  //  (b) person-kind FYI emails (real senders, not newsletters) — added below where the FYI groups
+  //      are split by sender kind.
+  // The synthesis judges which few of these rise to keep_an_eye_on; the rest stay in the FYI digest.
+  const awarenessRaw = new Map<string, { it: (typeof items)[number]; ccOnly: boolean }>();
+  for (const { it, posture } of classifiedEmails) {
+    if (posture !== 'fyi') continue;
+    const sd = (it.source_data ?? {}) as Record<string, unknown>;
+    // Only worth promoting if there's a real sender AND the user was cc'd (i.e. it was demoted for
+    // being a bystander, not because it's inherently noise). Newsletters have no personal signal.
+    if (sd.is_cc_only === true && (sd.from_address || sd.from)) awarenessRaw.set(it.id, { it, ccOnly: true });
+  }
+  // Drop reply threads you've already answered. Also pull the FULL thread messages (both directions)
+  // so we can compute the STRUCTURAL reply-state (computeThreadReplyState — direction+time only, no
+  // keyword matching) per thread and feed it to the synthesis as a first-class "already handled" signal.
   const candThreadIds = [...new Set(emailCandidates.map((c) => c.it.source_data?.thread_id).filter(Boolean))] as string[];
   let answered = new Map<string, string>();
+  const threadMsgsById = new Map<string, { is_from_user: boolean; received_at: string | null }[]>();
   if (candThreadIds.length) {
-    const { data: sent } = await supabase.from('emails')
-      .select('thread_id, received_at').eq('user_id', user.id).eq('is_from_user', true).in('thread_id', candThreadIds);
-    answered = buildAnsweredSet(sent ?? []);
+    const { data: threadRows } = await supabase.from('emails')
+      .select('thread_id, is_from_user, received_at').eq('user_id', user.id).in('thread_id', candThreadIds);
+    for (const r of (threadRows ?? []) as { thread_id: string | null; is_from_user: boolean; received_at: string | null }[]) {
+      if (!r.thread_id) continue;
+      const arr = threadMsgsById.get(r.thread_id) ?? [];
+      arr.push({ is_from_user: r.is_from_user, received_at: r.received_at });
+      threadMsgsById.set(r.thread_id, arr);
+    }
+    // The "already replied" set is the user's SENT messages only — same shape as before.
+    answered = buildAnsweredSet(
+      (threadRows ?? []).filter((r: { is_from_user: boolean }) => r.is_from_user).map((r: { thread_id: string | null; received_at: string | null }) => ({ thread_id: r.thread_id, received_at: r.received_at })),
+    );
   }
-  // Reconciliation (cross-source): the SHARED brief context assembles the meeting/calendar dimension
-  // (Layer 1). A scheduling/confirmation email from someone you already have a meeting with is
-  // SUPERSEDED by that meeting, so it shouldn't be a "must respond" (fixes "confirm a meeting that
-  // already happened"). buildBriefContext grows to add threads/commitments/timeline for more rules.
-  const { meetingPeople } = await buildBriefContext(user.id, self, now, supabase);
-  const SCHEDULING = /\b(meeting|schedul|avail|confirm|calendar|invite|slot|reschedul|works for you|time that works)\b/i;
-  // needs_reply items (with content) feed the Must-respond brief; they stay in priorities for counts.
-  const mustRespondRaw: Array<{ itemId: string; from: string; subject: string; snippet: string }> = [];
+  // needs_reply items (with content) feed the Must-respond synthesis; they stay in priorities for
+  // counts. NOTE: supersession/staleness is NO LONGER hardcoded here (the old SCHEDULING regex +
+  // meeting-supersession `continue` were bandaids that patched one observed case). Layer 3 (the
+  // grounded synthesis pass) now reasons about supersession/staleness over the full per-person
+  // context and returns the ids to drop — general for any phrasing, any person. Here we only apply
+  // the deterministic "already replied" resolution + collect the candidates.
+  const mustRespondRaw: MustRespondCandidate[] = [];
+  const emailSeeds: EmailSeed[] = [];
+  const fromEmailOf = (sd: Record<string, unknown>): string | null => {
+    const raw = String((sd.from_address as string) || (sd.from as string) || '').toLowerCase();
+    return raw.match(/[^\s<>"]+@[^\s<>"]+/)?.[0] || (raw.includes('@') ? raw : null);
+  };
   for (const { it, posture } of emailCandidates) {
     const sd = (it.source_data ?? {}) as Record<string, unknown>;
     const tid = sd.thread_id as string | undefined;
     const sentAt = tid ? answered.get(tid) : undefined;
-    if (posture === 'needs_reply' && sentAt && sentAt > it.created_at) continue; // already replied
-    // Superseded by a meeting — a scheduling/confirm email from someone you already meet with is moot.
-    if (posture === 'needs_reply') {
-      const fromRaw = String((sd.from as string) || (sd.from_address as string) || '').toLowerCase();
-      const fromEmail = fromRaw.match(/[^\s<>"]+@[^\s<>"]+/)?.[0] || fromRaw;
-      if (meetingPeople.has(fromEmail) && SCHEDULING.test(`${(sd.subject as string) || ''} ${(sd.body as string) || ''}`)) continue;
-    }
+    // Answered only if our reply is newer than the latest inbound activity — a fresh reply that
+    // landed AFTER we last sent still needs us.
+    if (posture === 'needs_reply' && sentAt && sentAt > activityAt(it)) continue; // already replied
+    const fromEmail = fromEmailOf(sd);
     priorities.push({
       id: `email:${it.id}`, source: 'email', posture: posture as Posture,
       title: it.work_title || (sd.subject as string) || 'Email',
       context: (sd.from_name as string) || (sd.from as string) || null,
       href: '/inbox', itemId: it.id,
     });
+    // Structural reply-state for this thread (direction+time only — no keyword/text matching). The
+    // synthesis reasons "the user already responded → drop/deprioritize" over the REAL thread, not a
+    // regex. `since` = the item's created_at so only a reply AFTER the item appeared counts.
+    const threadMsgs = tid ? threadMsgsById.get(tid) : undefined;
+    const replyState = threadMsgs && threadMsgs.length
+      ? computeThreadReplyState(threadMsgs, it.created_at ? new Date(it.created_at as string) : null)
+      : null;
+    // Feed the per-person entity map (Layer 1) — identity carried by the counterparty email.
+    emailSeeds.push({
+      itemId: it.id, fromAddress: fromEmail, fromName: (sd.from_name as string) || null,
+      subject: it.work_title || (sd.subject as string) || '(no subject)',
+      at: activityAt(it), posture,
+      snippet: ((sd.body as string) || '').replace(/\s+/g, ' ').trim().slice(0, 240),
+      userResponded: replyState?.userReplied ?? undefined,
+      lastFromUser: replyState?.lastMessageFromUser ?? undefined,
+    });
     if (posture === 'needs_reply') {
       mustRespondRaw.push({
         itemId: it.id,
         from: (sd.from_name as string) || (sd.from as string) || 'Someone',
+        fromEmail: fromEmail || '',
         subject: it.work_title || (sd.subject as string) || '(no subject)',
         snippet: ((sd.body as string) || '').replace(/\s+/g, ' ').trim().slice(0, 400),
+        receivedAt: activityAt(it),
       });
     }
   }
+  // Layer 1: assemble the reconciled per-person context (meetings + commitments + these emails).
+  const briefCtx = await buildBriefContext(user.id, self, now, supabase, emailSeeds);
 
-  // ── On your plate: commitments you owe — their OWN section (not mixed into Needs you), so the
-  // promises you've made are visible, with due dates. Overdue → due-today → dated → undated.
-  const commitments = commits
-    .filter((c) => c.direction === 'you_owe' && c.source !== 'meeting')
+  // ── Commitment CANDIDATES — every open non-meeting commitment, normalized. The raw ingest
+  // `direction` is only a DEFAULT hint here: the grounded synthesis (Layer 3) re-judges each one's
+  // placement (on_your_plate / ball_in_court / informational) so a REQUESTED action (the user is
+  // waiting on someone) can't sit in "On your plate" just because the extractor guessed you_owe.
+  // See docs/brief-and-labeling-plan.md ("DIRECTION corrected July 2") + Bug #1.
+  const commitmentCands = commits
+    .filter((c) => c.source !== 'meeting')
     .map((c) => ({
       id: c.id as string,
       description: c.description as string,
       counterparty: (c.counterparty as string | null) ?? null,
+      direction: (c.direction as string) || 'you_owe',
       dueDate: (c.due_date as string | null) ?? null,
       overdue: !!(c.due_date && c.due_date < todayStr),
       dueToday: !!(c.due_date && c.due_date === todayStr),
-    }))
-    .sort((a, b) => {
-      const rk = (x: typeof a) => (x.overdue ? 0 : x.dueToday ? 1 : x.dueDate ? 2 : 3);
-      return rk(a) !== rk(b) ? rk(a) - rk(b) : (a.dueDate || '9999').localeCompare(b.dueDate || '9999');
-    })
-    .slice(0, 5);
+      ageDays: Math.floor((now.getTime() - new Date(c.created_at).getTime()) / DAY),
+    }));
+  // Default placement from the ingest direction — used as the fallback when the synthesis has no
+  // verdict for a commitment (failure / not enumerated), so behavior degrades to the old routing.
+  const defaultPlacement = (dir: string): 'on_your_plate' | 'ball_in_court' | 'informational' =>
+    dir === 'awaiting' ? 'ball_in_court' : 'on_your_plate';
 
   // Overdue → reply → to-do → finished meetings last (a past meeting is context, not "do this now").
   const rank = (p: Priority) => (p.overdue ? 0 : p.source === 'meeting' ? 4 : p.posture === 'needs_reply' ? 1 : p.posture === 'to_do' ? 2 : 3);
   priorities.sort((a, b) => rank(a) - rank(b));
   const cappedPriorities = priorities.slice(0, MAX_PRIORITIES);
 
-  // ── Waiting on others → feeds the Follow-ups brief. All awaiting, freshest-quiet first; the age
-  // cue tells you which are urgent (a tomorrow-meeting confirm matters even at 0 days). ──
-  const waitingOn = commits
-    .filter((c) => c.direction === 'awaiting')
-    .map((c) => ({ id: c.id, description: c.description, counterparty: c.counterparty, ageDays: Math.floor((now.getTime() - new Date(c.created_at).getTime()) / DAY) }))
-    .sort((a, b) => b.ageDays - a.ageDays).slice(0, 6);
-
   // ── FYI-by-topic: group the awareness emails by sender; the AI digests each group below. ──
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const fyiRows = (fyiRes.data ?? []) as Array<{ work_title: string | null; source_data: any }>;
+  const fyiRows = (fyiRes.data ?? []) as Array<{ id: string; work_title: string | null; source_data: any; created_at: string }>;
   const fyiBySender = new Map<string, { subjects: string[]; address: string; unsub: boolean }>();
   for (const r of fyiRows) {
     const sd = (r.source_data ?? {}) as Record<string, unknown>;
@@ -202,6 +265,39 @@ export async function GET() {
   const fyiTop = [...peopleGroups, ...newsletterGroups];
   const fyiTailItems = fyiGroupsAll.reduce((n, g) => n + g.count, 0) - fyiTop.reduce((n, g) => n + g.count, 0);
   const fyiTailGroups = Math.max(0, fyiGroupsAll.length - fyiTop.length);
+
+  // ── Awareness candidates (source b): FYI emails the digest ITSELF treats as a real person (not a
+  // newsletter/service) — reuse that exact person/newsletter split (labels in `peopleGroups`) so the
+  // pool can't disagree with the digest, and we don't grow a second heuristic. Bulk mail stays in the
+  // digest; only human FYI is offered up for possible promotion. The synthesis makes the final call.
+  const personLabels = new Set(peopleGroups.map((g) => g.label));
+  for (const r of fyiRows) {
+    const sd = (r.source_data ?? {}) as Record<string, unknown>;
+    const label = (sd.from_name as string) || (sd.from as string);
+    if (!label || !personLabels.has(label)) continue; // not a person the digest recognises → digest only
+    if (!awarenessRaw.has(r.id)) awarenessRaw.set(r.id, { it: r as unknown as (typeof items)[number], ccOnly: sd.is_cc_only === true });
+  }
+  const fromEmailFrom = (sd: Record<string, unknown>): string | null => {
+    const raw = String((sd.from_address as string) || (sd.from as string) || '').toLowerCase();
+    return raw.match(/[^\s<>"]+@[^\s<>"]+/)?.[0] || (raw.includes('@') ? raw : null);
+  };
+  // Order cc'd human threads first (someone deliberately looped the user in — the strongest awareness
+  // signal), then freshest. Cap the pool small so the prompt stays lean and selective.
+  const keepAnEyeOnRaw = [...awarenessRaw.values()]
+    .sort((a, b) => (a.ccOnly === b.ccOnly ? activityAt(b.it).localeCompare(activityAt(a.it)) : a.ccOnly ? -1 : 1))
+    .slice(0, 12)
+    .map(({ it, ccOnly }) => {
+    const sd = (it.source_data ?? {}) as Record<string, unknown>;
+    return {
+      itemId: it.id,
+      from: (sd.from_name as string) || (sd.from as string) || 'Someone',
+      fromEmail: fromEmailFrom(sd) || '',
+      subject: it.work_title || (sd.subject as string) || '(no subject)',
+      snippet: ((sd.body as string) || '').replace(/\s+/g, ' ').trim().slice(0, 300),
+      receivedAt: activityAt(it),
+      ccOnly,
+    };
+  });
 
   // ── Today's schedule + light prep on the next meeting ──
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -229,12 +325,13 @@ export async function GET() {
     prep: i === 0 ? nextPrep : null,
   }));
 
-  // ── Status chips (live, alive) ──
+  // ── Status chips (live, alive) ── waitingOn counts commitments the INGEST flagged awaiting; the
+  // synthesis may re-place some, but this pre-synthesis count is a stable input for the cache sig.
   const replyP = priorities.filter((p) => p.posture === 'needs_reply').length;
   const status = {
     needsReply: replyP,
     meetingsToday: schedule.length,
-    waitingOn: commits.filter((c) => c.direction === 'awaiting').length,
+    waitingOn: commitmentCands.filter((c) => c.direction === 'awaiting').length,
     handledToday: handledRes.count ?? 0,
   };
 
@@ -250,134 +347,147 @@ export async function GET() {
   // ── Cached one-line narration (posture-aware + busts when the day's shape changes) ──
   const emailP = cappedPriorities.filter((p) => p.posture === 'needs_reply').length;
   const meetingP = cappedPriorities.filter((p) => p.source === 'meeting').length;
-  const commitP = commitments.length;
-  const overdueC = commitments.filter((c) => c.overdue).length;
+  // Sig uses the pre-synthesis (ingest-default) owed set — stable regardless of the AI verdict, so the
+  // signature is deterministic. Placements are cached alongside so a cache-hit still routes correctly.
+  const owedByIngest = commitmentCands.filter((c) => c.direction !== 'awaiting');
+  const commitP = owedByIngest.length;
+  const overdueC = owedByIngest.filter((c) => c.overdue).length;
   const overdueP = cappedPriorities.filter((p) => p.overdue).length;
   const fyiSig = fyiTop.map((g) => `${g.label}:${g.count}`).join(',');
-  // Freshness: the newest pending item's timestamp (items are ordered created_at desc) + the newest
-  // commitment update. Folding these into the signature makes the brief regenerate the moment new
-  // actionable mail lands — not just every 3h — so it feels live.
-  const freshest = (items[0]?.created_at as string) ?? '';
+  // Freshness: the newest pending item's LATEST-ACTIVITY timestamp + the newest commitment update.
+  // Folding these into the signature makes the brief regenerate the moment new activity lands (a
+  // fresh reply on an old thread now bumps last_activity_at) — not just every 3h — so it feels live.
+  const freshest = items.reduce((mx, it) => { const a = activityAt(it); return a > mx ? a : mx; }, '');
   const commitFresh = commits.reduce((mx, c) => (c.updated_at && c.updated_at > mx ? c.updated_at : mx), '');
   // Include today's date so the brief re-contextualizes on a day change (ages/overdue shift daily),
   // not only on the 3h TTL — a true daily recheck.
-  const sig = `${todayStr}|${emailP}|${meetingP}|${commitP}|${overdueP}|${overdueC}|${status.waitingOn}|${schedule.length}|${fyiSig}|${freshest}|${commitFresh}`;
+  // Awareness signature: count + freshest awareness item, so promoting/refreshing "keep an eye on"
+  // regenerates the brief when the awareness pool shifts (not just on the 3h TTL).
+  const eyeFresh = keepAnEyeOnRaw.reduce((mx, k) => (k.receivedAt > mx ? k.receivedAt : mx), '');
+  const sig = `${todayStr}|${emailP}|${meetingP}|${commitP}|${overdueP}|${overdueC}|${status.waitingOn}|${schedule.length}|${fyiSig}|${freshest}|${commitFresh}|${keepAnEyeOnRaw.length}|${eyeFresh}`;
 
   const fullName = (profileRes.data as { full_name?: string } | null)?.full_name ?? null;
   const firstName = fullName?.split(' ')[0] ?? null;
 
-  // ── Daily TLDR brief (Phase 1) — a grounded day-summary: teaser + 3–4 bullets + a "don't miss"
-  // callout. Cached on profiles.home_brief, busts when the day's shape (sig) changes. ──
+  // ── Daily brief — ONE grounded synthesis pass (Layer 3) over the reconciled per-person context,
+  // replacing the four blind silo passes. It writes the whole brief (TLDR + must-respond + follow-ups
+  // + FYI) coherently and cross-aware BY CONSTRUCTION: it drops scheduling emails a meeting already
+  // superseded (subsumes the retired SCHEDULING regex), never emits two fragments about one person,
+  // and drops stale asks. It returns the ids it dropped so the cards match the prose. Cached on
+  // profiles.home_brief, busts when the day's shape (sig) changes. ──
   type Tldr = { teaser: string; bullets: string[]; dontMiss: string | null };
   type FollowUp = { id?: string; who: string; status: string; nextMove: string };
   type Followups = { teaser: string; items: FollowUp[]; closing: string | null };
   type FyiDigest = { groups: { label: string; summary: string; kind: 'person' | 'newsletter' }[]; tailGroups: number; tailItems: number };
-  type Reply = { who: string; ask: string; angle: string; itemId: string };
+  type Reply = { who: string; ask: string; angle: string; itemId: string; subject?: string; snippet?: string; receivedAt?: string };
   type MustRespond = { teaser: string; items: Reply[] };
-  const cached = (profileRes.data as { home_brief?: { text?: string; tldr?: Tldr; followups?: Followups | null; fyiDigest?: FyiDigest | null; mustRespond?: MustRespond | null; generated_at: string; sig?: string } } | null)?.home_brief ?? null;
+  type KeepAnEyeOn = { items: { who: string; why: string; itemId: string }[] };
+  type CommitmentPlacement = 'on_your_plate' | 'ball_in_court' | 'informational';
+  const cached = (profileRes.data as { home_brief?: { text?: string; tldr?: Tldr; followups?: Followups | null; fyiDigest?: FyiDigest | null; mustRespond?: MustRespond | null; keepAnEyeOn?: KeepAnEyeOn | null; droppedItemIds?: string[]; commitmentPlacements?: Record<string, CommitmentPlacement>; generated_at: string; sig?: string } } | null)?.home_brief ?? null;
   let tldr: Tldr | null = cached?.tldr ?? null;
   let followups: Followups | null = cached?.followups ?? null;
   let fyiDigest: FyiDigest | null = cached?.fyiDigest ?? null;
   let mustRespond: MustRespond | null = cached?.mustRespond ?? null;
+  let keepAnEyeOn: KeepAnEyeOn | null = cached?.keepAnEyeOn ?? null;
   let briefLine = cached?.text ?? null;
-  const stale = !cached || cached.sig !== sig || (now.getTime() - new Date(cached.generated_at).getTime()) > BRIEF_TTL;
+  let droppedItemIds: string[] = cached?.droppedItemIds ?? [];
+  // The synthesis's per-commitment placement verdict (Bug #1). Cached so a cache-hit routes the same
+  // way it did when generated. Falls back to the ingest-direction default per-commitment below.
+  let commitmentPlacements: Record<string, CommitmentPlacement> = cached?.commitmentPlacements ?? {};
+  // A cache blob written BEFORE the placement fix has no `commitmentPlacements` field at all (a code
+  // revert doesn't touch cached data). Serving it makes every open commitment fall back to the ingest
+  // direction — so a REQUESTED action (e.g. a refund you're owed) wrongly sits in "On your plate". Force
+  // a one-time regen for such legacy caches when there are open commitments to (re-)place, so the
+  // synthesis verdict actually takes without a manual cache wipe. General — no hardcoded item.
+  const legacyPlacements = cached != null && cached.commitmentPlacements === undefined && commitmentCands.length > 0;
+  const stale = !cached || cached.sig !== sig || legacyPlacements || (now.getTime() - new Date(cached.generated_at).getTime()) > BRIEF_TTL;
   if (stale) {
-    const { client, model } = getSystemClient('summarization');
+    // Owed-context for the prose = the ingest-default owed set (re-placement happens inside).
+    const owedFacts = owedByIngest.map((c) => ({ description: c.description, overdue: c.overdue, dueToday: c.dueToday, dueDate: c.dueDate }));
+    const synth = await synthesizeBrief(getSystemClient('summarization'), {
+      firstName, now, ctx: briefCtx, schedule,
+      commitments: owedFacts,
+      commitmentCandidates: commitmentCands,
+      waitingOnCount: status.waitingOn, triaged: handled.triaged, filtered: handled.filtered,
+      emailReplyCount: emailP,
+      topPriorities: cappedPriorities.map((p) => ({ title: p.title, posture: p.posture, source: p.source, overdue: !!p.overdue })),
+      mustRespond: mustRespondRaw,
+      // Waiting candidates = the ingest-awaiting commitments — the synthesis writes the follow-up
+      // prose (status + nextMove) over these. Final lane routing is by the placement verdict below;
+      // a commitment re-placed to ball_in_court that wasn't here still appears via the raw fallback.
+      waiting: commitmentCands.filter((c) => c.direction === 'awaiting').map((c) => ({ id: c.id, counterparty: c.counterparty, description: c.description, ageDays: c.ageDays })),
+      fyiGroups: fyiTop.map((g) => ({ label: g.label, count: g.count, kind: g.kind, subjects: g.subjects })),
+      keepAnEyeOn: keepAnEyeOnRaw,
+    });
+    // Keep the cached value on a failed section (nulls only overwrite when we got something).
+    if (synth.tldr) { tldr = synth.tldr; briefLine = synth.tldr.teaser || briefLine; }
+    if (synth.mustRespond !== null || !mustRespondRaw.length) mustRespond = synth.mustRespond;
+    if (synth.keepAnEyeOn !== null || !keepAnEyeOnRaw.length) keepAnEyeOn = synth.keepAnEyeOn;
+    if (synth.followups !== null || !commitmentCands.some((c) => c.direction === 'awaiting')) followups = synth.followups;
+    if (synth.fyiDigest !== null || !fyiTop.length) {
+      // Fill the deterministic tail counts (computed over the FULL group set, not just the shown top).
+      fyiDigest = synth.fyiDigest ? { ...synth.fyiDigest, tailGroups: fyiTailGroups, tailItems: fyiTailItems } : null;
+    }
+    droppedItemIds = synth.droppedItemIds;
+    if (Object.keys(synth.commitmentPlacements).length) commitmentPlacements = synth.commitmentPlacements;
 
-    // The four briefs are independent → generate them IN PARALLEL (was sequential ≈ 16s; now ≈ the
-    // slowest single call). Each closure assigns its own outer var; failures keep the cached value.
-    await Promise.all([
-    // Daily TLDR brief (phase 1).
-    (async () => {
-    try {
-      const grounded = [
-        `Today is ${now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}`,
-        schedule.length
-          ? `Meetings today: ${schedule.map((s) => `${new Date(s.time).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })} ${s.title}`).join('; ')}`
-          : 'No meetings scheduled today',
-        `Emails needing your reply: ${emailP}`,
-        `Triaged in the last 24h: ${handled.triaged}${handled.filtered ? ` (${handled.filtered} were noise/marketing)` : ''}`,
-        commitP
-          ? `Commitments you owe: ${commitments.map((c) => `"${c.description}"${c.overdue ? ' [OVERDUE]' : c.dueToday ? ' [due today]' : c.dueDate ? ` [due ${c.dueDate}]` : ''}`).join('; ')}`
-          : 'No commitments pending',
-        status.waitingOn ? `Waiting on others: ${status.waitingOn}` : '',
-        cappedPriorities.length
-          ? `Top items needing you: ${cappedPriorities.map((p) => `"${p.title}"${p.overdue ? ' [overdue]' : ''} (${p.posture}, from ${p.source})`).join('; ')}`
-          : '',
-      ].filter(Boolean).join('\n');
-      const res = await aiCreate(client, {
-        model, max_tokens: 360, temperature: 0.4,
-        messages: [{ role: 'user', content: `You are ${firstName || 'the user'}'s assistant writing a short TLDR of their day. Use ONLY these facts — be specific with the real numbers and names, and never invent anything.\n\nReturn JSON only:\n{"teaser": "one short sentence summarising the day", "bullets": ["3 to 4 short, scannable bullets — meetings, todos/commitments, emails; lead with what matters most"], "dontMiss": "the SINGLE most time-sensitive or critical thing not to miss today, phrased as a brief warning grounded in a real item — or null if nothing is genuinely critical"}\n\nFacts:\n${grounded}` }],
-      });
-      const parsed = parseModelJSON<Tldr>(res.choices?.[0]?.message?.content || '', { teaser: '', bullets: [], dontMiss: null });
-      if ((Array.isArray(parsed.bullets) && parsed.bullets.length) || parsed.teaser) {
-        tldr = { teaser: parsed.teaser || '', bullets: Array.isArray(parsed.bullets) ? parsed.bullets.slice(0, 4) : [], dontMiss: parsed.dontMiss || null };
-        briefLine = tldr.teaser || briefLine;
-      }
-    } catch { /* keep cached */ }
-    })(),
-    // Must-respond brief (phase 2) — the replies you owe: what each sender is asking + a recommended
-    // angle for the reply. Grounded in the email content.
-    (async () => {
-    if (mustRespondRaw.length) {
-      try {
-        const input = mustRespondRaw.map((m, i) => `[${i}] ${m.from} — "${m.subject}": ${m.snippet}`).join('\n');
-        const res = await aiCreate(client, {
-          model, max_tokens: 560, temperature: 0.4,
-          messages: [{ role: 'user', content: `You are ${firstName || 'the user'}'s assistant. These emails are awaiting ${firstName || 'the user'}'s reply. For each, write what the sender is asking (one line) and a recommended angle for the reply (one line — the gist of what to say). Use ONLY the email content, never invent.\n\nReturn JSON only:\n{"teaser":"one short line","items":[{"i":<the [i] index from the input>,"who":"sender or topic","ask":"what they're asking","angle":"recommended reply gist"}]}\n\nEmails:\n${input}` }],
-        });
-        const p = parseModelJSON<{ teaser: string; items: { i: number; who: string; ask: string; angle: string }[] }>(res.choices?.[0]?.message?.content || '', { teaser: '', items: [] });
-        const items = (Array.isArray(p.items) ? p.items : [])
-          .map((x) => ({ who: x.who || '', ask: x.ask || '', angle: x.angle || '', itemId: mustRespondRaw[x.i]?.itemId || '' }))
-          .filter((x) => x.who || x.ask);
-        mustRespond = items.length ? { teaser: p.teaser || '', items: items.slice(0, 25) } : null;
-      } catch { /* keep cached */ }
-    } else {
-      mustRespond = null;
-    }
-    })(),
-    // Follow-ups brief (phase 2) — "ball in your court": a grounded roundup of the things you're
-    // waiting on, each with a recommended Next move. Only when there's something to nudge.
-    (async () => {
-    if (waitingOn.length) {
-      try {
-        const threads = waitingOn.map((w, i) => `[${i}] ${w.counterparty || 'Someone'} — "${w.description}" — ${w.ageDays} day${w.ageDays === 1 ? '' : 's'} quiet`).join('\n');
-        const res = await aiCreate(client, {
-          model, max_tokens: 520, temperature: 0.5,
-          messages: [{ role: 'user', content: `You are ${firstName || 'the user'}'s assistant. Below are threads where ${firstName || 'the user'} is waiting on a reply — the ball is now in their court to nudge. For each, write a short status (how long it's gone quiet, what's pending) and a recommended Next move (brief, specific, actionable). Use ONLY these facts, never invent details.\n\nReturn JSON only. Include the [index] of each thread as "i":\n{"teaser":"one short line introducing the roundup","items":[{"i":<the [index] number>,"who":"the person or topic","status":"short status line","nextMove":"the recommended next move"}],"closing":"a short offer to draft these — name the 1-2 you'd tackle first — or null"}\n\nThreads:\n${threads}` }],
-        });
-        const p = parseModelJSON<{ teaser: string; items: { i?: number; who: string; status: string; nextMove: string }[]; closing: string | null }>(res.choices?.[0]?.message?.content || '', { teaser: '', items: [], closing: null });
-        followups = Array.isArray(p.items) && p.items.length
-          ? { teaser: p.teaser || '', items: p.items.slice(0, 8).map((x) => ({ id: typeof x.i === 'number' ? waitingOn[x.i]?.id : undefined, who: x.who || '', status: x.status || '', nextMove: x.nextMove || '' })), closing: p.closing || null }
-          : null;
-      } catch { /* keep cached */ }
-    } else {
-      followups = null;
-    }
-    })(),
-    // FYI-by-topic brief (phase 2) — one short digest line per sender group, turning the FYI pile
-    // into a few thematic digests.
-    (async () => {
-    if (fyiTop.length) {
-      try {
-        const input = fyiTop.map((g, i) => `[${i}] ${g.label} (${g.count}): ${g.subjects.slice(0, 5).filter(Boolean).map((s) => `"${s}"`).join('; ')}`).join('\n');
-        const res = await aiCreate(client, {
-          model, max_tokens: 460, temperature: 0.4,
-          messages: [{ role: 'user', content: `You are ${firstName || 'the user'}'s assistant digesting low-priority FYI emails (no reply needed), grouped by sender. For each group, write ONE short line summarising what these are about. Use ONLY these facts, never invent.\n\nReturn JSON only:\n{"groups":[{"i":<the [i] index>,"summary":"one-line digest of what these are about"}]}\n\nGroups:\n${input}` }],
-        });
-        const p = parseModelJSON<{ groups: { i: number; summary: string }[] }>(res.choices?.[0]?.message?.content || '', { groups: [] });
-        const groups = (Array.isArray(p.groups) ? p.groups : [])
-          .map((x) => (fyiTop[x.i] ? { label: fyiTop[x.i].label, summary: x.summary || '', kind: fyiTop[x.i].kind } : null))
-          .filter((g): g is FyiDigest['groups'][number] => !!g && !!g.summary);
-        fyiDigest = groups.length ? { groups, tailGroups: fyiTailGroups, tailItems: fyiTailItems } : null;
-      } catch { /* keep cached */ }
-    } else {
-      fyiDigest = null;
-    }
-    })(),
-    ]);
+    await supabase.from('profiles').update({ home_brief: { text: briefLine, tldr, followups, fyiDigest, mustRespond, keepAnEyeOn, droppedItemIds, commitmentPlacements, generated_at: now.toISOString(), sig } }).eq('id', user.id).then(() => {}, () => {});
+  }
 
-    await supabase.from('profiles').update({ home_brief: { text: briefLine, tldr, followups, fyiDigest, mustRespond, generated_at: now.toISOString(), sig } }).eq('id', user.id).then(() => {}, () => {});
+  // ── Route each open commitment by the synthesis's VERDICT (fallback = the ingest-direction default).
+  // on_your_plate → "On your plate" (you owe, act) · ball_in_court → "Ball in your court" (waiting,
+  // nudge) · informational → neither lane (awareness only). This is the real Bug #1/#3 fix: a REQUESTED
+  // action the extractor mislabeled you_owe now lands in ball_in_court (or informational), never in the
+  // action lane. General — driven by grounded judgment, no hardcoded senders/subjects.
+  const placementOf = (c: (typeof commitmentCands)[number]): CommitmentPlacement =>
+    commitmentPlacements[c.id] ?? defaultPlacement(c.direction);
+  const commitments = commitmentCands
+    .filter((c) => placementOf(c) === 'on_your_plate')
+    .map((c) => ({ id: c.id, description: c.description, counterparty: c.counterparty, dueDate: c.dueDate, overdue: c.overdue, dueToday: c.dueToday }))
+    .sort((a, b) => {
+      const rk = (x: typeof a) => (x.overdue ? 0 : x.dueToday ? 1 : x.dueDate ? 2 : 3);
+      return rk(a) !== rk(b) ? rk(a) - rk(b) : (a.dueDate || '9999').localeCompare(b.dueDate || '9999');
+    })
+    .slice(0, 5);
+  const waitingOn = commitmentCands
+    .filter((c) => placementOf(c) === 'ball_in_court')
+    .map((c) => ({ id: c.id, description: c.description, counterparty: c.counterparty, ageDays: c.ageDays }))
+    .sort((a, b) => b.ageDays - a.ageDays)
+    .slice(0, 6);
+  // Keep the status chip honest with the routed set.
+  status.waitingOn = waitingOn.length;
+
+  // Reconcile the synthesized follow-up prose with the ball_in_court routing so the "Ball in your
+  // court" lane and the counts agree. Keep only follow-up items whose commitment is ball_in_court,
+  // then append any ball_in_court commitment the prose didn't cover (with a plain status/nextMove) so
+  // a re-placed you_owe→waiting item still surfaces with a nudge affordance. General, id-grounded.
+  const ballIds = new Set(waitingOn.map((w) => w.id));
+  {
+    const covered = new Set<string>();
+    const keptItems = (followups?.items ?? []).filter((f) => {
+      if (!f.id || !ballIds.has(f.id)) return false;
+      covered.add(f.id);
+      return true;
+    });
+    const extras = waitingOn
+      .filter((w) => !covered.has(w.id))
+      .map((w) => ({ id: w.id, who: w.counterparty || 'Someone', status: `Waiting ${w.ageDays}d`, nextMove: 'Send a nudge' }));
+    const allItems = [...keptItems, ...extras];
+    followups = allItems.length
+      ? { teaser: followups?.teaser || '', items: allItems, closing: followups?.closing ?? null }
+      : null;
+  }
+
+  // Apply the synthesis's supersession/staleness verdict to the CARDS too, so the "Needs you" grid
+  // can't contradict the prose (a reply the synthesis dropped as superseded shouldn't reappear as a
+  // priority card). Deterministic: we only hide ids the model returned as dropped.
+  if (droppedItemIds.length) {
+    const dropped = new Set(droppedItemIds);
+    for (let i = cappedPriorities.length - 1; i >= 0; i--) {
+      if (cappedPriorities[i].itemId && dropped.has(cappedPriorities[i].itemId!)) cappedPriorities.splice(i, 1);
+    }
+    // Keep the "N replies needed" chip honest — a superseded reply is no longer a reply you owe.
+    status.needsReply = Math.max(0, status.needsReply - droppedItemIds.length);
   }
 
   // Attach any prepared auto-draft (from the draft-sweep) to its must-respond item, so the Home can
@@ -396,6 +506,38 @@ export async function GET() {
         .filter((r) => !r.itemId || pendingItemIds.has(r.itemId))
         .map((r) => ({ ...r, draft: draftByItem.get(r.itemId) ?? null })) }
     : mustRespond;
+  // "Keep an eye on" is awareness — no action buttons — but still drop items that are no longer
+  // pending (dismissed elsewhere) so a stale cached tier can't show a gone item. Also enforce the
+  // cross-tier dedup (Bug #2) HERE too, as a route-level backstop: even if the cache mixes a fresh
+  // mustRespond with a stale keepAnEyeOn (or vice-versa), an itemId that surfaces as a must-respond
+  // reply must never ALSO appear in keep-an-eye-on. Must-respond wins.
+  const mustItemIds = new Set((mustRespondOut?.items ?? []).map((r) => r.itemId).filter(Boolean));
+  const keepAnEyeOnOut = keepAnEyeOn
+    ? { items: keepAnEyeOn.items.filter((k) => (!k.itemId || pendingItemIds.has(k.itemId) || awarenessRaw.has(k.itemId)) && !mustItemIds.has(k.itemId)) }
+    : keepAnEyeOn;
 
-  return NextResponse.json({ firstName, briefLine, tldr, followups, fyiDigest, mustRespond: mustRespondOut, status, priorities: cappedPriorities, commitments, waitingOn, schedule, handled });
+  // ── "Day cleared" progress ring — the LIVE half. `cleared` = things the user handled TODAY.
+  // Computed fresh here (NOT baked into the cached AI blob) via a cheap batch of head-count queries,
+  // so new activity moves the ring on the very next load. `needYou` is the current count of things
+  // still on the user's plate — the same live section data the dashboard already shows (must-respond
+  // replies + non-meeting/needs-you priority cards + on-your-plate commitments). The client re-derives
+  // `needYou` from its own live state and increments `cleared` as the user acts, so the ring rises
+  // instantly without a reload. This route value is the fresh baseline on each load.
+  const [inboxClearedRes, commitClearedRes, repliesSentRes] = await Promise.all([
+    supabase.from('inbox_items').select('id', { count: 'exact', head: true })
+      .eq('user_id', user.id).in('status', ['completed', 'dismissed']).gte('updated_at', startOfDay),
+    supabase.from('commitments').select('id', { count: 'exact', head: true })
+      .eq('user_id', user.id).in('status', ['done', 'dismissed']).gte('updated_at', startOfDay),
+    supabase.from('emails').select('id', { count: 'exact', head: true })
+      .eq('user_id', user.id).eq('is_from_user', true).gte('received_at', startOfDay),
+  ]);
+  const clearedToday = (inboxClearedRes.count ?? 0) + (commitClearedRes.count ?? 0) + (repliesSentRes.count ?? 0);
+  // needYou baseline = live counts already computed above: replies you owe (mustRespondOut) +
+  // non-meeting/needs-you priority cards + on-your-plate commitments still pending.
+  const needYouReplies = (mustRespondOut?.items ?? []).length;
+  const needYouCards = cappedPriorities.filter((p) => p.posture !== 'needs_reply' && p.source !== 'meeting').length;
+  const needYou = needYouReplies + needYouCards + commitments.length;
+  const dayProgress = { cleared: clearedToday, needYou };
+
+  return NextResponse.json({ firstName, briefLine, tldr, followups, fyiDigest, mustRespond: mustRespondOut, keepAnEyeOn: keepAnEyeOnOut, status, priorities: cappedPriorities, commitments, waitingOn, schedule, handled, dayProgress });
 }

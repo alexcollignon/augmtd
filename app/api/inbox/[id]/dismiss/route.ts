@@ -1,5 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { logActivity } from '@/lib/activity/log';
+
+function inboxItemTitle(item: { title?: string | null; source_data?: Record<string, unknown> | null }): string {
+  const sd = (item.source_data || {}) as Record<string, unknown>;
+  const pick = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : '');
+  return pick(item.title) || pick(sd.subject) || pick(sd.from_name) || pick(sd.from) || 'item';
+}
 
 export async function POST(
   request: NextRequest,
@@ -67,6 +74,15 @@ export async function POST(
       console.error('Error logging learning signal:', signalError);
       // Don't fail the request, just log the error
     }
+
+    // Activity timeline (non-fatal).
+    await logActivity(supabase, user.id, {
+      type: 'dismissed',
+      title: `Dismissed: ${inboxItemTitle(item)}`,
+      entityType: 'inbox_item',
+      entityId: id,
+      metadata: reason ? { reason } : {},
+    });
 
     return NextResponse.json({
       success: true,
