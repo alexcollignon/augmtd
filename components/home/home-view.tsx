@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { showUndoToast } from '@/lib/activity/undo-toast';
+import { createClient } from '@/lib/supabase/client';
 import {
   EnvelopeIcon, CalendarDaysIcon, CheckCircleIcon, ClockIcon, UsersIcon,
   ChevronRightIcon, ArrowRightIcon, BoltIcon, SparklesIcon, EyeIcon,
@@ -140,6 +141,45 @@ function DayClearedRing({ cleared, needYou }: { cleared: number; needYou: number
         <span className="text-[10px] font-semibold uppercase tracking-[0.09em] text-neutral-400">Day cleared</span>
         <span className={`text-[12.5px] font-medium mt-0.5 ${allClear ? 'text-emerald-600' : 'text-neutral-700'}`}>{label}</span>
       </div>
+    </div>
+  );
+}
+
+// ── Sync-status indicator — a quiet one-line reassurance in the header. Reads freshness:
+//   • "Syncing…" (gentle pulse) while a background load(true) is in flight
+//   • "Updated just now" / "Updated Nm ago" (relative, self-updating each minute) when idle
+//   • a small emerald live dot when the realtime channel is SUBSCRIBED; muted grey on poll-only fallback.
+// Low-chrome: text-[11px] neutral + a 5px dot, sits beside the ring/Activity cluster. Non-fatal —
+// if realtime never connects it just reads poll-only, still updating from the focus/90s poll.
+function relTime(from: Date): string {
+  const s = Math.max(0, Math.floor((Date.now() - from.getTime()) / 1000));
+  if (s < 45) return 'just now';
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.round(m / 60);
+  return `${h}h ago`;
+}
+function SyncStatus({ syncing, lastUpdatedAt, realtimeConnected }: { syncing: boolean; lastUpdatedAt: Date | null; realtimeConnected: boolean }) {
+  // Tick every 60s so the relative "Nm ago" stays current without a reload.
+  const [, force] = useState(0);
+  useEffect(() => {
+    const id = window.setInterval(() => force((n) => n + 1), 60_000);
+    return () => window.clearInterval(id);
+  }, []);
+  return (
+    <div
+      className="hidden sm:inline-flex items-center gap-1.5 text-[11px] font-medium text-neutral-400 select-none"
+      title={realtimeConnected ? 'Live — updates the moment new mail arrives' : 'Refreshing on a timer'}
+    >
+      <span
+        className={`w-[5px] h-[5px] rounded-full ${realtimeConnected ? 'bg-emerald-500' : 'bg-neutral-300'} ${realtimeConnected && !syncing ? 'animate-pulse' : ''}`}
+        aria-hidden="true"
+      />
+      {syncing ? (
+        <span className="animate-pulse text-neutral-500">Syncing…</span>
+      ) : (
+        <span>Updated {lastUpdatedAt ? relTime(lastUpdatedAt) : 'just now'}</span>
+      )}
     </div>
   );
 }
@@ -740,6 +780,12 @@ export function HomeView() {
   const [clearedIds, setClearedIds] = useState<Set<string>>(new Set());
   const [sessionCleared, setSessionCleared] = useState(0); // this session's Done/Dismiss/Send → ring `cleared`
   const [activityOpen, setActivityOpen] = useState(false); // right-side Activity slide-over
+  // Sync-status indicator state (3 bits): `syncing` = a background load(true) is in flight; `lastUpdatedAt`
+  // = when the last load succeeded (drives "Updated Nm ago"); `realtimeConnected` = the postgres_changes
+  // channel is SUBSCRIBED (emerald live dot) vs. poll-only fallback (muted dot).
+  const [syncing, setSyncing] = useState(false);
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
+  const [realtimeConnected, setRealtimeConnected] = useState(false);
 
   const aliveRef = useRef(true);
   // Entity keys we've already fired a pre-gen POST for (dedup across the focus/interval polls, so we
@@ -794,6 +840,7 @@ export function HomeView() {
   // immediate refresh (bringing a just-restored item back on screen without waiting for the poll).
   const load = useCallback((background = false) => {
     if (!background) setLoading(true);
+    else setSyncing(true); // drives the header "Syncing…" pulse (background refresh only)
     Promise.all([
       fetch('/api/home/brief').then(r => r.json()).catch(() => null),
       fetch('/api/workers/home').then(r => r.json()).catch(() => null),
@@ -817,7 +864,9 @@ export function HomeView() {
       // client ring bump to avoid double-counting.
       if (background) setSessionCleared(0);
       setLoading(false);
-    });
+      setSyncing(false);
+      setLastUpdatedAt(new Date()); // "Updated just now" — freshness clock resets on every success
+    }).catch(() => { if (aliveRef.current) setSyncing(false); });
   }, [preGenPlans]);
 
   useEffect(() => {
@@ -830,6 +879,43 @@ export function HomeView() {
     window.addEventListener('focus', onVisible);
     const id = window.setInterval(() => { if (document.visibilityState === 'visible') load(true); }, 90_000);
     return () => { aliveRef.current = false; document.removeEventListener('visibilitychange', onVisible); window.removeEventListener('focus', onVisible); window.clearInterval(id); };
+  }, [load]);
+
+  // ── REALTIME liveness — subscribe to postgres_changes on the user's own inbox_items + commitments
+  // (INSERT + UPDATE) so the Home reacts the instant a row is synced, instead of waiting up to 90s for
+  // the poll. A burst of synced rows is DEBOUNCED into ONE background load(true) (~2.5s) — a new item
+  // changes the brief cache signature, so the refetch regenerates and it surfaces within a couple
+  // seconds. The focus/90s poll stays as a backstop; realtime failure is non-fatal (dot goes muted).
+  // Requires migration 20260705b_home_realtime.sql (adds both tables to the supabase_realtime publication).
+  useEffect(() => {
+    const supabase = createClient();
+    let channel: ReturnType<typeof supabase.channel> | null = null;
+    let debounce: ReturnType<typeof setTimeout> | null = null;
+    let cancelled = false;
+    const bump = () => {
+      if (debounce) clearTimeout(debounce);
+      debounce = setTimeout(() => { if (!cancelled && aliveRef.current) load(true); }, 2500);
+    };
+    (async () => {
+      try {
+        const { data } = await supabase.auth.getUser();
+        const uid = data.user?.id;
+        if (!uid || cancelled) return;
+        channel = supabase
+          .channel('home-live')
+          .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'inbox_items', filter: `user_id=eq.${uid}` }, bump)
+          .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'inbox_items', filter: `user_id=eq.${uid}` }, bump)
+          .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'commitments', filter: `user_id=eq.${uid}` }, bump)
+          .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'commitments', filter: `user_id=eq.${uid}` }, bump)
+          .subscribe((status) => { if (!cancelled) setRealtimeConnected(status === 'SUBSCRIBED'); });
+      } catch { /* non-fatal — the poll still covers refresh; the live dot stays muted */ }
+    })();
+    return () => {
+      cancelled = true;
+      setRealtimeConnected(false);
+      if (debounce) clearTimeout(debounce);
+      if (channel) supabase.removeChannel(channel);
+    };
   }, [load]);
 
   // Skeleton MIRRORS the real layout (header + two columns) so there's no reflow on load.
@@ -1209,6 +1295,7 @@ export function HomeView() {
                 Activity affordance. Both share the same soft low-chrome treatment and sit on one
                 evenly-spaced row, aligned to the date eyebrow. */}
             <div className="flex-shrink-0 flex items-center gap-2 self-start mt-0.5">
+              <SyncStatus syncing={syncing} lastUpdatedAt={lastUpdatedAt} realtimeConnected={realtimeConnected} />
               {showRing && <DayClearedRing cleared={ringCleared} needYou={ringNeedYou} />}
               <button
                 onClick={() => setActivityOpen(true)}
