@@ -742,6 +742,48 @@ export function HomeView() {
   const [activityOpen, setActivityOpen] = useState(false); // right-side Activity slide-over
 
   const aliveRef = useRef(true);
+  // Entity keys we've already fired a pre-gen POST for (dedup across the focus/interval polls, so we
+  // warm each item's plan at most once per session — pre-gen must stay cheap + silent).
+  const preGennedRef = useRef<Set<string>>(new Set());
+  // Background pre-generation: warm the "What this takes" plan for the TOP few actionable items so the
+  // deep-dive opens with a cached plan (no 20–40s reasoning wait). Fire-and-forget, throttled, capped,
+  // errors ignored. get-or-generate on the route means a warmed plan just returns cached on open.
+  const preGenPlans = useCallback((brief: Brief) => {
+    const targets: { kind: string; entityId: string }[] = [];
+    // Must-respond replies first (the most likely opens), then non-meeting priorities. Meetings are
+    // included too (kind=meeting, id = transcript id), all keyed so we never repeat one.
+    for (const m of brief.mustRespond?.items ?? []) {
+      if (m.itemId) targets.push({ kind: 'email', entityId: m.itemId });
+    }
+    for (const p of brief.priorities ?? []) {
+      if (p.source === 'meeting') {
+        const tid = p.id.startsWith('meeting:') ? p.id.slice('meeting:'.length) : p.id;
+        if (tid) targets.push({ kind: 'meeting', entityId: tid });
+      } else if (p.itemId) {
+        targets.push({ kind: 'email', entityId: p.itemId });
+      }
+    }
+    // De-dupe within this batch + against what we've already warmed, then cap at 4 (cost guard).
+    const seen = new Set<string>();
+    const queue = targets.filter((t) => {
+      const key = `${t.kind}:${t.entityId}`;
+      if (seen.has(key) || preGennedRef.current.has(key)) return false;
+      seen.add(key);
+      return true;
+    }).slice(0, 4);
+    // Fire sequentially with a small stagger so we don't hammer the reasoning tier all at once.
+    queue.forEach((t, i) => {
+      const key = `${t.kind}:${t.entityId}`;
+      preGennedRef.current.add(key);
+      setTimeout(() => {
+        if (!aliveRef.current) return;
+        fetch('/api/items/plan', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ kind: t.kind, entityId: t.entityId }),
+        }).catch(() => {});
+      }, i * 600);
+    });
+  }, []);
   // Timestamp of the last client action (Done/Dismiss/Send). A background refetch that lands within a
   // short window of an action must NOT reset the session filter sets — the server write may not have
   // committed yet, so a reset could briefly resurface an item the user just cleared. Outside that
@@ -758,7 +800,7 @@ export function HomeView() {
     ]).then(([b, t]) => {
       if (!aliveRef.current) return;
       // Background refresh only SWAPS in fresh data — it never blanks the view.
-      if (b && !b.error) setBrief(b);
+      if (b && !b.error) { setBrief(b); preGenPlans(b); }
       else if (!background) setBrief(null);
       if (t) setTeam({ messages: t.messages ?? [], needsReview: t.needsReview ?? [] });
       // RESET the session filter sets on a settled refetch — the server data is authoritative
@@ -776,7 +818,7 @@ export function HomeView() {
       if (background) setSessionCleared(0);
       setLoading(false);
     });
-  }, []);
+  }, [preGenPlans]);
 
   useEffect(() => {
     aliveRef.current = true;

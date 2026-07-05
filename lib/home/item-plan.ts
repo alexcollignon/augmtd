@@ -41,7 +41,9 @@ WHAT WE CANNOT DO (grade as [You]):
 - Anything physical, or anything in a system we don't have access to.
 - Fetching from an EXTERNAL system (billing, CRM, bank, e-signature, payment portal) — that is [You], NOT fetch.
 
-RULE: If you are UNSURE whether we can do a task, grade it [You]. Over-claiming [System] breaks a promise. Be conservative.`;
+RULE 1 — UNSURE → [You]. If you are UNSURE whether we can do a task, grade it [You]. Over-claiming [System] breaks a promise. Be conservative.
+
+RULE 2 — INSTANCE HONESTY (do NOT assume a specific file/attachment/contact exists). A [System] "fetch" is only honest when the thing to fetch is EVIDENCED in the item context. If a step depends on a specific file, attachment, document, deck, spreadsheet, or a recipient's email address that you have NOT been shown exists in the context above, grade it [You] (the user provides/attaches/confirms it) — NOT a confident [System] "fetch". Examples: "fetch the deck from Drive" when no deck is referenced → [You] ("attach the deck"); "email X" when no email address is given → keep the draft [System] but add a [You] "confirm the recipient's email". Instance honesty beats category optimism.`;
 
 type PlanInput = { kind: ItemPlanKind; entityId: string; context: string };
 
@@ -110,6 +112,8 @@ export async function generateItemPlan(
     `- Break the item into 2–5 CONCRETE, specific sub-tasks. Order them the way you'd actually do the work.\n` +
     `- Be specific to THIS item: name the real recipient, say what to fetch/draft, reference the actual next step.\n` +
     `- A simple item may be a SINGLE task — don't invent busywork.\n` +
+    `- NO redundant steps. Drafting and sending an email is ONE action here — emit a single task like ` +
+    `"draft and send the reply to <name>" (capability "send"), NOT a separate "draft" step AND a "send" step.\n` +
     `- Grade each task: actor "system" (AUGMTD can do it now — set a capability: draft|analyze|fetch|send) ` +
     `or actor "you" (needs the user — capability null). Grade CONSERVATIVELY per the rules above.\n` +
     `- Every "system" task MUST map to one of draft|analyze|fetch|send. Every "you" task has capability null.\n\n` +

@@ -300,6 +300,18 @@ function WhatThisTakes({
   const trivial = tasks.length === 1 && tasks[0].actor === 'you';
   if (trivial) return null;
 
+  // Collapse draft + send into ONE actionable affordance. Both a `draft` task and a `send` task open
+  // the SAME compose flow (which already drafts AND sends), so two "Draft →" buttons read as a
+  // duplicate. We render the button on the FIRST draft/send task only, and if BOTH exist relabel it
+  // "Draft & send →". The other draft/send task still lists (it's useful context) but shows the quiet
+  // capability hint instead of a second button.
+  const composeTaskIds = tasks.filter((t) => t.actor === 'system' && (t.capability === 'draft' || t.capability === 'send')).map((t) => t.id);
+  const primaryComposeId = composeTaskIds[0] ?? null;
+  const hasDraftAndSend =
+    tasks.some((t) => t.actor === 'system' && t.capability === 'draft') &&
+    tasks.some((t) => t.actor === 'system' && t.capability === 'send');
+  const composeLabel = hasDraftAndSend ? 'Draft & send →' : 'Draft →';
+
   return (
     <section>
       <div className="flex items-baseline justify-between mb-2.5">
@@ -311,7 +323,9 @@ function WhatThisTakes({
       <ul className="space-y-1.5">
         {tasks.map((t) => {
           if (t.actor === 'system') {
-            const canDraft = (t.capability === 'draft' || t.capability === 'send') && !!onDraft;
+            // Only the FIRST draft/send task exposes the compose button (draft+send collapse to one
+            // affordance — the compose flow already sends). Any other draft/send task shows the hint.
+            const canDraft = t.id === primaryComposeId && !!onDraft;
             return (
               <li key={t.id} className="flex items-start gap-2.5 rounded-lg border border-indigo-100 bg-indigo-50/40 px-3 py-2.5">
                 <SparklesIcon className="w-4 h-4 flex-shrink-0 mt-[1px] text-indigo-500" />
@@ -324,7 +338,7 @@ function WhatThisTakes({
                         onClick={onDraft}
                         className="text-[11.5px] font-medium text-indigo-600 hover:text-indigo-700"
                       >
-                        Draft →
+                        {composeLabel}
                       </button>
                     ) : (
                       <span className="text-[11px] text-indigo-500/80">{CAP_HINT[t.capability ?? 'analyze'] ?? 'I can handle this'}</span>

@@ -132,16 +132,24 @@ export async function POST(request: NextRequest) {
     const context = (await buildContext(supabase, user.id, kind, entityId)) || '';
     const plan = await generateItemPlan(supabase, user.id, { kind, entityId, context });
 
-    // Persist (best-effort — a failed insert still returns the freshly generated plan).
-    try {
-      await supabase
-        .from('item_plans')
-        .upsert(
-          { user_id: user.id, kind, entity_id: entityId, tasks: plan.tasks, updated_at: new Date().toISOString() },
-          { onConflict: 'user_id,kind,entity_id' },
-        );
-    } catch (e) {
-      console.error('[items/plan] persist failed:', e);
+    // Persist (best-effort — a failed insert still returns the freshly generated plan). Supabase
+    // returns an { error } object rather than throwing, so check it explicitly — a silently-failed
+    // upsert is exactly what made the plan "regenerate every visit" before the migration existed.
+    // Skip persisting the honest single-[You] fallback: it's not worth caching, and re-opening later
+    // (once generation succeeds) should get a real plan rather than a stuck "Handle this".
+    const isFallback = plan.tasks.length === 1 && plan.tasks[0].actor === 'you' && plan.tasks[0].text === 'Handle this';
+    if (!isFallback) {
+      try {
+        const { error: upsertErr } = await supabase
+          .from('item_plans')
+          .upsert(
+            { user_id: user.id, kind, entity_id: entityId, tasks: plan.tasks, updated_at: new Date().toISOString() },
+            { onConflict: 'user_id,kind,entity_id' },
+          );
+        if (upsertErr) console.error('[items/plan] persist failed:', upsertErr.message);
+      } catch (e) {
+        console.error('[items/plan] persist threw:', e);
+      }
     }
 
     return NextResponse.json({ tasks: plan.tasks });
