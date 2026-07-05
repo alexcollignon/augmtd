@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { getSystemClient } from '@/lib/ai/factory';
 import { buildAnsweredSet } from '@/lib/inbox/needs-reply';
+import { computeThreadReplyState } from '@/lib/inbox/thread-resolution';
 import { classifyItem } from '@/lib/inbox/classify-item';
 import { lastMeetingRecall } from '@/lib/context/voice-context';
 import { buildBriefContext, type EmailSeed } from '@/lib/home/brief-context';
@@ -136,13 +137,25 @@ export async function GET() {
     // being a bystander, not because it's inherently noise). Newsletters have no personal signal.
     if (sd.is_cc_only === true && (sd.from_address || sd.from)) awarenessRaw.set(it.id, { it, ccOnly: true });
   }
-  // Drop reply threads you've already answered.
+  // Drop reply threads you've already answered. Also pull the FULL thread messages (both directions)
+  // so we can compute the STRUCTURAL reply-state (computeThreadReplyState — direction+time only, no
+  // keyword matching) per thread and feed it to the synthesis as a first-class "already handled" signal.
   const candThreadIds = [...new Set(emailCandidates.map((c) => c.it.source_data?.thread_id).filter(Boolean))] as string[];
   let answered = new Map<string, string>();
+  const threadMsgsById = new Map<string, { is_from_user: boolean; received_at: string | null }[]>();
   if (candThreadIds.length) {
-    const { data: sent } = await supabase.from('emails')
-      .select('thread_id, received_at').eq('user_id', user.id).eq('is_from_user', true).in('thread_id', candThreadIds);
-    answered = buildAnsweredSet(sent ?? []);
+    const { data: threadRows } = await supabase.from('emails')
+      .select('thread_id, is_from_user, received_at').eq('user_id', user.id).in('thread_id', candThreadIds);
+    for (const r of (threadRows ?? []) as { thread_id: string | null; is_from_user: boolean; received_at: string | null }[]) {
+      if (!r.thread_id) continue;
+      const arr = threadMsgsById.get(r.thread_id) ?? [];
+      arr.push({ is_from_user: r.is_from_user, received_at: r.received_at });
+      threadMsgsById.set(r.thread_id, arr);
+    }
+    // The "already replied" set is the user's SENT messages only — same shape as before.
+    answered = buildAnsweredSet(
+      (threadRows ?? []).filter((r: { is_from_user: boolean }) => r.is_from_user).map((r: { thread_id: string | null; received_at: string | null }) => ({ thread_id: r.thread_id, received_at: r.received_at })),
+    );
   }
   // needs_reply items (with content) feed the Must-respond synthesis; they stay in priorities for
   // counts. NOTE: supersession/staleness is NO LONGER hardcoded here (the old SCHEDULING regex +
@@ -170,12 +183,21 @@ export async function GET() {
       context: (sd.from_name as string) || (sd.from as string) || null,
       href: '/inbox', itemId: it.id,
     });
+    // Structural reply-state for this thread (direction+time only — no keyword/text matching). The
+    // synthesis reasons "the user already responded → drop/deprioritize" over the REAL thread, not a
+    // regex. `since` = the item's created_at so only a reply AFTER the item appeared counts.
+    const threadMsgs = tid ? threadMsgsById.get(tid) : undefined;
+    const replyState = threadMsgs && threadMsgs.length
+      ? computeThreadReplyState(threadMsgs, it.created_at ? new Date(it.created_at as string) : null)
+      : null;
     // Feed the per-person entity map (Layer 1) — identity carried by the counterparty email.
     emailSeeds.push({
       itemId: it.id, fromAddress: fromEmail, fromName: (sd.from_name as string) || null,
       subject: it.work_title || (sd.subject as string) || '(no subject)',
       at: activityAt(it), posture,
       snippet: ((sd.body as string) || '').replace(/\s+/g, ' ').trim().slice(0, 240),
+      userResponded: replyState?.userReplied ?? undefined,
+      lastFromUser: replyState?.lastMessageFromUser ?? undefined,
     });
     if (posture === 'needs_reply') {
       mustRespondRaw.push({

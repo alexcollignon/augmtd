@@ -889,14 +889,32 @@ export async function syncEmailsForConnection(
             }),
           ).catch(() => {});
 
-          // Resolution-on-reply (external): a reply went out on this thread — possibly from Gmail/
-          // Outlook directly — so clear any pending needs-reply item on the same thread.
+          // Resolution-on-reply (STRUCTURAL, agnostic): a message went OUT on this thread — possibly
+          // sent from Gmail/Outlook directly, ingested via the Sent folder or thread backfill. Resolve
+          // the open needs-reply item AND the user's own you-owe commitment on this thread, but ONLY
+          // when computeThreadReplyState confirms a user reply AFTER the item/commitment was created
+          // (direction + time only — no text inspection). Logged (auditable + undoable via /api/restore)
+          // and it busts the Home brief cache. Fully non-fatal; never blocks sync.
           if (storedEmail.thread_id) {
-            await adminSupabase.from('inbox_items')
-              .update({ status: 'completed' })
-              .eq('user_id', connection.user_id).eq('status', 'pending')
-              .in('work_state', ['work_prepared', 'decision_required'])
-              .eq('source_data->>thread_id', storedEmail.thread_id);
+            // Assemble the thread's messages (direction + time) for the structural check. Includes the
+            // user's SENT messages — backfill/Sent-folder sync store them with is_from_user computed
+            // from from_address, so the reply state is grounded in real thread history.
+            const { data: threadMsgs } = await adminSupabase
+              .from('emails')
+              .select('is_from_user, received_at')
+              .eq('user_id', connection.user_id)
+              .eq('thread_id', storedEmail.thread_id);
+            const { resolveThreadOnReply } = await import('@/lib/inbox/resolve-on-reply');
+            await resolveThreadOnReply({
+              userId: connection.user_id,
+              threadId: storedEmail.thread_id,
+              threadEmails: (threadMsgs ?? []) as { is_from_user: boolean; received_at: string | null }[],
+              repliedAt: storedEmail.received_at || null,
+              client: adminSupabase,
+              bustBriefCache: async () => {
+                await adminSupabase.from('profiles').update({ home_brief: null }).eq('id', connection.user_id);
+              },
+            }).catch(() => {});
           }
 
           console.log(`    ✓ Learning signals queued, skipping inbox item (sent email)\n`);

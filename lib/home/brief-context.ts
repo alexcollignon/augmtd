@@ -25,6 +25,13 @@ export interface PersonEmail {
   posture: string;
   /** short body snippet, for grounding the "what they're asking". */
   snippet?: string;
+  /** STRUCTURAL reply-state (computeThreadReplyState — direction+time, no keywords): the user has
+      sent a message on this thread after it was created → already handled. Lets the synthesis REASON
+      "the user already responded → drop/deprioritize", covering the fuzzy closure case grounded in
+      the real thread rather than any text match. */
+  userResponded?: boolean;
+  /** the most recent message on the thread is from the user (ball is in the other court). */
+  lastFromUser?: boolean;
 }
 
 export interface PersonContext {
@@ -63,6 +70,10 @@ export interface EmailSeed {
   at: string;
   posture: string;
   snippet?: string;
+  /** structural reply-state for this thread — computed by the route via computeThreadReplyState over
+      the same sent-message data it already loads. Carried through to PersonEmail for the synthesis. */
+  userResponded?: boolean;
+  lastFromUser?: boolean;
 }
 
 export async function buildBriefContext(
@@ -165,7 +176,10 @@ export async function buildBriefContext(
     if (!e || e === self) continue;
     const p = ensure(e, seed.fromName || undefined);
     learnName(e, seed.fromName);
-    p.emails.push({ itemId: seed.itemId, subject: seed.subject, at: seed.at, posture: seed.posture, snippet: seed.snippet });
+    p.emails.push({
+      itemId: seed.itemId, subject: seed.subject, at: seed.at, posture: seed.posture, snippet: seed.snippet,
+      userResponded: seed.userResponded, lastFromUser: seed.lastFromUser,
+    });
   }
 
   for (const c of (commitRes?.data ?? []) as Array<{ description: string; direction: string; due_date?: string | null; counterparty?: string | null }>) {

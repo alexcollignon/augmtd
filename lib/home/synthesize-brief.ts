@@ -151,7 +151,10 @@ function renderPeople(input: SynthesisInput): string {
     if (upcoming.length) parts.push(`upcoming meeting in ${Math.max(0, daysBetween(upcoming[0].start, nowIso))}d${upcoming[0].title ? ` ("${upcoming[0].title}")` : ''}`);
     for (const e of p.emails.slice(0, 4)) {
       const age = daysBetween(nowIso, e.at);
-      parts.push(`email ${age}d ago "${e.subject}" [${e.posture}]`);
+      // Structural reply-state (direction+time, no text match): if the user already replied on this
+      // thread it is HANDLED — surface that flag so the synthesis can drop/deprioritize by REASONING.
+      const replied = e.userResponded ? ' — YOU ALREADY REPLIED on this thread (handled)' : '';
+      parts.push(`email ${age}d ago "${e.subject}" [${e.posture}]${replied}`);
     }
     for (const c of p.commitments.slice(0, 4)) {
       parts.push(`${c.direction === 'you_owe' ? 'you owe' : 'they owe'}: "${c.description}"${c.dueDate ? ` (due ${c.dueDate})` : ''}`);
@@ -203,7 +206,8 @@ export async function synthesizeBrief(
   const prompt = `You are ${me}'s personal assistant. Write today's brief in a warm, first-person PA voice — as if you personally keep ${me}'s day in order (met X, owe Y, waiting on Z). Use ${me}'s first name naturally.
 
 You are given the COMPLETE grounded picture, reconciled per person. Reason over it holistically before writing:
-- SUPERSESSION: if an email awaiting a reply is a scheduling/confirmation/logistics message from someone ${me} ALREADY has a meeting with (held or upcoming), the meeting settles it — DROP that reply by listing its [Rn] index in "droppedReplies". Same for any ask a later interaction already resolved. EVERY reply you do NOT put in droppedReplies is KEPT and shown — this is opt-OUT: the default is to keep. droppedReplies must be RARE (usually empty, at most one or two). Drop ONLY a reply that is GENUINELY settled by a concrete later fact you can see (a meeting held after it, a reply already sent). NEVER drop a real, still-open reply just because you didn't write about it, ran low on space, or it felt minor — when unsure, KEEP it.
+- ALREADY RESPONDED (structural, trustworthy): if the per-person context marks a thread "YOU ALREADY REPLIED on this thread (handled)", ${me} has structurally sent a message on that thread AFTER it landed — the ball is no longer in ${me}'s court. Treat it as HANDLED: DROP that reply (list its [Rn] index in "droppedReplies") unless a NEWER inbound message on the thread reopened it (a fresh question after ${me}'s reply). This flag comes from real message direction + timestamps, not phrasing — trust it.
+- SUPERSESSION: if an email awaiting a reply is a scheduling/confirmation/logistics message from someone ${me} ALREADY has a meeting with (held or upcoming), the meeting settles it — DROP that reply by listing its [Rn] index in "droppedReplies". Same for any ask a later interaction already resolved. EVERY reply you do NOT put in droppedReplies is KEPT and shown — this is opt-OUT: the default is to keep. droppedReplies must be RARE (usually empty, at most one or two). Drop ONLY a reply that is GENUINELY settled by a concrete later fact you can see (a meeting held after it, a reply already sent, or the "already replied" flag above). NEVER drop a real, still-open reply just because you didn't write about it, ran low on space, or it felt minor — when unsure, KEEP it.
 - STALENESS: drop an ask whose moment has passed (e.g. "by 6pm yesterday").
 - GROUPING: never write two separate fragments about the same person — fold everything about them into one coherent thought.
 - GROUNDING: use ONLY the facts below. Never invent names, numbers, asks, or details. Echo the [Rn]/[Wn]/[Fn]/[Kn] tag of every item you keep so it maps back.
