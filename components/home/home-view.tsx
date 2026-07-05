@@ -636,7 +636,7 @@ function KeepAnEyeOnCard({ items }: { items: { who: string; why: string; itemId:
   return (
     <div className="rounded-2xl border border-neutral-200/80 bg-white divide-y divide-neutral-100 overflow-hidden">
       {items.map((k, i) => (
-        <Link key={k.itemId || i} href="/inbox" className="group flex items-start gap-2.5 px-4 py-2.5 transition-colors hover:bg-indigo-50/40">
+        <Link key={k.itemId || i} href={k.itemId ? `/item/${k.itemId}?kind=email` : '/inbox'} className="group flex items-start gap-2.5 px-4 py-2.5 transition-colors hover:bg-indigo-50/40">
           <span className="flex-shrink-0 mt-0.5 w-6 h-6 rounded-full bg-indigo-50 flex items-center justify-center">
             <EyeIcon className="w-3.5 h-3.5 text-indigo-500" />
           </span>

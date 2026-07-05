@@ -7,6 +7,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 
 export type ActivityType =
   | 'reply_sent'
+  | 'message_sent'
   | 'marked_done'
   | 'dismissed'
   | 'nudge_sent'

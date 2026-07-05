@@ -9,6 +9,8 @@ import {
   CheckIcon,
   CheckCircleIcon,
   ClockIcon,
+  PaperAirplaneIcon,
+  UserPlusIcon,
 } from '@heroicons/react/24/outline';
 import { ThreadMessages, type ThreadMessage } from '@/components/inbox/thread-messages';
 import ReplyEditor from '@/components/inbox/reply-editor';
@@ -22,6 +24,181 @@ function draftToHTML(text: string): string {
   return paras
     .map((p) => `<p>${esc(p).replace(/\n/g, '<br>')}</p>`)
     .join('');
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// UNIVERSAL COMPOSE PANEL — "actions follow intent". A shared compose surface (To / Cc / Subject +
+// the shared <ReplyEditor/> for the body) pre-filled by /api/compose/draft (recipient + subject +
+// AI draft in the user's voice) and sent via /api/compose/send (AS the user's mailbox, else the
+// coworker-email fallback). Used by the MEETING (follow-up to attendees) + COMMITMENT ("you owe X")
+// deep-dives — the drafter is available wherever the resolution is to send a message, not per-type.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+type ComposeKind = 'meeting' | 'commitment' | 'awareness' | 'email';
+
+// Editable recipient input — a light comma-separated field (chips would be nicer later; this keeps
+// it simple + reliable). Empty To is allowed: the panel surfaces the inferred name so the user fills.
+function RecipientField({ label, value, onChange, placeholder }: { label: string; value: string; onChange: (v: string) => void; placeholder?: string }) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="w-12 flex-shrink-0 text-[11px] font-semibold uppercase tracking-wide text-neutral-400">{label}</span>
+      <input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="min-w-0 flex-1 bg-transparent text-[13px] text-neutral-800 placeholder:text-neutral-300 focus:outline-none"
+      />
+    </div>
+  );
+}
+
+function ComposePanel({ kind, entityId, onSent }: { kind: ComposeKind; entityId: string; onSent?: () => void }) {
+  const [loading, setLoading] = useState(true);
+  const [to, setTo] = useState('');
+  const [cc, setCc] = useState('');
+  const [subject, setSubject] = useState('');
+  const [initialHTML, setInitialHTML] = useState<string>('');
+  const [bodyHTML, setBodyHTML] = useState('');
+  const [recipientName, setRecipientName] = useState<string | null>(null);
+  const [showCc, setShowCc] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [sent, setSent] = useState<{ viaCoworker: boolean } | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const editorRef = useRef<HTMLDivElement>(null);
+
+  // Pre-fill from the drafter (recipient + subject + voice-grounded body).
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    fetch('/api/compose/draft', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind, entityId }),
+    })
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then((d: { to?: string[]; cc?: string[]; subject?: string; bodyHTML?: string; recipientName?: string | null }) => {
+        if (!alive) return;
+        setTo((d.to ?? []).join(', '));
+        setCc((d.cc ?? []).join(', '));
+        if (d.cc?.length) setShowCc(true);
+        setSubject(d.subject ?? '');
+        setInitialHTML(d.bodyHTML || '<p></p>');
+        setBodyHTML(d.bodyHTML || '');
+        setRecipientName(d.recipientName ?? null);
+      })
+      .catch(() => { if (alive) { setInitialHTML('<p></p>'); setErr('Could not draft the message — write it below.'); } })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [kind, entityId]);
+
+  const send = async () => {
+    const html = bodyHTML || editorRef.current?.innerHTML || '';
+    const toList = to.split(',').map((s) => s.trim()).filter(Boolean);
+    if (sending) return;
+    if (!toList.length) { setErr('Add a recipient to send.'); return; }
+    if (!subject.trim()) { setErr('Add a subject to send.'); return; }
+    if (!html.replace(/<[^>]*>/g, '').trim()) { setErr('The message is empty.'); return; }
+    setSending(true); setErr(null);
+    try {
+      const res = await fetch('/api/compose/send', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to: toList, cc: cc.split(',').map((s) => s.trim()).filter(Boolean), subject: subject.trim(), bodyHTML: html }),
+      });
+      if (res.ok) {
+        const d = await res.json().catch(() => ({}));
+        setSent({ viaCoworker: !!d.viaCoworker });
+        onSent?.();
+      } else {
+        const d = await res.json().catch(() => ({}));
+        setErr(d.error || 'Could not send the message.');
+      }
+    } catch {
+      setErr('Could not send the message.');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  if (sent) {
+    return (
+      <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 px-4 py-4">
+        <div className="flex items-center gap-2">
+          <CheckIcon className="w-4 h-4 text-emerald-600" />
+          <p className="text-[13px] font-medium text-emerald-700">Message sent.</p>
+        </div>
+        {sent.viaCoworker && (
+          <p className="text-[11.5px] text-emerald-600/90 mt-1 leading-snug">Sent via your assistant's address (no mailbox connected), with replies routed to you.</p>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-xl border border-neutral-200 bg-white">
+      {/* Recipient + subject header */}
+      <div className="px-4 pt-3.5 pb-2 space-y-2 border-b border-neutral-100">
+        <div className="flex items-center gap-2">
+          <RecipientField label="To" value={to} onChange={setTo} placeholder={recipientName ? `${recipientName} (add their email)` : 'recipient@email.com'} />
+          {!showCc && <button onClick={() => setShowCc(true)} className="flex-shrink-0 text-[11px] font-medium text-neutral-400 hover:text-indigo-600">Cc</button>}
+        </div>
+        {showCc && <RecipientField label="Cc" value={cc} onChange={setCc} placeholder="cc@email.com" />}
+        <RecipientField label="Subj" value={subject} onChange={setSubject} placeholder="Subject" />
+      </div>
+      {/* Body */}
+      <div className="p-4">
+        {loading ? (
+          <div className="h-32 rounded-lg bg-neutral-100 animate-pulse" />
+        ) : (
+          <>
+            {!to.trim() && recipientName && (
+              <p className="text-[11.5px] text-amber-600 mb-2 leading-snug">Add {recipientName}'s email above — we couldn't resolve it from the item.</p>
+            )}
+            <ReplyEditor
+              ref={editorRef}
+              initialHTML={initialHTML}
+              onInput={setBodyHTML}
+              placeholder="Write your message…"
+              minHeight={140}
+              maxHeight={300}
+            />
+            {err && <p className="text-[12px] text-rose-600 mt-2">{err}</p>}
+            <div className="mt-3 flex items-center gap-4">
+              <button
+                onClick={send}
+                disabled={sending}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 text-white px-5 py-2 text-[13.5px] font-medium hover:bg-indigo-700 disabled:opacity-60 transition-colors"
+              >
+                <PaperAirplaneIcon className="w-4 h-4" />{sending ? 'Sending…' : 'Send'}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Contextual action bar — the natural moves for a deep-dive, chosen by intent. "Draft email" is
+// the primary action wherever the resolution is to send a message (meeting follow-up, commitment).
+// "Hand to a coworker" is a deferred stub (slot only). Additional actions render inline.
+function ActionBar({ primaryLabel, primaryActive, onPrimary, children }: { primaryLabel: string; primaryActive: boolean; onPrimary: () => void; children?: React.ReactNode }) {
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <button
+        onClick={onPrimary}
+        className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[13px] font-medium transition-colors ${primaryActive ? 'bg-indigo-600 text-white hover:bg-indigo-700' : 'bg-white text-indigo-700 border border-indigo-200 hover:bg-indigo-50'}`}
+      >
+        <EnvelopeIcon className="w-4 h-4" />{primaryLabel}
+      </button>
+      {children}
+      <button
+        disabled
+        title="Coming soon — delegate this to one of your coworkers"
+        className="inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[13px] font-medium bg-neutral-50 text-neutral-300 border border-neutral-200 cursor-not-allowed"
+      >
+        <UserPlusIcon className="w-4 h-4" />Hand to a coworker
+      </button>
+    </div>
+  );
 }
 
 // ── The full-context Home item detail — the roomy, focused view opened from the Home as a DEEP DIVE
@@ -332,6 +509,7 @@ function itemText(x: unknown): string {
 function MeetingDetail({ id }: { id: string }) {
   const [data, setData] = useState<MeetingFull | null>(null);
   const [err, setErr] = useState(false);
+  const [composing, setComposing] = useState(false); // the follow-up compose panel (Draft email)
   // Per-item cleared state (Done/Dismiss) → the row fades then hides. Keyed by inbox item id.
   const [cleared, setCleared] = useState<Set<string>>(new Set());
   const [acting, setActing] = useState<Set<string>>(new Set());
@@ -390,6 +568,12 @@ function MeetingDetail({ id }: { id: string }) {
           </div>
         ) : (
           <>
+            {/* Action bar — lead with the natural move: draft the follow-up to the attendees. */}
+            <ActionBar primaryLabel={composing ? 'Hide draft' : 'Draft follow-up →'} primaryActive={!composing} onPrimary={() => setComposing((v) => !v)} />
+            {composing && (
+              <ComposePanel kind="meeting" entityId={id} />
+            )}
+
             {/* Suggested next step — the one call-to-action, kept prominent up top (indigo accent). */}
             {tr?.suggestedNextStep && (
               <section className="rounded-xl border border-indigo-100 bg-indigo-50/40 px-4 py-3.5">
@@ -530,6 +714,8 @@ function CommitmentDetail({ id }: { id: string }) {
   const [err, setErr] = useState(false);
   const [acting, setActing] = useState(false);
   const [done, setDone] = useState<'done' | 'dismissed' | null>(null);
+  const [composing, setComposing] = useState(false); // the "email X what you owe" compose panel
+  const [emailed, setEmailed] = useState(false);      // sent the message → offer to mark done
 
   useEffect(() => {
     let alive = true;
@@ -581,7 +767,29 @@ function CommitmentDetail({ id }: { id: string }) {
             <div className="h-4 w-32 rounded bg-neutral-100" />
             <div className="h-24 rounded-lg bg-neutral-100" />
           </div>
-        ) : src ? (
+        ) : (
+          <>
+            {/* Action bar — lead with the natural move: email the counterparty what you owe. */}
+            <ActionBar
+              primaryLabel={composing ? 'Hide draft' : (data.counterparty ? `Draft email → ${data.counterparty.replace(/<[^>]*>/g, '').trim()}` : 'Draft email →')}
+              primaryActive={!composing}
+              onPrimary={() => setComposing((v) => !v)}
+            />
+            {composing && (
+              <div>
+                <ComposePanel kind="commitment" entityId={id} onSent={() => setEmailed(true)} />
+                {emailed && !done && (
+                  <button
+                    onClick={() => act('done')}
+                    className="mt-2 inline-flex items-center gap-1.5 text-[12.5px] font-medium text-emerald-600 hover:text-emerald-700"
+                  >
+                    <CheckIcon className="w-3.5 h-3.5" />Mark this commitment done
+                  </button>
+                )}
+              </div>
+            )}
+
+            {src ? (
           <section>
             <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2.5">
               {src.kind === 'meeting' ? 'From this meeting' : 'From this email'}
@@ -599,10 +807,12 @@ function CommitmentDetail({ id }: { id: string }) {
               {!src.subject && !src.snippet && <p className="text-[13px] text-neutral-400">No further context available.</p>}
             </div>
           </section>
-        ) : (
-          <p className="text-[13px] text-neutral-400 leading-relaxed">
-            This commitment was tracked from your activity. No linked source to show.
-          </p>
+            ) : (
+              <p className="text-[13px] text-neutral-400 leading-relaxed">
+                This commitment was tracked from your activity. No linked source to show.
+              </p>
+            )}
+          </>
         )}
       </div>
 
