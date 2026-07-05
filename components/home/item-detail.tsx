@@ -11,6 +11,7 @@ import {
   ClockIcon,
   PaperAirplaneIcon,
   UserPlusIcon,
+  SparklesIcon,
 } from '@heroicons/react/24/outline';
 import { ThreadMessages, type ThreadMessage } from '@/components/inbox/thread-messages';
 import ReplyEditor from '@/components/inbox/reply-editor';
@@ -201,6 +202,162 @@ function ActionBar({ primaryLabel, primaryActive, onPrimary, children }: { prima
   );
 }
 
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// WHAT THIS TAKES — stage 2 of "actions follow intent". The item's graded task breakdown: 2–5 concrete
+// sub-tasks, each tagged [System] (✦ AUGMTD can do it — grounded in our REAL capabilities) or [You]
+// (○ needs the user). System draft/send tasks wire to the EXISTING stage-1 compose flow via onDraft;
+// other system tasks show a quiet "I can handle this" (display only — execution is stage 3). [You]
+// tasks are a persisted checkbox checklist. Non-fatal: on load failure the whole section hides.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+type PlanTask = {
+  id: string;
+  text: string;
+  actor: 'system' | 'you';
+  capability: 'draft' | 'analyze' | 'fetch' | 'send' | null;
+  done?: boolean;
+};
+
+const CAP_HINT: Record<string, string> = {
+  draft: 'I can draft this',
+  send: 'I can send this',
+  analyze: 'I can handle this',
+  fetch: 'I can look this up',
+};
+
+// `onDraft` (when provided) is invoked by a system draft/send task to open the deep-dive's existing
+// compose flow. `planKind` is the storage kind used by the plan endpoints (may differ from the visual
+// ItemKind — e.g. an email deep-dive stores as 'email', an awareness row as 'awareness').
+function WhatThisTakes({
+  planKind,
+  entityId,
+  onDraft,
+}: {
+  planKind: 'email' | 'meeting' | 'commitment' | 'awareness' | 'followup';
+  entityId: string;
+  onDraft?: () => void;
+}) {
+  const [tasks, setTasks] = useState<PlanTask[] | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState(false);
+  const [pending, setPending] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    setFailed(false);
+    fetch('/api/items/plan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: planKind, entityId }),
+    })
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then((d: { tasks?: PlanTask[] }) => {
+        if (!alive) return;
+        setTasks(Array.isArray(d.tasks) ? d.tasks : []);
+      })
+      .catch(() => { if (alive) setFailed(true); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [planKind, entityId]);
+
+  const toggle = (task: PlanTask) => {
+    if (task.actor !== 'you' || pending.has(task.id)) return;
+    const next = !task.done;
+    // Optimistic — flip locally, persist, roll back on failure.
+    setTasks((prev) => (prev ? prev.map((t) => (t.id === task.id ? { ...t, done: next } : t)) : prev));
+    setPending((prev) => new Set(prev).add(task.id));
+    fetch('/api/items/plan', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: planKind, entityId, taskId: task.id, done: next }),
+    })
+      .then((r) => { if (!r.ok) throw new Error(); })
+      .catch(() => {
+        setTasks((prev) => (prev ? prev.map((t) => (t.id === task.id ? { ...t, done: !next } : t)) : prev));
+      })
+      .finally(() => setPending((prev) => { const n = new Set(prev); n.delete(task.id); return n; }));
+  };
+
+  // Non-fatal: a failed plan hides the section entirely — the stage-1 action bar carries the deep-dive.
+  if (failed) return null;
+
+  if (loading) {
+    return (
+      <section>
+        <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2.5">What this takes</h2>
+        <div className="space-y-2 animate-pulse">
+          <div className="h-9 rounded-lg bg-neutral-100" />
+          <div className="h-9 rounded-lg bg-neutral-100" />
+        </div>
+      </section>
+    );
+  }
+
+  if (!tasks || tasks.length === 0) return null;
+
+  // A single trivial [You] "Handle this" task = keep it minimal (the fallback / a truly one-step item).
+  const trivial = tasks.length === 1 && tasks[0].actor === 'you';
+  if (trivial) return null;
+
+  return (
+    <section>
+      <div className="flex items-baseline justify-between mb-2.5">
+        <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide">What this takes</h2>
+        <span className="text-[10.5px] text-neutral-400">
+          <span className="text-indigo-500">✦</span> AUGMTD can do · <span className="text-neutral-400">○</span> needs you
+        </span>
+      </div>
+      <ul className="space-y-1.5">
+        {tasks.map((t) => {
+          if (t.actor === 'system') {
+            const canDraft = (t.capability === 'draft' || t.capability === 'send') && !!onDraft;
+            return (
+              <li key={t.id} className="flex items-start gap-2.5 rounded-lg border border-indigo-100 bg-indigo-50/40 px-3 py-2.5">
+                <SparklesIcon className="w-4 h-4 flex-shrink-0 mt-[1px] text-indigo-500" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-[13px] text-neutral-800 leading-snug">{t.text}</p>
+                  <div className="mt-1 flex items-center gap-2">
+                    <span className="inline-flex items-center rounded bg-indigo-100 px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-wide text-indigo-600">AUGMTD</span>
+                    {canDraft ? (
+                      <button
+                        onClick={onDraft}
+                        className="text-[11.5px] font-medium text-indigo-600 hover:text-indigo-700"
+                      >
+                        Draft →
+                      </button>
+                    ) : (
+                      <span className="text-[11px] text-indigo-500/80">{CAP_HINT[t.capability ?? 'analyze'] ?? 'I can handle this'}</span>
+                    )}
+                  </div>
+                </div>
+              </li>
+            );
+          }
+          const busy = pending.has(t.id);
+          return (
+            <li key={t.id} className="flex items-start gap-2.5 rounded-lg border border-neutral-200/80 bg-white px-3 py-2.5">
+              <button
+                onClick={() => toggle(t)}
+                disabled={busy}
+                aria-pressed={!!t.done}
+                title={t.done ? 'Mark not done' : 'Mark done'}
+                className={`mt-[1px] flex-shrink-0 w-4 h-4 rounded border inline-flex items-center justify-center transition-colors ${t.done ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-neutral-300 text-transparent hover:border-neutral-400'}`}
+              >
+                <CheckIcon className="w-3 h-3" />
+              </button>
+              <div className="min-w-0 flex-1">
+                <p className={`text-[13px] leading-snug transition-colors ${t.done ? 'text-neutral-400 line-through' : 'text-neutral-800'}`}>{t.text}</p>
+                {!t.done && <span className="text-[10.5px] text-neutral-400">needs you</span>}
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
 // ── The full-context Home item detail — the roomy, focused view opened from the Home as a DEEP DIVE
 // (in-content, not a boxed popup). ONE shell (header / scrolling body / docked action footer) that
 // BRANCHES on `kind`:
@@ -282,6 +439,7 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
   const [copied, setCopied] = useState(false);
   const [sendErr, setSendErr] = useState<string | null>(null);
   const editorRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLDivElement>(null); // the docked reply composer — a draft-task scrolls here
 
   // Load the thread + the prepared draft in parallel — same endpoints the Home uses.
   useEffect(() => {
@@ -404,6 +562,13 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
           )}
         </div>
 
+        {/* What this takes — the graded breakdown; a system draft-task scrolls to the docked reply. */}
+        <WhatThisTakes
+          planKind="email"
+          entityId={id}
+          onDraft={() => composerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })}
+        />
+
         {/* Suggested angle (light line) — kept just above the docked composer */}
         {angle && (
           <p className="text-[13px] text-neutral-600 leading-relaxed">
@@ -415,7 +580,7 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
       {/* 3 — Docked reply composer: pinned to the bottom, always visible. Subtle top border +
           elevated bg so it reads as a docked reply bar. On short viewports it caps its own height
           and scrolls internally so Send never leaves the screen. */}
-      <div className="flex-shrink-0 border-t border-neutral-200 bg-neutral-50/80 backdrop-blur px-7 py-4 max-h-[45vh] overflow-y-auto">
+      <div ref={composerRef} className="flex-shrink-0 border-t border-neutral-200 bg-neutral-50/80 backdrop-blur px-7 py-4 max-h-[45vh] overflow-y-auto">
         <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2.5">Your reply</h2>
         {sent ? (
           <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50/60 px-4 py-4">
@@ -573,6 +738,9 @@ function MeetingDetail({ id }: { id: string }) {
             {composing && (
               <ComposePanel kind="meeting" entityId={id} />
             )}
+
+            {/* What this takes — the graded breakdown; a system draft-task opens the follow-up composer. */}
+            <WhatThisTakes planKind="meeting" entityId={id} onDraft={() => setComposing(true)} />
 
             {/* Suggested next step — the one call-to-action, kept prominent up top (indigo accent). */}
             {tr?.suggestedNextStep && (
@@ -789,6 +957,9 @@ function CommitmentDetail({ id }: { id: string }) {
               </div>
             )}
 
+            {/* What this takes — the graded breakdown; a system draft-task opens the compose panel. */}
+            <WhatThisTakes planKind="commitment" entityId={id} onDraft={() => setComposing(true)} />
+
             {src ? (
           <section>
             <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2.5">
@@ -863,6 +1034,7 @@ function FollowUpDetail({ id }: { id: string }) {
   const [copied, setCopied] = useState(false);
   const [sendErr, setSendErr] = useState<string | null>(null);
   const editorRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLDivElement>(null); // the docked nudge composer — a draft-task scrolls here
 
   useEffect(() => {
     let alive = true;
@@ -962,10 +1134,17 @@ function FollowUpDetail({ id }: { id: string }) {
             <ThreadMessages messages={threadMessages} fallback={null} />
           )}
         </div>
+
+        {/* What this takes — the graded breakdown; a system draft-task scrolls to the nudge composer. */}
+        <WhatThisTakes
+          planKind="followup"
+          entityId={id}
+          onDraft={() => composerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })}
+        />
       </div>
 
       {/* Docked nudge composer */}
-      <div className="flex-shrink-0 border-t border-neutral-200 bg-neutral-50/80 backdrop-blur px-7 py-4 max-h-[45vh] overflow-y-auto">
+      <div ref={composerRef} className="flex-shrink-0 border-t border-neutral-200 bg-neutral-50/80 backdrop-blur px-7 py-4 max-h-[45vh] overflow-y-auto">
         <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2.5">Your nudge</h2>
         {sent ? (
           <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50/60 px-4 py-4">
