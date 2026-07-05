@@ -630,23 +630,55 @@ function StartHerePriorityBody({ p, onCleared, onUndoInbox }: { p: Priority; onC
 
 // "Keep an eye on" — the middle awareness tier: real things happening AROUND you (a cc'd urgent
 // meeting, a thread you're on, a decision in your orbit) that you should SEE but do nothing about.
-// Glanceable one-liners (who + why it matters), NO action buttons — this is awareness, not action.
-// Secondary visual weight: lighter than Must-respond (no rose frame), heavier than the FYI digest.
-function KeepAnEyeOnCard({ items }: { items: { who: string; why: string; itemId: string }[] }) {
+// Glanceable one-liners (who + why it matters). The row OPENS the awareness deep-dive; a quiet ✕
+// lets you dismiss an item you've noted — same fade + /dismiss + live-count + undo-toast wiring as
+// the other Home sections. Secondary visual weight: lighter than Must-respond, heavier than the FYI
+// digest.
+function KeepAnEyeOnCard({ items, onDismiss, onUndoInbox }: { items: { who: string; why: string; itemId: string }[]; onDismiss?: (id: string) => void; onUndoInbox?: (message: string, entityId: string, sessionKeys: string[]) => void }) {
   return (
     <div className="rounded-2xl border border-neutral-200/80 bg-white divide-y divide-neutral-100 overflow-hidden">
       {items.map((k, i) => (
-        <Link key={k.itemId || i} href={k.itemId ? `/item/${k.itemId}?kind=email` : '/inbox'} className="group flex items-start gap-2.5 px-4 py-2.5 transition-colors hover:bg-indigo-50/40">
-          <span className="flex-shrink-0 mt-0.5 w-6 h-6 rounded-full bg-indigo-50 flex items-center justify-center">
-            <EyeIcon className="w-3.5 h-3.5 text-indigo-500" />
-          </span>
-          <div className="min-w-0 flex-1">
-            <p className="text-[13px] font-semibold text-neutral-800 leading-snug truncate">{k.who}</p>
-            {k.why && <p className="text-[12.5px] text-neutral-500 mt-0.5 leading-snug">{k.why}</p>}
-          </div>
-          <ChevronRightIcon className="w-3.5 h-3.5 text-neutral-300 group-hover:text-indigo-400 flex-shrink-0 mt-1 transition-colors" />
-        </Link>
+        <KeepAnEyeOnRow key={k.itemId || i} k={k} onDismiss={onDismiss} onUndoInbox={onUndoInbox} />
       ))}
+    </div>
+  );
+}
+
+// One awareness row. The row (link) opens the awareness deep-dive; the ✕ is an ADDITIONAL affordance
+// that dismisses the backing inbox item (POST /api/inbox/[itemId]/dismiss {reason:'home'}), fading the
+// row out (useExit), reporting the clear up so the section's live count decrements + the ring bumps,
+// and firing the "Dismissed · Undo" toast (restorable via /api/restore's inbox_item path). The ✕
+// stopPropagations so it doesn't also open the deep-dive.
+function KeepAnEyeOnRow({ k, onDismiss, onUndoInbox }: { k: { who: string; why: string; itemId: string }; onDismiss?: (id: string) => void; onUndoInbox?: (message: string, entityId: string, sessionKeys: string[]) => void }) {
+  const { removed, exiting, startExit } = useExit();
+  const [acting, setActing] = useState(false);
+  const dismiss = (e: React.MouseEvent) => {
+    e.preventDefault(); e.stopPropagation();
+    if (acting || !k.itemId) return;
+    setActing(true); startExit(); onDismiss?.(k.itemId); // raise the day-cleared ring + drop the live count
+    onUndoInbox?.('Dismissed', k.itemId, [k.itemId]);
+    fetch(`/api/inbox/${k.itemId}/dismiss`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason: 'home' }) })
+      .catch(() => {}).finally(() => setActing(false));
+  };
+  if (removed) return null;
+  return (
+    <div className={exitCls(exiting)}>
+      <Link href={k.itemId ? `/item/${k.itemId}?kind=email` : '/inbox'} className="group flex items-start gap-2.5 px-4 py-2.5 transition-colors hover:bg-indigo-50/40">
+        <span className="flex-shrink-0 mt-0.5 w-6 h-6 rounded-full bg-indigo-50 flex items-center justify-center">
+          <EyeIcon className="w-3.5 h-3.5 text-indigo-500" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-[13px] font-semibold text-neutral-800 leading-snug truncate">{k.who}</p>
+          {k.why && <p className="text-[12.5px] text-neutral-500 mt-0.5 leading-snug">{k.why}</p>}
+        </div>
+        <span className="flex-shrink-0 flex items-center gap-2 mt-0.5">
+          {k.itemId && (
+            <button onClick={dismiss} disabled={acting} title="Dismiss — won't show again"
+              className="text-neutral-300 hover:text-rose-600 transition-colors disabled:opacity-50 text-[13px] leading-none">✕</button>
+          )}
+          <ChevronRightIcon className="w-3.5 h-3.5 text-neutral-300 group-hover:text-indigo-400 transition-colors mt-0.5" />
+        </span>
+      </Link>
     </div>
   );
 }
@@ -905,6 +937,7 @@ export function HomeView() {
   const plateLive = (b?.commitments ?? []).filter((c) => !clearedIds.has(c.id)).length;
   const followupsLive = (b?.followups?.items ?? []).filter((f) => !(f.id && clearedIds.has(f.id))).length;
   const waitingLive = (b?.waitingOn ?? []).filter((c) => !clearedIds.has(c.id)).length;
+  const eyeLive = (b?.keepAnEyeOn?.items ?? []).filter((k) => !clearedIds.has(k.itemId)).length;
   const ringCleared = (b?.dayProgress?.cleared ?? 0) + sessionCleared;
   const showRing = !!b?.dayProgress; // non-fatal: hide gracefully if counts are missing
 
@@ -955,8 +988,12 @@ export function HomeView() {
 
   if (hasEye) rail('eye', (
     <section>
-      <Label count={b!.keepAnEyeOn!.items.length} icon={EyeIcon}>Keep an eye on</Label>
-      <KeepAnEyeOnCard items={b!.keepAnEyeOn!.items} />
+      <Label count={eyeLive} icon={EyeIcon}>Keep an eye on</Label>
+      {eyeLive === 0 ? (
+        <SectionCleared line="All noted — nothing to keep an eye on." />
+      ) : (
+        <KeepAnEyeOnCard items={b!.keepAnEyeOn!.items} onDismiss={onCleared} onUndoInbox={toastInbox} />
+      )}
     </section>
   ));
 
