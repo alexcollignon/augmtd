@@ -682,15 +682,40 @@ export async function syncEmailsForConnection(
           const threadIdForCheck = parsed.thread_id || parsed.message_id;
           const { data: orphanCheck } = await adminSupabase
             .from('inbox_items')
-            .select('id')
+            .select('id, status, work_state, rule_type, source_data')
             .eq('user_id', connection.user_id)
             .eq('source', 'email')
             .eq('source_data->>thread_id', threadIdForCheck)
+            .order('created_at', { ascending: false })
             .limit(1)
             .maybeSingle();
 
           if (orphanCheck) {
-            // Inbox item exists — genuinely already processed, skip
+            // ── BACKFILL REACTIVATION ─────────────────────────────────────────────────────────────
+            // An inbox_item already exists for this thread AND the email row is already stored (a
+            // push webhook delivered it, or a prior sync did). Historically we `continue`d here
+            // unconditionally — which meant a RESOLVED thread (Done/dismissed) that gets a genuinely
+            // new INBOUND reply could never reopen, because reactivation only lived on the NEW-email
+            // path below. That silently dropped every recent Outlook reply once its item was resolved.
+            // Fix: if the item is resolved and this is a NEW inbound message, reopen it right here.
+            // A user-sent reply (is_from_user) never reopens; an older re-synced message never reopens
+            // (the helper compares received_at). Idempotent + non-fatal.
+            const _resolved = orphanCheck.status === 'completed' || orphanCheck.status === 'dismissed';
+            if (_resolved && !existingEmail.is_from_user) {
+              const { reactivateResolvedThreadOnReply } = await import('@/lib/inbox/reactivate-on-reply');
+              const reopened = await reactivateResolvedThreadOnReply({
+                userId: connection.user_id,
+                connection,
+                storedEmail: existingEmail,
+                existingItem: orphanCheck,
+                emailClass,
+                autoLabel: !!emailSettings.auto_label,
+                gmailLabelCache,
+                client: adminSupabase,
+              });
+              if (reopened) result.inboxItemsCreated++;
+            }
+            // Inbox item exists — already processed (or just reopened above), skip further work.
             console.log(`    ✓ Already exists, skipping`);
             continue;
           }
@@ -818,13 +843,31 @@ export async function syncEmailsForConnection(
               const threadIdForCheck2 = parsed.thread_id || parsed.message_id;
               const { data: orphanCheck2 } = await adminSupabase
                 .from('inbox_items')
-                .select('id')
+                .select('id, status, work_state, rule_type, source_data')
                 .eq('user_id', connection.user_id)
                 .eq('source', 'email')
                 .eq('source_data->>thread_id', threadIdForCheck2)
+                .order('created_at', { ascending: false })
                 .limit(1)
                 .maybeSingle();
               if (orphanCheck2) {
+                // Same backfill reactivation as the primary existing-email path: a resolved thread
+                // with a new INBOUND reply reopens even when a parallel sync won the email insert.
+                const _resolved2 = orphanCheck2.status === 'completed' || orphanCheck2.status === 'dismissed';
+                if (_resolved2 && !racedEmail.is_from_user) {
+                  const { reactivateResolvedThreadOnReply } = await import('@/lib/inbox/reactivate-on-reply');
+                  const reopened2 = await reactivateResolvedThreadOnReply({
+                    userId: connection.user_id,
+                    connection,
+                    storedEmail: racedEmail,
+                    existingItem: orphanCheck2,
+                    emailClass,
+                    autoLabel: !!emailSettings.auto_label,
+                    gmailLabelCache,
+                    client: adminSupabase,
+                  });
+                  if (reopened2) result.inboxItemsCreated++;
+                }
                 console.log(`    ✓ Already exists, skipping`);
                 continue;
               }
@@ -1009,67 +1052,18 @@ export async function syncEmailsForConnection(
             // work_state, and relabel the mailbox from AUGMTD/Done back to its active label. A NEW
             // message FROM THE USER never reaches here (it continue'd at the is_from_user gate), so a
             // user re-reply on a resolved thread correctly leaves it Done.
-            // Reuse the item's prior classification if it was active; otherwise a needs-reply default
-            // (a fresh inbound to a thread you closed is, by default, awaiting your reply).
-            const _priorWs = (_snExisting as any).work_state as string | null;
-            const ACTIVE_WS = new Set(['work_prepared', 'decision_required', 'action_required', 'waiting']);
-            const _restoreWs = _priorWs && ACTIVE_WS.has(_priorWs) ? _priorWs : 'work_prepared';
-            const _reopenedAt = new Date().toISOString();
-            const _existingSd = ((_snExisting as any).source_data ?? {}) as Record<string, unknown>;
-            // Strip the resolution markers so it no longer reads as resolved.
-            delete (_existingSd as Record<string, unknown>).resolved_reason;
-            delete (_existingSd as Record<string, unknown>).resolved_at;
-            const { error: _reopenErr } = await adminSupabase
-              .from('inbox_items')
-              .update(stripNulls({
-                status: 'pending',
-                work_state: _restoreWs,
-                source_data: { ...(_existingSd as Record<string, unknown>), ...(_snSourceData as Record<string, unknown>) },
-                source_id: storedEmail.id,
-                last_activity_at: storedEmail.received_at || _reopenedAt,
-                updated_at: _reopenedAt,
-              }) as Record<string, unknown>)
-              .eq('id', _snExisting.id)
-              .in('status', ['completed', 'dismissed']); // guard against a concurrent flip
-            if (_reopenErr) {
-              console.error(`    ✗ Reactivation update failed:`, _reopenErr.message);
-            } else {
-              console.log(`    ♻️  Reopened resolved thread on new inbound reply`);
-              // Bust the Home brief cache so the reopened item resurfaces next load.
-              await adminSupabase.from('profiles').update({ home_brief: null }).eq('id', connection.user_id).then(() => {}, () => {});
-              // Relabel the mailbox back to the ACTIVE state (NOT Done). reconcile STRIPS the stale
-              // AUGMTD/Done first, so the downstream path (fast-path additive writeBackLabel for
-              // fyi/noise, or Phase 2 for process) then re-adds the same label idempotently rather
-              // than leaving Done alongside it. Pick the label to match THIS email's class so a
-              // fyi/noise reply doesn't get an actionable label: fyi/noise → its class label; process
-              // → the item's rule label if set, else derived from the restored work_state. Honors
-              // auto_label. Non-fatal.
-              if (emailSettings.auto_label) {
-                const _ruleLabel = (_snExisting as any).rule_type as string | null;
-                const _classTarget: string | null =
-                  emailClass === 'noise'
-                    ? 'notifications'
-                    : emailClass === 'fyi_only'
-                      ? 'fyi'
-                      : null; // process → resolve below from rule/work_state
-                void import('@/lib/inbox/rules/write-back').then(async ({ reconcileAugmtdLabel, mapWorkStateToLabel }) => {
-                  await reconcileAugmtdLabel({
-                    provider: connection.provider,
-                    encryptedTokens: connection.metadata?.tokens,
-                    targetLabel: (_classTarget ?? (_ruleLabel && _ruleLabel !== 'done' ? _ruleLabel : mapWorkStateToLabel(_restoreWs))) as any,
-                    gmailThreadId: storedEmail.thread_id,
-                    gmailCache: gmailLabelCache,
-                    outlookMessageId: (storedEmail as any).metadata?.outlook_id ?? storedEmail.message_id,
-                    onTokenRefresh: connection.provider === 'outlook'
-                      ? async (newTokens: { accessToken: string; refreshToken: string; expiresOn: string }) => {
-                          const newEncrypted = Buffer.from(JSON.stringify(newTokens)).toString('base64');
-                          await adminSupabase.from('connections').update({ metadata: { ...connection.metadata, tokens: newEncrypted } }).eq('id', connection.id);
-                        }
-                      : undefined,
-                  });
-                }).catch(() => {});
-              }
-            }
+            // Single source of truth: the same helper the backfill path calls (see reactivate-on-reply).
+            const { reactivateResolvedThreadOnReply } = await import('@/lib/inbox/reactivate-on-reply');
+            await reactivateResolvedThreadOnReply({
+              userId: connection.user_id,
+              connection,
+              storedEmail,
+              existingItem: _snExisting,
+              emailClass,
+              autoLabel: !!emailSettings.auto_label,
+              gmailLabelCache,
+              client: adminSupabase,
+            });
           }
         }
         // ── END SAFETY NET ───────────────────────────────────────────────────────────
