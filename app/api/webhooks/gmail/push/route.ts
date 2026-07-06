@@ -96,12 +96,32 @@ async function processGmailPush(emailAddress: string, historyId: string) {
 
     const gmail = await getGmailClient(encryptedTokens, onGmailTokenRefresh);
 
-    // Fetch history since last known historyId
-    const historyRes = await gmail.users.history.list({
-      userId: 'me',
-      startHistoryId,
-      historyTypes: ['messageAdded'],
-    });
+    // Fetch history since last known historyId.
+    // SELF-HEAL: a high-volume mailbox has short Gmail history retention. If a push gap makes
+    // push_history_id older than what Gmail still retains, history.list returns 404 (historyId not
+    // found). Recover by doing a window-based catch-up sync (idempotent via message_id dedup) and
+    // resetting the cursor to the notification's current historyId — the missed gap is unlistable,
+    // but the window sync covers it. Without this, push silently dies until the periodic sweep.
+    let historyRes;
+    try {
+      historyRes = await gmail.users.history.list({
+        userId: 'me',
+        startHistoryId,
+        historyTypes: ['messageAdded'],
+      });
+    } catch (err: any) {
+      const status = err?.code ?? err?.response?.status ?? err?.status;
+      if (status === 404) {
+        console.warn(
+          `[GmailPush] historyId stale (404) for ${emailAddress} — catch-up sync + cursor reset to ${historyId}`,
+        );
+        await syncEmailsForConnection(connection, adminSupabase, { syncWindowDays: 1 });
+        await adminSupabase.from('connections').update({ push_history_id: historyId }).eq('id', connection.id);
+        return;
+      }
+      // Non-404: rethrow so the outer catch logs it and the cursor is NOT advanced (next push retries).
+      throw err;
+    }
 
     const historyList = historyRes.data.history || [];
     const messageIds: string[] = [];
@@ -126,11 +146,20 @@ async function processGmailPush(emailAddress: string, historyId: string) {
     // Reverse so newest messages are processed first — if cap is hit, oldest are dropped not newest
     const prioritized = [...messageIds].reverse();
 
-    const fetchedMessages = await Promise.all(
+    // Use allSettled so a single un-fetchable message id can't reject (poison) the whole batch —
+    // with the after-storage cursor advance, a rejected Promise.all would retry forever and get stuck.
+    const settled = await Promise.allSettled(
       prioritized.slice(0, 50).map(id =>
         gmail.users.messages.get({ userId: 'me', id, format: 'full' }).then(r => r.data),
       ),
     );
+    const fetchedMessages = settled
+      .filter((s): s is PromiseFulfilledResult<any> => s.status === 'fulfilled')
+      .map(s => s.value);
+    const rejectedCount = settled.length - fetchedMessages.length;
+    if (rejectedCount > 0) {
+      console.warn(`[GmailPush] ${rejectedCount} message fetch(es) failed for ${emailAddress} — skipping those`);
+    }
 
     await syncEmailsForConnection(connection, adminSupabase, {
       preloadedMessages: fetchedMessages,
