@@ -300,16 +300,53 @@ export function InboxPageClient({
   const preSyncCountRef = useRef<number | null>(null);
   const periodicSyncRef = useRef<number>(0);
 
+  // Same account predicate the rendered list uses (see `filteredItems`): an item belongs to a
+  // connection when its connection_id matches, OR it has no connection_id (shown for any account).
+  const itemBelongsToConnection = useCallback((item: InboxItem, connId: string | null): boolean => {
+    const cid = (item as any).connection_id;
+    if (cid === null) return true;
+    return cid === connId;
+  }, []);
+
+  // Most recently created item that belongs to the given connection (falls back to the first
+  // folder section's connection when none is selected yet, e.g. on the very first mount).
+  const latestItemForConnection = useCallback((connId: string | null): InboxItem | null => {
+    const effectiveConn = connId ?? folderSections?.[0]?.connectionId ?? null;
+    const candidates = inboxItems.filter(i => itemBelongsToConnection(i, effectiveConn));
+    if (candidates.length === 0) return null;
+    return candidates.reduce((a, b) =>
+      new Date((b as any).created_at) > new Date((a as any).created_at) ? b : a
+    );
+  }, [inboxItems, folderSections, itemBelongsToConnection]);
+
   // Restore persisted preferences after mount (avoids SSR hydration mismatch)
   useEffect(() => {
     const savedDensity = localStorage.getItem('inboxDensity') as Density | null;
     if (savedDensity === 'normal' || savedDensity === 'compact') setDensity(savedDensity);
-    // Auto-select most recently received item after hydration (can't do during SSR — causes dangerouslySetInnerHTML mismatch)
-    const latest = inboxItems.length
-      ? inboxItems.reduce((a, b) => new Date((b as any).created_at) > new Date((a as any).created_at) ? b : a)
-      : null;
+    // Auto-select the most recently received item BELONGING TO THE SELECTED ACCOUNT after hydration
+    // (can't do during SSR — causes dangerouslySetInnerHTML mismatch). Never open a cross-account
+    // email by default.
+    const latest = latestItemForConnection(selectedConnectionId);
     setSelectedItem(prev => prev ?? latest);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Timing safety net: on the very first mount `selectedConnectionId`/`folderSections` may not be
+  // ready yet (client-fetch fallback path), so the mount auto-select above can no-op. Once they
+  // populate, pick the most-recent item for the selected/default account if nothing is selected.
+  useEffect(() => {
+    setSelectedItem(prev => prev ?? latestItemForConnection(selectedConnectionId));
+  }, [selectedConnectionId, folderSections]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // On account switch: if the currently-open item does NOT belong to the newly selected account,
+  // re-select that account's most-recent item so the open email always matches the selected inbox.
+  // Guard: only re-select when the current item is cross-account — never clobber a user's explicit
+  // pick WITHIN the same account.
+  useEffect(() => {
+    setSelectedItem(prev => {
+      if (prev && itemBelongsToConnection(prev, selectedConnectionId)) return prev;
+      return latestItemForConnection(selectedConnectionId) ?? prev;
+    });
+  }, [selectedConnectionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleDensity = (d: Density) => {
     setDensity(d);
@@ -707,9 +744,19 @@ export function InboxPageClient({
       });
     }
     const q = searchQuery.trim().toLowerCase();
-    // Always show at least the most recent item when no search is active
-    if (!q && items.length === 0 && inboxItems.length > 0) {
-      items = [inboxItems[0]];
+    // Always show at least the most recent item when no search is active — but it MUST belong to the
+    // selected account (never inject a cross-account item). `items` is already connection-filtered,
+    // so recover the most-recent item for this account from the full list.
+    if (!q && items.length === 0) {
+      const forConn = inboxItems.filter(i => {
+        const cid = (i as any).connection_id;
+        return cid === null || cid === selectedConnectionId;
+      });
+      if (forConn.length > 0) {
+        items = [forConn.reduce((a, b) =>
+          new Date((b as any).created_at) > new Date((a as any).created_at) ? b : a
+        )];
+      }
     }
     if (!q) return items;
     return items.filter(item => {
