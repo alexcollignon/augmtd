@@ -16,6 +16,57 @@ import {
 import { ThreadMessages, type ThreadMessage } from '@/components/inbox/thread-messages';
 import ReplyEditor from '@/components/inbox/reply-editor';
 
+// ── Shared visual language across ALL deep-dive variants (coherence pass #3). One header, one
+// section-label token, one card token — so email / meeting / commitment / follow-up read identically.
+
+// The single section-label class used by EVERY context section header (Thread / Summary / Decisions /
+// Risks / Source / Suggested next step / What this takes / Your reply). Never diverge from this.
+const SECTION_LABEL = 'text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2.5';
+// The single card token (context cards + compose surfaces).
+const CARD = 'rounded-xl border border-neutral-200/70 bg-white';
+
+// ONE shared header for every variant: a kind chip (+ optional status chip), the title, and a
+// who/date meta line. `titleClass` lets a longer commitment/follow-up title use a slightly smaller
+// size, but the treatment (weight, spacing, chip, meta) is identical everywhere.
+function DetailHeader({
+  chip,
+  status,
+  title,
+  meta,
+  titleClass = 'text-[20px] leading-tight',
+}: {
+  chip: React.ReactNode;
+  status?: React.ReactNode;
+  title: string;
+  meta?: React.ReactNode;
+  titleClass?: string;
+}) {
+  return (
+    <div className="flex-shrink-0 px-7 pt-6 pb-5 border-b border-neutral-200">
+      <div className="flex items-center gap-1.5 mb-2">
+        {chip}
+        {status}
+      </div>
+      <h1 className={`${titleClass} font-semibold text-neutral-900`}>{title}</h1>
+      {meta && <div className="flex items-center gap-2 mt-1.5 text-[13px] text-neutral-500">{meta}</div>}
+    </div>
+  );
+}
+
+// A kind chip (indigo/violet/amber accent) used in each variant's header — same shape everywhere.
+function KindChip({ tone, icon: Icon, label }: { tone: 'indigo' | 'violet' | 'amber'; icon: typeof EnvelopeIcon; label: string }) {
+  const map = {
+    indigo: 'bg-indigo-50 text-indigo-600',
+    violet: 'bg-violet-50 text-violet-600',
+    amber: 'bg-amber-50 text-amber-600',
+  } as const;
+  return (
+    <span className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium ${map[tone]}`}>
+      <Icon className="w-3 h-3" />{label}
+    </span>
+  );
+}
+
 // Escape + convert a plain-text draft to simple HTML so it seeds the rich editor: blank lines split
 // paragraphs, single newlines become <br>. Keeps the AI draft's shape while making it editable rich.
 function draftToHTML(text: string): string {
@@ -134,7 +185,7 @@ function ComposePanel({ kind, entityId, onSent }: { kind: ComposeKind; entityId:
   }
 
   return (
-    <div className="rounded-xl border border-neutral-200 bg-white">
+    <div className={CARD}>
       {/* Recipient + subject header */}
       <div className="px-4 pt-3.5 pb-2 space-y-2 border-b border-neutral-100">
         <div className="flex items-center gap-2">
@@ -285,7 +336,7 @@ function WhatThisTakes({
   if (loading) {
     return (
       <section>
-        <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2.5">What this takes</h2>
+        <h2 className={SECTION_LABEL}>What this takes</h2>
         <div className="space-y-2 animate-pulse">
           <div className="h-9 rounded-lg bg-neutral-100" />
           <div className="h-9 rounded-lg bg-neutral-100" />
@@ -350,7 +401,7 @@ function WhatThisTakes({
           }
           const busy = pending.has(t.id);
           return (
-            <li key={t.id} className="flex items-start gap-2.5 rounded-lg border border-neutral-200/80 bg-white px-3 py-2.5">
+            <li key={t.id} className="flex items-start gap-2.5 rounded-lg border border-neutral-200/70 bg-white px-3 py-2.5">
               <button
                 onClick={() => toggle(t)}
                 disabled={busy}
@@ -547,27 +598,25 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
     // Fills the shell height: header (top) / scrolling thread (middle) / docked reply composer (bottom).
     <div className="flex flex-col h-full min-h-0">
       {/* 1 — Header: subject + sender + date (fixed at top) */}
-      <div className="flex-shrink-0 px-7 pt-6 pb-5 border-b border-neutral-200">
-        <div className="flex items-center gap-1.5 mb-2">
-          <span className="inline-flex items-center gap-1 rounded-md bg-indigo-50 px-1.5 py-0.5 text-[10px] font-medium text-indigo-600">
-            <EnvelopeIcon className="w-3 h-3" />Reply needed
-          </span>
-        </div>
-        <h1 className="text-[20px] font-semibold text-neutral-900 leading-tight">{subject}</h1>
-        <div className="flex items-center gap-2 mt-1.5 text-[13px]">
-          {senderLine && <span className="text-neutral-600 min-w-0 truncate">From: {senderLine}</span>}
-          {thread?.receivedAt && (
-            <span className="text-neutral-400 flex-shrink-0 tabular-nums ml-auto">{fmtWhen(thread.receivedAt)}</span>
-          )}
-        </div>
-      </div>
+      <DetailHeader
+        chip={<KindChip tone="indigo" icon={EnvelopeIcon} label="Reply needed" />}
+        title={subject}
+        meta={
+          <>
+            {senderLine && <span className="min-w-0 truncate">From: {senderLine}</span>}
+            {thread?.receivedAt && (
+              <span className="text-neutral-400 flex-shrink-0 tabular-nums ml-auto">{fmtWhen(thread.receivedAt)}</span>
+            )}
+          </>
+        }
+      />
 
       {/* 2 — Scrolling thread + angle (the only scroll area; composer stays docked below) */}
       <div className="flex-1 min-h-0 overflow-y-auto px-7 py-6 space-y-6">
         {/* The whole thread, rendered by the SHARED inbox component (avatars + collapse + fold) */}
         <div>
           {hasThread && (
-            <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2.5">Thread</h2>
+            <h2 className={SECTION_LABEL}>Thread</h2>
           )}
           {threadErr ? (
             <p className="text-[13px] text-neutral-400">Could not load the thread.</p>
@@ -591,14 +640,14 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
           elevated bg so it reads as a docked reply bar. On short viewports it caps its own height
           and scrolls internally so Send never leaves the screen. */}
       <div ref={composerRef} className="flex-shrink-0 border-t border-neutral-200 bg-neutral-50/80 backdrop-blur px-7 py-4 max-h-[45vh] overflow-y-auto">
-        <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2.5">Your reply</h2>
+        <h2 className={SECTION_LABEL}>Your reply</h2>
         {sent ? (
           <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50/60 px-4 py-4">
             <CheckIcon className="w-4 h-4 text-emerald-600" />
             <p className="text-[13px] font-medium text-emerald-700">Reply sent.</p>
           </div>
         ) : (
-          <div className="rounded-xl border border-neutral-200 bg-white p-4">
+          <div className={`${CARD} p-4`}>
             {draft == null ? (
               // Composer renders even while the draft loads — a boxed loading state, never absent.
               <div className="h-32 rounded-lg bg-neutral-100 animate-pulse" />
@@ -718,18 +767,16 @@ function MeetingDetail({ id }: { id: string }) {
   return (
     <div className="flex flex-col h-full min-h-0">
       {/* Header */}
-      <div className="flex-shrink-0 px-7 pt-6 pb-5 border-b border-neutral-200">
-        <div className="flex items-center gap-1.5 mb-2">
-          <span className="inline-flex items-center gap-1 rounded-md bg-violet-50 px-1.5 py-0.5 text-[10px] font-medium text-violet-600">
-            <CalendarDaysIcon className="w-3 h-3" />Meeting
-          </span>
-        </div>
-        <h1 className="text-[20px] font-semibold text-neutral-900 leading-tight">{title}</h1>
-        <div className="flex items-center gap-2 mt-1.5 text-[13px]">
-          {when && <span className="text-neutral-500">{fmtDate(when)}</span>}
-          {tr?.durationMinutes ? <span className="text-neutral-400">· {tr.durationMinutes} min</span> : null}
-        </div>
-      </div>
+      <DetailHeader
+        chip={<KindChip tone="violet" icon={CalendarDaysIcon} label="Meeting" />}
+        title={title}
+        meta={
+          <>
+            {when && <span>{fmtDate(when)}</span>}
+            {tr?.durationMinutes ? <span className="text-neutral-400">· {tr.durationMinutes} min</span> : null}
+          </>
+        }
+      />
 
       {/* Scrolling body — summary + decisions/risks/next step + action items (no docked composer). */}
       <div className="flex-1 min-h-0 overflow-y-auto px-7 py-6 space-y-6">
@@ -750,6 +797,8 @@ function MeetingDetail({ id }: { id: string }) {
             )}
 
             {/* Suggested next step — the one call-to-action, kept prominent up top (indigo accent). */}
+            {/* Suggested next step — a highlighted indigo CALLOUT card (system accent), not a plain
+                context section; its label stays indigo to match the card, by design. */}
             {tr?.suggestedNextStep && (
               <section className="rounded-xl border border-indigo-100 bg-indigo-50/40 px-4 py-3.5">
                 <h2 className="text-[11px] font-semibold text-indigo-600 uppercase tracking-wide mb-1.5">Suggested next step</h2>
@@ -759,7 +808,7 @@ function MeetingDetail({ id }: { id: string }) {
 
             {tr?.summary && (
               <section>
-                <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2.5">Summary</h2>
+                <h2 className={SECTION_LABEL}>Summary</h2>
                 <p className="text-[13.5px] text-neutral-700 leading-relaxed whitespace-pre-wrap">{tr.summary}</p>
               </section>
             )}
@@ -771,7 +820,7 @@ function MeetingDetail({ id }: { id: string }) {
               if (decisions.length === 0) return null;
               return (
                 <section>
-                  <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2.5">Decisions</h2>
+                  <h2 className={SECTION_LABEL}>Decisions</h2>
                   <ul className="space-y-2.5">
                     {decisions.map((d, i) => {
                       const obj = typeof d === 'object' && d ? d : null;
@@ -805,7 +854,7 @@ function MeetingDetail({ id }: { id: string }) {
               if (risks.length === 0) return null;
               return (
                 <section>
-                  <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2.5">Risks &amp; open questions</h2>
+                  <h2 className={SECTION_LABEL}>Risks &amp; open questions</h2>
                   <ul className="space-y-2.5">
                     {risks.map((r, i) => {
                       const sev = typeof r === 'object' && r?.severity ? r.severity : null;
@@ -831,7 +880,7 @@ function MeetingDetail({ id }: { id: string }) {
 
             {/* Action items — the inline actions. Each item is an inbox_item → /complete + /dismiss. */}
             <section>
-              <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2.5">
+              <h2 className={SECTION_LABEL}>
                 Action items{data.actionItems.length > 0 ? ` · ${items.length}` : ''}
               </h2>
               {data.actionItems.length === 0 ? (
@@ -844,7 +893,7 @@ function MeetingDetail({ id }: { id: string }) {
               ) : (
                 <ul className="space-y-2">
                   {items.map(it => (
-                    <li key={it.id} className="group flex items-start gap-3 rounded-xl border border-neutral-200/80 bg-white px-4 py-3 transition-all duration-200 hover:border-neutral-300">
+                    <li key={it.id} className="group flex items-start gap-3 rounded-xl border border-neutral-200/70 bg-white px-4 py-3 transition-all duration-200 hover:border-neutral-300">
                       <div className="min-w-0 flex-1">
                         <p className="text-[13px] text-neutral-800 leading-snug">{it.workTitle}</p>
                         {it.whyMatters && <p className="text-[11.5px] text-neutral-400 mt-0.5 leading-snug">{it.whyMatters}</p>}
@@ -923,19 +972,22 @@ function CommitmentDetail({ id }: { id: string }) {
   return (
     <div className="flex flex-col h-full min-h-0">
       {/* Header */}
-      <div className="flex-shrink-0 px-7 pt-6 pb-5 border-b border-neutral-200">
-        <div className="flex items-center gap-1.5 mb-2">
+      <DetailHeader
+        chip={
           <span className="inline-flex items-center gap-1 rounded-md bg-indigo-50 px-1.5 py-0.5 text-[10px] font-medium text-indigo-600">
             <CheckCircleIcon className="w-3 h-3" />{data?.direction === 'awaiting' ? 'Waiting on someone' : 'On your plate'}
           </span>
-          {overdue && <span className="inline-flex items-center rounded-md bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-600">Overdue</span>}
-        </div>
-        <h1 className="text-[19px] font-semibold text-neutral-900 leading-snug">{data?.description || 'Commitment'}</h1>
-        <div className="flex items-center gap-2 mt-1.5 text-[13px] text-neutral-500">
-          {data?.counterparty && <span>{data.direction === 'awaiting' ? 'Waiting on' : 'You owe'} {data.counterparty}</span>}
-          {data?.dueDate && <span className={overdue ? 'text-red-500' : 'text-neutral-400'}>· Due {fmtDate(data.dueDate)}</span>}
-        </div>
-      </div>
+        }
+        status={overdue ? <span className="inline-flex items-center rounded-md bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-600">Overdue</span> : undefined}
+        title={data?.description || 'Commitment'}
+        titleClass="text-[19px] leading-snug"
+        meta={
+          <>
+            {data?.counterparty && <span>{data.direction === 'awaiting' ? 'Waiting on' : 'You owe'} {data.counterparty}</span>}
+            {data?.dueDate && <span className={overdue ? 'text-red-500' : 'text-neutral-400'}>· Due {fmtDate(data.dueDate)}</span>}
+          </>
+        }
+      />
 
       {/* Scrolling body — source context */}
       <div className="flex-1 min-h-0 overflow-y-auto px-7 py-6 space-y-6">
@@ -969,23 +1021,23 @@ function CommitmentDetail({ id }: { id: string }) {
             )}
 
             {src ? (
-          <section>
-            <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2.5">
-              {src.kind === 'meeting' ? 'From this meeting' : 'From this email'}
-            </h2>
-            <div className="rounded-xl border border-neutral-200/80 bg-white px-4 py-3.5">
-              <div className="flex items-center gap-1.5 text-[10px] font-medium text-neutral-400 mb-1.5">
-                {src.kind === 'meeting'
-                  ? <CalendarDaysIcon className="w-3 h-3 text-violet-400" />
-                  : <EnvelopeIcon className="w-3 h-3 text-indigo-400" />}
-                {src.from && <span className="text-neutral-500">{src.from}</span>}
-                {src.when && <span className="ml-auto tabular-nums text-neutral-300">{fmtWhen(src.when)}</span>}
-              </div>
-              {src.subject && <p className="text-[13.5px] font-semibold text-neutral-800 leading-snug">{src.subject}</p>}
-              {src.snippet && <p className="text-[13px] text-neutral-600 mt-1.5 leading-relaxed">{src.snippet}</p>}
-              {!src.subject && !src.snippet && <p className="text-[13px] text-neutral-400">No further context available.</p>}
-            </div>
-          </section>
+              <section>
+                <h2 className={SECTION_LABEL}>
+                  {src.kind === 'meeting' ? 'From this meeting' : 'From this email'}
+                </h2>
+                <div className={`${CARD} px-4 py-3.5`}>
+                  <div className="flex items-center gap-1.5 text-[10px] font-medium text-neutral-400 mb-1.5">
+                    {src.kind === 'meeting'
+                      ? <CalendarDaysIcon className="w-3 h-3 text-violet-400" />
+                      : <EnvelopeIcon className="w-3 h-3 text-indigo-400" />}
+                    {src.from && <span className="text-neutral-500">{src.from}</span>}
+                    {src.when && <span className="ml-auto tabular-nums text-neutral-300">{fmtWhen(src.when)}</span>}
+                  </div>
+                  {src.subject && <p className="text-[13.5px] font-semibold text-neutral-800 leading-snug">{src.subject}</p>}
+                  {src.snippet && <p className="text-[13px] text-neutral-600 mt-1.5 leading-relaxed">{src.snippet}</p>}
+                  {!src.subject && !src.snippet && <p className="text-[13px] text-neutral-400">No further context available.</p>}
+                </div>
+              </section>
             ) : (
               <p className="text-[13px] text-neutral-400 leading-relaxed">
                 This commitment was tracked from your activity. No linked source to show.
@@ -1122,21 +1174,18 @@ function FollowUpDetail({ id }: { id: string }) {
   return (
     <div className="flex flex-col h-full min-h-0">
       {/* Header */}
-      <div className="flex-shrink-0 px-7 pt-6 pb-5 border-b border-neutral-200">
-        <div className="flex items-center gap-1.5 mb-2">
-          <span className="inline-flex items-center gap-1 rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-600">
-            <ClockIcon className="w-3 h-3" />Ball in your court
-          </span>
-        </div>
-        <h1 className="text-[19px] font-semibold text-neutral-900 leading-snug">{title}</h1>
-        {who && <p className="text-[13px] text-neutral-500 mt-1.5">Waiting on {who}</p>}
-      </div>
+      <DetailHeader
+        chip={<KindChip tone="amber" icon={ClockIcon} label="Ball in your court" />}
+        title={title}
+        titleClass="text-[19px] leading-snug"
+        meta={who ? <span>Waiting on {who}</span> : undefined}
+      />
 
       {/* Scrolling thread */}
       <div className="flex-1 min-h-0 overflow-y-auto px-7 py-6 space-y-6">
         <div>
           {hasMessages && (
-            <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2.5">Conversation</h2>
+            <h2 className={SECTION_LABEL}>Conversation</h2>
           )}
           {threadErr ? (
             <p className="text-[13px] text-neutral-400">Could not load the conversation.</p>
@@ -1153,14 +1202,14 @@ function FollowUpDetail({ id }: { id: string }) {
 
       {/* Docked nudge composer */}
       <div ref={composerRef} className="flex-shrink-0 border-t border-neutral-200 bg-neutral-50/80 backdrop-blur px-7 py-4 max-h-[45vh] overflow-y-auto">
-        <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2.5">Your nudge</h2>
+        <h2 className={SECTION_LABEL}>Your nudge</h2>
         {sent ? (
           <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50/60 px-4 py-4">
             <CheckIcon className="w-4 h-4 text-emerald-600" />
             <p className="text-[13px] font-medium text-emerald-700">Nudge sent.</p>
           </div>
         ) : (
-          <div className="rounded-xl border border-neutral-200 bg-white p-4">
+          <div className={`${CARD} p-4`}>
             {draft == null ? (
               <div className="h-28 rounded-lg bg-neutral-100 animate-pulse" />
             ) : (
