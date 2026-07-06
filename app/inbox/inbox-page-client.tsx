@@ -1208,9 +1208,21 @@ export function InboxPageClient({
               <div className="flex-shrink-0 relative h-10 border-b border-neutral-100 overflow-hidden">
 
                 {/* Toolbar layer — slides up + fades out when search opens */}
-                <div className={`absolute inset-0 flex items-center pl-2.5 pr-1 transition-all duration-200 ease-in-out ${showSearch ? 'opacity-0 -translate-y-2 pointer-events-none' : 'opacity-100 translate-y-0'}`}>
-                  {/* Density toggle + folder + action icons */}
-                  <div className="flex items-center ml-auto">
+                <div className={`absolute inset-0 flex items-center justify-between pl-3 pr-1 transition-all duration-200 ease-in-out ${showSearch ? 'opacity-0 -translate-y-2 pointer-events-none' : 'opacity-100 translate-y-0'}`}>
+                  {/* Left: context header — current folder (or Inbox) + item count */}
+                  <div className="flex items-baseline gap-1.5 min-w-0">
+                    <span className="text-[15px] font-semibold text-neutral-800 truncate">
+                      {selectedFolder ? selectedFolder.folderName : 'Inbox'}
+                    </span>
+                    {(() => {
+                      const count = selectedFolder ? folderEmails.length : filteredItems.length;
+                      return count > 0 ? (
+                        <span className="text-[12px] text-neutral-400 flex-shrink-0">{count}</span>
+                      ) : null;
+                    })()}
+                  </div>
+                  {/* Right: density toggle + action icons */}
+                  <div className="flex items-center flex-shrink-0">
                     <button
                       onClick={() => handleDensity(density === 'compact' ? 'normal' : 'compact')}
                       title={density === 'compact' ? 'Normal view' : 'Compact view'}
