@@ -433,10 +433,17 @@ export async function GET() {
     //
     // 1. BASIC mustRespond — same shape the synthesis returns, minus the AI ask/angle (the Home
     //    position-fallbacks the missing ones). Freshest-first, capped to the synthesis's own cap (25).
+    // Reuse the AI ask/angle from the LAST-GOOD cache for items we already enriched, keyed by itemId —
+    // so a reload/regenerate KEEPS the beautiful synthesized context line for known items. Only a
+    // genuinely NEW item has no cached ask (the UI shows its snippet until the bg enrich fills it in).
+    const cachedAsk = new Map((cached?.mustRespond?.items ?? []).map((i) => [i.itemId, { ask: i.ask, angle: i.angle }]));
     const basicMustItems: Reply[] = [...mustRespondRaw]
       .sort((a, b) => (b.receivedAt || '').localeCompare(a.receivedAt || ''))
       .slice(0, 25)
-      .map((c) => ({ who: c.from, ask: '', angle: '', itemId: c.itemId, subject: c.subject, snippet: c.snippet, receivedAt: c.receivedAt }));
+      .map((c) => {
+        const prev = cachedAsk.get(c.itemId);
+        return { who: c.from, ask: prev?.ask || '', angle: prev?.angle || '', itemId: c.itemId, subject: c.subject, snippet: c.snippet, receivedAt: c.receivedAt };
+      });
     const basicMustRespond: MustRespond | null = basicMustItems.length ? { teaser: '', items: basicMustItems } : null;
 
     // 2. Assemble the basic brief: NEW must-respond (so new items appear now) + the last-good CACHED
