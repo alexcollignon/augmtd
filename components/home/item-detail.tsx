@@ -576,12 +576,8 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
           )}
         </div>
 
-        {/* What this takes — the graded breakdown; a system draft-task scrolls to the docked reply. */}
-        <WhatThisTakes
-          planKind="email"
-          entityId={id}
-          onDraft={() => composerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })}
-        />
+        {/* No "What this takes" here — a reply is ONE action; the docked reply composer below IS the
+            plan. The breakdown is reserved for multi-step items (meeting / commitment). */}
 
         {/* Suggested angle (light line) — kept just above the docked composer */}
         {angle && (
@@ -753,9 +749,6 @@ function MeetingDetail({ id }: { id: string }) {
               <ComposePanel kind="meeting" entityId={id} />
             )}
 
-            {/* What this takes — the graded breakdown; a system draft-task opens the follow-up composer. */}
-            <WhatThisTakes planKind="meeting" entityId={id} onDraft={() => setComposing(true)} />
-
             {/* Suggested next step — the one call-to-action, kept prominent up top (indigo accent). */}
             {tr?.suggestedNextStep && (
               <section className="rounded-xl border border-indigo-100 bg-indigo-50/40 px-4 py-3.5">
@@ -867,6 +860,10 @@ function MeetingDetail({ id }: { id: string }) {
                 </ul>
               )}
             </section>
+
+            {/* What this takes — the graded breakdown, BELOW the context (action-first ordering).
+                A system draft-task opens the follow-up composer at the top. */}
+            <WhatThisTakes planKind="meeting" entityId={id} onDraft={() => setComposing(true)} />
           </>
         )}
       </div>
@@ -971,9 +968,6 @@ function CommitmentDetail({ id }: { id: string }) {
               </div>
             )}
 
-            {/* What this takes — the graded breakdown; a system draft-task opens the compose panel. */}
-            <WhatThisTakes planKind="commitment" entityId={id} onDraft={() => setComposing(true)} />
-
             {src ? (
           <section>
             <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-2.5">
@@ -997,6 +991,10 @@ function CommitmentDetail({ id }: { id: string }) {
                 This commitment was tracked from your activity. No linked source to show.
               </p>
             )}
+
+            {/* What this takes — the graded breakdown, BELOW the source context (action-first
+                ordering). A system draft-task opens the compose panel at the top. */}
+            <WhatThisTakes planKind="commitment" entityId={id} onDraft={() => setComposing(true)} />
           </>
         )}
       </div>
@@ -1149,12 +1147,8 @@ function FollowUpDetail({ id }: { id: string }) {
           )}
         </div>
 
-        {/* What this takes — the graded breakdown; a system draft-task scrolls to the nudge composer. */}
-        <WhatThisTakes
-          planKind="followup"
-          entityId={id}
-          onDraft={() => composerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })}
-        />
+        {/* No "What this takes" here — a nudge is ONE action; the docked nudge composer below IS the
+            plan. The breakdown is reserved for multi-step items (meeting / commitment). */}
       </div>
 
       {/* Docked nudge composer */}

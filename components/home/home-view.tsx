@@ -839,18 +839,17 @@ export function HomeView() {
   // errors ignored. get-or-generate on the route means a warmed plan just returns cached on open.
   const preGenPlans = useCallback((brief: Brief) => {
     const targets: { kind: string; entityId: string }[] = [];
-    // Must-respond replies first (the most likely opens), then non-meeting priorities. Meetings are
-    // included too (kind=meeting, id = transcript id), all keyed so we never repeat one.
-    for (const m of brief.mustRespond?.items ?? []) {
-      if (m.itemId) targets.push({ kind: 'email', entityId: m.itemId });
-    }
+    // Only warm plans for the kinds that actually RENDER "What this takes": meetings + commitments
+    // (multi-step). Email/reply/nudge deep-dives no longer show a breakdown — their composer IS the
+    // plan — so warming their plans would spend AI calls for something that never renders.
     for (const p of brief.priorities ?? []) {
       if (p.source === 'meeting') {
         const tid = p.id.startsWith('meeting:') ? p.id.slice('meeting:'.length) : p.id;
         if (tid) targets.push({ kind: 'meeting', entityId: tid });
-      } else if (p.itemId) {
-        targets.push({ kind: 'email', entityId: p.itemId });
       }
+    }
+    for (const c of brief.commitments ?? []) {
+      if (c.id) targets.push({ kind: 'commitment', entityId: c.id });
     }
     // De-dupe within this batch + against what we've already warmed, then cap at 4 (cost guard).
     const seen = new Set<string>();
