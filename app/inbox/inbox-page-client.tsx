@@ -3,7 +3,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useSearchParams, useRouter } from 'next/navigation';
-import EmailListSections from '@/components/inbox/email-list-sections';
 import EmailListChronological from '@/components/inbox/email-list-chronological';
 import { type SentEmail } from '@/components/inbox/sent-email-list';
 import FolderSidebar, { type ConnectionFolders, type SelectedFolder } from '@/components/inbox/folder-rail';
@@ -23,7 +22,6 @@ import { setInboxRules } from '@/lib/inbox/classify-item';
 import { Button, EmptyState } from '@/components/ui';
 
 
-type ViewMode = 'chronological' | 'smart';
 type Density = 'normal' | 'compact';
 
 function markdownToHtml(text: string): string {
@@ -195,7 +193,6 @@ export function InboxPageClient({
   const [isSyncing, setIsSyncing] = useState(false);
   const [meetings, setMeetings] = useState<CalendarEvent[]>([]);
   const [meetingsLoading, setMeetingsLoading] = useState(true);
-  const [viewMode, setViewMode] = useState<ViewMode>('chronological');
   const [density, setDensity] = useState<Density>('normal');
   const [folderSidebarCollapsed, setFolderSidebarCollapsed] = useState(() => {
     if (typeof window === 'undefined') return false;
@@ -305,8 +302,6 @@ export function InboxPageClient({
 
   // Restore persisted preferences after mount (avoids SSR hydration mismatch)
   useEffect(() => {
-    const savedView = localStorage.getItem('inboxViewMode') as ViewMode | null;
-    if (savedView === 'smart' || savedView === 'chronological') setViewMode(savedView);
     const savedDensity = localStorage.getItem('inboxDensity') as Density | null;
     if (savedDensity === 'normal' || savedDensity === 'compact') setDensity(savedDensity);
     // Auto-select most recently received item after hydration (can't do during SSR — causes dangerouslySetInnerHTML mismatch)
@@ -315,11 +310,6 @@ export function InboxPageClient({
       : null;
     setSelectedItem(prev => prev ?? latest);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const handleViewMode = (mode: ViewMode) => {
-    setViewMode(mode);
-    localStorage.setItem('inboxViewMode', mode);
-  };
 
   const handleDensity = (d: Density) => {
     setDensity(d);
@@ -708,10 +698,7 @@ export function InboxPageClient({
 
   const filteredItems = useMemo(() => {
     let items = inboxItems;
-    // Smart tab hides noise items; all other work_states (including 'noted') appear
-    if (viewMode === 'smart') {
-      items = items.filter(item => (item as any).work_state !== 'noise');
-    }
+    // The inbox is the raw mailbox mirror — no noise filtering here; the Home does triage.
     // Filter by selected account (items with null connection_id are shown for any account)
     if (selectedConnectionId) {
       items = items.filter(i => {
@@ -734,7 +721,7 @@ export function InboxPageClient({
         (sd?.snippet || '').toLowerCase().includes(q)
       );
     });
-  }, [inboxItems, searchQuery, viewMode, selectedConnectionId]);
+  }, [inboxItems, searchQuery, selectedConnectionId]);
 
   const handleItemConfirmed = (ids: string[], _action: 'confirm_as_mine' | 'not_my_task') => {
     const idsSet = new Set(ids);
@@ -1175,31 +1162,6 @@ export function InboxPageClient({
 
                 {/* Toolbar layer — slides up + fades out when search opens */}
                 <div className={`absolute inset-0 flex items-center pl-2.5 pr-1 transition-all duration-200 ease-in-out ${showSearch ? 'opacity-0 -translate-y-2 pointer-events-none' : 'opacity-100 translate-y-0'}`}>
-                  {/* Segmented view tabs */}
-                  <div className="relative grid grid-cols-2 bg-neutral-100 rounded-full p-0.5">
-                    <div
-                      className="absolute inset-y-0.5 w-[calc(50%-2px)] rounded-full bg-white shadow-sm pointer-events-none"
-                      style={{
-                        left: viewMode === 'smart' ? '50%' : '2px',
-                        transition: 'left 180ms ease-in-out',
-                      }}
-                    />
-                    {(['chronological', 'smart'] as const).map((key) => {
-                      const labels = { chronological: 'Standard', smart: 'Smart' };
-                      return (
-                        <button
-                          key={key}
-                          onClick={() => handleViewMode(key)}
-                          className={`relative z-10 px-2.5 py-0.5 text-[11px] font-medium rounded-full text-center transition-colors duration-180 flex items-center justify-center gap-1 ${
-                            viewMode === key ? 'text-neutral-800' : 'text-neutral-500 hover:text-neutral-700'
-                          }`}
-                        >
-                          {labels[key]}
-                        </button>
-                      );
-                    })}
-                  </div>
-
                   {/* Density toggle + folder + action icons */}
                   <div className="flex items-center ml-auto">
                     <button
@@ -1362,20 +1324,8 @@ export function InboxPageClient({
                       New items will appear here after the next sync.
                     </p>
                   </div>
-                ) : viewMode === 'chronological' ? (
-                  <EmailListChronological
-                    items={filteredItems}
-                    selectedId={selectedItem?.id || null}
-                    onSelect={handleSelectItem}
-                    compact={density === 'compact'}
-                    selectedIds={selectedIds}
-                    onToggleSelect={handleToggleSelect}
-                    onDelete={handleDeleteItem}
-                    onArchive={handleArchiveItem}
-                    onFlag={handleFlagItem}
-                  />
                 ) : (
-                  <EmailListSections
+                  <EmailListChronological
                     items={filteredItems}
                     selectedId={selectedItem?.id || null}
                     onSelect={handleSelectItem}
