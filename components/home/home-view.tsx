@@ -768,6 +768,49 @@ function SkeletonCard({ h = 'h-[72px]' }: { h?: string }) {
   return <div className={`${h} rounded-2xl border border-neutral-200/60 bg-gradient-to-br from-neutral-100 to-neutral-50 animate-pulse`} />;
 }
 
+// ── MERGE-NOT-REPLACE — never downgrade already-shown content on a refetch. The optimistic-surfacing
+// brief route returns a BASIC brief first (empty ask/angle, empty why) then re-enriches in a later
+// pass; a refetch landing mid-enrichment (poll, focus, new-mail realtime) would otherwise flash the
+// visible items from enriched → basic. So for the two enriched lanes (mustRespond replies + keepAnEyeOn
+// awareness rows) we merge the incoming brief onto what's on screen BY itemId: if an item is already
+// shown with enriched fields and the incoming copy is basic (empty), KEEP the enriched fields. Only
+// genuinely NEW items (not in prev) render basic — they fill in on a later refetch once enriched. All
+// other brief fields (counts, dayProgress, priorities, schedule, …) swap wholesale as before.
+function mergeBrief(prev: Brief | null, next: Brief): Brief {
+  if (!prev) return next;
+  // A field is "enriched" when the prev copy has non-empty text and the incoming copy is empty/basic.
+  const keep = (prevVal?: string | null, nextVal?: string | null) =>
+    (nextVal && nextVal.trim()) ? nextVal : ((prevVal && prevVal.trim()) ? prevVal : nextVal);
+
+  let mustRespond = next.mustRespond;
+  if (next.mustRespond?.items) {
+    const prevById = new Map((prev.mustRespond?.items ?? []).map((m) => [m.itemId, m]));
+    mustRespond = {
+      ...next.mustRespond,
+      items: next.mustRespond.items.map((m) => {
+        const p = prevById.get(m.itemId);
+        if (!p) return m; // genuinely new → render basic until its own enrich lands
+        return { ...m, ask: keep(p.ask, m.ask) ?? m.ask, angle: keep(p.angle, m.angle) ?? m.angle };
+      }),
+    };
+  }
+
+  let keepAnEyeOn = next.keepAnEyeOn;
+  if (next.keepAnEyeOn?.items) {
+    const prevById = new Map((prev.keepAnEyeOn?.items ?? []).map((k) => [k.itemId, k]));
+    keepAnEyeOn = {
+      ...next.keepAnEyeOn,
+      items: next.keepAnEyeOn.items.map((k) => {
+        const p = prevById.get(k.itemId);
+        if (!p) return k;
+        return { ...k, why: keep(p.why, k.why) ?? k.why };
+      }),
+    };
+  }
+
+  return { ...next, mustRespond, keepAnEyeOn };
+}
+
 export function HomeView() {
   const [brief, setBrief] = useState<Brief | null>(null);
   const [team, setTeam] = useState<{ messages: TeamMsg[]; needsReview: TeamReview[] } | null>(null);
@@ -796,18 +839,17 @@ export function HomeView() {
   // errors ignored. get-or-generate on the route means a warmed plan just returns cached on open.
   const preGenPlans = useCallback((brief: Brief) => {
     const targets: { kind: string; entityId: string }[] = [];
-    // Must-respond replies first (the most likely opens), then non-meeting priorities. Meetings are
-    // included too (kind=meeting, id = transcript id), all keyed so we never repeat one.
-    for (const m of brief.mustRespond?.items ?? []) {
-      if (m.itemId) targets.push({ kind: 'email', entityId: m.itemId });
-    }
+    // Only warm plans for the kinds that actually RENDER "What this takes": meetings + commitments
+    // (multi-step). Email/reply/nudge deep-dives no longer show a breakdown — their composer IS the
+    // plan — so warming their plans would spend AI calls for something that never renders.
     for (const p of brief.priorities ?? []) {
       if (p.source === 'meeting') {
         const tid = p.id.startsWith('meeting:') ? p.id.slice('meeting:'.length) : p.id;
         if (tid) targets.push({ kind: 'meeting', entityId: tid });
-      } else if (p.itemId) {
-        targets.push({ kind: 'email', entityId: p.itemId });
       }
+    }
+    for (const c of brief.commitments ?? []) {
+      if (c.id) targets.push({ kind: 'commitment', entityId: c.id });
     }
     // De-dupe within this batch + against what we've already warmed, then cap at 4 (cost guard).
     const seen = new Set<string>();
@@ -847,7 +889,7 @@ export function HomeView() {
     ]).then(([b, t]) => {
       if (!aliveRef.current) return;
       // Background refresh only SWAPS in fresh data — it never blanks the view.
-      if (b && !b.error) { setBrief(b); preGenPlans(b); }
+      if (b && !b.error) { setBrief((prev) => mergeBrief(prev, b)); preGenPlans(b); }
       else if (!background) setBrief(null);
       if (t) setTeam({ messages: t.messages ?? [], needsReview: t.needsReview ?? [] });
       // RESET the session filter sets on a settled refetch — the server data is authoritative
@@ -894,7 +936,16 @@ export function HomeView() {
     let cancelled = false;
     const bump = () => {
       if (debounce) clearTimeout(debounce);
-      debounce = setTimeout(() => { if (!cancelled && aliveRef.current) load(true); }, 2500);
+      debounce = setTimeout(() => {
+        if (cancelled || !aliveRef.current) return;
+        // SELF-ACTION SUPPRESSION: a user's own Done/Dismiss/Send/mute UPDATEs inbox_items/commitments,
+        // which fires this very realtime event. The UI + counts were already updated optimistically, so
+        // reloading here would only flicker the *remaining* items (enriched → basic → enriched) under the
+        // user. Skip the refetch inside the just-acted window; genuine external changes (new mail) during
+        // that ~4.5s are caught by the next 90s poll / focus / a later realtime event.
+        if (Date.now() - lastActionRef.current < 4500) return;
+        load(true);
+      }, 2500);
     };
     (async () => {
       try {
@@ -985,15 +1036,21 @@ export function HomeView() {
   };
   // Show the "…· Undo" toast after a reversible INBOX action. `entityId` = the inbox item restored;
   // `sessionKeys` = the keys to clear on undo (itemId + optionally the card's p.id).
-  const toastInbox = (message: string, entityId: string, sessionKeys: string[]) =>
+  const toastInbox = (message: string, entityId: string, sessionKeys: string[]) => {
+    markActed(); // fired synchronously at action time → the self-action realtime refetch is suppressed
     showUndoToast({ message, entityType: 'inbox_item', entityId, onUndo: () => undoSessionState(sessionKeys) });
+  };
   // Show the "…· Undo" toast after a reversible COMMITMENT action.
-  const toastCommitment = (message: string, id: string) =>
+  const toastCommitment = (message: string, id: string) => {
+    markActed();
     showUndoToast({ message, entityType: 'commitment', entityId: id, onUndo: () => undoSessionState([id]) });
+  };
   // Show the "Muted · Undo" toast after muting a sender. Undo restores that sender's awareness items
   // (best-effort, via the sender restore path) and background-refreshes so they reappear.
-  const toastSenderMuted = (sender: string) =>
+  const toastSenderMuted = (sender: string) => {
+    markActed(); // mute UPDATEs inbox_items → suppress the self-action realtime refetch (same window)
     showUndoToast({ message: `Muted ${sender}`, entityType: 'sender', entityId: sender, onUndo: () => load(true) });
+  };
 
   // Called by the Activity-log Undo (which lives in a separate component tree and can't reach this
   // state). After a restore succeeds there, this un-hides the item on the Home for ANY type: drop its

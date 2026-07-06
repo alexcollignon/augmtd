@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextResponse, after } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { getSystemClient } from '@/lib/ai/factory';
 import { buildAnsweredSet } from '@/lib/inbox/needs-reply';
@@ -21,6 +21,25 @@ const MAX_PRIORITIES = 6;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function attendeeEmails(ev: any): string[] {
   return (ev?.attendees ?? []).map((a: any) => (a?.email || '').toLowerCase()).filter(Boolean);
+}
+
+// A calendar-CANCELLATION event whose title is the raw provider string ("Canceled event: …",
+// "Cancelled: …") is not an upcoming meeting even when its row status is still 'confirmed'. These
+// ARE the literal Google/Outlook-generated titles, so a small prefix list is the right tool.
+function isCancelledEventTitle(title: string | null | undefined): boolean {
+  const t = (title || '').trimStart().toLowerCase();
+  return t.startsWith('canceled event:') || t.startsWith('cancelled event:') ||
+    t.startsWith('canceled:') || t.startsWith('cancelled:');
+}
+
+// Calendar-SYSTEM email subjects (invite created/updated/cancelled, RSVP replies) leak into the
+// "last thread" subtitle as raw provider strings. These are the literal multi-language subjects
+// providers auto-generate — a prefix/pattern list is correct here (not a content heuristic). When a
+// related email's subject matches, suppress the subtitle rather than show the raw string.
+function isCalendarSystemSubject(subject: string | null | undefined): boolean {
+  const s = (subject || '').trim();
+  if (!s) return false;
+  return /^(convite atualizado|invitation updated|updated invitation|updated:|canceled event|cancelled event|canceled:|cancelled:|convite cancelado|convite:|invitation:|invite:|accepted:|declined:|tentative:|aceito:|recusado:|talvez:|einladung|aktualisierte einladung|abgesagt:)/i.test(s);
 }
 
 export async function GET() {
@@ -300,8 +319,10 @@ export async function GET() {
   });
 
   // ── Today's schedule + light prep on the next meeting ──
+  // Drop provider cancellation rows: the query already excludes status='cancelled', but a cancellation
+  // can arrive as a still-'confirmed' row with a raw "Canceled event: …" title — that's not upcoming.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const meetings = (meetingsRes.data ?? []) as any[];
+  const meetings = ((meetingsRes.data ?? []) as any[]).filter((m) => !isCancelledEventTitle(m.title));
   let nextPrep: { lastEmail?: { subject: string }; openCommitments: string[]; lastMeeting?: { title: string; date: string; recall: string; person: string } } | null = null;
   if (meetings[0]) {
     const others = attendeeEmails(meetings[0]).filter((e) => e !== self);
@@ -312,8 +333,11 @@ export async function GET() {
       const related = commits.filter((c) => others.includes((c.counterparty || '').toLowerCase())).map((c) => c.description);
       // Reminder (Slice C): if you've met this person before, recall what was discussed.
       const recall = await lastMeetingRecall(user.id, others[0], supabase);
+      // Suppress the "last thread" subtitle when the only related email is a calendar-system
+      // notification (invite update/cancel/RSVP) — its raw subject would leak in as noise.
+      const lastSubject = le?.[0]?.subject && !isCalendarSystemSubject(le[0].subject) ? le[0].subject : null;
       nextPrep = {
-        ...(le?.[0] ? { lastEmail: { subject: le[0].subject || '(no subject)' } } : {}),
+        ...(lastSubject ? { lastEmail: { subject: lastSubject } } : {}),
         openCommitments: related.slice(0, 3),
         ...(recall ? { lastMeeting: { ...recall, person: (others[0].split('@')[0] || others[0]) } } : {}),
       };
@@ -402,36 +426,72 @@ export async function GET() {
   const legacyPlacements = cached != null && cached.commitmentPlacements === undefined && commitmentCands.length > 0;
   const stale = !cached || cached.sig !== sig || legacyPlacements || (now.getTime() - new Date(cached.generated_at).getTime()) > BRIEF_TTL;
   if (stale) {
-    // Owed-context for the prose = the ingest-default owed set (re-placement happens inside).
-    const owedFacts = owedByIngest.map((c) => ({ description: c.description, overdue: c.overdue, dueToday: c.dueToday, dueDate: c.dueDate }));
-    const synth = await synthesizeBrief(getSystemClient('summarization'), {
-      firstName, now, ctx: briefCtx, schedule,
-      commitments: owedFacts,
-      commitmentCandidates: commitmentCands,
-      waitingOnCount: status.waitingOn, triaged: handled.triaged, filtered: handled.filtered,
-      emailReplyCount: emailP,
-      topPriorities: cappedPriorities.map((p) => ({ title: p.title, posture: p.posture, source: p.source, overdue: !!p.overdue })),
-      mustRespond: mustRespondRaw,
-      // Waiting candidates = the ingest-awaiting commitments — the synthesis writes the follow-up
-      // prose (status + nextMove) over these. Final lane routing is by the placement verdict below;
-      // a commitment re-placed to ball_in_court that wasn't here still appears via the raw fallback.
-      waiting: commitmentCands.filter((c) => c.direction === 'awaiting').map((c) => ({ id: c.id, counterparty: c.counterparty, description: c.description, ageDays: c.ageDays })),
-      fyiGroups: fyiTop.map((g) => ({ label: g.label, count: g.count, kind: g.kind, subjects: g.subjects })),
-      keepAnEyeOn: keepAnEyeOnRaw,
-    });
-    // Keep the cached value on a failed section (nulls only overwrite when we got something).
-    if (synth.tldr) { tldr = synth.tldr; briefLine = synth.tldr.teaser || briefLine; }
-    if (synth.mustRespond !== null || !mustRespondRaw.length) mustRespond = synth.mustRespond;
-    if (synth.keepAnEyeOn !== null || !keepAnEyeOnRaw.length) keepAnEyeOn = synth.keepAnEyeOn;
-    if (synth.followups !== null || !commitmentCands.some((c) => c.direction === 'awaiting')) followups = synth.followups;
-    if (synth.fyiDigest !== null || !fyiTop.length) {
-      // Fill the deterministic tail counts (computed over the FULL group set, not just the shown top).
-      fyiDigest = synth.fyiDigest ? { ...synth.fyiDigest, tailGroups: fyiTailGroups, tailItems: fyiTailItems } : null;
-    }
-    droppedItemIds = synth.droppedItemIds;
-    if (Object.keys(synth.commitmentPlacements).length) commitmentPlacements = synth.commitmentPlacements;
+    // ── OPTIMISTIC SURFACING ─────────────────────────────────────────────────────────────────────
+    // The AI synthesis (~10–30s) is what enriches the brief (ask/angle/ordering/supersession drops).
+    // "What needs you" items must NOT wait on it: build a BASIC mustRespond from the deterministic
+    // candidates so a freshly-synced item is PRESENT immediately, then enrich in the BACKGROUND.
+    //
+    // 1. BASIC mustRespond — same shape the synthesis returns, minus the AI ask/angle (the Home
+    //    position-fallbacks the missing ones). Freshest-first, capped to the synthesis's own cap (25).
+    const basicMustItems: Reply[] = [...mustRespondRaw]
+      .sort((a, b) => (b.receivedAt || '').localeCompare(a.receivedAt || ''))
+      .slice(0, 25)
+      .map((c) => ({ who: c.from, ask: '', angle: '', itemId: c.itemId, subject: c.subject, snippet: c.snippet, receivedAt: c.receivedAt }));
+    const basicMustRespond: MustRespond | null = basicMustItems.length ? { teaser: '', items: basicMustItems } : null;
 
+    // 2. Assemble the basic brief: NEW must-respond (so new items appear now) + the last-good CACHED
+    //    AI content for the other lanes (so they don't blank on a refresh). Falls back to null/empty
+    //    when there's no cache. Commitment placements keep the cached verdicts (or {}) so the routing
+    //    below degrades to the ingest-direction default — never breaks.
+    mustRespond = basicMustRespond;
+    // tldr / followups / fyiDigest / keepAnEyeOn / droppedItemIds / commitmentPlacements already
+    // initialized from `cached` above — leave them as-is (last-good, or null/[]/{}).
+
+    // 3. Persist the basic brief IMMEDIATELY with the NEW sig. This is the anti-regen-storm guard:
+    //    the very next request (poll / realtime refetch) is a cache-HIT on this basic brief and does
+    //    NOT trigger a second synthesis while the background one is still running.
     await supabase.from('profiles').update({ home_brief: { text: briefLine, tldr, followups, fyiDigest, mustRespond, keepAnEyeOn, droppedItemIds, commitmentPlacements, generated_at: now.toISOString(), sig } }).eq('id', user.id).then(() => {}, () => {});
+
+    // 4. Enrich in the BACKGROUND — same inputs as before — and persist the ENRICHED brief with the
+    //    SAME sig (upgrades the cache in place: real ask/angle, ordering, supersession drops,
+    //    placements). Non-fatal: any failure leaves the basic brief cached, which is still correct.
+    const owedFacts = owedByIngest.map((c) => ({ description: c.description, overdue: c.overdue, dueToday: c.dueToday, dueDate: c.dueDate }));
+    after(async () => {
+      try {
+        const synth = await synthesizeBrief(getSystemClient('summarization'), {
+          firstName, now, ctx: briefCtx, schedule,
+          commitments: owedFacts,
+          commitmentCandidates: commitmentCands,
+          waitingOnCount: status.waitingOn, triaged: handled.triaged, filtered: handled.filtered,
+          emailReplyCount: emailP,
+          topPriorities: cappedPriorities.map((p) => ({ title: p.title, posture: p.posture, source: p.source, overdue: !!p.overdue })),
+          mustRespond: mustRespondRaw,
+          // Waiting candidates = the ingest-awaiting commitments — the synthesis writes the follow-up
+          // prose (status + nextMove) over these. Final lane routing is by the placement verdict below;
+          // a commitment re-placed to ball_in_court that wasn't here still appears via the raw fallback.
+          waiting: commitmentCands.filter((c) => c.direction === 'awaiting').map((c) => ({ id: c.id, counterparty: c.counterparty, description: c.description, ageDays: c.ageDays })),
+          fyiGroups: fyiTop.map((g) => ({ label: g.label, count: g.count, kind: g.kind, subjects: g.subjects })),
+          keepAnEyeOn: keepAnEyeOnRaw,
+        });
+        // Start from the basic brief we just persisted; upgrade each section the synthesis produced
+        // (nulls only overwrite when we got something, same rule as before). This is the ENRICHED blob.
+        let enrTldr = tldr, enrFollowups = followups, enrFyiDigest = fyiDigest;
+        let enrMustRespond = mustRespond, enrKeepAnEyeOn = keepAnEyeOn, enrBriefLine = briefLine;
+        let enrDropped = droppedItemIds, enrPlacements = commitmentPlacements;
+        if (synth.tldr) { enrTldr = synth.tldr; enrBriefLine = synth.tldr.teaser || enrBriefLine; }
+        if (synth.mustRespond !== null || !mustRespondRaw.length) enrMustRespond = synth.mustRespond;
+        if (synth.keepAnEyeOn !== null || !keepAnEyeOnRaw.length) enrKeepAnEyeOn = synth.keepAnEyeOn;
+        if (synth.followups !== null || !commitmentCands.some((c) => c.direction === 'awaiting')) enrFollowups = synth.followups;
+        if (synth.fyiDigest !== null || !fyiTop.length) {
+          enrFyiDigest = synth.fyiDigest ? { ...synth.fyiDigest, tailGroups: fyiTailGroups, tailItems: fyiTailItems } : null;
+        }
+        enrDropped = synth.droppedItemIds;
+        if (Object.keys(synth.commitmentPlacements).length) enrPlacements = synth.commitmentPlacements;
+        // Persist the enriched brief under the SAME sig — upgrades the cache in place so the next
+        // refetch is a cache-hit on the fully-synthesized version.
+        await supabase.from('profiles').update({ home_brief: { text: enrBriefLine, tldr: enrTldr, followups: enrFollowups, fyiDigest: enrFyiDigest, mustRespond: enrMustRespond, keepAnEyeOn: enrKeepAnEyeOn, droppedItemIds: enrDropped, commitmentPlacements: enrPlacements, generated_at: now.toISOString(), sig } }).eq('id', user.id).then(() => {}, () => {});
+      } catch { /* non-fatal — basic brief stays cached */ }
+    });
   }
 
   // ── Route each open commitment by the synthesis's VERDICT (fallback = the ingest-direction default).
@@ -535,7 +595,12 @@ export async function GET() {
   // needYou baseline = live counts already computed above: replies you owe (mustRespondOut) +
   // non-meeting/needs-you priority cards + on-your-plate commitments still pending.
   const needYouReplies = (mustRespondOut?.items ?? []).length;
-  const needYouCards = cappedPriorities.filter((p) => p.posture !== 'needs_reply' && p.source !== 'meeting').length;
+  // Meeting cards ARE shown in "What needs you" (a Review action + follow-ups), so each meeting CARD
+  // counts as 1 unit of needYou — otherwise the ring reads "1 needs you" while 2 items show, and
+  // handling the meeting never moves it. (One card per meeting, not per nested action item.) Cleared
+  // already counts meeting follow-ups: they're inbox_items (source='meeting') and inboxClearedRes has
+  // no source filter — so clearing them moves the cleared half. The two halves stay consistent.
+  const needYouCards = cappedPriorities.filter((p) => p.posture !== 'needs_reply').length;
   const needYou = needYouReplies + needYouCards + commitments.length;
   const dayProgress = { cleared: clearedToday, needYou };
 
