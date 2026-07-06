@@ -386,7 +386,10 @@ function DigestReply({ m, onDismiss, emphasis = false, onUndoInbox }: { m: Diges
             </p>
             {when && <span className="flex-shrink-0 ml-auto text-[11px] text-neutral-300 tabular-nums">{when}</span>}
           </div>
-          {m.ask && <p className={`${emphasis ? 'text-[12.5px]' : 'text-[12px]'} text-neutral-500 mt-0.5 leading-snug line-clamp-1`}>{m.ask}</p>}
+          {/* Show the AI-synthesized ask when we have it; fall back to the email snippet so the context
+              line is NEVER empty (the optimistic "basic" brief has no ask yet — a full reload was showing
+              a blank line until the background enrich landed). */}
+          {(m.ask || m.snippet) && <p className={`${emphasis ? 'text-[12.5px]' : 'text-[12px]'} text-neutral-500 mt-0.5 leading-snug line-clamp-1`}>{m.ask || m.snippet}</p>}
         </div>
         {m.itemId && (
           <span className="flex-shrink-0 flex items-center gap-2.5 mt-0.5">
