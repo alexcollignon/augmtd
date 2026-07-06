@@ -55,14 +55,14 @@ export async function resolveThreadOnReply(opts: {
     // was created. We fetch first (need created_at as the `since` window + the subject for the log). ──
     const { data: openItems } = await client
       .from('inbox_items')
-      .select('id, created_at, work_title, source_data')
+      .select('id, created_at, work_title, source_data, connection_id')
       .eq('user_id', userId)
       .eq('source', 'email')
       .eq('status', 'pending')
       .in('work_state', REPLY_STATES)
       .eq('source_data->>thread_id', threadId);
 
-    for (const it of (openItems ?? []) as Array<{ id: string; created_at: string; work_title?: string; source_data?: { subject?: string } }>) {
+    for (const it of (openItems ?? []) as Array<{ id: string; created_at: string; work_title?: string; source_data?: { subject?: string }; connection_id?: string | null }>) {
       const state = computeThreadReplyState(messages, it.created_at ? new Date(it.created_at) : null);
       if (!state.userReplied) continue; // conservative: no clear structural reply → leave it
 
@@ -80,6 +80,13 @@ export async function resolveThreadOnReply(opts: {
         .eq('user_id', userId)
         .eq('status', 'pending'); // guard against a concurrent flip
       if (error) continue;
+
+      // Swap the mailbox label to AUGMTD/Done — the user replied from Gmail/Outlook directly, so the
+      // thread is resolved and should not linger under "Needs reply". Honors auto_label, non-fatal.
+      await import('@/lib/inbox/reconcile-item-label')
+        .then(({ reconcileItemLabel }) =>
+          reconcileItemLabel({ userId, itemId: it.id, item: it, targetLabel: 'done', client }))
+        .catch(() => {});
 
       out.resolvedItems++;
       const subject = it.work_title || (it.source_data?.subject as string) || 'a thread';

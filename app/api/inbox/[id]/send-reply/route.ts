@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, after } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { sendGmailReply, EmailAttachment } from '@/lib/google/gmail';
 import { sendOutlookReply } from '@/lib/microsoft/outlook';
@@ -141,6 +141,14 @@ export async function POST(
     // Resolution-on-reply: the loop is closed — clear this item so it leaves "Needs reply"
     // (inbox + Home). Replying ≠ reading; this fires only on an actual sent reply.
     await supabase.from('inbox_items').update({ status: 'completed' }).eq('id', id).eq('user_id', user.id);
+
+    // Swap the mailbox label to AUGMTD/Done (honors auto_label). Non-fatal, after() so it never
+    // blocks the send response. We have the connection + thread id already, but reconcileItemLabel
+    // re-resolves them cheaply from the item for a single code path.
+    after(async () => {
+      const { reconcileItemLabel } = await import('@/lib/inbox/reconcile-item-label');
+      await reconcileItemLabel({ userId: user.id, itemId: id, item, targetLabel: 'done', client: supabase });
+    });
 
     // Chain handoff: a promise inside the reply ("I'll send X Friday") becomes a follow-up
     // immediately — don't wait for the next sync. Gated on the user's To-do capture setting.

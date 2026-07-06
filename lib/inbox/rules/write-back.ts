@@ -57,6 +57,67 @@ export class GmailLabelCache {
   }
 }
 
+// All AUGMTD state-label display names (Gmail form). The reconciler strips any of these that are
+// present before adding the target, so a thread never carries two conflicting AUGMTD/* state labels.
+const ALL_STATE_LABELS = Object.values(LABEL_DISPLAY);
+
+/**
+ * Reconcile the AUGMTD state label on a thread: remove ANY existing AUGMTD/* state label, then add
+ * the target. The single entry point used by every state-change caller (send/complete/dismiss/
+ * external-reply resolution + reactivation on a new inbound to a resolved thread). Idempotent,
+ * non-fatal (NEVER throws — a label failure must not break send/complete/dismiss/sync), returns
+ * whether the target label was applied. Honors the caller's auto_label check (skip when off).
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function reconcileAugmtdLabel(opts: {
+  provider: string;
+  encryptedTokens: string;
+  /** either a work_state (mapped via mapWorkStateToLabel) or an explicit RuleLabel via targetLabel */
+  targetWorkState?: string | null;
+  targetLabel?: RuleLabel;
+  gmailThreadId?: string | null;
+  gmailCache?: GmailLabelCache;
+  outlookMessageId?: string | null;
+  onTokenRefresh?: any;
+}): Promise<boolean> {
+  const target: RuleLabel = opts.targetLabel ?? mapWorkStateToLabel(opts.targetWorkState);
+  const targetName = LABEL_DISPLAY[target];
+  if (!targetName) return false;
+  try {
+    if (opts.provider === 'gmail' && opts.gmailThreadId) {
+      const cache = opts.gmailCache ?? new GmailLabelCache(opts.encryptedTokens);
+      const { addGmailThreadLabel, removeGmailThreadLabel } = await import('@/lib/google/gmail');
+      // Remove every OTHER existing AUGMTD/* state label. We only resolve ids for labels that already
+      // exist (ensure() would create them, but a removed label absent from the thread is a harmless
+      // no-op), so we list once via the cache and skip names it can't resolve.
+      for (const name of ALL_STATE_LABELS) {
+        if (name === targetName) continue;
+        const id = await cache.ensure(name).catch(() => null);
+        if (!id) continue;
+        await removeGmailThreadLabel(opts.encryptedTokens, opts.gmailThreadId, id).catch(() => {});
+      }
+      // Add the target.
+      const targetId = await cache.ensure(targetName);
+      if (!targetId) return false;
+      await addGmailThreadLabel(opts.encryptedTokens, opts.gmailThreadId, targetId);
+      return true;
+    } else if (opts.provider === 'outlook' && opts.outlookMessageId) {
+      const { addOutlookCategory, removeOutlookCategory } = await import('@/lib/microsoft/outlook');
+      const targetCategory = targetName.replace('/', ': ');
+      for (const name of ALL_STATE_LABELS) {
+        const category = name.replace('/', ': ');
+        if (category === targetCategory) continue;
+        await removeOutlookCategory(opts.encryptedTokens, opts.outlookMessageId, category, opts.onTokenRefresh).catch(() => {});
+      }
+      await addOutlookCategory(opts.encryptedTokens, opts.outlookMessageId, targetCategory, opts.onTokenRefresh);
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function writeBackLabel(opts: {
   provider: string;

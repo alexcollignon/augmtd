@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, after } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { logActivity } from '@/lib/activity/log';
 
@@ -83,6 +83,13 @@ export async function POST(
       console.error('Error logging learning signal:', signalError);
       // Don't fail the request, just log the error
     }
+
+    // Swap the mailbox label to AUGMTD/Done (honors auto_label). Non-fatal, after() so it never
+    // blocks the response.
+    after(async () => {
+      const { reconcileItemLabel } = await import('@/lib/inbox/reconcile-item-label');
+      await reconcileItemLabel({ userId: user.id, itemId: id, item, targetLabel: 'done', client: supabase });
+    });
 
     // Activity timeline (non-fatal).
     await logActivity(supabase, user.id, {
