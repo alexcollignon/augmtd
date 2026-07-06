@@ -1300,7 +1300,16 @@ export function HomeView() {
   // thin/unbalanced, so we fold those sections to the BOTTOM of the main column and render one column.
   // 3+ sections → keep the calm right rail.
   const RAIL_MIN_FOR_SIDEBAR = 3;
-  const useSidebar = railNodes.length >= RAIL_MIN_FOR_SIDEBAR;
+  // LATCH the two-zone layout so it never flips mid-load. The brief arrives in stages (an optimistic
+  // BASIC brief first, then the enriched pass fills the ambient lanes — keepAnEyeOn / fyiDigest /
+  // followups — plus the separate /api/workers/home team fetch), so `railNodes.length` climbs past the
+  // threshold AFTER first paint → a one-column→two-column snap. We only ever go false→true: once the
+  // rail has earned the sidebar this session we keep it, so a transient recompute (or a mid-enrichment
+  // refetch) can never collapse it back to one column. A genuinely sparse day never reaches the
+  // threshold, so it stays one column throughout — the latch only removes the LOAD-time flip.
+  const sidebarLatchedRef = useRef(false);
+  if (railNodes.length >= RAIL_MIN_FOR_SIDEBAR) sidebarLatchedRef.current = true;
+  const useSidebar = sidebarLatchedRef.current;
 
   return (
     // Flex-row SHELL (mirrors the inbox `app/inbox/inbox-page-client.tsx` ~1470): a scrolling MAIN
