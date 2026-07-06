@@ -607,7 +607,7 @@ function StartHereReplyBody({ m, onDismiss, onUndoInbox }: { m: { who: string; a
             </div>
           </div>
           {m.snippet && <p className="text-[13px] text-neutral-500 mt-2 leading-relaxed line-clamp-2 border-l-2 border-neutral-200 pl-3">{m.snippet}</p>}
-          {m.ask && <p className="text-[13.5px] text-neutral-600 mt-2 leading-relaxed">{m.ask}</p>}
+          {(m.ask || m.snippet) && <p className="text-[13.5px] text-neutral-600 mt-2 leading-relaxed">{m.ask || m.snippet}</p>}
           {m.angle && <p className="text-[13px] text-neutral-600 mt-1.5 leading-relaxed"><span className="font-medium text-neutral-700">Angle:</span> {m.angle}</p>}
         </div>
         {m.itemId && (
