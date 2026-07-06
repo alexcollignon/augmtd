@@ -113,13 +113,10 @@ async function processGmailPush(emailAddress: string, historyId: string) {
       }
     }
 
-    // Always advance historyId even if no actionable messages
-    await adminSupabase
-      .from('connections')
-      .update({ push_history_id: historyId })
-      .eq('id', connection.id);
-
+    // Advance the cursor NOW only when there's nothing to store (safe — nothing to lose). When there ARE
+    // messages we advance AFTER they're stored (below) so a failed sync can never skip unstored mail.
     if (messageIds.length === 0) {
+      await adminSupabase.from('connections').update({ push_history_id: historyId }).eq('id', connection.id);
       console.log(`[GmailPush] No new messages for ${emailAddress}, historyId advanced to ${historyId}`);
       return;
     }
@@ -138,6 +135,12 @@ async function processGmailPush(emailAddress: string, historyId: string) {
     await syncEmailsForConnection(connection, adminSupabase, {
       preloadedMessages: fetchedMessages,
     });
+
+    // ADVANCE THE CURSOR ONLY AFTER STORAGE SUCCEEDS. If any step above threw (fetch, sync, rate limit,
+    // token refresh, a single bad message), push_history_id stays put so the NEXT push — or the periodic
+    // sweep — re-fetches this exact range. Emails are never silently dropped by a cursor that moved past
+    // unstored mail. Re-fetching is idempotent (sync dedups by message_id). This is the missed-email fix.
+    await adminSupabase.from('connections').update({ push_history_id: historyId }).eq('id', connection.id);
 
     // Sync calendar + schedule bots — catches meeting invitations arriving via email
     await syncCalendarForConnection(connection, adminSupabase, { daysAhead: 14, daysBehind: 0 })
