@@ -880,6 +880,10 @@ export function HomeView() {
   // committed yet, so a reset could briefly resurface an item the user just cleared. Outside that
   // window the server data is authoritative and we reset (which is what makes RESTORED items reappear).
   const lastActionRef = useRef(0);
+  // Latch for the two-zone (sidebar) layout — declared HERE (before any early return) so the hook order
+  // is stable. It only ever flips false→true (see the mutation below railNodes), so the load-time
+  // basic→enriched climb can't snap one-column→two-column.
+  const sidebarLatchedRef = useRef(false);
   const markActed = () => { lastActionRef.current = Date.now(); };
   // The background/foreground brief loader, lifted to component scope so an Undo can trigger an
   // immediate refresh (bringing a just-restored item back on screen without waiting for the poll).
@@ -1307,7 +1311,7 @@ export function HomeView() {
   // rail has earned the sidebar this session we keep it, so a transient recompute (or a mid-enrichment
   // refetch) can never collapse it back to one column. A genuinely sparse day never reaches the
   // threshold, so it stays one column throughout — the latch only removes the LOAD-time flip.
-  const sidebarLatchedRef = useRef(false);
+  // (sidebarLatchedRef is declared up top, before the loading early-return, to keep hook order stable.)
   if (railNodes.length >= RAIL_MIN_FOR_SIDEBAR) sidebarLatchedRef.current = true;
   const useSidebar = sidebarLatchedRef.current;
 
