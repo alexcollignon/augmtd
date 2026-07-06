@@ -23,6 +23,25 @@ function attendeeEmails(ev: any): string[] {
   return (ev?.attendees ?? []).map((a: any) => (a?.email || '').toLowerCase()).filter(Boolean);
 }
 
+// A calendar-CANCELLATION event whose title is the raw provider string ("Canceled event: …",
+// "Cancelled: …") is not an upcoming meeting even when its row status is still 'confirmed'. These
+// ARE the literal Google/Outlook-generated titles, so a small prefix list is the right tool.
+function isCancelledEventTitle(title: string | null | undefined): boolean {
+  const t = (title || '').trimStart().toLowerCase();
+  return t.startsWith('canceled event:') || t.startsWith('cancelled event:') ||
+    t.startsWith('canceled:') || t.startsWith('cancelled:');
+}
+
+// Calendar-SYSTEM email subjects (invite created/updated/cancelled, RSVP replies) leak into the
+// "last thread" subtitle as raw provider strings. These are the literal multi-language subjects
+// providers auto-generate — a prefix/pattern list is correct here (not a content heuristic). When a
+// related email's subject matches, suppress the subtitle rather than show the raw string.
+function isCalendarSystemSubject(subject: string | null | undefined): boolean {
+  const s = (subject || '').trim();
+  if (!s) return false;
+  return /^(convite atualizado|invitation updated|updated invitation|updated:|canceled event|cancelled event|canceled:|cancelled:|convite cancelado|convite:|invitation:|invite:|accepted:|declined:|tentative:|aceito:|recusado:|talvez:|einladung|aktualisierte einladung|abgesagt:)/i.test(s);
+}
+
 export async function GET() {
   const supabase = await createClient();
   const { data: { user }, error } = await supabase.auth.getUser();
@@ -300,8 +319,10 @@ export async function GET() {
   });
 
   // ── Today's schedule + light prep on the next meeting ──
+  // Drop provider cancellation rows: the query already excludes status='cancelled', but a cancellation
+  // can arrive as a still-'confirmed' row with a raw "Canceled event: …" title — that's not upcoming.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const meetings = (meetingsRes.data ?? []) as any[];
+  const meetings = ((meetingsRes.data ?? []) as any[]).filter((m) => !isCancelledEventTitle(m.title));
   let nextPrep: { lastEmail?: { subject: string }; openCommitments: string[]; lastMeeting?: { title: string; date: string; recall: string; person: string } } | null = null;
   if (meetings[0]) {
     const others = attendeeEmails(meetings[0]).filter((e) => e !== self);
@@ -312,8 +333,11 @@ export async function GET() {
       const related = commits.filter((c) => others.includes((c.counterparty || '').toLowerCase())).map((c) => c.description);
       // Reminder (Slice C): if you've met this person before, recall what was discussed.
       const recall = await lastMeetingRecall(user.id, others[0], supabase);
+      // Suppress the "last thread" subtitle when the only related email is a calendar-system
+      // notification (invite update/cancel/RSVP) — its raw subject would leak in as noise.
+      const lastSubject = le?.[0]?.subject && !isCalendarSystemSubject(le[0].subject) ? le[0].subject : null;
       nextPrep = {
-        ...(le?.[0] ? { lastEmail: { subject: le[0].subject || '(no subject)' } } : {}),
+        ...(lastSubject ? { lastEmail: { subject: lastSubject } } : {}),
         openCommitments: related.slice(0, 3),
         ...(recall ? { lastMeeting: { ...recall, person: (others[0].split('@')[0] || others[0]) } } : {}),
       };
@@ -571,7 +595,12 @@ export async function GET() {
   // needYou baseline = live counts already computed above: replies you owe (mustRespondOut) +
   // non-meeting/needs-you priority cards + on-your-plate commitments still pending.
   const needYouReplies = (mustRespondOut?.items ?? []).length;
-  const needYouCards = cappedPriorities.filter((p) => p.posture !== 'needs_reply' && p.source !== 'meeting').length;
+  // Meeting cards ARE shown in "What needs you" (a Review action + follow-ups), so each meeting CARD
+  // counts as 1 unit of needYou — otherwise the ring reads "1 needs you" while 2 items show, and
+  // handling the meeting never moves it. (One card per meeting, not per nested action item.) Cleared
+  // already counts meeting follow-ups: they're inbox_items (source='meeting') and inboxClearedRes has
+  // no source filter — so clearing them moves the cleared half. The two halves stay consistent.
+  const needYouCards = cappedPriorities.filter((p) => p.posture !== 'needs_reply').length;
   const needYou = needYouReplies + needYouCards + commitments.length;
   const dayProgress = { cleared: clearedToday, needYou };
 
