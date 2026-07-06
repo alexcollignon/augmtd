@@ -102,13 +102,16 @@ export async function fetchUnreadEmails(
 ) {
   const client = await getGraphClient(encryptedTokens, onTokenRefresh);
 
-  // Use last sync timestamp when available; fall back to syncWindowDays on first sync.
-  // Subtract a 3-minute overlap buffer from lastSync so emails that arrived during the
-  // previous sync's processing window (between API call and last_sync write) are caught.
-  // Duplicates are safe — the existingEmail check in sync-emails.ts deduplicates by message_id.
-  const dateString = lastSync
-    ? (() => { const d = new Date(lastSync); d.setMinutes(d.getMinutes() - 3); return d.toISOString(); })()
-    : (() => { const d = new Date(); d.setDate(d.getDate() - syncWindowDays); return d.toISOString(); })();
+  // Floor = the EARLIER of (lastSync − 3min buffer) and (now − syncWindowDays). ALWAYS look back at least
+  // syncWindowDays, using lastSync only when it reaches even further back. A strict last_sync floor can run
+  // AHEAD of the newest actual mail (a push gap, a timing race, or a sync that stamped last_sync to its
+  // START time before fetching) — which permanently blinds this forward-only pull (`receivedDateTime ge
+  // last_sync` returns nothing, and the cursor never rewinds). Honoring syncWindowDays as a minimum lookback
+  // self-heals a runaway cursor. Re-fetch is safe — sync-emails.ts dedups by message_id. (Trade-off: the
+  // pull is no longer strictly incremental — it re-checks the window each run; fine at current scale.)
+  const windowFloor = (() => { const d = new Date(); d.setDate(d.getDate() - syncWindowDays); return d; })();
+  const bufferFloor = lastSync ? (() => { const d = new Date(lastSync); d.setMinutes(d.getMinutes() - 3); return d; })() : null;
+  const dateString = (bufferFloor && bufferFloor.getTime() < windowFloor.getTime() ? bufferFloor : windowFloor).toISOString();
 
   // Page through ALL messages in the window. Previously a single .top(maxResults) page was
   // read — if a window held more than the cap, the older overflow was never fetched and the
