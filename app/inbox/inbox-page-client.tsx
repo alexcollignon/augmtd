@@ -3,7 +3,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useSearchParams, useRouter } from 'next/navigation';
-import EmailListSections from '@/components/inbox/email-list-sections';
 import EmailListChronological from '@/components/inbox/email-list-chronological';
 import { type SentEmail } from '@/components/inbox/sent-email-list';
 import FolderSidebar, { type ConnectionFolders, type SelectedFolder } from '@/components/inbox/folder-rail';
@@ -23,7 +22,6 @@ import { setInboxRules } from '@/lib/inbox/classify-item';
 import { Button, EmptyState } from '@/components/ui';
 
 
-type ViewMode = 'chronological' | 'smart';
 type Density = 'normal' | 'compact';
 
 function markdownToHtml(text: string): string {
@@ -195,7 +193,6 @@ export function InboxPageClient({
   const [isSyncing, setIsSyncing] = useState(false);
   const [meetings, setMeetings] = useState<CalendarEvent[]>([]);
   const [meetingsLoading, setMeetingsLoading] = useState(true);
-  const [viewMode, setViewMode] = useState<ViewMode>('chronological');
   const [density, setDensity] = useState<Density>('normal');
   const [folderSidebarCollapsed, setFolderSidebarCollapsed] = useState(() => {
     if (typeof window === 'undefined') return false;
@@ -303,23 +300,53 @@ export function InboxPageClient({
   const preSyncCountRef = useRef<number | null>(null);
   const periodicSyncRef = useRef<number>(0);
 
+  // Same account predicate the rendered list uses (see `filteredItems`): an item belongs to a
+  // connection when its connection_id matches, OR it has no connection_id (shown for any account).
+  const itemBelongsToConnection = useCallback((item: InboxItem, connId: string | null): boolean => {
+    const cid = (item as any).connection_id;
+    if (cid === null) return true;
+    return cid === connId;
+  }, []);
+
+  // Most recently created item that belongs to the given connection (falls back to the first
+  // folder section's connection when none is selected yet, e.g. on the very first mount).
+  const latestItemForConnection = useCallback((connId: string | null): InboxItem | null => {
+    const effectiveConn = connId ?? folderSections?.[0]?.connectionId ?? null;
+    const candidates = inboxItems.filter(i => itemBelongsToConnection(i, effectiveConn));
+    if (candidates.length === 0) return null;
+    return candidates.reduce((a, b) =>
+      new Date((b as any).created_at) > new Date((a as any).created_at) ? b : a
+    );
+  }, [inboxItems, folderSections, itemBelongsToConnection]);
+
   // Restore persisted preferences after mount (avoids SSR hydration mismatch)
   useEffect(() => {
-    const savedView = localStorage.getItem('inboxViewMode') as ViewMode | null;
-    if (savedView === 'smart' || savedView === 'chronological') setViewMode(savedView);
     const savedDensity = localStorage.getItem('inboxDensity') as Density | null;
     if (savedDensity === 'normal' || savedDensity === 'compact') setDensity(savedDensity);
-    // Auto-select most recently received item after hydration (can't do during SSR — causes dangerouslySetInnerHTML mismatch)
-    const latest = inboxItems.length
-      ? inboxItems.reduce((a, b) => new Date((b as any).created_at) > new Date((a as any).created_at) ? b : a)
-      : null;
+    // Auto-select the most recently received item BELONGING TO THE SELECTED ACCOUNT after hydration
+    // (can't do during SSR — causes dangerouslySetInnerHTML mismatch). Never open a cross-account
+    // email by default.
+    const latest = latestItemForConnection(selectedConnectionId);
     setSelectedItem(prev => prev ?? latest);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleViewMode = (mode: ViewMode) => {
-    setViewMode(mode);
-    localStorage.setItem('inboxViewMode', mode);
-  };
+  // Timing safety net: on the very first mount `selectedConnectionId`/`folderSections` may not be
+  // ready yet (client-fetch fallback path), so the mount auto-select above can no-op. Once they
+  // populate, pick the most-recent item for the selected/default account if nothing is selected.
+  useEffect(() => {
+    setSelectedItem(prev => prev ?? latestItemForConnection(selectedConnectionId));
+  }, [selectedConnectionId, folderSections]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // On account switch: if the currently-open item does NOT belong to the newly selected account,
+  // re-select that account's most-recent item so the open email always matches the selected inbox.
+  // Guard: only re-select when the current item is cross-account — never clobber a user's explicit
+  // pick WITHIN the same account.
+  useEffect(() => {
+    setSelectedItem(prev => {
+      if (prev && itemBelongsToConnection(prev, selectedConnectionId)) return prev;
+      return latestItemForConnection(selectedConnectionId) ?? prev;
+    });
+  }, [selectedConnectionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleDensity = (d: Density) => {
     setDensity(d);
@@ -708,10 +735,7 @@ export function InboxPageClient({
 
   const filteredItems = useMemo(() => {
     let items = inboxItems;
-    // Smart tab hides noise items; all other work_states (including 'noted') appear
-    if (viewMode === 'smart') {
-      items = items.filter(item => (item as any).work_state !== 'noise');
-    }
+    // The inbox is the raw mailbox mirror — no noise filtering here; the Home does triage.
     // Filter by selected account (items with null connection_id are shown for any account)
     if (selectedConnectionId) {
       items = items.filter(i => {
@@ -720,9 +744,19 @@ export function InboxPageClient({
       });
     }
     const q = searchQuery.trim().toLowerCase();
-    // Always show at least the most recent item when no search is active
-    if (!q && items.length === 0 && inboxItems.length > 0) {
-      items = [inboxItems[0]];
+    // Always show at least the most recent item when no search is active — but it MUST belong to the
+    // selected account (never inject a cross-account item). `items` is already connection-filtered,
+    // so recover the most-recent item for this account from the full list.
+    if (!q && items.length === 0) {
+      const forConn = inboxItems.filter(i => {
+        const cid = (i as any).connection_id;
+        return cid === null || cid === selectedConnectionId;
+      });
+      if (forConn.length > 0) {
+        items = [forConn.reduce((a, b) =>
+          new Date((b as any).created_at) > new Date((a as any).created_at) ? b : a
+        )];
+      }
     }
     if (!q) return items;
     return items.filter(item => {
@@ -734,7 +768,7 @@ export function InboxPageClient({
         (sd?.snippet || '').toLowerCase().includes(q)
       );
     });
-  }, [inboxItems, searchQuery, viewMode, selectedConnectionId]);
+  }, [inboxItems, searchQuery, selectedConnectionId]);
 
   const handleItemConfirmed = (ids: string[], _action: 'confirm_as_mine' | 'not_my_task') => {
     const idsSet = new Set(ids);
@@ -1174,34 +1208,21 @@ export function InboxPageClient({
               <div className="flex-shrink-0 relative h-10 border-b border-neutral-100 overflow-hidden">
 
                 {/* Toolbar layer — slides up + fades out when search opens */}
-                <div className={`absolute inset-0 flex items-center pl-2.5 pr-1 transition-all duration-200 ease-in-out ${showSearch ? 'opacity-0 -translate-y-2 pointer-events-none' : 'opacity-100 translate-y-0'}`}>
-                  {/* Segmented view tabs */}
-                  <div className="relative grid grid-cols-2 bg-neutral-100 rounded-full p-0.5">
-                    <div
-                      className="absolute inset-y-0.5 w-[calc(50%-2px)] rounded-full bg-white shadow-sm pointer-events-none"
-                      style={{
-                        left: viewMode === 'smart' ? '50%' : '2px',
-                        transition: 'left 180ms ease-in-out',
-                      }}
-                    />
-                    {(['chronological', 'smart'] as const).map((key) => {
-                      const labels = { chronological: 'Standard', smart: 'Smart' };
-                      return (
-                        <button
-                          key={key}
-                          onClick={() => handleViewMode(key)}
-                          className={`relative z-10 px-2.5 py-0.5 text-[11px] font-medium rounded-full text-center transition-colors duration-180 flex items-center justify-center gap-1 ${
-                            viewMode === key ? 'text-neutral-800' : 'text-neutral-500 hover:text-neutral-700'
-                          }`}
-                        >
-                          {labels[key]}
-                        </button>
-                      );
-                    })}
+                <div className={`absolute inset-0 flex items-center justify-between pl-3 pr-1 transition-all duration-200 ease-in-out ${showSearch ? 'opacity-0 -translate-y-2 pointer-events-none' : 'opacity-100 translate-y-0'}`}>
+                  {/* Left: context header — current folder (or Inbox) + item count */}
+                  <div className="flex items-baseline gap-1.5 min-w-0">
+                    <span className="text-[15px] font-semibold text-neutral-800 truncate">
+                      {selectedFolder ? selectedFolder.folderName : 'Inbox'}
+                    </span>
+                    {(() => {
+                      const count = selectedFolder ? folderEmails.length : filteredItems.length;
+                      return count > 0 ? (
+                        <span className="text-[12px] text-neutral-400 flex-shrink-0">{count}</span>
+                      ) : null;
+                    })()}
                   </div>
-
-                  {/* Density toggle + folder + action icons */}
-                  <div className="flex items-center ml-auto">
+                  {/* Right: density toggle + action icons */}
+                  <div className="flex items-center flex-shrink-0">
                     <button
                       onClick={() => handleDensity(density === 'compact' ? 'normal' : 'compact')}
                       title={density === 'compact' ? 'Normal view' : 'Compact view'}
@@ -1362,20 +1383,8 @@ export function InboxPageClient({
                       New items will appear here after the next sync.
                     </p>
                   </div>
-                ) : viewMode === 'chronological' ? (
-                  <EmailListChronological
-                    items={filteredItems}
-                    selectedId={selectedItem?.id || null}
-                    onSelect={handleSelectItem}
-                    compact={density === 'compact'}
-                    selectedIds={selectedIds}
-                    onToggleSelect={handleToggleSelect}
-                    onDelete={handleDeleteItem}
-                    onArchive={handleArchiveItem}
-                    onFlag={handleFlagItem}
-                  />
                 ) : (
-                  <EmailListSections
+                  <EmailListChronological
                     items={filteredItems}
                     selectedId={selectedItem?.id || null}
                     onSelect={handleSelectItem}

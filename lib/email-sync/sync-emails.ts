@@ -951,7 +951,7 @@ export async function syncEmailsForConnection(
           const _snThreadId = storedEmail.thread_id || storedEmail.message_id;
           const { data: _snExisting } = await adminSupabase
             .from('inbox_items')
-            .select('id, status, source_data')
+            .select('id, status, source_data, work_state, rule_type, connection_id')
             .eq('user_id', connection.user_id)
             .eq('source', 'email')
             .eq('source_data->>thread_id', _snThreadId)
@@ -1000,6 +1000,75 @@ export async function syncEmailsForConnection(
                 .from('inbox_items')
                 .update(stripNulls({ source_data: _snSourceData, source_id: storedEmail.id, last_activity_at: storedEmail.received_at || new Date().toISOString() }) as Record<string, unknown>)
                 .eq('id', _snExisting.id);
+            }
+          } else if (_snExisting.status === 'completed' || _snExisting.status === 'dismissed') {
+            // ── REACTIVATION: a resolved thread got a NEW INBOUND reply ──────────────────────────
+            // We are in the !is_from_user branch (the sent-mail path `continue`d above), so this is a
+            // genuine inbound message on a thread the user had already resolved (replied / marked Done
+            // / dismissed) — reopen it so it comes back on the inbox + Home, restore an active
+            // work_state, and relabel the mailbox from AUGMTD/Done back to its active label. A NEW
+            // message FROM THE USER never reaches here (it continue'd at the is_from_user gate), so a
+            // user re-reply on a resolved thread correctly leaves it Done.
+            // Reuse the item's prior classification if it was active; otherwise a needs-reply default
+            // (a fresh inbound to a thread you closed is, by default, awaiting your reply).
+            const _priorWs = (_snExisting as any).work_state as string | null;
+            const ACTIVE_WS = new Set(['work_prepared', 'decision_required', 'action_required', 'waiting']);
+            const _restoreWs = _priorWs && ACTIVE_WS.has(_priorWs) ? _priorWs : 'work_prepared';
+            const _reopenedAt = new Date().toISOString();
+            const _existingSd = ((_snExisting as any).source_data ?? {}) as Record<string, unknown>;
+            // Strip the resolution markers so it no longer reads as resolved.
+            delete (_existingSd as Record<string, unknown>).resolved_reason;
+            delete (_existingSd as Record<string, unknown>).resolved_at;
+            const { error: _reopenErr } = await adminSupabase
+              .from('inbox_items')
+              .update(stripNulls({
+                status: 'pending',
+                work_state: _restoreWs,
+                source_data: { ...(_existingSd as Record<string, unknown>), ...(_snSourceData as Record<string, unknown>) },
+                source_id: storedEmail.id,
+                last_activity_at: storedEmail.received_at || _reopenedAt,
+                updated_at: _reopenedAt,
+              }) as Record<string, unknown>)
+              .eq('id', _snExisting.id)
+              .in('status', ['completed', 'dismissed']); // guard against a concurrent flip
+            if (_reopenErr) {
+              console.error(`    ✗ Reactivation update failed:`, _reopenErr.message);
+            } else {
+              console.log(`    ♻️  Reopened resolved thread on new inbound reply`);
+              // Bust the Home brief cache so the reopened item resurfaces next load.
+              await adminSupabase.from('profiles').update({ home_brief: null }).eq('id', connection.user_id).then(() => {}, () => {});
+              // Relabel the mailbox back to the ACTIVE state (NOT Done). reconcile STRIPS the stale
+              // AUGMTD/Done first, so the downstream path (fast-path additive writeBackLabel for
+              // fyi/noise, or Phase 2 for process) then re-adds the same label idempotently rather
+              // than leaving Done alongside it. Pick the label to match THIS email's class so a
+              // fyi/noise reply doesn't get an actionable label: fyi/noise → its class label; process
+              // → the item's rule label if set, else derived from the restored work_state. Honors
+              // auto_label. Non-fatal.
+              if (emailSettings.auto_label) {
+                const _ruleLabel = (_snExisting as any).rule_type as string | null;
+                const _classTarget: string | null =
+                  emailClass === 'noise'
+                    ? 'notifications'
+                    : emailClass === 'fyi_only'
+                      ? 'fyi'
+                      : null; // process → resolve below from rule/work_state
+                void import('@/lib/inbox/rules/write-back').then(async ({ reconcileAugmtdLabel, mapWorkStateToLabel }) => {
+                  await reconcileAugmtdLabel({
+                    provider: connection.provider,
+                    encryptedTokens: connection.metadata?.tokens,
+                    targetLabel: (_classTarget ?? (_ruleLabel && _ruleLabel !== 'done' ? _ruleLabel : mapWorkStateToLabel(_restoreWs))) as any,
+                    gmailThreadId: storedEmail.thread_id,
+                    gmailCache: gmailLabelCache,
+                    outlookMessageId: (storedEmail as any).metadata?.outlook_id ?? storedEmail.message_id,
+                    onTokenRefresh: connection.provider === 'outlook'
+                      ? async (newTokens: { accessToken: string; refreshToken: string; expiresOn: string }) => {
+                          const newEncrypted = Buffer.from(JSON.stringify(newTokens)).toString('base64');
+                          await adminSupabase.from('connections').update({ metadata: { ...connection.metadata, tokens: newEncrypted } }).eq('id', connection.id);
+                        }
+                      : undefined,
+                  });
+                }).catch(() => {});
+              }
             }
           }
         }

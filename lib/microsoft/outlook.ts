@@ -607,6 +607,22 @@ export async function addOutlookCategory(
   await client.api(`/me/messages/${outlookMessageId}`).patch({ categories: [...current, category] });
 }
 
+// Additive-inverse of addOutlookCategory: strip a category from a message WITHOUT moving it. Reads
+// current categories and removes ours, leaving the user's own categories untouched. Used by the
+// AUGMTD label reconciler to swap a stale state category (e.g. "Needs reply" → "Done").
+export async function removeOutlookCategory(
+  encryptedTokens: string,
+  outlookMessageId: string,
+  category: string,
+  onTokenRefresh?: TokenRefreshCallback,
+): Promise<void> {
+  const client = await getGraphClient(encryptedTokens, onTokenRefresh);
+  const msg = await client.api(`/me/messages/${outlookMessageId}`).select('categories').get();
+  const current: string[] = msg?.categories ?? [];
+  if (!current.includes(category)) return;
+  await client.api(`/me/messages/${outlookMessageId}`).patch({ categories: current.filter(c => c !== category) });
+}
+
 // Build an onTokenRefresh callback that persists refreshed Outlook tokens back to the
 // connection row — pass this into the helpers above so a mid-action refresh isn't lost.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

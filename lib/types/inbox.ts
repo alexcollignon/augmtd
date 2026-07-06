@@ -19,14 +19,6 @@ export interface UserInboxCategory {
   color?: string;
 }
 
-/** Item types shown in Smart view (require action or awareness from user) */
-export const SMART_VIEW_TYPES: ItemType[] = ['reply', 'decision', 'meeting', 'review', 'fyi'];
-
-/** Is this item shown in Smart view? */
-export function isActionItem(item: InboxItem): boolean {
-  return item.item_type != null && SMART_VIEW_TYPES.includes(item.item_type as ItemType);
-}
-
 export type ConfirmationStatus = 'pending' | 'confirmed' | 'rejected';
 
 export type ConfirmationAction = 'confirm_as_mine' | 'not_my_task';

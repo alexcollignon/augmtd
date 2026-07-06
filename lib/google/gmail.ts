@@ -577,6 +577,21 @@ export async function addGmailThreadLabel(
   });
 }
 
+// Additive-inverse of addGmailThreadLabel: strip a label from a thread WITHOUT moving/archiving it.
+// Used by the AUGMTD label reconciler to swap a stale state label (e.g. "Needs reply" → "Done").
+export async function removeGmailThreadLabel(
+  encryptedTokens: string,
+  threadId: string,
+  labelId: string,
+): Promise<void> {
+  const gmail = await getGmailClient(encryptedTokens);
+  await gmail.users.threads.modify({
+    userId: 'me',
+    id: threadId,
+    requestBody: { removeLabelIds: [labelId] },
+  });
+}
+
 export async function archiveGmailThread(
   encryptedTokens: string,
   threadId: string,
