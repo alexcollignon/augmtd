@@ -85,6 +85,18 @@ export function classifyItem(item: Item): ItemType {
   return 'fyi';
 }
 
+// A reply draft is only ever warranted when the item GENUINELY owes a reply. Gate on the item's own
+// classification — never on sender/subject keywords:
+//   • `work_state === 'noted'` is the per-item FYI verdict (newsletter / notification / awareness).
+//     An FYI item must NEVER get a reply draft, even if a rule happened to tag it needs_reply — a
+//     newsletter you cannot meaningfully reply to shouldn't have a canned reply prepared for it.
+//   • otherwise, defer to the shared `classifyItem` resolver: only `needs_reply` items are drafted.
+// Used by BOTH the auto-draft sweep and every on-demand draft entry point so they can't drift.
+export function shouldDraftReply(item: Item): boolean {
+  if (item.work_state === 'noted') return false;   // FYI — respect the per-item classification
+  return classifyItem(item) === 'needs_reply';
+}
+
 export type TypeConfig = {
   label: string;
   verb: string;

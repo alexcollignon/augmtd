@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { generateReplyDraft } from '@/lib/inbox/draft-reply';
+import { loadUserRules } from '@/lib/inbox/rules/load';
+import { setInboxRules, shouldDraftReply } from '@/lib/inbox/classify-item';
 
 export const maxDuration = 30;
 
@@ -15,13 +17,27 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (error || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const { data: item } = await supabase.from('inbox_items')
-    .select('source_data').eq('id', id).eq('user_id', user.id).single();
+    .select('source_data, work_state, rule_type, type_override, status, source')
+    .eq('id', id).eq('user_id', user.id).single();
   if (!item) return NextResponse.json({ error: 'not found' }, { status: 404 });
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const sd = (item.source_data ?? {}) as Record<string, any>;
   // Serve a previously-generated draft (sweep or earlier open) unless a fresh one is requested.
   if (!fresh && sd.draft?.body) return NextResponse.json({ draft: sd.draft.body as string });
+
+  // Only draft when the item GENUINELY owes a reply — never for FYI/`noted` mail (a newsletter must
+  // never get a reply draft, even opened in the deep-dive). Gate on the item's own classification
+  // (work_state + classifyItem), never sender/subject keywords. Load the user's rules so classifyItem
+  // uses their edited deterministic tier, not just the seeds.
+  try {
+    const rules = await loadUserRules(user.id, supabase);
+    setInboxRules(rules);
+  } catch { /* fall back to default rules */ }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  if (!shouldDraftReply(item as any)) {
+    return NextResponse.json({ draft: '', skipped: 'not_a_reply' });
+  }
 
   try {
     const draft = await generateReplyDraft(user.id, sd, supabase);

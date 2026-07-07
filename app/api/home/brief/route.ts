@@ -243,6 +243,12 @@ export async function GET() {
   const awarenessRaw = new Map<string, { it: (typeof items)[number]; ccOnly: boolean }>();
   for (const { it, posture } of classifiedEmails) {
     if (posture !== 'fyi') continue;
+    // RESPECT the per-item classification: a `noted` item is FYI (newsletter / notification / awareness
+    // digest) — it belongs in the FYI digest, NOT the "keep an eye on" awareness tier (which is for
+    // substantive person/relationship threads). Excluding it here stops FYI mail polluting keep-an-eye
+    // and — since only substantive cc'd items remain — stops the synthesis inventing a "why" for a
+    // newsletter. Gate on work_state, never sender/subject keywords.
+    if (it.work_state === 'noted') continue;
     const sd = (it.source_data ?? {}) as Record<string, unknown>;
     // Only worth promoting if there's a real sender AND the user was cc'd (i.e. it was demoted for
     // being a bystander, not because it's inherently noise). Newsletters have no personal signal.
@@ -453,17 +459,12 @@ export async function GET() {
     return { groups, tailGroups: fyiTailGroups, tailItems: fyiTailItems };
   };
 
-  // ── Awareness candidates (source b): FYI emails the digest ITSELF treats as a real person (not a
-  // newsletter/service) — reuse that exact person/newsletter split (labels in `peopleGroups`) so the
-  // pool can't disagree with the digest, and we don't grow a second heuristic. Bulk mail stays in the
-  // digest; only human FYI is offered up for possible promotion. The synthesis makes the final call.
-  const personLabels = new Set(peopleGroups.map((g) => g.label));
-  for (const r of fyiRows) {
-    const sd = (r.source_data ?? {}) as Record<string, unknown>;
-    const label = (sd.from_name as string) || (sd.from as string);
-    if (!label || !personLabels.has(label)) continue; // not a person the digest recognises → digest only
-    if (!awarenessRaw.has(r.id)) awarenessRaw.set(r.id, { it: r as unknown as (typeof items)[number], ccOnly: sd.is_cc_only === true });
-  }
+  // ── Awareness candidates (source b) REMOVED — `noted`/FYI mail is NOT a keep-an-eye candidate.
+  // Previously this promoted person-kind FYI rows (every one `work_state='noted'`) into the awareness
+  // tier, which (i) leaked FYI mail into "keep an eye on" and (ii) let the synthesis FABRICATE a "why"
+  // for a newsletter (the observed "Natia Kurdadze — SEO hacks" / CryptoSlate hallucinations). RESPECT
+  // the per-item classification: `noted` items belong to the FYI DIGEST only. Keep-an-eye is fed solely
+  // by source (a) — substantive NON-`noted` threads the user was cc'd on. No sender/subject keywords.
   const fromEmailFrom = (sd: Record<string, unknown>): string | null => {
     const raw = String((sd.from_address as string) || (sd.from as string) || '').toLowerCase();
     return raw.match(/[^\s<>"]+@[^\s<>"]+/)?.[0] || (raw.includes('@') ? raw : null);

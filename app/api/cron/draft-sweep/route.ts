@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { loadUserRules } from '@/lib/inbox/rules/load';
-import { setInboxRules, classifyItem, type ItemType } from '@/lib/inbox/classify-item';
+import { setInboxRules, classifyItem, shouldDraftReply, type ItemType } from '@/lib/inbox/classify-item';
 import { LABEL_TO_TYPE } from '@/lib/inbox/rules/types';
 import { generateReplyDraft } from '@/lib/inbox/draft-reply';
 
@@ -53,6 +53,10 @@ export async function GET(request: NextRequest) {
       const sd = (it.source_data ?? {}) as Record<string, any>;
       if (sd.draft?.body) continue;                       // already drafted
       if (!sd.from && !sd.from_address) continue;          // not a real email item
+      // Only draft a reply when the item GENUINELY owes one — never for FYI/`noted` mail (a newsletter
+      // must never get an auto-draft). Gates on the item's own work_state + classifyItem, not keywords.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      if (!shouldDraftReply(it as any)) continue;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       if (!draftTypes.has(classifyItem(it as any))) continue;
       try {

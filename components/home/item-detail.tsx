@@ -2042,12 +2042,26 @@ type ThreadMsg = {
 type ThreadData = {
   id: string;
   subject: string;
+  // The item's classified type — drives the header badge (so an FYI newsletter reads "For awareness",
+  // not "Reply needed"). Optional for back-compat with any caller that doesn't send it.
+  type?: 'needs_reply' | 'to_do' | 'waiting_on' | 'reminder' | 'fyi' | 'hidden';
   fromName: string | null;
   fromAddress: string | null;
   receivedAt: string | null;
   messages: ThreadMsg[];
   body: string | null;
   counterparty?: string | null;
+};
+
+// The header badge for the email deep-dive, from the item's REAL classification — never a hardcoded
+// "Reply needed". A `noted`/FYI newsletter shows "For awareness"; a to-do shows "To do"; etc.
+const EMAIL_BADGE: Record<NonNullable<ThreadData['type']>, { label: string }> = {
+  needs_reply: { label: 'Reply needed' },
+  to_do: { label: 'To do' },
+  waiting_on: { label: 'Waiting on' },
+  reminder: { label: 'Reminder' },
+  fyi: { label: 'For awareness' },
+  hidden: { label: 'For awareness' },
 };
 
 function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
@@ -2082,7 +2096,9 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
 
     fetch(`/api/inbox/${id}/draft`, { method: 'POST' })
       .then(r => r.json())
-      .then(d => { if (alive) setDraft(d.draft || 'Could not draft a reply.'); })
+      // An FYI/`noted` item legitimately gets NO prepared reply (skipped) — seed a blank composer, not
+      // an error line. Only a genuine failure (no `skipped`, empty draft) shows the fallback text.
+      .then(d => { if (alive) setDraft(d.skipped ? '' : (d.draft || 'Could not draft a reply.')); })
       .catch(() => { if (alive) setDraft('Could not draft a reply.'); })
       .finally(() => { if (alive) setDraftLoading(false); });
 
@@ -2171,9 +2187,10 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
       onInvite={inviteHost.openInvite}
       panel={<WhatThisTakes plan={plan} variant="panel" onDraft={scrollToComposer} onInvite={inviteHost.openInvite} />}
     >
-      {/* 1 — Header: subject + sender + date (fixed at top) */}
+      {/* 1 — Header: subject + sender + date (fixed at top). The badge reflects the item's REAL
+          classification (a `noted`/FYI newsletter reads "For awareness", not "Reply needed"). */}
       <DetailHeader
-        chip={<KindChip tone="indigo" icon={EnvelopeIcon} label="Reply needed" />}
+        chip={<KindChip tone="indigo" icon={EnvelopeIcon} label={EMAIL_BADGE[thread?.type ?? 'needs_reply'].label} />}
         title={subject}
         meta={
           <>
