@@ -319,6 +319,23 @@ function useCommitmentAct(id?: string, onCleared?: (id: string) => void, onUndoC
   return { removed, exiting, acting, act };
 }
 
+// ── Expandable list — the shared "show a few, expand to all" pattern (same affordance as DigestList's
+// "Show N more"). No hard cap: renders `limit` rows, then a single "Show N more" button reveals the
+// rest. Reused by the commitment lanes so nothing is ever hidden — just folded. Generic over the row.
+function ExpandableRows<T>({ items, limit = 4, render }: { items: T[]; limit?: number; render: (item: T, index: number) => React.ReactNode }) {
+  const [showAll, setShowAll] = useState(false);
+  const visible = showAll ? items : items.slice(0, limit);
+  const more = items.length - limit;
+  return (
+    <>
+      {visible.map((it, i) => render(it, i))}
+      {!showAll && more > 0 && (
+        <button onClick={() => setShowAll(true)} className="pt-1 text-[12.5px] font-medium text-indigo-600 hover:text-indigo-700">Show {more} more</button>
+      )}
+    </>
+  );
+}
+
 // ── DIGEST — the editorial "what needs you" list. Each reply is a typeset briefing line, not a card:
 // a bold who · subject, a light one-line ask, and a quiet indigo affordance. Clicking the row opens
 // the depth inline — the suggested angle, the editable draft (Send/Copy), and Open thread. Rows are
@@ -1207,9 +1224,9 @@ export function HomeView() {
       <div className="rounded-2xl border border-neutral-200/80 bg-white p-4">
         {b!.followups!.teaser && <p className="text-[12.5px] text-neutral-500 mb-3.5 leading-relaxed">{b!.followups!.teaser}</p>}
         <ol className="space-y-3.5">
-          {b!.followups!.items.map((f, i) => (
+          <ExpandableRows items={b!.followups!.items} render={(f, i) => (
             <FollowUpItem key={f.id || i} f={f} index={i} onCleared={onCleared} onUndoCommitment={toastCommitment} />
-          ))}
+          )} />
         </ol>
         {b!.followups!.closing && (
           <div className="mt-3.5 pt-3.5 border-t border-neutral-100 flex items-start gap-2">
@@ -1229,12 +1246,14 @@ export function HomeView() {
         <SectionCleared line="All caught up here." />
       ) : (
       <div className="space-y-2">
-        {b!.waitingOn.map(c => (
+        <ExpandableRows items={b!.waitingOn} render={(c) => (
           <CommitmentSideRow key={c.id} id={c.id} icon={ClockIcon} iconClass="text-amber-400" onCleared={onCleared} onUndoCommitment={toastCommitment}>
             <span className="text-[13px] text-neutral-800 truncate block">{c.description}</span>
-            <p className="text-[11.5px] text-neutral-400 mt-0.5">Waiting on {c.counterparty || 'them'} · {c.ageDays}d</p>
+            {/* Counterparty or source label; omit the "Waiting on X" name-line entirely when neither
+                is known (never a placeholder), still showing the age. */}
+            <p className="text-[11.5px] text-neutral-400 mt-0.5">{c.counterparty ? `Waiting on ${/^from /i.test(c.counterparty) ? c.counterparty.replace(/^from /i, '') : c.counterparty} · ` : ''}{c.ageDays}d</p>
           </CommitmentSideRow>
-        ))}
+        )} />
       </div>
       )}
     </section>
@@ -1465,7 +1484,7 @@ export function HomeView() {
                     <SectionCleared line="Nothing on your plate — you cleared it all." />
                   ) : (
                   <div className="space-y-2">
-                    {b.commitments.map(c => (
+                    <ExpandableRows items={b.commitments} render={(c) => (
                       <CommitmentSideRow key={c.id} id={c.id} href={`/item/${c.id}?kind=commitment`} icon={CheckCircleIcon} iconClass={c.overdue ? 'text-red-400' : 'text-neutral-300'} onCleared={onCleared} onUndoCommitment={toastCommitment}>
                         <div className="flex items-start justify-between gap-2">
                           <span className="text-[13px] text-neutral-800 leading-snug">{c.description}</span>
@@ -1475,9 +1494,11 @@ export function HomeView() {
                             </span>
                           )}
                         </div>
-                        {c.counterparty && <p className="text-[11.5px] text-neutral-400 mt-0.5">You owe {c.counterparty}</p>}
+                        {/* Counterparty OR a source-derived label ("from <meeting>"); we prefix "You owe"
+                            only for a real person, and show a source label verbatim (already reads "from …"). */}
+                        {c.counterparty && <p className="text-[11.5px] text-neutral-400 mt-0.5">{/^from /i.test(c.counterparty) ? c.counterparty : `You owe ${c.counterparty}`}</p>}
                       </CommitmentSideRow>
-                    ))}
+                    )} />
                   </div>
                   )}
                 </section>

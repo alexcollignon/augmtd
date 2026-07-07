@@ -18,6 +18,42 @@ const DAY = 86_400_000;
 const BRIEF_TTL = 3 * 60 * 60 * 1000;
 const MAX_PRIORITIES = 6;
 
+// ── Display-level dedup backstop for commitments ──────────────────────────────────────────────
+// Even before any data cleanup, existing near-duplicate commitment rows shouldn't double up in a
+// lane. General (token-overlap, no text special-casing — mirrors the extractor's write-time dedup):
+// two descriptions with heavy content-word overlap are the same obligation; keep the first, drop the
+// rest. Works for any wording/language; never merges distinct tasks that merely share a noun.
+const DEDUP_STOPWORDS = new Set([
+  'the', 'a', 'an', 'to', 'for', 'of', 'and', 'or', 'with', 'on', 'in', 'at', 'by', 'from', 'up',
+  'out', 'over', 'about', 'into', 'as', 'is', 'be', 'will', 'would', 'should', 'need', 'needs',
+  'please', 'get', 'send', 'this', 'that', 'it', 'them', 'me', 'you', 'we', 'i', 'he', 'she', 'they',
+]);
+function dedupNorm(s: string): string { return (s || '').toLowerCase().replace(/\s+/g, ' ').trim(); }
+function dedupTokens(s: string): Set<string> {
+  const toks = dedupNorm(s).replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(Boolean)
+    .filter((t) => t.length > 2 && !DEDUP_STOPWORDS.has(t));
+  return new Set(toks);
+}
+function sameObligation(a: string, b: string, threshold = 0.6): boolean {
+  const na = dedupNorm(a), nb = dedupNorm(b);
+  if (na === nb) return true;
+  if (na && nb && (na.includes(nb) || nb.includes(na))) return true;
+  const ta = dedupTokens(a), tb = dedupTokens(b);
+  if (!ta.size || !tb.size) return false;
+  let inter = 0;
+  for (const t of ta) if (tb.has(t)) inter++;
+  const union = ta.size + tb.size - inter;
+  return union > 0 && inter / union >= threshold;
+}
+function dedupByDescription<T extends { description: string }>(rows: T[]): T[] {
+  const kept: T[] = [];
+  for (const r of rows) {
+    if (kept.some((k) => sameObligation(k.description, r.description))) continue;
+    kept.push(r);
+  }
+  return kept;
+}
+
 // Automated / transactional senders are never a reply YOU owe — a "payment failed", "account
 // suspended", "verify your email", or no-reply notification is not a human waiting on you, even if
 // the classifier tagged it needs_reply. Keep this heuristic CONSERVATIVE and well-scoped: it only
@@ -324,11 +360,38 @@ export async function GET() {
   // "you owe X" promise captured from a meeting (21 real open items → an empty "On your plate"). A
   // meeting commitment is a genuine thing the user owes and belongs in the same placement pipeline as
   // any other; the synthesis + the top-N cap keep the section a brief, not a backlog.
+  // Source-derived fallback label for commitments with NO counterparty — so the UI never prints a
+  // placeholder ("Someone"). For a meeting commitment we resolve the meeting title ("from <title>");
+  // an email commitment has no better source string, so it stays null and the UI omits the name.
+  // General: keyed off the commitment's own source_id, no hardcoded titles/ids.
+  const meetingCommitTids = [...new Set(commits
+    .filter((c) => c.source === 'meeting' && !c.counterparty && c.source_id)
+    .map((c) => c.source_id as string))];
+  const meetingTitleById = new Map<string, string>();
+  if (meetingCommitTids.length) {
+    const { data: mts } = await supabase.from('meeting_transcripts')
+      .select('id, title').eq('user_id', user.id).in('id', meetingCommitTids);
+    for (const m of (mts ?? []) as { id: string; title: string | null }[]) {
+      if (m.title) meetingTitleById.set(m.id, m.title);
+    }
+  }
+  // The label shown when counterparty is null: a source-derived string ("from <meeting title>") or
+  // null (UI omits the name entirely). NEVER a literal placeholder.
+  const sourceLabelOf = (c: (typeof commits)[number]): string | null => {
+    if (c.source === 'meeting' && c.source_id) {
+      const t = meetingTitleById.get(c.source_id as string);
+      return t ? `from ${t}` : null;
+    }
+    return null;
+  };
   const commitmentCands = commits
     .map((c) => ({
       id: c.id as string,
       description: c.description as string,
       counterparty: (c.counterparty as string | null) ?? null,
+      // A display-only fallback (never printed as the person's name in prose contexts that need a
+      // real name — the UI uses it only where it currently showed "Someone"/"them").
+      sourceLabel: sourceLabelOf(c),
       direction: (c.direction as string) || 'you_owe',
       dueDate: (c.due_date as string | null) ?? null,
       overdue: !!(c.due_date && c.due_date < todayStr),
@@ -594,7 +657,7 @@ export async function GET() {
           // Waiting candidates = the ingest-awaiting commitments — the synthesis writes the follow-up
           // prose (status + nextMove) over these. Final lane routing is by the placement verdict below;
           // a commitment re-placed to ball_in_court that wasn't here still appears via the raw fallback.
-          waiting: commitmentCands.filter((c) => c.direction === 'awaiting').map((c) => ({ id: c.id, counterparty: c.counterparty, description: c.description, ageDays: c.ageDays })),
+          waiting: commitmentCands.filter((c) => c.direction === 'awaiting').map((c) => ({ id: c.id, counterparty: c.counterparty || c.sourceLabel, description: c.description, ageDays: c.ageDays })),
           fyiGroups: fyiTop.map((g) => ({ label: g.label, count: g.count, kind: g.kind, subjects: g.subjects })),
           keepAnEyeOn: keepAnEyeOnRaw,
         });
@@ -631,19 +694,26 @@ export async function GET() {
   // action lane. General — driven by grounded judgment, no hardcoded senders/subjects.
   const placementOf = (c: (typeof commitmentCands)[number]): CommitmentPlacement =>
     commitmentPlacements[c.id] ?? defaultPlacement(c.direction);
-  const commitments = commitmentCands
-    .filter((c) => placementOf(c) === 'on_your_plate')
-    .map((c) => ({ id: c.id, description: c.description, counterparty: c.counterparty, dueDate: c.dueDate, overdue: c.overdue, dueToday: c.dueToday }))
+  // Display dedup backstop (general): collapse near-identical descriptions within each lane so
+  // existing bad rows can't double up even before the data-cleanup script runs. `counterparty` falls
+  // back to the source-derived label (never a placeholder); UI omits the name when both are null.
+  // NOTE: "On your plate" is NO LONGER hard-capped — it renders a few and expands (Show N more) in the
+  // UI; we pass the full deduped set (bounded only by the 60-row commitments query upstream).
+  const commitments = dedupByDescription(
+    commitmentCands
+      .filter((c) => placementOf(c) === 'on_your_plate')
+      .map((c) => ({ id: c.id, description: c.description, counterparty: c.counterparty || c.sourceLabel, dueDate: c.dueDate, overdue: c.overdue, dueToday: c.dueToday })),
+  )
     .sort((a, b) => {
       const rk = (x: typeof a) => (x.overdue ? 0 : x.dueToday ? 1 : x.dueDate ? 2 : 3);
       return rk(a) !== rk(b) ? rk(a) - rk(b) : (a.dueDate || '9999').localeCompare(b.dueDate || '9999');
-    })
-    .slice(0, 5);
-  const waitingOn = commitmentCands
-    .filter((c) => placementOf(c) === 'ball_in_court')
-    .map((c) => ({ id: c.id, description: c.description, counterparty: c.counterparty, ageDays: c.ageDays }))
-    .sort((a, b) => b.ageDays - a.ageDays)
-    .slice(0, 6);
+    });
+  const waitingOn = dedupByDescription(
+    commitmentCands
+      .filter((c) => placementOf(c) === 'ball_in_court')
+      .map((c) => ({ id: c.id, description: c.description, counterparty: c.counterparty || c.sourceLabel, ageDays: c.ageDays })),
+  )
+    .sort((a, b) => b.ageDays - a.ageDays);
   // Keep the status chip honest with the routed set.
   status.waitingOn = waitingOn.length;
 
@@ -661,7 +731,9 @@ export async function GET() {
     });
     const extras = waitingOn
       .filter((w) => !covered.has(w.id))
-      .map((w) => ({ id: w.id, who: w.counterparty || 'Someone', status: `Waiting ${w.ageDays}d`, nextMove: 'Send a nudge' }));
+      // `who` = the counterparty or its source-derived label; NEVER a placeholder. Falls back to the
+      // description when there's no name/source at all, so a row still reads as a real thing to nudge.
+      .map((w) => ({ id: w.id, who: w.counterparty || w.description, status: `Waiting ${w.ageDays}d`, nextMove: 'Send a nudge' }));
     const allItems = [...keptItems, ...extras];
     followups = allItems.length
       ? { teaser: followups?.teaser || '', items: allItems, closing: followups?.closing ?? null }

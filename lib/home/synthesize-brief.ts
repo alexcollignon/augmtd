@@ -196,7 +196,7 @@ export async function synthesizeBrief(
     ? input.mustRespond.map((m, i) => `[R${i}] from ${m.from} (${m.fromEmail || 'no address'}), ${daysBetween(iso(now), m.receivedAt)}d ago — "${m.subject}": ${m.snippet}`).join('\n')
     : 'none';
   const waitingStr = input.waiting.length
-    ? input.waiting.map((w, i) => `[W${i}] ${w.counterparty || 'Someone'} — "${w.description}" — ${w.ageDays}d quiet`).join('\n')
+    ? input.waiting.map((w, i) => `[W${i}] ${w.counterparty || 'an unnamed party'} — "${w.description}" — ${w.ageDays}d quiet`).join('\n')
     : 'none';
   const fyiStr = input.fyiGroups.length
     ? input.fyiGroups.map((g, i) => `[F${i}] ${g.label} (${g.count}, ${g.kind}): ${g.subjects.slice(0, 5).filter(Boolean).map((s) => `"${s}"`).join('; ')}`).join('\n')
