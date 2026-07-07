@@ -14,6 +14,7 @@ export type ActivityType =
   | 'commitment_done'
   | 'commitment_dismissed'
   | 'sender_muted'
+  | 'invite_sent'
   | 'restored';
 
 export interface LogActivityInput {

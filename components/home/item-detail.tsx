@@ -373,6 +373,288 @@ function ComposePanel({ kind, entityId, onSent }: { kind: ComposeKind; entityId:
   );
 }
 
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// PREPARED CALENDAR INVITE — the FIRST non-email prepared-action type (stage 3a). A [System] step whose
+// intent is "send a calendar invite" routes here instead of the email composer: /api/items/prepare
+// extracts a GROUNDED, editable invite (title / date / start-end / attendees / description), the user
+// reviews & edits it, then a single "Approve & send invite" click → /api/items/execute (the ONLY place
+// a real invite fires). Approve-before-commit: nothing sends until that click. Mirrors ComposePanel's
+// prepared-work-you-validate shape + tokens.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+// ISO ↔ <input type="datetime-local"> (which is local, no tz suffix). We keep the invite's canonical
+// value as an ISO string; the input shows/edits it in the browser's local time.
+function isoToLocalInput(iso: string): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  // Shift by the tz offset so toISOString's slice reads as LOCAL wall-clock for the input.
+  const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 16);
+}
+function localInputToISO(v: string): string {
+  if (!v) return '';
+  const d = new Date(v); // parsed as local time
+  return isNaN(d.getTime()) ? '' : d.toISOString();
+}
+function fmtInviteWhen(iso: string): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true });
+}
+
+type PreparedInvite = {
+  type: 'calendar_invite';
+  title: string;
+  startISO: string;
+  endISO: string;
+  attendees: string[];
+  description: string;
+  timezone: string;
+};
+
+// The editable invite chips (attendees) — add via a small input, remove via ✕. Never invents.
+function AttendeeChips({ attendees, onChange }: { attendees: string[]; onChange: (next: string[]) => void }) {
+  const [input, setInput] = useState('');
+  const add = () => {
+    const v = input.trim();
+    if (v && v.includes('@') && !attendees.includes(v)) onChange([...attendees, v]);
+    setInput('');
+  };
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {attendees.map((a) => (
+        <span key={a} className="inline-flex items-center gap-1 rounded-full bg-neutral-100 pl-2.5 pr-1.5 py-0.5 text-[11.5px] text-neutral-700">
+          {a}
+          <button onClick={() => onChange(attendees.filter((x) => x !== a))} className="hover:text-rose-500 transition-colors" aria-label={`Remove ${a}`}>
+            <XMarkIcon className="w-3 h-3" />
+          </button>
+        </span>
+      ))}
+      <input
+        value={input}
+        onChange={(e) => setInput(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); add(); } }}
+        onBlur={add}
+        placeholder={attendees.length ? 'Add another…' : 'attendee@email.com'}
+        className="min-w-[140px] flex-1 bg-transparent text-[12.5px] text-neutral-800 placeholder:text-neutral-300 focus:outline-none py-0.5"
+      />
+    </div>
+  );
+}
+
+// The prepared invite card — pre-filled from /api/items/prepare, fully editable, approve-to-send.
+function InvitePreviewCard({ kind, entityId, taskId, onSent, onCancel }: {
+  kind: ItemKind;
+  entityId: string;
+  taskId?: string;
+  onSent?: () => void;
+  onCancel?: () => void;
+}) {
+  const [loading, setLoading] = useState(true);
+  const [title, setTitle] = useState('');
+  const [startISO, setStartISO] = useState('');
+  const [endISO, setEndISO] = useState('');
+  const [attendees, setAttendees] = useState<string[]>([]);
+  const [description, setDescription] = useState('');
+  const [timezone, setTimezone] = useState('UTC');
+  const [sending, setSending] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  // Pre-fill from the grounded extractor (NO side effects — prepare never sends).
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    fetch('/api/items/prepare', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind, entityId, taskId }),
+    })
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then((d: PreparedInvite | { type: string }) => {
+        if (!alive) return;
+        if (d && (d as PreparedInvite).type === 'calendar_invite') {
+          const inv = d as PreparedInvite;
+          setTitle(inv.title || '');
+          setStartISO(inv.startISO || '');
+          setEndISO(inv.endISO || '');
+          setAttendees(Array.isArray(inv.attendees) ? inv.attendees : []);
+          setDescription(inv.description || '');
+          setTimezone(inv.timezone || 'UTC');
+        }
+      })
+      .catch(() => { if (alive) setErr('Could not prepare the invite — fill it in below.'); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [kind, entityId, taskId]);
+
+  // On start change with no/earlier end, default a 30-min end.
+  const onStart = (v: string) => {
+    setStartISO(v);
+    if (v && (!endISO || new Date(endISO) <= new Date(v))) {
+      setEndISO(new Date(new Date(v).getTime() + 30 * 60000).toISOString());
+    }
+  };
+
+  const send = async () => {
+    if (sending) return;
+    if (!title.trim()) { setErr('Add a title.'); return; }
+    if (!startISO || !endISO) { setErr('Set a date and time.'); return; }
+    if (attendees.length === 0) { setErr('Add at least one attendee.'); return; }
+    setSending(true); setErr(null);
+    try {
+      const res = await fetch('/api/items/execute', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          kind, entityId, taskId,
+          action: { type: 'calendar_invite', title: title.trim(), startISO, endISO, attendees, description, timezone },
+        }),
+      });
+      if (res.ok) {
+        setSent(true);
+        onSent?.();
+      } else {
+        const d = await res.json().catch(() => ({}));
+        setErr(d.error || 'Could not send the invite.');
+      }
+    } catch {
+      setErr('Could not send the invite.');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  if (sent) {
+    return (
+      <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 px-4 py-4">
+        <div className="flex items-center gap-2">
+          <CheckIcon className="w-4 h-4 text-emerald-600" />
+          <p className="text-[13px] font-medium text-emerald-700">Invite sent{startISO ? ` — ${fmtInviteWhen(startISO)}` : ''}.</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className={CARD}>
+      {/* "Review before it sends" affordance — this is prepared work the user validates. */}
+      <div className="flex items-center gap-1.5 px-4 pt-3 pb-2 border-b border-neutral-100">
+        <CalendarDaysIcon className="w-3.5 h-3.5 text-violet-500" />
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500">Calendar invite</span>
+        <span className="ml-auto text-[10.5px] text-amber-600">Review before it sends</span>
+      </div>
+
+      {loading ? (
+        <div className="p-4"><div className="h-40 rounded-lg bg-neutral-100 animate-pulse" /></div>
+      ) : (
+        <div className="p-4 space-y-3">
+          <div>
+            <label className="block text-[10.5px] font-semibold uppercase tracking-wide text-neutral-400 mb-1">Title</label>
+            <input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="Meeting title"
+              className="w-full rounded-lg border border-neutral-200 px-3 py-1.5 text-[13px] text-neutral-800 placeholder:text-neutral-300 focus:outline-none focus:border-indigo-300"
+            />
+          </div>
+
+          <div className="flex gap-3">
+            <div className="flex-1 min-w-0">
+              <label className="block text-[10.5px] font-semibold uppercase tracking-wide text-neutral-400 mb-1">Starts</label>
+              <input
+                type="datetime-local"
+                value={isoToLocalInput(startISO)}
+                onChange={(e) => onStart(localInputToISO(e.target.value))}
+                className="w-full rounded-lg border border-neutral-200 px-2.5 py-1.5 text-[12.5px] text-neutral-800 focus:outline-none focus:border-indigo-300"
+              />
+            </div>
+            <div className="flex-1 min-w-0">
+              <label className="block text-[10.5px] font-semibold uppercase tracking-wide text-neutral-400 mb-1">Ends</label>
+              <input
+                type="datetime-local"
+                value={isoToLocalInput(endISO)}
+                onChange={(e) => setEndISO(localInputToISO(e.target.value))}
+                className="w-full rounded-lg border border-neutral-200 px-2.5 py-1.5 text-[12.5px] text-neutral-800 focus:outline-none focus:border-indigo-300"
+              />
+            </div>
+          </div>
+          {startISO && (
+            <p className="text-[11px] text-neutral-500 -mt-1">{fmtInviteWhen(startISO)}{endISO ? ` → ${fmtInviteWhen(endISO)}` : ''}</p>
+          )}
+
+          <div>
+            <label className="block text-[10.5px] font-semibold uppercase tracking-wide text-neutral-400 mb-1">Attendees</label>
+            <div className="rounded-lg border border-neutral-200 px-2.5 py-1.5">
+              <AttendeeChips attendees={attendees} onChange={setAttendees} />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-[10.5px] font-semibold uppercase tracking-wide text-neutral-400 mb-1">Notes</label>
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Agenda / notes (optional)"
+              rows={2}
+              className="w-full rounded-lg border border-neutral-200 px-3 py-1.5 text-[12.5px] text-neutral-700 placeholder:text-neutral-300 focus:outline-none focus:border-indigo-300 resize-y"
+            />
+          </div>
+
+          {err && <p className="text-[12px] text-rose-600">{err}</p>}
+
+          <div className="flex items-center gap-3 pt-1">
+            <button
+              onClick={send}
+              disabled={sending}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 text-white px-4 py-2 text-[13px] font-medium hover:bg-indigo-700 disabled:opacity-60 transition-colors"
+            >
+              <CalendarDaysIcon className="w-4 h-4" />{sending ? 'Sending…' : 'Approve & send invite'}
+            </button>
+            {onCancel && (
+              <button onClick={onCancel} className="text-[13px] font-medium text-neutral-500 hover:text-neutral-700">Cancel</button>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Invite host — the small state wrapper each deep-dive variant mounts to host the InvitePreviewCard.
+// `useInviteHost` returns { invitingTaskId, openInvite, closeInvite, onSent } + the `InvitePanel` node.
+// A variant wires `onInvite={openInvite}` into WhatThisTakes and drops `<inviteHost.node/>` where the
+// prepared card should appear. On a successful send it flips the step to done (markSystemDone) + closes.
+function useInviteHost(kind: ItemKind, entityId: string, markSystemDone: (taskId: string) => void) {
+  const [invitingTaskId, setInvitingTaskId] = useState<string | null>(null);
+  const openInvite = (taskId: string) => setInvitingTaskId(taskId);
+  const closeInvite = () => setInvitingTaskId(null);
+  const node = invitingTaskId ? (
+    <InvitePreviewCard
+      kind={kind}
+      entityId={entityId}
+      taskId={invitingTaskId}
+      onSent={() => { if (invitingTaskId) markSystemDone(invitingTaskId); }}
+      onCancel={closeInvite}
+    />
+  ) : null;
+  return { invitingTaskId, openInvite, closeInvite, node };
+}
+
+// ── Prepared-action routing (client side). A [System] step's action is CAPABILITY-AWARE: a step whose
+// intent is a calendar invite opens the InvitePreviewCard; every other draft/send step opens the
+// existing email ComposePanel. Kept 1:1 with `lib/home/prepare-action.ts` `routeStepToActionType` so
+// the client picks the same host the server prepares for (agnostic: adding a type = extend both).
+function clientRouteActionType(task: { capability: PlanTask['capability']; text: string; detail?: string }): 'calendar_invite' | 'email' {
+  const cap = task.capability;
+  const hay = `${task.text || ''} ${task.detail || ''}`.toLowerCase();
+  const inviteHit =
+    /\b(calendar invite|calendar event|send (?:an? )?invite|put .* on the calendar|schedule (?:a|the|this) (?:meeting|call|invite)|book (?:a|the) (?:meeting|call|slot)|create (?:a|the|an) (?:meeting|event|invite))\b/.test(hay) ||
+    (/\binvit/.test(hay) && /\b(meet|call|calendar|event)\b/.test(hay));
+  if (inviteHit && (cap === 'send' || cap === null)) return 'calendar_invite';
+  return 'email';
+}
+
 // ── "Hand to a coworker" — the global, item-level delegate affordance (deferred stub, disabled).
 // It is NOT a workflow step, so it never duplicates one. It lives in exactly ONE place per layout:
 // the Identified-tasks panel FOOTER when a breakdown exists (see `TasksPanel`), else inline in the
@@ -457,6 +739,7 @@ type ItemPlan = {
   dismiss: (task: PlanTask) => void;  // TOGGLE a step's "not needed" (crossed-out) state, persisted
   addStep: (text: string) => Promise<void>;              // add a step → classify → append (optimistic)
   editStep: (taskId: string, text: string) => Promise<void>; // edit a step's text → re-classify in place
+  markSystemDone: (taskId: string) => void;              // optimistically flip a [System] step to done (after a commit)
 };
 
 function useItemPlan(
@@ -587,12 +870,18 @@ function useItemPlan(
     }
   };
 
+  // Flip a [System] step to done locally after a successful commit (the server already persisted it in
+  // /api/items/execute). Keeps the stepper's ✓ in sync without a full refetch.
+  const markSystemDone = (taskId: string) => {
+    setTasks((prev) => (prev ? prev.map((t) => (t.id === taskId ? { ...t, done: true } : t)) : prev));
+  };
+
   // The ≥2-task breakdown gate — a real multi-step plan, counting ALL identified tasks (including
   // crossed-out ones). Crossing steps out does NOT collapse the panel: a workflow the user has triaged
   // stays visible. (A user-added step counts toward it — it's in `tasks`.)
   const hasBreakdown = !loading && !failed && !!tasks && tasks.length >= 2;
 
-  return { tasks, loading, failed, hasBreakdown, pending, classifyingId, toggle, dismiss, addStep, editStep };
+  return { tasks, loading, failed, hasBreakdown, pending, classifyingId, toggle, dismiss, addStep, editStep, markSystemDone };
 }
 
 // ── One step in the "Identified tasks" workflow stepper. A vertical timeline row: a NODE (✦ for a
@@ -604,9 +893,8 @@ function useItemPlan(
 function StepperRow({
   task,
   isLast,
-  canDraft,
-  draftLabel,
-  onDraft,
+  actionLabel,
+  onAction,
   onToggle,
   onDismiss,
   onEdit,
@@ -615,9 +903,8 @@ function StepperRow({
 }: {
   task: PlanTask;
   isLast: boolean;
-  canDraft: boolean;
-  draftLabel: string;
-  onDraft?: () => void;
+  actionLabel: string | null;       // the row's system action button label (null → quiet hint)
+  onAction?: () => void;            // opens the prepared action (compose panel OR invite card)
   onToggle: () => void;
   onDismiss: () => void;
   onEdit: (text: string) => void;   // re-classify this step with new text
@@ -657,8 +944,13 @@ function StepperRow({
       {/* Node — ✦ for a system step, a checkbox for a [You] step. Dimmed when the step is crossed out.
           While classifying, the node pulses to signal the grade is resolving. */}
       {isSystem ? (
-        <span className={`absolute left-0 top-[3px] flex h-[23px] w-[23px] items-center justify-center rounded-full ring-2 ring-white transition-colors duration-300 ${crossed ? 'bg-neutral-100' : 'bg-indigo-50'} ${classifying ? 'animate-pulse' : ''}`}>
-          <SparklesIcon className={`h-3.5 w-3.5 transition-colors duration-300 ${crossed ? 'text-neutral-300' : 'text-indigo-500'}`} />
+        // A committed [System] step (done — e.g. an invite was sent) shows an emerald ✓; otherwise ✦.
+        <span className={`absolute left-0 top-[3px] flex h-[23px] w-[23px] items-center justify-center rounded-full ring-2 ring-white transition-colors duration-300 ${task.done ? 'bg-emerald-500' : crossed ? 'bg-neutral-100' : 'bg-indigo-50'} ${classifying ? 'animate-pulse' : ''}`}>
+          {task.done ? (
+            <CheckIcon className="h-3.5 w-3.5 text-white" />
+          ) : (
+            <SparklesIcon className={`h-3.5 w-3.5 transition-colors duration-300 ${crossed ? 'text-neutral-300' : 'text-indigo-500'}`} />
+          )}
         </span>
       ) : (
         <button
@@ -751,8 +1043,11 @@ function StepperRow({
           ) : crossed ? (
             <span className="text-[10.5px] text-neutral-400 italic">Not needed</span>
           ) : isSystem ? (
-            canDraft && onDraft ? (
-              <button onClick={onDraft} className="text-[11.5px] font-medium text-indigo-600 hover:text-indigo-700">{draftLabel}</button>
+            task.done ? (
+              // A committed [System] step (e.g. an invite was sent) — a done confirmation, no action.
+              <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-600"><CheckIcon className="w-3 h-3" />Done</span>
+            ) : actionLabel && onAction ? (
+              <button onClick={onAction} className="text-[11.5px] font-medium text-indigo-600 hover:text-indigo-700">{actionLabel}</button>
             ) : (
               <span className="text-[11px] text-indigo-500/80">{CAP_HINT[task.capability ?? 'analyze'] ?? 'I can handle this'}</span>
             )
@@ -824,10 +1119,15 @@ function AddStepRow({ onAdd }: { onAdd: (text: string) => void }) {
 function WhatThisTakes({
   plan,
   onDraft,
+  onInvite,
   variant = 'inline',
 }: {
   plan: ItemPlan;
   onDraft?: () => void;
+  // onInvite — a system step routed to a calendar invite opens the InvitePreviewCard. Passed the step's
+  // id so the host can prepare/execute against that specific task. When absent, the step falls back to
+  // the quiet capability hint (the invite card isn't hosted in this variant's shell).
+  onInvite?: (taskId: string) => void;
   variant?: 'inline' | 'panel';
 }) {
   const { tasks, loading, failed, pending, classifyingId, toggle, dismiss, addStep, editStep } = plan;
@@ -859,39 +1159,55 @@ function WhatThisTakes({
   // bar already IS the one action. Crossing steps out never collapses a triaged workflow.
   if (tasks.length < 2) return null;
 
-  // Collapse draft + send into ONE actionable affordance. Both a `draft` task and a `send` task open
-  // the SAME compose flow (which already drafts AND sends), so two "Draft →" buttons read as a
-  // duplicate. We render the button on the FIRST draft/send task only, and if BOTH exist relabel it
-  // "Draft & send →". The other draft/send task still lists (it's useful context) but shows the quiet
-  // capability hint instead of a second button. Crossed-out ("not needed") steps are excluded — they
-  // carry no action, so the button lands on the first ACTIVE draft/send task.
-  const composeTaskIds = tasks.filter((t) => !t.dismissed && t.actor === 'system' && (t.capability === 'draft' || t.capability === 'send')).map((t) => t.id);
+  // CAPABILITY-AWARE action routing (stage 3a). A [System] draft/send step's action is chosen by its
+  // capability + intent (via `clientRouteActionType`, 1:1 with the server router):
+  //   • a calendar-invite step → its own "Send invite →" action (opens the InvitePreviewCard).
+  //   • every other draft/send step → the email compose flow (drafts AND sends), collapsed to ONE
+  //     "Draft →" / "Draft & send →" button on the FIRST such step (two would read as a duplicate).
+  // Crossed-out ("not needed") steps carry no action. Invite steps are excluded from the compose
+  // collapse so an invite + a reply on the same item each get their own action.
+  const activeSystemSteps = tasks.filter((t) => !t.dismissed && t.actor === 'system' && (t.capability === 'draft' || t.capability === 'send'));
+  const inviteIds = new Set(activeSystemSteps.filter((t) => clientRouteActionType(t) === 'calendar_invite').map((t) => t.id));
+  const composeTaskIds = activeSystemSteps.filter((t) => !inviteIds.has(t.id)).map((t) => t.id);
   const primaryComposeId = composeTaskIds[0] ?? null;
   const hasDraftAndSend =
-    tasks.some((t) => !t.dismissed && t.actor === 'system' && t.capability === 'draft') &&
-    tasks.some((t) => !t.dismissed && t.actor === 'system' && t.capability === 'send');
+    activeSystemSteps.some((t) => !inviteIds.has(t.id) && t.capability === 'draft') &&
+    activeSystemSteps.some((t) => !inviteIds.has(t.id) && t.capability === 'send');
   const composeLabel = hasDraftAndSend ? 'Draft & send →' : 'Draft →';
+
+  // Per-step action resolver — returns the {label, onAction} for the row's action button, or null (a
+  // quiet capability hint). Keeps StepperRow agnostic: it just renders whatever action it's handed.
+  const stepAction = (t: PlanTask): { label: string; onAction: () => void } | null => {
+    if (t.dismissed || t.actor !== 'system') return null;
+    if (inviteIds.has(t.id)) {
+      return onInvite ? { label: 'Send invite →', onAction: () => onInvite(t.id) } : null;
+    }
+    if (t.id === primaryComposeId && onDraft) return { label: composeLabel, onAction: onDraft };
+    return null;
+  };
 
   // The stepper — a connected vertical timeline (node → connector → node). Shared by both variants;
   // in 'panel' the parent owns the sticky "Identified tasks" header + legend, so we render just the <ol>.
   const stepper = (
     <ol className="relative">
-      {tasks.map((t, i) => (
-        <StepperRow
-          key={t.id}
-          task={t}
-          // Never the last node — the "+ Add a step" row always follows, so the connector runs down to it.
-          isLast={false}
-          canDraft={t.id === primaryComposeId && !!onDraft}
-          draftLabel={composeLabel}
-          onDraft={onDraft}
-          onToggle={() => toggle(t)}
-          onDismiss={() => dismiss(t)}
-          onEdit={(text) => editStep(t.id, text)}
-          classifying={classifyingId === t.id}
-          busy={pending.has(t.id)}
-        />
-      ))}
+      {tasks.map((t) => {
+        const action = stepAction(t);
+        return (
+          <StepperRow
+            key={t.id}
+            task={t}
+            // Never the last node — the "+ Add a step" row always follows, so the connector runs down to it.
+            isLast={false}
+            actionLabel={action?.label ?? null}
+            onAction={action?.onAction}
+            onToggle={() => toggle(t)}
+            onDismiss={() => dismiss(t)}
+            onEdit={(text) => editStep(t.id, text)}
+            classifying={classifyingId === t.id}
+            busy={pending.has(t.id)}
+          />
+        );
+      })}
       {/* Add-a-step affordance — always at the bottom of an active plan. */}
       <AddStepRow onAdd={addStep} />
     </ol>
@@ -1089,6 +1405,7 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
   const [sendErr, setSendErr] = useState<string | null>(null);
   const plan = useItemPlan('email', id);          // ONE /api/items/plan POST, shared by both instances
   const hasBreakdown = plan.hasBreakdown;         // ≥2-task plan → open the two-column layout
+  const inviteHost = useInviteHost('email', id, plan.markSystemDone); // hosts the InvitePreviewCard for a calendar-invite step
   const atts = useReplyAttachments();             // shared inbox-style attach surface (base64 → send-reply)
   const editorRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null); // the docked reply composer — a draft-task scrolls here
@@ -1188,7 +1505,7 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
     // plan is a genuine ≥2-task breakdown; single column otherwise.
     <DeepDiveShell
       hasBreakdown={hasBreakdown}
-      panel={<WhatThisTakes plan={plan} variant="panel" onDraft={scrollToComposer} />}
+      panel={<WhatThisTakes plan={plan} variant="panel" onDraft={scrollToComposer} onInvite={inviteHost.openInvite} />}
     >
       {/* 1 — Header: subject + sender + date (fixed at top) */}
       <DetailHeader
@@ -1225,8 +1542,13 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
           <WhatThisTakes
             plan={plan}
             onDraft={scrollToComposer}
+            onInvite={inviteHost.openInvite}
           />
         </div>
+
+        {/* Prepared calendar-invite card — mounted when a calendar-invite step is triggered. Grounded,
+            editable, approve-to-send (the ONLY place an invite fires is the Approve click → execute). */}
+        {inviteHost.node && <div>{inviteHost.node}</div>}
 
         {/* Suggested angle (light line) — kept just above the docked composer */}
         {angle && (
@@ -1348,6 +1670,7 @@ function MeetingDetail({ id }: { id: string }) {
   const [acting, setActing] = useState<Set<string>>(new Set());
   const plan = useItemPlan('meeting', id);        // ONE /api/items/plan POST, shared by both instances
   const hasBreakdown = plan.hasBreakdown;         // ≥2-task plan → open the two-column layout
+  const inviteHost = useInviteHost('meeting', id, plan.markSystemDone);
 
   useEffect(() => {
     let alive = true;
@@ -1378,7 +1701,7 @@ function MeetingDetail({ id }: { id: string }) {
   return (
     <DeepDiveShell
       hasBreakdown={hasBreakdown}
-      panel={<WhatThisTakes plan={plan} variant="panel" onDraft={() => setComposing(true)} />}
+      panel={<WhatThisTakes plan={plan} variant="panel" onDraft={() => setComposing(true)} onInvite={inviteHost.openInvite} />}
     >
       {/* Header */}
       <DetailHeader
@@ -1415,6 +1738,10 @@ function MeetingDetail({ id }: { id: string }) {
             {composing && (
               <ComposePanel kind="meeting" entityId={id} />
             )}
+
+            {/* Prepared calendar-invite card — a calendar-invite step opens it here (grounded, editable,
+                approve-to-send). */}
+            {inviteHost.node}
 
             {/* Suggested next step — the one call-to-action, kept prominent up top (indigo accent). */}
             {/* Suggested next step — a highlighted indigo CALLOUT card (system accent), not a plain
@@ -1534,7 +1861,7 @@ function MeetingDetail({ id }: { id: string }) {
                 in the right TASKS PANEL). BELOW the context (action-first ordering). A system
                 draft-task opens the follow-up composer at the top. */}
             <div className="lg:hidden">
-              <WhatThisTakes plan={plan} onDraft={() => setComposing(true)} />
+              <WhatThisTakes plan={plan} onDraft={() => setComposing(true)} onInvite={inviteHost.openInvite} />
             </div>
           </>
         )}
@@ -1569,6 +1896,7 @@ function CommitmentDetail({ id }: { id: string }) {
   const [emailed, setEmailed] = useState(false);      // sent the message → offer to mark done
   const plan = useItemPlan('commitment', id);         // ONE /api/items/plan POST, shared by both instances
   const hasBreakdown = plan.hasBreakdown;             // ≥2-task plan → open the two-column layout
+  const inviteHost = useInviteHost('commitment', id, plan.markSystemDone);
 
   useEffect(() => {
     let alive = true;
@@ -1597,7 +1925,7 @@ function CommitmentDetail({ id }: { id: string }) {
   return (
     <DeepDiveShell
       hasBreakdown={hasBreakdown}
-      panel={<WhatThisTakes plan={plan} variant="panel" onDraft={() => setComposing(true)} />}
+      panel={<WhatThisTakes plan={plan} variant="panel" onDraft={() => setComposing(true)} onInvite={inviteHost.openInvite} />}
     >
       {/* Header */}
       <DetailHeader
@@ -1652,6 +1980,9 @@ function CommitmentDetail({ id }: { id: string }) {
               </div>
             )}
 
+            {/* Prepared calendar-invite card — a calendar-invite step opens it here. */}
+            {inviteHost.node}
+
             {src ? (
               <section>
                 <h2 className={SECTION_LABEL}>
@@ -1680,7 +2011,7 @@ function CommitmentDetail({ id }: { id: string }) {
                 in the right TASKS PANEL). BELOW the source context (action-first ordering). A system
                 draft-task opens the compose panel at the top. */}
             <div className="lg:hidden">
-              <WhatThisTakes plan={plan} onDraft={() => setComposing(true)} />
+              <WhatThisTakes plan={plan} onDraft={() => setComposing(true)} onInvite={inviteHost.openInvite} />
             </div>
           </>
         )}
@@ -1734,6 +2065,7 @@ function FollowUpDetail({ id }: { id: string }) {
   const [sendErr, setSendErr] = useState<string | null>(null);
   const plan = useItemPlan('followup', id);       // ONE /api/items/plan POST, shared by both instances
   const hasBreakdown = plan.hasBreakdown;         // ≥2-task plan → open the two-column layout
+  const inviteHost = useInviteHost('followup', id, plan.markSystemDone);
   const atts = useReplyAttachments();             // shared inbox-style attach surface (base64 → nudge PATCH)
   const editorRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null); // the docked nudge composer — a draft-task scrolls here
@@ -1814,7 +2146,7 @@ function FollowUpDetail({ id }: { id: string }) {
   return (
     <DeepDiveShell
       hasBreakdown={hasBreakdown}
-      panel={<WhatThisTakes plan={plan} variant="panel" onDraft={scrollToComposer} />}
+      panel={<WhatThisTakes plan={plan} variant="panel" onDraft={scrollToComposer} onInvite={inviteHost.openInvite} />}
     >
       {/* Header */}
       <DetailHeader
@@ -1846,8 +2178,12 @@ function FollowUpDetail({ id }: { id: string }) {
           <WhatThisTakes
             plan={plan}
             onDraft={scrollToComposer}
+            onInvite={inviteHost.openInvite}
           />
         </div>
+
+        {/* Prepared calendar-invite card — a calendar-invite step opens it here. */}
+        {inviteHost.node && <div>{inviteHost.node}</div>}
       </div>
 
       {/* Docked nudge composer */}
