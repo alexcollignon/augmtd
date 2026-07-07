@@ -281,28 +281,25 @@ const CAP_HINT: Record<string, string> = {
   fetch: 'I can look this up',
 };
 
-// `onDraft` (when provided) is invoked by a system draft/send task to open the deep-dive's existing
-// compose flow. `planKind` is the storage kind used by the plan endpoints (may differ from the visual
-// ItemKind — e.g. an email deep-dive stores as 'email', an awareness row as 'awareness').
-//
-// LAYOUT: `variant` controls the shell. 'inline' (default) renders the classic in-flow <section> —
-// used on narrow widths and as the stacked fallback. 'panel' renders the same task list WITHOUT its
-// own section header/legend (the parent panel supplies a sticky header) — used in the right column of
-// the two-column deep-dive. `onHasBreakdown(has)` reports whether a real ≥2-task breakdown exists so
-// the parent can decide to open the two-column layout (widen + show the aside) BEFORE render.
-function WhatThisTakes({
-  planKind,
-  entityId,
-  onDraft,
-  variant = 'inline',
-  onHasBreakdown,
-}: {
-  planKind: 'email' | 'meeting' | 'commitment' | 'awareness' | 'followup';
-  entityId: string;
-  onDraft?: () => void;
-  variant?: 'inline' | 'panel';
-  onHasBreakdown?: (has: boolean) => void;
-}) {
+// ── The plan hook — the SINGLE `/api/items/plan` fetch per deep-dive load. Hoisted out of
+// `WhatThisTakes` so each variant fetches the plan ONCE and passes the result to BOTH the inline
+// (lg:hidden) and panel (hidden lg:flex) `WhatThisTakes` instances. Previously each instance fetched
+// on its own → TWO concurrent POSTs on first open (a double AI plan-generation before the item_plans
+// cache row is written). Owns tasks / loading / failed / pending + the [You]-checkbox PATCH handler +
+// the ≥2-task breakdown gate.
+type ItemPlan = {
+  tasks: PlanTask[] | null;
+  loading: boolean;
+  failed: boolean;
+  hasBreakdown: boolean; // a genuine ≥2-task plan (drives the two-column layout)
+  pending: Set<string>;
+  toggle: (task: PlanTask) => void;
+};
+
+function useItemPlan(
+  planKind: 'email' | 'meeting' | 'commitment' | 'awareness' | 'followup',
+  entityId: string,
+): ItemPlan {
   const [tasks, setTasks] = useState<PlanTask[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
@@ -327,14 +324,6 @@ function WhatThisTakes({
     return () => { alive = false; };
   }, [planKind, entityId]);
 
-  // Report breakdown presence to the parent (a real ≥2-task plan) so it can open the two-column
-  // layout. Runs after load: failed / <2 tasks → false, else → true.
-  useEffect(() => {
-    if (!onHasBreakdown) return;
-    if (loading) return;
-    onHasBreakdown(!failed && !!tasks && tasks.length >= 2);
-  }, [loading, failed, tasks, onHasBreakdown]);
-
   const toggle = (task: PlanTask) => {
     if (task.actor !== 'you' || pending.has(task.id)) return;
     const next = !task.done;
@@ -353,9 +342,35 @@ function WhatThisTakes({
       .finally(() => setPending((prev) => { const n = new Set(prev); n.delete(task.id); return n; }));
   };
 
+  // The ≥2-task breakdown gate — a real multi-step plan (not failed, not loading, ≥2 tasks).
+  const hasBreakdown = !loading && !failed && !!tasks && tasks.length >= 2;
+
+  return { tasks, loading, failed, hasBreakdown, pending, toggle };
+}
+
+// `onDraft` (when provided) is invoked by a system draft/send task to open the deep-dive's existing
+// compose flow. The plan state (tasks / loading / failed / pending + toggle) is fetched ONCE by the
+// parent via `useItemPlan` and passed in as `plan` — both the inline and panel instances share it, so
+// there is exactly ONE `/api/items/plan` POST per deep-dive load.
+//
+// LAYOUT: `variant` controls the shell. 'inline' (default) renders the classic in-flow <section> —
+// used on narrow widths and as the stacked fallback. 'panel' renders the same task list WITHOUT its
+// own section header/legend (the parent panel supplies a sticky header) — used in the right column of
+// the two-column deep-dive.
+function WhatThisTakes({
+  plan,
+  onDraft,
+  variant = 'inline',
+}: {
+  plan: ItemPlan;
+  onDraft?: () => void;
+  variant?: 'inline' | 'panel';
+}) {
+  const { tasks, loading, failed, pending, toggle } = plan;
+
   // In the two-column layout the parent renders the panel chrome + its own loading/failed handling
-  // (the aside only mounts once a breakdown is confirmed), so the `panel` variant emits NOTHING on
-  // failed/loading/empty — it just reports via onHasBreakdown and renders the list when ready.
+  // (the aside only mounts once a breakdown is confirmed via the hook's `hasBreakdown`), so the
+  // `panel` variant emits NOTHING on failed/loading/empty — it just renders the list when ready.
   // Non-fatal: a failed plan hides the section entirely — the stage-1 action bar carries the deep-dive.
   if (failed) return null;
 
@@ -469,12 +484,13 @@ function WhatThisTakes({
 // dedicated TASKS PANEL (right column) surfaces the "What this takes" breakdown so it's easy to scan
 // and act on. When there's no breakdown → single column, exactly as before (no empty second column).
 //
-// Each variant renders `<WhatThisTakes …/>` TWICE with the same props/plan (React dedups the fetch by
-// nothing — but the plan endpoint is cheap + already cached upstream; both instances read the same
-// gate, so at most one ever renders content): once INLINE (stacked, shown only on narrow < lg widths
-// via `lg:hidden`) and once in the PANEL (shown only ≥ lg via `hidden lg:flex`). A single
-// `onHasBreakdown` from the panel instance drives the layout. This keeps the responsive fallback
-// truthful (tasks below the composer on narrow) without duplicating logic.
+// Each variant fetches the plan ONCE via `useItemPlan` and renders `<WhatThisTakes …/>` TWICE with the
+// SAME shared `plan` object: once INLINE (stacked, shown only on narrow < lg widths via `lg:hidden`)
+// and once in the PANEL (shown only ≥ lg via `hidden lg:flex`). Since both instances read the one
+// hoisted plan (tasks + gate), there is exactly ONE `/api/items/plan` POST per deep-dive load — no
+// more double AI plan-generation on first open. The hook's `hasBreakdown` drives the layout. This
+// keeps the responsive fallback truthful (tasks below the composer on narrow) without duplicating the
+// fetch.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 // The right column: a card-lane panel with a sticky "What this takes" header + legend and its own
@@ -615,7 +631,8 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
   const [sent, setSent] = useState(false);
   const [copied, setCopied] = useState(false);
   const [sendErr, setSendErr] = useState<string | null>(null);
-  const [hasBreakdown, setHasBreakdown] = useState(false); // ≥2-task plan → open the two-column layout
+  const plan = useItemPlan('email', id);          // ONE /api/items/plan POST, shared by both instances
+  const hasBreakdown = plan.hasBreakdown;         // ≥2-task plan → open the two-column layout
   const editorRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null); // the docked reply composer — a draft-task scrolls here
 
@@ -714,7 +731,7 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
     // plan is a genuine ≥2-task breakdown; single column otherwise.
     <DeepDiveShell
       hasBreakdown={hasBreakdown}
-      panel={<WhatThisTakes planKind="email" entityId={id} variant="panel" onDraft={scrollToComposer} onHasBreakdown={setHasBreakdown} />}
+      panel={<WhatThisTakes plan={plan} variant="panel" onDraft={scrollToComposer} />}
     >
       {/* 1 — Header: subject + sender + date (fixed at top) */}
       <DetailHeader
@@ -749,8 +766,7 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
             multi-step (≥2 tasks). A system draft/send task scrolls to the docked reply composer. */}
         <div className="lg:hidden">
           <WhatThisTakes
-            planKind="email"
-            entityId={id}
+            plan={plan}
             onDraft={scrollToComposer}
           />
         </div>
@@ -864,7 +880,8 @@ function MeetingDetail({ id }: { id: string }) {
   // Per-item cleared state (Done/Dismiss) → the row fades then hides. Keyed by inbox item id.
   const [cleared, setCleared] = useState<Set<string>>(new Set());
   const [acting, setActing] = useState<Set<string>>(new Set());
-  const [hasBreakdown, setHasBreakdown] = useState(false); // ≥2-task plan → open the two-column layout
+  const plan = useItemPlan('meeting', id);        // ONE /api/items/plan POST, shared by both instances
+  const hasBreakdown = plan.hasBreakdown;         // ≥2-task plan → open the two-column layout
 
   useEffect(() => {
     let alive = true;
@@ -895,7 +912,7 @@ function MeetingDetail({ id }: { id: string }) {
   return (
     <DeepDiveShell
       hasBreakdown={hasBreakdown}
-      panel={<WhatThisTakes planKind="meeting" entityId={id} variant="panel" onDraft={() => setComposing(true)} onHasBreakdown={setHasBreakdown} />}
+      panel={<WhatThisTakes plan={plan} variant="panel" onDraft={() => setComposing(true)} />}
     >
       {/* Header */}
       <DetailHeader
@@ -1045,7 +1062,7 @@ function MeetingDetail({ id }: { id: string }) {
                 in the right TASKS PANEL). BELOW the context (action-first ordering). A system
                 draft-task opens the follow-up composer at the top. */}
             <div className="lg:hidden">
-              <WhatThisTakes planKind="meeting" entityId={id} onDraft={() => setComposing(true)} />
+              <WhatThisTakes plan={plan} onDraft={() => setComposing(true)} />
             </div>
           </>
         )}
@@ -1078,7 +1095,8 @@ function CommitmentDetail({ id }: { id: string }) {
   const [done, setDone] = useState<'done' | 'dismissed' | null>(null);
   const [composing, setComposing] = useState(false); // the "email X what you owe" compose panel
   const [emailed, setEmailed] = useState(false);      // sent the message → offer to mark done
-  const [hasBreakdown, setHasBreakdown] = useState(false); // ≥2-task plan → open the two-column layout
+  const plan = useItemPlan('commitment', id);         // ONE /api/items/plan POST, shared by both instances
+  const hasBreakdown = plan.hasBreakdown;             // ≥2-task plan → open the two-column layout
 
   useEffect(() => {
     let alive = true;
@@ -1107,7 +1125,7 @@ function CommitmentDetail({ id }: { id: string }) {
   return (
     <DeepDiveShell
       hasBreakdown={hasBreakdown}
-      panel={<WhatThisTakes planKind="commitment" entityId={id} variant="panel" onDraft={() => setComposing(true)} onHasBreakdown={setHasBreakdown} />}
+      panel={<WhatThisTakes plan={plan} variant="panel" onDraft={() => setComposing(true)} />}
     >
       {/* Header */}
       <DetailHeader
@@ -1186,7 +1204,7 @@ function CommitmentDetail({ id }: { id: string }) {
                 in the right TASKS PANEL). BELOW the source context (action-first ordering). A system
                 draft-task opens the compose panel at the top. */}
             <div className="lg:hidden">
-              <WhatThisTakes planKind="commitment" entityId={id} onDraft={() => setComposing(true)} />
+              <WhatThisTakes plan={plan} onDraft={() => setComposing(true)} />
             </div>
           </>
         )}
@@ -1238,7 +1256,8 @@ function FollowUpDetail({ id }: { id: string }) {
   const [sent, setSent] = useState(false);
   const [copied, setCopied] = useState(false);
   const [sendErr, setSendErr] = useState<string | null>(null);
-  const [hasBreakdown, setHasBreakdown] = useState(false); // ≥2-task plan → open the two-column layout
+  const plan = useItemPlan('followup', id);       // ONE /api/items/plan POST, shared by both instances
+  const hasBreakdown = plan.hasBreakdown;         // ≥2-task plan → open the two-column layout
   const editorRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null); // the docked nudge composer — a draft-task scrolls here
 
@@ -1318,7 +1337,7 @@ function FollowUpDetail({ id }: { id: string }) {
   return (
     <DeepDiveShell
       hasBreakdown={hasBreakdown}
-      panel={<WhatThisTakes planKind="followup" entityId={id} variant="panel" onDraft={scrollToComposer} onHasBreakdown={setHasBreakdown} />}
+      panel={<WhatThisTakes plan={plan} variant="panel" onDraft={scrollToComposer} />}
     >
       {/* Header */}
       <DetailHeader
@@ -1348,8 +1367,7 @@ function FollowUpDetail({ id }: { id: string }) {
             simple nudge → hidden). A system draft/send task scrolls to the docked nudge composer. */}
         <div className="lg:hidden">
           <WhatThisTakes
-            planKind="followup"
-            entityId={id}
+            plan={plan}
             onDraft={scrollToComposer}
           />
         </div>
