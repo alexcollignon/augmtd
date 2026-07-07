@@ -17,10 +17,12 @@ export type PlanCapability = 'draft' | 'analyze' | 'fetch' | 'send' | null;
 
 export type ItemPlanTask = {
   id: string;
-  text: string;
+  text: string;              // a SHORT imperative title (≤ ~8–10 words) — the one line the stepper shows
+  detail?: string;           // an optional one-sentence explanation — revealed when the step is expanded
   actor: 'system' | 'you';
   capability: PlanCapability;
   done?: boolean;
+  dismissed?: boolean;       // the user removed this step from the workflow (persisted)
 };
 
 export type ItemPlan = { tasks: ItemPlanTask[] };
@@ -37,6 +39,7 @@ WHAT WE (the SYSTEM) CAN DO:
 
 WHAT WE CANNOT DO (grade as [You]):
 - Any external/tool action: process a refund in a billing system, look up a CRM/bank/invoice, sign a document, make a payment, book or attend something, place a call, update an external tool.
+- CREATE A CALENDAR EVENT or SEND A CALENDAR INVITE. We can READ the calendar and DRAFT a reply proposing a time, but we CANNOT put a meeting on the calendar or send an invite — that is [You] (capability null), never [System].
 - Any decision, approval, or judgment that is the user's to make.
 - Anything physical, or anything in a system we don't have access to.
 - Fetching from an EXTERNAL system (billing, CRM, bank, e-signature, payment portal) — that is [You], NOT fetch.
@@ -65,6 +68,7 @@ function parseTasks(raw: string): ItemPlanTask[] | null {
       const rec = t as Record<string, unknown>;
       const txt = typeof rec.text === 'string' ? rec.text.trim() : '';
       if (!txt) continue;
+      const detailRaw = typeof rec.detail === 'string' ? rec.detail.trim() : '';
       const actor = rec.actor === 'system' ? 'system' : 'you';
       const capRaw = rec.capability;
       const capability: PlanCapability =
@@ -73,7 +77,12 @@ function parseTasks(raw: string): ItemPlanTask[] | null {
           : null;
       tasks.push({
         id: `t${tasks.length + 1}`,
-        text: txt.slice(0, 240),
+        text: txt.slice(0, 120),
+        // The longer explanation, shown on expand. Only carry it when it adds something beyond the
+        // title (a model that echoed the title into `detail` shouldn't create a redundant expand).
+        ...(detailRaw && detailRaw.toLowerCase() !== txt.toLowerCase()
+          ? { detail: detailRaw.slice(0, 400) }
+          : {}),
         actor,
         // Defensive: a system task must name a capability (default 'analyze' if the model omitted it);
         // a [You] task never carries a system capability.
@@ -109,27 +118,40 @@ export async function generateItemPlan(
     `Home into the concrete sub-tasks it takes to RESOLVE it, and grade each task by who does it.\n\n` +
     `${CAPABILITY_SET}\n\n` +
     `INSTRUCTIONS:\n` +
-    `- Break the item into 2–5 CONCRETE, specific sub-tasks. Order them the way you'd actually do the work.\n` +
+    `- Break the item into 1–5 CONCRETE, specific sub-tasks. Order them the way you'd actually do the work.\n` +
     `- Be specific to THIS item: name the real recipient, say what to fetch/draft, reference the actual next step.\n` +
-    `- A simple item may be a SINGLE task — don't invent busywork.\n` +
+    `- EACH task has TWO fields:\n` +
+    `  • "text" — a SHORT imperative TITLE, ≤ 8 words, no trailing period (e.g. "Reply to Sarah", "Attach the Q3 deck", "Book the room"). This is the one line the user scans. Keep it terse — a title, not a sentence.\n` +
+    `  • "detail" — ONE plain sentence expanding on the title: the specifics, why, or what's involved (e.g. "Confirm you can make the Thursday 3pm slot and propose an agenda."). Never just repeat the title. Omit "detail" only if the title is already fully self-explanatory.\n` +
+    `- HONESTY OF STEP COUNT — this is the most important rule, and it cuts BOTH ways:\n` +
+    `  • A TRIVIAL item that only needs a reply MUST be a SINGLE task: e.g. "Draft and send the reply to <name>" ` +
+    `(capability "send"). Do NOT pad a simple reply with invented steps ("review the thread", "consider next steps") — one task.\n` +
+    `  • But surface EVERY DISTINCT real-world step this item actually requires to be RESOLVED — not just the reply. ` +
+    `Reason from the item itself: what does fully handling it take? If resolving it needs an action BEYOND writing a ` +
+    `message (attach a specific file, place an order, process/refund something, pay, forward to someone, sign, book ` +
+    `or schedule something, make a decision, update another system, etc.), make EACH such action its own task and ` +
+    `grade it by the capability set — most of these are [You] (capability null) because they aren't draft/analyze/` +
+    `fetch/send. Don't collapse a two-part item ("reply AND do X") into just the reply, and don't invent an X that ` +
+    `isn't there. Let the steps EMERGE from THIS item — never from its category.\n` +
     `- NO redundant steps. Drafting and sending an email is ONE action here — emit a single task like ` +
     `"draft and send the reply to <name>" (capability "send"), NOT a separate "draft" step AND a "send" step.\n` +
     `- Grade each task: actor "system" (AUGMTD can do it now — set a capability: draft|analyze|fetch|send) ` +
     `or actor "you" (needs the user — capability null). Grade CONSERVATIVELY per the rules above.\n` +
     `- Every "system" task MUST map to one of draft|analyze|fetch|send. Every "you" task has capability null.\n\n` +
     `Return ONLY JSON, no prose:\n` +
-    `{"tasks":[{"text":"...","actor":"system"|"you","capability":"draft"|"analyze"|"fetch"|"send"|null}]}\n\n` +
+    `{"tasks":[{"text":"short title","detail":"one-sentence explanation","actor":"system"|"you","capability":"draft"|"analyze"|"fetch"|"send"|null}]}\n\n` +
     `--- ITEM (${input.kind}) ---\n${context || '(no additional context)'}`;
 
   try {
-    const { client: ai, model } = await getAIClient(userId, 'planning', client);
+    // Use the CLASSIFICATION tier, NOT planning. On bedrock_optimised, planning = Kimi (a REASONING model)
+    // that burns the whole token budget in its `reasoning` channel and emits EMPTY content — and the richer
+    // title+detail ask made it over-reason past even an 8000 cap (35k chars of reasoning, 0 content → the
+    // "Handle this" fallback, panel empty). Classification routes to a NON-reasoning model (Bedrock Haiku 4.5
+    // on bedrock_optimised, gpt-4o-mini on standard) that emits the JSON directly — reliable, fast, no blowup.
+    const { client: ai, model } = await getAIClient(userId, 'classification', client);
     const res = await aiCreate(ai, {
-      // Headroom for REASONING models (bedrock_optimised planning = Kimi, a reasoning model): at 700 it
-      // spent the whole budget in the `reasoning` channel and emitted EMPTY content (finish_reason=length)
-      // → parse failed → the fallback "Handle this" every time. Non-reasoning tiers just stop after the
-      // ~200-token JSON, so a high cap is safe/cheap.
       model,
-      max_tokens: 8000,
+      max_tokens: 4000, // plenty for 1–5 tasks × (title+detail) from a direct (non-reasoning) model
       temperature: 0.3,
       messages: [{ role: 'user', content: prompt }],
     });

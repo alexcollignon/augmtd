@@ -381,15 +381,15 @@ function DigestReply({ m, onDismiss, emphasis = false, onUndoInbox }: { m: Diges
         <SenderAvatar name={m.who} size={emphasis ? 'md' : 'sm'} />
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline gap-2">
+            {/* Line 1 = sender · the SYNTHESIZED ASK (the actionable summary — prominent), snippet fallback
+                until the enrich lands. Line 2 = the raw email subject (muted, secondary). Inverted so the
+                "what they need" leads and the subject is supporting context. */}
             <p className={`${emphasis ? 'text-[14.5px]' : 'text-[13.5px]'} font-semibold text-neutral-900 leading-snug min-w-0 truncate`}>
-              {m.who}{subject && <span className="font-normal text-neutral-400"> · </span>}{subject && <span className="font-semibold text-neutral-800">{subject}</span>}
+              {m.who}{(m.ask || m.snippet) && <span className="font-normal text-neutral-400"> · </span>}{(m.ask || m.snippet) && <span className="font-semibold text-neutral-800">{m.ask || m.snippet}</span>}
             </p>
             {when && <span className="flex-shrink-0 ml-auto text-[11px] text-neutral-300 tabular-nums">{when}</span>}
           </div>
-          {/* Show the AI-synthesized ask when we have it; fall back to the email snippet so the context
-              line is NEVER empty (the optimistic "basic" brief has no ask yet — a full reload was showing
-              a blank line until the background enrich landed). */}
-          {(m.ask || m.snippet) && <p className={`${emphasis ? 'text-[12.5px]' : 'text-[12px]'} text-neutral-500 mt-0.5 leading-snug line-clamp-1`}>{m.ask || m.snippet}</p>}
+          {subject && <p className={`${emphasis ? 'text-[12.5px]' : 'text-[12px]'} text-neutral-500 mt-0.5 leading-snug line-clamp-1`}>{subject}</p>}
         </div>
         {m.itemId && (
           <span className="flex-shrink-0 flex items-center gap-2.5 mt-0.5">
@@ -842,26 +842,34 @@ export function HomeView() {
   // errors ignored. get-or-generate on the route means a warmed plan just returns cached on open.
   const preGenPlans = useCallback((brief: Brief) => {
     const targets: { kind: string; entityId: string }[] = [];
-    // Only warm plans for the kinds that actually RENDER "What this takes": meetings + commitments
-    // (multi-step). Email/reply/nudge deep-dives no longer show a breakdown — their composer IS the
-    // plan — so warming their plans would spend AI calls for something that never renders.
+    // Warm plans for ALL actionable kinds — the "What this takes" breakdown is now INTENT-driven
+    // (renders on ANY kind whose plan is genuinely multi-step, ≥2 tasks), so a meeting-request EMAIL
+    // may show a breakdown too. Pre-gen so the deep-dive opens with a cached plan (no 1s load) even
+    // for emails. For a single-task (trivial) plan the pre-gen is "wasted" but it's background/cached
+    // and never blocks — the get-or-generate route returns cached on open.
+    for (const m of brief.mustRespond?.items ?? []) {
+      if (m.itemId) targets.push({ kind: 'email', entityId: m.itemId });
+    }
     for (const p of brief.priorities ?? []) {
       if (p.source === 'meeting') {
         const tid = p.id.startsWith('meeting:') ? p.id.slice('meeting:'.length) : p.id;
         if (tid) targets.push({ kind: 'meeting', entityId: tid });
+      } else if (p.itemId) {
+        // A non-meeting priority card is an inbox email item (email/awareness deep-dive → kind email).
+        targets.push({ kind: 'email', entityId: p.itemId });
       }
     }
     for (const c of brief.commitments ?? []) {
       if (c.id) targets.push({ kind: 'commitment', entityId: c.id });
     }
-    // De-dupe within this batch + against what we've already warmed, then cap at 4 (cost guard).
+    // De-dupe within this batch + against what we've already warmed, then cap at 6 (cost guard).
     const seen = new Set<string>();
     const queue = targets.filter((t) => {
       const key = `${t.kind}:${t.entityId}`;
       if (seen.has(key) || preGennedRef.current.has(key)) return false;
       seen.add(key);
       return true;
-    }).slice(0, 4);
+    }).slice(0, 6);
     // Fire sequentially with a small stagger so we don't hammer the reasoning tier all at once.
     queue.forEach((t, i) => {
       const key = `${t.kind}:${t.entityId}`;
@@ -1299,11 +1307,11 @@ export function HomeView() {
     </Collapsible>
   ));
 
-  // THIN-RAIL FOLD THRESHOLD — the two-zone split only earns its keep when the rail has enough
-  // ambient content to balance a full main column. With ≤2 non-empty rail sections a sidebar reads
-  // thin/unbalanced, so we fold those sections to the BOTTOM of the main column and render one column.
-  // 3+ sections → keep the calm right rail.
-  const RAIL_MIN_FOR_SIDEBAR = 3;
+  // Two-zone whenever there's ANY rail content — a CONSISTENT layout beats a content-count-dependent
+  // one. A `3`-section threshold made the Home flip between one- and two-column as ambient sections
+  // (Keep-an-eye-on / Awareness) came and went, which reads as the layout "changing on its own". Now any
+  // rail content earns the sidebar; only a totally empty rail (nothing to show) stays one column.
+  const RAIL_MIN_FOR_SIDEBAR = 1;
   // LATCH the two-zone layout so it never flips mid-load. The brief arrives in stages (an optimistic
   // BASIC brief first, then the enriched pass fills the ambient lanes — keepAnEyeOn / fyiDigest /
   // followups — plus the separate /api/workers/home team fetch), so `railNodes.length` climbs past the

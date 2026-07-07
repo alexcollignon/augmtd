@@ -12,6 +12,8 @@ import {
   PaperAirplaneIcon,
   UserPlusIcon,
   SparklesIcon,
+  ChevronDownIcon,
+  XMarkIcon,
 } from '@heroicons/react/24/outline';
 import { ThreadMessages, type ThreadMessage } from '@/components/inbox/thread-messages';
 import ReplyEditor from '@/components/inbox/reply-editor';
@@ -229,9 +231,28 @@ function ComposePanel({ kind, entityId, onSent }: { kind: ComposeKind; entityId:
   );
 }
 
+// ── "Hand to a coworker" — the global, item-level delegate affordance (deferred stub, disabled).
+// It is NOT a workflow step, so it never duplicates one. It lives in exactly ONE place per layout:
+// the Identified-tasks panel FOOTER when a breakdown exists (see `TasksPanel`), else inline in the
+// `ActionBar` when there is no panel to host it. `size` tunes it for the narrower panel footer.
+function HandToCoworkerButton({ size = 'md' }: { size?: 'md' | 'sm' }) {
+  const pad = size === 'sm' ? 'px-3 py-1.5 text-[12px]' : 'px-4 py-2 text-[13px]';
+  return (
+    <button
+      disabled
+      title="Coming soon — delegate this to one of your coworkers"
+      className={`inline-flex items-center gap-1.5 rounded-lg font-medium bg-neutral-50 text-neutral-300 border border-neutral-200 cursor-not-allowed ${pad}`}
+    >
+      <UserPlusIcon className={size === 'sm' ? 'w-3.5 h-3.5' : 'w-4 h-4'} />Hand to a coworker
+    </button>
+  );
+}
+
 // ── Contextual action bar — the natural moves for a deep-dive, chosen by intent. "Draft email" is
 // the primary action wherever the resolution is to send a message (meeting follow-up, commitment).
-// "Hand to a coworker" is a deferred stub (slot only). Additional actions render inline.
+// Rendered ONLY when there is NO task breakdown (no Identified-tasks panel): with a breakdown the
+// workflow step's own "Draft →" IS the canonical trigger, so a standalone Draft button would double
+// it — and "Hand to a coworker" moves into the panel footer instead. Additional actions render inline.
 function ActionBar({ primaryLabel, primaryActive, onPrimary, children }: { primaryLabel: string; primaryActive: boolean; onPrimary: () => void; children?: React.ReactNode }) {
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -242,31 +263,32 @@ function ActionBar({ primaryLabel, primaryActive, onPrimary, children }: { prima
         <EnvelopeIcon className="w-4 h-4" />{primaryLabel}
       </button>
       {children}
-      <button
-        disabled
-        title="Coming soon — delegate this to one of your coworkers"
-        className="inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[13px] font-medium bg-neutral-50 text-neutral-300 border border-neutral-200 cursor-not-allowed"
-      >
-        <UserPlusIcon className="w-4 h-4" />Hand to a coworker
-      </button>
+      <HandToCoworkerButton />
     </div>
   );
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-// WHAT THIS TAKES — stage 2 of "actions follow intent". The item's graded task breakdown: 2–5 concrete
+// WHAT THIS TAKES — stage 2 of "actions follow intent". The item's graded task breakdown: 1–5 concrete
 // sub-tasks, each tagged [System] (✦ AUGMTD can do it — grounded in our REAL capabilities) or [You]
 // (○ needs the user). System draft/send tasks wire to the EXISTING stage-1 compose flow via onDraft;
 // other system tasks show a quiet "I can handle this" (display only — execution is stage 3). [You]
 // tasks are a persisted checkbox checklist. Non-fatal: on load failure the whole section hides.
+//
+// INTENT-DRIVEN, not kind-driven: this renders for ANY kind (email / meeting / commitment / followup /
+// awareness), but ONLY when the plan is genuinely multi-step (≥2 tasks). A single-task plan → the
+// section hides entirely (the docked composer / action bar already IS the one action) — so trivial
+// replies stay clean while a meeting-request email (reply + a [You] calendar step) surfaces its steps.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 type PlanTask = {
   id: string;
-  text: string;
+  text: string;                 // short imperative title (the one line the stepper shows)
+  detail?: string;              // longer explanation, revealed on expand
   actor: 'system' | 'you';
   capability: 'draft' | 'analyze' | 'fetch' | 'send' | null;
   done?: boolean;
+  dismissed?: boolean;          // removed from the workflow (persisted)
 };
 
 const CAP_HINT: Record<string, string> = {
@@ -276,18 +298,26 @@ const CAP_HINT: Record<string, string> = {
   fetch: 'I can look this up',
 };
 
-// `onDraft` (when provided) is invoked by a system draft/send task to open the deep-dive's existing
-// compose flow. `planKind` is the storage kind used by the plan endpoints (may differ from the visual
-// ItemKind — e.g. an email deep-dive stores as 'email', an awareness row as 'awareness').
-function WhatThisTakes({
-  planKind,
-  entityId,
-  onDraft,
-}: {
-  planKind: 'email' | 'meeting' | 'commitment' | 'awareness' | 'followup';
-  entityId: string;
-  onDraft?: () => void;
-}) {
+// ── The plan hook — the SINGLE `/api/items/plan` fetch per deep-dive load. Hoisted out of
+// `WhatThisTakes` so each variant fetches the plan ONCE and passes the result to BOTH the inline
+// (lg:hidden) and panel (hidden lg:flex) `WhatThisTakes` instances. Previously each instance fetched
+// on its own → TWO concurrent POSTs on first open (a double AI plan-generation before the item_plans
+// cache row is written). Owns tasks / loading / failed / pending + the [You]-checkbox PATCH handler +
+// the ≥2-task breakdown gate.
+type ItemPlan = {
+  tasks: PlanTask[] | null;     // the LIVE (non-dismissed) tasks — the stepper renders these
+  loading: boolean;
+  failed: boolean;
+  hasBreakdown: boolean; // a genuine ≥2 non-dismissed-task plan (drives the two-column layout)
+  pending: Set<string>;
+  toggle: (task: PlanTask) => void;
+  dismiss: (task: PlanTask) => void;  // remove a step (system OR you) from the workflow, persisted
+};
+
+function useItemPlan(
+  planKind: 'email' | 'meeting' | 'commitment' | 'awareness' | 'followup',
+  entityId: string,
+): ItemPlan {
   const [tasks, setTasks] = useState<PlanTask[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
@@ -330,13 +360,175 @@ function WhatThisTakes({
       .finally(() => setPending((prev) => { const n = new Set(prev); n.delete(task.id); return n; }));
   };
 
+  // Dismiss a step (ANY actor) — mark it dismissed locally + persist. The stepper filters dismissed
+  // out; the step fade-out is owned by the row (it holds a short exit state before this fires). Roll
+  // back on failure so a lost step reappears.
+  const dismiss = (task: PlanTask) => {
+    if (pending.has(task.id)) return;
+    setTasks((prev) => (prev ? prev.map((t) => (t.id === task.id ? { ...t, dismissed: true } : t)) : prev));
+    setPending((prev) => new Set(prev).add(task.id));
+    fetch('/api/items/plan', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: planKind, entityId, taskId: task.id, dismissed: true }),
+    })
+      .then((r) => { if (!r.ok) throw new Error(); })
+      .catch(() => {
+        setTasks((prev) => (prev ? prev.map((t) => (t.id === task.id ? { ...t, dismissed: false } : t)) : prev));
+      })
+      .finally(() => setPending((prev) => { const n = new Set(prev); n.delete(task.id); return n; }));
+  };
+
+  // The LIVE tasks the stepper reasons over — dismissed steps are removed from the workflow.
+  const liveTasks = useMemo(() => (tasks ? tasks.filter((t) => !t.dismissed) : tasks), [tasks]);
+
+  // The ≥2-task breakdown gate — a real multi-step plan, counting only NON-dismissed tasks. Dismissing
+  // below 2 collapses the panel (the layout latch keeps the flip from being jarring).
+  const hasBreakdown = !loading && !failed && !!liveTasks && liveTasks.length >= 2;
+
+  return { tasks: liveTasks, loading, failed, hasBreakdown, pending, toggle, dismiss };
+}
+
+// ── One step in the "Identified tasks" workflow stepper. A vertical timeline row: a NODE (✦ for a
+// system step, a [You] checkbox for a your step) + a CONNECTOR line to the next node + a SHORT title
+// that expands to the fuller `detail` on click + the row action (Draft → / done checkbox) + a quiet
+// dismiss ✕. Dismissing fades the row out (300ms) then calls `onDismiss` (which persists + filters it).
+function StepperRow({
+  task,
+  isLast,
+  canDraft,
+  draftLabel,
+  onDraft,
+  onToggle,
+  onDismiss,
+  busy,
+}: {
+  task: PlanTask;
+  isLast: boolean;
+  canDraft: boolean;
+  draftLabel: string;
+  onDraft?: () => void;
+  onToggle: () => void;
+  onDismiss: () => void;
+  busy: boolean;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [exiting, setExiting] = useState(false);
+  const isSystem = task.actor === 'system';
+  const hasDetail = !!task.detail?.trim();
+
+  const startDismiss = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (exiting) return;
+    setExiting(true);
+    setTimeout(onDismiss, 300); // fade, then persist + unmount via the parent's filter
+  };
+
+  return (
+    <li className={`relative pl-8 transition-all duration-300 ease-out ${exiting ? 'opacity-0 -translate-x-1' : 'opacity-100'}`}>
+      {/* Connector line — runs from just under this node to the next; hidden on the last step. */}
+      {!isLast && <span aria-hidden className="absolute left-[11px] top-6 bottom-[-6px] w-px bg-neutral-200" />}
+
+      {/* Node — ✦ for a system step, a checkbox for a [You] step. Sits on the connector line. */}
+      {isSystem ? (
+        <span className="absolute left-0 top-[3px] flex h-[23px] w-[23px] items-center justify-center rounded-full bg-indigo-50 ring-2 ring-white">
+          <SparklesIcon className="h-3.5 w-3.5 text-indigo-500" />
+        </span>
+      ) : (
+        <button
+          onClick={onToggle}
+          disabled={busy}
+          aria-pressed={!!task.done}
+          title={task.done ? 'Mark not done' : 'Mark done'}
+          className={`absolute left-0 top-[3px] flex h-[23px] w-[23px] items-center justify-center rounded-full ring-2 ring-white border transition-colors ${task.done ? 'bg-emerald-500 border-emerald-500 text-white' : 'bg-white border-neutral-300 text-transparent hover:border-neutral-400'}`}
+        >
+          <CheckIcon className="h-3 w-3" />
+        </button>
+      )}
+
+      {/* Row body */}
+      <div className="group/step pb-3">
+        <div className="flex items-start gap-2">
+          {/* Title (+ optional expand affordance). Click the row to reveal `detail`. */}
+          <button
+            onClick={() => hasDetail && setExpanded((v) => !v)}
+            className={`min-w-0 flex-1 text-left ${hasDetail ? 'cursor-pointer' : 'cursor-default'}`}
+          >
+            <span className="flex items-center gap-1">
+              <span className={`text-[13px] font-medium leading-snug ${task.done ? 'text-neutral-400 line-through' : 'text-neutral-800'}`}>{task.text}</span>
+              {hasDetail && (
+                <ChevronDownIcon className={`w-3 h-3 flex-shrink-0 text-neutral-300 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`} />
+              )}
+            </span>
+          </button>
+
+          {/* Dismiss — every step is removable (system + you). Quiet, appears on row hover. */}
+          <button
+            onClick={startDismiss}
+            disabled={busy || exiting}
+            title="Not needed — remove this step"
+            aria-label="Remove step"
+            className="flex-shrink-0 -mt-0.5 p-0.5 text-neutral-300 opacity-0 group-hover/step:opacity-100 focus:opacity-100 hover:text-rose-500 transition-all"
+          >
+            <XMarkIcon className="w-3.5 h-3.5" />
+          </button>
+        </div>
+
+        {/* Expandable detail — the fuller one-sentence explanation. */}
+        {hasDetail && (
+          <div className={`grid transition-all duration-300 ease-out ${expanded ? 'grid-rows-[1fr] opacity-100 mt-1' : 'grid-rows-[0fr] opacity-0'}`}>
+            <p className="overflow-hidden text-[12px] text-neutral-500 leading-relaxed">{task.detail}</p>
+          </div>
+        )}
+
+        {/* Action / status line */}
+        <div className="mt-1 flex items-center gap-2">
+          {isSystem ? (
+            canDraft && onDraft ? (
+              <button onClick={onDraft} className="text-[11.5px] font-medium text-indigo-600 hover:text-indigo-700">{draftLabel}</button>
+            ) : (
+              <span className="text-[11px] text-indigo-500/80">{CAP_HINT[task.capability ?? 'analyze'] ?? 'I can handle this'}</span>
+            )
+          ) : (
+            !task.done && <span className="text-[10.5px] text-neutral-400">needs you</span>
+          )}
+        </div>
+      </div>
+    </li>
+  );
+}
+
+// `onDraft` (when provided) is invoked by a system draft/send task to open the deep-dive's existing
+// compose flow. The plan state (tasks / loading / failed / pending + toggle + dismiss) is fetched ONCE
+// by the parent via `useItemPlan` and passed in as `plan` — both the inline and panel instances share
+// it, so there is exactly ONE `/api/items/plan` POST per deep-dive load.
+//
+// LAYOUT: `variant` controls the shell. 'inline' (default) renders the classic in-flow <section> —
+// used on narrow widths and as the stacked fallback. 'panel' renders the same stepper WITHOUT its
+// own section header/legend (the parent panel supplies a sticky header) — used in the right column of
+// the two-column deep-dive.
+function WhatThisTakes({
+  plan,
+  onDraft,
+  variant = 'inline',
+}: {
+  plan: ItemPlan;
+  onDraft?: () => void;
+  variant?: 'inline' | 'panel';
+}) {
+  const { tasks, loading, failed, pending, toggle, dismiss } = plan;
+
+  // In the two-column layout the parent renders the panel chrome + its own loading/failed handling
+  // (the aside only mounts once a breakdown is confirmed via the hook's `hasBreakdown`), so the
+  // `panel` variant emits NOTHING on failed/loading/empty — it just renders the stepper when ready.
   // Non-fatal: a failed plan hides the section entirely — the stage-1 action bar carries the deep-dive.
   if (failed) return null;
 
   if (loading) {
+    if (variant === 'panel') return null;
     return (
       <section>
-        <h2 className={SECTION_LABEL}>What this takes</h2>
+        <h2 className={SECTION_LABEL}>Identified tasks</h2>
         <div className="space-y-2 animate-pulse">
           <div className="h-9 rounded-lg bg-neutral-100" />
           <div className="h-9 rounded-lg bg-neutral-100" />
@@ -347,9 +539,11 @@ function WhatThisTakes({
 
   if (!tasks || tasks.length === 0) return null;
 
-  // A single trivial [You] "Handle this" task = keep it minimal (the fallback / a truly one-step item).
-  const trivial = tasks.length === 1 && tasks[0].actor === 'you';
-  if (trivial) return null;
+  // PLAN-CONTENT-DRIVEN gate (not kind-driven): the workflow renders for ANY kind, but ONLY when the
+  // plan is genuinely multi-step (≥2 NON-dismissed tasks). A single-task plan (a simple reply / one
+  // action) → hide it entirely; the docked composer / action bar already IS the one action. This is
+  // what keeps trivial replies clean while surfacing multi-step work.
+  if (tasks.length < 2) return null;
 
   // Collapse draft + send into ONE actionable affordance. Both a `draft` task and a `send` task open
   // the SAME compose flow (which already drafts AND sends), so two "Draft →" buttons read as a
@@ -363,63 +557,132 @@ function WhatThisTakes({
     tasks.some((t) => t.actor === 'system' && t.capability === 'send');
   const composeLabel = hasDraftAndSend ? 'Draft & send →' : 'Draft →';
 
+  // The stepper — a connected vertical timeline (node → connector → node). Shared by both variants;
+  // in 'panel' the parent owns the sticky "Identified tasks" header + legend, so we render just the <ol>.
+  const stepper = (
+    <ol className="relative">
+      {tasks.map((t, i) => (
+        <StepperRow
+          key={t.id}
+          task={t}
+          isLast={i === tasks.length - 1}
+          canDraft={t.id === primaryComposeId && !!onDraft}
+          draftLabel={composeLabel}
+          onDraft={onDraft}
+          onToggle={() => toggle(t)}
+          onDismiss={() => dismiss(t)}
+          busy={pending.has(t.id)}
+        />
+      ))}
+    </ol>
+  );
+
+  // PANEL variant: just the stepper — the parent's TasksPanel supplies the sticky header + legend + its
+  // own scroll. INLINE variant: the classic self-contained section (narrow / stacked fallback).
+  if (variant === 'panel') return stepper;
+
   return (
     <section>
-      <div className="flex items-baseline justify-between mb-2.5">
-        <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide">What this takes</h2>
+      <div className="flex items-baseline justify-between mb-3">
+        <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide">Identified tasks</h2>
         <span className="text-[10.5px] text-neutral-400">
           <span className="text-indigo-500">✦</span> AUGMTD can do · <span className="text-neutral-400">○</span> needs you
         </span>
       </div>
-      <ul className="space-y-1.5">
-        {tasks.map((t) => {
-          if (t.actor === 'system') {
-            // Only the FIRST draft/send task exposes the compose button (draft+send collapse to one
-            // affordance — the compose flow already sends). Any other draft/send task shows the hint.
-            const canDraft = t.id === primaryComposeId && !!onDraft;
-            return (
-              <li key={t.id} className="flex items-start gap-2.5 rounded-lg border border-indigo-100 bg-indigo-50/40 px-3 py-2.5">
-                <SparklesIcon className="w-4 h-4 flex-shrink-0 mt-[1px] text-indigo-500" />
-                <div className="min-w-0 flex-1">
-                  <p className="text-[13px] text-neutral-800 leading-snug">{t.text}</p>
-                  <div className="mt-1 flex items-center gap-2">
-                    <span className="inline-flex items-center rounded bg-indigo-100 px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-wide text-indigo-600">AUGMTD</span>
-                    {canDraft ? (
-                      <button
-                        onClick={onDraft}
-                        className="text-[11.5px] font-medium text-indigo-600 hover:text-indigo-700"
-                      >
-                        {composeLabel}
-                      </button>
-                    ) : (
-                      <span className="text-[11px] text-indigo-500/80">{CAP_HINT[t.capability ?? 'analyze'] ?? 'I can handle this'}</span>
-                    )}
-                  </div>
-                </div>
-              </li>
-            );
-          }
-          const busy = pending.has(t.id);
-          return (
-            <li key={t.id} className="flex items-start gap-2.5 rounded-lg border border-neutral-200/70 bg-white px-3 py-2.5">
-              <button
-                onClick={() => toggle(t)}
-                disabled={busy}
-                aria-pressed={!!t.done}
-                title={t.done ? 'Mark not done' : 'Mark done'}
-                className={`mt-[1px] flex-shrink-0 w-4 h-4 rounded border inline-flex items-center justify-center transition-colors ${t.done ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-neutral-300 text-transparent hover:border-neutral-400'}`}
-              >
-                <CheckIcon className="w-3 h-3" />
-              </button>
-              <div className="min-w-0 flex-1">
-                <p className={`text-[13px] leading-snug transition-colors ${t.done ? 'text-neutral-400 line-through' : 'text-neutral-800'}`}>{t.text}</p>
-                {!t.done && <span className="text-[10.5px] text-neutral-400">needs you</span>}
-              </div>
-            </li>
-          );
-        })}
-      </ul>
+      {stepper}
     </section>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// TWO-COLUMN DEEP-DIVE — when an item has a genuine task breakdown (≥2 tasks), the deep-dive splits:
+// the MAIN column keeps the email interaction (header + thread + docked composer / action bar), and a
+// dedicated TASKS PANEL (right column) surfaces the "What this takes" breakdown so it's easy to scan
+// and act on. When there's no breakdown → single column, exactly as before (no empty second column).
+//
+// Each variant fetches the plan ONCE via `useItemPlan` and renders `<WhatThisTakes …/>` TWICE with the
+// SAME shared `plan` object: once INLINE (stacked, shown only on narrow < lg widths via `lg:hidden`)
+// and once in the PANEL (shown only ≥ lg via `hidden lg:flex`). Since both instances read the one
+// hoisted plan (tasks + gate), there is exactly ONE `/api/items/plan` POST per deep-dive load — no
+// more double AI plan-generation on first open. The hook's `hasBreakdown` drives the layout. This
+// keeps the responsive fallback truthful (tasks below the composer on narrow) without duplicating the
+// fetch.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+// The right column: the "Identified tasks" workflow lane — a width-animated COLUMN that REFLOWS the
+// main email column left (never overlays), mirroring the Activity panel's mechanism exactly. The
+// `p-2 bg-neutral-50` wrapper makes an inset gap; inside sits a FLAT `rounded-2xl bg-white border`
+// card (no drop-shadow — border-only, matching the cleaner deep-dive look). Narrower than before
+// (300px) so the email column gets the room. `hasBreakdown` animates the width open/closed. The inner
+// card holds a fixed width so it's simply CLIPPED during the animation rather than squishing.
+//
+// This panel is the SINGLE home for an item's actions when a breakdown exists: the workflow steps
+// (each with its own "Draft →" / done affordance) + a quiet "Hand to a coworker" FOOTER — so those
+// actions aren't also floating in the main column.
+function TasksPanel({ hasBreakdown, children }: { hasBreakdown: boolean; children: React.ReactNode }) {
+  return (
+    <aside
+      aria-hidden={!hasBreakdown}
+      className={`hidden lg:flex flex-col min-h-0 flex-shrink-0 bg-neutral-50 overflow-hidden transition-[width] duration-300 ease-out ${
+        hasBreakdown ? 'w-[300px] xl:w-[320px]' : 'w-0 pointer-events-none'
+      }`}
+    >
+      {/* Inset card — fixed width so it clips cleanly while the column animates. Flat, border-only. */}
+      <div className="flex-1 min-h-0 p-2 w-[300px] xl:w-[320px]">
+        <div className="h-full flex flex-col rounded-2xl bg-white border border-neutral-200/70 overflow-hidden">
+          {/* Sticky header — "Identified tasks" + the ✦ / ○ legend. Matches the Activity panel header. */}
+          <div className="flex-shrink-0 flex items-center justify-between gap-2 h-10 px-3.5 border-b border-neutral-200">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <SparklesIcon className="w-4 h-4 flex-shrink-0 text-indigo-400" />
+              <span className="text-[13px] font-semibold text-neutral-700 whitespace-nowrap">Identified tasks</span>
+            </div>
+            <span className="text-[10px] text-neutral-400 whitespace-nowrap flex-shrink-0">
+              <span className="text-indigo-500">✦</span> AUGMTD · <span className="text-neutral-400">○</span> you
+            </span>
+          </div>
+          {/* Body — its own scroll when long. min-w keeps the stepper from crushing during animation. */}
+          <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 min-w-[268px]">
+            {children}
+          </div>
+          {/* Footer — the item-level "Hand to a coworker" affordance (relocated out of the main column
+              so it isn't floating redundantly beside the workflow steps). Disabled / coming soon. */}
+          <div className="flex-shrink-0 border-t border-neutral-100 px-4 py-3 min-w-[268px]">
+            <HandToCoworkerButton size="sm" />
+          </div>
+        </div>
+      </div>
+    </aside>
+  );
+}
+
+// The two-column shell: MAIN (flex-1, the variant's own header/body/composer column) + the animated
+// TASKS PANEL aside. When `hasBreakdown` is false the aside collapses to width 0 and the layout reads
+// as a single column — the transition is smooth (transition-[width] on the aside). Below `lg` the
+// aside is hidden entirely (its `hidden lg:flex`) and the variant's INLINE WhatThisTakes carries the
+// tasks stacked in the main column.
+function DeepDiveShell({
+  hasBreakdown,
+  panel,
+  children,
+}: {
+  hasBreakdown: boolean;
+  panel: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  // The whole two-column block is centered. Its max width grows only when the tasks panel is present
+  // (single column stays capped at the classic readable width — identical to before); when the panel
+  // opens we give the email column noticeably MORE room (a wider block + the now-narrower ~300px aside),
+  // so the thread + composer breathe while the workflow sits to the right. The transition animates the
+  // split.
+  return (
+    <div
+      className={`mx-auto w-full h-full min-h-0 flex flex-row transition-[max-width] duration-300 ease-out ${
+        hasBreakdown ? 'lg:max-w-6xl' : 'max-w-3xl'
+      }`}
+    >
+      <div className="flex-1 min-w-0 flex flex-col h-full min-h-0">{children}</div>
+      <TasksPanel hasBreakdown={hasBreakdown}>{panel}</TasksPanel>
+    </div>
   );
 }
 
@@ -503,6 +766,8 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
   const [sent, setSent] = useState(false);
   const [copied, setCopied] = useState(false);
   const [sendErr, setSendErr] = useState<string | null>(null);
+  const plan = useItemPlan('email', id);          // ONE /api/items/plan POST, shared by both instances
+  const hasBreakdown = plan.hasBreakdown;         // ≥2-task plan → open the two-column layout
   const editorRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null); // the docked reply composer — a draft-task scrolls here
 
@@ -594,9 +859,15 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
 
   const hasThread = !threadErr && (thread?.messages?.length ?? 0) > 1;
 
+  const scrollToComposer = () => composerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
   return (
-    // Fills the shell height: header (top) / scrolling thread (middle) / docked reply composer (bottom).
-    <div className="flex flex-col h-full min-h-0">
+    // Two-column deep-dive: MAIN (header / thread / docked composer) + TASKS PANEL (right) when the
+    // plan is a genuine ≥2-task breakdown; single column otherwise.
+    <DeepDiveShell
+      hasBreakdown={hasBreakdown}
+      panel={<WhatThisTakes plan={plan} variant="panel" onDraft={scrollToComposer} />}
+    >
       {/* 1 — Header: subject + sender + date (fixed at top) */}
       <DetailHeader
         chip={<KindChip tone="indigo" icon={EnvelopeIcon} label="Reply needed" />}
@@ -625,8 +896,15 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
           )}
         </div>
 
-        {/* No "What this takes" here — a reply is ONE action; the docked reply composer below IS the
-            plan. The breakdown is reserved for multi-step items (meeting / commitment). */}
+        {/* What this takes — INLINE (stacked) fallback, shown only below `lg`; on `lg`+ the same
+            breakdown lives in the right TASKS PANEL. Renders only when the plan is genuinely
+            multi-step (≥2 tasks). A system draft/send task scrolls to the docked reply composer. */}
+        <div className="lg:hidden">
+          <WhatThisTakes
+            plan={plan}
+            onDraft={scrollToComposer}
+          />
+        </div>
 
         {/* Suggested angle (light line) — kept just above the docked composer */}
         {angle && (
@@ -685,7 +963,7 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
           </div>
         )}
       </div>
-    </div>
+    </DeepDiveShell>
   );
 }
 
@@ -737,6 +1015,8 @@ function MeetingDetail({ id }: { id: string }) {
   // Per-item cleared state (Done/Dismiss) → the row fades then hides. Keyed by inbox item id.
   const [cleared, setCleared] = useState<Set<string>>(new Set());
   const [acting, setActing] = useState<Set<string>>(new Set());
+  const plan = useItemPlan('meeting', id);        // ONE /api/items/plan POST, shared by both instances
+  const hasBreakdown = plan.hasBreakdown;         // ≥2-task plan → open the two-column layout
 
   useEffect(() => {
     let alive = true;
@@ -765,7 +1045,10 @@ function MeetingDetail({ id }: { id: string }) {
   const allCleared = !!data && (data.actionItems.length > 0) && items.length === 0;
 
   return (
-    <div className="flex flex-col h-full min-h-0">
+    <DeepDiveShell
+      hasBreakdown={hasBreakdown}
+      panel={<WhatThisTakes plan={plan} variant="panel" onDraft={() => setComposing(true)} />}
+    >
       {/* Header */}
       <DetailHeader
         chip={<KindChip tone="violet" icon={CalendarDaysIcon} label="Meeting" />}
@@ -790,8 +1073,14 @@ function MeetingDetail({ id }: { id: string }) {
           </div>
         ) : (
           <>
-            {/* Action bar — lead with the natural move: draft the follow-up to the attendees. */}
-            <ActionBar primaryLabel={composing ? 'Hide draft' : 'Draft follow-up →'} primaryActive={!composing} onPrimary={() => setComposing((v) => !v)} />
+            {/* Action bar — ONLY when there's no task breakdown. With a breakdown, the workflow step's
+                own "Draft →" is the canonical trigger (it opens the same composer via onDraft), so a
+                standalone Draft button here would duplicate it; "Hand to a coworker" moves to the panel. */}
+            {!hasBreakdown && (
+              <ActionBar primaryLabel={composing ? 'Hide draft' : 'Draft follow-up →'} primaryActive={!composing} onPrimary={() => setComposing((v) => !v)} />
+            )}
+            {/* The follow-up composer — the writing surface the draft step points to. Reachable from the
+                ActionBar (no breakdown) or the workflow step's Draft → (breakdown). */}
             {composing && (
               <ComposePanel kind="meeting" entityId={id} />
             )}
@@ -910,13 +1199,16 @@ function MeetingDetail({ id }: { id: string }) {
               )}
             </section>
 
-            {/* What this takes — the graded breakdown, BELOW the context (action-first ordering).
-                A system draft-task opens the follow-up composer at the top. */}
-            <WhatThisTakes planKind="meeting" entityId={id} onDraft={() => setComposing(true)} />
+            {/* What this takes — INLINE (stacked) fallback, shown only below `lg` (on `lg`+ it lives
+                in the right TASKS PANEL). BELOW the context (action-first ordering). A system
+                draft-task opens the follow-up composer at the top. */}
+            <div className="lg:hidden">
+              <WhatThisTakes plan={plan} onDraft={() => setComposing(true)} />
+            </div>
           </>
         )}
       </div>
-    </div>
+    </DeepDiveShell>
   );
 }
 
@@ -944,6 +1236,8 @@ function CommitmentDetail({ id }: { id: string }) {
   const [done, setDone] = useState<'done' | 'dismissed' | null>(null);
   const [composing, setComposing] = useState(false); // the "email X what you owe" compose panel
   const [emailed, setEmailed] = useState(false);      // sent the message → offer to mark done
+  const plan = useItemPlan('commitment', id);         // ONE /api/items/plan POST, shared by both instances
+  const hasBreakdown = plan.hasBreakdown;             // ≥2-task plan → open the two-column layout
 
   useEffect(() => {
     let alive = true;
@@ -970,7 +1264,10 @@ function CommitmentDetail({ id }: { id: string }) {
   const src = data?.sourceContext;
 
   return (
-    <div className="flex flex-col h-full min-h-0">
+    <DeepDiveShell
+      hasBreakdown={hasBreakdown}
+      panel={<WhatThisTakes plan={plan} variant="panel" onDraft={() => setComposing(true)} />}
+    >
       {/* Header */}
       <DetailHeader
         chip={
@@ -1000,12 +1297,16 @@ function CommitmentDetail({ id }: { id: string }) {
           </div>
         ) : (
           <>
-            {/* Action bar — lead with the natural move: email the counterparty what you owe. */}
-            <ActionBar
-              primaryLabel={composing ? 'Hide draft' : (data.counterparty ? `Draft email → ${data.counterparty.replace(/<[^>]*>/g, '').trim()}` : 'Draft email →')}
-              primaryActive={!composing}
-              onPrimary={() => setComposing((v) => !v)}
-            />
+            {/* Action bar — ONLY when there's no task breakdown. With a breakdown, the workflow step's
+                own "Draft →" is the canonical trigger (opens the same compose panel via onDraft), so a
+                standalone Draft button here would duplicate it; "Hand to a coworker" moves to the panel. */}
+            {!hasBreakdown && (
+              <ActionBar
+                primaryLabel={composing ? 'Hide draft' : (data.counterparty ? `Draft email → ${data.counterparty.replace(/<[^>]*>/g, '').trim()}` : 'Draft email →')}
+                primaryActive={!composing}
+                onPrimary={() => setComposing((v) => !v)}
+              />
+            )}
             {composing && (
               <div>
                 <ComposePanel kind="commitment" entityId={id} onSent={() => setEmailed(true)} />
@@ -1044,9 +1345,12 @@ function CommitmentDetail({ id }: { id: string }) {
               </p>
             )}
 
-            {/* What this takes — the graded breakdown, BELOW the source context (action-first
-                ordering). A system draft-task opens the compose panel at the top. */}
-            <WhatThisTakes planKind="commitment" entityId={id} onDraft={() => setComposing(true)} />
+            {/* What this takes — INLINE (stacked) fallback, shown only below `lg` (on `lg`+ it lives
+                in the right TASKS PANEL). BELOW the source context (action-first ordering). A system
+                draft-task opens the compose panel at the top. */}
+            <div className="lg:hidden">
+              <WhatThisTakes plan={plan} onDraft={() => setComposing(true)} />
+            </div>
           </>
         )}
       </div>
@@ -1077,7 +1381,7 @@ function CommitmentDetail({ id }: { id: string }) {
           </div>
         )}
       </div>
-    </div>
+    </DeepDiveShell>
   );
 }
 
@@ -1097,6 +1401,8 @@ function FollowUpDetail({ id }: { id: string }) {
   const [sent, setSent] = useState(false);
   const [copied, setCopied] = useState(false);
   const [sendErr, setSendErr] = useState<string | null>(null);
+  const plan = useItemPlan('followup', id);       // ONE /api/items/plan POST, shared by both instances
+  const hasBreakdown = plan.hasBreakdown;         // ≥2-task plan → open the two-column layout
   const editorRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null); // the docked nudge composer — a draft-task scrolls here
 
@@ -1171,8 +1477,13 @@ function FollowUpDetail({ id }: { id: string }) {
 
   const hasMessages = !threadErr && (thread?.messages?.length ?? 0) > 0;
 
+  const scrollToComposer = () => composerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
   return (
-    <div className="flex flex-col h-full min-h-0">
+    <DeepDiveShell
+      hasBreakdown={hasBreakdown}
+      panel={<WhatThisTakes plan={plan} variant="panel" onDraft={scrollToComposer} />}
+    >
       {/* Header */}
       <DetailHeader
         chip={<KindChip tone="amber" icon={ClockIcon} label="Ball in your court" />}
@@ -1196,8 +1507,15 @@ function FollowUpDetail({ id }: { id: string }) {
           )}
         </div>
 
-        {/* No "What this takes" here — a nudge is ONE action; the docked nudge composer below IS the
-            plan. The breakdown is reserved for multi-step items (meeting / commitment). */}
+        {/* What this takes — INLINE (stacked) fallback, shown only below `lg` (on `lg`+ it lives in
+            the right TASKS PANEL). Renders only when the plan is genuinely multi-step (≥2 tasks; a
+            simple nudge → hidden). A system draft/send task scrolls to the docked nudge composer. */}
+        <div className="lg:hidden">
+          <WhatThisTakes
+            plan={plan}
+            onDraft={scrollToComposer}
+          />
+        </div>
       </div>
 
       {/* Docked nudge composer */}
@@ -1243,6 +1561,6 @@ function FollowUpDetail({ id }: { id: string }) {
           </div>
         )}
       </div>
-    </div>
+    </DeepDiveShell>
   );
 }
