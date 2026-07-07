@@ -8,6 +8,7 @@
 
 import { reconcileAugmtdLabel } from '@/lib/inbox/rules/write-back';
 import type { RuleLabel } from '@/lib/inbox/rules/types';
+import { resolveConnectionForItem } from '@/lib/inbox/resolve-connection';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type DBClient = any;
@@ -54,18 +55,13 @@ export async function reconcileItemLabel(opts: {
     const threadId = (sd.thread_id as string) || null;
     if (!provider) return false;
 
-    // Resolve the connection (tokens) — prefer connection_id FK, fall back to provider lookup, same
-    // as the send-reply route.
+    // Resolve the connection (tokens) — prefer connection_id FK, else recipient-aware provider
+    // resolution (same helper as send-reply; disambiguates two accounts of one provider by the
+    // mailbox the mail arrived on). Select provider_account_id too so the address match works.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let connection: any = null;
-    if (item.connection_id) {
-      const { data } = await client.from('connections').select('id, provider, metadata').eq('id', item.connection_id).eq('user_id', userId).maybeSingle();
-      connection = data;
-    }
-    if (!connection) {
-      const { data } = await client.from('connections').select('id, provider, metadata').eq('user_id', userId).eq('provider', provider).eq('status', 'active').maybeSingle();
-      connection = data;
-    }
+    const connection: any = await resolveConnectionForItem(
+      client, userId, item, 'id, provider, metadata, provider_account_id',
+    );
     if (!connection?.metadata?.tokens) return false;
 
     // Outlook: the reconcile needs the INTERNAL Graph message id (not the RFC message-id). It's stored

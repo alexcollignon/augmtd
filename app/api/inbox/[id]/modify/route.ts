@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { google } from 'googleapis';
+import { resolveConnectionForItem } from '@/lib/inbox/resolve-connection';
 
 export async function POST(
   request: NextRequest,
@@ -80,16 +81,11 @@ export async function POST(
     // Get provider from source_data or email metadata
     const provider = sourceData.provider || originalEmail.metadata?.provider || 'gmail';
 
-    // Get user's email connection
-    const { data: connection, error: connError } = await supabase
-      .from('connections')
-      .select('*')
-      .eq('user_id', user.id)
-      .eq('provider', provider)
-      .eq('status', 'active')
-      .single();
+    // Get user's email connection — prefer the item's connection_id, else recipient-aware provider
+    // resolution (sends from the mailbox the mail arrived on even with two same-provider accounts).
+    const connection = await resolveConnectionForItem(supabase, user.id, item);
 
-    if (connError || !connection) {
+    if (!connection) {
       return NextResponse.json(
         { error: `${provider} connection not found` },
         { status: 400 }
