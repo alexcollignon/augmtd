@@ -284,14 +284,24 @@ const CAP_HINT: Record<string, string> = {
 // `onDraft` (when provided) is invoked by a system draft/send task to open the deep-dive's existing
 // compose flow. `planKind` is the storage kind used by the plan endpoints (may differ from the visual
 // ItemKind — e.g. an email deep-dive stores as 'email', an awareness row as 'awareness').
+//
+// LAYOUT: `variant` controls the shell. 'inline' (default) renders the classic in-flow <section> —
+// used on narrow widths and as the stacked fallback. 'panel' renders the same task list WITHOUT its
+// own section header/legend (the parent panel supplies a sticky header) — used in the right column of
+// the two-column deep-dive. `onHasBreakdown(has)` reports whether a real ≥2-task breakdown exists so
+// the parent can decide to open the two-column layout (widen + show the aside) BEFORE render.
 function WhatThisTakes({
   planKind,
   entityId,
   onDraft,
+  variant = 'inline',
+  onHasBreakdown,
 }: {
   planKind: 'email' | 'meeting' | 'commitment' | 'awareness' | 'followup';
   entityId: string;
   onDraft?: () => void;
+  variant?: 'inline' | 'panel';
+  onHasBreakdown?: (has: boolean) => void;
 }) {
   const [tasks, setTasks] = useState<PlanTask[] | null>(null);
   const [loading, setLoading] = useState(true);
@@ -317,6 +327,14 @@ function WhatThisTakes({
     return () => { alive = false; };
   }, [planKind, entityId]);
 
+  // Report breakdown presence to the parent (a real ≥2-task plan) so it can open the two-column
+  // layout. Runs after load: failed / <2 tasks → false, else → true.
+  useEffect(() => {
+    if (!onHasBreakdown) return;
+    if (loading) return;
+    onHasBreakdown(!failed && !!tasks && tasks.length >= 2);
+  }, [loading, failed, tasks, onHasBreakdown]);
+
   const toggle = (task: PlanTask) => {
     if (task.actor !== 'you' || pending.has(task.id)) return;
     const next = !task.done;
@@ -335,10 +353,14 @@ function WhatThisTakes({
       .finally(() => setPending((prev) => { const n = new Set(prev); n.delete(task.id); return n; }));
   };
 
+  // In the two-column layout the parent renders the panel chrome + its own loading/failed handling
+  // (the aside only mounts once a breakdown is confirmed), so the `panel` variant emits NOTHING on
+  // failed/loading/empty — it just reports via onHasBreakdown and renders the list when ready.
   // Non-fatal: a failed plan hides the section entirely — the stage-1 action bar carries the deep-dive.
   if (failed) return null;
 
   if (loading) {
+    if (variant === 'panel') return null;
     return (
       <section>
         <h2 className={SECTION_LABEL}>What this takes</h2>
@@ -371,16 +393,11 @@ function WhatThisTakes({
     tasks.some((t) => t.actor === 'system' && t.capability === 'send');
   const composeLabel = hasDraftAndSend ? 'Draft & send →' : 'Draft →';
 
-  return (
-    <section>
-      <div className="flex items-baseline justify-between mb-2.5">
-        <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide">What this takes</h2>
-        <span className="text-[10.5px] text-neutral-400">
-          <span className="text-indigo-500">✦</span> AUGMTD can do · <span className="text-neutral-400">○</span> needs you
-        </span>
-      </div>
-      <ul className="space-y-1.5">
-        {tasks.map((t) => {
+  // The task list — shared by both variants. In 'panel' the parent owns the "What this takes" sticky
+  // header + legend, so we render just the <ul>; in 'inline' we wrap it in the classic <section>.
+  const list = (
+    <ul className="space-y-1.5">
+      {tasks.map((t) => {
           if (t.actor === 'system') {
             // Only the FIRST draft/send task exposes the compose button (draft+send collapse to one
             // affordance — the compose flow already sends). Any other draft/send task shows the hint.
@@ -426,8 +443,95 @@ function WhatThisTakes({
             </li>
           );
         })}
-      </ul>
+    </ul>
+  );
+
+  // PANEL variant: just the list — the parent's TasksPanel supplies the sticky header + legend + its
+  // own scroll. INLINE variant: the classic self-contained section (narrow / stacked fallback).
+  if (variant === 'panel') return list;
+
+  return (
+    <section>
+      <div className="flex items-baseline justify-between mb-2.5">
+        <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide">What this takes</h2>
+        <span className="text-[10.5px] text-neutral-400">
+          <span className="text-indigo-500">✦</span> AUGMTD can do · <span className="text-neutral-400">○</span> needs you
+        </span>
+      </div>
+      {list}
     </section>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// TWO-COLUMN DEEP-DIVE — when an item has a genuine task breakdown (≥2 tasks), the deep-dive splits:
+// the MAIN column keeps the email interaction (header + thread + docked composer / action bar), and a
+// dedicated TASKS PANEL (right column) surfaces the "What this takes" breakdown so it's easy to scan
+// and act on. When there's no breakdown → single column, exactly as before (no empty second column).
+//
+// Each variant renders `<WhatThisTakes …/>` TWICE with the same props/plan (React dedups the fetch by
+// nothing — but the plan endpoint is cheap + already cached upstream; both instances read the same
+// gate, so at most one ever renders content): once INLINE (stacked, shown only on narrow < lg widths
+// via `lg:hidden`) and once in the PANEL (shown only ≥ lg via `hidden lg:flex`). A single
+// `onHasBreakdown` from the panel instance drives the layout. This keeps the responsive fallback
+// truthful (tasks below the composer on narrow) without duplicating logic.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+// The right column: a card-lane panel with a sticky "What this takes" header + legend and its own
+// scroll. `hasBreakdown` animates its width so the split opens/closes smoothly. Matches app UI —
+// SECTION_LABEL token for the header, subtle left border, page-bg tint so it reads as a distinct lane.
+function TasksPanel({ hasBreakdown, children }: { hasBreakdown: boolean; children: React.ReactNode }) {
+  return (
+    <aside
+      aria-hidden={!hasBreakdown}
+      className={`hidden lg:flex flex-col min-h-0 flex-shrink-0 border-l border-neutral-200 bg-neutral-50/60 overflow-hidden transition-[width,opacity] duration-300 ease-out ${
+        hasBreakdown ? 'w-[340px] xl:w-[380px] opacity-100' : 'w-0 opacity-0'
+      }`}
+    >
+      {/* Sticky panel header — the section label + the ✦ / ○ legend, matching the inline section. */}
+      <div className="flex-shrink-0 px-5 pt-5 pb-3 border-b border-neutral-200 bg-neutral-50/60 backdrop-blur">
+        <div className="flex items-baseline justify-between gap-2">
+          <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide whitespace-nowrap">What this takes</h2>
+          <span className="text-[10.5px] text-neutral-400 whitespace-nowrap">
+            <span className="text-indigo-500">✦</span> AUGMTD · <span className="text-neutral-400">○</span> you
+          </span>
+        </div>
+      </div>
+      {/* Panel body — its own scroll when long. min-w keeps the list from crushing during the width
+          animation. */}
+      <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4 min-w-[300px]">
+        {children}
+      </div>
+    </aside>
+  );
+}
+
+// The two-column shell: MAIN (flex-1, the variant's own header/body/composer column) + the animated
+// TASKS PANEL aside. When `hasBreakdown` is false the aside collapses to width 0 and the layout reads
+// as a single column — the transition is smooth (transition-[width] on the aside). Below `lg` the
+// aside is hidden entirely (its `hidden lg:flex`) and the variant's INLINE WhatThisTakes carries the
+// tasks stacked in the main column.
+function DeepDiveShell({
+  hasBreakdown,
+  panel,
+  children,
+}: {
+  hasBreakdown: boolean;
+  panel: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  // The whole two-column block is centered. Its max width grows only when the tasks panel is present
+  // (single column stays capped at the classic readable width — identical to before); when the panel
+  // opens we give room for it (main column + ~360px aside). The width transition animates the split.
+  return (
+    <div
+      className={`mx-auto w-full h-full min-h-0 flex flex-row transition-[max-width] duration-300 ease-out ${
+        hasBreakdown ? 'lg:max-w-5xl' : 'max-w-3xl'
+      }`}
+    >
+      <div className="flex-1 min-w-0 flex flex-col h-full min-h-0">{children}</div>
+      <TasksPanel hasBreakdown={hasBreakdown}>{panel}</TasksPanel>
+    </div>
   );
 }
 
@@ -511,6 +615,7 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
   const [sent, setSent] = useState(false);
   const [copied, setCopied] = useState(false);
   const [sendErr, setSendErr] = useState<string | null>(null);
+  const [hasBreakdown, setHasBreakdown] = useState(false); // ≥2-task plan → open the two-column layout
   const editorRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null); // the docked reply composer — a draft-task scrolls here
 
@@ -602,9 +707,15 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
 
   const hasThread = !threadErr && (thread?.messages?.length ?? 0) > 1;
 
+  const scrollToComposer = () => composerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
   return (
-    // Fills the shell height: header (top) / scrolling thread (middle) / docked reply composer (bottom).
-    <div className="flex flex-col h-full min-h-0">
+    // Two-column deep-dive: MAIN (header / thread / docked composer) + TASKS PANEL (right) when the
+    // plan is a genuine ≥2-task breakdown; single column otherwise.
+    <DeepDiveShell
+      hasBreakdown={hasBreakdown}
+      panel={<WhatThisTakes planKind="email" entityId={id} variant="panel" onDraft={scrollToComposer} onHasBreakdown={setHasBreakdown} />}
+    >
       {/* 1 — Header: subject + sender + date (fixed at top) */}
       <DetailHeader
         chip={<KindChip tone="indigo" icon={EnvelopeIcon} label="Reply needed" />}
@@ -633,14 +744,16 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
           )}
         </div>
 
-        {/* What this takes — the graded breakdown, INTENT-driven (renders only when the plan is
-            genuinely multi-step, ≥2 tasks; a simple reply → hidden, the docked composer below IS the
-            plan). A system draft/send task scrolls to the docked reply composer. */}
-        <WhatThisTakes
-          planKind="email"
-          entityId={id}
-          onDraft={() => composerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })}
-        />
+        {/* What this takes — INLINE (stacked) fallback, shown only below `lg`; on `lg`+ the same
+            breakdown lives in the right TASKS PANEL. Renders only when the plan is genuinely
+            multi-step (≥2 tasks). A system draft/send task scrolls to the docked reply composer. */}
+        <div className="lg:hidden">
+          <WhatThisTakes
+            planKind="email"
+            entityId={id}
+            onDraft={scrollToComposer}
+          />
+        </div>
 
         {/* Suggested angle (light line) — kept just above the docked composer */}
         {angle && (
@@ -699,7 +812,7 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
           </div>
         )}
       </div>
-    </div>
+    </DeepDiveShell>
   );
 }
 
@@ -751,6 +864,7 @@ function MeetingDetail({ id }: { id: string }) {
   // Per-item cleared state (Done/Dismiss) → the row fades then hides. Keyed by inbox item id.
   const [cleared, setCleared] = useState<Set<string>>(new Set());
   const [acting, setActing] = useState<Set<string>>(new Set());
+  const [hasBreakdown, setHasBreakdown] = useState(false); // ≥2-task plan → open the two-column layout
 
   useEffect(() => {
     let alive = true;
@@ -779,7 +893,10 @@ function MeetingDetail({ id }: { id: string }) {
   const allCleared = !!data && (data.actionItems.length > 0) && items.length === 0;
 
   return (
-    <div className="flex flex-col h-full min-h-0">
+    <DeepDiveShell
+      hasBreakdown={hasBreakdown}
+      panel={<WhatThisTakes planKind="meeting" entityId={id} variant="panel" onDraft={() => setComposing(true)} onHasBreakdown={setHasBreakdown} />}
+    >
       {/* Header */}
       <DetailHeader
         chip={<KindChip tone="violet" icon={CalendarDaysIcon} label="Meeting" />}
@@ -924,13 +1041,16 @@ function MeetingDetail({ id }: { id: string }) {
               )}
             </section>
 
-            {/* What this takes — the graded breakdown, BELOW the context (action-first ordering).
-                A system draft-task opens the follow-up composer at the top. */}
-            <WhatThisTakes planKind="meeting" entityId={id} onDraft={() => setComposing(true)} />
+            {/* What this takes — INLINE (stacked) fallback, shown only below `lg` (on `lg`+ it lives
+                in the right TASKS PANEL). BELOW the context (action-first ordering). A system
+                draft-task opens the follow-up composer at the top. */}
+            <div className="lg:hidden">
+              <WhatThisTakes planKind="meeting" entityId={id} onDraft={() => setComposing(true)} />
+            </div>
           </>
         )}
       </div>
-    </div>
+    </DeepDiveShell>
   );
 }
 
@@ -958,6 +1078,7 @@ function CommitmentDetail({ id }: { id: string }) {
   const [done, setDone] = useState<'done' | 'dismissed' | null>(null);
   const [composing, setComposing] = useState(false); // the "email X what you owe" compose panel
   const [emailed, setEmailed] = useState(false);      // sent the message → offer to mark done
+  const [hasBreakdown, setHasBreakdown] = useState(false); // ≥2-task plan → open the two-column layout
 
   useEffect(() => {
     let alive = true;
@@ -984,7 +1105,10 @@ function CommitmentDetail({ id }: { id: string }) {
   const src = data?.sourceContext;
 
   return (
-    <div className="flex flex-col h-full min-h-0">
+    <DeepDiveShell
+      hasBreakdown={hasBreakdown}
+      panel={<WhatThisTakes planKind="commitment" entityId={id} variant="panel" onDraft={() => setComposing(true)} onHasBreakdown={setHasBreakdown} />}
+    >
       {/* Header */}
       <DetailHeader
         chip={
@@ -1058,9 +1182,12 @@ function CommitmentDetail({ id }: { id: string }) {
               </p>
             )}
 
-            {/* What this takes — the graded breakdown, BELOW the source context (action-first
-                ordering). A system draft-task opens the compose panel at the top. */}
-            <WhatThisTakes planKind="commitment" entityId={id} onDraft={() => setComposing(true)} />
+            {/* What this takes — INLINE (stacked) fallback, shown only below `lg` (on `lg`+ it lives
+                in the right TASKS PANEL). BELOW the source context (action-first ordering). A system
+                draft-task opens the compose panel at the top. */}
+            <div className="lg:hidden">
+              <WhatThisTakes planKind="commitment" entityId={id} onDraft={() => setComposing(true)} />
+            </div>
           </>
         )}
       </div>
@@ -1091,7 +1218,7 @@ function CommitmentDetail({ id }: { id: string }) {
           </div>
         )}
       </div>
-    </div>
+    </DeepDiveShell>
   );
 }
 
@@ -1111,6 +1238,7 @@ function FollowUpDetail({ id }: { id: string }) {
   const [sent, setSent] = useState(false);
   const [copied, setCopied] = useState(false);
   const [sendErr, setSendErr] = useState<string | null>(null);
+  const [hasBreakdown, setHasBreakdown] = useState(false); // ≥2-task plan → open the two-column layout
   const editorRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null); // the docked nudge composer — a draft-task scrolls here
 
@@ -1185,8 +1313,13 @@ function FollowUpDetail({ id }: { id: string }) {
 
   const hasMessages = !threadErr && (thread?.messages?.length ?? 0) > 0;
 
+  const scrollToComposer = () => composerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
   return (
-    <div className="flex flex-col h-full min-h-0">
+    <DeepDiveShell
+      hasBreakdown={hasBreakdown}
+      panel={<WhatThisTakes planKind="followup" entityId={id} variant="panel" onDraft={scrollToComposer} onHasBreakdown={setHasBreakdown} />}
+    >
       {/* Header */}
       <DetailHeader
         chip={<KindChip tone="amber" icon={ClockIcon} label="Ball in your court" />}
@@ -1210,14 +1343,16 @@ function FollowUpDetail({ id }: { id: string }) {
           )}
         </div>
 
-        {/* What this takes — INTENT-driven (renders only when the plan is genuinely multi-step,
-            ≥2 tasks; a simple nudge → hidden, the docked composer below IS the plan). A system
-            draft/send task scrolls to the docked nudge composer. */}
-        <WhatThisTakes
-          planKind="followup"
-          entityId={id}
-          onDraft={() => composerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })}
-        />
+        {/* What this takes — INLINE (stacked) fallback, shown only below `lg` (on `lg`+ it lives in
+            the right TASKS PANEL). Renders only when the plan is genuinely multi-step (≥2 tasks; a
+            simple nudge → hidden). A system draft/send task scrolls to the docked nudge composer. */}
+        <div className="lg:hidden">
+          <WhatThisTakes
+            planKind="followup"
+            entityId={id}
+            onDraft={scrollToComposer}
+          />
+        </div>
       </div>
 
       {/* Docked nudge composer */}
@@ -1263,6 +1398,6 @@ function FollowUpDetail({ id }: { id: string }) {
           </div>
         )}
       </div>
-    </div>
+    </DeepDiveShell>
   );
 }

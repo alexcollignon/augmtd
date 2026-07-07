@@ -70,11 +70,11 @@ export function ItemDetailModal({ id }: { id: string }) {
             <ArrowLeftIcon className="w-4 h-4" />Back to Home
           </button>
         </div>
-        {/* Deep-dive body — the ItemDetail owns its own scroll (thread scrolls, composer docks). */}
-        <div className="flex-1 min-h-0 flex flex-col">
-          <div className="mx-auto max-w-3xl w-full flex-1 min-h-0 flex flex-col">
-            <ItemDetail id={id} angle={angle} kind={kind} />
-          </div>
+        {/* Deep-dive body — the ItemDetail owns its own scroll (thread scrolls, composer docks) AND
+            its own centering/width: single column caps at the classic readable width; a two-column
+            breakdown widens (main + tasks panel) via DeepDiveShell. */}
+        <div className="flex-1 min-h-0 flex flex-col px-2 sm:px-4">
+          <ItemDetail id={id} angle={angle} kind={kind} />
         </div>
       </div>
     </div>
