@@ -152,6 +152,41 @@ export function isDirectRunnableCapability(cap: PlanCapability): boolean {
 // A convenience for the plan-capability type used by the helpers above (mirrors item-plan's).
 type PlanCapability = 'draft' | 'analyze' | 'fetch' | 'send' | null;
 
+// ── PROPOSED OWNER — the "Run the plan" model's core derivation. Given a step's actor + coarse
+// capability, propose WHO should own it BEFORE the user reassigns. This is what makes coworkers
+// actually SUGGESTED (they never were before — only AUGMTD/you).
+//
+//   • actor 'you'                    → 'you'   (no capability — the user's move)
+//   • actor 'system' + JUDGMENT cap  → 'coworker' (draft/produce — voice/reasoning/skill work a
+//                                       coworker is MEANT for; still AUGMTD-runnable if reassigned)
+//   • actor 'system' + ATOMIC cap    → 'system' (send/fetch/analyze — deterministic, AUGMTD runs it)
+//
+// The judgment↔atomic split is DERIVED from the CAPABILITY_MAP's `kind`, not hand-coded: `draft` maps
+// to the map's judgment producers (compose_email / generate_document), while `analyze`/`fetch`/`send`
+// map to atomic entries. So adding a capability changes the proposal by construction — no branch here
+// to keep in sync. `handedTo` (a step already delegated) is resolved by the caller (it's an explicit,
+// not proposed, owner) — this answers the PROPOSAL for a not-yet-handed step.
+export type ProposedOwner = 'system' | 'coworker' | 'you';
+
+// The coarse-capability → CapabilityKind bridge, read from the map so the two can't drift. A `draft`
+// step is judgment (the map's producers are judgment); the read/analyze/send coarse caps are atomic.
+export function coarseCapabilityKind(cap: PlanCapability): CapabilityKind | null {
+  if (cap === null) return null;
+  if (cap === 'draft') {
+    // Draft/produce → judgment: grounded in the map's producer entries (compose_email / generate_document).
+    const producers = [CAPABILITY_MAP.compose_email, CAPABILITY_MAP.generate_document].filter(Boolean);
+    return producers.some((c) => c.kind === 'judgment') ? 'judgment' : 'atomic';
+  }
+  // analyze / fetch / send → atomic (the map grades `analyze`, the read/fetch tools, and the sends atomic).
+  return 'atomic';
+}
+
+// The proposal for a step that has NOT been explicitly handed to a coworker yet.
+export function proposeOwner(actor: 'system' | 'you', cap: PlanCapability): ProposedOwner {
+  if (actor === 'you') return 'you';
+  return coarseCapabilityKind(cap) === 'judgment' ? 'coworker' : 'system';
+}
+
 /**
  * renderCapabilitySet — DERIVES the classifier's capability prompt block from the map.
  * Adding a `CAPABILITY_MAP` entry (built:true) makes it appear here automatically; no prose to edit.
