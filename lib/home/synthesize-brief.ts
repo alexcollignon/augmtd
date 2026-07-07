@@ -323,7 +323,9 @@ If a section has no items, return it with an empty items/groups array (or null f
         // Carry the REAL email through to the client (avatar/subject/snippet/date live richness) —
         // these come straight from the deterministic candidate, not the model, so they can't drift.
         return {
-          who: x?.who || cand.from, ask: x?.ask || '', angle: x?.angle || '', itemId: cand.itemId,
+          // who = the candidate's real sender (identity is deterministic, never the model's free text) so
+          // the row's name always matches its subject + itemId; the model only supplies ask/angle judgment.
+          who: cand.from, ask: x?.ask || '', angle: x?.angle || '', itemId: cand.itemId,
           subject: cand.subject, snippet: cand.snippet, receivedAt: cand.receivedAt,
         };
       })
@@ -358,7 +360,11 @@ If a section has no items, return it with an empty items/groups array (or null f
         // reply (cross-tier dedup — must-respond wins, Bug #2).
         if (!cand || eyeSeen.has(cand.itemId) || mustItemIds.has(cand.itemId)) return null;
         eyeSeen.add(cand.itemId);
-        return { who: x.who || cand.from, why: x.why || '', itemId: cand.itemId };
+        // IDENTITY (who) comes from the MAPPED candidate, never the model's free text — so the card ALWAYS
+        // describes the item it links to. If the model echoed a `k` that mismatches the `who`/`why` it
+        // wrote (a grounding slip), we'd otherwise show one sender's name but open a different email
+        // (the "click Rehab Afifi → open Santander" bug). The model only supplies judgment (`why`).
+        return { who: cand.from, why: x.why || '', itemId: cand.itemId };
       })
       .filter((x): x is KeepAnEye => !!x)
       .slice(0, 4);
