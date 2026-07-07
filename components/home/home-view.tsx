@@ -381,15 +381,15 @@ function DigestReply({ m, onDismiss, emphasis = false, onUndoInbox }: { m: Diges
         <SenderAvatar name={m.who} size={emphasis ? 'md' : 'sm'} />
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline gap-2">
+            {/* Line 1 = sender · the SYNTHESIZED ASK (the actionable summary — prominent), snippet fallback
+                until the enrich lands. Line 2 = the raw email subject (muted, secondary). Inverted so the
+                "what they need" leads and the subject is supporting context. */}
             <p className={`${emphasis ? 'text-[14.5px]' : 'text-[13.5px]'} font-semibold text-neutral-900 leading-snug min-w-0 truncate`}>
-              {m.who}{subject && <span className="font-normal text-neutral-400"> · </span>}{subject && <span className="font-semibold text-neutral-800">{subject}</span>}
+              {m.who}{(m.ask || m.snippet) && <span className="font-normal text-neutral-400"> · </span>}{(m.ask || m.snippet) && <span className="font-semibold text-neutral-800">{m.ask || m.snippet}</span>}
             </p>
             {when && <span className="flex-shrink-0 ml-auto text-[11px] text-neutral-300 tabular-nums">{when}</span>}
           </div>
-          {/* Show the AI-synthesized ask when we have it; fall back to the email snippet so the context
-              line is NEVER empty (the optimistic "basic" brief has no ask yet — a full reload was showing
-              a blank line until the background enrich landed). */}
-          {(m.ask || m.snippet) && <p className={`${emphasis ? 'text-[12.5px]' : 'text-[12px]'} text-neutral-500 mt-0.5 leading-snug line-clamp-1`}>{m.ask || m.snippet}</p>}
+          {subject && <p className={`${emphasis ? 'text-[12.5px]' : 'text-[12px]'} text-neutral-500 mt-0.5 leading-snug line-clamp-1`}>{subject}</p>}
         </div>
         {m.itemId && (
           <span className="flex-shrink-0 flex items-center gap-2.5 mt-0.5">
