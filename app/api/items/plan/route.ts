@@ -9,8 +9,9 @@ export const maxDuration = 30;
 //
 // POST /api/items/plan  { kind, entityId }  → get-or-generate: return the stored plan if we have one,
 //   else build the item's context, call generateItemPlan, persist, and return { tasks }.
-// PATCH /api/items/plan { kind, entityId, taskId, done } → toggle a [You] task's `done` in the stored
-//   jsonb. (System tasks aren't user-checkable — execution is stage 3.)
+// PATCH /api/items/plan { kind, entityId, taskId, done? , dismissed? } → mutate one task in the stored
+//   jsonb: toggle a [You] task's `done`, OR set `dismissed` on ANY task (system + you — every step is
+//   removable from the workflow). (System tasks aren't user-checkable for `done` — execution is stage 3.)
 //
 // Non-fatal: the deep-dive still works with just the stage-1 action bar if this fails.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -165,8 +166,8 @@ export async function PATCH(request: NextRequest) {
     const { data: { user }, error: authError } = await supabase.auth.getUser();
     if (authError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { kind, entityId, taskId, done } = (await request.json()) as {
-      kind: Kind; entityId: string; taskId: string; done: boolean;
+    const { kind, entityId, taskId, done, dismissed } = (await request.json()) as {
+      kind: Kind; entityId: string; taskId: string; done?: boolean; dismissed?: boolean;
     };
     if (!entityId || !VALID_KINDS.includes(kind) || !taskId) {
       return NextResponse.json({ error: 'kind, entityId and taskId are required' }, { status: 400 });
@@ -181,10 +182,15 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: 'not found' }, { status: 404 });
     }
 
-    // Toggle only a [You] task's done flag — system tasks aren't user-checkable here.
-    const tasks = (row.tasks as ItemPlanTask[]).map((t) =>
-      t.id === taskId && t.actor === 'you' ? { ...t, done: !!done } : t,
-    );
+    // Mutate the matching task. `dismissed` applies to ANY step (system + you — every step is removable).
+    // `done` toggles only a [You] task's checkbox — system tasks aren't user-checkable here.
+    const tasks = (row.tasks as ItemPlanTask[]).map((t) => {
+      if (t.id !== taskId) return t;
+      const next = { ...t };
+      if (typeof dismissed === 'boolean') next.dismissed = dismissed;
+      if (typeof done === 'boolean' && t.actor === 'you') next.done = done;
+      return next;
+    });
 
     const { error } = await supabase
       .from('item_plans')

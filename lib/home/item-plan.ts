@@ -17,10 +17,12 @@ export type PlanCapability = 'draft' | 'analyze' | 'fetch' | 'send' | null;
 
 export type ItemPlanTask = {
   id: string;
-  text: string;
+  text: string;              // a SHORT imperative title (≤ ~8–10 words) — the one line the stepper shows
+  detail?: string;           // an optional one-sentence explanation — revealed when the step is expanded
   actor: 'system' | 'you';
   capability: PlanCapability;
   done?: boolean;
+  dismissed?: boolean;       // the user removed this step from the workflow (persisted)
 };
 
 export type ItemPlan = { tasks: ItemPlanTask[] };
@@ -66,6 +68,7 @@ function parseTasks(raw: string): ItemPlanTask[] | null {
       const rec = t as Record<string, unknown>;
       const txt = typeof rec.text === 'string' ? rec.text.trim() : '';
       if (!txt) continue;
+      const detailRaw = typeof rec.detail === 'string' ? rec.detail.trim() : '';
       const actor = rec.actor === 'system' ? 'system' : 'you';
       const capRaw = rec.capability;
       const capability: PlanCapability =
@@ -74,7 +77,12 @@ function parseTasks(raw: string): ItemPlanTask[] | null {
           : null;
       tasks.push({
         id: `t${tasks.length + 1}`,
-        text: txt.slice(0, 240),
+        text: txt.slice(0, 120),
+        // The longer explanation, shown on expand. Only carry it when it adds something beyond the
+        // title (a model that echoed the title into `detail` shouldn't create a redundant expand).
+        ...(detailRaw && detailRaw.toLowerCase() !== txt.toLowerCase()
+          ? { detail: detailRaw.slice(0, 400) }
+          : {}),
         actor,
         // Defensive: a system task must name a capability (default 'analyze' if the model omitted it);
         // a [You] task never carries a system capability.
@@ -112,6 +120,9 @@ export async function generateItemPlan(
     `INSTRUCTIONS:\n` +
     `- Break the item into 1–5 CONCRETE, specific sub-tasks. Order them the way you'd actually do the work.\n` +
     `- Be specific to THIS item: name the real recipient, say what to fetch/draft, reference the actual next step.\n` +
+    `- EACH task has TWO fields:\n` +
+    `  • "text" — a SHORT imperative TITLE, ≤ 8 words, no trailing period (e.g. "Reply to Sarah", "Attach the Q3 deck", "Book the room"). This is the one line the user scans. Keep it terse — a title, not a sentence.\n` +
+    `  • "detail" — ONE plain sentence expanding on the title: the specifics, why, or what's involved (e.g. "Confirm you can make the Thursday 3pm slot and propose an agenda."). Never just repeat the title. Omit "detail" only if the title is already fully self-explanatory.\n` +
     `- HONESTY OF STEP COUNT — this is the most important rule, and it cuts BOTH ways:\n` +
     `  • A TRIVIAL item that only needs a reply MUST be a SINGLE task: e.g. "Draft and send the reply to <name>" ` +
     `(capability "send"). Do NOT pad a simple reply with invented steps ("review the thread", "consider next steps") — one task.\n` +
@@ -128,7 +139,7 @@ export async function generateItemPlan(
     `or actor "you" (needs the user — capability null). Grade CONSERVATIVELY per the rules above.\n` +
     `- Every "system" task MUST map to one of draft|analyze|fetch|send. Every "you" task has capability null.\n\n` +
     `Return ONLY JSON, no prose:\n` +
-    `{"tasks":[{"text":"...","actor":"system"|"you","capability":"draft"|"analyze"|"fetch"|"send"|null}]}\n\n` +
+    `{"tasks":[{"text":"short title","detail":"one-sentence explanation","actor":"system"|"you","capability":"draft"|"analyze"|"fetch"|"send"|null}]}\n\n` +
     `--- ITEM (${input.kind}) ---\n${context || '(no additional context)'}`;
 
   try {

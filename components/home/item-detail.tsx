@@ -12,6 +12,8 @@ import {
   PaperAirplaneIcon,
   UserPlusIcon,
   SparklesIcon,
+  ChevronDownIcon,
+  XMarkIcon,
 } from '@heroicons/react/24/outline';
 import { ThreadMessages, type ThreadMessage } from '@/components/inbox/thread-messages';
 import ReplyEditor from '@/components/inbox/reply-editor';
@@ -268,10 +270,12 @@ function ActionBar({ primaryLabel, primaryActive, onPrimary, children }: { prima
 
 type PlanTask = {
   id: string;
-  text: string;
+  text: string;                 // short imperative title (the one line the stepper shows)
+  detail?: string;              // longer explanation, revealed on expand
   actor: 'system' | 'you';
   capability: 'draft' | 'analyze' | 'fetch' | 'send' | null;
   done?: boolean;
+  dismissed?: boolean;          // removed from the workflow (persisted)
 };
 
 const CAP_HINT: Record<string, string> = {
@@ -288,12 +292,13 @@ const CAP_HINT: Record<string, string> = {
 // cache row is written). Owns tasks / loading / failed / pending + the [You]-checkbox PATCH handler +
 // the ≥2-task breakdown gate.
 type ItemPlan = {
-  tasks: PlanTask[] | null;
+  tasks: PlanTask[] | null;     // the LIVE (non-dismissed) tasks — the stepper renders these
   loading: boolean;
   failed: boolean;
-  hasBreakdown: boolean; // a genuine ≥2-task plan (drives the two-column layout)
+  hasBreakdown: boolean; // a genuine ≥2 non-dismissed-task plan (drives the two-column layout)
   pending: Set<string>;
   toggle: (task: PlanTask) => void;
+  dismiss: (task: PlanTask) => void;  // remove a step (system OR you) from the workflow, persisted
 };
 
 function useItemPlan(
@@ -342,19 +347,151 @@ function useItemPlan(
       .finally(() => setPending((prev) => { const n = new Set(prev); n.delete(task.id); return n; }));
   };
 
-  // The ≥2-task breakdown gate — a real multi-step plan (not failed, not loading, ≥2 tasks).
-  const hasBreakdown = !loading && !failed && !!tasks && tasks.length >= 2;
+  // Dismiss a step (ANY actor) — mark it dismissed locally + persist. The stepper filters dismissed
+  // out; the step fade-out is owned by the row (it holds a short exit state before this fires). Roll
+  // back on failure so a lost step reappears.
+  const dismiss = (task: PlanTask) => {
+    if (pending.has(task.id)) return;
+    setTasks((prev) => (prev ? prev.map((t) => (t.id === task.id ? { ...t, dismissed: true } : t)) : prev));
+    setPending((prev) => new Set(prev).add(task.id));
+    fetch('/api/items/plan', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: planKind, entityId, taskId: task.id, dismissed: true }),
+    })
+      .then((r) => { if (!r.ok) throw new Error(); })
+      .catch(() => {
+        setTasks((prev) => (prev ? prev.map((t) => (t.id === task.id ? { ...t, dismissed: false } : t)) : prev));
+      })
+      .finally(() => setPending((prev) => { const n = new Set(prev); n.delete(task.id); return n; }));
+  };
 
-  return { tasks, loading, failed, hasBreakdown, pending, toggle };
+  // The LIVE tasks the stepper reasons over — dismissed steps are removed from the workflow.
+  const liveTasks = useMemo(() => (tasks ? tasks.filter((t) => !t.dismissed) : tasks), [tasks]);
+
+  // The ≥2-task breakdown gate — a real multi-step plan, counting only NON-dismissed tasks. Dismissing
+  // below 2 collapses the panel (the layout latch keeps the flip from being jarring).
+  const hasBreakdown = !loading && !failed && !!liveTasks && liveTasks.length >= 2;
+
+  return { tasks: liveTasks, loading, failed, hasBreakdown, pending, toggle, dismiss };
+}
+
+// ── One step in the "Identified tasks" workflow stepper. A vertical timeline row: a NODE (✦ for a
+// system step, a [You] checkbox for a your step) + a CONNECTOR line to the next node + a SHORT title
+// that expands to the fuller `detail` on click + the row action (Draft → / done checkbox) + a quiet
+// dismiss ✕. Dismissing fades the row out (300ms) then calls `onDismiss` (which persists + filters it).
+function StepperRow({
+  task,
+  isLast,
+  canDraft,
+  draftLabel,
+  onDraft,
+  onToggle,
+  onDismiss,
+  busy,
+}: {
+  task: PlanTask;
+  isLast: boolean;
+  canDraft: boolean;
+  draftLabel: string;
+  onDraft?: () => void;
+  onToggle: () => void;
+  onDismiss: () => void;
+  busy: boolean;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [exiting, setExiting] = useState(false);
+  const isSystem = task.actor === 'system';
+  const hasDetail = !!task.detail?.trim();
+
+  const startDismiss = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (exiting) return;
+    setExiting(true);
+    setTimeout(onDismiss, 300); // fade, then persist + unmount via the parent's filter
+  };
+
+  return (
+    <li className={`relative pl-8 transition-all duration-300 ease-out ${exiting ? 'opacity-0 -translate-x-1' : 'opacity-100'}`}>
+      {/* Connector line — runs from just under this node to the next; hidden on the last step. */}
+      {!isLast && <span aria-hidden className="absolute left-[11px] top-6 bottom-[-6px] w-px bg-neutral-200" />}
+
+      {/* Node — ✦ for a system step, a checkbox for a [You] step. Sits on the connector line. */}
+      {isSystem ? (
+        <span className="absolute left-0 top-[3px] flex h-[23px] w-[23px] items-center justify-center rounded-full bg-indigo-50 ring-2 ring-white">
+          <SparklesIcon className="h-3.5 w-3.5 text-indigo-500" />
+        </span>
+      ) : (
+        <button
+          onClick={onToggle}
+          disabled={busy}
+          aria-pressed={!!task.done}
+          title={task.done ? 'Mark not done' : 'Mark done'}
+          className={`absolute left-0 top-[3px] flex h-[23px] w-[23px] items-center justify-center rounded-full ring-2 ring-white border transition-colors ${task.done ? 'bg-emerald-500 border-emerald-500 text-white' : 'bg-white border-neutral-300 text-transparent hover:border-neutral-400'}`}
+        >
+          <CheckIcon className="h-3 w-3" />
+        </button>
+      )}
+
+      {/* Row body */}
+      <div className="group/step pb-3">
+        <div className="flex items-start gap-2">
+          {/* Title (+ optional expand affordance). Click the row to reveal `detail`. */}
+          <button
+            onClick={() => hasDetail && setExpanded((v) => !v)}
+            className={`min-w-0 flex-1 text-left ${hasDetail ? 'cursor-pointer' : 'cursor-default'}`}
+          >
+            <span className="flex items-center gap-1">
+              <span className={`text-[13px] font-medium leading-snug ${task.done ? 'text-neutral-400 line-through' : 'text-neutral-800'}`}>{task.text}</span>
+              {hasDetail && (
+                <ChevronDownIcon className={`w-3 h-3 flex-shrink-0 text-neutral-300 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`} />
+              )}
+            </span>
+          </button>
+
+          {/* Dismiss — every step is removable (system + you). Quiet, appears on row hover. */}
+          <button
+            onClick={startDismiss}
+            disabled={busy || exiting}
+            title="Not needed — remove this step"
+            aria-label="Remove step"
+            className="flex-shrink-0 -mt-0.5 p-0.5 text-neutral-300 opacity-0 group-hover/step:opacity-100 focus:opacity-100 hover:text-rose-500 transition-all"
+          >
+            <XMarkIcon className="w-3.5 h-3.5" />
+          </button>
+        </div>
+
+        {/* Expandable detail — the fuller one-sentence explanation. */}
+        {hasDetail && (
+          <div className={`grid transition-all duration-300 ease-out ${expanded ? 'grid-rows-[1fr] opacity-100 mt-1' : 'grid-rows-[0fr] opacity-0'}`}>
+            <p className="overflow-hidden text-[12px] text-neutral-500 leading-relaxed">{task.detail}</p>
+          </div>
+        )}
+
+        {/* Action / status line */}
+        <div className="mt-1 flex items-center gap-2">
+          {isSystem ? (
+            canDraft && onDraft ? (
+              <button onClick={onDraft} className="text-[11.5px] font-medium text-indigo-600 hover:text-indigo-700">{draftLabel}</button>
+            ) : (
+              <span className="text-[11px] text-indigo-500/80">{CAP_HINT[task.capability ?? 'analyze'] ?? 'I can handle this'}</span>
+            )
+          ) : (
+            !task.done && <span className="text-[10.5px] text-neutral-400">needs you</span>
+          )}
+        </div>
+      </div>
+    </li>
+  );
 }
 
 // `onDraft` (when provided) is invoked by a system draft/send task to open the deep-dive's existing
-// compose flow. The plan state (tasks / loading / failed / pending + toggle) is fetched ONCE by the
-// parent via `useItemPlan` and passed in as `plan` — both the inline and panel instances share it, so
-// there is exactly ONE `/api/items/plan` POST per deep-dive load.
+// compose flow. The plan state (tasks / loading / failed / pending + toggle + dismiss) is fetched ONCE
+// by the parent via `useItemPlan` and passed in as `plan` — both the inline and panel instances share
+// it, so there is exactly ONE `/api/items/plan` POST per deep-dive load.
 //
 // LAYOUT: `variant` controls the shell. 'inline' (default) renders the classic in-flow <section> —
-// used on narrow widths and as the stacked fallback. 'panel' renders the same task list WITHOUT its
+// used on narrow widths and as the stacked fallback. 'panel' renders the same stepper WITHOUT its
 // own section header/legend (the parent panel supplies a sticky header) — used in the right column of
 // the two-column deep-dive.
 function WhatThisTakes({
@@ -366,11 +503,11 @@ function WhatThisTakes({
   onDraft?: () => void;
   variant?: 'inline' | 'panel';
 }) {
-  const { tasks, loading, failed, pending, toggle } = plan;
+  const { tasks, loading, failed, pending, toggle, dismiss } = plan;
 
   // In the two-column layout the parent renders the panel chrome + its own loading/failed handling
   // (the aside only mounts once a breakdown is confirmed via the hook's `hasBreakdown`), so the
-  // `panel` variant emits NOTHING on failed/loading/empty — it just renders the list when ready.
+  // `panel` variant emits NOTHING on failed/loading/empty — it just renders the stepper when ready.
   // Non-fatal: a failed plan hides the section entirely — the stage-1 action bar carries the deep-dive.
   if (failed) return null;
 
@@ -378,7 +515,7 @@ function WhatThisTakes({
     if (variant === 'panel') return null;
     return (
       <section>
-        <h2 className={SECTION_LABEL}>What this takes</h2>
+        <h2 className={SECTION_LABEL}>Identified tasks</h2>
         <div className="space-y-2 animate-pulse">
           <div className="h-9 rounded-lg bg-neutral-100" />
           <div className="h-9 rounded-lg bg-neutral-100" />
@@ -389,11 +526,10 @@ function WhatThisTakes({
 
   if (!tasks || tasks.length === 0) return null;
 
-  // PLAN-CONTENT-DRIVEN gate (not kind-driven): the breakdown renders for ANY kind, but ONLY when the
-  // plan is genuinely multi-step (≥2 tasks). A single-task plan (a simple reply / one action) → hide
-  // the breakdown entirely; the docked composer / action bar already IS the one action. This is what
-  // keeps trivial replies clean while surfacing multi-step work (e.g. a meeting-request email that
-  // needs a reply AND a calendar step).
+  // PLAN-CONTENT-DRIVEN gate (not kind-driven): the workflow renders for ANY kind, but ONLY when the
+  // plan is genuinely multi-step (≥2 NON-dismissed tasks). A single-task plan (a simple reply / one
+  // action) → hide it entirely; the docked composer / action bar already IS the one action. This is
+  // what keeps trivial replies clean while surfacing multi-step work.
   if (tasks.length < 2) return null;
 
   // Collapse draft + send into ONE actionable affordance. Both a `draft` task and a `send` task open
@@ -408,72 +544,39 @@ function WhatThisTakes({
     tasks.some((t) => t.actor === 'system' && t.capability === 'send');
   const composeLabel = hasDraftAndSend ? 'Draft & send →' : 'Draft →';
 
-  // The task list — shared by both variants. In 'panel' the parent owns the "What this takes" sticky
-  // header + legend, so we render just the <ul>; in 'inline' we wrap it in the classic <section>.
-  const list = (
-    <ul className="space-y-1.5">
-      {tasks.map((t) => {
-          if (t.actor === 'system') {
-            // Only the FIRST draft/send task exposes the compose button (draft+send collapse to one
-            // affordance — the compose flow already sends). Any other draft/send task shows the hint.
-            const canDraft = t.id === primaryComposeId && !!onDraft;
-            return (
-              <li key={t.id} className="flex items-start gap-2.5 rounded-lg border border-indigo-100 bg-indigo-50/40 px-3 py-2.5">
-                <SparklesIcon className="w-4 h-4 flex-shrink-0 mt-[1px] text-indigo-500" />
-                <div className="min-w-0 flex-1">
-                  <p className="text-[13px] text-neutral-800 leading-snug">{t.text}</p>
-                  <div className="mt-1 flex items-center gap-2">
-                    <span className="inline-flex items-center rounded bg-indigo-100 px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-wide text-indigo-600">AUGMTD</span>
-                    {canDraft ? (
-                      <button
-                        onClick={onDraft}
-                        className="text-[11.5px] font-medium text-indigo-600 hover:text-indigo-700"
-                      >
-                        {composeLabel}
-                      </button>
-                    ) : (
-                      <span className="text-[11px] text-indigo-500/80">{CAP_HINT[t.capability ?? 'analyze'] ?? 'I can handle this'}</span>
-                    )}
-                  </div>
-                </div>
-              </li>
-            );
-          }
-          const busy = pending.has(t.id);
-          return (
-            <li key={t.id} className="flex items-start gap-2.5 rounded-lg border border-neutral-200/70 bg-white px-3 py-2.5">
-              <button
-                onClick={() => toggle(t)}
-                disabled={busy}
-                aria-pressed={!!t.done}
-                title={t.done ? 'Mark not done' : 'Mark done'}
-                className={`mt-[1px] flex-shrink-0 w-4 h-4 rounded border inline-flex items-center justify-center transition-colors ${t.done ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-neutral-300 text-transparent hover:border-neutral-400'}`}
-              >
-                <CheckIcon className="w-3 h-3" />
-              </button>
-              <div className="min-w-0 flex-1">
-                <p className={`text-[13px] leading-snug transition-colors ${t.done ? 'text-neutral-400 line-through' : 'text-neutral-800'}`}>{t.text}</p>
-                {!t.done && <span className="text-[10.5px] text-neutral-400">needs you</span>}
-              </div>
-            </li>
-          );
-        })}
-    </ul>
+  // The stepper — a connected vertical timeline (node → connector → node). Shared by both variants;
+  // in 'panel' the parent owns the sticky "Identified tasks" header + legend, so we render just the <ol>.
+  const stepper = (
+    <ol className="relative">
+      {tasks.map((t, i) => (
+        <StepperRow
+          key={t.id}
+          task={t}
+          isLast={i === tasks.length - 1}
+          canDraft={t.id === primaryComposeId && !!onDraft}
+          draftLabel={composeLabel}
+          onDraft={onDraft}
+          onToggle={() => toggle(t)}
+          onDismiss={() => dismiss(t)}
+          busy={pending.has(t.id)}
+        />
+      ))}
+    </ol>
   );
 
-  // PANEL variant: just the list — the parent's TasksPanel supplies the sticky header + legend + its
+  // PANEL variant: just the stepper — the parent's TasksPanel supplies the sticky header + legend + its
   // own scroll. INLINE variant: the classic self-contained section (narrow / stacked fallback).
-  if (variant === 'panel') return list;
+  if (variant === 'panel') return stepper;
 
   return (
     <section>
-      <div className="flex items-baseline justify-between mb-2.5">
-        <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide">What this takes</h2>
+      <div className="flex items-baseline justify-between mb-3">
+        <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide">Identified tasks</h2>
         <span className="text-[10.5px] text-neutral-400">
           <span className="text-indigo-500">✦</span> AUGMTD can do · <span className="text-neutral-400">○</span> needs you
         </span>
       </div>
-      {list}
+      {stepper}
     </section>
   );
 }
@@ -493,30 +596,38 @@ function WhatThisTakes({
 // fetch.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
-// The right column: a card-lane panel with a sticky "What this takes" header + legend and its own
-// scroll. `hasBreakdown` animates its width so the split opens/closes smoothly. Matches app UI —
-// SECTION_LABEL token for the header, subtle left border, page-bg tint so it reads as a distinct lane.
+// The right column: the "Identified tasks" workflow lane — a width-animated COLUMN that REFLOWS the
+// main email column left (never overlays), mirroring the Activity panel's mechanism exactly. The
+// `p-2 bg-neutral-50` wrapper makes an inset gap; inside sits a `rounded-2xl bg-white shadow-sm border`
+// card so it reads as part of the page. Narrower than before (300px) so the email column gets the room.
+// `hasBreakdown` animates the width open/closed. The inner card holds a fixed width so it's simply
+// CLIPPED during the animation rather than squishing.
 function TasksPanel({ hasBreakdown, children }: { hasBreakdown: boolean; children: React.ReactNode }) {
   return (
     <aside
       aria-hidden={!hasBreakdown}
-      className={`hidden lg:flex flex-col min-h-0 flex-shrink-0 border-l border-neutral-200 bg-neutral-50/60 overflow-hidden transition-[width,opacity] duration-300 ease-out ${
-        hasBreakdown ? 'w-[340px] xl:w-[380px] opacity-100' : 'w-0 opacity-0'
+      className={`hidden lg:flex flex-col min-h-0 flex-shrink-0 bg-neutral-50 overflow-hidden transition-[width] duration-300 ease-out ${
+        hasBreakdown ? 'w-[300px] xl:w-[320px]' : 'w-0 pointer-events-none'
       }`}
     >
-      {/* Sticky panel header — the section label + the ✦ / ○ legend, matching the inline section. */}
-      <div className="flex-shrink-0 px-5 pt-5 pb-3 border-b border-neutral-200 bg-neutral-50/60 backdrop-blur">
-        <div className="flex items-baseline justify-between gap-2">
-          <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide whitespace-nowrap">What this takes</h2>
-          <span className="text-[10.5px] text-neutral-400 whitespace-nowrap">
-            <span className="text-indigo-500">✦</span> AUGMTD · <span className="text-neutral-400">○</span> you
-          </span>
+      {/* Inset card — fixed width so it clips cleanly while the column animates. */}
+      <div className="flex-1 min-h-0 p-2 w-[300px] xl:w-[320px]">
+        <div className="h-full flex flex-col rounded-2xl bg-white shadow-sm border border-neutral-200/70 overflow-hidden">
+          {/* Sticky header — "Identified tasks" + the ✦ / ○ legend. Matches the Activity panel header. */}
+          <div className="flex-shrink-0 flex items-center justify-between gap-2 h-10 px-3.5 border-b border-neutral-200">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <SparklesIcon className="w-4 h-4 flex-shrink-0 text-indigo-400" />
+              <span className="text-[13px] font-semibold text-neutral-700 whitespace-nowrap">Identified tasks</span>
+            </div>
+            <span className="text-[10px] text-neutral-400 whitespace-nowrap flex-shrink-0">
+              <span className="text-indigo-500">✦</span> AUGMTD · <span className="text-neutral-400">○</span> you
+            </span>
+          </div>
+          {/* Body — its own scroll when long. min-w keeps the stepper from crushing during animation. */}
+          <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 min-w-[268px]">
+            {children}
+          </div>
         </div>
-      </div>
-      {/* Panel body — its own scroll when long. min-w keeps the list from crushing during the width
-          animation. */}
-      <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4 min-w-[300px]">
-        {children}
       </div>
     </aside>
   );
@@ -538,11 +649,13 @@ function DeepDiveShell({
 }) {
   // The whole two-column block is centered. Its max width grows only when the tasks panel is present
   // (single column stays capped at the classic readable width — identical to before); when the panel
-  // opens we give room for it (main column + ~360px aside). The width transition animates the split.
+  // opens we give the email column noticeably MORE room (a wider block + the now-narrower ~300px aside),
+  // so the thread + composer breathe while the workflow sits to the right. The transition animates the
+  // split.
   return (
     <div
       className={`mx-auto w-full h-full min-h-0 flex flex-row transition-[max-width] duration-300 ease-out ${
-        hasBreakdown ? 'lg:max-w-5xl' : 'max-w-3xl'
+        hasBreakdown ? 'lg:max-w-6xl' : 'max-w-3xl'
       }`}
     >
       <div className="flex-1 min-w-0 flex flex-col h-full min-h-0">{children}</div>
