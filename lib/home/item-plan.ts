@@ -37,6 +37,7 @@ WHAT WE (the SYSTEM) CAN DO:
 
 WHAT WE CANNOT DO (grade as [You]):
 - Any external/tool action: process a refund in a billing system, look up a CRM/bank/invoice, sign a document, make a payment, book or attend something, place a call, update an external tool.
+- CREATE A CALENDAR EVENT or SEND A CALENDAR INVITE. We can READ the calendar and DRAFT a reply proposing a time, but we CANNOT put a meeting on the calendar or send an invite — that is [You] (capability null), never [System].
 - Any decision, approval, or judgment that is the user's to make.
 - Anything physical, or anything in a system we don't have access to.
 - Fetching from an EXTERNAL system (billing, CRM, bank, e-signature, payment portal) — that is [You], NOT fetch.
@@ -109,9 +110,18 @@ export async function generateItemPlan(
     `Home into the concrete sub-tasks it takes to RESOLVE it, and grade each task by who does it.\n\n` +
     `${CAPABILITY_SET}\n\n` +
     `INSTRUCTIONS:\n` +
-    `- Break the item into 2–5 CONCRETE, specific sub-tasks. Order them the way you'd actually do the work.\n` +
+    `- Break the item into 1–5 CONCRETE, specific sub-tasks. Order them the way you'd actually do the work.\n` +
     `- Be specific to THIS item: name the real recipient, say what to fetch/draft, reference the actual next step.\n` +
-    `- A simple item may be a SINGLE task — don't invent busywork.\n` +
+    `- HONESTY OF STEP COUNT — this is the most important rule, and it cuts BOTH ways:\n` +
+    `  • A TRIVIAL item that only needs a reply MUST be a SINGLE task: e.g. "Draft and send the reply to <name>" ` +
+    `(capability "send"). Do NOT pad a simple reply with invented steps ("review the thread", "consider next steps") — one task.\n` +
+    `  • But surface EVERY DISTINCT real-world step this item actually requires to be RESOLVED — not just the reply. ` +
+    `Reason from the item itself: what does fully handling it take? If resolving it needs an action BEYOND writing a ` +
+    `message (attach a specific file, place an order, process/refund something, pay, forward to someone, sign, book ` +
+    `or schedule something, make a decision, update another system, etc.), make EACH such action its own task and ` +
+    `grade it by the capability set — most of these are [You] (capability null) because they aren't draft/analyze/` +
+    `fetch/send. Don't collapse a two-part item ("reply AND do X") into just the reply, and don't invent an X that ` +
+    `isn't there. Let the steps EMERGE from THIS item — never from its category.\n` +
     `- NO redundant steps. Drafting and sending an email is ONE action here — emit a single task like ` +
     `"draft and send the reply to <name>" (capability "send"), NOT a separate "draft" step AND a "send" step.\n` +
     `- Grade each task: actor "system" (AUGMTD can do it now — set a capability: draft|analyze|fetch|send) ` +

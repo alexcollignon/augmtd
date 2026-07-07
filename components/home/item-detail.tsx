@@ -254,11 +254,16 @@ function ActionBar({ primaryLabel, primaryActive, onPrimary, children }: { prima
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-// WHAT THIS TAKES — stage 2 of "actions follow intent". The item's graded task breakdown: 2–5 concrete
+// WHAT THIS TAKES — stage 2 of "actions follow intent". The item's graded task breakdown: 1–5 concrete
 // sub-tasks, each tagged [System] (✦ AUGMTD can do it — grounded in our REAL capabilities) or [You]
 // (○ needs the user). System draft/send tasks wire to the EXISTING stage-1 compose flow via onDraft;
 // other system tasks show a quiet "I can handle this" (display only — execution is stage 3). [You]
 // tasks are a persisted checkbox checklist. Non-fatal: on load failure the whole section hides.
+//
+// INTENT-DRIVEN, not kind-driven: this renders for ANY kind (email / meeting / commitment / followup /
+// awareness), but ONLY when the plan is genuinely multi-step (≥2 tasks). A single-task plan → the
+// section hides entirely (the docked composer / action bar already IS the one action) — so trivial
+// replies stay clean while a meeting-request email (reply + a [You] calendar step) surfaces its steps.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 type PlanTask = {
@@ -347,9 +352,12 @@ function WhatThisTakes({
 
   if (!tasks || tasks.length === 0) return null;
 
-  // A single trivial [You] "Handle this" task = keep it minimal (the fallback / a truly one-step item).
-  const trivial = tasks.length === 1 && tasks[0].actor === 'you';
-  if (trivial) return null;
+  // PLAN-CONTENT-DRIVEN gate (not kind-driven): the breakdown renders for ANY kind, but ONLY when the
+  // plan is genuinely multi-step (≥2 tasks). A single-task plan (a simple reply / one action) → hide
+  // the breakdown entirely; the docked composer / action bar already IS the one action. This is what
+  // keeps trivial replies clean while surfacing multi-step work (e.g. a meeting-request email that
+  // needs a reply AND a calendar step).
+  if (tasks.length < 2) return null;
 
   // Collapse draft + send into ONE actionable affordance. Both a `draft` task and a `send` task open
   // the SAME compose flow (which already drafts AND sends), so two "Draft →" buttons read as a
@@ -625,8 +633,14 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
           )}
         </div>
 
-        {/* No "What this takes" here — a reply is ONE action; the docked reply composer below IS the
-            plan. The breakdown is reserved for multi-step items (meeting / commitment). */}
+        {/* What this takes — the graded breakdown, INTENT-driven (renders only when the plan is
+            genuinely multi-step, ≥2 tasks; a simple reply → hidden, the docked composer below IS the
+            plan). A system draft/send task scrolls to the docked reply composer. */}
+        <WhatThisTakes
+          planKind="email"
+          entityId={id}
+          onDraft={() => composerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })}
+        />
 
         {/* Suggested angle (light line) — kept just above the docked composer */}
         {angle && (
@@ -1196,8 +1210,14 @@ function FollowUpDetail({ id }: { id: string }) {
           )}
         </div>
 
-        {/* No "What this takes" here — a nudge is ONE action; the docked nudge composer below IS the
-            plan. The breakdown is reserved for multi-step items (meeting / commitment). */}
+        {/* What this takes — INTENT-driven (renders only when the plan is genuinely multi-step,
+            ≥2 tasks; a simple nudge → hidden, the docked composer below IS the plan). A system
+            draft/send task scrolls to the docked nudge composer. */}
+        <WhatThisTakes
+          planKind="followup"
+          entityId={id}
+          onDraft={() => composerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })}
+        />
       </div>
 
       {/* Docked nudge composer */}

@@ -842,26 +842,34 @@ export function HomeView() {
   // errors ignored. get-or-generate on the route means a warmed plan just returns cached on open.
   const preGenPlans = useCallback((brief: Brief) => {
     const targets: { kind: string; entityId: string }[] = [];
-    // Only warm plans for the kinds that actually RENDER "What this takes": meetings + commitments
-    // (multi-step). Email/reply/nudge deep-dives no longer show a breakdown — their composer IS the
-    // plan — so warming their plans would spend AI calls for something that never renders.
+    // Warm plans for ALL actionable kinds — the "What this takes" breakdown is now INTENT-driven
+    // (renders on ANY kind whose plan is genuinely multi-step, ≥2 tasks), so a meeting-request EMAIL
+    // may show a breakdown too. Pre-gen so the deep-dive opens with a cached plan (no 1s load) even
+    // for emails. For a single-task (trivial) plan the pre-gen is "wasted" but it's background/cached
+    // and never blocks — the get-or-generate route returns cached on open.
+    for (const m of brief.mustRespond?.items ?? []) {
+      if (m.itemId) targets.push({ kind: 'email', entityId: m.itemId });
+    }
     for (const p of brief.priorities ?? []) {
       if (p.source === 'meeting') {
         const tid = p.id.startsWith('meeting:') ? p.id.slice('meeting:'.length) : p.id;
         if (tid) targets.push({ kind: 'meeting', entityId: tid });
+      } else if (p.itemId) {
+        // A non-meeting priority card is an inbox email item (email/awareness deep-dive → kind email).
+        targets.push({ kind: 'email', entityId: p.itemId });
       }
     }
     for (const c of brief.commitments ?? []) {
       if (c.id) targets.push({ kind: 'commitment', entityId: c.id });
     }
-    // De-dupe within this batch + against what we've already warmed, then cap at 4 (cost guard).
+    // De-dupe within this batch + against what we've already warmed, then cap at 6 (cost guard).
     const seen = new Set<string>();
     const queue = targets.filter((t) => {
       const key = `${t.kind}:${t.entityId}`;
       if (seen.has(key) || preGennedRef.current.has(key)) return false;
       seen.add(key);
       return true;
-    }).slice(0, 4);
+    }).slice(0, 6);
     // Fire sequentially with a small stagger so we don't hammer the reasoning tier all at once.
     queue.forEach((t, i) => {
       const key = `${t.kind}:${t.entityId}`;
