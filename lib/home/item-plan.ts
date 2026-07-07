@@ -27,15 +27,27 @@ export type HandedTo = {
   at?: string;                // ISO timestamp
 };
 
+// ── The per-step RUNTIME STATE — the small, persisted status that makes the workflow read LIVE, not
+// static (the orchestration-board model: every step is owner · state · one action). ABSENT = the step
+// is ready/pending (nothing running). The values are the transient states between ready and resolved:
+//   • 'working'          — AUGMTD (or a coworker) is executing it right now (subtle spinner).
+//   • 'awaiting_approval'— AUGMTD prepared an irreversible send and is waiting for the user's one-tap OK.
+//   • 'done'             — resolved (mirrors `done:true`; kept for symmetry so a status read is total).
+// `done` / `handedTo` stay the durable resolution markers; `status` is the in-flight nuance layered on
+// top. Persisted in the `item_plans.tasks` jsonb (schemaless — no migration needed).
+export type PlanTaskStatus = 'working' | 'awaiting_approval' | 'done';
+
 export type ItemPlanTask = {
   id: string;
   text: string;              // a SHORT imperative title (≤ ~8–10 words) — the one line the stepper shows
   detail?: string;           // an optional one-sentence explanation — revealed when the step is expanded
   actor: 'system' | 'you';
   capability: PlanCapability;
+  status?: PlanTaskStatus;   // transient runtime state (working / awaiting_approval / done); absent = ready
   done?: boolean;
   dismissed?: boolean;       // the user removed this step from the workflow (persisted)
   handedTo?: HandedTo;       // a coworker executed this step (stage 3b delegation)
+  result?: string;           // AUGMTD's own returned output when it ran the step directly ("Hand to AUGMTD")
 };
 
 export type ItemPlan = { tasks: ItemPlanTask[] };

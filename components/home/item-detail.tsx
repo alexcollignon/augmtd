@@ -766,6 +766,85 @@ function CoworkerPicker({ onPick, onClose, align = 'left', direction = 'up', tit
   );
 }
 
+// ── The per-step OWNER dropdown — the "who does this step" reassignment menu. Lists AUGMTD, each
+// coworker (avatar + name), and "I'll do it", so any step's executor can be flipped system ↔ coworker
+// ↔ you in one tap. Anchored below its trigger (absolute, z-[60] so it clears the sticky panel header
+// — the layering bug we fix), closes on outside-click / Esc. Reuses the coworker roster + avatar. This
+// SUPERSEDES the coworker-only per-step picker: picking AUGMTD/you calls `onReassign`; picking a
+// coworker calls `onPickCoworker` (→ delegateStep). Shows the current owner with a check.
+function OwnerMenu({
+  currentOwner,
+  onReassign,
+  onPickCoworker,
+  onClose,
+  align = 'right',
+}: {
+  currentOwner: 'system' | 'you' | 'coworker';
+  onReassign: (owner: 'system' | 'you') => void;
+  onPickCoworker: (w: Coworker) => void;
+  onClose: () => void;
+  align?: 'left' | 'right';
+}) {
+  const workers = useCoworkers();
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const onDoc = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) onClose(); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onDoc); document.removeEventListener('keydown', onKey); };
+  }, [onClose]);
+
+  return (
+    <div
+      ref={ref}
+      // Anchored DOWN from the trigger (opening up would push over the sticky panel header). z-[60]
+      // sits above the panel chrome + the coworker-footer picker; the parent trigger stays `relative`.
+      className={`absolute z-[60] top-full mt-1.5 w-56 rounded-xl border border-neutral-200 bg-white shadow-xl overflow-hidden ${align === 'right' ? 'right-0' : 'left-0'}`}
+    >
+      <div className="px-3 py-2 border-b border-neutral-100">
+        <p className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide">Who does this</p>
+      </div>
+      <ul className="max-h-64 overflow-y-auto py-1">
+        {/* AUGMTD */}
+        <li>
+          <button
+            onClick={() => onReassign('system')}
+            className="w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-indigo-50/70 transition-colors"
+          >
+            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-indigo-50 flex-shrink-0"><AugmtdMark size={14} /></span>
+            <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-neutral-800">AUGMTD</span>
+            {currentOwner === 'system' && <CheckIcon className="w-3.5 h-3.5 text-indigo-500 flex-shrink-0" />}
+          </button>
+        </li>
+        {/* Coworkers */}
+        {workers.map((w) => (
+          <li key={w.id}>
+            <button
+              onClick={() => onPickCoworker(w)}
+              className="w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-indigo-50/70 transition-colors"
+            >
+              <CoworkerAvatar worker={w} size={24} />
+              <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-neutral-800">{w.name}</span>
+            </button>
+          </li>
+        ))}
+        {/* You */}
+        <li className="border-t border-neutral-100 mt-1 pt-1">
+          <button
+            onClick={() => onReassign('you')}
+            className="w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-indigo-50/70 transition-colors"
+          >
+            <span className="flex h-6 w-6 items-center justify-center rounded-full border border-neutral-300 text-neutral-400 text-[13px] flex-shrink-0">○</span>
+            <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-neutral-800">I&apos;ll do it</span>
+            {currentOwner === 'you' && <CheckIcon className="w-3.5 h-3.5 text-indigo-500 flex-shrink-0" />}
+          </button>
+        </li>
+      </ul>
+    </div>
+  );
+}
+
 // ── "Hand to a coworker" — the global, item-level delegate affordance. Opens the CoworkerPicker; on
 // pick it delegates the WHOLE item via `onDelegate`. It is NOT a workflow step, so it never duplicates
 // one. It lives in exactly ONE place per layout: the Identified-tasks panel FOOTER when a breakdown
@@ -881,16 +960,33 @@ type HandedTo = {
   at?: string;
 };
 
+// The per-step RUNTIME state (mirrors lib/home/item-plan.ts). Absent = ready/pending; 'working' =
+// AUGMTD/coworker is running it now; 'awaiting_approval' = AUGMTD prepared an irreversible send,
+// waiting for the user's OK; 'done' = resolved.
+type PlanTaskStatus = 'working' | 'awaiting_approval' | 'done';
+
+type PlanCap = 'draft' | 'analyze' | 'fetch' | 'send' | null;
+
 type PlanTask = {
   id: string;
   text: string;                 // short imperative title (the one line the stepper shows)
   detail?: string;              // longer explanation, revealed on expand
   actor: 'system' | 'you';
-  capability: 'draft' | 'analyze' | 'fetch' | 'send' | null;
+  capability: PlanCap;
+  status?: PlanTaskStatus;      // transient runtime state (working / awaiting_approval / done)
   done?: boolean;
   dismissed?: boolean;          // removed from the workflow (persisted)
   handedTo?: HandedTo;          // a coworker executed this step (stage 3b)
+  result?: string;             // AUGMTD's returned output when it ran the step directly ("Hand to AUGMTD")
 };
+
+// A step's system capability is a REVERSIBLE, ATOMIC one AUGMTD can run directly ("Hand to AUGMTD").
+// 1:1 with `lib/home/capability-map.ts` `isDirectRunnableCapability` (analyze / fetch). A `draft` has
+// the composer surface; a `send` is the approval-gated invite path. Kept here so the row logic stays
+// agnostic + derived (adding a runnable capability = extend both).
+function isDirectRunnableCap(cap: PlanCap): boolean {
+  return cap === 'analyze' || cap === 'fetch';
+}
 
 const CAP_HINT: Record<string, string> = {
   draft: 'I can draft this',
@@ -920,6 +1016,10 @@ type ItemPlan = {
   delegatingId: string | null;   // id of the step currently being delegated ('__item__' for a whole-item hand-off)
   delegateStep: (taskId: string, agentId: string, agentName: string) => Promise<boolean>;  // hand one step to a coworker
   delegateItem: (agentId: string, agentName: string) => Promise<boolean>;                   // hand the whole item to a coworker
+  runningId: string | null;      // id of the [System] step AUGMTD is running directly ("Hand to AUGMTD")
+  runStep: (taskId: string) => Promise<boolean>;         // AUGMTD runs one reversible atomic step directly
+  reassignStep: (taskId: string, owner: 'system' | 'you') => void; // flip a step's owner (coworker→ handled elsewhere)
+  dispatchAll: (openInvite?: (taskId: string) => void, openCompose?: () => void) => void;   // "Hand all of this off" — each step to its owner
   markComposerSent: () => void;  // the docked composer's Send succeeded → flip the reply STEP to "Sent ✓"
 };
 
@@ -936,6 +1036,11 @@ function useItemPlan(
   const [pending, setPending] = useState<Set<string>>(new Set());
   const [classifyingId, setClassifyingId] = useState<string | null>(null);
   const [delegatingId, setDelegatingId] = useState<string | null>(null);
+  const [runningId, setRunningId] = useState<string | null>(null);
+  // A live ref of the latest tasks — read inside async run handlers to guard concurrent dispatch
+  // without a stale closure (the per-step "already working/done" check in runStep + dispatchAll).
+  const tasksRef = useRef<PlanTask[] | null>(null);
+  tasksRef.current = tasks;
 
   useEffect(() => {
     let alive = true;
@@ -1132,12 +1237,99 @@ function useItemPlan(
     }
   };
 
+  // ── "Hand to AUGMTD" — AUGMTD runs ONE reversible atomic [System] step (analyze / grounded fetch)
+  // directly. Optimistically flag it working (spinner + "Handed to AUGMTD…"), POST /api/items/run → on
+  // success stamp done + status:'done' + the returned result inline. On failure, clear the working flag
+  // (nothing marked — the step stays ready to retry or hand off). Reversible: never sends/commits.
+  const runStep = async (taskId: string): Promise<boolean> => {
+    // Per-task guard (not a single global lock) — so "Hand all of this off" can run several reversible
+    // steps concurrently. A step already working / done / handed / dismissed is skipped. `runningId`
+    // tracks only the most-recent single click (for the trigger's own affordance); the durable
+    // per-step spinner reads `status==='working'`, so concurrent runs each show their own state.
+    const cur = tasksRef.current?.find((t) => t.id === taskId);
+    if (!cur || cur.status === 'working' || cur.done || cur.handedTo || cur.dismissed) return false;
+    setRunningId(taskId);
+    setTasks((prev) => (prev ? prev.map((t) => (t.id === taskId ? { ...t, status: 'working' } : t)) : prev));
+    try {
+      const res = await fetch('/api/items/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: planKind, entityId, taskId }),
+      });
+      if (!res.ok) throw new Error();
+      const d = (await res.json()) as { output?: string };
+      setTasks((prev) => (prev ? prev.map((t) => (t.id === taskId ? { ...t, done: true, status: 'done', result: d.output } : t)) : prev));
+      return true;
+    } catch {
+      // Clear the working flag — the step reverts to ready.
+      setTasks((prev) => (prev ? prev.map((t) => (t.id === taskId ? { ...t, status: undefined } : t)) : prev));
+      return false;
+    } finally {
+      setRunningId((cur2) => (cur2 === taskId ? null : cur2));
+    }
+  };
+
+  // ── Re-assign a step's OWNER between AUGMTD (system) and you (the coworker case is handled by
+  // delegateStep, which stamps handedTo). Flipping owner re-grades the step's actor: system→you drops
+  // the capability (a [You] step never carries one); you→system defaults to 'analyze' (the safe atomic
+  // capability AUGMTD can always run over the item). Optimistic + persisted via the plan PATCH's
+  // dedicated `reassign` action (no text re-classification — we only change WHO does it).
+  const reassignStep = (taskId: string, owner: 'system' | 'you') => {
+    setTasks((prev) => {
+      if (!prev) return prev;
+      return prev.map((t) => {
+        if (t.id !== taskId) return t;
+        if (owner === 'you') {
+          // Hand it back to yourself — clear any coworker attribution + system capability + working state.
+          return { ...t, actor: 'you', capability: null, handedTo: undefined, status: undefined, done: false };
+        }
+        // Give it to AUGMTD — default to the always-runnable 'analyze' capability if it had none.
+        return { ...t, actor: 'system', capability: t.capability ?? 'analyze', handedTo: undefined, status: undefined, done: false };
+      });
+    });
+    // Persist the owner flip (best-effort, non-fatal). The plan PATCH route accepts a reassign action.
+    fetch('/api/items/plan', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: planKind, entityId, taskId, action: 'reassign', owner }),
+    }).catch(() => { /* non-fatal — optimistic state already applied */ });
+  };
+
+  // ── "Hand all of this off" — dispatch EVERY actionable live step to its CURRENT owner at once:
+  //   • a coworker-owned step (handedTo already set) is already running — skip.
+  //   • a [System] reversible-atomic step → run it directly (runStep).
+  //   • a [System] draft/send step → reveal its prepared surface (composer/invite) so the user can
+  //     review & send (the approval gate — we never auto-fire an irreversible send from here).
+  //   • a [You] step stays with the user (nothing to dispatch).
+  // The invite/compose openers are passed in from the host so this can surface the right approval
+  // surface. Runs the reversible ones concurrently; opens the first pending approval surface.
+  const dispatchAll = (openInvite?: (taskId: string) => void, openCompose?: () => void) => {
+    const ts = tasksRef.current;
+    if (!ts) return;
+    let approvalOpened = false;
+    for (const t of ts) {
+      if (t.dismissed || t.done || t.handedTo || t.status === 'working') continue;
+      if (t.actor !== 'system') continue; // [You] steps stay with the user
+      if (isDirectRunnableCap(t.capability)) {
+        // Reversible atomic → AUGMTD runs it now (concurrency guarded by runningId — dispatch sequences
+        // will no-op if one is mid-flight, but distinct calls resolve independently in practice).
+        void runStep(t.id);
+      } else if (t.capability === 'draft' || t.capability === 'send') {
+        // Irreversible/produce → surface the approval (invite card or composer). Open only the first.
+        if (approvalOpened) continue;
+        const isInvite = clientRouteActionType(t) === 'calendar_invite';
+        if (isInvite && openInvite) { openInvite(t.id); approvalOpened = true; }
+        else if (openCompose) { openCompose(); approvalOpened = true; }
+      }
+    }
+  };
+
   // The ≥2-task breakdown gate — a real multi-step plan, counting ALL identified tasks (including
   // crossed-out ones). Crossing steps out does NOT collapse the panel: a workflow the user has triaged
   // stays visible. (A user-added step counts toward it — it's in `tasks`.)
   const hasBreakdown = !loading && !failed && !!tasks && tasks.length >= 2;
 
-  return { tasks, loading, failed, hasBreakdown, pending, classifyingId, toggle, dismiss, addStep, editStep, markSystemDone, delegatingId, delegateStep, delegateItem, markComposerSent };
+  return { tasks, loading, failed, hasBreakdown, pending, classifyingId, toggle, dismiss, addStep, editStep, markSystemDone, delegatingId, delegateStep, delegateItem, runningId, runStep, reassignStep, dispatchAll, markComposerSent };
 }
 
 // ── The per-step STATE CHIP — the single glanceable "where is this step" token. Every StepperRow
@@ -1145,7 +1337,7 @@ function useItemPlan(
 // ("Sent ✓" / "Invite sent ✓") once the user commits it; a [You] step is "Needs you" → "Done ✓"; a
 // delegated step is "{Name} is on it…" → "{Name} handled it ✓"; a set-aside step is "Not needed".
 // This is the heart of the redesign: the step SAYS what's true, so the workflow reads live, not static.
-type StepState = 'ready' | 'sent' | 'needs-you' | 'done' | 'running' | 'handled' | 'dismissed' | 'system';
+type StepState = 'ready' | 'sent' | 'needs-you' | 'done' | 'running' | 'handled' | 'dismissed' | 'system' | 'working' | 'awaiting';
 function StateChip({ state, label }: { state: StepState; label: string }) {
   const tone: Record<StepState, string> = {
     ready: 'bg-emerald-50 text-emerald-600',       // prepared, waiting for your approval
@@ -1156,10 +1348,13 @@ function StateChip({ state, label }: { state: StepState; label: string }) {
     handled: 'bg-emerald-100 text-emerald-700',     // a coworker finished ✓
     dismissed: 'bg-neutral-100 text-neutral-400',   // set aside
     system: 'bg-indigo-50 text-indigo-500',         // AUGMTD (no user-facing send)
+    working: 'bg-indigo-50 text-indigo-600',        // AUGMTD is running it right now
+    awaiting: 'bg-amber-100 text-amber-700',        // prepared an irreversible send — one-tap approve
   };
+  const spins = state === 'running' || state === 'working';
   return (
     <span className={`inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium transition-colors duration-300 ${tone[state]}`}>
-      {state === 'running' && <span className="w-2 h-2 rounded-full border-[1.5px] border-indigo-300 border-t-indigo-600 animate-spin" />}
+      {spins && <span className="w-2 h-2 rounded-full border-[1.5px] border-indigo-300 border-t-indigo-600 animate-spin" />}
       {(state === 'sent' || state === 'done' || state === 'handled') && <CheckIcon className="w-2.5 h-2.5" />}
       {label}
     </span>
@@ -1183,6 +1378,9 @@ function StepperRow({
   onDismiss,
   onEdit,
   onDelegate,
+  onReassign,
+  onRun,
+  running,
   delegating,
   classifying,
   busy,
@@ -1196,6 +1394,9 @@ function StepperRow({
   onDismiss: () => void;
   onEdit: (text: string) => void;   // re-classify this step with new text
   onDelegate?: (w: Coworker) => void; // hand THIS step to a coworker (opens the picker)
+  onReassign?: (owner: 'system' | 'you') => void; // flip THIS step's owner between AUGMTD and you
+  onRun?: () => void;               // "Hand to AUGMTD" — run a reversible atomic system step directly
+  running: boolean;                 // AUGMTD is running this step now — show working state
   delegating: boolean;              // this step is being delegated — show a spinner
   classifying: boolean;             // this step is being (re)classified — show a quiet "classifying…"
   busy: boolean;
@@ -1203,12 +1404,13 @@ function StepperRow({
   const [expanded, setExpanded] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draftText, setDraftText] = useState(task.text);
-  const [pickerOpen, setPickerOpen] = useState(false);
+  const [ownerOpen, setOwnerOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const isSystem = task.actor === 'system';
   const hasDetail = !!task.detail?.trim();
   const crossed = !!task.dismissed; // "not needed" — visible but struck-through, action disabled
   const handed = task.handedTo;     // a coworker executed this step
+  const working = running || task.status === 'working'; // AUGMTD is executing this step right now
 
   useEffect(() => {
     if (editing) { setDraftText(task.text); inputRef.current?.focus(); inputRef.current?.select(); }
@@ -1239,6 +1441,11 @@ function StepperRow({
           <CoworkerAvatar worker={{ name: handed.agentName, worker_role: handed.workerRole ?? null }} size={21} />
         </span>
       ) : delegating ? (
+        <span className="absolute left-0 top-[3px] flex h-[23px] w-[23px] items-center justify-center rounded-full ring-2 ring-white bg-indigo-50">
+          <span className="w-3 h-3 rounded-full border-2 border-indigo-300 border-t-indigo-600 animate-spin" />
+        </span>
+      ) : working ? (
+        // AUGMTD is running this step directly — a spinner over the brand-mark's indigo well.
         <span className="absolute left-0 top-[3px] flex h-[23px] w-[23px] items-center justify-center rounded-full ring-2 ring-white bg-indigo-50">
           <span className="w-3 h-3 rounded-full border-2 border-indigo-300 border-t-indigo-600 animate-spin" />
         </span>
@@ -1300,26 +1507,27 @@ function StepperRow({
 
           {!editing && (
             <>
-              {/* 👤 — quiet per-step "Hand to a coworker". Hover-revealed on active, not-yet-handed steps.
-                  Opens the picker anchored to this row; pick → delegate THIS step. */}
-              {!crossed && !handed && onDelegate && (
+              {/* 👤 — quiet per-step OWNER control. Hover-revealed on active, not-yet-handed steps. Opens
+                  the OwnerMenu (AUGMTD / each coworker / I'll do it) anchored to this row: AUGMTD/you →
+                  reassign the owner; a coworker → delegate THIS step. Fixes the old coworker-only picker. */}
+              {!crossed && !handed && !working && (onDelegate || onReassign) && (
                 <div className="relative flex-shrink-0 -mt-0.5">
                   <button
-                    onClick={(e) => { e.stopPropagation(); if (!busy && !classifying && !delegating) setPickerOpen((v) => !v); }}
+                    onClick={(e) => { e.stopPropagation(); if (!busy && !classifying && !delegating) setOwnerOpen((v) => !v); }}
                     disabled={busy || classifying || delegating}
-                    title="Hand this step to a coworker"
-                    aria-label="Hand step to a coworker"
+                    title="Change who does this step"
+                    aria-label="Change who does this step"
                     className="p-0.5 text-neutral-300 opacity-0 group-hover/step:opacity-100 focus:opacity-100 hover:text-indigo-600 transition-all disabled:opacity-40"
                   >
                     <UserPlusIcon className="w-3.5 h-3.5" />
                   </button>
-                  {pickerOpen && (
-                    <CoworkerPicker
+                  {ownerOpen && (
+                    <OwnerMenu
                       align="right"
-                      direction="down"
-                      title="Assign this step"
-                      onPick={(w) => { setPickerOpen(false); onDelegate(w); }}
-                      onClose={() => setPickerOpen(false)}
+                      currentOwner={isSystem ? 'system' : 'you'}
+                      onReassign={(owner) => { setOwnerOpen(false); onReassign?.(owner); }}
+                      onPickCoworker={(w) => { setOwnerOpen(false); onDelegate?.(w); }}
+                      onClose={() => setOwnerOpen(false)}
                     />
                   )}
                 </div>
@@ -1374,6 +1582,19 @@ function StepperRow({
           </details>
         )}
 
+        {/* AUGMTD's own result — what it produced when it ran the step directly ("Hand to AUGMTD"). */}
+        {!handed && task.result && (
+          <details className="mt-1.5 group/ran">
+            <summary className="cursor-pointer list-none text-[11px] font-medium text-indigo-600/80 hover:text-indigo-700 inline-flex items-center gap-1">
+              <ChevronDownIcon className="w-3 h-3 transition-transform group-open/ran:rotate-180" />
+              What AUGMTD handed back
+            </summary>
+            <div className="mt-1 rounded-lg border border-indigo-100 bg-indigo-50/40 px-2.5 py-2 text-[12px] leading-relaxed text-neutral-700 whitespace-pre-wrap max-h-64 overflow-y-auto">
+              {task.result}
+            </div>
+          </details>
+        )}
+
         {/* Owner · STATE · action line — the redesign's core. Every row leads with ONE state chip that
             reflects what is TRUE right now, followed (only where there's a next move) by ONE action.
             Precedence: handed-off / delegating win; then classifying; then set-aside; then the
@@ -1385,24 +1606,35 @@ function StepperRow({
             <StateChip state="handled" label={`${handed.agentName} handled it`} />
           ) : delegating ? (
             <StateChip state="running" label="Handing off…" />
+          ) : working ? (
+            // AUGMTD is running this reversible step right now.
+            <StateChip state="working" label="Handed to AUGMTD…" />
           ) : classifying ? (
             <span className="text-[10.5px] text-indigo-400 italic animate-pulse">Classifying…</span>
           ) : crossed ? (
             <StateChip state="dismissed" label="Not needed" />
           ) : isSystem ? (
             task.done ? (
-              // Committed — the reply was sent from the docked composer, or the invite fired. The chip
-              // reflects WHICH: a reply step → "Sent ✓", an invite step → "Invite sent ✓".
-              <StateChip state="sent" label={sysKind === 'invite' ? 'Invite sent' : 'Sent'} />
+              // Resolved. The chip reflects HOW: a reply step → "Sent ✓", an invite step → "Invite sent ✓",
+              // a directly-run analyze/fetch step (has a result) → "Done ✓".
+              <StateChip state="sent" label={sysKind === 'invite' ? 'Invite sent' : task.result ? 'Done' : 'Sent'} />
             ) : sysKind && actionLabel && onAction ? (
               // A PREPARED system step (reply drafted in the composer / invite ready): a state chip that
-              // SAYS it's prepared + the single "Review & send →" action that reveals its surface.
+              // SAYS it's prepared + the single "Review & send →" action that reveals its surface. An
+              // invite step is an irreversible commit → the amber "Ready to send — approve" gate.
               <>
-                <StateChip state="ready" label={sysKind === 'invite' ? 'Ready to send' : 'Draft ready'} />
+                <StateChip state={sysKind === 'invite' ? 'awaiting' : 'ready'} label={sysKind === 'invite' ? 'Ready to send — approve' : 'Draft ready'} />
                 <button onClick={onAction} className="text-[11.5px] font-medium text-indigo-600 hover:text-indigo-700">{actionLabel}</button>
               </>
+            ) : isDirectRunnableCap(task.capability) && onRun ? (
+              // A reversible atomic system step (analyze / grounded fetch) — AUGMTD can RUN it directly.
+              // "Ready" chip + the single "Hand to AUGMTD" action that executes it.
+              <>
+                <StateChip state="ready" label="Ready" />
+                <button onClick={onRun} className="text-[11.5px] font-medium text-indigo-600 hover:text-indigo-700">Hand to AUGMTD →</button>
+              </>
             ) : (
-              // A fetch/analyze system step with no user-facing send — a quiet "AUGMTD" capability chip.
+              // A system step with no wired direct-run path in this host — a quiet "AUGMTD" capability chip.
               <span className="inline-flex items-center gap-1">
                 <StateChip state="system" label="AUGMTD" />
                 <span className="text-[11px] text-indigo-500/70">{CAP_HINT[task.capability ?? 'analyze'] ?? 'I can handle this'}</span>
@@ -1488,7 +1720,7 @@ function WhatThisTakes({
   onInvite?: (taskId: string) => void;
   variant?: 'inline' | 'panel';
 }) {
-  const { tasks, loading, failed, pending, classifyingId, toggle, dismiss, addStep, editStep, delegatingId, delegateStep } = plan;
+  const { tasks, loading, failed, pending, classifyingId, toggle, dismiss, addStep, editStep, delegatingId, delegateStep, runningId, runStep, reassignStep } = plan;
 
   // In the two-column layout the parent renders the panel chrome + its own loading/failed handling
   // (the aside only mounts once a breakdown is confirmed via the hook's `hasBreakdown`), so the
@@ -1569,6 +1801,9 @@ function WhatThisTakes({
             onDismiss={() => dismiss(t)}
             onEdit={(text) => editStep(t.id, text)}
             onDelegate={(w) => delegateStep(t.id, w.id, w.name)}
+            onReassign={(owner) => reassignStep(t.id, owner)}
+            onRun={() => runStep(t.id)}
+            running={runningId === t.id}
             delegating={delegating}
             classifying={classifyingId === t.id}
             busy={pending.has(t.id)}
@@ -1625,7 +1860,7 @@ function WhatThisTakes({
 // This panel is the SINGLE home for an item's actions when a breakdown exists: the workflow steps
 // (each with its own "Draft →" / done affordance) + a quiet "Hand to a coworker" FOOTER — so those
 // actions aren't also floating in the main column.
-function TasksPanel({ hasBreakdown, plan, children }: { hasBreakdown: boolean; plan?: ItemPlan; children: React.ReactNode }) {
+function TasksPanel({ hasBreakdown, plan, onDraft, onInvite, children }: { hasBreakdown: boolean; plan?: ItemPlan; onDraft?: () => void; onInvite?: (taskId: string) => void; children: React.ReactNode }) {
   // The item-level "Hand to a coworker" footer state: pending while the whole-item hand-off runs, and
   // resolved (attribution) once every live step carries the same handedTo. Derived from the shared plan.
   const itemDelegating = plan?.delegatingId === ITEM_DELEGATE_ID;
@@ -1682,9 +1917,21 @@ function TasksPanel({ hasBreakdown, plan, children }: { hasBreakdown: boolean; p
           <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 min-w-[268px]">
             {children}
           </div>
-          {/* Footer — the item-level "Hand to a coworker" affordance (relocated out of the main column
-              so it isn't floating redundantly beside the workflow steps). Delegates the WHOLE item. */}
-          <div className="flex-shrink-0 border-t border-neutral-100 px-4 py-3 min-w-[268px]">
+          {/* Footer — the item-level dispatch affordances. Two moves, both scoping the WHOLE item:
+              1. "Hand all of this off" — dispatch EVERY actionable live step to its CURRENT owner at
+                 once (coworker steps run; AUGMTD reversible steps run; a system send surfaces its
+                 approval; [You] steps stay). This is the orchestration-board "run the board" button.
+              2. "Let a coworker handle all of this" — the existing single-coworker whole-item delegate.
+              Hidden once the whole item has been handed to one coworker (liveHandedTo). */}
+          <div className="flex-shrink-0 border-t border-neutral-100 px-4 py-3 min-w-[268px] space-y-2">
+            {!liveHandedTo && !itemDelegating && plan && (
+              <button
+                onClick={() => plan.dispatchAll(onInvite, onDraft)}
+                className="w-full inline-flex items-center justify-center gap-1.5 rounded-lg bg-indigo-600 text-white px-3 py-1.5 text-[12px] font-medium hover:bg-indigo-700 transition-colors"
+              >
+                Hand all of this off
+              </button>
+            )}
             <HandToCoworkerButton
               size="sm"
               onDelegate={plan ? (w) => plan.delegateItem(w.id, w.name) : undefined}
@@ -1707,11 +1954,15 @@ function DeepDiveShell({
   hasBreakdown,
   panel,
   plan,
+  onDraft,
+  onInvite,
   children,
 }: {
   hasBreakdown: boolean;
   panel: React.ReactNode;
-  plan?: ItemPlan;             // the shared plan — the panel footer's whole-item "Hand to a coworker" uses it
+  plan?: ItemPlan;             // the shared plan — the panel footer's whole-item dispatch uses it
+  onDraft?: () => void;        // reveal the docked composer / compose panel (for "Hand all of this off")
+  onInvite?: (taskId: string) => void; // open the prepared invite card for a step
   children: React.ReactNode;
 }) {
   // The whole two-column block is centered. Its max width grows only when the tasks panel is present
@@ -1726,7 +1977,7 @@ function DeepDiveShell({
       }`}
     >
       <div className="flex-1 min-w-0 flex flex-col h-full min-h-0">{children}</div>
-      <TasksPanel hasBreakdown={hasBreakdown} plan={plan}>{panel}</TasksPanel>
+      <TasksPanel hasBreakdown={hasBreakdown} plan={plan} onDraft={onDraft} onInvite={onInvite}>{panel}</TasksPanel>
     </div>
   );
 }
@@ -1916,6 +2167,8 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
     <DeepDiveShell
       hasBreakdown={hasBreakdown}
       plan={plan}
+      onDraft={scrollToComposer}
+      onInvite={inviteHost.openInvite}
       panel={<WhatThisTakes plan={plan} variant="panel" onDraft={scrollToComposer} onInvite={inviteHost.openInvite} />}
     >
       {/* 1 — Header: subject + sender + date (fixed at top) */}
@@ -2113,6 +2366,8 @@ function MeetingDetail({ id }: { id: string }) {
     <DeepDiveShell
       hasBreakdown={hasBreakdown}
       plan={plan}
+      onDraft={() => setComposing(true)}
+      onInvite={inviteHost.openInvite}
       panel={<WhatThisTakes plan={plan} variant="panel" onDraft={() => setComposing(true)} onInvite={inviteHost.openInvite} />}
     >
       {/* Header */}
@@ -2338,6 +2593,8 @@ function CommitmentDetail({ id }: { id: string }) {
     <DeepDiveShell
       hasBreakdown={hasBreakdown}
       plan={plan}
+      onDraft={() => setComposing(true)}
+      onInvite={inviteHost.openInvite}
       panel={<WhatThisTakes plan={plan} variant="panel" onDraft={() => setComposing(true)} onInvite={inviteHost.openInvite} />}
     >
       {/* Header */}
@@ -2562,6 +2819,8 @@ function FollowUpDetail({ id }: { id: string }) {
     <DeepDiveShell
       hasBreakdown={hasBreakdown}
       plan={plan}
+      onDraft={scrollToComposer}
+      onInvite={inviteHost.openInvite}
       panel={<WhatThisTakes plan={plan} variant="panel" onDraft={scrollToComposer} onInvite={inviteHost.openInvite} />}
     >
       {/* Header */}

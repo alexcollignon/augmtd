@@ -116,9 +116,9 @@ export async function PATCH(request: NextRequest) {
 
     const body = (await request.json()) as {
       kind: Kind; entityId: string; taskId?: string; done?: boolean; dismissed?: boolean;
-      action?: 'add' | 'edit'; text?: string;
+      action?: 'add' | 'edit' | 'reassign'; text?: string; owner?: 'system' | 'you';
     };
-    const { kind, entityId, taskId, done, dismissed, action, text } = body;
+    const { kind, entityId, taskId, done, dismissed, action, text, owner } = body;
     if (!entityId || !VALID_KINDS.includes(kind)) {
       return NextResponse.json({ error: 'kind and entityId are required' }, { status: 400 });
     }
@@ -169,6 +169,18 @@ export async function PATCH(request: NextRequest) {
         };
         tasks = current.map((t) => (t.id === taskId ? newTask! : t));
       }
+    } else if (action === 'reassign') {
+      // Re-assign a step's OWNER between AUGMTD (system) and you — WITHOUT re-classifying its text (the
+      // user is only changing WHO does it). system→you drops the capability + any coworker attribution;
+      // you→system defaults to the always-runnable 'analyze'. Mirrors the client's optimistic reassign.
+      if (!taskId) return NextResponse.json({ error: 'taskId is required' }, { status: 400 });
+      const nextOwner = owner === 'system' ? 'system' : 'you';
+      const existing = current.find((t) => t.id === taskId);
+      if (!existing) return NextResponse.json({ error: 'task not found' }, { status: 404 });
+      const reassigned: ItemPlanTask = nextOwner === 'you'
+        ? { ...existing, actor: 'you', capability: null, handedTo: undefined, status: undefined, done: false }
+        : { ...existing, actor: 'system', capability: existing.capability ?? 'analyze', handedTo: undefined, status: undefined, done: false };
+      tasks = current.map((t) => (t.id === taskId ? reassigned : t));
     } else {
       // Toggle: `dismissed` applies to ANY step; `done` only to a [You] task's checkbox.
       tasks = current.map((t) => {

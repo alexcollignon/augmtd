@@ -123,6 +123,35 @@ function builtCapabilities(): Capability[] {
   return Object.values(CAPABILITY_MAP).filter((c) => c.built);
 }
 
+// ── The orchestration-board runtime helpers. A plan task carries a coarse `capability`
+// (draft|analyze|fetch|send); these translate that coarse grade into the board's owner·state·action
+// model WITHOUT re-deriving per-task logic — they read the SAME CAPABILITY_MAP the classifier grades
+// against, so the panel and the classifier can't drift.
+//
+// A step's capability may match several map entries (e.g. `fetch` ↔ any of the read/fetch tools); we
+// answer at the coarse level the plan actually stores. The map's own entries drive the character:
+//   • 'draft'   → produce content, reversible (compose_email / generate_document / analyze).
+//   • 'analyze' → reason over what we already have, reversible + atomic → AUGMTD can RUN it directly.
+//   • 'fetch'   → read/look-up, reversible + atomic, but INSTANCE-honest (only when evidenced) — the
+//                 classifier already downgrades an unevidenced fetch to [You], so a fetch step that
+//                 survived as [System] is safe to run.
+//   • 'send'    → irreversible commit → approval gate (never auto-fires).
+
+// Is this coarse system capability an IRREVERSIBLE send (→ approval gate before it commits)?
+export function isIrreversibleCapability(cap: PlanCapability): boolean {
+  return cap === 'send';
+}
+
+// Can AUGMTD RUN this system step directly, right now, reversibly ("Hand to AUGMTD")? True for the
+// reversible atomic produce/read capabilities (analyze / fetch). A `draft` is handled by the prepared
+// composer surface (not this direct-run path); a `send` is gated. Grounded in the map's `irreversible`.
+export function isDirectRunnableCapability(cap: PlanCapability): boolean {
+  return cap === 'analyze' || cap === 'fetch';
+}
+
+// A convenience for the plan-capability type used by the helpers above (mirrors item-plan's).
+type PlanCapability = 'draft' | 'analyze' | 'fetch' | 'send' | null;
+
 /**
  * renderCapabilitySet — DERIVES the classifier's capability prompt block from the map.
  * Adding a `CAPABILITY_MAP` entry (built:true) makes it appear here automatically; no prose to edit.
