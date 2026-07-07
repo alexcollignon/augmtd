@@ -445,13 +445,13 @@ const CAP_HINT: Record<string, string> = {
 // cache row is written). Owns tasks / loading / failed / pending + the [You]-checkbox PATCH handler +
 // the ≥2-task breakdown gate.
 type ItemPlan = {
-  tasks: PlanTask[] | null;     // the LIVE (non-dismissed) tasks — the stepper renders these
+  tasks: PlanTask[] | null;     // ALL tasks (incl. dismissed) — the stepper renders crossed-out steps too
   loading: boolean;
   failed: boolean;
-  hasBreakdown: boolean; // a genuine ≥2 non-dismissed-task plan (drives the two-column layout)
+  hasBreakdown: boolean; // a genuine ≥2-task plan (counts ALL tasks — crossing out doesn't collapse it)
   pending: Set<string>;
   toggle: (task: PlanTask) => void;
-  dismiss: (task: PlanTask) => void;  // remove a step (system OR you) from the workflow, persisted
+  dismiss: (task: PlanTask) => void;  // TOGGLE a step's "not needed" (crossed-out) state, persisted
 };
 
 function useItemPlan(
@@ -500,39 +500,40 @@ function useItemPlan(
       .finally(() => setPending((prev) => { const n = new Set(prev); n.delete(task.id); return n; }));
   };
 
-  // Dismiss a step (ANY actor) — mark it dismissed locally + persist. The stepper filters dismissed
-  // out; the step fade-out is owned by the row (it holds a short exit state before this fires). Roll
-  // back on failure so a lost step reappears.
+  // Dismiss = TOGGLE a step's "not needed" state (ANY actor). The step is NOT removed — it stays in
+  // the workflow, rendered struck-through + greyed with its action disabled. Clicking ✕ again un-crosses
+  // it (back to active). Optimistic flip + persist the toggled value; roll back on failure.
   const dismiss = (task: PlanTask) => {
     if (pending.has(task.id)) return;
-    setTasks((prev) => (prev ? prev.map((t) => (t.id === task.id ? { ...t, dismissed: true } : t)) : prev));
+    const next = !task.dismissed;
+    setTasks((prev) => (prev ? prev.map((t) => (t.id === task.id ? { ...t, dismissed: next } : t)) : prev));
     setPending((prev) => new Set(prev).add(task.id));
     fetch('/api/items/plan', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ kind: planKind, entityId, taskId: task.id, dismissed: true }),
+      body: JSON.stringify({ kind: planKind, entityId, taskId: task.id, dismissed: next }),
     })
       .then((r) => { if (!r.ok) throw new Error(); })
       .catch(() => {
-        setTasks((prev) => (prev ? prev.map((t) => (t.id === task.id ? { ...t, dismissed: false } : t)) : prev));
+        setTasks((prev) => (prev ? prev.map((t) => (t.id === task.id ? { ...t, dismissed: !next } : t)) : prev));
       })
       .finally(() => setPending((prev) => { const n = new Set(prev); n.delete(task.id); return n; }));
   };
 
-  // The LIVE tasks the stepper reasons over — dismissed steps are removed from the workflow.
-  const liveTasks = useMemo(() => (tasks ? tasks.filter((t) => !t.dismissed) : tasks), [tasks]);
+  // The ≥2-task breakdown gate — a real multi-step plan, counting ALL identified tasks (including
+  // crossed-out ones). Crossing steps out does NOT collapse the panel: a workflow the user has triaged
+  // stays visible.
+  const hasBreakdown = !loading && !failed && !!tasks && tasks.length >= 2;
 
-  // The ≥2-task breakdown gate — a real multi-step plan, counting only NON-dismissed tasks. Dismissing
-  // below 2 collapses the panel (the layout latch keeps the flip from being jarring).
-  const hasBreakdown = !loading && !failed && !!liveTasks && liveTasks.length >= 2;
-
-  return { tasks: liveTasks, loading, failed, hasBreakdown, pending, toggle, dismiss };
+  return { tasks, loading, failed, hasBreakdown, pending, toggle, dismiss };
 }
 
 // ── One step in the "Identified tasks" workflow stepper. A vertical timeline row: a NODE (✦ for a
 // system step, a [You] checkbox for a your step) + a CONNECTOR line to the next node + a SHORT title
-// that expands to the fuller `detail` on click + the row action (Draft → / done checkbox) + a quiet
-// dismiss ✕. Dismissing fades the row out (300ms) then calls `onDismiss` (which persists + filters it).
+// that expands to the fuller `detail` on click + the row action (Draft → / done checkbox) + a ✕ that
+// toggles the step's "not needed" state. A dismissed step STAYS in the workflow — rendered struck-
+// through + greyed, its node dimmed, and its action disabled (set aside, not removed). The ✕ is a
+// reversible toggle: click to cross out, click again to restore. The strike + grey animates smoothly.
 function StepperRow({
   task,
   isLast,
@@ -553,34 +554,33 @@ function StepperRow({
   busy: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const [exiting, setExiting] = useState(false);
   const isSystem = task.actor === 'system';
   const hasDetail = !!task.detail?.trim();
+  const crossed = !!task.dismissed; // "not needed" — visible but struck-through, action disabled
 
-  const startDismiss = (e: React.MouseEvent) => {
+  const handleDismiss = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (exiting) return;
-    setExiting(true);
-    setTimeout(onDismiss, 300); // fade, then persist + unmount via the parent's filter
+    if (busy) return;
+    onDismiss(); // toggle "not needed" (persisted); the row stays mounted, just crosses/un-crosses
   };
 
   return (
-    <li className={`relative pl-8 transition-all duration-300 ease-out ${exiting ? 'opacity-0 -translate-x-1' : 'opacity-100'}`}>
+    <li className="relative pl-8">
       {/* Connector line — runs from just under this node to the next; hidden on the last step. */}
       {!isLast && <span aria-hidden className="absolute left-[11px] top-6 bottom-[-6px] w-px bg-neutral-200" />}
 
-      {/* Node — ✦ for a system step, a checkbox for a [You] step. Sits on the connector line. */}
+      {/* Node — ✦ for a system step, a checkbox for a [You] step. Dimmed when the step is crossed out. */}
       {isSystem ? (
-        <span className="absolute left-0 top-[3px] flex h-[23px] w-[23px] items-center justify-center rounded-full bg-indigo-50 ring-2 ring-white">
-          <SparklesIcon className="h-3.5 w-3.5 text-indigo-500" />
+        <span className={`absolute left-0 top-[3px] flex h-[23px] w-[23px] items-center justify-center rounded-full ring-2 ring-white transition-colors duration-300 ${crossed ? 'bg-neutral-100' : 'bg-indigo-50'}`}>
+          <SparklesIcon className={`h-3.5 w-3.5 transition-colors duration-300 ${crossed ? 'text-neutral-300' : 'text-indigo-500'}`} />
         </span>
       ) : (
         <button
           onClick={onToggle}
-          disabled={busy}
+          disabled={busy || crossed}
           aria-pressed={!!task.done}
-          title={task.done ? 'Mark not done' : 'Mark done'}
-          className={`absolute left-0 top-[3px] flex h-[23px] w-[23px] items-center justify-center rounded-full ring-2 ring-white border transition-colors ${task.done ? 'bg-emerald-500 border-emerald-500 text-white' : 'bg-white border-neutral-300 text-transparent hover:border-neutral-400'}`}
+          title={crossed ? 'Set aside' : task.done ? 'Mark not done' : 'Mark done'}
+          className={`absolute left-0 top-[3px] flex h-[23px] w-[23px] items-center justify-center rounded-full ring-2 ring-white border transition-colors duration-300 ${crossed ? 'bg-neutral-50 border-neutral-200 text-transparent cursor-default' : task.done ? 'bg-emerald-500 border-emerald-500 text-white' : 'bg-white border-neutral-300 text-transparent hover:border-neutral-400'}`}
         >
           <CheckIcon className="h-3 w-3" />
         </button>
@@ -595,20 +595,23 @@ function StepperRow({
             className={`min-w-0 flex-1 text-left ${hasDetail ? 'cursor-pointer' : 'cursor-default'}`}
           >
             <span className="flex items-center gap-1">
-              <span className={`text-[13px] font-medium leading-snug ${task.done ? 'text-neutral-400 line-through' : 'text-neutral-800'}`}>{task.text}</span>
+              <span className={`text-[13px] font-medium leading-snug transition-colors duration-300 ${crossed ? 'text-neutral-400 line-through' : task.done ? 'text-neutral-400 line-through' : 'text-neutral-800'}`}>{task.text}</span>
               {hasDetail && (
                 <ChevronDownIcon className={`w-3 h-3 flex-shrink-0 text-neutral-300 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`} />
               )}
             </span>
           </button>
 
-          {/* Dismiss — every step is removable (system + you). Quiet, appears on row hover. */}
+          {/* ✕ — toggles "not needed". Crossing out keeps the step visible but struck + disabled; click
+              again to restore. Quiet on hover when active; when crossed it stays visible (amber) as the
+              affordance to un-cross. */}
           <button
-            onClick={startDismiss}
-            disabled={busy || exiting}
-            title="Not needed — remove this step"
-            aria-label="Remove step"
-            className="flex-shrink-0 -mt-0.5 p-0.5 text-neutral-300 opacity-0 group-hover/step:opacity-100 focus:opacity-100 hover:text-rose-500 transition-all"
+            onClick={handleDismiss}
+            disabled={busy}
+            title={crossed ? 'Restore — mark needed again' : 'Not needed — set this step aside'}
+            aria-label={crossed ? 'Restore step' : 'Set step aside'}
+            aria-pressed={crossed}
+            className={`flex-shrink-0 -mt-0.5 p-0.5 transition-all disabled:opacity-40 ${crossed ? 'text-amber-500 opacity-100 hover:text-amber-600' : 'text-neutral-300 opacity-0 group-hover/step:opacity-100 focus:opacity-100 hover:text-rose-500'}`}
           >
             <XMarkIcon className="w-3.5 h-3.5" />
           </button>
@@ -617,13 +620,16 @@ function StepperRow({
         {/* Expandable detail — the fuller one-sentence explanation. */}
         {hasDetail && (
           <div className={`grid transition-all duration-300 ease-out ${expanded ? 'grid-rows-[1fr] opacity-100 mt-1' : 'grid-rows-[0fr] opacity-0'}`}>
-            <p className="overflow-hidden text-[12px] text-neutral-500 leading-relaxed">{task.detail}</p>
+            <p className={`overflow-hidden text-[12px] leading-relaxed transition-colors duration-300 ${crossed ? 'text-neutral-300 line-through' : 'text-neutral-500'}`}>{task.detail}</p>
           </div>
         )}
 
-        {/* Action / status line */}
+        {/* Action / status line — a crossed-out ("not needed") step shows a quiet "set aside" label with
+            NO active action (no Draft → / no needs-you), so it can't be acted on while set aside. */}
         <div className="mt-1 flex items-center gap-2">
-          {isSystem ? (
+          {crossed ? (
+            <span className="text-[10.5px] text-neutral-400 italic">Not needed</span>
+          ) : isSystem ? (
             canDraft && onDraft ? (
               <button onClick={onDraft} className="text-[11.5px] font-medium text-indigo-600 hover:text-indigo-700">{draftLabel}</button>
             ) : (
@@ -680,21 +686,22 @@ function WhatThisTakes({
   if (!tasks || tasks.length === 0) return null;
 
   // PLAN-CONTENT-DRIVEN gate (not kind-driven): the workflow renders for ANY kind, but ONLY when the
-  // plan is genuinely multi-step (≥2 NON-dismissed tasks). A single-task plan (a simple reply / one
-  // action) → hide it entirely; the docked composer / action bar already IS the one action. This is
-  // what keeps trivial replies clean while surfacing multi-step work.
+  // plan is genuinely multi-step (≥2 identified tasks — counting ALL, including crossed-out ones). A
+  // single-task plan (a simple reply / one action) → hide it entirely; the docked composer / action
+  // bar already IS the one action. Crossing steps out never collapses a triaged workflow.
   if (tasks.length < 2) return null;
 
   // Collapse draft + send into ONE actionable affordance. Both a `draft` task and a `send` task open
   // the SAME compose flow (which already drafts AND sends), so two "Draft →" buttons read as a
   // duplicate. We render the button on the FIRST draft/send task only, and if BOTH exist relabel it
   // "Draft & send →". The other draft/send task still lists (it's useful context) but shows the quiet
-  // capability hint instead of a second button.
-  const composeTaskIds = tasks.filter((t) => t.actor === 'system' && (t.capability === 'draft' || t.capability === 'send')).map((t) => t.id);
+  // capability hint instead of a second button. Crossed-out ("not needed") steps are excluded — they
+  // carry no action, so the button lands on the first ACTIVE draft/send task.
+  const composeTaskIds = tasks.filter((t) => !t.dismissed && t.actor === 'system' && (t.capability === 'draft' || t.capability === 'send')).map((t) => t.id);
   const primaryComposeId = composeTaskIds[0] ?? null;
   const hasDraftAndSend =
-    tasks.some((t) => t.actor === 'system' && t.capability === 'draft') &&
-    tasks.some((t) => t.actor === 'system' && t.capability === 'send');
+    tasks.some((t) => !t.dismissed && t.actor === 'system' && t.capability === 'draft') &&
+    tasks.some((t) => !t.dismissed && t.actor === 'system' && t.capability === 'send');
   const composeLabel = hasDraftAndSend ? 'Draft & send →' : 'Draft →';
 
   // The stepper — a connected vertical timeline (node → connector → node). Shared by both variants;
