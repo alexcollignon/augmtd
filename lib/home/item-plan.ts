@@ -143,14 +143,15 @@ export async function generateItemPlan(
     `--- ITEM (${input.kind}) ---\n${context || '(no additional context)'}`;
 
   try {
-    const { client: ai, model } = await getAIClient(userId, 'planning', client);
+    // Use the CLASSIFICATION tier, NOT planning. On bedrock_optimised, planning = Kimi (a REASONING model)
+    // that burns the whole token budget in its `reasoning` channel and emits EMPTY content — and the richer
+    // title+detail ask made it over-reason past even an 8000 cap (35k chars of reasoning, 0 content → the
+    // "Handle this" fallback, panel empty). Classification routes to a NON-reasoning model (Bedrock Haiku 4.5
+    // on bedrock_optimised, gpt-4o-mini on standard) that emits the JSON directly — reliable, fast, no blowup.
+    const { client: ai, model } = await getAIClient(userId, 'classification', client);
     const res = await aiCreate(ai, {
-      // Headroom for REASONING models (bedrock_optimised planning = Kimi, a reasoning model): at 700 it
-      // spent the whole budget in the `reasoning` channel and emitted EMPTY content (finish_reason=length)
-      // → parse failed → the fallback "Handle this" every time. Non-reasoning tiers just stop after the
-      // ~200-token JSON, so a high cap is safe/cheap.
       model,
-      max_tokens: 8000,
+      max_tokens: 4000, // plenty for 1–5 tasks × (title+detail) from a direct (non-reasoning) model
       temperature: 0.3,
       messages: [{ role: 'user', content: prompt }],
     });
