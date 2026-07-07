@@ -53,8 +53,16 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   const { data: { user }, error } = await supabase.auth.getUser();
   if (error || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const { body } = await request.json();
+  const { body, attachments: rawAttachments } = await request.json();
   if (!body || typeof body !== 'string') return NextResponse.json({ error: 'Missing body' }, { status: 400 });
+
+  // Same base64 attach shape the inbox reply uses ({filename, content(base64), mimeType}) →
+  // EmailAttachment[] (content decoded to a Buffer), forwarded to the provider send fns below.
+  const attachments = (rawAttachments || []).map((a: { filename: string; content: string; mimeType: string }) => ({
+    filename: a.filename,
+    content: Buffer.from(a.content, 'base64'),
+    mimeType: a.mimeType,
+  }));
 
   const commitment = await loadCommitment(supabase, user.id, id);
   if (!commitment) return NextResponse.json({ error: 'not found' }, { status: 404 });
@@ -95,12 +103,13 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
               body,
               inReplyTo: email.in_reply_to,
               references: Array.isArray(email.references_ids) ? email.references_ids.join(' ') : email.references_ids,
+              attachments,
             });
             sent = true;
           } else if (provider === 'outlook') {
             const { sendOutlookReply } = await import('@/lib/microsoft/outlook');
             const outlookMessageId = (email.metadata as { outlook_id?: string } | null)?.outlook_id || email.message_id;
-            await sendOutlookReply({ encryptedTokens: connection.metadata.tokens, messageId: outlookMessageId, body, to });
+            await sendOutlookReply({ encryptedTokens: connection.metadata.tokens, messageId: outlookMessageId, body, to, attachments });
             sent = true;
           }
         }

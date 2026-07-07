@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   EnvelopeIcon,
@@ -10,6 +10,7 @@ import {
   CheckCircleIcon,
   ClockIcon,
   PaperAirplaneIcon,
+  PaperClipIcon,
   UserPlusIcon,
   SparklesIcon,
   ChevronDownIcon,
@@ -17,6 +18,7 @@ import {
 } from '@heroicons/react/24/outline';
 import { ThreadMessages, type ThreadMessage } from '@/components/inbox/thread-messages';
 import ReplyEditor from '@/components/inbox/reply-editor';
+import KbFilePicker from '@/components/inbox/kb-file-picker';
 
 // ── Shared visual language across ALL deep-dive variants (coherence pass #3). One header, one
 // section-label token, one card token — so email / meeting / commitment / follow-up read identically.
@@ -78,6 +80,144 @@ function draftToHTML(text: string): string {
   return paras
     .map((p) => `<p>${esc(p).replace(/\n/g, '<br>')}</p>`)
     .join('');
+}
+
+// ── Reply attachments (shared) — the SAME base64 attach model the inbox reply uses
+// (`components/inbox/work-detail-inline.tsx`): a `{filename, content(base64), mimeType}` list sent to
+// `/api/inbox/[id]/send-reply` (which already accepts `attachments` → `EmailAttachment[]`). Reuses the
+// inbox's `KbFilePicker` + `/api/kb/attachment` endpoint for "from knowledge base", so there is no
+// parallel uploader. Client-side ~4 MB total guard (mirrors the Vercel JSON-body limit the inbox
+// attach flow works within — base64 rides in the request body). Non-fatal: an oversize/failed attach
+// sets an error string, never breaks the composer.
+
+// Matches the inbox `PendingAttachment` shape exactly.
+type PendingAttachment = { filename: string; content: string; mimeType: string };
+
+// ~4 MB body budget; base64 inflates ~1.37×, so cap raw bytes accordingly to stay under the limit.
+const ATTACH_MAX_TOTAL_BYTES = 3_800_000;
+
+function useReplyAttachments() {
+  const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
+  const [kbPickerOpen, setKbPickerOpen] = useState(false);
+  const [showMenu, setShowMenu] = useState(false);
+  const [attachErr, setAttachErr] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Approx current base64 payload size (chars ≈ bytes for a base64 string).
+  const currentBytes = () => attachments.reduce((n, a) => n + a.content.length, 0);
+
+  const onLocalFile = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    setAttachErr(null);
+    const files = Array.from(e.target.files || []);
+    e.target.value = '';
+    const results: PendingAttachment[] = [];
+    for (const file of files) {
+      const arrayBuffer = await file.arrayBuffer();
+      const bytes = new Uint8Array(arrayBuffer);
+      let binary = '';
+      for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+      const content = btoa(binary);
+      results.push({ filename: file.name, content, mimeType: file.type || 'application/octet-stream' });
+    }
+    setAttachments((prev) => {
+      const total = [...prev, ...results].reduce((n, a) => n + a.content.length, 0);
+      if (total > ATTACH_MAX_TOTAL_BYTES) {
+        setAttachErr('Attachments are too large (max ~4 MB total). Share a Drive link instead.');
+        return prev;
+      }
+      return [...prev, ...results];
+    });
+  }, []);
+
+  const onKbSelect = useCallback(async (selected: { id: string; filename: string }[]) => {
+    setKbPickerOpen(false);
+    setAttachErr(null);
+    const results = await Promise.all(selected.map(async ({ id, filename }) => {
+      try {
+        const res = await fetch(`/api/kb/attachment?fileId=${id}`);
+        if (!res.ok) { setAttachErr(`Could not load ${filename}.`); return null; }
+        return await res.json() as PendingAttachment;
+      } catch {
+        setAttachErr(`Could not load ${filename}.`);
+        return null;
+      }
+    }));
+    const ok = results.filter(Boolean) as PendingAttachment[];
+    setAttachments((prev) => {
+      const total = [...prev, ...ok].reduce((n, a) => n + a.content.length, 0);
+      if (total > ATTACH_MAX_TOTAL_BYTES) {
+        setAttachErr('Attachments are too large (max ~4 MB total). Share a Drive link instead.');
+        return prev;
+      }
+      return [...prev, ...ok];
+    });
+  }, []);
+
+  const remove = useCallback((i: number) => setAttachments((prev) => prev.filter((_, j) => j !== i)), []);
+  const clear = useCallback(() => setAttachments([]), []);
+
+  return {
+    attachments, attachErr, kbPickerOpen, setKbPickerOpen, showMenu, setShowMenu,
+    fileInputRef, onLocalFile, onKbSelect, remove, clear, currentBytes,
+  };
+}
+
+// The attach (📎) button + its menu — dropped into <ReplyEditor toolbarLeading>. Same affordance as
+// the inbox reply (Upload a file / From knowledge base). `up` opens the menu upward (docked composers).
+function AttachMenu({ atts, up = true }: { atts: ReturnType<typeof useReplyAttachments>; up?: boolean }) {
+  return (
+    <div className="relative flex-shrink-0">
+      <button
+        type="button"
+        onClick={() => atts.setShowMenu((v) => !v)}
+        className="p-1.5 rounded text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100 transition-colors"
+        title="Attach file"
+      >
+        <PaperClipIcon className="w-4 h-4" />
+      </button>
+      {atts.showMenu && (
+        <div className={`absolute ${up ? 'bottom-9' : 'top-9'} left-0 w-52 bg-white border border-neutral-200 rounded-lg shadow-lg z-10 py-1`}>
+          <button
+            onClick={() => { atts.fileInputRef.current?.click(); atts.setShowMenu(false); }}
+            className="w-full text-left px-3 py-2 text-[12px] text-neutral-700 hover:bg-neutral-50"
+          >
+            Upload a file
+          </button>
+          <button
+            onClick={() => { atts.setKbPickerOpen(true); atts.setShowMenu(false); }}
+            className="w-full text-left px-3 py-2 text-[12px] text-neutral-700 hover:bg-neutral-50"
+          >
+            From knowledge base
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// The attachment chips (add/remove) — rendered as <ReplyEditor>'s children (between editor + toolbar),
+// exactly as the inbox does. Plus the hidden file input + the KB picker modal, so a host mounts the
+// whole attach surface with one component.
+function AttachSurface({ atts }: { atts: ReturnType<typeof useReplyAttachments> }) {
+  return (
+    <>
+      <input ref={atts.fileInputRef} type="file" multiple className="hidden" onChange={atts.onLocalFile} />
+      {atts.attachments.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 pb-2 mt-2">
+          {atts.attachments.map((att, i) => (
+            <span key={i} className="inline-flex items-center gap-1 px-2 py-0.5 bg-neutral-100 rounded text-[11px] text-neutral-700">
+              <PaperClipIcon className="w-3 h-3 flex-shrink-0" />
+              <span className="max-w-[140px] truncate">{att.filename}</span>
+              <button onClick={() => atts.remove(i)} className="hover:text-rose-500 transition-colors ml-0.5">
+                <XMarkIcon className="w-3 h-3" />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      {atts.attachErr && <p className="text-[11.5px] text-rose-600 pb-1">{atts.attachErr}</p>}
+    </>
+  );
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -610,11 +750,11 @@ function WhatThisTakes({
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 // The right column: the "Identified tasks" workflow lane — a width-animated COLUMN that REFLOWS the
-// main email column left (never overlays), mirroring the Activity panel's mechanism exactly. The
-// `p-2 bg-neutral-50` wrapper makes an inset gap; inside sits a FLAT `rounded-2xl bg-white border`
-// card (no drop-shadow — border-only, matching the cleaner deep-dive look). Narrower than before
-// (300px) so the email column gets the room. `hasBreakdown` animates the width open/closed. The inner
-// card holds a fixed width so it's simply CLIPPED during the animation rather than squishing.
+// main email column left (never overlays), mirroring the Activity panel's mechanism exactly. The lane
+// itself is WHITE (no grey fill) with a LEFT BORDER only, so it reads as a distinct column without an
+// inset grey gap — matching the flat deep-dive. Inside sits a bordered card (no drop-shadow — border-
+// only). Narrower than before (300px) so the email column gets the room. `hasBreakdown` animates the
+// width open/closed. The inner card holds a fixed width so it's simply CLIPPED during the animation.
 //
 // This panel is the SINGLE home for an item's actions when a breakdown exists: the workflow steps
 // (each with its own "Draft →" / done affordance) + a quiet "Hand to a coworker" FOOTER — so those
@@ -623,11 +763,12 @@ function TasksPanel({ hasBreakdown, children }: { hasBreakdown: boolean; childre
   return (
     <aside
       aria-hidden={!hasBreakdown}
-      className={`hidden lg:flex flex-col min-h-0 flex-shrink-0 bg-neutral-50 overflow-hidden transition-[width] duration-300 ease-out ${
-        hasBreakdown ? 'w-[300px] xl:w-[320px]' : 'w-0 pointer-events-none'
+      className={`hidden lg:flex flex-col min-h-0 flex-shrink-0 bg-white border-l border-neutral-200 overflow-hidden transition-[width] duration-300 ease-out ${
+        hasBreakdown ? 'w-[300px] xl:w-[320px]' : 'w-0 pointer-events-none border-l-0'
       }`}
     >
-      {/* Inset card — fixed width so it clips cleanly while the column animates. Flat, border-only. */}
+      {/* Inner card — fixed width so it clips cleanly while the column animates. Flat, border-only,
+          white (the lane's own left border is what separates it from the email column). */}
       <div className="flex-1 min-h-0 p-2 w-[300px] xl:w-[320px]">
         <div className="h-full flex flex-col rounded-2xl bg-white border border-neutral-200/70 overflow-hidden">
           {/* Sticky header — "Identified tasks" + the ✦ / ○ legend. Matches the Activity panel header. */}
@@ -768,6 +909,7 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
   const [sendErr, setSendErr] = useState<string | null>(null);
   const plan = useItemPlan('email', id);          // ONE /api/items/plan POST, shared by both instances
   const hasBreakdown = plan.hasBreakdown;         // ≥2-task plan → open the two-column layout
+  const atts = useReplyAttachments();             // shared inbox-style attach surface (base64 → send-reply)
   const editorRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null); // the docked reply composer — a draft-task scrolls here
 
@@ -799,7 +941,7 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
     try {
       const res = await fetch(`/api/inbox/${id}/send-reply`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ customMessage: html }),
+        body: JSON.stringify({ customMessage: html, attachments: atts.attachments }),
       });
       if (res.ok) {
         setSent(true);
@@ -932,7 +1074,8 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
             ) : (
               <>
                 {/* The SAME rich editor the inbox uses (bold/italic/underline/font size/lists),
-                    seeded with the prepared draft converted to simple HTML. */}
+                    seeded with the prepared draft converted to simple HTML. Same attach affordance as
+                    the inbox reply — the 📎 menu in the toolbar + chips above it. */}
                 <ReplyEditor
                   ref={editorRef}
                   initialHTML={draftToHTML(draft)}
@@ -940,7 +1083,10 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
                   placeholder="Write your reply…"
                   minHeight={120}
                   maxHeight={280}
-                />
+                  toolbarLeading={<AttachMenu atts={atts} />}
+                >
+                  <AttachSurface atts={atts} />
+                </ReplyEditor>
                 {sendErr && <p className="text-[12px] text-rose-600 mt-2">{sendErr}</p>}
                 <div className="mt-3 flex items-center gap-4">
                   <button
@@ -963,6 +1109,11 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
           </div>
         )}
       </div>
+
+      {/* KB file picker modal (shared with the inbox) — "From knowledge base" attach path. */}
+      {atts.kbPickerOpen && (
+        <KbFilePicker onSelect={atts.onKbSelect} onClose={() => atts.setKbPickerOpen(false)} />
+      )}
     </DeepDiveShell>
   );
 }
@@ -1403,6 +1554,7 @@ function FollowUpDetail({ id }: { id: string }) {
   const [sendErr, setSendErr] = useState<string | null>(null);
   const plan = useItemPlan('followup', id);       // ONE /api/items/plan POST, shared by both instances
   const hasBreakdown = plan.hasBreakdown;         // ≥2-task plan → open the two-column layout
+  const atts = useReplyAttachments();             // shared inbox-style attach surface (base64 → nudge PATCH)
   const editorRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null); // the docked nudge composer — a draft-task scrolls here
 
@@ -1432,7 +1584,7 @@ function FollowUpDetail({ id }: { id: string }) {
     try {
       const res = await fetch(`/api/commitments/${id}/nudge`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ body: text }),
+        body: JSON.stringify({ body: text, attachments: atts.attachments }),
       });
       if (res.ok) {
         setSent(true);
@@ -1538,7 +1690,10 @@ function FollowUpDetail({ id }: { id: string }) {
                   placeholder="Write your nudge…"
                   minHeight={110}
                   maxHeight={260}
-                />
+                  toolbarLeading={<AttachMenu atts={atts} />}
+                >
+                  <AttachSurface atts={atts} />
+                </ReplyEditor>
                 {sendErr && <p className="text-[12px] text-rose-600 mt-2">{sendErr}</p>}
                 <div className="mt-3 flex items-center gap-4">
                   <button
@@ -1561,6 +1716,11 @@ function FollowUpDetail({ id }: { id: string }) {
           </div>
         )}
       </div>
+
+      {/* KB file picker modal (shared with the inbox) — "From knowledge base" attach path. */}
+      {atts.kbPickerOpen && (
+        <KbFilePicker onSelect={atts.onKbSelect} onClose={() => atts.setKbPickerOpen(false)} />
+      )}
     </DeepDiveShell>
   );
 }
