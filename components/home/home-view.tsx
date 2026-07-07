@@ -1299,11 +1299,11 @@ export function HomeView() {
     </Collapsible>
   ));
 
-  // THIN-RAIL FOLD THRESHOLD — the two-zone split only earns its keep when the rail has enough
-  // ambient content to balance a full main column. With ≤2 non-empty rail sections a sidebar reads
-  // thin/unbalanced, so we fold those sections to the BOTTOM of the main column and render one column.
-  // 3+ sections → keep the calm right rail.
-  const RAIL_MIN_FOR_SIDEBAR = 3;
+  // Two-zone whenever there's ANY rail content — a CONSISTENT layout beats a content-count-dependent
+  // one. A `3`-section threshold made the Home flip between one- and two-column as ambient sections
+  // (Keep-an-eye-on / Awareness) came and went, which reads as the layout "changing on its own". Now any
+  // rail content earns the sidebar; only a totally empty rail (nothing to show) stays one column.
+  const RAIL_MIN_FOR_SIDEBAR = 1;
   // LATCH the two-zone layout so it never flips mid-load. The brief arrives in stages (an optimistic
   // BASIC brief first, then the enriched pass fills the ambient lanes — keepAnEyeOn / fyiDigest /
   // followups — plus the separate /api/workers/home team fetch), so `railNodes.length` climbs past the
