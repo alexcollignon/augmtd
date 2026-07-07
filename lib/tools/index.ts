@@ -19,6 +19,8 @@ export { getEmailsDefinition, executeGetEmails } from './get-emails';
 export type { GetEmailsConfig } from './get-emails';
 export { getMeetingContextDefinition, executeGetMeetingContext } from './get-meeting-context';
 export type { GetMeetingContextConfig } from './get-meeting-context';
+export { sendCalendarInviteDefinition, executeSendCalendarInvite } from './send-calendar-invite';
+export type { SendCalendarInviteConfig } from './send-calendar-invite';
 export { deepResearchDefinition } from './deep-research';
 export {
   slackListChannelsDefinition, slackPostMessageDefinition, slackReadMessagesDefinition, slackListMembersDefinition,

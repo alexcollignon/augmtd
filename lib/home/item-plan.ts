@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getAIClient, aiCreate } from '@/lib/ai/factory';
+import { renderCapabilitySet } from './capability-map';
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // ITEM PLAN — "actions follow intent", stage 2. Decompose a Home item into 2–5 concrete sub-tasks and
@@ -15,6 +16,17 @@ export type ItemPlanKind = 'meeting' | 'commitment' | 'awareness' | 'email' | 'f
 
 export type PlanCapability = 'draft' | 'analyze' | 'fetch' | 'send' | null;
 
+// A step (or the whole item) handed to a coworker who executed it — stamped on the plan when a
+// delegation resolves. `output` is the coworker's returned deliverable/summary (shown inline).
+export type HandedTo = {
+  agentId: string;
+  agentName: string;
+  workerRole?: string | null;
+  threadId?: string | null;   // the coworker's chat thread where the delegated work + report-back live
+  output?: string;            // the coworker's returned text (deliverable / what they did)
+  at?: string;                // ISO timestamp
+};
+
 export type ItemPlanTask = {
   id: string;
   text: string;              // a SHORT imperative title (≤ ~8–10 words) — the one line the stepper shows
@@ -23,30 +35,17 @@ export type ItemPlanTask = {
   capability: PlanCapability;
   done?: boolean;
   dismissed?: boolean;       // the user removed this step from the workflow (persisted)
+  handedTo?: HandedTo;       // a coworker executed this step (stage 3b delegation)
 };
 
 export type ItemPlan = { tasks: ItemPlanTask[] };
 
-// The capability set the model grades against — kept in ONE place so the grading stays honest. This
-// is embedded verbatim in the prompt. Grow it (and the palette in stage 3) as capabilities land.
-const CAPABILITY_SET = `AUGMTD's REAL capabilities TODAY — grade each sub-task against THIS list, conservatively:
-
-WHAT WE (the SYSTEM) CAN DO:
-- draft — write ANY email, reply, message, or document in the user's voice. → [System] (always).
-- analyze / summarize — read and reason over content we ALREADY HAVE (this thread, this meeting/transcript, attached or referenced documents). → [System].
-- fetch / look up — retrieve from data we have access to: the user's EMAIL, CALENDAR, MEETINGS/TRANSCRIPTS, and KNOWLEDGE BASE (Drive). → [System].
-- send — send an email as the user (connected mailbox, or the assistant's own address). → [System].
-
-WHAT WE CANNOT DO (grade as [You]):
-- Any external/tool action: process a refund in a billing system, look up a CRM/bank/invoice, sign a document, make a payment, book or attend something, place a call, update an external tool.
-- CREATE A CALENDAR EVENT or SEND A CALENDAR INVITE. We can READ the calendar and DRAFT a reply proposing a time, but we CANNOT put a meeting on the calendar or send an invite — that is [You] (capability null), never [System].
-- Any decision, approval, or judgment that is the user's to make.
-- Anything physical, or anything in a system we don't have access to.
-- Fetching from an EXTERNAL system (billing, CRM, bank, e-signature, payment portal) — that is [You], NOT fetch.
-
-RULE 1 — UNSURE → [You]. If you are UNSURE whether we can do a task, grade it [You]. Over-claiming [System] breaks a promise. Be conservative.
-
-RULE 2 — INSTANCE HONESTY (do NOT assume a specific file/attachment/contact exists). A [System] "fetch" is only honest when the thing to fetch is EVIDENCED in the item context. If a step depends on a specific file, attachment, document, deck, spreadsheet, or a recipient's email address that you have NOT been shown exists in the context above, grade it [You] (the user provides/attaches/confirms it) — NOT a confident [System] "fetch". Examples: "fetch the deck from Drive" when no deck is referenced → [You] ("attach the deck"); "email X" when no email address is given → keep the draft [System] but add a [You] "confirm the recipient's email". Instance honesty beats category optimism.`;
+// The capability set the model grades against is DERIVED from the single source of truth
+// (`lib/home/capability-map.ts` → `renderCapabilitySet()`), NOT a hand-written blurb — adding a
+// `CAPABILITY_MAP` entry updates this prompt automatically. The old prose (which hard-coded
+// "calendar invite → [You]") is gone: `send_calendar_invite` is now a built atomic capability, so
+// the model grades it [System] straight from the map. No per-capability logic lives here.
+const CAPABILITY_SET = renderCapabilitySet();
 
 type PlanInput = { kind: ItemPlanKind; entityId: string; context: string };
 
@@ -102,6 +101,126 @@ function fallbackPlan(): ItemPlan {
   return { tasks: [{ id: 't1', text: 'Handle this', actor: 'you', capability: null, done: false }] };
 }
 
+// ── The shared grading rules — the ONE place the [System]/[You] boundary + instance-honesty are
+// spelled out, so `generateItemPlan` (multi-step) and `classifyStep` (single-step, for edits/adds)
+// grade IDENTICALLY. Both prepend the DERIVED capability set (`CAPABILITY_SET`) and these rules; no
+// divergent per-capability logic lives in either.
+const GRADING_RULES =
+  `- Grade the step: actor "system" (AUGMTD can do it now — set a capability: draft|analyze|fetch|send) ` +
+  `or actor "you" (needs the user — capability null). Grade CONSERVATIVELY.\n` +
+  `- Every "system" step MUST map to one of draft|analyze|fetch|send. Every "you" step has capability null.\n` +
+  `- If NO capability in the set above matches the step's intent → actor "you", capability null. ` +
+  `Never invent a capability we don't list.`;
+
+// Parse a SINGLE graded step object out of a model reply (used by classifyStep). Mirrors the per-task
+// coercion in parseTasks (actor/capability/detail) but for one object, and does NOT rewrite `text`.
+function parseSingleStep(raw: string, fallbackText: string): { actor: 'system' | 'you'; capability: PlanCapability; detail?: string } | null {
+  if (!raw) return null;
+  let text = raw.trim();
+  const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fence) text = fence[1].trim();
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  if (start === -1 || end === -1 || end <= start) return null;
+  try {
+    const rec = JSON.parse(text.slice(start, end + 1)) as Record<string, unknown>;
+    const actor = rec.actor === 'system' ? 'system' : 'you';
+    const capRaw = rec.capability;
+    const capability: PlanCapability =
+      capRaw === 'draft' || capRaw === 'analyze' || capRaw === 'fetch' || capRaw === 'send' ? capRaw : null;
+    const detailRaw = typeof rec.detail === 'string' ? rec.detail.trim() : '';
+    return {
+      actor,
+      // A system step must name a capability (default 'analyze'); a [You] step never carries one.
+      capability: actor === 'system' ? (capability ?? 'analyze') : null,
+      ...(detailRaw && detailRaw.toLowerCase() !== fallbackText.toLowerCase() ? { detail: detailRaw.slice(0, 400) } : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * classifyStep — the reusable CLASSIFICATION ENGINE for ONE user-provided intent (a step the user
+ * added or edited in the living plan). It classifies HOW to execute WHAT the user wrote, against the
+ * SAME capability map + rules `generateItemPlan` uses — it never rewrites the user's meaning:
+ *   • WHAT → which capability/tool the intent maps to (via the map; unmappable → [You]).
+ *   • WHO  → actor 'system' (atomic/built) or 'you' (honest default for anything unmapped/ambiguous).
+ *   • HOW  → a one-sentence `detail`.
+ * The returned step KEEPS the user's text as its title (lightly normalized to a terse title at most,
+ * never changed in meaning); the engine only ATTACHES actor/capability/detail. Same classification
+ * tier as the generator (the reasoning-model blow-up documented above is why). Non-fatal: any failure
+ * → an honest [You] step carrying the user's text verbatim.
+ */
+export async function classifyStep(
+  client: SupabaseClient,
+  userId: string,
+  input: { text: string; itemContext?: string; kind?: ItemPlanKind },
+): Promise<ItemPlanTask> {
+  const userText = (input.text || '').trim().slice(0, 200);
+  // Honest [You] step carrying the user's exact text — the fallback whenever classification fails.
+  const honest = (): ItemPlanTask => ({ id: 't', text: userText || 'Handle this', actor: 'you', capability: null, done: false });
+  if (!userText) return honest();
+
+  const context = (input.itemContext || '').slice(0, 2500).trim();
+
+  const prompt =
+    `You are the planning brain of AUGMTD. The user has written ONE step of a plan for handling an ` +
+    `item. Classify HOW to execute exactly what they wrote — do NOT change the meaning of their step.\n\n` +
+    `${CAPABILITY_SET}\n\n` +
+    `INSTRUCTIONS:\n` +
+    `- The user's step is the SOURCE OF TRUTH for WHAT to do. You only decide WHO does it and add a HOW.\n` +
+    `- Return THREE fields:\n` +
+    `  • "text" — a terse imperative TITLE for the step (≤ 8 words, no trailing period). You MAY lightly ` +
+    `normalize the user's wording into a clean title, but you MUST NOT change its meaning or invent a ` +
+    `different action. If in doubt, keep the user's wording.\n` +
+    `  • "detail" — ONE plain sentence expanding on the step (the specifics / what's involved). Omit if ` +
+    `the title is fully self-explanatory. Never just repeat the title.\n` +
+    `  • grading — per the rules below.\n` +
+    GRADING_RULES + `\n` +
+    `- INSTANCE HONESTY: a "system" grade is a PROMISE. Only grade a fetch/read "system" when the thing ` +
+    `to fetch is EVIDENCED in the item context (a real file, a known recipient). If the step is ambiguous ` +
+    `or depends on something not shown to exist → actor "you". When UNSURE → "you".\n\n` +
+    `Return ONLY JSON, no prose:\n` +
+    `{"text":"terse title","detail":"one-sentence explanation","actor":"system"|"you","capability":"draft"|"analyze"|"fetch"|"send"|null}\n\n` +
+    (context ? `--- ITEM CONTEXT${input.kind ? ` (${input.kind})` : ''} ---\n${context}\n\n` : '') +
+    `--- THE USER'S STEP ---\n${userText}`;
+
+  try {
+    const { client: ai, model } = await getAIClient(userId, 'classification', client);
+    const res = await aiCreate(ai, {
+      model,
+      max_tokens: 1000,
+      temperature: 0.2,
+      messages: [{ role: 'user', content: prompt }],
+    });
+    const msg = res.choices?.[0]?.message as { content?: string; reasoning?: string } | undefined;
+    const raw = msg?.content?.trim() || msg?.reasoning?.trim() || '';
+    const parsed = parseSingleStep(raw, userText);
+    if (!parsed) return honest();
+    // Prefer a lightly-normalized title from the model, but fall back to the user's exact text — and
+    // never let the model drop/blank the step. We do NOT trust a wildly different title (guard against
+    // meaning drift): if the model returned nothing usable, keep the user's words.
+    let title = userText;
+    try {
+      const rec = JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1)) as Record<string, unknown>;
+      const t = typeof rec.text === 'string' ? rec.text.trim() : '';
+      if (t) title = t.slice(0, 120);
+    } catch { /* keep userText */ }
+    return {
+      id: 't',
+      text: title,
+      ...(parsed.detail ? { detail: parsed.detail } : {}),
+      actor: parsed.actor,
+      capability: parsed.capability,
+      done: false,
+    };
+  } catch (e) {
+    console.error('[item-plan] classifyStep failed:', e);
+    return honest();
+  }
+}
+
 /**
  * generateItemPlan — AI decomposition of one Home item into a graded task breakdown.
  * Cheap, robust, non-fatal: any failure returns a single [You] "Handle this" task.
@@ -135,9 +254,12 @@ export async function generateItemPlan(
     `isn't there. Let the steps EMERGE from THIS item — never from its category.\n` +
     `- NO redundant steps. Drafting and sending an email is ONE action here — emit a single task like ` +
     `"draft and send the reply to <name>" (capability "send"), NOT a separate "draft" step AND a "send" step.\n` +
-    `- Grade each task: actor "system" (AUGMTD can do it now — set a capability: draft|analyze|fetch|send) ` +
-    `or actor "you" (needs the user — capability null). Grade CONSERVATIVELY per the rules above.\n` +
-    `- Every "system" task MUST map to one of draft|analyze|fetch|send. Every "you" task has capability null.\n\n` +
+    // Shared grading rules — the SAME [System]/[You] boundary `classifyStep` uses (single source of truth).
+    GRADING_RULES + `\n` +
+    `- ONE ACTION PER STEP — never bundle two distinct actions into one task. CRUCIALLY, never combine a SYSTEM ` +
+    `action with a YOU action in the same step: if resolving the item needs both (e.g. confirm/reply AND send a ` +
+    `file the user must first locate), SPLIT them into separate steps ("Confirm the meeting" = system/send, ` +
+    `"Locate and send the deck" = you) — so a system-doable action is never hidden inside a [You] bundle.\n\n` +
     `Return ONLY JSON, no prose:\n` +
     `{"tasks":[{"text":"short title","detail":"one-sentence explanation","actor":"system"|"you","capability":"draft"|"analyze"|"fetch"|"send"|null}]}\n\n` +
     `--- ITEM (${input.kind}) ---\n${context || '(no additional context)'}`;

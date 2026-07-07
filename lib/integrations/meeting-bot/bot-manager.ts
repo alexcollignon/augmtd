@@ -322,9 +322,22 @@ export async function storeTranscriptAndGenerateWork(
   }
 
   // Capture meeting action items as commitments (you owe / awaiting) — the don't-drop-the-ball tracker.
+  // Pass the real named participants (assignees + decision owners) so a 1:1 user-task commitment can
+  // resolve its counterpart instead of leaving it null; and the user's own name so we don't treat the
+  // user as the "other" party. writeMeetingCommitments dedups + drops fabricated due_dates.
   try {
     const { writeMeetingCommitments } = await import('@/lib/commitments/extract');
-    await writeMeetingCommitments(userId, insights.actionItems ?? [], { transcriptId: transcriptRecord.id }, supabase);
+    const participants = [
+      ...(insights.actionItems ?? []).map((a) => a.assignee),
+      ...(insights.decisions ?? []).map((d) => d.owner),
+    ];
+    const { data: prof } = await supabase.from('profiles').select('full_name').eq('id', userId).maybeSingle();
+    await writeMeetingCommitments(
+      userId,
+      insights.actionItems ?? [],
+      { transcriptId: transcriptRecord.id, attendees: participants, userName: prof?.full_name ?? null },
+      supabase,
+    );
   } catch (e) {
     console.warn('[MeetingBot] Non-fatal: failed to write meeting commitments', e);
   }
@@ -526,7 +539,7 @@ Return a JSON object with exactly these fields:
       "assignee": "Name or null",
       "priority": 75,
       "context": "Why this matters",
-      "dueDate": "YYYY-MM-DD or null",
+      "dueDate": "YYYY-MM-DD ONLY if a deadline was explicitly stated in the meeting, else null — never invent a date",
       "category": "todo",
       "isUserTask": true
     }
@@ -552,7 +565,7 @@ Rules for the document field:
 
 Rules for other fields:
 - decisions: concrete things agreed or decided (not tasks). Max 8. Must be grounded in the transcript.
-- actionItems: specific tasks. Max 10. category: "todo" | "waiting_for" | "project". isUserTask=true if assignee matches user or is unassigned.
+- actionItems: only SPECIFIC obligations a participant explicitly took on (or is explicitly owed) — NOT every idea, sub-step, or suggestion discussed. Merge related sub-tasks of one obligation into a single item. Be selective: prefer fewer, real commitments (typically 0–6). Max 10. category: "todo" | "waiting_for" | "project". isUserTask=true if assignee matches user or is unassigned. dueDate: only when a deadline was explicitly stated — otherwise null (never invent one).
 - risks: blockers or concerns raised explicitly or implicitly. Max 6. severity: "high" | "medium" | "low".
 - keyMoments: up to 6 notable segments. type: "decision" | "risk" | "commitment". segmentIndex must be a real [N] from the transcript.
 - Return ONLY the JSON object, no other text.`;

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   EnvelopeIcon,
@@ -10,13 +10,17 @@ import {
   CheckCircleIcon,
   ClockIcon,
   PaperAirplaneIcon,
+  PaperClipIcon,
   UserPlusIcon,
   SparklesIcon,
   ChevronDownIcon,
   XMarkIcon,
+  PencilIcon,
+  PlusIcon,
 } from '@heroicons/react/24/outline';
 import { ThreadMessages, type ThreadMessage } from '@/components/inbox/thread-messages';
 import ReplyEditor from '@/components/inbox/reply-editor';
+import KbFilePicker from '@/components/inbox/kb-file-picker';
 
 // ── Shared visual language across ALL deep-dive variants (coherence pass #3). One header, one
 // section-label token, one card token — so email / meeting / commitment / follow-up read identically.
@@ -78,6 +82,144 @@ function draftToHTML(text: string): string {
   return paras
     .map((p) => `<p>${esc(p).replace(/\n/g, '<br>')}</p>`)
     .join('');
+}
+
+// ── Reply attachments (shared) — the SAME base64 attach model the inbox reply uses
+// (`components/inbox/work-detail-inline.tsx`): a `{filename, content(base64), mimeType}` list sent to
+// `/api/inbox/[id]/send-reply` (which already accepts `attachments` → `EmailAttachment[]`). Reuses the
+// inbox's `KbFilePicker` + `/api/kb/attachment` endpoint for "from knowledge base", so there is no
+// parallel uploader. Client-side ~4 MB total guard (mirrors the Vercel JSON-body limit the inbox
+// attach flow works within — base64 rides in the request body). Non-fatal: an oversize/failed attach
+// sets an error string, never breaks the composer.
+
+// Matches the inbox `PendingAttachment` shape exactly.
+type PendingAttachment = { filename: string; content: string; mimeType: string };
+
+// ~4 MB body budget; base64 inflates ~1.37×, so cap raw bytes accordingly to stay under the limit.
+const ATTACH_MAX_TOTAL_BYTES = 3_800_000;
+
+function useReplyAttachments() {
+  const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
+  const [kbPickerOpen, setKbPickerOpen] = useState(false);
+  const [showMenu, setShowMenu] = useState(false);
+  const [attachErr, setAttachErr] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Approx current base64 payload size (chars ≈ bytes for a base64 string).
+  const currentBytes = () => attachments.reduce((n, a) => n + a.content.length, 0);
+
+  const onLocalFile = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    setAttachErr(null);
+    const files = Array.from(e.target.files || []);
+    e.target.value = '';
+    const results: PendingAttachment[] = [];
+    for (const file of files) {
+      const arrayBuffer = await file.arrayBuffer();
+      const bytes = new Uint8Array(arrayBuffer);
+      let binary = '';
+      for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+      const content = btoa(binary);
+      results.push({ filename: file.name, content, mimeType: file.type || 'application/octet-stream' });
+    }
+    setAttachments((prev) => {
+      const total = [...prev, ...results].reduce((n, a) => n + a.content.length, 0);
+      if (total > ATTACH_MAX_TOTAL_BYTES) {
+        setAttachErr('Attachments are too large (max ~4 MB total). Share a Drive link instead.');
+        return prev;
+      }
+      return [...prev, ...results];
+    });
+  }, []);
+
+  const onKbSelect = useCallback(async (selected: { id: string; filename: string }[]) => {
+    setKbPickerOpen(false);
+    setAttachErr(null);
+    const results = await Promise.all(selected.map(async ({ id, filename }) => {
+      try {
+        const res = await fetch(`/api/kb/attachment?fileId=${id}`);
+        if (!res.ok) { setAttachErr(`Could not load ${filename}.`); return null; }
+        return await res.json() as PendingAttachment;
+      } catch {
+        setAttachErr(`Could not load ${filename}.`);
+        return null;
+      }
+    }));
+    const ok = results.filter(Boolean) as PendingAttachment[];
+    setAttachments((prev) => {
+      const total = [...prev, ...ok].reduce((n, a) => n + a.content.length, 0);
+      if (total > ATTACH_MAX_TOTAL_BYTES) {
+        setAttachErr('Attachments are too large (max ~4 MB total). Share a Drive link instead.');
+        return prev;
+      }
+      return [...prev, ...ok];
+    });
+  }, []);
+
+  const remove = useCallback((i: number) => setAttachments((prev) => prev.filter((_, j) => j !== i)), []);
+  const clear = useCallback(() => setAttachments([]), []);
+
+  return {
+    attachments, attachErr, kbPickerOpen, setKbPickerOpen, showMenu, setShowMenu,
+    fileInputRef, onLocalFile, onKbSelect, remove, clear, currentBytes,
+  };
+}
+
+// The attach (📎) button + its menu — dropped into <ReplyEditor toolbarLeading>. Same affordance as
+// the inbox reply (Upload a file / From knowledge base). `up` opens the menu upward (docked composers).
+function AttachMenu({ atts, up = true }: { atts: ReturnType<typeof useReplyAttachments>; up?: boolean }) {
+  return (
+    <div className="relative flex-shrink-0">
+      <button
+        type="button"
+        onClick={() => atts.setShowMenu((v) => !v)}
+        className="p-1.5 rounded text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100 transition-colors"
+        title="Attach file"
+      >
+        <PaperClipIcon className="w-4 h-4" />
+      </button>
+      {atts.showMenu && (
+        <div className={`absolute ${up ? 'bottom-9' : 'top-9'} left-0 w-52 bg-white border border-neutral-200 rounded-lg shadow-lg z-10 py-1`}>
+          <button
+            onClick={() => { atts.fileInputRef.current?.click(); atts.setShowMenu(false); }}
+            className="w-full text-left px-3 py-2 text-[12px] text-neutral-700 hover:bg-neutral-50"
+          >
+            Upload a file
+          </button>
+          <button
+            onClick={() => { atts.setKbPickerOpen(true); atts.setShowMenu(false); }}
+            className="w-full text-left px-3 py-2 text-[12px] text-neutral-700 hover:bg-neutral-50"
+          >
+            From knowledge base
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// The attachment chips (add/remove) — rendered as <ReplyEditor>'s children (between editor + toolbar),
+// exactly as the inbox does. Plus the hidden file input + the KB picker modal, so a host mounts the
+// whole attach surface with one component.
+function AttachSurface({ atts }: { atts: ReturnType<typeof useReplyAttachments> }) {
+  return (
+    <>
+      <input ref={atts.fileInputRef} type="file" multiple className="hidden" onChange={atts.onLocalFile} />
+      {atts.attachments.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 pb-2 mt-2">
+          {atts.attachments.map((att, i) => (
+            <span key={i} className="inline-flex items-center gap-1 px-2 py-0.5 bg-neutral-100 rounded text-[11px] text-neutral-700">
+              <PaperClipIcon className="w-3 h-3 flex-shrink-0" />
+              <span className="max-w-[140px] truncate">{att.filename}</span>
+              <button onClick={() => atts.remove(i)} className="hover:text-rose-500 transition-colors ml-0.5">
+                <XMarkIcon className="w-3 h-3" />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      {atts.attachErr && <p className="text-[11.5px] text-rose-600 pb-1">{atts.attachErr}</p>}
+    </>
+  );
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -231,20 +373,446 @@ function ComposePanel({ kind, entityId, onSent }: { kind: ComposeKind; entityId:
   );
 }
 
-// ── "Hand to a coworker" — the global, item-level delegate affordance (deferred stub, disabled).
-// It is NOT a workflow step, so it never duplicates one. It lives in exactly ONE place per layout:
-// the Identified-tasks panel FOOTER when a breakdown exists (see `TasksPanel`), else inline in the
-// `ActionBar` when there is no panel to host it. `size` tunes it for the narrower panel footer.
-function HandToCoworkerButton({ size = 'md' }: { size?: 'md' | 'sm' }) {
-  const pad = size === 'sm' ? 'px-3 py-1.5 text-[12px]' : 'px-4 py-2 text-[13px]';
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// PREPARED CALENDAR INVITE — the FIRST non-email prepared-action type (stage 3a). A [System] step whose
+// intent is "send a calendar invite" routes here instead of the email composer: /api/items/prepare
+// extracts a GROUNDED, editable invite (title / date / start-end / attendees / description), the user
+// reviews & edits it, then a single "Approve & send invite" click → /api/items/execute (the ONLY place
+// a real invite fires). Approve-before-commit: nothing sends until that click. Mirrors ComposePanel's
+// prepared-work-you-validate shape + tokens.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+// ISO ↔ <input type="datetime-local"> (which is local, no tz suffix). We keep the invite's canonical
+// value as an ISO string; the input shows/edits it in the browser's local time.
+function isoToLocalInput(iso: string): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  // Shift by the tz offset so toISOString's slice reads as LOCAL wall-clock for the input.
+  const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 16);
+}
+function localInputToISO(v: string): string {
+  if (!v) return '';
+  const d = new Date(v); // parsed as local time
+  return isNaN(d.getTime()) ? '' : d.toISOString();
+}
+function fmtInviteWhen(iso: string): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true });
+}
+
+type PreparedInvite = {
+  type: 'calendar_invite';
+  title: string;
+  startISO: string;
+  endISO: string;
+  attendees: string[];
+  description: string;
+  timezone: string;
+};
+
+// The editable invite chips (attendees) — add via a small input, remove via ✕. Never invents.
+function AttendeeChips({ attendees, onChange }: { attendees: string[]; onChange: (next: string[]) => void }) {
+  const [input, setInput] = useState('');
+  const add = () => {
+    const v = input.trim();
+    if (v && v.includes('@') && !attendees.includes(v)) onChange([...attendees, v]);
+    setInput('');
+  };
   return (
-    <button
-      disabled
-      title="Coming soon — delegate this to one of your coworkers"
-      className={`inline-flex items-center gap-1.5 rounded-lg font-medium bg-neutral-50 text-neutral-300 border border-neutral-200 cursor-not-allowed ${pad}`}
+    <div className="flex flex-wrap items-center gap-1.5">
+      {attendees.map((a) => (
+        <span key={a} className="inline-flex items-center gap-1 rounded-full bg-neutral-100 pl-2.5 pr-1.5 py-0.5 text-[11.5px] text-neutral-700">
+          {a}
+          <button onClick={() => onChange(attendees.filter((x) => x !== a))} className="hover:text-rose-500 transition-colors" aria-label={`Remove ${a}`}>
+            <XMarkIcon className="w-3 h-3" />
+          </button>
+        </span>
+      ))}
+      <input
+        value={input}
+        onChange={(e) => setInput(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); add(); } }}
+        onBlur={add}
+        placeholder={attendees.length ? 'Add another…' : 'attendee@email.com'}
+        className="min-w-[140px] flex-1 bg-transparent text-[12.5px] text-neutral-800 placeholder:text-neutral-300 focus:outline-none py-0.5"
+      />
+    </div>
+  );
+}
+
+// The prepared invite card — pre-filled from /api/items/prepare, fully editable, approve-to-send.
+function InvitePreviewCard({ kind, entityId, taskId, onSent, onCancel }: {
+  kind: ItemKind;
+  entityId: string;
+  taskId?: string;
+  onSent?: () => void;
+  onCancel?: () => void;
+}) {
+  const [loading, setLoading] = useState(true);
+  const [title, setTitle] = useState('');
+  const [startISO, setStartISO] = useState('');
+  const [endISO, setEndISO] = useState('');
+  const [attendees, setAttendees] = useState<string[]>([]);
+  const [description, setDescription] = useState('');
+  const [timezone, setTimezone] = useState('UTC');
+  const [sending, setSending] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  // Pre-fill from the grounded extractor (NO side effects — prepare never sends).
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    fetch('/api/items/prepare', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind, entityId, taskId }),
+    })
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then((d: PreparedInvite | { type: string }) => {
+        if (!alive) return;
+        if (d && (d as PreparedInvite).type === 'calendar_invite') {
+          const inv = d as PreparedInvite;
+          setTitle(inv.title || '');
+          setStartISO(inv.startISO || '');
+          setEndISO(inv.endISO || '');
+          setAttendees(Array.isArray(inv.attendees) ? inv.attendees : []);
+          setDescription(inv.description || '');
+          setTimezone(inv.timezone || 'UTC');
+        }
+      })
+      .catch(() => { if (alive) setErr('Could not prepare the invite — fill it in below.'); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [kind, entityId, taskId]);
+
+  // On start change with no/earlier end, default a 30-min end.
+  const onStart = (v: string) => {
+    setStartISO(v);
+    if (v && (!endISO || new Date(endISO) <= new Date(v))) {
+      setEndISO(new Date(new Date(v).getTime() + 30 * 60000).toISOString());
+    }
+  };
+
+  const send = async () => {
+    if (sending) return;
+    if (!title.trim()) { setErr('Add a title.'); return; }
+    if (!startISO || !endISO) { setErr('Set a date and time.'); return; }
+    if (attendees.length === 0) { setErr('Add at least one attendee.'); return; }
+    setSending(true); setErr(null);
+    try {
+      const res = await fetch('/api/items/execute', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          kind, entityId, taskId,
+          action: { type: 'calendar_invite', title: title.trim(), startISO, endISO, attendees, description, timezone },
+        }),
+      });
+      if (res.ok) {
+        setSent(true);
+        onSent?.();
+      } else {
+        const d = await res.json().catch(() => ({}));
+        setErr(d.error || 'Could not send the invite.');
+      }
+    } catch {
+      setErr('Could not send the invite.');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  if (sent) {
+    return (
+      <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 px-4 py-4">
+        <div className="flex items-center gap-2">
+          <CheckIcon className="w-4 h-4 text-emerald-600" />
+          <p className="text-[13px] font-medium text-emerald-700">Invite sent{startISO ? ` — ${fmtInviteWhen(startISO)}` : ''}.</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className={CARD}>
+      {/* "Review before it sends" affordance — this is prepared work the user validates. */}
+      <div className="flex items-center gap-1.5 px-4 pt-3 pb-2 border-b border-neutral-100">
+        <CalendarDaysIcon className="w-3.5 h-3.5 text-violet-500" />
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500">Calendar invite</span>
+        <span className="ml-auto text-[10.5px] text-amber-600">Review before it sends</span>
+      </div>
+
+      {loading ? (
+        <div className="p-4"><div className="h-40 rounded-lg bg-neutral-100 animate-pulse" /></div>
+      ) : (
+        <div className="p-4 space-y-3">
+          <div>
+            <label className="block text-[10.5px] font-semibold uppercase tracking-wide text-neutral-400 mb-1">Title</label>
+            <input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="Meeting title"
+              className="w-full rounded-lg border border-neutral-200 px-3 py-1.5 text-[13px] text-neutral-800 placeholder:text-neutral-300 focus:outline-none focus:border-indigo-300"
+            />
+          </div>
+
+          <div className="flex gap-3">
+            <div className="flex-1 min-w-0">
+              <label className="block text-[10.5px] font-semibold uppercase tracking-wide text-neutral-400 mb-1">Starts</label>
+              <input
+                type="datetime-local"
+                value={isoToLocalInput(startISO)}
+                onChange={(e) => onStart(localInputToISO(e.target.value))}
+                className="w-full rounded-lg border border-neutral-200 px-2.5 py-1.5 text-[12.5px] text-neutral-800 focus:outline-none focus:border-indigo-300"
+              />
+            </div>
+            <div className="flex-1 min-w-0">
+              <label className="block text-[10.5px] font-semibold uppercase tracking-wide text-neutral-400 mb-1">Ends</label>
+              <input
+                type="datetime-local"
+                value={isoToLocalInput(endISO)}
+                onChange={(e) => setEndISO(localInputToISO(e.target.value))}
+                className="w-full rounded-lg border border-neutral-200 px-2.5 py-1.5 text-[12.5px] text-neutral-800 focus:outline-none focus:border-indigo-300"
+              />
+            </div>
+          </div>
+          {startISO && (
+            <p className="text-[11px] text-neutral-500 -mt-1">{fmtInviteWhen(startISO)}{endISO ? ` → ${fmtInviteWhen(endISO)}` : ''}</p>
+          )}
+
+          <div>
+            <label className="block text-[10.5px] font-semibold uppercase tracking-wide text-neutral-400 mb-1">Attendees</label>
+            <div className="rounded-lg border border-neutral-200 px-2.5 py-1.5">
+              <AttendeeChips attendees={attendees} onChange={setAttendees} />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-[10.5px] font-semibold uppercase tracking-wide text-neutral-400 mb-1">Notes</label>
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Agenda / notes (optional)"
+              rows={2}
+              className="w-full rounded-lg border border-neutral-200 px-3 py-1.5 text-[12.5px] text-neutral-700 placeholder:text-neutral-300 focus:outline-none focus:border-indigo-300 resize-y"
+            />
+          </div>
+
+          {err && <p className="text-[12px] text-rose-600">{err}</p>}
+
+          <div className="flex items-center gap-3 pt-1">
+            <button
+              onClick={send}
+              disabled={sending}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 text-white px-4 py-2 text-[13px] font-medium hover:bg-indigo-700 disabled:opacity-60 transition-colors"
+            >
+              <CalendarDaysIcon className="w-4 h-4" />{sending ? 'Sending…' : 'Approve & send invite'}
+            </button>
+            {onCancel && (
+              <button onClick={onCancel} className="text-[13px] font-medium text-neutral-500 hover:text-neutral-700">Cancel</button>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Invite host — the small state wrapper each deep-dive variant mounts to host the InvitePreviewCard.
+// `useInviteHost` returns { invitingTaskId, openInvite, closeInvite, onSent } + the `InvitePanel` node.
+// A variant wires `onInvite={openInvite}` into WhatThisTakes and drops `<inviteHost.node/>` where the
+// prepared card should appear. On a successful send it flips the step to done (markSystemDone) + closes.
+function useInviteHost(kind: ItemKind, entityId: string, markSystemDone: (taskId: string) => void) {
+  const [invitingTaskId, setInvitingTaskId] = useState<string | null>(null);
+  const openInvite = (taskId: string) => setInvitingTaskId(taskId);
+  const closeInvite = () => setInvitingTaskId(null);
+  const node = invitingTaskId ? (
+    <InvitePreviewCard
+      kind={kind}
+      entityId={entityId}
+      taskId={invitingTaskId}
+      onSent={() => { if (invitingTaskId) markSystemDone(invitingTaskId); }}
+      onCancel={closeInvite}
+    />
+  ) : null;
+  return { invitingTaskId, openInvite, closeInvite, node };
+}
+
+// ── Prepared-action routing (client side). A [System] step's action is CAPABILITY-AWARE: a step whose
+// intent is a calendar invite opens the InvitePreviewCard; every other draft/send step opens the
+// existing email ComposePanel. Kept 1:1 with `lib/home/prepare-action.ts` `routeStepToActionType` so
+// the client picks the same host the server prepares for (agnostic: adding a type = extend both).
+function clientRouteActionType(task: { capability: PlanTask['capability']; text: string; detail?: string }): 'calendar_invite' | 'email' {
+  const cap = task.capability;
+  const hay = `${task.text || ''} ${task.detail || ''}`.toLowerCase();
+  const inviteHit =
+    /\b(calendar invite|calendar event|send (?:an? )?invite|put .* on the calendar|schedule (?:a|the|this) (?:meeting|call|invite)|book (?:a|the) (?:meeting|call|slot)|create (?:a|the|an) (?:meeting|event|invite))\b/.test(hay) ||
+    (/\binvit/.test(hay) && /\b(meet|call|calendar|event)\b/.test(hay));
+  if (inviteHit && (cap === 'send' || cap === null)) return 'calendar_invite';
+  return 'email';
+}
+
+// ── The user's coworkers, fetched once (module-scoped so every picker on the page shares one load).
+type Coworker = { id: string; name: string; worker_role: string | null };
+const WORKER_AVATAR: Record<string, string> = {
+  personal_assistant: '/workers/clara.png',
+  content_manager: '/workers/sofia.png',
+  linkedin_drafter: '/workers/luca.png',
+  research_analyst: '/workers/max.png',
+};
+let _coworkersCache: Coworker[] | null = null;
+let _coworkersPromise: Promise<Coworker[]> | null = null;
+function loadCoworkers(): Promise<Coworker[]> {
+  if (_coworkersCache) return Promise.resolve(_coworkersCache);
+  if (_coworkersPromise) return _coworkersPromise;
+  _coworkersPromise = fetch('/api/workers')
+    .then((r) => (r.ok ? r.json() : Promise.reject()))
+    .then((d: { workers?: Coworker[] }) => {
+      _coworkersCache = Array.isArray(d.workers) ? d.workers : [];
+      return _coworkersCache;
+    })
+    .catch(() => { _coworkersCache = []; return _coworkersCache; })
+    .finally(() => { _coworkersPromise = null; });
+  return _coworkersPromise;
+}
+
+function useCoworkers(): Coworker[] {
+  const [workers, setWorkers] = useState<Coworker[]>(_coworkersCache ?? []);
+  useEffect(() => {
+    let alive = true;
+    loadCoworkers().then((w) => { if (alive) setWorkers(w); });
+    return () => { alive = false; };
+  }, []);
+  return workers;
+}
+
+// A tiny coworker avatar (falls back to an initials chip when the role image is unknown).
+function CoworkerAvatar({ worker, size = 20 }: { worker: Pick<Coworker, 'name' | 'worker_role'>; size?: number }) {
+  const src = worker.worker_role ? WORKER_AVATAR[worker.worker_role] : undefined;
+  if (src) {
+    // eslint-disable-next-line @next/next/no-img-element
+    return <img src={src} alt={worker.name} width={size} height={size} className="rounded-full object-cover flex-shrink-0" style={{ width: size, height: size }} />;
+  }
+  return (
+    <span className="flex-shrink-0 inline-flex items-center justify-center rounded-full bg-indigo-100 text-indigo-600 font-semibold" style={{ width: size, height: size, fontSize: size * 0.42 }}>
+      {(worker.name || '?').charAt(0).toUpperCase()}
+    </span>
+  );
+}
+
+// ── The coworker PICKER popover — the avatars/names of the user's workers; pick one → confirm → the
+// host delegates. Anchored below its trigger. Closes on outside-click / Esc. Shared by the item-level
+// footer button and the per-step hand-off menu.
+function CoworkerPicker({ onPick, onClose, align = 'left' }: { onPick: (w: Coworker) => void; onClose: () => void; align?: 'left' | 'right' }) {
+  const workers = useCoworkers();
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const onDoc = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) onClose(); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onDoc); document.removeEventListener('keydown', onKey); };
+  }, [onClose]);
+  return (
+    <div
+      ref={ref}
+      className={`absolute z-30 bottom-full mb-1.5 w-60 rounded-xl border border-neutral-200 bg-white shadow-lg overflow-hidden ${align === 'right' ? 'right-0' : 'left-0'}`}
     >
-      <UserPlusIcon className={size === 'sm' ? 'w-3.5 h-3.5' : 'w-4 h-4'} />Hand to a coworker
-    </button>
+      <div className="px-3 py-2 border-b border-neutral-100">
+        <p className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide">Hand to a coworker</p>
+        <p className="mt-0.5 text-[10.5px] text-neutral-400 leading-snug">They&apos;ll prepare it and report back — you stay in the loop.</p>
+      </div>
+      <ul className="max-h-64 overflow-y-auto py-1">
+        {workers.length === 0 ? (
+          <li className="px-3 py-3 text-[12px] text-neutral-400">No coworkers yet.</li>
+        ) : (
+          workers.map((w) => (
+            <li key={w.id}>
+              <button
+                onClick={() => onPick(w)}
+                className="w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-indigo-50/70 transition-colors"
+              >
+                <CoworkerAvatar worker={w} size={24} />
+                <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-neutral-800">{w.name}</span>
+              </button>
+            </li>
+          ))
+        )}
+      </ul>
+    </div>
+  );
+}
+
+// ── "Hand to a coworker" — the global, item-level delegate affordance. Opens the CoworkerPicker; on
+// pick it delegates the WHOLE item via `onDelegate`. It is NOT a workflow step, so it never duplicates
+// one. It lives in exactly ONE place per layout: the Identified-tasks panel FOOTER when a breakdown
+// exists (see `TasksPanel`), else inline in the `ActionBar`. `size` tunes it for the narrower footer.
+function HandToCoworkerButton({
+  size = 'md',
+  onDelegate,
+  pending = false,
+  handedTo,
+}: {
+  size?: 'md' | 'sm';
+  onDelegate?: (w: Coworker) => void;   // absent → disabled stub (kept for layouts with no plan yet)
+  pending?: boolean;
+  handedTo?: HandedTo | null;           // the whole-item hand-off resolved → show the handed state
+}) {
+  const [open, setOpen] = useState(false);
+  const pad = size === 'sm' ? 'px-3 py-1.5 text-[12px]' : 'px-4 py-2 text-[13px]';
+
+  // Resolved — the item was handed off. Show the attribution, no picker.
+  if (handedTo) {
+    return (
+      <div className={`inline-flex items-center gap-1.5 rounded-lg font-medium bg-emerald-50 text-emerald-700 border border-emerald-200 ${pad}`}>
+        <CoworkerAvatar worker={{ name: handedTo.agentName, worker_role: handedTo.workerRole ?? null }} size={size === 'sm' ? 16 : 18} />
+        {handedTo.agentName} is on it
+      </div>
+    );
+  }
+
+  // Pending — the coworker is running.
+  if (pending) {
+    return (
+      <div className={`inline-flex items-center gap-1.5 rounded-lg font-medium bg-indigo-50 text-indigo-600 border border-indigo-200 ${pad}`}>
+        <span className="w-3.5 h-3.5 rounded-full border-2 border-indigo-300 border-t-indigo-600 animate-spin" />
+        Handing off…
+      </div>
+    );
+  }
+
+  // Disabled stub (no plan / no delegate handler wired) — kept so a layout without a breakdown still
+  // renders the affordance gracefully.
+  if (!onDelegate) {
+    return (
+      <button
+        disabled
+        title="Open an item's identified tasks to hand it to a coworker"
+        className={`inline-flex items-center gap-1.5 rounded-lg font-medium bg-neutral-50 text-neutral-300 border border-neutral-200 cursor-not-allowed ${pad}`}
+      >
+        <UserPlusIcon className={size === 'sm' ? 'w-3.5 h-3.5' : 'w-4 h-4'} />Hand to a coworker
+      </button>
+    );
+  }
+
+  return (
+    <div className="relative inline-block">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className={`inline-flex items-center gap-1.5 rounded-lg font-medium bg-white text-indigo-700 border border-indigo-200 hover:bg-indigo-50 transition-colors ${pad}`}
+      >
+        <UserPlusIcon className={size === 'sm' ? 'w-3.5 h-3.5' : 'w-4 h-4'} />Hand to a coworker
+      </button>
+      {open && (
+        <CoworkerPicker
+          onPick={(w) => { setOpen(false); onDelegate(w); }}
+          onClose={() => setOpen(false)}
+        />
+      )}
+    </div>
   );
 }
 
@@ -281,6 +849,15 @@ function ActionBar({ primaryLabel, primaryActive, onPrimary, children }: { prima
 // replies stay clean while a meeting-request email (reply + a [You] calendar step) surfaces its steps.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
+type HandedTo = {
+  agentId: string;
+  agentName: string;
+  workerRole?: string | null;
+  threadId?: string | null;
+  output?: string;
+  at?: string;
+};
+
 type PlanTask = {
   id: string;
   text: string;                 // short imperative title (the one line the stepper shows)
@@ -289,6 +866,7 @@ type PlanTask = {
   capability: 'draft' | 'analyze' | 'fetch' | 'send' | null;
   done?: boolean;
   dismissed?: boolean;          // removed from the workflow (persisted)
+  handedTo?: HandedTo;          // a coworker executed this step (stage 3b)
 };
 
 const CAP_HINT: Record<string, string> = {
@@ -305,14 +883,24 @@ const CAP_HINT: Record<string, string> = {
 // cache row is written). Owns tasks / loading / failed / pending + the [You]-checkbox PATCH handler +
 // the ≥2-task breakdown gate.
 type ItemPlan = {
-  tasks: PlanTask[] | null;     // the LIVE (non-dismissed) tasks — the stepper renders these
+  tasks: PlanTask[] | null;     // ALL tasks (incl. dismissed) — the stepper renders crossed-out steps too
   loading: boolean;
   failed: boolean;
-  hasBreakdown: boolean; // a genuine ≥2 non-dismissed-task plan (drives the two-column layout)
+  hasBreakdown: boolean; // a genuine ≥2-task plan (counts ALL tasks — crossing out doesn't collapse it)
   pending: Set<string>;
+  classifyingId: string | null;  // id of the step currently being (re)classified — drives the "classifying…" hint
   toggle: (task: PlanTask) => void;
-  dismiss: (task: PlanTask) => void;  // remove a step (system OR you) from the workflow, persisted
+  dismiss: (task: PlanTask) => void;  // TOGGLE a step's "not needed" (crossed-out) state, persisted
+  addStep: (text: string) => Promise<void>;              // add a step → classify → append (optimistic)
+  editStep: (taskId: string, text: string) => Promise<void>; // edit a step's text → re-classify in place
+  markSystemDone: (taskId: string) => void;              // optimistically flip a [System] step to done (after a commit)
+  delegatingId: string | null;   // id of the step currently being delegated ('__item__' for a whole-item hand-off)
+  delegateStep: (taskId: string, agentId: string, agentName: string) => Promise<boolean>;  // hand one step to a coworker
+  delegateItem: (agentId: string, agentName: string) => Promise<boolean>;                   // hand the whole item to a coworker
 };
+
+// A sentinel id used for the delegating-pending state of a WHOLE-ITEM hand-off (no single taskId).
+const ITEM_DELEGATE_ID = '__item__';
 
 function useItemPlan(
   planKind: 'email' | 'meeting' | 'commitment' | 'awareness' | 'followup',
@@ -322,6 +910,8 @@ function useItemPlan(
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
   const [pending, setPending] = useState<Set<string>>(new Set());
+  const [classifyingId, setClassifyingId] = useState<string | null>(null);
+  const [delegatingId, setDelegatingId] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -360,87 +950,242 @@ function useItemPlan(
       .finally(() => setPending((prev) => { const n = new Set(prev); n.delete(task.id); return n; }));
   };
 
-  // Dismiss a step (ANY actor) — mark it dismissed locally + persist. The stepper filters dismissed
-  // out; the step fade-out is owned by the row (it holds a short exit state before this fires). Roll
-  // back on failure so a lost step reappears.
+  // Dismiss = TOGGLE a step's "not needed" state (ANY actor). The step is NOT removed — it stays in
+  // the workflow, rendered struck-through + greyed with its action disabled. Clicking ✕ again un-crosses
+  // it (back to active). Optimistic flip + persist the toggled value; roll back on failure.
   const dismiss = (task: PlanTask) => {
     if (pending.has(task.id)) return;
-    setTasks((prev) => (prev ? prev.map((t) => (t.id === task.id ? { ...t, dismissed: true } : t)) : prev));
+    const next = !task.dismissed;
+    setTasks((prev) => (prev ? prev.map((t) => (t.id === task.id ? { ...t, dismissed: next } : t)) : prev));
     setPending((prev) => new Set(prev).add(task.id));
     fetch('/api/items/plan', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ kind: planKind, entityId, taskId: task.id, dismissed: true }),
+      body: JSON.stringify({ kind: planKind, entityId, taskId: task.id, dismissed: next }),
     })
       .then((r) => { if (!r.ok) throw new Error(); })
       .catch(() => {
-        setTasks((prev) => (prev ? prev.map((t) => (t.id === task.id ? { ...t, dismissed: false } : t)) : prev));
+        setTasks((prev) => (prev ? prev.map((t) => (t.id === task.id ? { ...t, dismissed: !next } : t)) : prev));
       })
       .finally(() => setPending((prev) => { const n = new Set(prev); n.delete(task.id); return n; }));
   };
 
-  // The LIVE tasks the stepper reasons over — dismissed steps are removed from the workflow.
-  const liveTasks = useMemo(() => (tasks ? tasks.filter((t) => !t.dismissed) : tasks), [tasks]);
+  // ── Add a step. Optimistically insert a provisional [You] step (the user's text, "classifying…"),
+  // POST action:'add' → the classifier grades it → swap in the real graded step (executor badge +
+  // action may resolve). On failure, remove the provisional row (rollback).
+  const addStep = async (text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    // A local, temporary id — replaced by the server's real id on success.
+    const tempId = `tmp-${Date.now()}`;
+    const provisional: PlanTask = { id: tempId, text: trimmed, actor: 'you', capability: null, done: false };
+    setTasks((prev) => [...(prev ?? []), provisional]);
+    setClassifyingId(tempId);
+    try {
+      const res = await fetch('/api/items/plan', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: planKind, entityId, action: 'add', text: trimmed }),
+      });
+      if (!res.ok) throw new Error();
+      const d = (await res.json()) as { task?: PlanTask };
+      if (!d.task) throw new Error();
+      const graded = d.task;
+      setTasks((prev) => (prev ? prev.map((t) => (t.id === tempId ? graded : t)) : prev));
+    } catch {
+      // Rollback — drop the provisional row.
+      setTasks((prev) => (prev ? prev.filter((t) => t.id !== tempId) : prev));
+    } finally {
+      setClassifyingId(null);
+    }
+  };
 
-  // The ≥2-task breakdown gate — a real multi-step plan, counting only NON-dismissed tasks. Dismissing
-  // below 2 collapses the panel (the layout latch keeps the flip from being jarring).
-  const hasBreakdown = !loading && !failed && !!liveTasks && liveTasks.length >= 2;
+  // ── Edit a step's text in place → re-classify. Optimistically show the new text (keeping the old
+  // grade under a "classifying…" hint), POST action:'edit' → swap in the re-graded step. Roll back to
+  // the prior task on failure.
+  const editStep = async (taskId: string, text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    let prior: PlanTask | undefined;
+    setTasks((prev) => {
+      if (!prev) return prev;
+      prior = prev.find((t) => t.id === taskId);
+      return prev.map((t) => (t.id === taskId ? { ...t, text: trimmed } : t));
+    });
+    setClassifyingId(taskId);
+    try {
+      const res = await fetch('/api/items/plan', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: planKind, entityId, action: 'edit', taskId, text: trimmed }),
+      });
+      if (!res.ok) throw new Error();
+      const d = (await res.json()) as { task?: PlanTask };
+      if (!d.task) throw new Error();
+      const graded = d.task;
+      setTasks((prev) => (prev ? prev.map((t) => (t.id === taskId ? graded : t)) : prev));
+    } catch {
+      if (prior) setTasks((prev) => (prev ? prev.map((t) => (t.id === taskId ? prior! : t)) : prev));
+    } finally {
+      setClassifyingId(null);
+    }
+  };
 
-  return { tasks: liveTasks, loading, failed, hasBreakdown, pending, toggle, dismiss };
+  // Flip a [System] step to done locally after a successful commit (the server already persisted it in
+  // /api/items/execute). Keeps the stepper's ✓ in sync without a full refetch.
+  const markSystemDone = (taskId: string) => {
+    setTasks((prev) => (prev ? prev.map((t) => (t.id === taskId ? { ...t, done: true } : t)) : prev));
+  };
+
+  // ── Hand a SINGLE step to a coworker. Optimistically flag the step delegating (spinner in the row),
+  // POST /api/items/delegate with the taskId → on success stamp the returned handedTo + done on the
+  // step (attribution + the coworker's output). On failure, clear the pending flag (nothing marked).
+  const delegateStep = async (taskId: string, agentId: string, agentName: string): Promise<boolean> => {
+    if (delegatingId) return false;
+    setDelegatingId(taskId);
+    try {
+      const res = await fetch('/api/items/delegate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: planKind, entityId, agentId, taskId }),
+      });
+      if (!res.ok) throw new Error();
+      const d = (await res.json()) as { handedTo?: HandedTo };
+      const handedTo = d.handedTo ?? { agentId, agentName };
+      setTasks((prev) => (prev ? prev.map((t) => (t.id === taskId ? { ...t, done: true, handedTo } : t)) : prev));
+      return true;
+    } catch {
+      return false;
+    } finally {
+      setDelegatingId(null);
+    }
+  };
+
+  // ── Hand the WHOLE item to a coworker. Uses the sentinel id for the pending state; on success stamps
+  // handedTo + done on every live (non-dismissed, not-done, not-already-handed) step — mirroring the
+  // server's whole-item marking.
+  const delegateItem = async (agentId: string, agentName: string): Promise<boolean> => {
+    if (delegatingId) return false;
+    setDelegatingId(ITEM_DELEGATE_ID);
+    try {
+      const res = await fetch('/api/items/delegate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: planKind, entityId, agentId }),
+      });
+      if (!res.ok) throw new Error();
+      const d = (await res.json()) as { handedTo?: HandedTo };
+      const handedTo = d.handedTo ?? { agentId, agentName };
+      setTasks((prev) =>
+        prev
+          ? prev.map((t) => (!t.dismissed && !t.done && !t.handedTo ? { ...t, done: true, handedTo } : t))
+          : prev,
+      );
+      return true;
+    } catch {
+      return false;
+    } finally {
+      setDelegatingId(null);
+    }
+  };
+
+  // The ≥2-task breakdown gate — a real multi-step plan, counting ALL identified tasks (including
+  // crossed-out ones). Crossing steps out does NOT collapse the panel: a workflow the user has triaged
+  // stays visible. (A user-added step counts toward it — it's in `tasks`.)
+  const hasBreakdown = !loading && !failed && !!tasks && tasks.length >= 2;
+
+  return { tasks, loading, failed, hasBreakdown, pending, classifyingId, toggle, dismiss, addStep, editStep, markSystemDone, delegatingId, delegateStep, delegateItem };
 }
 
 // ── One step in the "Identified tasks" workflow stepper. A vertical timeline row: a NODE (✦ for a
 // system step, a [You] checkbox for a your step) + a CONNECTOR line to the next node + a SHORT title
-// that expands to the fuller `detail` on click + the row action (Draft → / done checkbox) + a quiet
-// dismiss ✕. Dismissing fades the row out (300ms) then calls `onDismiss` (which persists + filters it).
+// that expands to the fuller `detail` on click + the row action (Draft → / done checkbox) + a ✕ that
+// toggles the step's "not needed" state. A dismissed step STAYS in the workflow — rendered struck-
+// through + greyed, its node dimmed, and its action disabled (set aside, not removed). The ✕ is a
+// reversible toggle: click to cross out, click again to restore. The strike + grey animates smoothly.
 function StepperRow({
   task,
   isLast,
-  canDraft,
-  draftLabel,
-  onDraft,
+  actionLabel,
+  onAction,
   onToggle,
   onDismiss,
+  onEdit,
+  onDelegate,
+  delegating,
+  classifying,
   busy,
 }: {
   task: PlanTask;
   isLast: boolean;
-  canDraft: boolean;
-  draftLabel: string;
-  onDraft?: () => void;
+  actionLabel: string | null;       // the row's system action button label (null → quiet hint)
+  onAction?: () => void;            // opens the prepared action (compose panel OR invite card)
   onToggle: () => void;
   onDismiss: () => void;
+  onEdit: (text: string) => void;   // re-classify this step with new text
+  onDelegate?: (w: Coworker) => void; // hand THIS step to a coworker (opens the picker)
+  delegating: boolean;              // this step is being delegated — show a spinner
+  classifying: boolean;             // this step is being (re)classified — show a quiet "classifying…"
   busy: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const [exiting, setExiting] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draftText, setDraftText] = useState(task.text);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
   const isSystem = task.actor === 'system';
   const hasDetail = !!task.detail?.trim();
+  const crossed = !!task.dismissed; // "not needed" — visible but struck-through, action disabled
+  const handed = task.handedTo;     // a coworker executed this step
 
-  const startDismiss = (e: React.MouseEvent) => {
+  useEffect(() => {
+    if (editing) { setDraftText(task.text); inputRef.current?.focus(); inputRef.current?.select(); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editing]);
+
+  const handleDismiss = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (exiting) return;
-    setExiting(true);
-    setTimeout(onDismiss, 300); // fade, then persist + unmount via the parent's filter
+    if (busy) return;
+    onDismiss(); // toggle "not needed" (persisted); the row stays mounted, just crosses/un-crosses
+  };
+
+  const commitEdit = () => {
+    const t = draftText.trim();
+    setEditing(false);
+    if (t && t !== task.text) onEdit(t);   // only re-classify on a real change
   };
 
   return (
-    <li className={`relative pl-8 transition-all duration-300 ease-out ${exiting ? 'opacity-0 -translate-x-1' : 'opacity-100'}`}>
+    <li className="relative pl-8">
       {/* Connector line — runs from just under this node to the next; hidden on the last step. */}
       {!isLast && <span aria-hidden className="absolute left-[11px] top-6 bottom-[-6px] w-px bg-neutral-200" />}
 
-      {/* Node — ✦ for a system step, a checkbox for a [You] step. Sits on the connector line. */}
-      {isSystem ? (
-        <span className="absolute left-0 top-[3px] flex h-[23px] w-[23px] items-center justify-center rounded-full bg-indigo-50 ring-2 ring-white">
-          <SparklesIcon className="h-3.5 w-3.5 text-indigo-500" />
+      {/* Node — a coworker avatar when the step was handed off; else ✦ for a system step / a checkbox
+          for a [You] step. Dimmed when crossed out; pulses while classifying/delegating. */}
+      {handed ? (
+        <span className="absolute left-0 top-[3px] flex h-[23px] w-[23px] items-center justify-center rounded-full ring-2 ring-white bg-white">
+          <CoworkerAvatar worker={{ name: handed.agentName, worker_role: handed.workerRole ?? null }} size={21} />
+        </span>
+      ) : delegating ? (
+        <span className="absolute left-0 top-[3px] flex h-[23px] w-[23px] items-center justify-center rounded-full ring-2 ring-white bg-indigo-50">
+          <span className="w-3 h-3 rounded-full border-2 border-indigo-300 border-t-indigo-600 animate-spin" />
+        </span>
+      ) : isSystem ? (
+        // A committed [System] step (done — e.g. an invite was sent) shows an emerald ✓; otherwise ✦.
+        <span className={`absolute left-0 top-[3px] flex h-[23px] w-[23px] items-center justify-center rounded-full ring-2 ring-white transition-colors duration-300 ${task.done ? 'bg-emerald-500' : crossed ? 'bg-neutral-100' : 'bg-indigo-50'} ${classifying ? 'animate-pulse' : ''}`}>
+          {task.done ? (
+            <CheckIcon className="h-3.5 w-3.5 text-white" />
+          ) : (
+            <SparklesIcon className={`h-3.5 w-3.5 transition-colors duration-300 ${crossed ? 'text-neutral-300' : 'text-indigo-500'}`} />
+          )}
         </span>
       ) : (
         <button
           onClick={onToggle}
-          disabled={busy}
+          disabled={busy || crossed || classifying}
           aria-pressed={!!task.done}
-          title={task.done ? 'Mark not done' : 'Mark done'}
-          className={`absolute left-0 top-[3px] flex h-[23px] w-[23px] items-center justify-center rounded-full ring-2 ring-white border transition-colors ${task.done ? 'bg-emerald-500 border-emerald-500 text-white' : 'bg-white border-neutral-300 text-transparent hover:border-neutral-400'}`}
+          title={crossed ? 'Set aside' : task.done ? 'Mark not done' : 'Mark done'}
+          className={`absolute left-0 top-[3px] flex h-[23px] w-[23px] items-center justify-center rounded-full ring-2 ring-white border transition-colors duration-300 ${classifying ? 'animate-pulse' : ''} ${crossed ? 'bg-neutral-50 border-neutral-200 text-transparent cursor-default' : task.done ? 'bg-emerald-500 border-emerald-500 text-white' : 'bg-white border-neutral-300 text-transparent hover:border-neutral-400'}`}
         >
           <CheckIcon className="h-3 w-3" />
         </button>
@@ -449,43 +1194,133 @@ function StepperRow({
       {/* Row body */}
       <div className="group/step pb-3">
         <div className="flex items-start gap-2">
-          {/* Title (+ optional expand affordance). Click the row to reveal `detail`. */}
-          <button
-            onClick={() => hasDetail && setExpanded((v) => !v)}
-            className={`min-w-0 flex-1 text-left ${hasDetail ? 'cursor-pointer' : 'cursor-default'}`}
-          >
-            <span className="flex items-center gap-1">
-              <span className={`text-[13px] font-medium leading-snug ${task.done ? 'text-neutral-400 line-through' : 'text-neutral-800'}`}>{task.text}</span>
-              {hasDetail && (
-                <ChevronDownIcon className={`w-3 h-3 flex-shrink-0 text-neutral-300 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`} />
-              )}
-            </span>
-          </button>
+          {editing ? (
+            // Inline edit — the title becomes an editable input; Enter (or blur) saves → re-classify,
+            // Esc cancels. Lightweight, no builder.
+            <input
+              ref={inputRef}
+              value={draftText}
+              onChange={(e) => setDraftText(e.target.value)}
+              onBlur={commitEdit}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') { e.preventDefault(); commitEdit(); }
+                else if (e.key === 'Escape') { e.preventDefault(); setEditing(false); }
+              }}
+              className="min-w-0 flex-1 bg-white border border-indigo-300 rounded-md px-2 py-1 text-[13px] font-medium text-neutral-800 focus:outline-none"
+            />
+          ) : (
+            // Title (+ optional expand affordance). Click reveals `detail`; DOUBLE-click to edit. A tiny
+            // pencil affordance appears on hover for an active (not crossed) step.
+            <button
+              onClick={() => hasDetail && setExpanded((v) => !v)}
+              onDoubleClick={() => !crossed && !classifying && setEditing(true)}
+              className={`min-w-0 flex-1 text-left ${hasDetail ? 'cursor-pointer' : 'cursor-default'}`}
+            >
+              <span className="flex items-center gap-1">
+                <span className={`text-[13px] font-medium leading-snug transition-colors duration-300 ${crossed ? 'text-neutral-400 line-through' : task.done ? 'text-neutral-400 line-through' : 'text-neutral-800'}`}>{task.text}</span>
+                {hasDetail && (
+                  <ChevronDownIcon className={`w-3 h-3 flex-shrink-0 text-neutral-300 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`} />
+                )}
+              </span>
+            </button>
+          )}
 
-          {/* Dismiss — every step is removable (system + you). Quiet, appears on row hover. */}
-          <button
-            onClick={startDismiss}
-            disabled={busy || exiting}
-            title="Not needed — remove this step"
-            aria-label="Remove step"
-            className="flex-shrink-0 -mt-0.5 p-0.5 text-neutral-300 opacity-0 group-hover/step:opacity-100 focus:opacity-100 hover:text-rose-500 transition-all"
-          >
-            <XMarkIcon className="w-3.5 h-3.5" />
-          </button>
+          {!editing && (
+            <>
+              {/* 👤 — quiet per-step "Hand to a coworker". Hover-revealed on active, not-yet-handed steps.
+                  Opens the picker anchored to this row; pick → delegate THIS step. */}
+              {!crossed && !handed && onDelegate && (
+                <div className="relative flex-shrink-0 -mt-0.5">
+                  <button
+                    onClick={(e) => { e.stopPropagation(); if (!busy && !classifying && !delegating) setPickerOpen((v) => !v); }}
+                    disabled={busy || classifying || delegating}
+                    title="Hand this step to a coworker"
+                    aria-label="Hand step to a coworker"
+                    className="p-0.5 text-neutral-300 opacity-0 group-hover/step:opacity-100 focus:opacity-100 hover:text-indigo-600 transition-all disabled:opacity-40"
+                  >
+                    <UserPlusIcon className="w-3.5 h-3.5" />
+                  </button>
+                  {pickerOpen && (
+                    <CoworkerPicker
+                      align="right"
+                      onPick={(w) => { setPickerOpen(false); onDelegate(w); }}
+                      onClose={() => setPickerOpen(false)}
+                    />
+                  )}
+                </div>
+              )}
+              {/* ✎ — edit the step's text (re-classified on save). Quiet, hover-revealed, active steps only. */}
+              {!crossed && !handed && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); if (!busy && !classifying) setEditing(true); }}
+                  disabled={busy || classifying}
+                  title="Edit this step"
+                  aria-label="Edit step"
+                  className="flex-shrink-0 -mt-0.5 p-0.5 text-neutral-300 opacity-0 group-hover/step:opacity-100 focus:opacity-100 hover:text-indigo-600 transition-all disabled:opacity-40"
+                >
+                  <PencilIcon className="w-3.5 h-3.5" />
+                </button>
+              )}
+              {/* ✕ — toggles "not needed". Crossing out keeps the step visible but struck + disabled; click
+                  again to restore. Quiet on hover when active; when crossed it stays visible (amber). */}
+              {!handed && (
+                <button
+                  onClick={handleDismiss}
+                  disabled={busy}
+                  title={crossed ? 'Restore — mark needed again' : 'Not needed — set this step aside'}
+                  aria-label={crossed ? 'Restore step' : 'Set step aside'}
+                  aria-pressed={crossed}
+                  className={`flex-shrink-0 -mt-0.5 p-0.5 transition-all disabled:opacity-40 ${crossed ? 'text-amber-500 opacity-100 hover:text-amber-600' : 'text-neutral-300 opacity-0 group-hover/step:opacity-100 focus:opacity-100 hover:text-rose-500'}`}
+                >
+                  <XMarkIcon className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </>
+          )}
         </div>
 
         {/* Expandable detail — the fuller one-sentence explanation. */}
-        {hasDetail && (
+        {hasDetail && !editing && (
           <div className={`grid transition-all duration-300 ease-out ${expanded ? 'grid-rows-[1fr] opacity-100 mt-1' : 'grid-rows-[0fr] opacity-0'}`}>
-            <p className="overflow-hidden text-[12px] text-neutral-500 leading-relaxed">{task.detail}</p>
+            <p className={`overflow-hidden text-[12px] leading-relaxed transition-colors duration-300 ${crossed ? 'text-neutral-300 line-through' : 'text-neutral-500'}`}>{task.detail}</p>
           </div>
         )}
 
-        {/* Action / status line */}
+        {/* Handed-off result — the coworker's returned deliverable/summary, shown inline (collapsible). */}
+        {handed?.output && (
+          <details className="mt-1.5 group/handed">
+            <summary className="cursor-pointer list-none text-[11px] font-medium text-emerald-700/80 hover:text-emerald-700 inline-flex items-center gap-1">
+              <ChevronDownIcon className="w-3 h-3 transition-transform group-open/handed:rotate-180" />
+              What {handed.agentName} handed back
+            </summary>
+            <div className="mt-1 rounded-lg border border-emerald-100 bg-emerald-50/40 px-2.5 py-2 text-[12px] leading-relaxed text-neutral-700 whitespace-pre-wrap max-h-64 overflow-y-auto">
+              {handed.output}
+            </div>
+          </details>
+        )}
+
+        {/* Action / status line. Handed-off / delegating states win; then classifying / crossed-out;
+            then the system action / [You] hint. */}
         <div className="mt-1 flex items-center gap-2">
-          {isSystem ? (
-            canDraft && onDraft ? (
-              <button onClick={onDraft} className="text-[11.5px] font-medium text-indigo-600 hover:text-indigo-700">{draftLabel}</button>
+          {handed ? (
+            <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-600">
+              <CheckIcon className="w-3 h-3" />Handed to {handed.agentName}
+            </span>
+          ) : delegating ? (
+            <span className="inline-flex items-center gap-1 text-[10.5px] text-indigo-500 italic">
+              <span className="w-2.5 h-2.5 rounded-full border-2 border-indigo-300 border-t-indigo-600 animate-spin" />
+              Handing off…
+            </span>
+          ) : classifying ? (
+            <span className="text-[10.5px] text-indigo-400 italic animate-pulse">Classifying…</span>
+          ) : crossed ? (
+            <span className="text-[10.5px] text-neutral-400 italic">Not needed</span>
+          ) : isSystem ? (
+            task.done ? (
+              // A committed [System] step (e.g. an invite was sent) — a done confirmation, no action.
+              <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-600"><CheckIcon className="w-3 h-3" />Done</span>
+            ) : actionLabel && onAction ? (
+              <button onClick={onAction} className="text-[11.5px] font-medium text-indigo-600 hover:text-indigo-700">{actionLabel}</button>
             ) : (
               <span className="text-[11px] text-indigo-500/80">{CAP_HINT[task.capability ?? 'analyze'] ?? 'I can handle this'}</span>
             )
@@ -494,6 +1329,53 @@ function StepperRow({
           )}
         </div>
       </div>
+    </li>
+  );
+}
+
+// ── "+ Add a step" — an inline affordance at the bottom of the stepper. Collapsed to a quiet link;
+// on click it becomes a single-line input. On submit it posts action:'add' (the parent's `onAdd` →
+// hook `addStep`), which classifies the text and appends the graded step (with a brief "classifying…").
+function AddStepRow({ onAdd }: { onAdd: (text: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState('');
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => { if (open) inputRef.current?.focus(); }, [open]);
+
+  const submit = () => {
+    const t = text.trim();
+    if (t) { onAdd(t); setText(''); }
+    // Keep the input open so several steps can be added in a row; a blank submit closes it.
+    else setOpen(false);
+  };
+
+  return (
+    <li className="relative pl-8">
+      {open ? (
+        <div className="pb-1">
+          <input
+            ref={inputRef}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') { e.preventDefault(); submit(); }
+              else if (e.key === 'Escape') { e.preventDefault(); setText(''); setOpen(false); }
+            }}
+            onBlur={() => { if (!text.trim()) setOpen(false); }}
+            placeholder="Add a step…"
+            className="w-full bg-white border border-indigo-300 rounded-md px-2 py-1.5 text-[13px] text-neutral-800 placeholder:text-neutral-300 focus:outline-none"
+          />
+          <p className="mt-1 text-[10.5px] text-neutral-400">Enter to add · Esc to cancel — we'll work out who does it.</p>
+        </div>
+      ) : (
+        <button
+          onClick={() => setOpen(true)}
+          className="inline-flex items-center gap-1 text-[12px] font-medium text-neutral-400 hover:text-indigo-600 transition-colors"
+        >
+          <PlusIcon className="w-3.5 h-3.5" /> Add a step
+        </button>
+      )}
     </li>
   );
 }
@@ -510,13 +1392,18 @@ function StepperRow({
 function WhatThisTakes({
   plan,
   onDraft,
+  onInvite,
   variant = 'inline',
 }: {
   plan: ItemPlan;
   onDraft?: () => void;
+  // onInvite — a system step routed to a calendar invite opens the InvitePreviewCard. Passed the step's
+  // id so the host can prepare/execute against that specific task. When absent, the step falls back to
+  // the quiet capability hint (the invite card isn't hosted in this variant's shell).
+  onInvite?: (taskId: string) => void;
   variant?: 'inline' | 'panel';
 }) {
-  const { tasks, loading, failed, pending, toggle, dismiss } = plan;
+  const { tasks, loading, failed, pending, classifyingId, toggle, dismiss, addStep, editStep, delegatingId, delegateStep } = plan;
 
   // In the two-column layout the parent renders the panel chrome + its own loading/failed handling
   // (the aside only mounts once a breakdown is confirmed via the hook's `hasBreakdown`), so the
@@ -540,40 +1427,68 @@ function WhatThisTakes({
   if (!tasks || tasks.length === 0) return null;
 
   // PLAN-CONTENT-DRIVEN gate (not kind-driven): the workflow renders for ANY kind, but ONLY when the
-  // plan is genuinely multi-step (≥2 NON-dismissed tasks). A single-task plan (a simple reply / one
-  // action) → hide it entirely; the docked composer / action bar already IS the one action. This is
-  // what keeps trivial replies clean while surfacing multi-step work.
+  // plan is genuinely multi-step (≥2 identified tasks — counting ALL, including crossed-out ones). A
+  // single-task plan (a simple reply / one action) → hide it entirely; the docked composer / action
+  // bar already IS the one action. Crossing steps out never collapses a triaged workflow.
   if (tasks.length < 2) return null;
 
-  // Collapse draft + send into ONE actionable affordance. Both a `draft` task and a `send` task open
-  // the SAME compose flow (which already drafts AND sends), so two "Draft →" buttons read as a
-  // duplicate. We render the button on the FIRST draft/send task only, and if BOTH exist relabel it
-  // "Draft & send →". The other draft/send task still lists (it's useful context) but shows the quiet
-  // capability hint instead of a second button.
-  const composeTaskIds = tasks.filter((t) => t.actor === 'system' && (t.capability === 'draft' || t.capability === 'send')).map((t) => t.id);
+  // CAPABILITY-AWARE action routing (stage 3a). A [System] draft/send step's action is chosen by its
+  // capability + intent (via `clientRouteActionType`, 1:1 with the server router):
+  //   • a calendar-invite step → its own "Send invite →" action (opens the InvitePreviewCard).
+  //   • every other draft/send step → the email compose flow (drafts AND sends), collapsed to ONE
+  //     "Draft →" / "Draft & send →" button on the FIRST such step (two would read as a duplicate).
+  // Crossed-out ("not needed") steps carry no action. Invite steps are excluded from the compose
+  // collapse so an invite + a reply on the same item each get their own action.
+  const activeSystemSteps = tasks.filter((t) => !t.dismissed && t.actor === 'system' && (t.capability === 'draft' || t.capability === 'send'));
+  const inviteIds = new Set(activeSystemSteps.filter((t) => clientRouteActionType(t) === 'calendar_invite').map((t) => t.id));
+  const composeTaskIds = activeSystemSteps.filter((t) => !inviteIds.has(t.id)).map((t) => t.id);
   const primaryComposeId = composeTaskIds[0] ?? null;
   const hasDraftAndSend =
-    tasks.some((t) => t.actor === 'system' && t.capability === 'draft') &&
-    tasks.some((t) => t.actor === 'system' && t.capability === 'send');
+    activeSystemSteps.some((t) => !inviteIds.has(t.id) && t.capability === 'draft') &&
+    activeSystemSteps.some((t) => !inviteIds.has(t.id) && t.capability === 'send');
   const composeLabel = hasDraftAndSend ? 'Draft & send →' : 'Draft →';
+
+  // Per-step action resolver — returns the {label, onAction} for the row's action button, or null (a
+  // quiet capability hint). Keeps StepperRow agnostic: it just renders whatever action it's handed.
+  const stepAction = (t: PlanTask): { label: string; onAction: () => void } | null => {
+    if (t.dismissed || t.actor !== 'system') return null;
+    if (inviteIds.has(t.id)) {
+      return onInvite ? { label: 'Send invite →', onAction: () => onInvite(t.id) } : null;
+    }
+    if (t.id === primaryComposeId && onDraft) return { label: composeLabel, onAction: onDraft };
+    return null;
+  };
 
   // The stepper — a connected vertical timeline (node → connector → node). Shared by both variants;
   // in 'panel' the parent owns the sticky "Identified tasks" header + legend, so we render just the <ol>.
   const stepper = (
     <ol className="relative">
-      {tasks.map((t, i) => (
-        <StepperRow
-          key={t.id}
-          task={t}
-          isLast={i === tasks.length - 1}
-          canDraft={t.id === primaryComposeId && !!onDraft}
-          draftLabel={composeLabel}
-          onDraft={onDraft}
-          onToggle={() => toggle(t)}
-          onDismiss={() => dismiss(t)}
-          busy={pending.has(t.id)}
-        />
-      ))}
+      {tasks.map((t) => {
+        const action = stepAction(t);
+        // A whole-item hand-off (sentinel id) shows every live step delegating; a per-step hand-off
+        // shows just that step. A busy step (any pending write) suppresses its own delegate affordance.
+        const itemDelegating = delegatingId === ITEM_DELEGATE_ID && !t.dismissed && !t.done && !t.handedTo;
+        const delegating = delegatingId === t.id || itemDelegating;
+        return (
+          <StepperRow
+            key={t.id}
+            task={t}
+            // Never the last node — the "+ Add a step" row always follows, so the connector runs down to it.
+            isLast={false}
+            actionLabel={action?.label ?? null}
+            onAction={action?.onAction}
+            onToggle={() => toggle(t)}
+            onDismiss={() => dismiss(t)}
+            onEdit={(text) => editStep(t.id, text)}
+            onDelegate={(w) => delegateStep(t.id, w.id, w.name)}
+            delegating={delegating}
+            classifying={classifyingId === t.id}
+            busy={pending.has(t.id)}
+          />
+        );
+      })}
+      {/* Add-a-step affordance — always at the bottom of an active plan. */}
+      <AddStepRow onAdd={addStep} />
     </ol>
   );
 
@@ -610,24 +1525,37 @@ function WhatThisTakes({
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 // The right column: the "Identified tasks" workflow lane — a width-animated COLUMN that REFLOWS the
-// main email column left (never overlays), mirroring the Activity panel's mechanism exactly. The
-// `p-2 bg-neutral-50` wrapper makes an inset gap; inside sits a FLAT `rounded-2xl bg-white border`
-// card (no drop-shadow — border-only, matching the cleaner deep-dive look). Narrower than before
-// (300px) so the email column gets the room. `hasBreakdown` animates the width open/closed. The inner
-// card holds a fixed width so it's simply CLIPPED during the animation rather than squishing.
+// main email column left (never overlays), mirroring the Activity panel's mechanism exactly. The lane
+// itself is WHITE (no grey fill) with a LEFT BORDER only, so it reads as a distinct column without an
+// inset grey gap — matching the flat deep-dive. Inside sits a bordered card (no drop-shadow — border-
+// only). Narrower than before (300px) so the email column gets the room. `hasBreakdown` animates the
+// width open/closed. The inner card holds a fixed width so it's simply CLIPPED during the animation.
 //
 // This panel is the SINGLE home for an item's actions when a breakdown exists: the workflow steps
 // (each with its own "Draft →" / done affordance) + a quiet "Hand to a coworker" FOOTER — so those
 // actions aren't also floating in the main column.
-function TasksPanel({ hasBreakdown, children }: { hasBreakdown: boolean; children: React.ReactNode }) {
+function TasksPanel({ hasBreakdown, plan, children }: { hasBreakdown: boolean; plan?: ItemPlan; children: React.ReactNode }) {
+  // The item-level "Hand to a coworker" footer state: pending while the whole-item hand-off runs, and
+  // resolved (attribution) once every live step carries the same handedTo. Derived from the shared plan.
+  const itemDelegating = plan?.delegatingId === ITEM_DELEGATE_ID;
+  const liveHandedTo = (() => {
+    const ts = plan?.tasks;
+    if (!ts || !ts.length) return null;
+    const live = ts.filter((t) => !t.dismissed);
+    // Only treat as a whole-item hand-off when every live step was handed to the SAME coworker.
+    if (live.length === 0 || !live.every((t) => t.handedTo)) return null;
+    const first = live[0].handedTo!;
+    return live.every((t) => t.handedTo?.agentId === first.agentId) ? first : null;
+  })();
   return (
     <aside
       aria-hidden={!hasBreakdown}
-      className={`hidden lg:flex flex-col min-h-0 flex-shrink-0 bg-neutral-50 overflow-hidden transition-[width] duration-300 ease-out ${
-        hasBreakdown ? 'w-[300px] xl:w-[320px]' : 'w-0 pointer-events-none'
+      className={`hidden lg:flex flex-col min-h-0 flex-shrink-0 bg-white border-l border-neutral-200 overflow-hidden transition-[width] duration-300 ease-out ${
+        hasBreakdown ? 'w-[300px] xl:w-[320px]' : 'w-0 pointer-events-none border-l-0'
       }`}
     >
-      {/* Inset card — fixed width so it clips cleanly while the column animates. Flat, border-only. */}
+      {/* Inner card — fixed width so it clips cleanly while the column animates. Flat, border-only,
+          white (the lane's own left border is what separates it from the email column). */}
       <div className="flex-1 min-h-0 p-2 w-[300px] xl:w-[320px]">
         <div className="h-full flex flex-col rounded-2xl bg-white border border-neutral-200/70 overflow-hidden">
           {/* Sticky header — "Identified tasks" + the ✦ / ○ legend. Matches the Activity panel header. */}
@@ -645,9 +1573,14 @@ function TasksPanel({ hasBreakdown, children }: { hasBreakdown: boolean; childre
             {children}
           </div>
           {/* Footer — the item-level "Hand to a coworker" affordance (relocated out of the main column
-              so it isn't floating redundantly beside the workflow steps). Disabled / coming soon. */}
+              so it isn't floating redundantly beside the workflow steps). Delegates the WHOLE item. */}
           <div className="flex-shrink-0 border-t border-neutral-100 px-4 py-3 min-w-[268px]">
-            <HandToCoworkerButton size="sm" />
+            <HandToCoworkerButton
+              size="sm"
+              onDelegate={plan ? (w) => plan.delegateItem(w.id, w.name) : undefined}
+              pending={itemDelegating}
+              handedTo={liveHandedTo}
+            />
           </div>
         </div>
       </div>
@@ -663,10 +1596,12 @@ function TasksPanel({ hasBreakdown, children }: { hasBreakdown: boolean; childre
 function DeepDiveShell({
   hasBreakdown,
   panel,
+  plan,
   children,
 }: {
   hasBreakdown: boolean;
   panel: React.ReactNode;
+  plan?: ItemPlan;             // the shared plan — the panel footer's whole-item "Hand to a coworker" uses it
   children: React.ReactNode;
 }) {
   // The whole two-column block is centered. Its max width grows only when the tasks panel is present
@@ -681,7 +1616,7 @@ function DeepDiveShell({
       }`}
     >
       <div className="flex-1 min-w-0 flex flex-col h-full min-h-0">{children}</div>
-      <TasksPanel hasBreakdown={hasBreakdown}>{panel}</TasksPanel>
+      <TasksPanel hasBreakdown={hasBreakdown} plan={plan}>{panel}</TasksPanel>
     </div>
   );
 }
@@ -768,6 +1703,8 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
   const [sendErr, setSendErr] = useState<string | null>(null);
   const plan = useItemPlan('email', id);          // ONE /api/items/plan POST, shared by both instances
   const hasBreakdown = plan.hasBreakdown;         // ≥2-task plan → open the two-column layout
+  const inviteHost = useInviteHost('email', id, plan.markSystemDone); // hosts the InvitePreviewCard for a calendar-invite step
+  const atts = useReplyAttachments();             // shared inbox-style attach surface (base64 → send-reply)
   const editorRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null); // the docked reply composer — a draft-task scrolls here
 
@@ -799,7 +1736,7 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
     try {
       const res = await fetch(`/api/inbox/${id}/send-reply`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ customMessage: html }),
+        body: JSON.stringify({ customMessage: html, attachments: atts.attachments }),
       });
       if (res.ok) {
         setSent(true);
@@ -866,7 +1803,8 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
     // plan is a genuine ≥2-task breakdown; single column otherwise.
     <DeepDiveShell
       hasBreakdown={hasBreakdown}
-      panel={<WhatThisTakes plan={plan} variant="panel" onDraft={scrollToComposer} />}
+      plan={plan}
+      panel={<WhatThisTakes plan={plan} variant="panel" onDraft={scrollToComposer} onInvite={inviteHost.openInvite} />}
     >
       {/* 1 — Header: subject + sender + date (fixed at top) */}
       <DetailHeader
@@ -903,8 +1841,13 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
           <WhatThisTakes
             plan={plan}
             onDraft={scrollToComposer}
+            onInvite={inviteHost.openInvite}
           />
         </div>
+
+        {/* Prepared calendar-invite card — mounted when a calendar-invite step is triggered. Grounded,
+            editable, approve-to-send (the ONLY place an invite fires is the Approve click → execute). */}
+        {inviteHost.node && <div>{inviteHost.node}</div>}
 
         {/* Suggested angle (light line) — kept just above the docked composer */}
         {angle && (
@@ -932,7 +1875,8 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
             ) : (
               <>
                 {/* The SAME rich editor the inbox uses (bold/italic/underline/font size/lists),
-                    seeded with the prepared draft converted to simple HTML. */}
+                    seeded with the prepared draft converted to simple HTML. Same attach affordance as
+                    the inbox reply — the 📎 menu in the toolbar + chips above it. */}
                 <ReplyEditor
                   ref={editorRef}
                   initialHTML={draftToHTML(draft)}
@@ -940,7 +1884,10 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
                   placeholder="Write your reply…"
                   minHeight={120}
                   maxHeight={280}
-                />
+                  toolbarLeading={<AttachMenu atts={atts} />}
+                >
+                  <AttachSurface atts={atts} />
+                </ReplyEditor>
                 {sendErr && <p className="text-[12px] text-rose-600 mt-2">{sendErr}</p>}
                 <div className="mt-3 flex items-center gap-4">
                   <button
@@ -963,6 +1910,11 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
           </div>
         )}
       </div>
+
+      {/* KB file picker modal (shared with the inbox) — "From knowledge base" attach path. */}
+      {atts.kbPickerOpen && (
+        <KbFilePicker onSelect={atts.onKbSelect} onClose={() => atts.setKbPickerOpen(false)} />
+      )}
     </DeepDiveShell>
   );
 }
@@ -1017,6 +1969,7 @@ function MeetingDetail({ id }: { id: string }) {
   const [acting, setActing] = useState<Set<string>>(new Set());
   const plan = useItemPlan('meeting', id);        // ONE /api/items/plan POST, shared by both instances
   const hasBreakdown = plan.hasBreakdown;         // ≥2-task plan → open the two-column layout
+  const inviteHost = useInviteHost('meeting', id, plan.markSystemDone);
 
   useEffect(() => {
     let alive = true;
@@ -1047,7 +2000,8 @@ function MeetingDetail({ id }: { id: string }) {
   return (
     <DeepDiveShell
       hasBreakdown={hasBreakdown}
-      panel={<WhatThisTakes plan={plan} variant="panel" onDraft={() => setComposing(true)} />}
+      plan={plan}
+      panel={<WhatThisTakes plan={plan} variant="panel" onDraft={() => setComposing(true)} onInvite={inviteHost.openInvite} />}
     >
       {/* Header */}
       <DetailHeader
@@ -1084,6 +2038,10 @@ function MeetingDetail({ id }: { id: string }) {
             {composing && (
               <ComposePanel kind="meeting" entityId={id} />
             )}
+
+            {/* Prepared calendar-invite card — a calendar-invite step opens it here (grounded, editable,
+                approve-to-send). */}
+            {inviteHost.node}
 
             {/* Suggested next step — the one call-to-action, kept prominent up top (indigo accent). */}
             {/* Suggested next step — a highlighted indigo CALLOUT card (system accent), not a plain
@@ -1203,7 +2161,7 @@ function MeetingDetail({ id }: { id: string }) {
                 in the right TASKS PANEL). BELOW the context (action-first ordering). A system
                 draft-task opens the follow-up composer at the top. */}
             <div className="lg:hidden">
-              <WhatThisTakes plan={plan} onDraft={() => setComposing(true)} />
+              <WhatThisTakes plan={plan} onDraft={() => setComposing(true)} onInvite={inviteHost.openInvite} />
             </div>
           </>
         )}
@@ -1238,6 +2196,7 @@ function CommitmentDetail({ id }: { id: string }) {
   const [emailed, setEmailed] = useState(false);      // sent the message → offer to mark done
   const plan = useItemPlan('commitment', id);         // ONE /api/items/plan POST, shared by both instances
   const hasBreakdown = plan.hasBreakdown;             // ≥2-task plan → open the two-column layout
+  const inviteHost = useInviteHost('commitment', id, plan.markSystemDone);
 
   useEffect(() => {
     let alive = true;
@@ -1266,7 +2225,8 @@ function CommitmentDetail({ id }: { id: string }) {
   return (
     <DeepDiveShell
       hasBreakdown={hasBreakdown}
-      panel={<WhatThisTakes plan={plan} variant="panel" onDraft={() => setComposing(true)} />}
+      plan={plan}
+      panel={<WhatThisTakes plan={plan} variant="panel" onDraft={() => setComposing(true)} onInvite={inviteHost.openInvite} />}
     >
       {/* Header */}
       <DetailHeader
@@ -1321,6 +2281,9 @@ function CommitmentDetail({ id }: { id: string }) {
               </div>
             )}
 
+            {/* Prepared calendar-invite card — a calendar-invite step opens it here. */}
+            {inviteHost.node}
+
             {src ? (
               <section>
                 <h2 className={SECTION_LABEL}>
@@ -1349,7 +2312,7 @@ function CommitmentDetail({ id }: { id: string }) {
                 in the right TASKS PANEL). BELOW the source context (action-first ordering). A system
                 draft-task opens the compose panel at the top. */}
             <div className="lg:hidden">
-              <WhatThisTakes plan={plan} onDraft={() => setComposing(true)} />
+              <WhatThisTakes plan={plan} onDraft={() => setComposing(true)} onInvite={inviteHost.openInvite} />
             </div>
           </>
         )}
@@ -1403,6 +2366,8 @@ function FollowUpDetail({ id }: { id: string }) {
   const [sendErr, setSendErr] = useState<string | null>(null);
   const plan = useItemPlan('followup', id);       // ONE /api/items/plan POST, shared by both instances
   const hasBreakdown = plan.hasBreakdown;         // ≥2-task plan → open the two-column layout
+  const inviteHost = useInviteHost('followup', id, plan.markSystemDone);
+  const atts = useReplyAttachments();             // shared inbox-style attach surface (base64 → nudge PATCH)
   const editorRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null); // the docked nudge composer — a draft-task scrolls here
 
@@ -1416,8 +2381,8 @@ function FollowUpDetail({ id }: { id: string }) {
     // Draft a nudge (plain text) — same endpoint the Home "Draft nudge" uses.
     fetch(`/api/commitments/${id}/nudge`, { method: 'POST' })
       .then(r => r.json())
-      .then(d => { if (alive) setDraft(d.draft || 'Could not draft a nudge.'); })
-      .catch(() => { if (alive) setDraft('Could not draft a nudge.'); })
+      .then(d => { if (alive) setDraft(d.draft || 'Could not write a follow-up.'); })
+      .catch(() => { if (alive) setDraft('Could not write a follow-up.'); })
       .finally(() => { if (alive) setDraftLoading(false); });
 
     return () => { alive = false; };
@@ -1432,17 +2397,17 @@ function FollowUpDetail({ id }: { id: string }) {
     try {
       const res = await fetch(`/api/commitments/${id}/nudge`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ body: text }),
+        body: JSON.stringify({ body: text, attachments: atts.attachments }),
       });
       if (res.ok) {
         setSent(true);
         setTimeout(() => router.back(), 900);
       } else {
         const d = await res.json().catch(() => ({}));
-        setSendErr(d.error || 'Could not send the nudge.');
+        setSendErr(d.error || 'Could not send the follow-up.');
       }
     } catch {
-      setSendErr('Could not send the nudge.');
+      setSendErr('Could not send the follow-up.');
     } finally {
       setSending(false);
     }
@@ -1482,7 +2447,8 @@ function FollowUpDetail({ id }: { id: string }) {
   return (
     <DeepDiveShell
       hasBreakdown={hasBreakdown}
-      panel={<WhatThisTakes plan={plan} variant="panel" onDraft={scrollToComposer} />}
+      plan={plan}
+      panel={<WhatThisTakes plan={plan} variant="panel" onDraft={scrollToComposer} onInvite={inviteHost.openInvite} />}
     >
       {/* Header */}
       <DetailHeader
@@ -1501,7 +2467,7 @@ function FollowUpDetail({ id }: { id: string }) {
           {threadErr ? (
             <p className="text-[13px] text-neutral-400">Could not load the conversation.</p>
           ) : !hasMessages && thread ? (
-            <p className="text-[13px] text-neutral-400 leading-relaxed">No linked email thread — write a nudge below.</p>
+            <p className="text-[13px] text-neutral-400 leading-relaxed">No linked email thread — write a follow-up below.</p>
           ) : (
             <ThreadMessages messages={threadMessages} fallback={null} />
           )}
@@ -1514,17 +2480,21 @@ function FollowUpDetail({ id }: { id: string }) {
           <WhatThisTakes
             plan={plan}
             onDraft={scrollToComposer}
+            onInvite={inviteHost.openInvite}
           />
         </div>
+
+        {/* Prepared calendar-invite card — a calendar-invite step opens it here. */}
+        {inviteHost.node && <div>{inviteHost.node}</div>}
       </div>
 
       {/* Docked nudge composer */}
       <div ref={composerRef} className="flex-shrink-0 border-t border-neutral-200 bg-neutral-50/80 backdrop-blur px-7 py-4 max-h-[45vh] overflow-y-auto">
-        <h2 className={SECTION_LABEL}>Your nudge</h2>
+        <h2 className={SECTION_LABEL}>Your follow-up</h2>
         {sent ? (
           <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50/60 px-4 py-4">
             <CheckIcon className="w-4 h-4 text-emerald-600" />
-            <p className="text-[13px] font-medium text-emerald-700">Nudge sent.</p>
+            <p className="text-[13px] font-medium text-emerald-700">Follow-up sent.</p>
           </div>
         ) : (
           <div className={`${CARD} p-4`}>
@@ -1535,10 +2505,13 @@ function FollowUpDetail({ id }: { id: string }) {
                 <ReplyEditor
                   ref={editorRef}
                   initialHTML={draftToHTML(draft)}
-                  placeholder="Write your nudge…"
+                  placeholder="Write your follow-up…"
                   minHeight={110}
                   maxHeight={260}
-                />
+                  toolbarLeading={<AttachMenu atts={atts} />}
+                >
+                  <AttachSurface atts={atts} />
+                </ReplyEditor>
                 {sendErr && <p className="text-[12px] text-rose-600 mt-2">{sendErr}</p>}
                 <div className="mt-3 flex items-center gap-4">
                   <button
@@ -1546,7 +2519,7 @@ function FollowUpDetail({ id }: { id: string }) {
                     disabled={sending || draftLoading}
                     className="inline-flex items-center rounded-lg bg-indigo-600 text-white px-5 py-2 text-[13.5px] font-medium hover:bg-indigo-700 disabled:opacity-60 transition-colors"
                   >
-                    {sending ? 'Sending…' : 'Send nudge'}
+                    {sending ? 'Sending…' : 'Send follow-up'}
                   </button>
                   <button
                     onClick={copy}
@@ -1561,6 +2534,11 @@ function FollowUpDetail({ id }: { id: string }) {
           </div>
         )}
       </div>
+
+      {/* KB file picker modal (shared with the inbox) — "From knowledge base" attach path. */}
+      {atts.kbPickerOpen && (
+        <KbFilePicker onSelect={atts.onKbSelect} onClose={() => atts.setKbPickerOpen(false)} />
+      )}
     </DeepDiveShell>
   );
 }

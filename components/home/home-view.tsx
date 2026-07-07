@@ -319,6 +319,23 @@ function useCommitmentAct(id?: string, onCleared?: (id: string) => void, onUndoC
   return { removed, exiting, acting, act };
 }
 
+// ── Expandable list — the shared "show a few, expand to all" pattern (same affordance as DigestList's
+// "Show N more"). No hard cap: renders `limit` rows, then a single "Show N more" button reveals the
+// rest. Reused by the commitment lanes so nothing is ever hidden — just folded. Generic over the row.
+function ExpandableRows<T>({ items, limit = 4, render }: { items: T[]; limit?: number; render: (item: T, index: number) => React.ReactNode }) {
+  const [showAll, setShowAll] = useState(false);
+  const visible = showAll ? items : items.slice(0, limit);
+  const more = items.length - limit;
+  return (
+    <>
+      {visible.map((it, i) => render(it, i))}
+      {!showAll && more > 0 && (
+        <button onClick={() => setShowAll(true)} className="pt-1 text-[12.5px] font-medium text-indigo-600 hover:text-indigo-700">Show {more} more</button>
+      )}
+    </>
+  );
+}
+
 // ── DIGEST — the editorial "what needs you" list. Each reply is a typeset briefing line, not a card:
 // a bold who · subject, a light one-line ask, and a quiet indigo affordance. Clicking the row opens
 // the depth inline — the suggested angle, the editable draft (Send/Copy), and Open thread. Rows are
@@ -394,7 +411,7 @@ function DigestReply({ m, onDismiss, emphasis = false, onUndoInbox }: { m: Diges
         {m.itemId && (
           <span className="flex-shrink-0 flex items-center gap-2.5 mt-0.5">
             <span className="inline-flex items-center gap-1 text-[12.5px] font-medium text-indigo-600 hover:text-indigo-700 whitespace-nowrap">
-              {ready ? 'Send draft' : 'Open'}
+              {ready ? 'Reply' : 'Open'}
               <ArrowRightIcon className="w-3.5 h-3.5" />
             </span>
             <button onClick={(e) => act('complete', e)} disabled={acting} title="Mark done"
@@ -435,8 +452,8 @@ function FollowUpItem({ f, index, onCleared, onUndoCommitment }: { f: { id?: str
     try {
       const res = await fetch(`/api/commitments/${f.id}/nudge`, { method: 'POST' });
       const d = await res.json();
-      setDraft(d.draft || 'Could not draft a nudge.');
-    } catch { setDraft('Could not draft a nudge.'); } finally { setLoading(false); }
+      setDraft(d.draft || 'Could not write a follow-up.');
+    } catch { setDraft('Could not write a follow-up.'); } finally { setLoading(false); }
   };
   const send = async () => {
     if (!draft || sending || !f.id) return;
@@ -446,8 +463,8 @@ function FollowUpItem({ f, index, onCleared, onUndoCommitment }: { f: { id?: str
         method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ body: draft }),
       });
       if (res.ok) { setSent(true); setOpen(false); }
-      else { const d = await res.json().catch(() => ({})); setErr(d.error || 'Could not send the nudge.'); }
-    } catch { setErr('Could not send the nudge.'); } finally { setSending(false); }
+      else { const d = await res.json().catch(() => ({})); setErr(d.error || 'Could not send the follow-up.'); }
+    } catch { setErr('Could not send the follow-up.'); } finally { setSending(false); }
   };
 
   if (removed) return null;
@@ -460,11 +477,11 @@ function FollowUpItem({ f, index, onCleared, onUndoCommitment }: { f: { id?: str
           className={`text-[13px] font-semibold text-neutral-800 leading-snug ${f.id ? 'cursor-pointer hover:text-indigo-700 transition-colors' : ''}`}>{f.who}</p>
         {f.status && <p className="text-[12.5px] text-neutral-500 mt-0.5 leading-snug">{f.status}</p>}
         {sent ? (
-          <p className="text-[12.5px] text-emerald-600 mt-1 leading-snug font-medium">Nudge sent ✓</p>
+          <p className="text-[12.5px] text-emerald-600 mt-1 leading-snug font-medium">Follow-up sent ✓</p>
         ) : f.id && (
           <button onClick={() => (open ? setOpen(false) : openNudge())}
             className="inline-flex items-center gap-1 text-[12.5px] font-medium text-indigo-600 hover:text-indigo-700 mt-1 transition-colors">
-            {loading ? 'Drafting…' : open ? 'Collapse' : 'Draft nudge'}
+            {loading ? 'Writing…' : open ? 'Collapse' : 'Follow up'}
             {!open && !loading && <ArrowRightIcon className="w-3.5 h-3.5" />}
           </button>
         )}
@@ -473,7 +490,7 @@ function FollowUpItem({ f, index, onCleared, onUndoCommitment }: { f: { id?: str
             {loading && <div className="h-16 rounded-xl bg-neutral-100 animate-pulse" />}
             {draft && (
               <div className="rounded-xl border border-neutral-200 bg-neutral-50/70 p-3">
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400 mb-1.5">Nudge draft</p>
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400 mb-1.5">Follow-up</p>
                 <textarea value={draft} onChange={(e) => setDraft(e.target.value)}
                   rows={Math.min(12, Math.max(4, draft.split('\n').length + 1))}
                   className="w-full bg-transparent text-[12.5px] text-neutral-700 leading-relaxed resize-none focus:outline-none" />
@@ -613,7 +630,7 @@ function StartHereReplyBody({ m, onDismiss, onUndoInbox }: { m: { who: string; a
         {m.itemId && (
           <div className="flex-shrink-0 flex items-center gap-1.5">
             <span className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 text-white px-3.5 py-2 text-[13px] font-medium hover:bg-indigo-700 transition-colors">
-              {ready ? '✦ Send draft' : 'Open'}
+              {ready ? 'Reply' : 'Open'}
               <ArrowRightIcon className="w-3.5 h-3.5" />
             </span>
             <button onClick={(e) => act('complete', e)} disabled={acting} title="Mark done" className="w-8 h-8 inline-flex items-center justify-center rounded-lg border border-neutral-200 text-neutral-400 hover:text-emerald-600 hover:border-emerald-200 hover:bg-emerald-50 transition-colors text-[14px]">✓</button>
@@ -1200,16 +1217,16 @@ export function HomeView() {
   if (hasFollowups) rail('followups', (
     <section>
       <Label count={followupsLive} icon={ClockIcon}>Ball in your court</Label>
-      <p className="text-[12px] text-neutral-400 -mt-1.5 mb-2.5 leading-snug">Waiting on others — nudge when it stalls.</p>
+      <p className="text-[12px] text-neutral-400 -mt-1.5 mb-2.5 leading-snug">Waiting on others — follow up when it stalls.</p>
       {followupsLive === 0 ? (
         <SectionCleared line="All caught up here — nothing waiting on you." />
       ) : (
       <div className="rounded-2xl border border-neutral-200/80 bg-white p-4">
         {b!.followups!.teaser && <p className="text-[12.5px] text-neutral-500 mb-3.5 leading-relaxed">{b!.followups!.teaser}</p>}
         <ol className="space-y-3.5">
-          {b!.followups!.items.map((f, i) => (
+          <ExpandableRows items={b!.followups!.items} render={(f, i) => (
             <FollowUpItem key={f.id || i} f={f} index={i} onCleared={onCleared} onUndoCommitment={toastCommitment} />
-          ))}
+          )} />
         </ol>
         {b!.followups!.closing && (
           <div className="mt-3.5 pt-3.5 border-t border-neutral-100 flex items-start gap-2">
@@ -1229,12 +1246,14 @@ export function HomeView() {
         <SectionCleared line="All caught up here." />
       ) : (
       <div className="space-y-2">
-        {b!.waitingOn.map(c => (
+        <ExpandableRows items={b!.waitingOn} render={(c) => (
           <CommitmentSideRow key={c.id} id={c.id} icon={ClockIcon} iconClass="text-amber-400" onCleared={onCleared} onUndoCommitment={toastCommitment}>
             <span className="text-[13px] text-neutral-800 truncate block">{c.description}</span>
-            <p className="text-[11.5px] text-neutral-400 mt-0.5">Waiting on {c.counterparty || 'them'} · {c.ageDays}d</p>
+            {/* Counterparty or source label; omit the "Waiting on X" name-line entirely when neither
+                is known (never a placeholder), still showing the age. */}
+            <p className="text-[11.5px] text-neutral-400 mt-0.5">{c.counterparty ? `Waiting on ${/^from /i.test(c.counterparty) ? c.counterparty.replace(/^from /i, '') : c.counterparty} · ` : ''}{c.ageDays}d</p>
           </CommitmentSideRow>
-        ))}
+        )} />
       </div>
       )}
     </section>
@@ -1465,7 +1484,7 @@ export function HomeView() {
                     <SectionCleared line="Nothing on your plate — you cleared it all." />
                   ) : (
                   <div className="space-y-2">
-                    {b.commitments.map(c => (
+                    <ExpandableRows items={b.commitments} render={(c) => (
                       <CommitmentSideRow key={c.id} id={c.id} href={`/item/${c.id}?kind=commitment`} icon={CheckCircleIcon} iconClass={c.overdue ? 'text-red-400' : 'text-neutral-300'} onCleared={onCleared} onUndoCommitment={toastCommitment}>
                         <div className="flex items-start justify-between gap-2">
                           <span className="text-[13px] text-neutral-800 leading-snug">{c.description}</span>
@@ -1475,9 +1494,11 @@ export function HomeView() {
                             </span>
                           )}
                         </div>
-                        {c.counterparty && <p className="text-[11.5px] text-neutral-400 mt-0.5">You owe {c.counterparty}</p>}
+                        {/* Counterparty OR a source-derived label ("from <meeting>"); we prefix "You owe"
+                            only for a real person, and show a source label verbatim (already reads "from …"). */}
+                        {c.counterparty && <p className="text-[11.5px] text-neutral-400 mt-0.5">{/^from /i.test(c.counterparty) ? c.counterparty : `You owe ${c.counterparty}`}</p>}
                       </CommitmentSideRow>
-                    ))}
+                    )} />
                   </div>
                   )}
                 </section>

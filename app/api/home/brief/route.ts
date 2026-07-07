@@ -18,6 +18,98 @@ const DAY = 86_400_000;
 const BRIEF_TTL = 3 * 60 * 60 * 1000;
 const MAX_PRIORITIES = 6;
 
+// ── Display-level dedup backstop for commitments ──────────────────────────────────────────────
+// Even before any data cleanup, existing near-duplicate commitment rows shouldn't double up in a
+// lane. General (token-overlap, no text special-casing — mirrors the extractor's write-time dedup):
+// two descriptions with heavy content-word overlap are the same obligation; keep the first, drop the
+// rest. Works for any wording/language; never merges distinct tasks that merely share a noun.
+const DEDUP_STOPWORDS = new Set([
+  'the', 'a', 'an', 'to', 'for', 'of', 'and', 'or', 'with', 'on', 'in', 'at', 'by', 'from', 'up',
+  'out', 'over', 'about', 'into', 'as', 'is', 'be', 'will', 'would', 'should', 'need', 'needs',
+  'please', 'get', 'send', 'this', 'that', 'it', 'them', 'me', 'you', 'we', 'i', 'he', 'she', 'they',
+]);
+function dedupNorm(s: string): string { return (s || '').toLowerCase().replace(/\s+/g, ' ').trim(); }
+function dedupTokens(s: string): Set<string> {
+  const toks = dedupNorm(s).replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(Boolean)
+    .filter((t) => t.length > 2 && !DEDUP_STOPWORDS.has(t));
+  return new Set(toks);
+}
+function sameObligation(a: string, b: string, threshold = 0.6): boolean {
+  const na = dedupNorm(a), nb = dedupNorm(b);
+  if (na === nb) return true;
+  if (na && nb && (na.includes(nb) || nb.includes(na))) return true;
+  const ta = dedupTokens(a), tb = dedupTokens(b);
+  if (!ta.size || !tb.size) return false;
+  let inter = 0;
+  for (const t of ta) if (tb.has(t)) inter++;
+  const union = ta.size + tb.size - inter;
+  return union > 0 && inter / union >= threshold;
+}
+function dedupByDescription<T extends { description: string }>(rows: T[]): T[] {
+  const kept: T[] = [];
+  for (const r of rows) {
+    if (kept.some((k) => sameObligation(k.description, r.description))) continue;
+    kept.push(r);
+  }
+  return kept;
+}
+
+// Automated / transactional senders are never a reply YOU owe — a "payment failed", "account
+// suspended", "verify your email", or no-reply notification is not a human waiting on you, even if
+// the classifier tagged it needs_reply. Keep this heuristic CONSERVATIVE and well-scoped: it only
+// removes an item from the must-respond (needs_reply) pool — the item still flows through the FYI /
+// awareness path. Matches on the from ADDRESS localpart (no-reply@, notifications@, billing@…), a few
+// bulk-sender domains, and unmistakable automated display-name / subject phrases.
+function isAutomatedSender(fromEmail: string | null, fromName: string | null, subject: string | null): boolean {
+  const email = (fromEmail || '').toLowerCase();
+  const localpart = email.split('@')[0] || '';
+  // Address localpart patterns — the classic "do not reply to this mailbox" senders.
+  const addrPatterns = [
+    'no-reply', 'noreply', 'no_reply', 'donotreply', 'do-not-reply', 'do_not_reply',
+    'notifications', 'notification', 'notify', 'mailer', 'mailer-daemon', 'bounce', 'bounces',
+    'postmaster', 'automated', 'auto-confirm', 'alerts', 'alert', 'billing', 'invoices', 'receipts',
+    'support+', 'updates', 'newsletter', 'news', 'digest',
+  ];
+  if (addrPatterns.some((p) => localpart.includes(p))) return true;
+  // Full-address contains (covers e.g. "team@notifications.stripe.com" style subdomains).
+  if (/(^|[.@])(no-?reply|donotreply|notifications?|mailer|bounce|postmaster)([.@])/.test(email)) return true;
+  // Display-name + subject signals — transactional / security / dunning mail from a real-looking
+  // localpart. Kept tight (well-known phrasings) so we don't nuke genuine human replies.
+  const text = `${(fromName || '').toLowerCase()} ${(subject || '').toLowerCase()}`;
+  const phrasePatterns = [
+    'payment failed', 'payment unsuccessful', 'payment declined', 'account suspended',
+    'account restricted', 'account has been', 'your subscription', 'subscription renew',
+    'verify your', 'confirm your email', 'confirm your account', 'security alert', 'security notice',
+    'unusual sign', 'sign-in attempt', 'password reset', 'invoice is', 'your receipt', 'order confirmation',
+  ];
+  if (phrasePatterns.some((p) => text.includes(p))) return true;
+  return false;
+}
+
+// Bug C — "can't reply" ≠ "no action needed". An automated / no-reply item you cannot reply to can
+// still DEMAND action: a payment failed, an account suspended/restricted, a security alert, a "verify
+// your…", something expiring. These are ACTION-WORTHY: they must NOT be buried in the FYI digest
+// (nobody sees them), but they're also NOT a reply (no human is waiting) — so they belong in the
+// ACTION lane (a to-do priority card), not must-respond. This tells them apart from informational
+// automated mail (newsletters, receipts, "order shipped", digests) which stays FYI.
+//   • work_state ∈ (action_required | decision_required) — the classifier already flagged it needs a
+//     decision/action (e.g. iCloud full, Google security alert land here), OR
+//   • the subject/name carries an unmistakable action signal (dunning / suspension / security /
+//     verification / expiry). Kept tight so marketing "act now!" copy doesn't trip it.
+function isActionWorthyAutomated(workState: string | null, fromName: string | null, subject: string | null): boolean {
+  if (workState === 'action_required' || workState === 'decision_required') return true;
+  const text = `${(fromName || '').toLowerCase()} ${(subject || '').toLowerCase()}`;
+  const actionPhrases = [
+    'payment failed', 'payment unsuccessful', 'payment declined', 'payment could not',
+    'account suspended', 'account restricted', 'account limited', 'account locked', 'account disabled',
+    'account has been suspended', 'has been restricted', 'has been limited', 'has been locked',
+    'security alert', 'security notice', 'unusual sign', 'suspicious', 'verify your', 'confirm your account',
+    'action required', 'action needed', 'immediate action', 'expiring', 'expires', 'will expire',
+    'storage is full', 'storage full', 'past due', 'overdue', 'update your payment', 'billing problem',
+  ];
+  return actionPhrases.some((p) => text.includes(p));
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function attendeeEmails(ev: any): string[] {
   return (ev?.attendees ?? []).map((a: any) => (a?.email || '').toLowerCase()).filter(Boolean);
@@ -184,6 +276,11 @@ export async function GET() {
   // the deterministic "already replied" resolution + collect the candidates.
   const mustRespondRaw: MustRespondCandidate[] = [];
   const emailSeeds: EmailSeed[] = [];
+  // itemId → whether the NEWEST message on the thread is the user's own (structural, direction+time).
+  // `lastFromUser === false` means the newest message is INBOUND, i.e. a genuinely unanswered reply the
+  // user still owes — such an item is PROTECTED and can never be dropped by the AI synthesis. Only items
+  // where the user has the last word (`lastFromUser === true`) may be closure-dropped by the model.
+  const lastFromUserByItem = new Map<string, boolean>();
   const fromEmailOf = (sd: Record<string, unknown>): string | null => {
     const raw = String((sd.from_address as string) || (sd.from as string) || '').toLowerCase();
     return raw.match(/[^\s<>"]+@[^\s<>"]+/)?.[0] || (raw.includes('@') ? raw : null);
@@ -196,10 +293,20 @@ export async function GET() {
     // landed AFTER we last sent still needs us.
     if (posture === 'needs_reply' && sentAt && sentAt > activityAt(it)) continue; // already replied
     const fromEmail = fromEmailOf(sd);
+    const subj = it.work_title || (sd.subject as string) || null;
+    const fromName = (sd.from_name as string) || null;
+    const automated = posture === 'needs_reply' && isAutomatedSender(fromEmail, fromName, subj);
+    // Bug C — an AUTOMATED item classified needs_reply isn't a reply you owe (no human is waiting), but
+    // it may still DEMAND action (payment failed / account suspended / security alert / expiring). If
+    // so, re-posture it to `to_do` so it surfaces as a visible ACTION card (the "Worth acting on"
+    // path), never buried in FYI. Informational automated mail (posture stays needs_reply here) is
+    // dropped from must-respond below and flows to the FYI/awareness digest as before — no reply-flood.
+    const actionWorthy = automated && isActionWorthyAutomated((it.work_state as string) || null, fromName, subj);
+    const effectivePosture: Posture = actionWorthy ? 'to_do' : (posture as Posture);
     priorities.push({
-      id: `email:${it.id}`, source: 'email', posture: posture as Posture,
-      title: it.work_title || (sd.subject as string) || 'Email',
-      context: (sd.from_name as string) || (sd.from as string) || null,
+      id: `email:${it.id}`, source: 'email', posture: effectivePosture,
+      title: subj || 'Email',
+      context: fromName || (sd.from as string) || null,
       href: '/inbox', itemId: it.id,
     });
     // Structural reply-state for this thread (direction+time only — no keyword/text matching). The
@@ -213,12 +320,21 @@ export async function GET() {
     emailSeeds.push({
       itemId: it.id, fromAddress: fromEmail, fromName: (sd.from_name as string) || null,
       subject: it.work_title || (sd.subject as string) || '(no subject)',
-      at: activityAt(it), posture,
+      at: activityAt(it), posture: effectivePosture,
       snippet: ((sd.body as string) || '').replace(/\s+/g, ' ').trim().slice(0, 240),
       userResponded: replyState?.userReplied ?? undefined,
       lastFromUser: replyState?.lastMessageFromUser ?? undefined,
     });
-    if (posture === 'needs_reply') {
+    if (replyState && typeof replyState.lastMessageFromUser === 'boolean') {
+      lastFromUserByItem.set(it.id, replyState.lastMessageFromUser);
+    }
+    if (effectivePosture === 'needs_reply') {
+      // Automated / transactional mail is not a reply you owe — keep it OUT of must-respond (it still
+      // flows through FYI/awareness). This cleans the pool so "show every real reply" isn't polluted by
+      // no-reply notifications the model then over-drops. Action-worthy automated items were already
+      // re-postured to `to_do` above (so they surface as action cards), so anything still automated
+      // here is informational → drop it from must-respond (it flows to the FYI/awareness digest).
+      if (automated) continue;
       mustRespondRaw.push({
         itemId: it.id,
         from: (sd.from_name as string) || (sd.from as string) || 'Someone',
@@ -232,17 +348,50 @@ export async function GET() {
   // Layer 1: assemble the reconciled per-person context (meetings + commitments + these emails).
   const briefCtx = await buildBriefContext(user.id, self, now, supabase, emailSeeds);
 
-  // ── Commitment CANDIDATES — every open non-meeting commitment, normalized. The raw ingest
-  // `direction` is only a DEFAULT hint here: the grounded synthesis (Layer 3) re-judges each one's
-  // placement (on_your_plate / ball_in_court / informational) so a REQUESTED action (the user is
-  // waiting on someone) can't sit in "On your plate" just because the extractor guessed you_owe.
+  // ── Commitment CANDIDATES — every open commitment, normalized. The raw ingest `direction` is only
+  // a DEFAULT hint here: the grounded synthesis (Layer 3) re-judges each one's placement (on_your_plate
+  // / ball_in_court / informational) so a REQUESTED action (the user is waiting on someone) can't sit
+  // in "On your plate" just because the extractor guessed you_owe.
   // See docs/brief-and-labeling-plan.md ("DIRECTION corrected July 2") + Bug #1.
+  //
+  // Bug B: meeting-sourced commitments are INCLUDED. They used to be excluded wholesale (`source !==
+  // 'meeting'`) on the assumption they'd double the meeting action-item priority cards — but those
+  // cards come from `inbox_items` (a distinct table/extraction), so the exclusion instead HID every
+  // "you owe X" promise captured from a meeting (21 real open items → an empty "On your plate"). A
+  // meeting commitment is a genuine thing the user owes and belongs in the same placement pipeline as
+  // any other; the synthesis + the top-N cap keep the section a brief, not a backlog.
+  // Source-derived fallback label for commitments with NO counterparty — so the UI never prints a
+  // placeholder ("Someone"). For a meeting commitment we resolve the meeting title ("from <title>");
+  // an email commitment has no better source string, so it stays null and the UI omits the name.
+  // General: keyed off the commitment's own source_id, no hardcoded titles/ids.
+  const meetingCommitTids = [...new Set(commits
+    .filter((c) => c.source === 'meeting' && !c.counterparty && c.source_id)
+    .map((c) => c.source_id as string))];
+  const meetingTitleById = new Map<string, string>();
+  if (meetingCommitTids.length) {
+    const { data: mts } = await supabase.from('meeting_transcripts')
+      .select('id, title').eq('user_id', user.id).in('id', meetingCommitTids);
+    for (const m of (mts ?? []) as { id: string; title: string | null }[]) {
+      if (m.title) meetingTitleById.set(m.id, m.title);
+    }
+  }
+  // The label shown when counterparty is null: a source-derived string ("from <meeting title>") or
+  // null (UI omits the name entirely). NEVER a literal placeholder.
+  const sourceLabelOf = (c: (typeof commits)[number]): string | null => {
+    if (c.source === 'meeting' && c.source_id) {
+      const t = meetingTitleById.get(c.source_id as string);
+      return t ? `from ${t}` : null;
+    }
+    return null;
+  };
   const commitmentCands = commits
-    .filter((c) => c.source !== 'meeting')
     .map((c) => ({
       id: c.id as string,
       description: c.description as string,
       counterparty: (c.counterparty as string | null) ?? null,
+      // A display-only fallback (never printed as the person's name in prose contexts that need a
+      // real name — the UI uses it only where it currently showed "Someone"/"them").
+      sourceLabel: sourceLabelOf(c),
       direction: (c.direction as string) || 'you_owe',
       dueDate: (c.due_date as string | null) ?? null,
       overdue: !!(c.due_date && c.due_date < todayStr),
@@ -284,6 +433,25 @@ export async function GET() {
   const fyiTop = [...peopleGroups, ...newsletterGroups];
   const fyiTailItems = fyiGroupsAll.reduce((n, g) => n + g.count, 0) - fyiTop.reduce((n, g) => n + g.count, 0);
   const fyiTailGroups = Math.max(0, fyiGroupsAll.length - fyiTop.length);
+
+  // DETERMINISTIC FYI DIGEST — a fallback the section can ALWAYS render when FYI groups exist, even
+  // if the AI synthesis omits/returns null for fyiDigest (Bug A: the model frequently drops the fyi
+  // block on a large mailbox, and the enrich path only overwrote fyiDigest when synth.fyiDigest was
+  // non-null OR there were no groups — so with groups + a null model result the section stayed empty
+  // forever). This builds one plain digest line per group directly from the sender + a couple of its
+  // subjects, so "For your awareness" is never blank while noted mail exists. The AI's nicer prose
+  // still wins when present (used only as the fallback below + when no cache/synth is available).
+  const buildDeterministicFyiDigest = (): FyiDigest | null => {
+    if (!fyiTop.length) return null;
+    const groups = fyiTop.map((g) => {
+      const subs = g.subjects.map((s) => (s || '').trim()).filter(Boolean).slice(0, 2);
+      const summary = subs.length
+        ? `${g.count} message${g.count > 1 ? 's' : ''} — ${subs.map((s) => `“${s.length > 60 ? s.slice(0, 57) + '…' : s}”`).join(', ')}`
+        : `${g.count} message${g.count > 1 ? 's' : ''}`;
+      return { label: g.label, summary, kind: g.kind };
+    });
+    return { groups, tailGroups: fyiTailGroups, tailItems: fyiTailItems };
+  };
 
   // ── Awareness candidates (source b): FYI emails the digest ITSELF treats as a real person (not a
   // newsletter/service) — reuse that exact person/newsletter split (labels in `peopleGroups`) so the
@@ -439,7 +607,8 @@ export async function GET() {
     const cachedAsk = new Map((cached?.mustRespond?.items ?? []).map((i) => [i.itemId, { ask: i.ask, angle: i.angle }]));
     const basicMustItems: Reply[] = [...mustRespondRaw]
       .sort((a, b) => (b.receivedAt || '').localeCompare(a.receivedAt || ''))
-      .slice(0, 25)
+      // High safety bound, not a functional gate — real replies must never be hidden by a cap.
+      .slice(0, 100)
       .map((c) => {
         const prev = cachedAsk.get(c.itemId);
         return { who: c.from, ask: prev?.ask || '', angle: prev?.angle || '', itemId: c.itemId, subject: c.subject, snippet: c.snippet, receivedAt: c.receivedAt };
@@ -451,8 +620,11 @@ export async function GET() {
     //    when there's no cache. Commitment placements keep the cached verdicts (or {}) so the routing
     //    below degrades to the ingest-direction default — never breaks.
     mustRespond = basicMustRespond;
-    // tldr / followups / fyiDigest / keepAnEyeOn / droppedItemIds / commitmentPlacements already
-    // initialized from `cached` above — leave them as-is (last-good, or null/[]/{}).
+    // tldr / followups / keepAnEyeOn / droppedItemIds / commitmentPlacements already initialized
+    // from `cached` above — leave them as-is (last-good, or null/[]/{}).
+    // fyiDigest: seed the DETERMINISTIC fallback if the cache has none but groups exist (Bug A), so
+    // "For your awareness" renders immediately on the basic brief and never depends on the AI pass.
+    if ((!fyiDigest || !fyiDigest.groups?.length) && fyiTop.length) fyiDigest = buildDeterministicFyiDigest();
 
     // 3. Persist the basic brief IMMEDIATELY with the NEW sig. This is the anti-regen-storm guard:
     //    the very next request (poll / realtime refetch) is a cache-HIT on this basic brief and does
@@ -463,6 +635,14 @@ export async function GET() {
     //    SAME sig (upgrades the cache in place: real ask/angle, ordering, supersession drops,
     //    placements). Non-fatal: any failure leaves the basic brief cached, which is still correct.
     const owedFacts = owedByIngest.map((c) => ({ description: c.description, overdue: c.overdue, dueToday: c.dueToday, dueDate: c.dueDate }));
+    // PROTECTED members = must-respond candidates whose newest thread message is INBOUND
+    // (lastFromUser === false), i.e. genuinely unanswered human replies the user still owes. These
+    // can NEVER be dropped by the AI (no appear-then-vanish); only items where the user has the last
+    // word (lastFromUser === true) remain droppable for closure. Missing from the map (no thread
+    // reply-state) → treated as unanswered/protected, the safe default (don't silently drop).
+    const protectedItemIds = new Set<string>(
+      mustRespondRaw.filter((c) => lastFromUserByItem.get(c.itemId) !== true).map((c) => c.itemId),
+    );
     after(async () => {
       try {
         const synth = await synthesizeBrief(getSystemClient('summarization'), {
@@ -473,10 +653,11 @@ export async function GET() {
           emailReplyCount: emailP,
           topPriorities: cappedPriorities.map((p) => ({ title: p.title, posture: p.posture, source: p.source, overdue: !!p.overdue })),
           mustRespond: mustRespondRaw,
+          protectedItemIds,
           // Waiting candidates = the ingest-awaiting commitments — the synthesis writes the follow-up
           // prose (status + nextMove) over these. Final lane routing is by the placement verdict below;
           // a commitment re-placed to ball_in_court that wasn't here still appears via the raw fallback.
-          waiting: commitmentCands.filter((c) => c.direction === 'awaiting').map((c) => ({ id: c.id, counterparty: c.counterparty, description: c.description, ageDays: c.ageDays })),
+          waiting: commitmentCands.filter((c) => c.direction === 'awaiting').map((c) => ({ id: c.id, counterparty: c.counterparty || c.sourceLabel, description: c.description, ageDays: c.ageDays })),
           fyiGroups: fyiTop.map((g) => ({ label: g.label, count: g.count, kind: g.kind, subjects: g.subjects })),
           keepAnEyeOn: keepAnEyeOnRaw,
         });
@@ -489,10 +670,15 @@ export async function GET() {
         if (synth.mustRespond !== null || !mustRespondRaw.length) enrMustRespond = synth.mustRespond;
         if (synth.keepAnEyeOn !== null || !keepAnEyeOnRaw.length) enrKeepAnEyeOn = synth.keepAnEyeOn;
         if (synth.followups !== null || !commitmentCands.some((c) => c.direction === 'awaiting')) enrFollowups = synth.followups;
-        if (synth.fyiDigest !== null || !fyiTop.length) {
-          enrFyiDigest = synth.fyiDigest ? { ...synth.fyiDigest, tailGroups: fyiTailGroups, tailItems: fyiTailItems } : null;
-        }
-        enrDropped = synth.droppedItemIds;
+        // FYI: the AI's nicer summary wins when present; otherwise, whenever groups exist, fall back to
+        // the DETERMINISTIC digest so the section never goes empty while noted mail exists (Bug A). Only
+        // a genuinely empty FYI pool (no groups) yields null.
+        enrFyiDigest = synth.fyiDigest
+          ? { ...synth.fyiDigest, tailGroups: fyiTailGroups, tailItems: fyiTailItems }
+          : buildDeterministicFyiDigest();
+        // Belt-and-suspenders: a protected (unanswered inbound) item can NEVER be in droppedItemIds,
+        // so it can't be removed from the priority cards either — enriched membership ⊇ protected set.
+        enrDropped = synth.droppedItemIds.filter((id) => !protectedItemIds.has(id));
         if (Object.keys(synth.commitmentPlacements).length) enrPlacements = synth.commitmentPlacements;
         // Persist the enriched brief under the SAME sig — upgrades the cache in place so the next
         // refetch is a cache-hit on the fully-synthesized version.
@@ -508,19 +694,26 @@ export async function GET() {
   // action lane. General — driven by grounded judgment, no hardcoded senders/subjects.
   const placementOf = (c: (typeof commitmentCands)[number]): CommitmentPlacement =>
     commitmentPlacements[c.id] ?? defaultPlacement(c.direction);
-  const commitments = commitmentCands
-    .filter((c) => placementOf(c) === 'on_your_plate')
-    .map((c) => ({ id: c.id, description: c.description, counterparty: c.counterparty, dueDate: c.dueDate, overdue: c.overdue, dueToday: c.dueToday }))
+  // Display dedup backstop (general): collapse near-identical descriptions within each lane so
+  // existing bad rows can't double up even before the data-cleanup script runs. `counterparty` falls
+  // back to the source-derived label (never a placeholder); UI omits the name when both are null.
+  // NOTE: "On your plate" is NO LONGER hard-capped — it renders a few and expands (Show N more) in the
+  // UI; we pass the full deduped set (bounded only by the 60-row commitments query upstream).
+  const commitments = dedupByDescription(
+    commitmentCands
+      .filter((c) => placementOf(c) === 'on_your_plate')
+      .map((c) => ({ id: c.id, description: c.description, counterparty: c.counterparty || c.sourceLabel, dueDate: c.dueDate, overdue: c.overdue, dueToday: c.dueToday })),
+  )
     .sort((a, b) => {
       const rk = (x: typeof a) => (x.overdue ? 0 : x.dueToday ? 1 : x.dueDate ? 2 : 3);
       return rk(a) !== rk(b) ? rk(a) - rk(b) : (a.dueDate || '9999').localeCompare(b.dueDate || '9999');
-    })
-    .slice(0, 5);
-  const waitingOn = commitmentCands
-    .filter((c) => placementOf(c) === 'ball_in_court')
-    .map((c) => ({ id: c.id, description: c.description, counterparty: c.counterparty, ageDays: c.ageDays }))
-    .sort((a, b) => b.ageDays - a.ageDays)
-    .slice(0, 6);
+    });
+  const waitingOn = dedupByDescription(
+    commitmentCands
+      .filter((c) => placementOf(c) === 'ball_in_court')
+      .map((c) => ({ id: c.id, description: c.description, counterparty: c.counterparty || c.sourceLabel, ageDays: c.ageDays })),
+  )
+    .sort((a, b) => b.ageDays - a.ageDays);
   // Keep the status chip honest with the routed set.
   status.waitingOn = waitingOn.length;
 
@@ -538,7 +731,9 @@ export async function GET() {
     });
     const extras = waitingOn
       .filter((w) => !covered.has(w.id))
-      .map((w) => ({ id: w.id, who: w.counterparty || 'Someone', status: `Waiting ${w.ageDays}d`, nextMove: 'Send a nudge' }));
+      // `who` = the counterparty or its source-derived label; NEVER a placeholder. Falls back to the
+      // description when there's no name/source at all, so a row still reads as a real thing to nudge.
+      .map((w) => ({ id: w.id, who: w.counterparty || w.description, status: `Waiting ${w.ageDays}d`, nextMove: 'Send a nudge' }));
     const allItems = [...keptItems, ...extras];
     followups = allItems.length
       ? { teaser: followups?.teaser || '', items: allItems, closing: followups?.closing ?? null }
