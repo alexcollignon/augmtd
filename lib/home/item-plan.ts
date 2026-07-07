@@ -16,6 +16,17 @@ export type ItemPlanKind = 'meeting' | 'commitment' | 'awareness' | 'email' | 'f
 
 export type PlanCapability = 'draft' | 'analyze' | 'fetch' | 'send' | null;
 
+// A step (or the whole item) handed to a coworker who executed it — stamped on the plan when a
+// delegation resolves. `output` is the coworker's returned deliverable/summary (shown inline).
+export type HandedTo = {
+  agentId: string;
+  agentName: string;
+  workerRole?: string | null;
+  threadId?: string | null;   // the coworker's chat thread where the delegated work + report-back live
+  output?: string;            // the coworker's returned text (deliverable / what they did)
+  at?: string;                // ISO timestamp
+};
+
 export type ItemPlanTask = {
   id: string;
   text: string;              // a SHORT imperative title (≤ ~8–10 words) — the one line the stepper shows
@@ -24,6 +35,7 @@ export type ItemPlanTask = {
   capability: PlanCapability;
   done?: boolean;
   dismissed?: boolean;       // the user removed this step from the workflow (persisted)
+  handedTo?: HandedTo;       // a coworker executed this step (stage 3b delegation)
 };
 
 export type ItemPlan = { tasks: ItemPlanTask[] };

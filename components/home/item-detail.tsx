@@ -655,20 +655,164 @@ function clientRouteActionType(task: { capability: PlanTask['capability']; text:
   return 'email';
 }
 
-// ── "Hand to a coworker" — the global, item-level delegate affordance (deferred stub, disabled).
-// It is NOT a workflow step, so it never duplicates one. It lives in exactly ONE place per layout:
-// the Identified-tasks panel FOOTER when a breakdown exists (see `TasksPanel`), else inline in the
-// `ActionBar` when there is no panel to host it. `size` tunes it for the narrower panel footer.
-function HandToCoworkerButton({ size = 'md' }: { size?: 'md' | 'sm' }) {
-  const pad = size === 'sm' ? 'px-3 py-1.5 text-[12px]' : 'px-4 py-2 text-[13px]';
+// ── The user's coworkers, fetched once (module-scoped so every picker on the page shares one load).
+type Coworker = { id: string; name: string; worker_role: string | null };
+const WORKER_AVATAR: Record<string, string> = {
+  personal_assistant: '/workers/clara.png',
+  content_manager: '/workers/sofia.png',
+  linkedin_drafter: '/workers/luca.png',
+  research_analyst: '/workers/max.png',
+};
+let _coworkersCache: Coworker[] | null = null;
+let _coworkersPromise: Promise<Coworker[]> | null = null;
+function loadCoworkers(): Promise<Coworker[]> {
+  if (_coworkersCache) return Promise.resolve(_coworkersCache);
+  if (_coworkersPromise) return _coworkersPromise;
+  _coworkersPromise = fetch('/api/workers')
+    .then((r) => (r.ok ? r.json() : Promise.reject()))
+    .then((d: { workers?: Coworker[] }) => {
+      _coworkersCache = Array.isArray(d.workers) ? d.workers : [];
+      return _coworkersCache;
+    })
+    .catch(() => { _coworkersCache = []; return _coworkersCache; })
+    .finally(() => { _coworkersPromise = null; });
+  return _coworkersPromise;
+}
+
+function useCoworkers(): Coworker[] {
+  const [workers, setWorkers] = useState<Coworker[]>(_coworkersCache ?? []);
+  useEffect(() => {
+    let alive = true;
+    loadCoworkers().then((w) => { if (alive) setWorkers(w); });
+    return () => { alive = false; };
+  }, []);
+  return workers;
+}
+
+// A tiny coworker avatar (falls back to an initials chip when the role image is unknown).
+function CoworkerAvatar({ worker, size = 20 }: { worker: Pick<Coworker, 'name' | 'worker_role'>; size?: number }) {
+  const src = worker.worker_role ? WORKER_AVATAR[worker.worker_role] : undefined;
+  if (src) {
+    // eslint-disable-next-line @next/next/no-img-element
+    return <img src={src} alt={worker.name} width={size} height={size} className="rounded-full object-cover flex-shrink-0" style={{ width: size, height: size }} />;
+  }
   return (
-    <button
-      disabled
-      title="Coming soon — delegate this to one of your coworkers"
-      className={`inline-flex items-center gap-1.5 rounded-lg font-medium bg-neutral-50 text-neutral-300 border border-neutral-200 cursor-not-allowed ${pad}`}
+    <span className="flex-shrink-0 inline-flex items-center justify-center rounded-full bg-indigo-100 text-indigo-600 font-semibold" style={{ width: size, height: size, fontSize: size * 0.42 }}>
+      {(worker.name || '?').charAt(0).toUpperCase()}
+    </span>
+  );
+}
+
+// ── The coworker PICKER popover — the avatars/names of the user's workers; pick one → confirm → the
+// host delegates. Anchored below its trigger. Closes on outside-click / Esc. Shared by the item-level
+// footer button and the per-step hand-off menu.
+function CoworkerPicker({ onPick, onClose, align = 'left' }: { onPick: (w: Coworker) => void; onClose: () => void; align?: 'left' | 'right' }) {
+  const workers = useCoworkers();
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const onDoc = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) onClose(); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onDoc); document.removeEventListener('keydown', onKey); };
+  }, [onClose]);
+  return (
+    <div
+      ref={ref}
+      className={`absolute z-30 bottom-full mb-1.5 w-60 rounded-xl border border-neutral-200 bg-white shadow-lg overflow-hidden ${align === 'right' ? 'right-0' : 'left-0'}`}
     >
-      <UserPlusIcon className={size === 'sm' ? 'w-3.5 h-3.5' : 'w-4 h-4'} />Hand to a coworker
-    </button>
+      <div className="px-3 py-2 border-b border-neutral-100">
+        <p className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide">Hand to a coworker</p>
+        <p className="mt-0.5 text-[10.5px] text-neutral-400 leading-snug">They&apos;ll prepare it and report back — you stay in the loop.</p>
+      </div>
+      <ul className="max-h-64 overflow-y-auto py-1">
+        {workers.length === 0 ? (
+          <li className="px-3 py-3 text-[12px] text-neutral-400">No coworkers yet.</li>
+        ) : (
+          workers.map((w) => (
+            <li key={w.id}>
+              <button
+                onClick={() => onPick(w)}
+                className="w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-indigo-50/70 transition-colors"
+              >
+                <CoworkerAvatar worker={w} size={24} />
+                <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-neutral-800">{w.name}</span>
+              </button>
+            </li>
+          ))
+        )}
+      </ul>
+    </div>
+  );
+}
+
+// ── "Hand to a coworker" — the global, item-level delegate affordance. Opens the CoworkerPicker; on
+// pick it delegates the WHOLE item via `onDelegate`. It is NOT a workflow step, so it never duplicates
+// one. It lives in exactly ONE place per layout: the Identified-tasks panel FOOTER when a breakdown
+// exists (see `TasksPanel`), else inline in the `ActionBar`. `size` tunes it for the narrower footer.
+function HandToCoworkerButton({
+  size = 'md',
+  onDelegate,
+  pending = false,
+  handedTo,
+}: {
+  size?: 'md' | 'sm';
+  onDelegate?: (w: Coworker) => void;   // absent → disabled stub (kept for layouts with no plan yet)
+  pending?: boolean;
+  handedTo?: HandedTo | null;           // the whole-item hand-off resolved → show the handed state
+}) {
+  const [open, setOpen] = useState(false);
+  const pad = size === 'sm' ? 'px-3 py-1.5 text-[12px]' : 'px-4 py-2 text-[13px]';
+
+  // Resolved — the item was handed off. Show the attribution, no picker.
+  if (handedTo) {
+    return (
+      <div className={`inline-flex items-center gap-1.5 rounded-lg font-medium bg-emerald-50 text-emerald-700 border border-emerald-200 ${pad}`}>
+        <CoworkerAvatar worker={{ name: handedTo.agentName, worker_role: handedTo.workerRole ?? null }} size={size === 'sm' ? 16 : 18} />
+        {handedTo.agentName} is on it
+      </div>
+    );
+  }
+
+  // Pending — the coworker is running.
+  if (pending) {
+    return (
+      <div className={`inline-flex items-center gap-1.5 rounded-lg font-medium bg-indigo-50 text-indigo-600 border border-indigo-200 ${pad}`}>
+        <span className="w-3.5 h-3.5 rounded-full border-2 border-indigo-300 border-t-indigo-600 animate-spin" />
+        Handing off…
+      </div>
+    );
+  }
+
+  // Disabled stub (no plan / no delegate handler wired) — kept so a layout without a breakdown still
+  // renders the affordance gracefully.
+  if (!onDelegate) {
+    return (
+      <button
+        disabled
+        title="Open an item's identified tasks to hand it to a coworker"
+        className={`inline-flex items-center gap-1.5 rounded-lg font-medium bg-neutral-50 text-neutral-300 border border-neutral-200 cursor-not-allowed ${pad}`}
+      >
+        <UserPlusIcon className={size === 'sm' ? 'w-3.5 h-3.5' : 'w-4 h-4'} />Hand to a coworker
+      </button>
+    );
+  }
+
+  return (
+    <div className="relative inline-block">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className={`inline-flex items-center gap-1.5 rounded-lg font-medium bg-white text-indigo-700 border border-indigo-200 hover:bg-indigo-50 transition-colors ${pad}`}
+      >
+        <UserPlusIcon className={size === 'sm' ? 'w-3.5 h-3.5' : 'w-4 h-4'} />Hand to a coworker
+      </button>
+      {open && (
+        <CoworkerPicker
+          onPick={(w) => { setOpen(false); onDelegate(w); }}
+          onClose={() => setOpen(false)}
+        />
+      )}
+    </div>
   );
 }
 
@@ -705,6 +849,15 @@ function ActionBar({ primaryLabel, primaryActive, onPrimary, children }: { prima
 // replies stay clean while a meeting-request email (reply + a [You] calendar step) surfaces its steps.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
+type HandedTo = {
+  agentId: string;
+  agentName: string;
+  workerRole?: string | null;
+  threadId?: string | null;
+  output?: string;
+  at?: string;
+};
+
 type PlanTask = {
   id: string;
   text: string;                 // short imperative title (the one line the stepper shows)
@@ -713,6 +866,7 @@ type PlanTask = {
   capability: 'draft' | 'analyze' | 'fetch' | 'send' | null;
   done?: boolean;
   dismissed?: boolean;          // removed from the workflow (persisted)
+  handedTo?: HandedTo;          // a coworker executed this step (stage 3b)
 };
 
 const CAP_HINT: Record<string, string> = {
@@ -740,7 +894,13 @@ type ItemPlan = {
   addStep: (text: string) => Promise<void>;              // add a step → classify → append (optimistic)
   editStep: (taskId: string, text: string) => Promise<void>; // edit a step's text → re-classify in place
   markSystemDone: (taskId: string) => void;              // optimistically flip a [System] step to done (after a commit)
+  delegatingId: string | null;   // id of the step currently being delegated ('__item__' for a whole-item hand-off)
+  delegateStep: (taskId: string, agentId: string, agentName: string) => Promise<boolean>;  // hand one step to a coworker
+  delegateItem: (agentId: string, agentName: string) => Promise<boolean>;                   // hand the whole item to a coworker
 };
+
+// A sentinel id used for the delegating-pending state of a WHOLE-ITEM hand-off (no single taskId).
+const ITEM_DELEGATE_ID = '__item__';
 
 function useItemPlan(
   planKind: 'email' | 'meeting' | 'commitment' | 'awareness' | 'followup',
@@ -751,6 +911,7 @@ function useItemPlan(
   const [failed, setFailed] = useState(false);
   const [pending, setPending] = useState<Set<string>>(new Set());
   const [classifyingId, setClassifyingId] = useState<string | null>(null);
+  const [delegatingId, setDelegatingId] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -876,12 +1037,64 @@ function useItemPlan(
     setTasks((prev) => (prev ? prev.map((t) => (t.id === taskId ? { ...t, done: true } : t)) : prev));
   };
 
+  // ── Hand a SINGLE step to a coworker. Optimistically flag the step delegating (spinner in the row),
+  // POST /api/items/delegate with the taskId → on success stamp the returned handedTo + done on the
+  // step (attribution + the coworker's output). On failure, clear the pending flag (nothing marked).
+  const delegateStep = async (taskId: string, agentId: string, agentName: string): Promise<boolean> => {
+    if (delegatingId) return false;
+    setDelegatingId(taskId);
+    try {
+      const res = await fetch('/api/items/delegate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: planKind, entityId, agentId, taskId }),
+      });
+      if (!res.ok) throw new Error();
+      const d = (await res.json()) as { handedTo?: HandedTo };
+      const handedTo = d.handedTo ?? { agentId, agentName };
+      setTasks((prev) => (prev ? prev.map((t) => (t.id === taskId ? { ...t, done: true, handedTo } : t)) : prev));
+      return true;
+    } catch {
+      return false;
+    } finally {
+      setDelegatingId(null);
+    }
+  };
+
+  // ── Hand the WHOLE item to a coworker. Uses the sentinel id for the pending state; on success stamps
+  // handedTo + done on every live (non-dismissed, not-done, not-already-handed) step — mirroring the
+  // server's whole-item marking.
+  const delegateItem = async (agentId: string, agentName: string): Promise<boolean> => {
+    if (delegatingId) return false;
+    setDelegatingId(ITEM_DELEGATE_ID);
+    try {
+      const res = await fetch('/api/items/delegate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: planKind, entityId, agentId }),
+      });
+      if (!res.ok) throw new Error();
+      const d = (await res.json()) as { handedTo?: HandedTo };
+      const handedTo = d.handedTo ?? { agentId, agentName };
+      setTasks((prev) =>
+        prev
+          ? prev.map((t) => (!t.dismissed && !t.done && !t.handedTo ? { ...t, done: true, handedTo } : t))
+          : prev,
+      );
+      return true;
+    } catch {
+      return false;
+    } finally {
+      setDelegatingId(null);
+    }
+  };
+
   // The ≥2-task breakdown gate — a real multi-step plan, counting ALL identified tasks (including
   // crossed-out ones). Crossing steps out does NOT collapse the panel: a workflow the user has triaged
   // stays visible. (A user-added step counts toward it — it's in `tasks`.)
   const hasBreakdown = !loading && !failed && !!tasks && tasks.length >= 2;
 
-  return { tasks, loading, failed, hasBreakdown, pending, classifyingId, toggle, dismiss, addStep, editStep, markSystemDone };
+  return { tasks, loading, failed, hasBreakdown, pending, classifyingId, toggle, dismiss, addStep, editStep, markSystemDone, delegatingId, delegateStep, delegateItem };
 }
 
 // ── One step in the "Identified tasks" workflow stepper. A vertical timeline row: a NODE (✦ for a
@@ -898,6 +1111,8 @@ function StepperRow({
   onToggle,
   onDismiss,
   onEdit,
+  onDelegate,
+  delegating,
   classifying,
   busy,
 }: {
@@ -908,16 +1123,20 @@ function StepperRow({
   onToggle: () => void;
   onDismiss: () => void;
   onEdit: (text: string) => void;   // re-classify this step with new text
+  onDelegate?: (w: Coworker) => void; // hand THIS step to a coworker (opens the picker)
+  delegating: boolean;              // this step is being delegated — show a spinner
   classifying: boolean;             // this step is being (re)classified — show a quiet "classifying…"
   busy: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draftText, setDraftText] = useState(task.text);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const isSystem = task.actor === 'system';
   const hasDetail = !!task.detail?.trim();
   const crossed = !!task.dismissed; // "not needed" — visible but struck-through, action disabled
+  const handed = task.handedTo;     // a coworker executed this step
 
   useEffect(() => {
     if (editing) { setDraftText(task.text); inputRef.current?.focus(); inputRef.current?.select(); }
@@ -941,9 +1160,17 @@ function StepperRow({
       {/* Connector line — runs from just under this node to the next; hidden on the last step. */}
       {!isLast && <span aria-hidden className="absolute left-[11px] top-6 bottom-[-6px] w-px bg-neutral-200" />}
 
-      {/* Node — ✦ for a system step, a checkbox for a [You] step. Dimmed when the step is crossed out.
-          While classifying, the node pulses to signal the grade is resolving. */}
-      {isSystem ? (
+      {/* Node — a coworker avatar when the step was handed off; else ✦ for a system step / a checkbox
+          for a [You] step. Dimmed when crossed out; pulses while classifying/delegating. */}
+      {handed ? (
+        <span className="absolute left-0 top-[3px] flex h-[23px] w-[23px] items-center justify-center rounded-full ring-2 ring-white bg-white">
+          <CoworkerAvatar worker={{ name: handed.agentName, worker_role: handed.workerRole ?? null }} size={21} />
+        </span>
+      ) : delegating ? (
+        <span className="absolute left-0 top-[3px] flex h-[23px] w-[23px] items-center justify-center rounded-full ring-2 ring-white bg-indigo-50">
+          <span className="w-3 h-3 rounded-full border-2 border-indigo-300 border-t-indigo-600 animate-spin" />
+        </span>
+      ) : isSystem ? (
         // A committed [System] step (done — e.g. an invite was sent) shows an emerald ✓; otherwise ✦.
         <span className={`absolute left-0 top-[3px] flex h-[23px] w-[23px] items-center justify-center rounded-full ring-2 ring-white transition-colors duration-300 ${task.done ? 'bg-emerald-500' : crossed ? 'bg-neutral-100' : 'bg-indigo-50'} ${classifying ? 'animate-pulse' : ''}`}>
           {task.done ? (
@@ -1000,8 +1227,30 @@ function StepperRow({
 
           {!editing && (
             <>
+              {/* 👤 — quiet per-step "Hand to a coworker". Hover-revealed on active, not-yet-handed steps.
+                  Opens the picker anchored to this row; pick → delegate THIS step. */}
+              {!crossed && !handed && onDelegate && (
+                <div className="relative flex-shrink-0 -mt-0.5">
+                  <button
+                    onClick={(e) => { e.stopPropagation(); if (!busy && !classifying && !delegating) setPickerOpen((v) => !v); }}
+                    disabled={busy || classifying || delegating}
+                    title="Hand this step to a coworker"
+                    aria-label="Hand step to a coworker"
+                    className="p-0.5 text-neutral-300 opacity-0 group-hover/step:opacity-100 focus:opacity-100 hover:text-indigo-600 transition-all disabled:opacity-40"
+                  >
+                    <UserPlusIcon className="w-3.5 h-3.5" />
+                  </button>
+                  {pickerOpen && (
+                    <CoworkerPicker
+                      align="right"
+                      onPick={(w) => { setPickerOpen(false); onDelegate(w); }}
+                      onClose={() => setPickerOpen(false)}
+                    />
+                  )}
+                </div>
+              )}
               {/* ✎ — edit the step's text (re-classified on save). Quiet, hover-revealed, active steps only. */}
-              {!crossed && (
+              {!crossed && !handed && (
                 <button
                   onClick={(e) => { e.stopPropagation(); if (!busy && !classifying) setEditing(true); }}
                   disabled={busy || classifying}
@@ -1014,16 +1263,18 @@ function StepperRow({
               )}
               {/* ✕ — toggles "not needed". Crossing out keeps the step visible but struck + disabled; click
                   again to restore. Quiet on hover when active; when crossed it stays visible (amber). */}
-              <button
-                onClick={handleDismiss}
-                disabled={busy}
-                title={crossed ? 'Restore — mark needed again' : 'Not needed — set this step aside'}
-                aria-label={crossed ? 'Restore step' : 'Set step aside'}
-                aria-pressed={crossed}
-                className={`flex-shrink-0 -mt-0.5 p-0.5 transition-all disabled:opacity-40 ${crossed ? 'text-amber-500 opacity-100 hover:text-amber-600' : 'text-neutral-300 opacity-0 group-hover/step:opacity-100 focus:opacity-100 hover:text-rose-500'}`}
-              >
-                <XMarkIcon className="w-3.5 h-3.5" />
-              </button>
+              {!handed && (
+                <button
+                  onClick={handleDismiss}
+                  disabled={busy}
+                  title={crossed ? 'Restore — mark needed again' : 'Not needed — set this step aside'}
+                  aria-label={crossed ? 'Restore step' : 'Set step aside'}
+                  aria-pressed={crossed}
+                  className={`flex-shrink-0 -mt-0.5 p-0.5 transition-all disabled:opacity-40 ${crossed ? 'text-amber-500 opacity-100 hover:text-amber-600' : 'text-neutral-300 opacity-0 group-hover/step:opacity-100 focus:opacity-100 hover:text-rose-500'}`}
+                >
+                  <XMarkIcon className="w-3.5 h-3.5" />
+                </button>
+              )}
             </>
           )}
         </div>
@@ -1035,10 +1286,32 @@ function StepperRow({
           </div>
         )}
 
-        {/* Action / status line. While classifying → a quiet "classifying…". A crossed-out step shows a
-            "Not needed" label with NO active action. */}
+        {/* Handed-off result — the coworker's returned deliverable/summary, shown inline (collapsible). */}
+        {handed?.output && (
+          <details className="mt-1.5 group/handed">
+            <summary className="cursor-pointer list-none text-[11px] font-medium text-emerald-700/80 hover:text-emerald-700 inline-flex items-center gap-1">
+              <ChevronDownIcon className="w-3 h-3 transition-transform group-open/handed:rotate-180" />
+              What {handed.agentName} handed back
+            </summary>
+            <div className="mt-1 rounded-lg border border-emerald-100 bg-emerald-50/40 px-2.5 py-2 text-[12px] leading-relaxed text-neutral-700 whitespace-pre-wrap max-h-64 overflow-y-auto">
+              {handed.output}
+            </div>
+          </details>
+        )}
+
+        {/* Action / status line. Handed-off / delegating states win; then classifying / crossed-out;
+            then the system action / [You] hint. */}
         <div className="mt-1 flex items-center gap-2">
-          {classifying ? (
+          {handed ? (
+            <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-600">
+              <CheckIcon className="w-3 h-3" />Handed to {handed.agentName}
+            </span>
+          ) : delegating ? (
+            <span className="inline-flex items-center gap-1 text-[10.5px] text-indigo-500 italic">
+              <span className="w-2.5 h-2.5 rounded-full border-2 border-indigo-300 border-t-indigo-600 animate-spin" />
+              Handing off…
+            </span>
+          ) : classifying ? (
             <span className="text-[10.5px] text-indigo-400 italic animate-pulse">Classifying…</span>
           ) : crossed ? (
             <span className="text-[10.5px] text-neutral-400 italic">Not needed</span>
@@ -1130,7 +1403,7 @@ function WhatThisTakes({
   onInvite?: (taskId: string) => void;
   variant?: 'inline' | 'panel';
 }) {
-  const { tasks, loading, failed, pending, classifyingId, toggle, dismiss, addStep, editStep } = plan;
+  const { tasks, loading, failed, pending, classifyingId, toggle, dismiss, addStep, editStep, delegatingId, delegateStep } = plan;
 
   // In the two-column layout the parent renders the panel chrome + its own loading/failed handling
   // (the aside only mounts once a breakdown is confirmed via the hook's `hasBreakdown`), so the
@@ -1192,6 +1465,10 @@ function WhatThisTakes({
     <ol className="relative">
       {tasks.map((t) => {
         const action = stepAction(t);
+        // A whole-item hand-off (sentinel id) shows every live step delegating; a per-step hand-off
+        // shows just that step. A busy step (any pending write) suppresses its own delegate affordance.
+        const itemDelegating = delegatingId === ITEM_DELEGATE_ID && !t.dismissed && !t.done && !t.handedTo;
+        const delegating = delegatingId === t.id || itemDelegating;
         return (
           <StepperRow
             key={t.id}
@@ -1203,6 +1480,8 @@ function WhatThisTakes({
             onToggle={() => toggle(t)}
             onDismiss={() => dismiss(t)}
             onEdit={(text) => editStep(t.id, text)}
+            onDelegate={(w) => delegateStep(t.id, w.id, w.name)}
+            delegating={delegating}
             classifying={classifyingId === t.id}
             busy={pending.has(t.id)}
           />
@@ -1255,7 +1534,19 @@ function WhatThisTakes({
 // This panel is the SINGLE home for an item's actions when a breakdown exists: the workflow steps
 // (each with its own "Draft →" / done affordance) + a quiet "Hand to a coworker" FOOTER — so those
 // actions aren't also floating in the main column.
-function TasksPanel({ hasBreakdown, children }: { hasBreakdown: boolean; children: React.ReactNode }) {
+function TasksPanel({ hasBreakdown, plan, children }: { hasBreakdown: boolean; plan?: ItemPlan; children: React.ReactNode }) {
+  // The item-level "Hand to a coworker" footer state: pending while the whole-item hand-off runs, and
+  // resolved (attribution) once every live step carries the same handedTo. Derived from the shared plan.
+  const itemDelegating = plan?.delegatingId === ITEM_DELEGATE_ID;
+  const liveHandedTo = (() => {
+    const ts = plan?.tasks;
+    if (!ts || !ts.length) return null;
+    const live = ts.filter((t) => !t.dismissed);
+    // Only treat as a whole-item hand-off when every live step was handed to the SAME coworker.
+    if (live.length === 0 || !live.every((t) => t.handedTo)) return null;
+    const first = live[0].handedTo!;
+    return live.every((t) => t.handedTo?.agentId === first.agentId) ? first : null;
+  })();
   return (
     <aside
       aria-hidden={!hasBreakdown}
@@ -1282,9 +1573,14 @@ function TasksPanel({ hasBreakdown, children }: { hasBreakdown: boolean; childre
             {children}
           </div>
           {/* Footer — the item-level "Hand to a coworker" affordance (relocated out of the main column
-              so it isn't floating redundantly beside the workflow steps). Disabled / coming soon. */}
+              so it isn't floating redundantly beside the workflow steps). Delegates the WHOLE item. */}
           <div className="flex-shrink-0 border-t border-neutral-100 px-4 py-3 min-w-[268px]">
-            <HandToCoworkerButton size="sm" />
+            <HandToCoworkerButton
+              size="sm"
+              onDelegate={plan ? (w) => plan.delegateItem(w.id, w.name) : undefined}
+              pending={itemDelegating}
+              handedTo={liveHandedTo}
+            />
           </div>
         </div>
       </div>
@@ -1300,10 +1596,12 @@ function TasksPanel({ hasBreakdown, children }: { hasBreakdown: boolean; childre
 function DeepDiveShell({
   hasBreakdown,
   panel,
+  plan,
   children,
 }: {
   hasBreakdown: boolean;
   panel: React.ReactNode;
+  plan?: ItemPlan;             // the shared plan — the panel footer's whole-item "Hand to a coworker" uses it
   children: React.ReactNode;
 }) {
   // The whole two-column block is centered. Its max width grows only when the tasks panel is present
@@ -1318,7 +1616,7 @@ function DeepDiveShell({
       }`}
     >
       <div className="flex-1 min-w-0 flex flex-col h-full min-h-0">{children}</div>
-      <TasksPanel hasBreakdown={hasBreakdown}>{panel}</TasksPanel>
+      <TasksPanel hasBreakdown={hasBreakdown} plan={plan}>{panel}</TasksPanel>
     </div>
   );
 }
@@ -1505,6 +1803,7 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
     // plan is a genuine ≥2-task breakdown; single column otherwise.
     <DeepDiveShell
       hasBreakdown={hasBreakdown}
+      plan={plan}
       panel={<WhatThisTakes plan={plan} variant="panel" onDraft={scrollToComposer} onInvite={inviteHost.openInvite} />}
     >
       {/* 1 — Header: subject + sender + date (fixed at top) */}
@@ -1701,6 +2000,7 @@ function MeetingDetail({ id }: { id: string }) {
   return (
     <DeepDiveShell
       hasBreakdown={hasBreakdown}
+      plan={plan}
       panel={<WhatThisTakes plan={plan} variant="panel" onDraft={() => setComposing(true)} onInvite={inviteHost.openInvite} />}
     >
       {/* Header */}
@@ -1925,6 +2225,7 @@ function CommitmentDetail({ id }: { id: string }) {
   return (
     <DeepDiveShell
       hasBreakdown={hasBreakdown}
+      plan={plan}
       panel={<WhatThisTakes plan={plan} variant="panel" onDraft={() => setComposing(true)} onInvite={inviteHost.openInvite} />}
     >
       {/* Header */}
@@ -2146,6 +2447,7 @@ function FollowUpDetail({ id }: { id: string }) {
   return (
     <DeepDiveShell
       hasBreakdown={hasBreakdown}
+      plan={plan}
       panel={<WhatThisTakes plan={plan} variant="panel" onDraft={scrollToComposer} onInvite={inviteHost.openInvite} />}
     >
       {/* Header */}

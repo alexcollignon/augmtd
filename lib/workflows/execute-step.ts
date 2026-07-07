@@ -319,7 +319,11 @@ function getOutputLanguageName(code: string): string {
 
 // ── Agent step ────────────────────────────────────────────────────────────────
 
-async function executeAgentStep(step: AgentStep, ctx: StepContext): Promise<string> {
+// Exported: the single, FLAG-AGNOSTIC entry point that runs ONE coworker with a prompt and returns its
+// output text. Internally routes through AgentOS when `WORKERS_USE_AGENTOS` is on (with the coworker's
+// tools + per-user context) and falls back to the native inline call otherwise — so the caller never
+// has to know which path is live. Reused by the Home item-delegation route (`/api/items/delegate`).
+export async function executeAgentStep(step: AgentStep, ctx: StepContext): Promise<string> {
   // Load agent
   const { data: agent, error } = await ctx.supabase
     .from('custom_agents')
