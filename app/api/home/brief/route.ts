@@ -18,6 +18,38 @@ const DAY = 86_400_000;
 const BRIEF_TTL = 3 * 60 * 60 * 1000;
 const MAX_PRIORITIES = 6;
 
+// Automated / transactional senders are never a reply YOU owe — a "payment failed", "account
+// suspended", "verify your email", or no-reply notification is not a human waiting on you, even if
+// the classifier tagged it needs_reply. Keep this heuristic CONSERVATIVE and well-scoped: it only
+// removes an item from the must-respond (needs_reply) pool — the item still flows through the FYI /
+// awareness path. Matches on the from ADDRESS localpart (no-reply@, notifications@, billing@…), a few
+// bulk-sender domains, and unmistakable automated display-name / subject phrases.
+function isAutomatedSender(fromEmail: string | null, fromName: string | null, subject: string | null): boolean {
+  const email = (fromEmail || '').toLowerCase();
+  const localpart = email.split('@')[0] || '';
+  // Address localpart patterns — the classic "do not reply to this mailbox" senders.
+  const addrPatterns = [
+    'no-reply', 'noreply', 'no_reply', 'donotreply', 'do-not-reply', 'do_not_reply',
+    'notifications', 'notification', 'notify', 'mailer', 'mailer-daemon', 'bounce', 'bounces',
+    'postmaster', 'automated', 'auto-confirm', 'alerts', 'alert', 'billing', 'invoices', 'receipts',
+    'support+', 'updates', 'newsletter', 'news', 'digest',
+  ];
+  if (addrPatterns.some((p) => localpart.includes(p))) return true;
+  // Full-address contains (covers e.g. "team@notifications.stripe.com" style subdomains).
+  if (/(^|[.@])(no-?reply|donotreply|notifications?|mailer|bounce|postmaster)([.@])/.test(email)) return true;
+  // Display-name + subject signals — transactional / security / dunning mail from a real-looking
+  // localpart. Kept tight (well-known phrasings) so we don't nuke genuine human replies.
+  const text = `${(fromName || '').toLowerCase()} ${(subject || '').toLowerCase()}`;
+  const phrasePatterns = [
+    'payment failed', 'payment unsuccessful', 'payment declined', 'account suspended',
+    'account restricted', 'account has been', 'your subscription', 'subscription renew',
+    'verify your', 'confirm your email', 'confirm your account', 'security alert', 'security notice',
+    'unusual sign', 'sign-in attempt', 'password reset', 'invoice is', 'your receipt', 'order confirmation',
+  ];
+  if (phrasePatterns.some((p) => text.includes(p))) return true;
+  return false;
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function attendeeEmails(ev: any): string[] {
   return (ev?.attendees ?? []).map((a: any) => (a?.email || '').toLowerCase()).filter(Boolean);
@@ -184,6 +216,11 @@ export async function GET() {
   // the deterministic "already replied" resolution + collect the candidates.
   const mustRespondRaw: MustRespondCandidate[] = [];
   const emailSeeds: EmailSeed[] = [];
+  // itemId → whether the NEWEST message on the thread is the user's own (structural, direction+time).
+  // `lastFromUser === false` means the newest message is INBOUND, i.e. a genuinely unanswered reply the
+  // user still owes — such an item is PROTECTED and can never be dropped by the AI synthesis. Only items
+  // where the user has the last word (`lastFromUser === true`) may be closure-dropped by the model.
+  const lastFromUserByItem = new Map<string, boolean>();
   const fromEmailOf = (sd: Record<string, unknown>): string | null => {
     const raw = String((sd.from_address as string) || (sd.from as string) || '').toLowerCase();
     return raw.match(/[^\s<>"]+@[^\s<>"]+/)?.[0] || (raw.includes('@') ? raw : null);
@@ -218,7 +255,14 @@ export async function GET() {
       userResponded: replyState?.userReplied ?? undefined,
       lastFromUser: replyState?.lastMessageFromUser ?? undefined,
     });
+    if (replyState && typeof replyState.lastMessageFromUser === 'boolean') {
+      lastFromUserByItem.set(it.id, replyState.lastMessageFromUser);
+    }
     if (posture === 'needs_reply') {
+      // Automated / transactional mail is not a reply you owe — keep it OUT of must-respond (it still
+      // flows through FYI/awareness). This cleans the pool so "show every real reply" isn't polluted
+      // by no-reply notifications / payment-failed / account-suspended junk the model then over-drops.
+      if (isAutomatedSender(fromEmail, (sd.from_name as string) || null, it.work_title || (sd.subject as string) || null)) continue;
       mustRespondRaw.push({
         itemId: it.id,
         from: (sd.from_name as string) || (sd.from as string) || 'Someone',
@@ -439,7 +483,8 @@ export async function GET() {
     const cachedAsk = new Map((cached?.mustRespond?.items ?? []).map((i) => [i.itemId, { ask: i.ask, angle: i.angle }]));
     const basicMustItems: Reply[] = [...mustRespondRaw]
       .sort((a, b) => (b.receivedAt || '').localeCompare(a.receivedAt || ''))
-      .slice(0, 25)
+      // High safety bound, not a functional gate — real replies must never be hidden by a cap.
+      .slice(0, 100)
       .map((c) => {
         const prev = cachedAsk.get(c.itemId);
         return { who: c.from, ask: prev?.ask || '', angle: prev?.angle || '', itemId: c.itemId, subject: c.subject, snippet: c.snippet, receivedAt: c.receivedAt };
@@ -463,6 +508,14 @@ export async function GET() {
     //    SAME sig (upgrades the cache in place: real ask/angle, ordering, supersession drops,
     //    placements). Non-fatal: any failure leaves the basic brief cached, which is still correct.
     const owedFacts = owedByIngest.map((c) => ({ description: c.description, overdue: c.overdue, dueToday: c.dueToday, dueDate: c.dueDate }));
+    // PROTECTED members = must-respond candidates whose newest thread message is INBOUND
+    // (lastFromUser === false), i.e. genuinely unanswered human replies the user still owes. These
+    // can NEVER be dropped by the AI (no appear-then-vanish); only items where the user has the last
+    // word (lastFromUser === true) remain droppable for closure. Missing from the map (no thread
+    // reply-state) → treated as unanswered/protected, the safe default (don't silently drop).
+    const protectedItemIds = new Set<string>(
+      mustRespondRaw.filter((c) => lastFromUserByItem.get(c.itemId) !== true).map((c) => c.itemId),
+    );
     after(async () => {
       try {
         const synth = await synthesizeBrief(getSystemClient('summarization'), {
@@ -473,6 +526,7 @@ export async function GET() {
           emailReplyCount: emailP,
           topPriorities: cappedPriorities.map((p) => ({ title: p.title, posture: p.posture, source: p.source, overdue: !!p.overdue })),
           mustRespond: mustRespondRaw,
+          protectedItemIds,
           // Waiting candidates = the ingest-awaiting commitments — the synthesis writes the follow-up
           // prose (status + nextMove) over these. Final lane routing is by the placement verdict below;
           // a commitment re-placed to ball_in_court that wasn't here still appears via the raw fallback.
@@ -492,7 +546,9 @@ export async function GET() {
         if (synth.fyiDigest !== null || !fyiTop.length) {
           enrFyiDigest = synth.fyiDigest ? { ...synth.fyiDigest, tailGroups: fyiTailGroups, tailItems: fyiTailItems } : null;
         }
-        enrDropped = synth.droppedItemIds;
+        // Belt-and-suspenders: a protected (unanswered inbound) item can NEVER be in droppedItemIds,
+        // so it can't be removed from the priority cards either — enriched membership ⊇ protected set.
+        enrDropped = synth.droppedItemIds.filter((id) => !protectedItemIds.has(id));
         if (Object.keys(synth.commitmentPlacements).length) enrPlacements = synth.commitmentPlacements;
         // Persist the enriched brief under the SAME sig — upgrades the cache in place so the next
         // refetch is a cache-hit on the fully-synthesized version.

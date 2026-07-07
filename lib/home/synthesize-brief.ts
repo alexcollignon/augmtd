@@ -98,6 +98,11 @@ export interface SynthesisInput {
   /** awareness/cc'd threads the synthesis may PROMOTE to the "keep an eye on" tier if they carry
       real substance — general judgment, not a rule. Kept small by the synthesis (2–4). */
   keepAnEyeOn: AwarenessCandidate[];
+  /** itemIds whose newest thread message is INBOUND (a genuinely unanswered human reply the user
+      still owes). These are PROTECTED: the synthesis may NOT drop them — a real reply must never
+      appear then vanish after enrichment. Only items where the user has the last word are droppable
+      for closure. Missing from the set → not protected (droppable as before). */
+  protectedItemIds?: Set<string>;
 }
 
 // ── Output shapes — identical to what the client already renders ──
@@ -309,6 +314,17 @@ If a section has no items, return it with an empty items/groups array (or null f
     const droppedR = new Set<number>(
       Array.isArray(parsed.droppedReplies) ? parsed.droppedReplies.filter((n): n is number => typeof n === 'number') : [],
     );
+    // PROTECT genuinely unanswered human replies (newest thread message INBOUND). The model may drop
+    // an item ONLY when the deterministic reply-state says the user has the last word — so a real,
+    // still-open reply can never be dropped for "closure" and appear-then-vanish after enrichment.
+    // This makes the enriched must-respond set ⊇ the protected members. (Guard here, at the single
+    // place droppedR feeds BOTH mustItems and droppedItemIds, so the two outputs stay consistent.)
+    const protectedIds = input.protectedItemIds;
+    if (protectedIds && protectedIds.size) {
+      input.mustRespond.forEach((cand, i) => {
+        if (droppedR.has(i) && protectedIds.has(cand.itemId)) droppedR.delete(i);
+      });
+    }
     const modelItems = Array.isArray(parsed.mustRespond?.items) ? parsed.mustRespond!.items! : [];
     const enrichR = new Map<number, { who?: string; ask?: string; angle?: string }>();
     modelItems.forEach((x) => { if (typeof x.r === 'number') enrichR.set(x.r, x); });
@@ -329,7 +345,9 @@ If a section has no items, return it with an empty items/groups array (or null f
           subject: cand.subject, snippet: cand.snippet, receivedAt: cand.receivedAt,
         };
       })
-      .slice(0, 25);
+      // High safety bound only — NOT a functional gate. Real replies must never be hidden by a cap;
+      // the pool is already cleaned (automated senders excluded upstream), so this is pure headroom.
+      .slice(0, 100);
     const mustRespond: MustRespond | null = mustItems.length
       ? { teaser: parsed.mustRespond?.teaser || '', items: mustItems }
       : null;
