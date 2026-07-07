@@ -13,6 +13,13 @@
 
 import type { FeatureKey } from '@/lib/workspace/types';
 
+// ── PLAN_VERSION — the auto-invalidation stamp. Persisted on each `item_plans` row (the `version`
+// column). BUMP THIS whenever the CAPABILITY_MAP or the classifier prompt/rules change: a cached plan
+// whose stored `version !== PLAN_VERSION` is treated as STALE by `POST /api/items/plan` and silently
+// regenerated + re-stamped on next open — so there's no manual cache-bust / row-delete anymore.
+// (Bumped for the stage-2 classification engine + editable-plan work.)
+export const PLAN_VERSION = 1;
+
 // 'atomic'   → deterministic, no judgment → the System runs it directly (a `tool`/`ai` workflow step).
 // 'judgment' → benefits from a coworker's voice/reasoning/skills → an `agent` step.
 export type CapabilityKind = 'atomic' | 'judgment';

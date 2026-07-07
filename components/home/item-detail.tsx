@@ -15,6 +15,8 @@ import {
   SparklesIcon,
   ChevronDownIcon,
   XMarkIcon,
+  PencilIcon,
+  PlusIcon,
 } from '@heroicons/react/24/outline';
 import { ThreadMessages, type ThreadMessage } from '@/components/inbox/thread-messages';
 import ReplyEditor from '@/components/inbox/reply-editor';
@@ -450,8 +452,11 @@ type ItemPlan = {
   failed: boolean;
   hasBreakdown: boolean; // a genuine ≥2-task plan (counts ALL tasks — crossing out doesn't collapse it)
   pending: Set<string>;
+  classifyingId: string | null;  // id of the step currently being (re)classified — drives the "classifying…" hint
   toggle: (task: PlanTask) => void;
   dismiss: (task: PlanTask) => void;  // TOGGLE a step's "not needed" (crossed-out) state, persisted
+  addStep: (text: string) => Promise<void>;              // add a step → classify → append (optimistic)
+  editStep: (taskId: string, text: string) => Promise<void>; // edit a step's text → re-classify in place
 };
 
 function useItemPlan(
@@ -462,6 +467,7 @@ function useItemPlan(
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
   const [pending, setPending] = useState<Set<string>>(new Set());
+  const [classifyingId, setClassifyingId] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -520,12 +526,73 @@ function useItemPlan(
       .finally(() => setPending((prev) => { const n = new Set(prev); n.delete(task.id); return n; }));
   };
 
+  // ── Add a step. Optimistically insert a provisional [You] step (the user's text, "classifying…"),
+  // POST action:'add' → the classifier grades it → swap in the real graded step (executor badge +
+  // action may resolve). On failure, remove the provisional row (rollback).
+  const addStep = async (text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    // A local, temporary id — replaced by the server's real id on success.
+    const tempId = `tmp-${Date.now()}`;
+    const provisional: PlanTask = { id: tempId, text: trimmed, actor: 'you', capability: null, done: false };
+    setTasks((prev) => [...(prev ?? []), provisional]);
+    setClassifyingId(tempId);
+    try {
+      const res = await fetch('/api/items/plan', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: planKind, entityId, action: 'add', text: trimmed }),
+      });
+      if (!res.ok) throw new Error();
+      const d = (await res.json()) as { task?: PlanTask };
+      if (!d.task) throw new Error();
+      const graded = d.task;
+      setTasks((prev) => (prev ? prev.map((t) => (t.id === tempId ? graded : t)) : prev));
+    } catch {
+      // Rollback — drop the provisional row.
+      setTasks((prev) => (prev ? prev.filter((t) => t.id !== tempId) : prev));
+    } finally {
+      setClassifyingId(null);
+    }
+  };
+
+  // ── Edit a step's text in place → re-classify. Optimistically show the new text (keeping the old
+  // grade under a "classifying…" hint), POST action:'edit' → swap in the re-graded step. Roll back to
+  // the prior task on failure.
+  const editStep = async (taskId: string, text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    let prior: PlanTask | undefined;
+    setTasks((prev) => {
+      if (!prev) return prev;
+      prior = prev.find((t) => t.id === taskId);
+      return prev.map((t) => (t.id === taskId ? { ...t, text: trimmed } : t));
+    });
+    setClassifyingId(taskId);
+    try {
+      const res = await fetch('/api/items/plan', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: planKind, entityId, action: 'edit', taskId, text: trimmed }),
+      });
+      if (!res.ok) throw new Error();
+      const d = (await res.json()) as { task?: PlanTask };
+      if (!d.task) throw new Error();
+      const graded = d.task;
+      setTasks((prev) => (prev ? prev.map((t) => (t.id === taskId ? graded : t)) : prev));
+    } catch {
+      if (prior) setTasks((prev) => (prev ? prev.map((t) => (t.id === taskId ? prior! : t)) : prev));
+    } finally {
+      setClassifyingId(null);
+    }
+  };
+
   // The ≥2-task breakdown gate — a real multi-step plan, counting ALL identified tasks (including
   // crossed-out ones). Crossing steps out does NOT collapse the panel: a workflow the user has triaged
-  // stays visible.
+  // stays visible. (A user-added step counts toward it — it's in `tasks`.)
   const hasBreakdown = !loading && !failed && !!tasks && tasks.length >= 2;
 
-  return { tasks, loading, failed, hasBreakdown, pending, toggle, dismiss };
+  return { tasks, loading, failed, hasBreakdown, pending, classifyingId, toggle, dismiss, addStep, editStep };
 }
 
 // ── One step in the "Identified tasks" workflow stepper. A vertical timeline row: a NODE (✦ for a
@@ -542,6 +609,8 @@ function StepperRow({
   onDraft,
   onToggle,
   onDismiss,
+  onEdit,
+  classifying,
   busy,
 }: {
   task: PlanTask;
@@ -551,12 +620,22 @@ function StepperRow({
   onDraft?: () => void;
   onToggle: () => void;
   onDismiss: () => void;
+  onEdit: (text: string) => void;   // re-classify this step with new text
+  classifying: boolean;             // this step is being (re)classified — show a quiet "classifying…"
   busy: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draftText, setDraftText] = useState(task.text);
+  const inputRef = useRef<HTMLInputElement>(null);
   const isSystem = task.actor === 'system';
   const hasDetail = !!task.detail?.trim();
   const crossed = !!task.dismissed; // "not needed" — visible but struck-through, action disabled
+
+  useEffect(() => {
+    if (editing) { setDraftText(task.text); inputRef.current?.focus(); inputRef.current?.select(); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editing]);
 
   const handleDismiss = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -564,23 +643,30 @@ function StepperRow({
     onDismiss(); // toggle "not needed" (persisted); the row stays mounted, just crosses/un-crosses
   };
 
+  const commitEdit = () => {
+    const t = draftText.trim();
+    setEditing(false);
+    if (t && t !== task.text) onEdit(t);   // only re-classify on a real change
+  };
+
   return (
     <li className="relative pl-8">
       {/* Connector line — runs from just under this node to the next; hidden on the last step. */}
       {!isLast && <span aria-hidden className="absolute left-[11px] top-6 bottom-[-6px] w-px bg-neutral-200" />}
 
-      {/* Node — ✦ for a system step, a checkbox for a [You] step. Dimmed when the step is crossed out. */}
+      {/* Node — ✦ for a system step, a checkbox for a [You] step. Dimmed when the step is crossed out.
+          While classifying, the node pulses to signal the grade is resolving. */}
       {isSystem ? (
-        <span className={`absolute left-0 top-[3px] flex h-[23px] w-[23px] items-center justify-center rounded-full ring-2 ring-white transition-colors duration-300 ${crossed ? 'bg-neutral-100' : 'bg-indigo-50'}`}>
+        <span className={`absolute left-0 top-[3px] flex h-[23px] w-[23px] items-center justify-center rounded-full ring-2 ring-white transition-colors duration-300 ${crossed ? 'bg-neutral-100' : 'bg-indigo-50'} ${classifying ? 'animate-pulse' : ''}`}>
           <SparklesIcon className={`h-3.5 w-3.5 transition-colors duration-300 ${crossed ? 'text-neutral-300' : 'text-indigo-500'}`} />
         </span>
       ) : (
         <button
           onClick={onToggle}
-          disabled={busy || crossed}
+          disabled={busy || crossed || classifying}
           aria-pressed={!!task.done}
           title={crossed ? 'Set aside' : task.done ? 'Mark not done' : 'Mark done'}
-          className={`absolute left-0 top-[3px] flex h-[23px] w-[23px] items-center justify-center rounded-full ring-2 ring-white border transition-colors duration-300 ${crossed ? 'bg-neutral-50 border-neutral-200 text-transparent cursor-default' : task.done ? 'bg-emerald-500 border-emerald-500 text-white' : 'bg-white border-neutral-300 text-transparent hover:border-neutral-400'}`}
+          className={`absolute left-0 top-[3px] flex h-[23px] w-[23px] items-center justify-center rounded-full ring-2 ring-white border transition-colors duration-300 ${classifying ? 'animate-pulse' : ''} ${crossed ? 'bg-neutral-50 border-neutral-200 text-transparent cursor-default' : task.done ? 'bg-emerald-500 border-emerald-500 text-white' : 'bg-white border-neutral-300 text-transparent hover:border-neutral-400'}`}
         >
           <CheckIcon className="h-3 w-3" />
         </button>
@@ -589,45 +675,80 @@ function StepperRow({
       {/* Row body */}
       <div className="group/step pb-3">
         <div className="flex items-start gap-2">
-          {/* Title (+ optional expand affordance). Click the row to reveal `detail`. */}
-          <button
-            onClick={() => hasDetail && setExpanded((v) => !v)}
-            className={`min-w-0 flex-1 text-left ${hasDetail ? 'cursor-pointer' : 'cursor-default'}`}
-          >
-            <span className="flex items-center gap-1">
-              <span className={`text-[13px] font-medium leading-snug transition-colors duration-300 ${crossed ? 'text-neutral-400 line-through' : task.done ? 'text-neutral-400 line-through' : 'text-neutral-800'}`}>{task.text}</span>
-              {hasDetail && (
-                <ChevronDownIcon className={`w-3 h-3 flex-shrink-0 text-neutral-300 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`} />
-              )}
-            </span>
-          </button>
+          {editing ? (
+            // Inline edit — the title becomes an editable input; Enter (or blur) saves → re-classify,
+            // Esc cancels. Lightweight, no builder.
+            <input
+              ref={inputRef}
+              value={draftText}
+              onChange={(e) => setDraftText(e.target.value)}
+              onBlur={commitEdit}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') { e.preventDefault(); commitEdit(); }
+                else if (e.key === 'Escape') { e.preventDefault(); setEditing(false); }
+              }}
+              className="min-w-0 flex-1 bg-white border border-indigo-300 rounded-md px-2 py-1 text-[13px] font-medium text-neutral-800 focus:outline-none"
+            />
+          ) : (
+            // Title (+ optional expand affordance). Click reveals `detail`; DOUBLE-click to edit. A tiny
+            // pencil affordance appears on hover for an active (not crossed) step.
+            <button
+              onClick={() => hasDetail && setExpanded((v) => !v)}
+              onDoubleClick={() => !crossed && !classifying && setEditing(true)}
+              className={`min-w-0 flex-1 text-left ${hasDetail ? 'cursor-pointer' : 'cursor-default'}`}
+            >
+              <span className="flex items-center gap-1">
+                <span className={`text-[13px] font-medium leading-snug transition-colors duration-300 ${crossed ? 'text-neutral-400 line-through' : task.done ? 'text-neutral-400 line-through' : 'text-neutral-800'}`}>{task.text}</span>
+                {hasDetail && (
+                  <ChevronDownIcon className={`w-3 h-3 flex-shrink-0 text-neutral-300 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`} />
+                )}
+              </span>
+            </button>
+          )}
 
-          {/* ✕ — toggles "not needed". Crossing out keeps the step visible but struck + disabled; click
-              again to restore. Quiet on hover when active; when crossed it stays visible (amber) as the
-              affordance to un-cross. */}
-          <button
-            onClick={handleDismiss}
-            disabled={busy}
-            title={crossed ? 'Restore — mark needed again' : 'Not needed — set this step aside'}
-            aria-label={crossed ? 'Restore step' : 'Set step aside'}
-            aria-pressed={crossed}
-            className={`flex-shrink-0 -mt-0.5 p-0.5 transition-all disabled:opacity-40 ${crossed ? 'text-amber-500 opacity-100 hover:text-amber-600' : 'text-neutral-300 opacity-0 group-hover/step:opacity-100 focus:opacity-100 hover:text-rose-500'}`}
-          >
-            <XMarkIcon className="w-3.5 h-3.5" />
-          </button>
+          {!editing && (
+            <>
+              {/* ✎ — edit the step's text (re-classified on save). Quiet, hover-revealed, active steps only. */}
+              {!crossed && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); if (!busy && !classifying) setEditing(true); }}
+                  disabled={busy || classifying}
+                  title="Edit this step"
+                  aria-label="Edit step"
+                  className="flex-shrink-0 -mt-0.5 p-0.5 text-neutral-300 opacity-0 group-hover/step:opacity-100 focus:opacity-100 hover:text-indigo-600 transition-all disabled:opacity-40"
+                >
+                  <PencilIcon className="w-3.5 h-3.5" />
+                </button>
+              )}
+              {/* ✕ — toggles "not needed". Crossing out keeps the step visible but struck + disabled; click
+                  again to restore. Quiet on hover when active; when crossed it stays visible (amber). */}
+              <button
+                onClick={handleDismiss}
+                disabled={busy}
+                title={crossed ? 'Restore — mark needed again' : 'Not needed — set this step aside'}
+                aria-label={crossed ? 'Restore step' : 'Set step aside'}
+                aria-pressed={crossed}
+                className={`flex-shrink-0 -mt-0.5 p-0.5 transition-all disabled:opacity-40 ${crossed ? 'text-amber-500 opacity-100 hover:text-amber-600' : 'text-neutral-300 opacity-0 group-hover/step:opacity-100 focus:opacity-100 hover:text-rose-500'}`}
+              >
+                <XMarkIcon className="w-3.5 h-3.5" />
+              </button>
+            </>
+          )}
         </div>
 
         {/* Expandable detail — the fuller one-sentence explanation. */}
-        {hasDetail && (
+        {hasDetail && !editing && (
           <div className={`grid transition-all duration-300 ease-out ${expanded ? 'grid-rows-[1fr] opacity-100 mt-1' : 'grid-rows-[0fr] opacity-0'}`}>
             <p className={`overflow-hidden text-[12px] leading-relaxed transition-colors duration-300 ${crossed ? 'text-neutral-300 line-through' : 'text-neutral-500'}`}>{task.detail}</p>
           </div>
         )}
 
-        {/* Action / status line — a crossed-out ("not needed") step shows a quiet "set aside" label with
-            NO active action (no Draft → / no needs-you), so it can't be acted on while set aside. */}
+        {/* Action / status line. While classifying → a quiet "classifying…". A crossed-out step shows a
+            "Not needed" label with NO active action. */}
         <div className="mt-1 flex items-center gap-2">
-          {crossed ? (
+          {classifying ? (
+            <span className="text-[10.5px] text-indigo-400 italic animate-pulse">Classifying…</span>
+          ) : crossed ? (
             <span className="text-[10.5px] text-neutral-400 italic">Not needed</span>
           ) : isSystem ? (
             canDraft && onDraft ? (
@@ -640,6 +761,53 @@ function StepperRow({
           )}
         </div>
       </div>
+    </li>
+  );
+}
+
+// ── "+ Add a step" — an inline affordance at the bottom of the stepper. Collapsed to a quiet link;
+// on click it becomes a single-line input. On submit it posts action:'add' (the parent's `onAdd` →
+// hook `addStep`), which classifies the text and appends the graded step (with a brief "classifying…").
+function AddStepRow({ onAdd }: { onAdd: (text: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState('');
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => { if (open) inputRef.current?.focus(); }, [open]);
+
+  const submit = () => {
+    const t = text.trim();
+    if (t) { onAdd(t); setText(''); }
+    // Keep the input open so several steps can be added in a row; a blank submit closes it.
+    else setOpen(false);
+  };
+
+  return (
+    <li className="relative pl-8">
+      {open ? (
+        <div className="pb-1">
+          <input
+            ref={inputRef}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') { e.preventDefault(); submit(); }
+              else if (e.key === 'Escape') { e.preventDefault(); setText(''); setOpen(false); }
+            }}
+            onBlur={() => { if (!text.trim()) setOpen(false); }}
+            placeholder="Add a step…"
+            className="w-full bg-white border border-indigo-300 rounded-md px-2 py-1.5 text-[13px] text-neutral-800 placeholder:text-neutral-300 focus:outline-none"
+          />
+          <p className="mt-1 text-[10.5px] text-neutral-400">Enter to add · Esc to cancel — we'll work out who does it.</p>
+        </div>
+      ) : (
+        <button
+          onClick={() => setOpen(true)}
+          className="inline-flex items-center gap-1 text-[12px] font-medium text-neutral-400 hover:text-indigo-600 transition-colors"
+        >
+          <PlusIcon className="w-3.5 h-3.5" /> Add a step
+        </button>
+      )}
     </li>
   );
 }
@@ -662,7 +830,7 @@ function WhatThisTakes({
   onDraft?: () => void;
   variant?: 'inline' | 'panel';
 }) {
-  const { tasks, loading, failed, pending, toggle, dismiss } = plan;
+  const { tasks, loading, failed, pending, classifyingId, toggle, dismiss, addStep, editStep } = plan;
 
   // In the two-column layout the parent renders the panel chrome + its own loading/failed handling
   // (the aside only mounts once a breakdown is confirmed via the hook's `hasBreakdown`), so the
@@ -712,15 +880,20 @@ function WhatThisTakes({
         <StepperRow
           key={t.id}
           task={t}
-          isLast={i === tasks.length - 1}
+          // Never the last node — the "+ Add a step" row always follows, so the connector runs down to it.
+          isLast={false}
           canDraft={t.id === primaryComposeId && !!onDraft}
           draftLabel={composeLabel}
           onDraft={onDraft}
           onToggle={() => toggle(t)}
           onDismiss={() => dismiss(t)}
+          onEdit={(text) => editStep(t.id, text)}
+          classifying={classifyingId === t.id}
           busy={pending.has(t.id)}
         />
       ))}
+      {/* Add-a-step affordance — always at the bottom of an active plan. */}
+      <AddStepRow onAdd={addStep} />
     </ol>
   );
 
