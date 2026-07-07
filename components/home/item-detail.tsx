@@ -16,6 +16,7 @@ import {
   XMarkIcon,
   PencilIcon,
   PlusIcon,
+  ClipboardDocumentListIcon,
 } from '@heroicons/react/24/outline';
 import { ThreadMessages, type ThreadMessage } from '@/components/inbox/thread-messages';
 import ReplyEditor from '@/components/inbox/reply-editor';
@@ -2008,16 +2009,6 @@ function TasksPanel({ hasBreakdown, plan, onDraft, onInvite, children }: { hasBr
     return suggestCoworkerFor(t, workers);
   };
 
-  // The whole-item "assign all to a coworker" — the single best-fit coworker across the live plan (kept
-  // as a QUIET secondary link, not a second hero button next to Run). Falls back to the first coworker.
-  const bulkCoworker = (() => {
-    const ts = (plan?.tasks ?? []).filter((t) => !t.dismissed && !t.done && !t.handedTo);
-    for (const t of ts) { const w = suggestCoworkerFor(t, workers); if (w) return w; }
-    return workers[0] ?? null;
-  })();
-
-  const [bulkOpen, setBulkOpen] = useState(false);
-
   return (
     <aside
       aria-hidden={!hasBreakdown}
@@ -2029,12 +2020,13 @@ function TasksPanel({ hasBreakdown, plan, onDraft, onInvite, children }: { hasBr
           white (the lane's own left border is what separates it from the email column). */}
       <div className="flex-1 min-h-0 p-2 w-[300px] xl:w-[320px]">
         <div className="h-full flex flex-col rounded-2xl bg-white border border-neutral-200/70 overflow-hidden">
-          {/* Sticky header — the AUGMTD brand mark + "Identified tasks" + a LIVE "N of M done" progress
+          {/* Sticky header — a tasks/checklist glyph + "Identified tasks" + a LIVE "N of M done" progress
               indicator (counts every completed/sent/handled/set-aside step, updates as steps resolve).
-              Matches the Activity panel header; the mark replaces the old sparkles cliché. */}
+              Matches the Activity panel header. NB: the header icon is a task glyph (not the AUGMTD mark);
+              the AUGMTD mark stays on the per-step SYSTEM nodes/chips where it means "AUGMTD owns this". */}
           <div className="flex-shrink-0 flex items-center justify-between gap-2 h-10 px-3.5 border-b border-neutral-200">
             <div className="flex items-center gap-1.5 min-w-0">
-              <AugmtdMark size={15} />
+              <ClipboardDocumentListIcon className="w-4 h-4 text-neutral-400 flex-shrink-0" />
               <span className="text-[13px] font-semibold text-neutral-700 whitespace-nowrap">Identified tasks</span>
             </div>
             {progress.total > 0 && (
@@ -2069,33 +2061,13 @@ function TasksPanel({ hasBreakdown, plan, onDraft, onInvite, children }: { hasBr
                 Handing off…
               </div>
             ) : plan ? (
-              <>
-                <button
-                  onClick={() => plan.runPlan({ pickCoworker, openInvite: onInvite, openCompose: onDraft })}
-                  className="w-full inline-flex items-center justify-center gap-1.5 rounded-lg bg-indigo-600 text-white px-3 py-2 text-[13px] font-semibold hover:bg-indigo-700 transition-colors"
-                >
-                  <PaperAirplaneIcon className="w-3.5 h-3.5" />
-                  {progress.done > 0 ? 'Run the rest' : 'Run'}
-                </button>
-                {/* Quiet secondary — assign the whole thing to one coworker (a popover confirm, not a hero button). */}
-                {bulkCoworker && (
-                  <div className="relative">
-                    <button
-                      onClick={() => setBulkOpen((v) => !v)}
-                      className="w-full text-center text-[11px] font-medium text-neutral-400 hover:text-indigo-600 transition-colors"
-                    >
-                      or give it all to a coworker
-                    </button>
-                    {bulkOpen && (
-                      <CoworkerPicker
-                        title="Give the whole thing to a coworker"
-                        onPick={(w) => { setBulkOpen(false); plan.delegateItem(w.id, w.name); }}
-                        onClose={() => setBulkOpen(false)}
-                      />
-                    )}
-                  </div>
-                )}
-              </>
+              <button
+                onClick={() => plan.runPlan({ pickCoworker, openInvite: onInvite, openCompose: onDraft })}
+                className="w-full inline-flex items-center justify-center gap-1.5 rounded-lg bg-indigo-600 text-white px-3 py-2 text-[13px] font-semibold hover:bg-indigo-700 transition-colors"
+              >
+                <PaperAirplaneIcon className="w-3.5 h-3.5" />
+                {progress.done > 0 ? 'Run the rest' : 'Run'}
+              </button>
             ) : null}
           </div>
         </div>
@@ -2124,18 +2096,26 @@ function DeepDiveShell({
   onInvite?: (taskId: string) => void; // open the prepared invite card for a step
   children: React.ReactNode;
 }) {
-  // The whole two-column block is centered. Its max width grows only when the tasks panel is present
-  // (single column stays capped at the classic readable width — identical to before); when the panel
-  // opens we give the email column noticeably MORE room (a wider block + the now-narrower ~300px aside),
-  // so the thread + composer breathe while the workflow sits to the right. The transition animates the
-  // split.
+  // Layout mirrors the Home ACTIVITY panel: the tasks aside hugs the RIGHT edge (a `flex-shrink-0`
+  // width-animated column, never overlaid), and the MAIN column absorbs ALL the freed width — no
+  // centered `max-w` cap that leaves dead space to the right of the panel. When a breakdown exists the
+  // whole row goes full width so the aside sits flush right; the main column's OWN inner content is
+  // still capped at the classic readable width (centered within its now-wider flex space) so the thread
+  // + composer stay comfortable while gaining room. Single column (no breakdown) is unchanged: a
+  // centered `max-w-3xl` block, exactly as before. The transition animates the split.
   return (
     <div
-      className={`mx-auto w-full h-full min-h-0 flex flex-row transition-[max-width] duration-300 ease-out ${
-        hasBreakdown ? 'lg:max-w-6xl' : 'max-w-3xl'
+      className={`w-full h-full min-h-0 flex flex-row transition-[max-width] duration-300 ease-out ${
+        hasBreakdown ? 'max-w-none' : 'mx-auto max-w-3xl'
       }`}
     >
-      <div className="flex-1 min-w-0 flex flex-col h-full min-h-0">{children}</div>
+      <div className="flex-1 min-w-0 flex flex-col h-full min-h-0">
+        {hasBreakdown ? (
+          <div className="w-full max-w-4xl mx-auto flex flex-col h-full min-h-0">{children}</div>
+        ) : (
+          children
+        )}
+      </div>
       <TasksPanel hasBreakdown={hasBreakdown} plan={plan} onDraft={onDraft} onInvite={onInvite}>{panel}</TasksPanel>
     </div>
   );
