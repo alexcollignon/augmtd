@@ -411,7 +411,7 @@ function DigestReply({ m, onDismiss, emphasis = false, onUndoInbox }: { m: Diges
         {m.itemId && (
           <span className="flex-shrink-0 flex items-center gap-2.5 mt-0.5">
             <span className="inline-flex items-center gap-1 text-[12.5px] font-medium text-indigo-600 hover:text-indigo-700 whitespace-nowrap">
-              {ready ? 'Send draft' : 'Open'}
+              {ready ? 'Reply' : 'Open'}
               <ArrowRightIcon className="w-3.5 h-3.5" />
             </span>
             <button onClick={(e) => act('complete', e)} disabled={acting} title="Mark done"
@@ -452,8 +452,8 @@ function FollowUpItem({ f, index, onCleared, onUndoCommitment }: { f: { id?: str
     try {
       const res = await fetch(`/api/commitments/${f.id}/nudge`, { method: 'POST' });
       const d = await res.json();
-      setDraft(d.draft || 'Could not draft a nudge.');
-    } catch { setDraft('Could not draft a nudge.'); } finally { setLoading(false); }
+      setDraft(d.draft || 'Could not write a follow-up.');
+    } catch { setDraft('Could not write a follow-up.'); } finally { setLoading(false); }
   };
   const send = async () => {
     if (!draft || sending || !f.id) return;
@@ -463,8 +463,8 @@ function FollowUpItem({ f, index, onCleared, onUndoCommitment }: { f: { id?: str
         method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ body: draft }),
       });
       if (res.ok) { setSent(true); setOpen(false); }
-      else { const d = await res.json().catch(() => ({})); setErr(d.error || 'Could not send the nudge.'); }
-    } catch { setErr('Could not send the nudge.'); } finally { setSending(false); }
+      else { const d = await res.json().catch(() => ({})); setErr(d.error || 'Could not send the follow-up.'); }
+    } catch { setErr('Could not send the follow-up.'); } finally { setSending(false); }
   };
 
   if (removed) return null;
@@ -477,11 +477,11 @@ function FollowUpItem({ f, index, onCleared, onUndoCommitment }: { f: { id?: str
           className={`text-[13px] font-semibold text-neutral-800 leading-snug ${f.id ? 'cursor-pointer hover:text-indigo-700 transition-colors' : ''}`}>{f.who}</p>
         {f.status && <p className="text-[12.5px] text-neutral-500 mt-0.5 leading-snug">{f.status}</p>}
         {sent ? (
-          <p className="text-[12.5px] text-emerald-600 mt-1 leading-snug font-medium">Nudge sent ✓</p>
+          <p className="text-[12.5px] text-emerald-600 mt-1 leading-snug font-medium">Follow-up sent ✓</p>
         ) : f.id && (
           <button onClick={() => (open ? setOpen(false) : openNudge())}
             className="inline-flex items-center gap-1 text-[12.5px] font-medium text-indigo-600 hover:text-indigo-700 mt-1 transition-colors">
-            {loading ? 'Drafting…' : open ? 'Collapse' : 'Draft nudge'}
+            {loading ? 'Writing…' : open ? 'Collapse' : 'Follow up'}
             {!open && !loading && <ArrowRightIcon className="w-3.5 h-3.5" />}
           </button>
         )}
@@ -490,7 +490,7 @@ function FollowUpItem({ f, index, onCleared, onUndoCommitment }: { f: { id?: str
             {loading && <div className="h-16 rounded-xl bg-neutral-100 animate-pulse" />}
             {draft && (
               <div className="rounded-xl border border-neutral-200 bg-neutral-50/70 p-3">
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400 mb-1.5">Nudge draft</p>
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400 mb-1.5">Follow-up</p>
                 <textarea value={draft} onChange={(e) => setDraft(e.target.value)}
                   rows={Math.min(12, Math.max(4, draft.split('\n').length + 1))}
                   className="w-full bg-transparent text-[12.5px] text-neutral-700 leading-relaxed resize-none focus:outline-none" />
@@ -630,7 +630,7 @@ function StartHereReplyBody({ m, onDismiss, onUndoInbox }: { m: { who: string; a
         {m.itemId && (
           <div className="flex-shrink-0 flex items-center gap-1.5">
             <span className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 text-white px-3.5 py-2 text-[13px] font-medium hover:bg-indigo-700 transition-colors">
-              {ready ? '✦ Send draft' : 'Open'}
+              {ready ? 'Reply' : 'Open'}
               <ArrowRightIcon className="w-3.5 h-3.5" />
             </span>
             <button onClick={(e) => act('complete', e)} disabled={acting} title="Mark done" className="w-8 h-8 inline-flex items-center justify-center rounded-lg border border-neutral-200 text-neutral-400 hover:text-emerald-600 hover:border-emerald-200 hover:bg-emerald-50 transition-colors text-[14px]">✓</button>
@@ -1217,7 +1217,7 @@ export function HomeView() {
   if (hasFollowups) rail('followups', (
     <section>
       <Label count={followupsLive} icon={ClockIcon}>Ball in your court</Label>
-      <p className="text-[12px] text-neutral-400 -mt-1.5 mb-2.5 leading-snug">Waiting on others — nudge when it stalls.</p>
+      <p className="text-[12px] text-neutral-400 -mt-1.5 mb-2.5 leading-snug">Waiting on others — follow up when it stalls.</p>
       {followupsLive === 0 ? (
         <SectionCleared line="All caught up here — nothing waiting on you." />
       ) : (

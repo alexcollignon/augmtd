@@ -2381,8 +2381,8 @@ function FollowUpDetail({ id }: { id: string }) {
     // Draft a nudge (plain text) — same endpoint the Home "Draft nudge" uses.
     fetch(`/api/commitments/${id}/nudge`, { method: 'POST' })
       .then(r => r.json())
-      .then(d => { if (alive) setDraft(d.draft || 'Could not draft a nudge.'); })
-      .catch(() => { if (alive) setDraft('Could not draft a nudge.'); })
+      .then(d => { if (alive) setDraft(d.draft || 'Could not write a follow-up.'); })
+      .catch(() => { if (alive) setDraft('Could not write a follow-up.'); })
       .finally(() => { if (alive) setDraftLoading(false); });
 
     return () => { alive = false; };
@@ -2404,10 +2404,10 @@ function FollowUpDetail({ id }: { id: string }) {
         setTimeout(() => router.back(), 900);
       } else {
         const d = await res.json().catch(() => ({}));
-        setSendErr(d.error || 'Could not send the nudge.');
+        setSendErr(d.error || 'Could not send the follow-up.');
       }
     } catch {
-      setSendErr('Could not send the nudge.');
+      setSendErr('Could not send the follow-up.');
     } finally {
       setSending(false);
     }
@@ -2467,7 +2467,7 @@ function FollowUpDetail({ id }: { id: string }) {
           {threadErr ? (
             <p className="text-[13px] text-neutral-400">Could not load the conversation.</p>
           ) : !hasMessages && thread ? (
-            <p className="text-[13px] text-neutral-400 leading-relaxed">No linked email thread — write a nudge below.</p>
+            <p className="text-[13px] text-neutral-400 leading-relaxed">No linked email thread — write a follow-up below.</p>
           ) : (
             <ThreadMessages messages={threadMessages} fallback={null} />
           )}
@@ -2490,11 +2490,11 @@ function FollowUpDetail({ id }: { id: string }) {
 
       {/* Docked nudge composer */}
       <div ref={composerRef} className="flex-shrink-0 border-t border-neutral-200 bg-neutral-50/80 backdrop-blur px-7 py-4 max-h-[45vh] overflow-y-auto">
-        <h2 className={SECTION_LABEL}>Your nudge</h2>
+        <h2 className={SECTION_LABEL}>Your follow-up</h2>
         {sent ? (
           <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50/60 px-4 py-4">
             <CheckIcon className="w-4 h-4 text-emerald-600" />
-            <p className="text-[13px] font-medium text-emerald-700">Nudge sent.</p>
+            <p className="text-[13px] font-medium text-emerald-700">Follow-up sent.</p>
           </div>
         ) : (
           <div className={`${CARD} p-4`}>
@@ -2505,7 +2505,7 @@ function FollowUpDetail({ id }: { id: string }) {
                 <ReplyEditor
                   ref={editorRef}
                   initialHTML={draftToHTML(draft)}
-                  placeholder="Write your nudge…"
+                  placeholder="Write your follow-up…"
                   minHeight={110}
                   maxHeight={260}
                   toolbarLeading={<AttachMenu atts={atts} />}
@@ -2519,7 +2519,7 @@ function FollowUpDetail({ id }: { id: string }) {
                     disabled={sending || draftLoading}
                     className="inline-flex items-center rounded-lg bg-indigo-600 text-white px-5 py-2 text-[13.5px] font-medium hover:bg-indigo-700 disabled:opacity-60 transition-colors"
                   >
-                    {sending ? 'Sending…' : 'Send nudge'}
+                    {sending ? 'Sending…' : 'Send follow-up'}
                   </button>
                   <button
                     onClick={copy}
