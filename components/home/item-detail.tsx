@@ -231,9 +231,28 @@ function ComposePanel({ kind, entityId, onSent }: { kind: ComposeKind; entityId:
   );
 }
 
+// ── "Hand to a coworker" — the global, item-level delegate affordance (deferred stub, disabled).
+// It is NOT a workflow step, so it never duplicates one. It lives in exactly ONE place per layout:
+// the Identified-tasks panel FOOTER when a breakdown exists (see `TasksPanel`), else inline in the
+// `ActionBar` when there is no panel to host it. `size` tunes it for the narrower panel footer.
+function HandToCoworkerButton({ size = 'md' }: { size?: 'md' | 'sm' }) {
+  const pad = size === 'sm' ? 'px-3 py-1.5 text-[12px]' : 'px-4 py-2 text-[13px]';
+  return (
+    <button
+      disabled
+      title="Coming soon — delegate this to one of your coworkers"
+      className={`inline-flex items-center gap-1.5 rounded-lg font-medium bg-neutral-50 text-neutral-300 border border-neutral-200 cursor-not-allowed ${pad}`}
+    >
+      <UserPlusIcon className={size === 'sm' ? 'w-3.5 h-3.5' : 'w-4 h-4'} />Hand to a coworker
+    </button>
+  );
+}
+
 // ── Contextual action bar — the natural moves for a deep-dive, chosen by intent. "Draft email" is
 // the primary action wherever the resolution is to send a message (meeting follow-up, commitment).
-// "Hand to a coworker" is a deferred stub (slot only). Additional actions render inline.
+// Rendered ONLY when there is NO task breakdown (no Identified-tasks panel): with a breakdown the
+// workflow step's own "Draft →" IS the canonical trigger, so a standalone Draft button would double
+// it — and "Hand to a coworker" moves into the panel footer instead. Additional actions render inline.
 function ActionBar({ primaryLabel, primaryActive, onPrimary, children }: { primaryLabel: string; primaryActive: boolean; onPrimary: () => void; children?: React.ReactNode }) {
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -244,13 +263,7 @@ function ActionBar({ primaryLabel, primaryActive, onPrimary, children }: { prima
         <EnvelopeIcon className="w-4 h-4" />{primaryLabel}
       </button>
       {children}
-      <button
-        disabled
-        title="Coming soon — delegate this to one of your coworkers"
-        className="inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[13px] font-medium bg-neutral-50 text-neutral-300 border border-neutral-200 cursor-not-allowed"
-      >
-        <UserPlusIcon className="w-4 h-4" />Hand to a coworker
-      </button>
+      <HandToCoworkerButton />
     </div>
   );
 }
@@ -598,10 +611,14 @@ function WhatThisTakes({
 
 // The right column: the "Identified tasks" workflow lane — a width-animated COLUMN that REFLOWS the
 // main email column left (never overlays), mirroring the Activity panel's mechanism exactly. The
-// `p-2 bg-neutral-50` wrapper makes an inset gap; inside sits a `rounded-2xl bg-white shadow-sm border`
-// card so it reads as part of the page. Narrower than before (300px) so the email column gets the room.
-// `hasBreakdown` animates the width open/closed. The inner card holds a fixed width so it's simply
-// CLIPPED during the animation rather than squishing.
+// `p-2 bg-neutral-50` wrapper makes an inset gap; inside sits a FLAT `rounded-2xl bg-white border`
+// card (no drop-shadow — border-only, matching the cleaner deep-dive look). Narrower than before
+// (300px) so the email column gets the room. `hasBreakdown` animates the width open/closed. The inner
+// card holds a fixed width so it's simply CLIPPED during the animation rather than squishing.
+//
+// This panel is the SINGLE home for an item's actions when a breakdown exists: the workflow steps
+// (each with its own "Draft →" / done affordance) + a quiet "Hand to a coworker" FOOTER — so those
+// actions aren't also floating in the main column.
 function TasksPanel({ hasBreakdown, children }: { hasBreakdown: boolean; children: React.ReactNode }) {
   return (
     <aside
@@ -610,9 +627,9 @@ function TasksPanel({ hasBreakdown, children }: { hasBreakdown: boolean; childre
         hasBreakdown ? 'w-[300px] xl:w-[320px]' : 'w-0 pointer-events-none'
       }`}
     >
-      {/* Inset card — fixed width so it clips cleanly while the column animates. */}
+      {/* Inset card — fixed width so it clips cleanly while the column animates. Flat, border-only. */}
       <div className="flex-1 min-h-0 p-2 w-[300px] xl:w-[320px]">
-        <div className="h-full flex flex-col rounded-2xl bg-white shadow-sm border border-neutral-200/70 overflow-hidden">
+        <div className="h-full flex flex-col rounded-2xl bg-white border border-neutral-200/70 overflow-hidden">
           {/* Sticky header — "Identified tasks" + the ✦ / ○ legend. Matches the Activity panel header. */}
           <div className="flex-shrink-0 flex items-center justify-between gap-2 h-10 px-3.5 border-b border-neutral-200">
             <div className="flex items-center gap-1.5 min-w-0">
@@ -626,6 +643,11 @@ function TasksPanel({ hasBreakdown, children }: { hasBreakdown: boolean; childre
           {/* Body — its own scroll when long. min-w keeps the stepper from crushing during animation. */}
           <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 min-w-[268px]">
             {children}
+          </div>
+          {/* Footer — the item-level "Hand to a coworker" affordance (relocated out of the main column
+              so it isn't floating redundantly beside the workflow steps). Disabled / coming soon. */}
+          <div className="flex-shrink-0 border-t border-neutral-100 px-4 py-3 min-w-[268px]">
+            <HandToCoworkerButton size="sm" />
           </div>
         </div>
       </div>
@@ -1051,8 +1073,14 @@ function MeetingDetail({ id }: { id: string }) {
           </div>
         ) : (
           <>
-            {/* Action bar — lead with the natural move: draft the follow-up to the attendees. */}
-            <ActionBar primaryLabel={composing ? 'Hide draft' : 'Draft follow-up →'} primaryActive={!composing} onPrimary={() => setComposing((v) => !v)} />
+            {/* Action bar — ONLY when there's no task breakdown. With a breakdown, the workflow step's
+                own "Draft →" is the canonical trigger (it opens the same composer via onDraft), so a
+                standalone Draft button here would duplicate it; "Hand to a coworker" moves to the panel. */}
+            {!hasBreakdown && (
+              <ActionBar primaryLabel={composing ? 'Hide draft' : 'Draft follow-up →'} primaryActive={!composing} onPrimary={() => setComposing((v) => !v)} />
+            )}
+            {/* The follow-up composer — the writing surface the draft step points to. Reachable from the
+                ActionBar (no breakdown) or the workflow step's Draft → (breakdown). */}
             {composing && (
               <ComposePanel kind="meeting" entityId={id} />
             )}
@@ -1269,12 +1297,16 @@ function CommitmentDetail({ id }: { id: string }) {
           </div>
         ) : (
           <>
-            {/* Action bar — lead with the natural move: email the counterparty what you owe. */}
-            <ActionBar
-              primaryLabel={composing ? 'Hide draft' : (data.counterparty ? `Draft email → ${data.counterparty.replace(/<[^>]*>/g, '').trim()}` : 'Draft email →')}
-              primaryActive={!composing}
-              onPrimary={() => setComposing((v) => !v)}
-            />
+            {/* Action bar — ONLY when there's no task breakdown. With a breakdown, the workflow step's
+                own "Draft →" is the canonical trigger (opens the same compose panel via onDraft), so a
+                standalone Draft button here would duplicate it; "Hand to a coworker" moves to the panel. */}
+            {!hasBreakdown && (
+              <ActionBar
+                primaryLabel={composing ? 'Hide draft' : (data.counterparty ? `Draft email → ${data.counterparty.replace(/<[^>]*>/g, '').trim()}` : 'Draft email →')}
+                primaryActive={!composing}
+                onPrimary={() => setComposing((v) => !v)}
+              />
+            )}
             {composing && (
               <div>
                 <ComposePanel kind="commitment" entityId={id} onSent={() => setEmailed(true)} />
