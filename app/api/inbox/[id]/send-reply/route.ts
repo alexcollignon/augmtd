@@ -4,6 +4,7 @@ import { sendGmailReply, EmailAttachment } from '@/lib/google/gmail';
 import { sendOutlookReply } from '@/lib/microsoft/outlook';
 import { ContextService } from '@/lib/context/context-service';
 import { logActivity } from '@/lib/activity/log';
+import { resolveConnectionForItem } from '@/lib/inbox/resolve-connection';
 
 // Plain-text, whitespace-normalised view of a draft for comparing AI vs sent.
 const norm = (s: string) => s.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
@@ -45,16 +46,9 @@ export async function POST(
 
     const sourceData = item.source_data;
 
-    // Get user's email connection — prefer connection_id FK, fallback to provider lookup
-    let connection: any = null;
-    if (item.connection_id) {
-      const { data } = await supabase.from('connections').select('*').eq('id', item.connection_id).eq('user_id', user.id).single();
-      connection = data;
-    }
-    if (!connection) {
-      const { data } = await supabase.from('connections').select('*').eq('user_id', user.id).eq('provider', sourceData.provider).eq('status', 'active').single();
-      connection = data;
-    }
+    // Get user's email connection — prefer connection_id FK, else recipient-aware provider resolution
+    // (so a user with two accounts of the same provider replies from the mailbox the mail arrived on).
+    const connection = await resolveConnectionForItem(supabase, user.id, item);
 
     if (!connection) {
       console.error('[SendReply] No connection found for item', id, 'provider:', sourceData.provider);

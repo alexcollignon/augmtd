@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { listGmailLabels } from '@/lib/google/gmail';
 import { listOutlookFolders } from '@/lib/microsoft/outlook';
+import { resolveConnectionForItem } from '@/lib/inbox/resolve-connection';
 
 // GET /api/inbox/[id]/email-folders — list folders/labels for the email provider of this inbox item
 export async function GET(
@@ -27,15 +28,7 @@ export async function GET(
     const provider = item.source_data?.provider;
     if (!provider) return NextResponse.json({ error: 'No email provider' }, { status: 400 });
 
-    let connection: { metadata: { tokens: string } } | null = null;
-    if (item.connection_id) {
-      const { data } = await supabase.from('connections').select('*').eq('id', item.connection_id).eq('user_id', user.id).single();
-      connection = data;
-    }
-    if (!connection) {
-      const { data } = await supabase.from('connections').select('*').eq('user_id', user.id).eq('provider', provider).eq('status', 'active').single();
-      connection = data;
-    }
+    const connection = await resolveConnectionForItem(supabase, user.id, item);
     if (!connection) return NextResponse.json({ error: 'Connection not found' }, { status: 404 });
 
     const folders =

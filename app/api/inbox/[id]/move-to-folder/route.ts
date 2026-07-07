@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { moveGmailThreadToLabel, createGmailLabel } from '@/lib/google/gmail';
 import { sanitizeError } from '@/lib/utils/api-error';
 import { moveOutlookMessageToFolder, createOutlookFolder, persistOutlookTokens } from '@/lib/microsoft/outlook';
+import { resolveConnectionForItem } from '@/lib/inbox/resolve-connection';
 
 // POST /api/inbox/[id]/move-to-folder — move email to a folder/label and dismiss inbox item
 export async function POST(
@@ -33,15 +34,7 @@ export async function POST(
     const provider = sourceData?.provider;
     if (!provider) return NextResponse.json({ error: 'No email provider' }, { status: 400 });
 
-    let connection: { metadata: { tokens: string } } | null = null;
-    if (item.connection_id) {
-      const { data } = await supabase.from('connections').select('*').eq('id', item.connection_id).eq('user_id', user.id).single();
-      connection = data;
-    }
-    if (!connection) {
-      const { data } = await supabase.from('connections').select('*').eq('user_id', user.id).eq('provider', provider).eq('status', 'active').single();
-      connection = data;
-    }
+    const connection = await resolveConnectionForItem(supabase, user.id, item);
     if (!connection) return NextResponse.json({ error: 'Connection not found' }, { status: 404 });
 
     const encryptedTokens = connection.metadata.tokens;

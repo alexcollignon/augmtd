@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { archiveGmailThread } from '@/lib/google/gmail';
 import { archiveOutlookMessage, persistOutlookTokens } from '@/lib/microsoft/outlook';
+import { resolveConnectionForItem } from '@/lib/inbox/resolve-connection';
 
 export async function POST(
   _request: NextRequest,
@@ -35,27 +36,9 @@ export async function POST(
       return NextResponse.json({ error: 'No email provider on this item' }, { status: 400 });
     }
 
-    // Prefer connection FK if set, fallback to provider+status lookup
-    let connection: { metadata: { tokens: string } } | null = null;
-    if (item.connection_id) {
-      const { data } = await supabase
-        .from('connections')
-        .select('*')
-        .eq('id', item.connection_id)
-        .eq('user_id', user.id)
-        .single();
-      connection = data;
-    }
-    if (!connection) {
-      const { data } = await supabase
-        .from('connections')
-        .select('*')
-        .eq('user_id', user.id)
-        .eq('provider', provider)
-        .eq('status', 'active')
-        .single();
-      connection = data;
-    }
+    // Prefer connection FK if set, else recipient-aware provider resolution (disambiguates two
+    // accounts of the same provider by the mailbox the mail arrived on).
+    const connection = await resolveConnectionForItem(supabase, user.id, item);
 
     if (!connection) {
       return NextResponse.json({ error: 'Email connection not found' }, { status: 404 });
