@@ -124,7 +124,11 @@ export async function generateItemPlan(
     `"draft and send the reply to <name>" (capability "send"), NOT a separate "draft" step AND a "send" step.\n` +
     `- Grade each task: actor "system" (AUGMTD can do it now — set a capability: draft|analyze|fetch|send) ` +
     `or actor "you" (needs the user — capability null). Grade CONSERVATIVELY per the rules above.\n` +
-    `- Every "system" task MUST map to one of draft|analyze|fetch|send. Every "you" task has capability null.\n\n` +
+    `- Every "system" task MUST map to one of draft|analyze|fetch|send. Every "you" task has capability null.\n` +
+    `- ONE ACTION PER STEP — never bundle two distinct actions into one task. CRUCIALLY, never combine a SYSTEM ` +
+    `action with a YOU action in the same step: if resolving the item needs both (e.g. confirm/reply AND send a ` +
+    `file the user must first locate), SPLIT them into separate steps ("Confirm the meeting" = system/send, ` +
+    `"Locate and send the deck" = you) — so a system-doable action is never hidden inside a [You] bundle.\n\n` +
     `Return ONLY JSON, no prose:\n` +
     `{"tasks":[{"text":"short title","detail":"one-sentence explanation","actor":"system"|"you","capability":"draft"|"analyze"|"fetch"|"send"|null}]}\n\n` +
     `--- ITEM (${input.kind}) ---\n${context || '(no additional context)'}`;
