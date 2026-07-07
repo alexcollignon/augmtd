@@ -50,6 +50,30 @@ function isAutomatedSender(fromEmail: string | null, fromName: string | null, su
   return false;
 }
 
+// Bug C — "can't reply" ≠ "no action needed". An automated / no-reply item you cannot reply to can
+// still DEMAND action: a payment failed, an account suspended/restricted, a security alert, a "verify
+// your…", something expiring. These are ACTION-WORTHY: they must NOT be buried in the FYI digest
+// (nobody sees them), but they're also NOT a reply (no human is waiting) — so they belong in the
+// ACTION lane (a to-do priority card), not must-respond. This tells them apart from informational
+// automated mail (newsletters, receipts, "order shipped", digests) which stays FYI.
+//   • work_state ∈ (action_required | decision_required) — the classifier already flagged it needs a
+//     decision/action (e.g. iCloud full, Google security alert land here), OR
+//   • the subject/name carries an unmistakable action signal (dunning / suspension / security /
+//     verification / expiry). Kept tight so marketing "act now!" copy doesn't trip it.
+function isActionWorthyAutomated(workState: string | null, fromName: string | null, subject: string | null): boolean {
+  if (workState === 'action_required' || workState === 'decision_required') return true;
+  const text = `${(fromName || '').toLowerCase()} ${(subject || '').toLowerCase()}`;
+  const actionPhrases = [
+    'payment failed', 'payment unsuccessful', 'payment declined', 'payment could not',
+    'account suspended', 'account restricted', 'account limited', 'account locked', 'account disabled',
+    'account has been suspended', 'has been restricted', 'has been limited', 'has been locked',
+    'security alert', 'security notice', 'unusual sign', 'suspicious', 'verify your', 'confirm your account',
+    'action required', 'action needed', 'immediate action', 'expiring', 'expires', 'will expire',
+    'storage is full', 'storage full', 'past due', 'overdue', 'update your payment', 'billing problem',
+  ];
+  return actionPhrases.some((p) => text.includes(p));
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function attendeeEmails(ev: any): string[] {
   return (ev?.attendees ?? []).map((a: any) => (a?.email || '').toLowerCase()).filter(Boolean);
@@ -233,10 +257,20 @@ export async function GET() {
     // landed AFTER we last sent still needs us.
     if (posture === 'needs_reply' && sentAt && sentAt > activityAt(it)) continue; // already replied
     const fromEmail = fromEmailOf(sd);
+    const subj = it.work_title || (sd.subject as string) || null;
+    const fromName = (sd.from_name as string) || null;
+    const automated = posture === 'needs_reply' && isAutomatedSender(fromEmail, fromName, subj);
+    // Bug C — an AUTOMATED item classified needs_reply isn't a reply you owe (no human is waiting), but
+    // it may still DEMAND action (payment failed / account suspended / security alert / expiring). If
+    // so, re-posture it to `to_do` so it surfaces as a visible ACTION card (the "Worth acting on"
+    // path), never buried in FYI. Informational automated mail (posture stays needs_reply here) is
+    // dropped from must-respond below and flows to the FYI/awareness digest as before — no reply-flood.
+    const actionWorthy = automated && isActionWorthyAutomated((it.work_state as string) || null, fromName, subj);
+    const effectivePosture: Posture = actionWorthy ? 'to_do' : (posture as Posture);
     priorities.push({
-      id: `email:${it.id}`, source: 'email', posture: posture as Posture,
-      title: it.work_title || (sd.subject as string) || 'Email',
-      context: (sd.from_name as string) || (sd.from as string) || null,
+      id: `email:${it.id}`, source: 'email', posture: effectivePosture,
+      title: subj || 'Email',
+      context: fromName || (sd.from as string) || null,
       href: '/inbox', itemId: it.id,
     });
     // Structural reply-state for this thread (direction+time only — no keyword/text matching). The
@@ -250,7 +284,7 @@ export async function GET() {
     emailSeeds.push({
       itemId: it.id, fromAddress: fromEmail, fromName: (sd.from_name as string) || null,
       subject: it.work_title || (sd.subject as string) || '(no subject)',
-      at: activityAt(it), posture,
+      at: activityAt(it), posture: effectivePosture,
       snippet: ((sd.body as string) || '').replace(/\s+/g, ' ').trim().slice(0, 240),
       userResponded: replyState?.userReplied ?? undefined,
       lastFromUser: replyState?.lastMessageFromUser ?? undefined,
@@ -258,11 +292,13 @@ export async function GET() {
     if (replyState && typeof replyState.lastMessageFromUser === 'boolean') {
       lastFromUserByItem.set(it.id, replyState.lastMessageFromUser);
     }
-    if (posture === 'needs_reply') {
+    if (effectivePosture === 'needs_reply') {
       // Automated / transactional mail is not a reply you owe — keep it OUT of must-respond (it still
-      // flows through FYI/awareness). This cleans the pool so "show every real reply" isn't polluted
-      // by no-reply notifications / payment-failed / account-suspended junk the model then over-drops.
-      if (isAutomatedSender(fromEmail, (sd.from_name as string) || null, it.work_title || (sd.subject as string) || null)) continue;
+      // flows through FYI/awareness). This cleans the pool so "show every real reply" isn't polluted by
+      // no-reply notifications the model then over-drops. Action-worthy automated items were already
+      // re-postured to `to_do` above (so they surface as action cards), so anything still automated
+      // here is informational → drop it from must-respond (it flows to the FYI/awareness digest).
+      if (automated) continue;
       mustRespondRaw.push({
         itemId: it.id,
         from: (sd.from_name as string) || (sd.from as string) || 'Someone',
@@ -276,13 +312,19 @@ export async function GET() {
   // Layer 1: assemble the reconciled per-person context (meetings + commitments + these emails).
   const briefCtx = await buildBriefContext(user.id, self, now, supabase, emailSeeds);
 
-  // ── Commitment CANDIDATES — every open non-meeting commitment, normalized. The raw ingest
-  // `direction` is only a DEFAULT hint here: the grounded synthesis (Layer 3) re-judges each one's
-  // placement (on_your_plate / ball_in_court / informational) so a REQUESTED action (the user is
-  // waiting on someone) can't sit in "On your plate" just because the extractor guessed you_owe.
+  // ── Commitment CANDIDATES — every open commitment, normalized. The raw ingest `direction` is only
+  // a DEFAULT hint here: the grounded synthesis (Layer 3) re-judges each one's placement (on_your_plate
+  // / ball_in_court / informational) so a REQUESTED action (the user is waiting on someone) can't sit
+  // in "On your plate" just because the extractor guessed you_owe.
   // See docs/brief-and-labeling-plan.md ("DIRECTION corrected July 2") + Bug #1.
+  //
+  // Bug B: meeting-sourced commitments are INCLUDED. They used to be excluded wholesale (`source !==
+  // 'meeting'`) on the assumption they'd double the meeting action-item priority cards — but those
+  // cards come from `inbox_items` (a distinct table/extraction), so the exclusion instead HID every
+  // "you owe X" promise captured from a meeting (21 real open items → an empty "On your plate"). A
+  // meeting commitment is a genuine thing the user owes and belongs in the same placement pipeline as
+  // any other; the synthesis + the top-N cap keep the section a brief, not a backlog.
   const commitmentCands = commits
-    .filter((c) => c.source !== 'meeting')
     .map((c) => ({
       id: c.id as string,
       description: c.description as string,
@@ -328,6 +370,25 @@ export async function GET() {
   const fyiTop = [...peopleGroups, ...newsletterGroups];
   const fyiTailItems = fyiGroupsAll.reduce((n, g) => n + g.count, 0) - fyiTop.reduce((n, g) => n + g.count, 0);
   const fyiTailGroups = Math.max(0, fyiGroupsAll.length - fyiTop.length);
+
+  // DETERMINISTIC FYI DIGEST — a fallback the section can ALWAYS render when FYI groups exist, even
+  // if the AI synthesis omits/returns null for fyiDigest (Bug A: the model frequently drops the fyi
+  // block on a large mailbox, and the enrich path only overwrote fyiDigest when synth.fyiDigest was
+  // non-null OR there were no groups — so with groups + a null model result the section stayed empty
+  // forever). This builds one plain digest line per group directly from the sender + a couple of its
+  // subjects, so "For your awareness" is never blank while noted mail exists. The AI's nicer prose
+  // still wins when present (used only as the fallback below + when no cache/synth is available).
+  const buildDeterministicFyiDigest = (): FyiDigest | null => {
+    if (!fyiTop.length) return null;
+    const groups = fyiTop.map((g) => {
+      const subs = g.subjects.map((s) => (s || '').trim()).filter(Boolean).slice(0, 2);
+      const summary = subs.length
+        ? `${g.count} message${g.count > 1 ? 's' : ''} — ${subs.map((s) => `“${s.length > 60 ? s.slice(0, 57) + '…' : s}”`).join(', ')}`
+        : `${g.count} message${g.count > 1 ? 's' : ''}`;
+      return { label: g.label, summary, kind: g.kind };
+    });
+    return { groups, tailGroups: fyiTailGroups, tailItems: fyiTailItems };
+  };
 
   // ── Awareness candidates (source b): FYI emails the digest ITSELF treats as a real person (not a
   // newsletter/service) — reuse that exact person/newsletter split (labels in `peopleGroups`) so the
@@ -496,8 +557,11 @@ export async function GET() {
     //    when there's no cache. Commitment placements keep the cached verdicts (or {}) so the routing
     //    below degrades to the ingest-direction default — never breaks.
     mustRespond = basicMustRespond;
-    // tldr / followups / fyiDigest / keepAnEyeOn / droppedItemIds / commitmentPlacements already
-    // initialized from `cached` above — leave them as-is (last-good, or null/[]/{}).
+    // tldr / followups / keepAnEyeOn / droppedItemIds / commitmentPlacements already initialized
+    // from `cached` above — leave them as-is (last-good, or null/[]/{}).
+    // fyiDigest: seed the DETERMINISTIC fallback if the cache has none but groups exist (Bug A), so
+    // "For your awareness" renders immediately on the basic brief and never depends on the AI pass.
+    if ((!fyiDigest || !fyiDigest.groups?.length) && fyiTop.length) fyiDigest = buildDeterministicFyiDigest();
 
     // 3. Persist the basic brief IMMEDIATELY with the NEW sig. This is the anti-regen-storm guard:
     //    the very next request (poll / realtime refetch) is a cache-HIT on this basic brief and does
@@ -543,9 +607,12 @@ export async function GET() {
         if (synth.mustRespond !== null || !mustRespondRaw.length) enrMustRespond = synth.mustRespond;
         if (synth.keepAnEyeOn !== null || !keepAnEyeOnRaw.length) enrKeepAnEyeOn = synth.keepAnEyeOn;
         if (synth.followups !== null || !commitmentCands.some((c) => c.direction === 'awaiting')) enrFollowups = synth.followups;
-        if (synth.fyiDigest !== null || !fyiTop.length) {
-          enrFyiDigest = synth.fyiDigest ? { ...synth.fyiDigest, tailGroups: fyiTailGroups, tailItems: fyiTailItems } : null;
-        }
+        // FYI: the AI's nicer summary wins when present; otherwise, whenever groups exist, fall back to
+        // the DETERMINISTIC digest so the section never goes empty while noted mail exists (Bug A). Only
+        // a genuinely empty FYI pool (no groups) yields null.
+        enrFyiDigest = synth.fyiDigest
+          ? { ...synth.fyiDigest, tailGroups: fyiTailGroups, tailItems: fyiTailItems }
+          : buildDeterministicFyiDigest();
         // Belt-and-suspenders: a protected (unanswered inbound) item can NEVER be in droppedItemIds,
         // so it can't be removed from the priority cards either — enriched membership ⊇ protected set.
         enrDropped = synth.droppedItemIds.filter((id) => !protectedItemIds.has(id));
