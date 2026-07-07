@@ -59,7 +59,7 @@ export function ItemDetailModal({ id }: { id: string }) {
       />
       {/* The deep-dive surface — full content width, slides in from the right + fades. */}
       <div
-        className={`relative pointer-events-auto flex-1 min-h-0 flex flex-col bg-white shadow-xl transition-all duration-300 ease-out ${shown ? 'translate-x-0 opacity-100' : 'translate-x-6 opacity-0'}`}
+        className={`relative pointer-events-auto flex-1 min-h-0 flex flex-col bg-white border-l border-neutral-200 transition-all duration-300 ease-out ${shown ? 'translate-x-0 opacity-100' : 'translate-x-6 opacity-0'}`}
       >
         {/* Back bar */}
         <div className="flex-shrink-0 flex items-center px-5 py-3 border-b border-neutral-200 bg-white/95 backdrop-blur">
