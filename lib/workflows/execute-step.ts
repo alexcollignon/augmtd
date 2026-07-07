@@ -13,7 +13,8 @@ import { formatCalendarContextForChat } from '@/lib/calendar/format-calendar-con
 import { buildKBContext } from '@/lib/knowledge/build-kb-context';
 import { buildSkillsBlock, buildSkillsBlockByIds } from '@/lib/work/worker-skills-context';
 import { composeSlackMessage } from './slack-message';
-import { executeWebSearch, executeFetchUrl, executeRssFeed, executeLinkedInPost, executeBrowserFetch, executePtTenders, executeDeepResearch, executeWorkflowOutput, executeGetEmails, executeGetMeetingContext, executeSlackReadMessages, executeSlackPostMessage } from '@/lib/tools';
+import { executeWebSearch, executeFetchUrl, executeRssFeed, executeLinkedInPost, executeBrowserFetch, executePtTenders, executeDeepResearch, executeWorkflowOutput, executeGetEmails, executeGetMeetingContext, executeSlackReadMessages, executeSlackPostMessage, executeSendCalendarInvite } from '@/lib/tools';
+import type { SendCalendarInviteConfig } from '@/lib/tools';
 import type { WorkflowStep, StepOutput, ToolStep, AIStep, AgentStep } from './types';
 
 export interface StepContext {
@@ -95,6 +96,7 @@ async function executeToolStep(step: ToolStep, ctx: StepContext): Promise<string
     case 'rss_feed':          return await executeRssFeed(step.config, ctx.lastRunAt);
     case 'slack_read_channel': return await executeSlackReadMessages(step.config, ctx.userId, ctx.supabase, ctx.workerAgentId);
     case 'slack_send':         return await toolSlackSend(step, ctx);
+    case 'send_calendar_invite': return await executeSendCalendarInvite(step.config as unknown as SendCalendarInviteConfig, ctx.userId, ctx.supabase);
     case 'linkedin_post':     return await executeLinkedInPost(step.config, {
       userId: ctx.userId,
       supabase: ctx.supabase,

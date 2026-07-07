@@ -16,6 +16,7 @@ export const TOOL_FEATURE: Record<string, FeatureKey | null> = {
   // ── Meetings / calendar ──
   get_meeting_context: 'meetings',
   get_calendar: 'meetings',
+  send_calendar_invite: 'meetings',
 
   // ── Drive / knowledge base ──
   search_knowledge_base: 'drive',

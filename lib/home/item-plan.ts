@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getAIClient, aiCreate } from '@/lib/ai/factory';
+import { renderCapabilitySet } from './capability-map';
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // ITEM PLAN — "actions follow intent", stage 2. Decompose a Home item into 2–5 concrete sub-tasks and
@@ -27,26 +28,12 @@ export type ItemPlanTask = {
 
 export type ItemPlan = { tasks: ItemPlanTask[] };
 
-// The capability set the model grades against — kept in ONE place so the grading stays honest. This
-// is embedded verbatim in the prompt. Grow it (and the palette in stage 3) as capabilities land.
-const CAPABILITY_SET = `AUGMTD's REAL capabilities TODAY — grade each sub-task against THIS list, conservatively:
-
-WHAT WE (the SYSTEM) CAN DO:
-- draft — write ANY email, reply, message, or document in the user's voice. → [System] (always).
-- analyze / summarize — read and reason over content we ALREADY HAVE (this thread, this meeting/transcript, attached or referenced documents). → [System].
-- fetch / look up — retrieve from data we have access to: the user's EMAIL, CALENDAR, MEETINGS/TRANSCRIPTS, and KNOWLEDGE BASE (Drive). → [System].
-- send — send an email as the user (connected mailbox, or the assistant's own address). → [System].
-
-WHAT WE CANNOT DO (grade as [You]):
-- Any external/tool action: process a refund in a billing system, look up a CRM/bank/invoice, sign a document, make a payment, book or attend something, place a call, update an external tool.
-- CREATE A CALENDAR EVENT or SEND A CALENDAR INVITE. We can READ the calendar and DRAFT a reply proposing a time, but we CANNOT put a meeting on the calendar or send an invite — that is [You] (capability null), never [System].
-- Any decision, approval, or judgment that is the user's to make.
-- Anything physical, or anything in a system we don't have access to.
-- Fetching from an EXTERNAL system (billing, CRM, bank, e-signature, payment portal) — that is [You], NOT fetch.
-
-RULE 1 — UNSURE → [You]. If you are UNSURE whether we can do a task, grade it [You]. Over-claiming [System] breaks a promise. Be conservative.
-
-RULE 2 — INSTANCE HONESTY (do NOT assume a specific file/attachment/contact exists). A [System] "fetch" is only honest when the thing to fetch is EVIDENCED in the item context. If a step depends on a specific file, attachment, document, deck, spreadsheet, or a recipient's email address that you have NOT been shown exists in the context above, grade it [You] (the user provides/attaches/confirms it) — NOT a confident [System] "fetch". Examples: "fetch the deck from Drive" when no deck is referenced → [You] ("attach the deck"); "email X" when no email address is given → keep the draft [System] but add a [You] "confirm the recipient's email". Instance honesty beats category optimism.`;
+// The capability set the model grades against is DERIVED from the single source of truth
+// (`lib/home/capability-map.ts` → `renderCapabilitySet()`), NOT a hand-written blurb — adding a
+// `CAPABILITY_MAP` entry updates this prompt automatically. The old prose (which hard-coded
+// "calendar invite → [You]") is gone: `send_calendar_invite` is now a built atomic capability, so
+// the model grades it [System] straight from the map. No per-capability logic lives here.
+const CAPABILITY_SET = renderCapabilitySet();
 
 type PlanInput = { kind: ItemPlanKind; entityId: string; context: string };
 
