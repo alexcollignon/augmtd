@@ -12,7 +12,6 @@ import {
   PaperAirplaneIcon,
   PaperClipIcon,
   UserPlusIcon,
-  SparklesIcon,
   ChevronDownIcon,
   XMarkIcon,
   PencilIcon,
@@ -689,6 +688,23 @@ function useCoworkers(): Coworker[] {
   return workers;
 }
 
+// ── The AUGMTD brand mark — the same triangle logo used in the top-left nav (`/augmtd-logo.png`).
+// Reused (small) as the identity for every SYSTEM step node + the panel header, replacing the generic
+// sparkles/✦ cliché. `○` stays the mark for a "you" step, so the legend reads "▲ AUGMTD · ○ you".
+function AugmtdMark({ size = 14, className }: { size?: number; className?: string }) {
+  // eslint-disable-next-line @next/next/no-img-element
+  return (
+    <img
+      src="/augmtd-logo.png"
+      alt="AUGMTD"
+      width={size}
+      height={size}
+      className={`object-contain flex-shrink-0 ${className ?? ''}`}
+      style={{ width: size, height: size }}
+    />
+  );
+}
+
 // A tiny coworker avatar (falls back to an initials chip when the role image is unknown).
 function CoworkerAvatar({ worker, size = 20 }: { worker: Pick<Coworker, 'name' | 'worker_role'>; size?: number }) {
   const src = worker.worker_role ? WORKER_AVATAR[worker.worker_role] : undefined;
@@ -706,7 +722,7 @@ function CoworkerAvatar({ worker, size = 20 }: { worker: Pick<Coworker, 'name' |
 // ── The coworker PICKER popover — the avatars/names of the user's workers; pick one → confirm → the
 // host delegates. Anchored below its trigger. Closes on outside-click / Esc. Shared by the item-level
 // footer button and the per-step hand-off menu.
-function CoworkerPicker({ onPick, onClose, align = 'left' }: { onPick: (w: Coworker) => void; onClose: () => void; align?: 'left' | 'right' }) {
+function CoworkerPicker({ onPick, onClose, align = 'left', direction = 'up', title = 'Hand to a coworker' }: { onPick: (w: Coworker) => void; onClose: () => void; align?: 'left' | 'right'; direction?: 'up' | 'down'; title?: string }) {
   const workers = useCoworkers();
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -716,16 +732,20 @@ function CoworkerPicker({ onPick, onClose, align = 'left' }: { onPick: (w: Cowor
     document.addEventListener('keydown', onKey);
     return () => { document.removeEventListener('mousedown', onDoc); document.removeEventListener('keydown', onKey); };
   }, [onClose]);
+  // Anchored to its trigger: `direction` opens up (footer button, near the panel bottom) or DOWN
+  // (per-step assign — opening up would push it over the sticky panel header, the layering bug we fix).
+  // z-50 keeps it above the panel chrome; the parent trigger stays `relative` so this stays anchored.
+  const place = direction === 'up' ? 'bottom-full mb-1.5' : 'top-full mt-1.5';
   return (
     <div
       ref={ref}
-      className={`absolute z-30 bottom-full mb-1.5 w-60 rounded-xl border border-neutral-200 bg-white shadow-lg overflow-hidden ${align === 'right' ? 'right-0' : 'left-0'}`}
+      className={`absolute z-50 ${place} w-56 rounded-xl border border-neutral-200 bg-white shadow-xl overflow-hidden ${align === 'right' ? 'right-0' : 'left-0'}`}
     >
       <div className="px-3 py-2 border-b border-neutral-100">
-        <p className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide">Hand to a coworker</p>
+        <p className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide">{title}</p>
         <p className="mt-0.5 text-[10.5px] text-neutral-400 leading-snug">They&apos;ll prepare it and report back — you stay in the loop.</p>
       </div>
-      <ul className="max-h-64 overflow-y-auto py-1">
+      <ul className="max-h-56 overflow-y-auto py-1">
         {workers.length === 0 ? (
           <li className="px-3 py-3 text-[12px] text-neutral-400">No coworkers yet.</li>
         ) : (
@@ -793,21 +813,24 @@ function HandToCoworkerButton({
         title="Open an item's identified tasks to hand it to a coworker"
         className={`inline-flex items-center gap-1.5 rounded-lg font-medium bg-neutral-50 text-neutral-300 border border-neutral-200 cursor-not-allowed ${pad}`}
       >
-        <UserPlusIcon className={size === 'sm' ? 'w-3.5 h-3.5' : 'w-4 h-4'} />Hand to a coworker
+        <UserPlusIcon className={size === 'sm' ? 'w-3.5 h-3.5' : 'w-4 h-4'} />Let a coworker handle all of this
       </button>
     );
   }
 
   return (
     <div className="relative inline-block">
+      {/* WHOLE-ITEM delegation — labelled explicitly so its scope (the entire item, every live step) is
+          unambiguous next to the per-step "Assign" affordance in the rows above. */}
       <button
         onClick={() => setOpen((v) => !v)}
         className={`inline-flex items-center gap-1.5 rounded-lg font-medium bg-white text-indigo-700 border border-indigo-200 hover:bg-indigo-50 transition-colors ${pad}`}
       >
-        <UserPlusIcon className={size === 'sm' ? 'w-3.5 h-3.5' : 'w-4 h-4'} />Hand to a coworker
+        <UserPlusIcon className={size === 'sm' ? 'w-3.5 h-3.5' : 'w-4 h-4'} />Let a coworker handle all of this
       </button>
       {open && (
         <CoworkerPicker
+          title="Let a coworker handle all of this"
           onPick={(w) => { setOpen(false); onDelegate(w); }}
           onClose={() => setOpen(false)}
         />
@@ -897,6 +920,7 @@ type ItemPlan = {
   delegatingId: string | null;   // id of the step currently being delegated ('__item__' for a whole-item hand-off)
   delegateStep: (taskId: string, agentId: string, agentName: string) => Promise<boolean>;  // hand one step to a coworker
   delegateItem: (agentId: string, agentName: string) => Promise<boolean>;                   // hand the whole item to a coworker
+  markComposerSent: () => void;  // the docked composer's Send succeeded → flip the reply STEP to "Sent ✓"
 };
 
 // A sentinel id used for the delegating-pending state of a WHOLE-ITEM hand-off (no single taskId).
@@ -1037,6 +1061,25 @@ function useItemPlan(
     setTasks((prev) => (prev ? prev.map((t) => (t.id === taskId ? { ...t, done: true } : t)) : prev));
   };
 
+  // ── Composer → step wiring (kills the redundancy). When the deep-dive's DOCKED composer actually
+  // sends (reply / follow-up), flip the matching PREPARED reply step to done so the stepper reflects the
+  // composer's real outcome — "Draft ready" → "Sent ✓". We resolve the SAME "primary reply step" the
+  // stepper's action targets: the first active system draft/send step that is NOT a calendar-invite
+  // (invites commit through their own card + markSystemDone, not the composer). No standalone "Draft →".
+  const markComposerSent = () => {
+    setTasks((prev) => {
+      if (!prev) return prev;
+      const replyStep = prev.find(
+        (t) =>
+          !t.dismissed && !t.done && t.actor === 'system' &&
+          (t.capability === 'draft' || t.capability === 'send') &&
+          clientRouteActionType({ capability: t.capability, text: t.text, detail: t.detail }) !== 'calendar_invite',
+      );
+      if (!replyStep) return prev;
+      return prev.map((t) => (t.id === replyStep.id ? { ...t, done: true } : t));
+    });
+  };
+
   // ── Hand a SINGLE step to a coworker. Optimistically flag the step delegating (spinner in the row),
   // POST /api/items/delegate with the taskId → on success stamp the returned handedTo + done on the
   // step (attribution + the coworker's output). On failure, clear the pending flag (nothing marked).
@@ -1094,11 +1137,38 @@ function useItemPlan(
   // stays visible. (A user-added step counts toward it — it's in `tasks`.)
   const hasBreakdown = !loading && !failed && !!tasks && tasks.length >= 2;
 
-  return { tasks, loading, failed, hasBreakdown, pending, classifyingId, toggle, dismiss, addStep, editStep, markSystemDone, delegatingId, delegateStep, delegateItem };
+  return { tasks, loading, failed, hasBreakdown, pending, classifyingId, toggle, dismiss, addStep, editStep, markSystemDone, delegatingId, delegateStep, delegateItem, markComposerSent };
 }
 
-// ── One step in the "Identified tasks" workflow stepper. A vertical timeline row: a NODE (✦ for a
-// system step, a [You] checkbox for a your step) + a CONNECTOR line to the next node + a SHORT title
+// ── The per-step STATE CHIP — the single glanceable "where is this step" token. Every StepperRow
+// leads with one: a system step is PREPARED ("Draft ready" / "Ready to send") and flips to DONE
+// ("Sent ✓" / "Invite sent ✓") once the user commits it; a [You] step is "Needs you" → "Done ✓"; a
+// delegated step is "{Name} is on it…" → "{Name} handled it ✓"; a set-aside step is "Not needed".
+// This is the heart of the redesign: the step SAYS what's true, so the workflow reads live, not static.
+type StepState = 'ready' | 'sent' | 'needs-you' | 'done' | 'running' | 'handled' | 'dismissed' | 'system';
+function StateChip({ state, label }: { state: StepState; label: string }) {
+  const tone: Record<StepState, string> = {
+    ready: 'bg-emerald-50 text-emerald-600',       // prepared, waiting for your approval
+    sent: 'bg-emerald-100 text-emerald-700',       // committed ✓
+    'needs-you': 'bg-amber-50 text-amber-600',      // your move
+    done: 'bg-emerald-100 text-emerald-700',       // you did it ✓
+    running: 'bg-indigo-50 text-indigo-600',        // a coworker is on it
+    handled: 'bg-emerald-100 text-emerald-700',     // a coworker finished ✓
+    dismissed: 'bg-neutral-100 text-neutral-400',   // set aside
+    system: 'bg-indigo-50 text-indigo-500',         // AUGMTD (no user-facing send)
+  };
+  return (
+    <span className={`inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium transition-colors duration-300 ${tone[state]}`}>
+      {state === 'running' && <span className="w-2 h-2 rounded-full border-[1.5px] border-indigo-300 border-t-indigo-600 animate-spin" />}
+      {(state === 'sent' || state === 'done' || state === 'handled') && <CheckIcon className="w-2.5 h-2.5" />}
+      {label}
+    </span>
+  );
+}
+
+// ── One step in the "Identified tasks" workflow stepper. A vertical timeline row: a NODE (the AUGMTD
+// brand mark for a system step, a [You] checkbox for a your step) + a CONNECTOR line to the next node
+// + a SHORT title
 // that expands to the fuller `detail` on click + the row action (Draft → / done checkbox) + a ✕ that
 // toggles the step's "not needed" state. A dismissed step STAYS in the workflow — rendered struck-
 // through + greyed, its node dimmed, and its action disabled (set aside, not removed). The ✕ is a
@@ -1107,6 +1177,7 @@ function StepperRow({
   task,
   isLast,
   actionLabel,
+  sysKind,
   onAction,
   onToggle,
   onDismiss,
@@ -1118,8 +1189,9 @@ function StepperRow({
 }: {
   task: PlanTask;
   isLast: boolean;
-  actionLabel: string | null;       // the row's system action button label (null → quiet hint)
-  onAction?: () => void;            // opens the prepared action (compose panel OR invite card)
+  actionLabel: string | null;       // the row's system action button label (null → quiet capability chip)
+  sysKind?: 'reply' | 'invite' | null; // a prepared system step: 'reply'→"Draft ready", 'invite'→"Ready to send"
+  onAction?: () => void;            // opens the prepared action (focuses the composer OR opens the invite card)
   onToggle: () => void;
   onDismiss: () => void;
   onEdit: (text: string) => void;   // re-classify this step with new text
@@ -1171,12 +1243,13 @@ function StepperRow({
           <span className="w-3 h-3 rounded-full border-2 border-indigo-300 border-t-indigo-600 animate-spin" />
         </span>
       ) : isSystem ? (
-        // A committed [System] step (done — e.g. an invite was sent) shows an emerald ✓; otherwise ✦.
+        // A committed [System] step (done — reply sent / invite sent) shows an emerald ✓; otherwise the
+        // AUGMTD brand mark (dimmed when set aside). No generic sparkles — this is a real AUGMTD step.
         <span className={`absolute left-0 top-[3px] flex h-[23px] w-[23px] items-center justify-center rounded-full ring-2 ring-white transition-colors duration-300 ${task.done ? 'bg-emerald-500' : crossed ? 'bg-neutral-100' : 'bg-indigo-50'} ${classifying ? 'animate-pulse' : ''}`}>
           {task.done ? (
             <CheckIcon className="h-3.5 w-3.5 text-white" />
           ) : (
-            <SparklesIcon className={`h-3.5 w-3.5 transition-colors duration-300 ${crossed ? 'text-neutral-300' : 'text-indigo-500'}`} />
+            <AugmtdMark size={13} className={`transition-opacity duration-300 ${crossed ? 'opacity-30' : ''}`} />
           )}
         </span>
       ) : (
@@ -1243,6 +1316,8 @@ function StepperRow({
                   {pickerOpen && (
                     <CoworkerPicker
                       align="right"
+                      direction="down"
+                      title="Assign this step"
                       onPick={(w) => { setPickerOpen(false); onDelegate(w); }}
                       onClose={() => setPickerOpen(false)}
                     />
@@ -1299,33 +1374,43 @@ function StepperRow({
           </details>
         )}
 
-        {/* Action / status line. Handed-off / delegating states win; then classifying / crossed-out;
-            then the system action / [You] hint. */}
-        <div className="mt-1 flex items-center gap-2">
+        {/* Owner · STATE · action line — the redesign's core. Every row leads with ONE state chip that
+            reflects what is TRUE right now, followed (only where there's a next move) by ONE action.
+            Precedence: handed-off / delegating win; then classifying; then set-aside; then the
+            system PREPARED→SENT states (or a quiet capability chip for fetch/analyze); then [You]. */}
+        <div className="mt-1 flex items-center gap-2 flex-wrap">
           {handed ? (
-            <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-600">
-              <CheckIcon className="w-3 h-3" />Handed to {handed.agentName}
-            </span>
+            // Coworker executed this step → "{Name} handled it ✓" (the expandable "what they handed
+            // back" sits above). The chip carries the done state; the avatar is already in the node.
+            <StateChip state="handled" label={`${handed.agentName} handled it`} />
           ) : delegating ? (
-            <span className="inline-flex items-center gap-1 text-[10.5px] text-indigo-500 italic">
-              <span className="w-2.5 h-2.5 rounded-full border-2 border-indigo-300 border-t-indigo-600 animate-spin" />
-              Handing off…
-            </span>
+            <StateChip state="running" label="Handing off…" />
           ) : classifying ? (
             <span className="text-[10.5px] text-indigo-400 italic animate-pulse">Classifying…</span>
           ) : crossed ? (
-            <span className="text-[10.5px] text-neutral-400 italic">Not needed</span>
+            <StateChip state="dismissed" label="Not needed" />
           ) : isSystem ? (
             task.done ? (
-              // A committed [System] step (e.g. an invite was sent) — a done confirmation, no action.
-              <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-600"><CheckIcon className="w-3 h-3" />Done</span>
-            ) : actionLabel && onAction ? (
-              <button onClick={onAction} className="text-[11.5px] font-medium text-indigo-600 hover:text-indigo-700">{actionLabel}</button>
+              // Committed — the reply was sent from the docked composer, or the invite fired. The chip
+              // reflects WHICH: a reply step → "Sent ✓", an invite step → "Invite sent ✓".
+              <StateChip state="sent" label={sysKind === 'invite' ? 'Invite sent' : 'Sent'} />
+            ) : sysKind && actionLabel && onAction ? (
+              // A PREPARED system step (reply drafted in the composer / invite ready): a state chip that
+              // SAYS it's prepared + the single "Review & send →" action that reveals its surface.
+              <>
+                <StateChip state="ready" label={sysKind === 'invite' ? 'Ready to send' : 'Draft ready'} />
+                <button onClick={onAction} className="text-[11.5px] font-medium text-indigo-600 hover:text-indigo-700">{actionLabel}</button>
+              </>
             ) : (
-              <span className="text-[11px] text-indigo-500/80">{CAP_HINT[task.capability ?? 'analyze'] ?? 'I can handle this'}</span>
+              // A fetch/analyze system step with no user-facing send — a quiet "AUGMTD" capability chip.
+              <span className="inline-flex items-center gap-1">
+                <StateChip state="system" label="AUGMTD" />
+                <span className="text-[11px] text-indigo-500/70">{CAP_HINT[task.capability ?? 'analyze'] ?? 'I can handle this'}</span>
+              </span>
             )
           ) : (
-            !task.done && <span className="text-[10.5px] text-neutral-400">needs you</span>
+            // [You] step — "Needs you" until the checkbox is ticked, then "Done ✓".
+            <StateChip state={task.done ? 'done' : 'needs-you'} label={task.done ? 'Done' : 'Needs you'} />
           )}
         </div>
       </div>
@@ -1432,30 +1517,32 @@ function WhatThisTakes({
   // bar already IS the one action. Crossing steps out never collapses a triaged workflow.
   if (tasks.length < 2) return null;
 
-  // CAPABILITY-AWARE action routing (stage 3a). A [System] draft/send step's action is chosen by its
-  // capability + intent (via `clientRouteActionType`, 1:1 with the server router):
-  //   • a calendar-invite step → its own "Send invite →" action (opens the InvitePreviewCard).
-  //   • every other draft/send step → the email compose flow (drafts AND sends), collapsed to ONE
-  //     "Draft →" / "Draft & send →" button on the FIRST such step (two would read as a duplicate).
-  // Crossed-out ("not needed") steps carry no action. Invite steps are excluded from the compose
-  // collapse so an invite + a reply on the same item each get their own action.
+  // CAPABILITY-AWARE action routing. A [System] draft/send step's action is chosen by its capability +
+  // intent (via `clientRouteActionType`, 1:1 with the server router):
+  //   • a calendar-invite step → "Review & send →" opening the InvitePreviewCard (its "Ready to send"
+  //     surface); after execute → "Invite sent ✓".
+  //   • every other draft/send step → the DOCKED COMPOSER (already drafted). We do NOT render a separate
+  //     "Draft →" that just scrolls to an existing draft — the composer IS this step's surface. The
+  //     single "Review & send →" reveals/focuses it; when the composer's Send succeeds the step flips to
+  //     "Sent ✓" (via the deep-dive's markSystemDone wiring). One reply-step carries the action (the
+  //     FIRST such step) so a draft + send never read as two duplicate rows.
+  // Crossed-out ("not needed") steps carry no action. Invite steps are excluded from the compose collapse
+  // so an invite + a reply on the same item each get their own action.
   const activeSystemSteps = tasks.filter((t) => !t.dismissed && t.actor === 'system' && (t.capability === 'draft' || t.capability === 'send'));
   const inviteIds = new Set(activeSystemSteps.filter((t) => clientRouteActionType(t) === 'calendar_invite').map((t) => t.id));
   const composeTaskIds = activeSystemSteps.filter((t) => !inviteIds.has(t.id)).map((t) => t.id);
   const primaryComposeId = composeTaskIds[0] ?? null;
-  const hasDraftAndSend =
-    activeSystemSteps.some((t) => !inviteIds.has(t.id) && t.capability === 'draft') &&
-    activeSystemSteps.some((t) => !inviteIds.has(t.id) && t.capability === 'send');
-  const composeLabel = hasDraftAndSend ? 'Draft & send →' : 'Draft →';
 
-  // Per-step action resolver — returns the {label, onAction} for the row's action button, or null (a
-  // quiet capability hint). Keeps StepperRow agnostic: it just renders whatever action it's handed.
-  const stepAction = (t: PlanTask): { label: string; onAction: () => void } | null => {
+  // Per-step action resolver — returns {label, onAction, sysKind} for the row's prepared action, or null
+  // (a quiet capability chip). `sysKind` drives the state chip: 'reply' → "Draft ready", 'invite' →
+  // "Ready to send". Keeps StepperRow agnostic: it just renders whatever it's handed.
+  const stepAction = (t: PlanTask): { label: string; onAction: () => void; sysKind: 'reply' | 'invite' } | null => {
     if (t.dismissed || t.actor !== 'system') return null;
     if (inviteIds.has(t.id)) {
-      return onInvite ? { label: 'Send invite →', onAction: () => onInvite(t.id) } : null;
+      return onInvite ? { label: 'Review & send →', onAction: () => onInvite(t.id), sysKind: 'invite' } : null;
     }
-    if (t.id === primaryComposeId && onDraft) return { label: composeLabel, onAction: onDraft };
+    // The reply step reveals/focuses the already-drafted docked composer — no redundant "Draft →".
+    if (t.id === primaryComposeId && onDraft) return { label: 'Review & send →', onAction: onDraft, sysKind: 'reply' };
     return null;
   };
 
@@ -1476,6 +1563,7 @@ function WhatThisTakes({
             // Never the last node — the "+ Add a step" row always follows, so the connector runs down to it.
             isLast={false}
             actionLabel={action?.label ?? null}
+            sysKind={action?.sysKind ?? null}
             onAction={action?.onAction}
             onToggle={() => toggle(t)}
             onDismiss={() => dismiss(t)}
@@ -1498,10 +1586,13 @@ function WhatThisTakes({
 
   return (
     <section>
-      <div className="flex items-baseline justify-between mb-3">
-        <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide">Identified tasks</h2>
-        <span className="text-[10.5px] text-neutral-400">
-          <span className="text-indigo-500">✦</span> AUGMTD can do · <span className="text-neutral-400">○</span> needs you
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-1.5">
+          <AugmtdMark size={13} />
+          <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide">Identified tasks</h2>
+        </div>
+        <span className="inline-flex items-center gap-1 text-[10.5px] text-neutral-400">
+          <AugmtdMark size={10} /> AUGMTD · <span className="text-neutral-400">○</span> you
         </span>
       </div>
       {stepper}
@@ -1547,6 +1638,17 @@ function TasksPanel({ hasBreakdown, plan, children }: { hasBreakdown: boolean; p
     const first = live[0].handedTo!;
     return live.every((t) => t.handedTo?.agentId === first.agentId) ? first : null;
   })();
+
+  // ── Live progress — "N of M done". A step counts as RESOLVED when it's done (a [You] check, a sent
+  // reply/invite via markSystemDone), handed to a coworker, or set aside ("not needed"). Recomputed on
+  // every plan change so the header ticks up as the workflow completes.
+  const progress = (() => {
+    const ts = plan?.tasks ?? [];
+    const total = ts.length;
+    const done = ts.filter((t) => t.done || t.handedTo || t.dismissed).length;
+    return { done, total };
+  })();
+
   return (
     <aside
       aria-hidden={!hasBreakdown}
@@ -1558,15 +1660,23 @@ function TasksPanel({ hasBreakdown, plan, children }: { hasBreakdown: boolean; p
           white (the lane's own left border is what separates it from the email column). */}
       <div className="flex-1 min-h-0 p-2 w-[300px] xl:w-[320px]">
         <div className="h-full flex flex-col rounded-2xl bg-white border border-neutral-200/70 overflow-hidden">
-          {/* Sticky header — "Identified tasks" + the ✦ / ○ legend. Matches the Activity panel header. */}
+          {/* Sticky header — the AUGMTD brand mark + "Identified tasks" + a LIVE "N of M done" progress
+              indicator (counts every completed/sent/handled/set-aside step, updates as steps resolve).
+              Matches the Activity panel header; the mark replaces the old sparkles cliché. */}
           <div className="flex-shrink-0 flex items-center justify-between gap-2 h-10 px-3.5 border-b border-neutral-200">
             <div className="flex items-center gap-1.5 min-w-0">
-              <SparklesIcon className="w-4 h-4 flex-shrink-0 text-indigo-400" />
+              <AugmtdMark size={15} />
               <span className="text-[13px] font-semibold text-neutral-700 whitespace-nowrap">Identified tasks</span>
             </div>
-            <span className="text-[10px] text-neutral-400 whitespace-nowrap flex-shrink-0">
-              <span className="text-indigo-500">✦</span> AUGMTD · <span className="text-neutral-400">○</span> you
-            </span>
+            {progress.total > 0 && (
+              <span className="text-[10.5px] font-medium text-neutral-400 whitespace-nowrap flex-shrink-0 tabular-nums transition-colors duration-300">
+                {progress.done === progress.total ? (
+                  <span className="inline-flex items-center gap-1 text-emerald-600"><CheckIcon className="w-3 h-3" />All done</span>
+                ) : (
+                  <>{progress.done} of {progress.total} done</>
+                )}
+              </span>
+            )}
           </div>
           {/* Body — its own scroll when long. min-w keeps the stepper from crushing during animation. */}
           <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 min-w-[268px]">
@@ -1740,6 +1850,8 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
       });
       if (res.ok) {
         setSent(true);
+        // Reflect the composer's real outcome in the workflow — the reply step flips "Draft ready" → "Sent ✓".
+        plan.markComposerSent();
         // Success state, then close back to the Home (its auto-refresh reflects the sent item).
         setTimeout(() => router.back(), 900);
       } else {
@@ -2036,7 +2148,7 @@ function MeetingDetail({ id }: { id: string }) {
             {/* The follow-up composer — the writing surface the draft step points to. Reachable from the
                 ActionBar (no breakdown) or the workflow step's Draft → (breakdown). */}
             {composing && (
-              <ComposePanel kind="meeting" entityId={id} />
+              <ComposePanel kind="meeting" entityId={id} onSent={() => plan.markComposerSent()} />
             )}
 
             {/* Prepared calendar-invite card — a calendar-invite step opens it here (grounded, editable,
@@ -2269,7 +2381,7 @@ function CommitmentDetail({ id }: { id: string }) {
             )}
             {composing && (
               <div>
-                <ComposePanel kind="commitment" entityId={id} onSent={() => setEmailed(true)} />
+                <ComposePanel kind="commitment" entityId={id} onSent={() => { setEmailed(true); plan.markComposerSent(); }} />
                 {emailed && !done && (
                   <button
                     onClick={() => act('done')}
@@ -2401,6 +2513,8 @@ function FollowUpDetail({ id }: { id: string }) {
       });
       if (res.ok) {
         setSent(true);
+        // Reflect the composer's outcome in the workflow — the nudge/reply step flips to "Sent ✓".
+        plan.markComposerSent();
         setTimeout(() => router.back(), 900);
       } else {
         const d = await res.json().catch(() => ({}));
