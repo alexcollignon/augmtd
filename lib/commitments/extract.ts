@@ -28,6 +28,39 @@ const BULK_HINT = /unsubscribe|view (this )?(e?-?mail )?in (your )?browser|manag
 const FIRST_PERSON_PROMISE = /\b(i'?ll|i will|i'?m going to|i am going to|i shall|let me|we'?ll|we will|we'?re going to|we are going to|on my end|i'?ve|i have|i can|i'?d|i would)\b/i;
 
 const norm = (s: string) => s.toLowerCase().replace(/\s+/g, ' ').trim();
+
+// ── Attendee alias helpers — collapse an email + a display name (or name variants) of the SAME
+// person, so a 1:1's counterpart resolves even when the meeting feeds mixed aliases. Fully agnostic:
+// no hardcoded identities; when it can't confidently reduce to one person the counterpart stays null.
+const emailLocalpart = (s: string): string | null => {
+  const m = s.match(/^([^@\s]+)@/);
+  return m ? m[1].toLowerCase().replace(/[^a-z0-9]/g, '') : null;
+};
+const nameTokens = (s: string): string[] => norm(s).split(/[^a-z0-9]+/).filter(Boolean);
+// Does an email localpart plausibly denote this name? john.smith@ / jsmith@ / johnsmith@ ~ "John Smith".
+const emailDenotesName = (local: string, name: string): boolean => {
+  const t = nameTokens(name);
+  if (!t.length || !local) return false;
+  const joined = t.join('');
+  const initials = t.map((w) => w[0]).join('');
+  const firstLast = (t[0]?.[0] || '') + (t[t.length - 1] || '');
+  return local === joined || local === initials || local === firstLast || t.some((w) => w.length > 2 && local.includes(w));
+};
+// Two attendee strings refer to the same person? exact, name-subset variant ("Jane" ⊆ "Jane Doe"),
+// same email localpart, or email↔name.
+const sameAttendee = (a: string, b: string): boolean => {
+  if (norm(a) === norm(b)) return true;
+  const la = emailLocalpart(a), lb = emailLocalpart(b);
+  if (la && lb) return la === lb;
+  if (!la && !lb) {
+    const ta = nameTokens(a), tb = nameTokens(b);
+    if (!ta.length || !tb.length) return false;
+    const setA = new Set(ta), setB = new Set(tb);
+    return ta.every((w) => setB.has(w)) || tb.every((w) => setA.has(w));
+  }
+  return la ? emailDenotesName(la, b) : emailDenotesName(lb!, a);
+};
+
 function validDate(d: unknown): string | null {
   if (typeof d !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(d)) return null;
   return d;
@@ -139,12 +172,24 @@ export async function writeMeetingCommitments(
 ): Promise<void> {
   // The set of "other" participants (attendee names that aren't the user). Used only to resolve a
   // 1:1 counterpart for a user task — never to fabricate a name.
-  const userNorm = norm(meta.userName || '');
-  const others = [...new Set((meta.attendees ?? [])
-    .map((a) => (a || '').toString().trim())
-    .filter(Boolean)
-    .filter((a) => !userNorm || norm(a) !== userNorm))];
-  const soleCounterpart = others.length === 1 ? others[0] : null;
+  const userName = meta.userName || '';
+  const userNorm = norm(userName);
+  // Strip the user in ANY form (name or an email that denotes their name), then collapse the rest
+  // into DISTINCT people (alias-aware), preferring a display name over an email as the label.
+  const notUser = [...new Set((meta.attendees ?? []).map((a) => (a || '').toString().trim()).filter(Boolean))]
+    .filter((a) => {
+      if (!userNorm) return true;
+      if (norm(a) === userNorm) return false;
+      const local = emailLocalpart(a);
+      return !(local && emailDenotesName(local, userName));
+    });
+  const people: string[] = [];
+  for (const a of notUser) {
+    const idx = people.findIndex((p) => sameAttendee(p, a));
+    if (idx === -1) people.push(a);
+    else if (emailLocalpart(people[idx]) && !emailLocalpart(a)) people[idx] = a; // prefer a name over an email
+  }
+  const soleCounterpart = people.length === 1 ? people[0] : null;
 
   const list: ExtractedCommitment[] = (actionItems ?? [])
     .filter((a) => a?.action?.trim())
