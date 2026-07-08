@@ -1054,8 +1054,9 @@ type HandedTo = {
 
 // The per-step RUNTIME state (mirrors lib/home/item-plan.ts). Absent = ready/pending; 'working' =
 // AUGMTD/coworker is running it now; 'awaiting_approval' = AUGMTD prepared an irreversible send,
-// waiting for the user's OK; 'done' = resolved.
-type PlanTaskStatus = 'working' | 'awaiting_approval' | 'done';
+// waiting for the user's OK; 'awaiting_input' = the step requested a file from the user (S3);
+// 'done' = resolved.
+type PlanTaskStatus = 'working' | 'awaiting_approval' | 'awaiting_input' | 'done';
 
 type PlanCap = 'draft' | 'analyze' | 'fetch' | 'send' | null;
 
@@ -1075,6 +1076,10 @@ type PlanTask = {
     type: 'text' | 'document' | 'file' | 'sent_record' | 'draft';
     title?: string;
     gist?: string;
+  };
+  request?: {                  // task-workflows S3: a [You] step requesting a file (awaiting_input)
+    prompt: string;            // "Upload the pitch deck"
+    fulfilledRef?: string;     // the pool deliverable id once the file lands
   };
 };
 
@@ -1109,6 +1114,8 @@ type ItemPlan = {
   delegateItem: (agentId: string, agentName: string) => Promise<boolean>;                   // hand the whole item to a coworker
   runningId: string | null;      // id of the [System] step AUGMTD is running directly ("Hand to AUGMTD")
   runStep: (taskId: string) => Promise<boolean>;         // AUGMTD runs one reversible atomic step directly
+  uploadingId: string | null;    // id of the awaiting_input step whose upload is in flight (S3)
+  uploadForStep: (taskId: string, file: File) => Promise<boolean>; // upload a requested file → pool file deliverable
   reassignStep: (taskId: string, owner: 'system' | 'you') => void; // flip a step's owner (coworker→ handled elsewhere)
   // ── RUN THE PLAN — the single hero action. Walks every live step to its CURRENT/PROPOSED owner:
   //   • AUGMTD reversible-atomic step (analyze/fetch) → runs it (runStep)
@@ -1135,6 +1142,7 @@ function useItemPlan(
   const [classifyingId, setClassifyingId] = useState<string | null>(null);
   const [delegatingId, setDelegatingId] = useState<string | null>(null);
   const [runningId, setRunningId] = useState<string | null>(null);
+  const [uploadingId, setUploadingId] = useState<string | null>(null);
   // A live ref of the latest tasks — read inside async run handlers to guard concurrent dispatch
   // without a stale closure (the per-step "already working/done" check in runStep + runPlan).
   const tasksRef = useRef<PlanTask[] | null>(null);
@@ -1367,6 +1375,40 @@ function useItemPlan(
     }
   };
 
+  // ── task-workflows S3: upload a file for an `awaiting_input` step. Posts the file to /api/items/attach
+  // (mirrors chat-attach: store → extract text → KB index → pool `file` deliverable). On success the step
+  // flips to done with a "Produced: {filename}" deliverable line + the request marked fulfilled, so the
+  // uploaded file flows to downstream steps via the pool. On failure the step stays awaiting_input to retry.
+  const uploadForStep = async (taskId: string, file: File): Promise<boolean> => {
+    const cur = tasksRef.current?.find((t) => t.id === taskId);
+    if (!cur || uploadingId) return false;
+    setUploadingId(taskId);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      fd.append('kind', planKind);
+      fd.append('entityId', entityId);
+      fd.append('taskId', taskId);
+      const res = await fetch('/api/items/attach', { method: 'POST', body: fd });
+      if (!res.ok) throw new Error();
+      const d = (await res.json()) as { deliverable?: PlanTask['deliverable']; filename?: string };
+      setTasks((prev) => (prev ? prev.map((t) => (t.id === taskId
+        ? {
+            ...t,
+            status: 'done',
+            done: true,
+            ...(d.deliverable ? { deliverable: d.deliverable } : {}),
+            request: { ...(t.request ?? { prompt: `Upload ${d.filename ?? 'file'}` }), fulfilledRef: d.deliverable?.id },
+          }
+        : t)) : prev));
+      return true;
+    } catch {
+      return false;
+    } finally {
+      setUploadingId((cur2) => (cur2 === taskId ? null : cur2));
+    }
+  };
+
   // ── Re-assign a step's OWNER between AUGMTD (system) and you (the coworker case is handled by
   // delegateStep, which stamps handedTo). Flipping owner re-grades the step's actor: system→you drops
   // the capability (a [You] step never carries one); you→system defaults to 'analyze' (the safe atomic
@@ -1442,7 +1484,7 @@ function useItemPlan(
   // stays visible. (A user-added step counts toward it — it's in `tasks`.)
   const hasBreakdown = !loading && !failed && !!tasks && tasks.length >= 2;
 
-  return { tasks, loading, failed, hasBreakdown, pending, classifyingId, toggle, dismiss, addStep, editStep, markSystemDone, delegatingId, delegateStep, delegateItem, runningId, runStep, reassignStep, runPlan, markComposerSent };
+  return { tasks, loading, failed, hasBreakdown, pending, classifyingId, toggle, dismiss, addStep, editStep, markSystemDone, delegatingId, delegateStep, delegateItem, runningId, runStep, uploadingId, uploadForStep, reassignStep, runPlan, markComposerSent };
 }
 
 // ── The per-step STATE CHIP — the single glanceable "where is this step" token. Every StepperRow
@@ -1494,7 +1536,9 @@ function StepperRow({
   onEdit,
   onDelegate,
   onReassign,
+  onUpload,
   running,
+  uploading,
   delegating,
   classifying,
   busy,
@@ -1511,7 +1555,9 @@ function StepperRow({
   onEdit: (text: string) => void;   // re-classify this step with new text
   onDelegate?: (w: Coworker) => void; // hand THIS step to a coworker (from the owner chip)
   onReassign?: (owner: 'system' | 'you') => void; // flip THIS step's owner between AUGMTD and you
+  onUpload?: (file: File) => void;  // task-workflows S3: upload a requested file for an awaiting_input step
   running: boolean;                 // AUGMTD is running this step now — show working state
+  uploading: boolean;               // S3: this awaiting_input step's upload is in flight
   delegating: boolean;              // this step is being delegated — show a spinner
   classifying: boolean;             // this step is being (re)classified — show a quiet "classifying…"
   busy: boolean;
@@ -1520,11 +1566,15 @@ function StepperRow({
   const [editing, setEditing] = useState(false);
   const [draftText, setDraftText] = useState(task.text);
   const inputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null); // S3: the hidden picker for an awaiting_input upload
   const isSystem = task.actor === 'system';
   const hasDetail = !!task.detail?.trim();
   const crossed = !!task.dismissed; // "not needed" — visible but struck-through, action disabled
   const handed = task.handedTo;     // a coworker executed this step
   const working = running || task.status === 'working'; // AUGMTD is executing this step right now
+  // task-workflows S3: a [You] step that asked for a file and hasn't been given one yet → render an
+  // "Upload →" affordance instead of the plain "Needs you" checkbox chip.
+  const awaitingInput = !crossed && !task.done && task.status === 'awaiting_input' && !task.request?.fulfilledRef;
 
   useEffect(() => {
     if (editing) { setDraftText(task.text); inputRef.current?.focus(); inputRef.current?.select(); }
@@ -1671,6 +1721,12 @@ function StepperRow({
           </details>
         )}
 
+        {/* task-workflows S3 — the attachment REQUEST prompt: when the step is asking for a file, show
+            its ask ("Upload the pitch deck") as a subtitle (only if it adds to the terse title). */}
+        {awaitingInput && task.request?.prompt && task.request.prompt.trim().toLowerCase() !== task.text.trim().toLowerCase() && (
+          <p className="mt-1 text-[12px] leading-relaxed text-amber-700/90">{task.request.prompt}</p>
+        )}
+
         {/* task-workflows S1 — the produced DELIVERABLE line: when a system step ran a real tool and
             landed a pool entry, name it ("Produced: {title}") above the collapsible body. */}
         {!handed && task.deliverable && (task.deliverable.title || task.deliverable.gist) && (
@@ -1745,6 +1801,37 @@ function StepperRow({
                   // Otherwise just its ready state — Run executes it; no per-row action.
                   <StateChip state="ready" label="Ready" />
                 )
+              ) : awaitingInput ? (
+                // task-workflows S3 — the step ASKED for a file. Show an amber "Needs a file" + an
+                // "Upload →" affordance opening the hidden picker; on pick it posts to /api/items/attach.
+                <>
+                  <StateChip state="awaiting" label="Needs a file" />
+                  {uploading ? (
+                    <span className="inline-flex items-center gap-1 text-[11.5px] font-medium text-indigo-500">
+                      <span className="w-2.5 h-2.5 rounded-full border-[1.5px] border-indigo-300 border-t-indigo-600 animate-spin" />
+                      Uploading…
+                    </span>
+                  ) : (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); if (!busy) fileInputRef.current?.click(); }}
+                      disabled={busy}
+                      className="text-[11.5px] font-medium text-indigo-600 hover:text-indigo-700 disabled:opacity-40"
+                    >
+                      Upload →
+                    </button>
+                  )}
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".pdf,.docx,.txt,.png,.jpg,.jpeg,.webp,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,image/*"
+                    className="hidden"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      e.target.value = ''; // allow re-picking the same file after a failed upload
+                      if (f && onUpload) onUpload(f);
+                    }}
+                  />
+                </>
               ) : (
                 // [You] step — "Needs you" until the checkbox (in the node) is ticked, then "Done ✓".
                 <StateChip state={task.done ? 'done' : 'needs-you'} label={task.done ? 'Done' : 'Needs you'} />
@@ -1827,7 +1914,7 @@ function WhatThisTakes({
   onInvite?: (taskId: string) => void;
   variant?: 'inline' | 'panel';
 }) {
-  const { tasks, loading, failed, pending, classifyingId, toggle, dismiss, addStep, editStep, delegatingId, delegateStep, runningId, reassignStep } = plan;
+  const { tasks, loading, failed, pending, classifyingId, toggle, dismiss, addStep, editStep, delegatingId, delegateStep, runningId, uploadingId, uploadForStep, reassignStep } = plan;
   const workers = useCoworkers();
 
   // In the two-column layout the parent renders the panel chrome + its own loading/failed handling
@@ -1916,7 +2003,9 @@ function WhatThisTakes({
             onEdit={(text) => editStep(t.id, text)}
             onDelegate={(w) => delegateStep(t.id, w.id, w.name)}
             onReassign={(owner) => reassignStep(t.id, owner)}
+            onUpload={(file) => uploadForStep(t.id, file)}
             running={runningId === t.id}
+            uploading={uploadingId === t.id}
             delegating={delegating}
             classifying={classifyingId === t.id}
             busy={pending.has(t.id)}

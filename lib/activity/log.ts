@@ -16,6 +16,7 @@ export type ActivityType =
   | 'sender_muted'
   | 'invite_sent'
   | 'delegated_to_coworker'
+  | 'file_attached'
   | 'restored';
 
 export interface LogActivityInput {

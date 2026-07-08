@@ -32,10 +32,12 @@ export type HandedTo = {
 // is ready/pending (nothing running). The values are the transient states between ready and resolved:
 //   • 'working'          — AUGMTD (or a coworker) is executing it right now (subtle spinner).
 //   • 'awaiting_approval'— AUGMTD prepared an irreversible send and is waiting for the user's one-tap OK.
+//   • 'awaiting_input'   — the step REQUESTED a file/document from the user (task-workflows S3). It renders
+//                          an "Upload →" affordance and resolves to `done` once the file lands in the pool.
 //   • 'done'             — resolved (mirrors `done:true`; kept for symmetry so a status read is total).
 // `done` / `handedTo` stay the durable resolution markers; `status` is the in-flight nuance layered on
 // top. Persisted in the `item_plans.tasks` jsonb (schemaless — no migration needed).
-export type PlanTaskStatus = 'working' | 'awaiting_approval' | 'done';
+export type PlanTaskStatus = 'working' | 'awaiting_approval' | 'awaiting_input' | 'done';
 
 export type ItemPlanTask = {
   id: string;
@@ -58,7 +60,38 @@ export type ItemPlanTask = {
     title?: string;          // short label ("Research brief", "Cost estimate")
     gist?: string;           // one-line summary ("produced: cost estimate")
   };
+  // ── task-workflows S3: a [You] step that REQUESTS a file/document from the user. When set (with
+  // `status:'awaiting_input'`), the stepper renders the `prompt` + an "Upload →" affordance; on upload
+  // the file becomes a `file` deliverable in the pool and the step resolves to `done`. Back-compatible
+  // (optional, schemaless jsonb).
+  request?: {
+    prompt: string;          // what to upload, e.g. "Upload the pitch deck"
+    fulfilledRef?: string;   // item_deliverables.id once the user provides the file
+  };
 };
+
+// ── task-workflows S3: detect whether a [You] step is a "provide a document" request — i.e. its intent
+// is to hand over a file (attach/share/provide/upload/send the deck / the docs / the signed X). When it
+// is, the step is rendered as an ATTACHMENT REQUEST (awaiting_input) instead of a plain checkbox, so the
+// user uploads the file straight into the item's deliverable pool. Instance-honest + light: only a [You]
+// step (never a system step), only when the verb+object clearly name a document to provide — NOT every
+// you-step (a "call the client" or "make a decision" step stays a plain checkbox).
+const PROVIDE_VERBS = /\b(upload|attach|provide|share|send over|hand over|drop in|supply|locate and (?:send|attach|share)|forward)\b/i;
+const DOC_NOUNS = /\b(file|files|document|documents|doc|docs|deck|slides?|slide deck|pitch\s?deck|pdf|contract|agreement|nda|invoice|report|spreadsheet|attachment|attachments|proposal|statement|receipt|form|paperwork|materials?|deliverable|presentation|resume|cv|brief\b)\b/i;
+
+export function detectAttachmentRequest(task: Pick<ItemPlanTask, 'actor' | 'text' | 'detail'>): string | null {
+  if (task.actor !== 'you') return null;
+  const hay = `${task.text || ''} ${task.detail || ''}`;
+  if (!PROVIDE_VERBS.test(hay)) return null;
+  if (!DOC_NOUNS.test(hay)) return null;
+  // Build a short imperative prompt for the ask. Prefer the step's own title if it already reads as an
+  // upload ask; else synthesize "Upload …" from the object it names.
+  const t = (task.text || '').trim();
+  if (/^upload\b/i.test(t)) return t.slice(0, 120);
+  const nounMatch = hay.match(DOC_NOUNS);
+  const noun = nounMatch ? nounMatch[0] : 'the file';
+  return `Upload ${/\bthe\b/i.test(hay) ? 'the ' : ''}${noun}`.replace(/\s+/g, ' ').slice(0, 120);
+}
 
 export type ItemPlan = { tasks: ItemPlanTask[] };
 

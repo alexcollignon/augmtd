@@ -164,8 +164,11 @@ export function renderPoolForContext(deliverables: Deliverable[], excludeTaskId?
   const lines = relevant.map((d, i) => {
     const label = d.title || d.gist || d.type;
     const head = `[Deliverable ${i + 1} · ${d.type}] ${label}`;
-    // Inline the body for text/draft (the poolable content); for document/file/sent, a pointer line.
-    if (d.type === 'text' || d.type === 'draft') {
+    // Inline the body for text/draft (the poolable content) AND for a `file` whose extracted TEXT is in
+    // `content` (a user-uploaded doc — S3; the extracted text is exactly what a downstream step/coworker
+    // reads — note the AgentOS path is text-only, so a scanned-image file with no extractable text falls
+    // through to the pointer line). For a document/sent record with no inline body, a pointer line.
+    if (d.type === 'text' || d.type === 'draft' || (d.type === 'file' && (d.content || '').trim())) {
       const body = (d.content || '').trim().slice(0, 3000);
       return body ? `${head}\n${body}` : head;
     }
