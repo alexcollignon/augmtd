@@ -5,6 +5,7 @@ import { buildVoiceBlock } from '@/lib/context/voice-context';
 import { loadUserRules } from '@/lib/inbox/rules/load';
 import { setInboxRules, shouldDraftReply } from '@/lib/inbox/classify-item';
 import { detectLanguage } from '@/lib/inbox/detect-language';
+import { generateReplyDraft } from '@/lib/inbox/draft-reply';
 
 export const maxDuration = 30;
 
@@ -77,6 +78,11 @@ export async function POST(request: NextRequest) {
     // inbox item should never get a canned reply (the user can still write one). Set only in the
     // awareness/email branch, from the item's own classification (never sender/subject keywords).
     let skipDraft = false;
+    // For an email/awareness item that genuinely owes a reply, we draft via the shared reply drafter
+    // (`generateReplyDraft`) — it detects + mirrors the INCOMING email's language (the A2 fix), so the
+    // reply comes back in the thread's language, not the user's default. Set to the item's source_data.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let replyItemSD: Record<string, any> | null = null;
 
     if (kind === 'meeting') {
       // entityId = the meeting transcript id. Pull its calendar event's attendees (minus the user).
@@ -167,6 +173,7 @@ export async function POST(request: NextRequest) {
       } catch { /* fall back to default rules */ }
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       if (!shouldDraftReply(item as any)) skipDraft = true;
+      else replyItemSD = sd; // route through the language-mirroring reply drafter below
       const from = String(sd.from || sd.from_address || '');
       const email = extractEmail(from);
       recipientName = (sd.from_name as string) || extractName(from);
@@ -188,7 +195,12 @@ export async function POST(request: NextRequest) {
     // Draft in the user's voice — same voice block the reply drafter uses (per-recipient tone). Skipped
     // for FYI/`noted` inbox items (recipient/subject still returned; the user writes the body themselves).
     let body = '';
-    if (!skipDraft) try {
+    if (!skipDraft && replyItemSD) try {
+      // Email/awareness reply → the shared reply drafter, which mirrors the incoming email's language.
+      body = await generateReplyDraft(user.id, replyItemSD, supabase, intent?.trim() || null);
+    } catch (e) {
+      console.error('[compose/draft] reply drafting failed:', e);
+    } else if (!skipDraft) try {
       const voiceBlock = await buildVoiceBlock(user.id, voiceRecipient, supabase).catch(() => '');
       const { client: ai, model } = await getAIClient(user.id, 'conversation', supabase);
       const res = await aiCreate(ai, {

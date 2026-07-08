@@ -23,13 +23,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const sd = (item.source_data ?? {}) as Record<string, any>;
-  // Serve a previously-generated draft (sweep or earlier open) unless a fresh one is requested.
-  if (!fresh && sd.draft?.body) return NextResponse.json({ draft: sd.draft.body as string });
 
-  // Only draft when the item GENUINELY owes a reply — never for FYI/`noted` mail (a newsletter must
-  // never get a reply draft, even opened in the deep-dive). Gate on the item's own classification
-  // (work_state + classifyItem), never sender/subject keywords. Load the user's rules so classifyItem
-  // uses their edited deterministic tier, not just the seeds.
+  // Only draft when the item GENUINELY owes a reply — never for FYI/`noted` mail or a CC-only
+  // bystander thread (a newsletter, or a thread you're only CC'd on, must never get a reply draft,
+  // even opened in the deep-dive). Gate on the item's own classification (work_state + classifyItem),
+  // never sender/subject keywords. Load the user's rules so classifyItem uses their edited
+  // deterministic tier, not just the seeds. This gate runs BEFORE serving any stored draft so a stale
+  // draft (e.g. a pre-A2 Portuguese draft left on a `noted` item) is never returned.
   try {
     const rules = await loadUserRules(user.id, supabase);
     setInboxRules(rules);
@@ -38,6 +38,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (!shouldDraftReply(item as any)) {
     return NextResponse.json({ draft: '', skipped: 'not_a_reply' });
   }
+
+  // Serve a previously-generated draft (sweep or earlier open) unless a fresh one is requested — only
+  // reached for items that genuinely owe a reply (gated above).
+  if (!fresh && sd.draft?.body) return NextResponse.json({ draft: sd.draft.body as string });
 
   try {
     const draft = await generateReplyDraft(user.id, sd, supabase);

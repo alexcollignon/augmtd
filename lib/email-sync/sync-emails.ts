@@ -73,6 +73,7 @@ import { analyzeSentEmail } from '@/lib/context/sent-email-analyzer';
 import { getCalendarContext } from '@/lib/calendar/calendar-context';
 import { buildUserContextBlock } from '@/lib/context/build-user-context';
 import type { UserContextProfile } from '@/lib/types/user-context';
+import { computeRecipientRole } from '@/lib/inbox/recipient-role';
 
 /**
  * Detect whether an email was forwarded based on subject and body patterns
@@ -639,6 +640,24 @@ export async function syncEmailsForConnection(
       _orgUsers.push({ id: connection.user_id, email: _connectionEmail, full_name: _ownerProfile.full_name });
     }
 
+    // The user's OWN addresses — login/profile email + every connected mailbox. Used to compute the
+    // user's recipient role (To vs CC) on each incoming email so `is_cc_only` is stamped reliably on
+    // ALL inbox-item write paths (safety-net, fast-path, and process), independent of org-user
+    // recipient analysis. A thread where someone ELSE is the To and the user is only CC'd is awareness.
+    const _userAddresses = new Set<string>();
+    if (_connectionEmail) _userAddresses.add(String(_connectionEmail).toLowerCase());
+    if (_ownerProfile?.email) _userAddresses.add(String(_ownerProfile.email).toLowerCase());
+    try {
+      const { data: _allConns } = await adminSupabase
+        .from('connections')
+        .select('metadata, provider_account_id')
+        .eq('user_id', connection.user_id);
+      for (const c of (_allConns ?? []) as Array<{ metadata: { email?: string } | null; provider_account_id?: string | null }>) {
+        const e = (c.metadata?.email || c.provider_account_id || '').toLowerCase();
+        if (e) _userAddresses.add(e);
+      }
+    } catch { /* non-fatal — connection email alone is the primary signal */ }
+
     // Phase 1: sequential — store email rows, fire learning for sent, fast-path noise/fyi
     // Process-class emails are collected into processQueue for parallel AI in Phase 2
     interface _ProcessQueueItem {
@@ -729,6 +748,13 @@ export async function syncEmailsForConnection(
           // Email stored but no inbox item — recover it
           console.log(`    ♻️  Email exists but no inbox item — recovering`);
 
+          // Recipient role for the recovered item (CC-only bystander → awareness, not needs-reply).
+          const _recoverRole = computeRecipientRole(
+            existingEmail.to_addresses,
+            existingEmail.cc_addresses,
+            _userAddresses,
+          );
+
           if (emailClass === 'noise') {
             await adminSupabase.from('inbox_items').insert(stripNulls({
               user_id: connection.user_id,
@@ -752,6 +778,9 @@ export async function syncEmailsForConnection(
                 html_body: existingEmail.html_body?.slice(0, 15000) || null,
                 received_at: existingEmail.received_at,
                 provider: connection.provider,
+                is_cc_only: _recoverRole.is_cc_only,
+                to: _recoverRole.to,
+                cc: _recoverRole.cc,
               },
               is_read: deriveIsRead(existingEmail),
               status: 'pending',
@@ -784,6 +813,9 @@ export async function syncEmailsForConnection(
                 html_body: existingEmail.html_body?.slice(0, 15000) || null,
                 received_at: existingEmail.received_at,
                 provider: connection.provider,
+                is_cc_only: _recoverRole.is_cc_only,
+                to: _recoverRole.to,
+                cc: _recoverRole.cc,
               },
               is_read: deriveIsRead(existingEmail),
               status: 'pending',
@@ -891,6 +923,15 @@ export async function syncEmailsForConnection(
         }
 
         result.emailsFetched++;
+
+        // Compute the user's recipient role (To vs CC) from the stored email's own To/CC vs the
+        // user's addresses. Stamped into EVERY source_data below so `isCcOnlyBystander` can fire —
+        // reliable and provider-agnostic (doesn't depend on org-user recipient analysis running).
+        const _recipientRole = computeRecipientRole(
+          storedEmail.to_addresses,
+          storedEmail.cc_addresses,
+          _userAddresses,
+        );
 
         // Check if email is from the user
         console.log(`    User email: ${userEmail}`);
@@ -1014,6 +1055,10 @@ export async function syncEmailsForConnection(
             html_body: (parsed as any).html_body?.slice(0, 15000) || null,
             received_at: storedEmail.received_at,
             provider: connection.provider,
+            // Recipient role — a thread you're only CC'd on isn't yours to answer (bystander → awareness).
+            is_cc_only: _recipientRole.is_cc_only,
+            to: _recipientRole.to,
+            cc: _recipientRole.cc,
           });
 
           if (!_snExisting) {
@@ -1118,6 +1163,10 @@ export async function syncEmailsForConnection(
             html_body: (parsed as any).html_body?.slice(0, 15000) || null,
             received_at: storedEmail.received_at,
             provider: connection.provider,
+            // Recipient role — CC-only bystander stays awareness even on the fyi/noise fast-path.
+            is_cc_only: _recipientRole.is_cc_only,
+            to: _recipientRole.to,
+            cc: _recipientRole.cc,
           });
 
           if (fastExisting) {
@@ -1298,6 +1347,15 @@ export async function syncEmailsForConnection(
 
         // orgUsers — use pre-hoisted values (avoids redundant DB queries per email)
         const orgUsers = _orgUsers;
+
+        // Recipient role from the stored email's own To/CC vs the user's addresses — reliable and
+        // independent of whether the user was matched among org users (which is what left is_cc_only
+        // undefined for CC-only threads like Omantel). Stamped into both process-path source_data below.
+        const _recipientRole = computeRecipientRole(
+          storedEmail.to_addresses,
+          storedEmail.cc_addresses,
+          _userAddresses,
+        );
 
         console.log(`🔍 Analyzing recipients for: "${parsed.subject}"`);
         console.log(`   To: ${storedEmail.to_addresses?.join(', ') || 'none'}`);
@@ -1517,9 +1575,12 @@ export async function syncEmailsForConnection(
                   // labelIds → marketing (CATEGORY_PROMOTIONS) + native category rules.
                   has_unsubscribe: !!(parsed as { has_unsubscribe?: boolean }).has_unsubscribe,
                   gmail_labels: (parsed as { labels?: string[] }).labels ?? [],
-                  // Recipient position — lets classifyItem/isNeedsReply avoid marking a thread you're
-                  // only CC'd on (and not personally addressed) as Needs reply.
-                  is_cc_only: recipient.position === 'cc',
+                  // Recipient role — from the email's own To/CC vs the user's addresses (reliable;
+                  // recipient.position can miss when the user isn't an analyzed org user). Lets
+                  // classifyItem/isNeedsReply avoid marking a CC-only thread as Needs reply.
+                  is_cc_only: _recipientRole.is_cc_only,
+                  to: _recipientRole.to,
+                  cc: _recipientRole.cc,
                   calendar_event_id: calendarEventId || undefined,
                   isForwarded,
                   thread_history: threadEmails?.map(e => ({
@@ -1641,9 +1702,12 @@ export async function syncEmailsForConnection(
                 html_body: ((parsed as any).html_body as string | null)?.slice(0, 15000) || null,
                 received_at: storedEmail.received_at,
                 provider: connection.provider,
-                // Recipient position — so a thread you're only CC'd on (and not addressed) isn't
-                // marked Needs reply by classifyItem/isNeedsReply.
-                is_cc_only: recipient.position === 'cc',
+                // Recipient role — from the email's own To/CC vs the user's addresses (reliable;
+                // recipient.position can miss when the user isn't an analyzed org user). So a thread
+                // you're only CC'd on (and not addressed) isn't marked Needs reply.
+                is_cc_only: _recipientRole.is_cc_only,
+                to: _recipientRole.to,
+                cc: _recipientRole.cc,
                 calendar_event_id: calendarEventId || undefined,
                 isForwarded,
                 thread_history: threadEmailsForNew?.map(e => ({
