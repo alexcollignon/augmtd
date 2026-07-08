@@ -2,8 +2,9 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { executeAgentStep } from '@/lib/workflows/execute-step';
 import { generateReportBack, fallbackReport, type ReportFacts } from '@/lib/workflows/report-back';
 import { getAIClient } from '@/lib/ai/factory';
-import type { AgentStep } from '@/lib/workflows/types';
+import type { AgentStep, StepOutput } from '@/lib/workflows/types';
 import type { ItemPlanKind, ItemPlanTask } from './item-plan';
+import { readPool, writeDeliverable, renderPoolForContext, type Deliverable } from './deliverable-pool';
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // HOME ITEM DELEGATION (stage 3b) — hand a Home item, OR a single identified step, to a named coworker
@@ -81,6 +82,8 @@ export interface DelegateResult {
   agentName: string;
   threadId: string | null;
   reportText: string;
+  deliverable?: Deliverable;   // the coworker's output written to the per-item pool (S2)
+  poolSize?: number;           // pool entries the coworker saw as context (for logging / smoke test)
 }
 
 /**
@@ -97,15 +100,41 @@ export async function runDelegation(args: {
   prompt: string;
   itemLabel: string;             // short label for the thread title + report-back task name
   firstName?: string | null;
+  // ── task-workflows S2: the item this delegation belongs to, so the coworker READS the per-item
+  // deliverable pool (build on prior steps — engine-gap #1: was `previousOutputs: []`) and WRITES its
+  // output back into the pool for downstream steps. Optional/back-compatible: absent → no pool wiring
+  // (identical to pre-S2 behaviour). `taskId` = the plan step being delegated (dedup key for the write).
+  pool?: { kind: ItemPlanKind; entityId: string; taskId?: string | null };
 }): Promise<DelegateResult> {
-  const { supabase, userId, worker, prompt, itemLabel, firstName } = args;
+  const { supabase, userId, worker, prompt, itemLabel, firstName, pool: poolScope } = args;
+
+  // ── Read the per-item deliverable pool so the coworker builds on what prior steps produced (S2 — the
+  // engine-gap #1 fix). The pool is rendered into a SINGLE previousOutputs entry, which both the native
+  // `executeAgentStep` path and the AgentOS bridge fold into the coworker's context as `<previous_steps>`
+  // → the coworker literally sees "ALREADY PRODUCED …". Instance-honest: only real deliverables render;
+  // an empty pool renders '' → previousOutputs stays [] (identical to the old behaviour). Non-fatal.
+  let pool: Deliverable[] = [];
+  const previousOutputs: StepOutput[] = [];
+  if (poolScope) {
+    pool = await readPool(supabase, userId, poolScope.kind, poolScope.entityId);
+    const poolContext = renderPoolForContext(pool, poolScope.taskId ?? undefined);
+    if (poolContext) {
+      previousOutputs.push({
+        step_id: 'pool',
+        step_type: 'ai',
+        label: 'Already produced for this item',
+        output: poolContext,
+        duration_ms: 0,
+      });
+    }
+  }
 
   // ── Run the coworker through the ONE worker entry point (flag-agnostic). ──
   const step: AgentStep = { type: 'agent', id: 'delegate', label: 'Delegated work', agent_id: worker.id, prompt };
   const output = (await executeAgentStep(step, {
     userId,
     supabase,
-    previousOutputs: [],
+    previousOutputs,
     workflowName: `Delegation: ${itemLabel}`.slice(0, 120),
   })).trim();
 
@@ -156,5 +185,26 @@ export async function runDelegation(args: {
     console.error('[delegate] thread write failed (non-fatal):', e);
   }
 
-  return { output, agentName: worker.name, threadId, reportText };
+  // ── Write the coworker's output into the per-item pool (S2 — ADDITIVE; report-back + thread +
+  // handedTo attribution above are unchanged). Downstream steps + other coworkers read this. A coworker
+  // output is stored as `text` (or `draft` when the delegated step was a draft) with the coworker's
+  // deliverable in `content`; if the coworker produced a real document/artifact with an id, we'd store
+  // its `ref` + type `document` — but the native/AgentOS text path returns text, so `text` is correct
+  // here. Dedup on `task_id` (a re-run REPLACES). Non-fatal: a pool-write failure never loses the run.
+  let deliverable: Deliverable | undefined;
+  if (poolScope) {
+    const gist = output.replace(/\s+/g, ' ').slice(0, 140);
+    deliverable = await writeDeliverable(supabase, userId, {
+      kind: poolScope.kind,
+      entityId: poolScope.entityId,
+      taskId: poolScope.taskId ?? null,
+      type: 'text',
+      title: itemLabel.slice(0, 100),
+      content: output.slice(0, 8000),
+      gist,
+      metadata: { source: 'delegation', agentId: worker.id, agentName: worker.name },
+    }) ?? undefined;
+  }
+
+  return { output, agentName: worker.name, threadId, reportText, deliverable, poolSize: pool.length };
 }
