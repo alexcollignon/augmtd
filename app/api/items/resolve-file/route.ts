@@ -49,7 +49,27 @@ export async function POST(request: NextRequest) {
     const result = await resolveFileForStep(supabase, user.id, {
       kind, entityId,
       task: { text: step.text, detail: step.detail },
+      cached: step.resolvedFile ?? null,   // the persisted snapshot — re-used when the cache key matches (no AI call)
     });
+
+    // ── Persist the resolution snapshot on the step (item_plans.tasks) so a reload / re-render doesn't
+    // re-run the reasoned pick. We cache found_one/found_many/none (keyed by step text + pool sig);
+    // `have_it` is NOT cached (the pool-first short-circuit re-derives it for free). Only write when the
+    // snapshot changed (a fresh, uncached result) to avoid a needless jsonb rewrite on every cache hit.
+    if (result.status !== 'have_it' && result.cacheKey && !result.cached) {
+      const snapshot = {
+        key: result.cacheKey,
+        status: result.status,
+        candidates: result.candidates,
+        ...(result.description ? { description: result.description } : {}),
+      };
+      const nextTasks = tasks.map((t) => (t.id === taskId ? { ...t, resolvedFile: snapshot } : t));
+      const { error: persistErr } = await supabase
+        .from('item_plans')
+        .update({ tasks: nextTasks, updated_at: new Date().toISOString() })
+        .eq('user_id', user.id).eq('kind', kind).eq('entity_id', entityId);
+      if (persistErr) console.error('[items/resolve-file] snapshot persist failed (non-fatal):', persistErr.message);
+    }
 
     return NextResponse.json({
       status: result.status,
