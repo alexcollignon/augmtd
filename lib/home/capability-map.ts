@@ -116,6 +116,14 @@ export const CAPABILITY_MAP: Record<string, Capability> = {
     tool: 'send_calendar_invite', built: true, kind: 'atomic', irreversible: true, feature: 'meetings',
     blurb: 'SEND a calendar invite / put a meeting on the calendar (real Google/Outlook event, notifies attendees)',
   },
+  // ── S5 proof-of-agnosticism: one map row + a registered executor + a prepared-action surface makes
+  // "forward the deck to finance" flip from [You] to [System]. proposeOwner / the classifier / the
+  // assembler needed NO structural edits — they read this map. Real send → irreversible → approval gate.
+  forward_email: {
+    intent: 'forward an email we already have to a new recipient (e.g. forward the deck to finance)',
+    tool: 'forward_email', built: true, kind: 'atomic', irreversible: true, feature: 'email',
+    blurb: 'FORWARD an existing email to another recipient (real send as the user)',
+  },
 };
 
 // Only the capabilities that are actually wired today drive the classifier prompt.

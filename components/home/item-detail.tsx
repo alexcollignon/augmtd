@@ -18,6 +18,7 @@ import {
   PlusIcon,
   ClipboardDocumentListIcon,
   SparklesIcon,
+  ArrowUturnRightIcon,
 } from '@heroicons/react/24/outline';
 import { ThreadMessages, type ThreadMessage } from '@/components/inbox/thread-messages';
 import ReplyEditor from '@/components/inbox/reply-editor';
@@ -643,17 +644,220 @@ function useInviteHost(kind: ItemKind, entityId: string, markSystemDone: (taskId
   return { invitingTaskId, openInvite, closeInvite, node };
 }
 
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// PREPARED FORWARD — the S5 second concrete prepared-action type (the proof-of-agnosticism send-type).
+// A [System] step whose intent is "forward this to <someone>" routes here (via `clientRouteActionType`,
+// 1:1 with the server router) instead of the composer: /api/items/prepare returns a GROUNDED forward
+// (the item's REAL email as read-only forwarded content + an editable To + note), the user reviews &
+// adds the recipient, then a single "Review & forward" click → /api/items/execute (type:'forward', the
+// ONLY place the forward fires). Mirrors InvitePreviewCard's shape/tokens exactly — the ONE new surface.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+type PreparedForward = { type: 'forward'; to: string[]; subject: string; forwardedBody: string; note: string };
+
+// Reused chips editor for To (same pattern as AttendeeChips — add via input, remove via ✕, never invents).
+function RecipientChips({ recipients, onChange }: { recipients: string[]; onChange: (next: string[]) => void }) {
+  const [input, setInput] = useState('');
+  const add = () => {
+    const v = input.trim();
+    if (v && v.includes('@') && !recipients.includes(v)) onChange([...recipients, v]);
+    setInput('');
+  };
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {recipients.map((a) => (
+        <span key={a} className="inline-flex items-center gap-1 rounded-full bg-neutral-100 pl-2.5 pr-1.5 py-0.5 text-[11.5px] text-neutral-700">
+          {a}
+          <button onClick={() => onChange(recipients.filter((x) => x !== a))} className="hover:text-rose-500 transition-colors" aria-label={`Remove ${a}`}>
+            <XMarkIcon className="w-3 h-3" />
+          </button>
+        </span>
+      ))}
+      <input
+        value={input}
+        onChange={(e) => setInput(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); add(); } }}
+        onBlur={add}
+        placeholder={recipients.length ? 'Add another…' : 'finance@company.com'}
+        className="min-w-[150px] flex-1 bg-transparent text-[12.5px] text-neutral-800 placeholder:text-neutral-300 focus:outline-none py-0.5"
+      />
+    </div>
+  );
+}
+
+function ForwardPreviewCard({ kind, entityId, taskId, onSent, onCancel }: {
+  kind: ItemKind;
+  entityId: string;
+  taskId?: string;
+  onSent?: () => void;
+  onCancel?: () => void;
+}) {
+  const [loading, setLoading] = useState(true);
+  const [to, setTo] = useState<string[]>([]);
+  const [subject, setSubject] = useState('');
+  const [note, setNote] = useState('');
+  const [forwardedBody, setForwardedBody] = useState('');
+  const [sending, setSending] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  // Pre-fill from the grounded builder (NO side effects — prepare never sends). Recipient stays empty
+  // unless a literal address was evidenced in the step text (never invented — the user fills it in).
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    fetch('/api/items/prepare', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind, entityId, taskId }),
+    })
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then((d: PreparedForward | { type: string }) => {
+        if (!alive) return;
+        if (d && (d as PreparedForward).type === 'forward') {
+          const f = d as PreparedForward;
+          setTo(Array.isArray(f.to) ? f.to : []);
+          setSubject(f.subject || 'Fwd:');
+          setForwardedBody(f.forwardedBody || '');
+          setNote(f.note || '');
+        }
+      })
+      .catch(() => { if (alive) setErr('Could not prepare the forward — add the recipient below.'); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [kind, entityId, taskId]);
+
+  const send = async () => {
+    if (sending) return;
+    if (to.length === 0) { setErr('Add at least one recipient.'); return; }
+    setSending(true); setErr(null);
+    try {
+      const res = await fetch('/api/items/execute', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind, entityId, taskId, action: { type: 'forward', to, note } }),
+      });
+      if (res.ok) { setSent(true); onSent?.(); }
+      else {
+        const d = await res.json().catch(() => ({}));
+        setErr(d.error || 'Could not forward the email.');
+      }
+    } catch {
+      setErr('Could not forward the email.');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  if (sent) {
+    return (
+      <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 px-4 py-4">
+        <div className="flex items-center gap-2">
+          <CheckIcon className="w-4 h-4 text-emerald-600" />
+          <p className="text-[13px] font-medium text-emerald-700">Forwarded{to.length ? ` to ${to[0]}${to.length > 1 ? ` +${to.length - 1}` : ''}` : ''}.</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className={CARD}>
+      <div className="flex items-center gap-1.5 px-4 pt-3 pb-2 border-b border-neutral-100">
+        <ArrowUturnRightIcon className="w-3.5 h-3.5 text-violet-500" />
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500">Forward</span>
+        <span className="ml-auto text-[10.5px] text-amber-600">Review before it sends</span>
+      </div>
+
+      {loading ? (
+        <div className="p-4"><div className="h-40 rounded-lg bg-neutral-100 animate-pulse" /></div>
+      ) : (
+        <div className="p-4 space-y-3">
+          <div>
+            <label className="block text-[10.5px] font-semibold uppercase tracking-wide text-neutral-400 mb-1">To</label>
+            <div className="rounded-lg border border-neutral-200 px-2.5 py-1.5">
+              <RecipientChips recipients={to} onChange={setTo} />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-[10.5px] font-semibold uppercase tracking-wide text-neutral-400 mb-1">Subject</label>
+            <input
+              value={subject}
+              readOnly
+              className="w-full rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-1.5 text-[13px] text-neutral-500"
+            />
+          </div>
+
+          <div>
+            <label className="block text-[10.5px] font-semibold uppercase tracking-wide text-neutral-400 mb-1">Note (optional)</label>
+            <textarea
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="Add a line above the forwarded message…"
+              rows={2}
+              className="w-full rounded-lg border border-neutral-200 px-3 py-1.5 text-[12.5px] text-neutral-700 placeholder:text-neutral-300 focus:outline-none focus:border-indigo-300 resize-y"
+            />
+          </div>
+
+          {forwardedBody && (
+            <div>
+              <label className="block text-[10.5px] font-semibold uppercase tracking-wide text-neutral-400 mb-1">Forwarded message</label>
+              <div className="rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2 max-h-40 overflow-y-auto text-[12px] leading-relaxed text-neutral-600">
+                <div dangerouslySetInnerHTML={{ __html: forwardedBody }} />
+              </div>
+            </div>
+          )}
+
+          {err && <p className="text-[12px] text-rose-600">{err}</p>}
+
+          <div className="flex items-center gap-3 pt-1">
+            <button
+              onClick={send}
+              disabled={sending}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 text-white px-4 py-2 text-[13px] font-medium hover:bg-indigo-700 disabled:opacity-60 transition-colors"
+            >
+              <ArrowUturnRightIcon className="w-4 h-4" />{sending ? 'Forwarding…' : 'Review & forward'}
+            </button>
+            {onCancel && (
+              <button onClick={onCancel} className="text-[13px] font-medium text-neutral-500 hover:text-neutral-700">Cancel</button>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Forward host — mirrors useInviteHost. A variant wires `onForward={openForward}` into WhatThisTakes
+// and drops `<forwardHost.node/>` where the prepared card should appear. On send → step done + close.
+function useForwardHost(kind: ItemKind, entityId: string, markSystemDone: (taskId: string) => void) {
+  const [forwardingTaskId, setForwardingTaskId] = useState<string | null>(null);
+  const openForward = (taskId: string) => setForwardingTaskId(taskId);
+  const closeForward = () => setForwardingTaskId(null);
+  const node = forwardingTaskId ? (
+    <ForwardPreviewCard
+      kind={kind}
+      entityId={entityId}
+      taskId={forwardingTaskId}
+      onSent={() => { if (forwardingTaskId) markSystemDone(forwardingTaskId); }}
+      onCancel={closeForward}
+    />
+  ) : null;
+  return { forwardingTaskId, openForward, closeForward, node };
+}
+
 // ── Prepared-action routing (client side). A [System] step's action is CAPABILITY-AWARE: a step whose
 // intent is a calendar invite opens the InvitePreviewCard; every other draft/send step opens the
 // existing email ComposePanel. Kept 1:1 with `lib/home/prepare-action.ts` `routeStepToActionType` so
 // the client picks the same host the server prepares for (agnostic: adding a type = extend both).
-function clientRouteActionType(task: { capability: PlanTask['capability']; text: string; detail?: string }): 'calendar_invite' | 'email' {
+function clientRouteActionType(task: { capability: PlanTask['capability']; text: string; detail?: string }): 'calendar_invite' | 'forward' | 'email' {
   const cap = task.capability;
   const hay = `${task.text || ''} ${task.detail || ''}`.toLowerCase();
   const inviteHit =
     /\b(calendar invite|calendar event|send (?:an? )?invite|put .* on the calendar|schedule (?:a|the|this) (?:meeting|call|invite)|book (?:a|the) (?:meeting|call|slot)|create (?:a|the|an) (?:meeting|event|invite))\b/.test(hay) ||
     (/\binvit/.test(hay) && /\b(meet|call|calendar|event)\b/.test(hay));
   if (inviteHit && (cap === 'send' || cap === null)) return 'calendar_invite';
+  // Forward (S5 send-type) — kept 1:1 with the server router in `lib/home/prepare-action.ts`.
+  const forwardHit = /\bforward(?:ed|ing|s)?\b/.test(hay) && /\b(email|mail|message|thread|deck|attachment|note|this|it)\b/.test(hay);
+  if (forwardHit && (cap === 'send' || cap === null)) return 'forward';
   return 'email';
 }
 
@@ -1145,7 +1349,7 @@ type ItemPlan = {
   //   • a send step (irreversible) → pauses, surfaces its approval surface (openInvite/openCompose)
   //   • a [You] step → pauses (its checkbox is the move)
   // Sequential approvals: opens ONE send surface at a time. Nothing irreversible fires without a tap.
-  runPlan: (opts: { pickCoworker: (t: PlanTask) => Coworker | null; openInvite?: (taskId: string) => void; openCompose?: () => void }) => void;
+  runPlan: (opts: { pickCoworker: (t: PlanTask) => Coworker | null; openInvite?: (taskId: string) => void; openForward?: (taskId: string) => void; openCompose?: () => void }) => void;
   markComposerSent: () => void;  // the docked composer's Send succeeded → flip the reply STEP to "Sent ✓"
 };
 
@@ -1563,10 +1767,10 @@ function useItemPlan(
   //     never auto-fires. Sequential: only the FIRST pending approval opens (one send surface at a time).
   //   • a [You] step → PAUSE (its checkbox is the move).
   // Coworker dispatches + reversible runs kick off together; the send approval waits for the user's tap.
-  const runPlan = (opts: { pickCoworker: (t: PlanTask) => Coworker | null; openInvite?: (taskId: string) => void; openCompose?: () => void }) => {
+  const runPlan = (opts: { pickCoworker: (t: PlanTask) => Coworker | null; openInvite?: (taskId: string) => void; openForward?: (taskId: string) => void; openCompose?: () => void }) => {
     const ts = tasksRef.current;
     if (!ts) return;
-    const { pickCoworker, openInvite, openCompose } = opts;
+    const { pickCoworker, openInvite, openForward, openCompose } = opts;
     let approvalOpened = false;
     for (const t of ts) {
       if (t.dismissed || t.done || t.handedTo || t.status === 'working') continue;
@@ -1590,8 +1794,9 @@ function useItemPlan(
       } else if (t.capability === 'send' || t.capability === 'draft') {
         // Irreversible / prepared-send → surface the approval (invite card or composer). Open only the first.
         if (approvalOpened) continue;
-        const isInvite = clientRouteActionType(t) === 'calendar_invite';
-        if (isInvite && openInvite) { openInvite(t.id); approvalOpened = true; }
+        const route = clientRouteActionType(t);
+        if (route === 'calendar_invite' && openInvite) { openInvite(t.id); approvalOpened = true; }
+        else if (route === 'forward' && openForward) { openForward(t.id); approvalOpened = true; }
         else if (openCompose) { openCompose(); approvalOpened = true; }
       }
     }
@@ -2149,6 +2354,7 @@ function WhatThisTakes({
   plan,
   onDraft,
   onInvite,
+  onForward,
   variant = 'inline',
 }: {
   plan: ItemPlan;
@@ -2157,6 +2363,8 @@ function WhatThisTakes({
   // id so the host can prepare/execute against that specific task. When absent, the step falls back to
   // the quiet capability hint (the invite card isn't hosted in this variant's shell).
   onInvite?: (taskId: string) => void;
+  // onForward — the S5 sibling: a system step routed to a forward opens the ForwardPreviewCard.
+  onForward?: (taskId: string) => void;
   variant?: 'inline' | 'panel';
 }) {
   const { tasks, loading, failed, pending, classifyingId, toggle, dismiss, addStep, editStep, delegatingId, delegateStep, runningId, uploadingId, uploadForStep, resolution, resolveFile, useResolvedFile, attachToStep, reassignStep } = plan;
@@ -2202,7 +2410,9 @@ function WhatThisTakes({
   // so an invite + a reply on the same item each get their own action.
   const activeSystemSteps = tasks.filter((t) => !t.dismissed && t.actor === 'system' && (t.capability === 'draft' || t.capability === 'send'));
   const inviteIds = new Set(activeSystemSteps.filter((t) => clientRouteActionType(t) === 'calendar_invite').map((t) => t.id));
-  const composeTaskIds = activeSystemSteps.filter((t) => !inviteIds.has(t.id)).map((t) => t.id);
+  // Forward steps (S5) — a distinct send surface, excluded from the compose collapse like invites.
+  const forwardIds = new Set(activeSystemSteps.filter((t) => clientRouteActionType(t) === 'forward').map((t) => t.id));
+  const composeTaskIds = activeSystemSteps.filter((t) => !inviteIds.has(t.id) && !forwardIds.has(t.id)).map((t) => t.id);
   const primaryComposeId = composeTaskIds[0] ?? null;
 
   // Per-step action resolver — returns {label, onAction, sysKind} for the row's prepared action, or null
@@ -2212,6 +2422,10 @@ function WhatThisTakes({
     if (t.dismissed || t.actor !== 'system') return null;
     if (inviteIds.has(t.id)) {
       return onInvite ? { label: 'Review & send →', onAction: () => onInvite(t.id), sysKind: 'invite' } : null;
+    }
+    if (forwardIds.has(t.id)) {
+      // A forward is a send-type — same "Ready to send" chip as the invite, its own prepared card.
+      return onForward ? { label: 'Review & forward →', onAction: () => onForward(t.id), sysKind: 'invite' } : null;
     }
     // The reply step reveals/focuses the already-drafted docked composer — no redundant "Draft →".
     if (t.id === primaryComposeId && onDraft) return { label: 'Review & send →', onAction: onDraft, sysKind: 'reply' };
@@ -2287,7 +2501,7 @@ function WhatThisTakes({
           the primary reply → the composer; sends pause for approval; [You] steps pause. */}
       <div className="mt-3">
         <button
-          onClick={() => plan.runPlan({ pickCoworker: (t) => (t.id === primaryComposeId ? null : suggestCoworkerFor(t, workers)), openInvite: onInvite, openCompose: onDraft })}
+          onClick={() => plan.runPlan({ pickCoworker: (t) => (t.id === primaryComposeId ? null : suggestCoworkerFor(t, workers)), openInvite: onInvite, openForward: onForward, openCompose: onDraft })}
           className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 text-white px-4 py-2 text-[13px] font-semibold hover:bg-indigo-700 transition-colors"
         >
           <PaperAirplaneIcon className="w-3.5 h-3.5" />Run
@@ -2322,7 +2536,7 @@ function WhatThisTakes({
 // This panel is the SINGLE home for an item's actions when a breakdown exists: the workflow steps
 // (each with its own "Draft →" / done affordance) + a quiet "Hand to a coworker" FOOTER — so those
 // actions aren't also floating in the main column.
-function TasksPanel({ hasBreakdown, plan, onDraft, onInvite, children }: { hasBreakdown: boolean; plan?: ItemPlan; onDraft?: () => void; onInvite?: (taskId: string) => void; children: React.ReactNode }) {
+function TasksPanel({ hasBreakdown, plan, onDraft, onInvite, onForward, children }: { hasBreakdown: boolean; plan?: ItemPlan; onDraft?: () => void; onInvite?: (taskId: string) => void; onForward?: (taskId: string) => void; children: React.ReactNode }) {
   // The item-level "Hand to a coworker" footer state: pending while the whole-item hand-off runs, and
   // resolved (attribution) once every live step carries the same handedTo. Derived from the shared plan.
   const itemDelegating = plan?.delegatingId === ITEM_DELEGATE_ID;
@@ -2416,7 +2630,7 @@ function TasksPanel({ hasBreakdown, plan, onDraft, onInvite, children }: { hasBr
               </div>
             ) : plan ? (
               <button
-                onClick={() => plan.runPlan({ pickCoworker, openInvite: onInvite, openCompose: onDraft })}
+                onClick={() => plan.runPlan({ pickCoworker, openInvite: onInvite, openForward: onForward, openCompose: onDraft })}
                 className="w-full inline-flex items-center justify-center gap-1.5 rounded-lg bg-indigo-600 text-white px-3 py-2 text-[13px] font-semibold hover:bg-indigo-700 transition-colors"
               >
                 <PaperAirplaneIcon className="w-3.5 h-3.5" />
@@ -2441,6 +2655,7 @@ function DeepDiveShell({
   plan,
   onDraft,
   onInvite,
+  onForward,
   children,
 }: {
   hasBreakdown: boolean;
@@ -2448,6 +2663,7 @@ function DeepDiveShell({
   plan?: ItemPlan;             // the shared plan — the panel footer's whole-item dispatch uses it
   onDraft?: () => void;        // reveal the docked composer / compose panel (for "Hand all of this off")
   onInvite?: (taskId: string) => void; // open the prepared invite card for a step
+  onForward?: (taskId: string) => void; // open the prepared forward card for a step (S5)
   children: React.ReactNode;
 }) {
   // Layout mirrors the Home ACTIVITY panel: the tasks aside hugs the RIGHT edge (a `flex-shrink-0`
@@ -2470,7 +2686,7 @@ function DeepDiveShell({
           children
         )}
       </div>
-      <TasksPanel hasBreakdown={hasBreakdown} plan={plan} onDraft={onDraft} onInvite={onInvite}>{panel}</TasksPanel>
+      <TasksPanel hasBreakdown={hasBreakdown} plan={plan} onDraft={onDraft} onInvite={onInvite} onForward={onForward}>{panel}</TasksPanel>
     </div>
   );
 }
@@ -2572,6 +2788,7 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
   const plan = useItemPlan('email', id);          // ONE /api/items/plan POST, shared by both instances
   const hasBreakdown = plan.hasBreakdown;         // ≥2-task plan → open the two-column layout
   const inviteHost = useInviteHost('email', id, plan.markSystemDone); // hosts the InvitePreviewCard for a calendar-invite step
+  const forwardHost = useForwardHost('email', id, plan.markSystemDone); // hosts the ForwardPreviewCard for a forward step (S5)
   const atts = useReplyAttachments();             // shared inbox-style attach surface (base64 → send-reply)
   const editorRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null); // the docked reply composer — a draft-task scrolls here
@@ -2678,7 +2895,8 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
       plan={plan}
       onDraft={scrollToComposer}
       onInvite={inviteHost.openInvite}
-      panel={<WhatThisTakes plan={plan} variant="panel" onDraft={scrollToComposer} onInvite={inviteHost.openInvite} />}
+      onForward={forwardHost.openForward}
+      panel={<WhatThisTakes plan={plan} variant="panel" onDraft={scrollToComposer} onInvite={inviteHost.openInvite} onForward={forwardHost.openForward} />}
     >
       {/* 1 — Header: subject + sender + date (fixed at top). The badge reflects the item's REAL
           classification (a `noted`/FYI newsletter reads "For awareness", not "Reply needed"). */}
@@ -2717,12 +2935,15 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
             plan={plan}
             onDraft={scrollToComposer}
             onInvite={inviteHost.openInvite}
+            onForward={forwardHost.openForward}
           />
         </div>
 
         {/* Prepared calendar-invite card — mounted when a calendar-invite step is triggered. Grounded,
             editable, approve-to-send (the ONLY place an invite fires is the Approve click → execute). */}
         {inviteHost.node && <div>{inviteHost.node}</div>}
+        {/* Prepared forward card (S5) — same approve-before-commit gate as the invite. */}
+        {forwardHost.node && <div>{forwardHost.node}</div>}
 
         {/* Suggested angle (light line) — kept just above the docked composer */}
         {angle && (
@@ -2845,6 +3066,7 @@ function MeetingDetail({ id }: { id: string }) {
   const plan = useItemPlan('meeting', id);        // ONE /api/items/plan POST, shared by both instances
   const hasBreakdown = plan.hasBreakdown;         // ≥2-task plan → open the two-column layout
   const inviteHost = useInviteHost('meeting', id, plan.markSystemDone);
+  const forwardHost = useForwardHost('meeting', id, plan.markSystemDone);
 
   useEffect(() => {
     let alive = true;
@@ -2878,7 +3100,8 @@ function MeetingDetail({ id }: { id: string }) {
       plan={plan}
       onDraft={() => setComposing(true)}
       onInvite={inviteHost.openInvite}
-      panel={<WhatThisTakes plan={plan} variant="panel" onDraft={() => setComposing(true)} onInvite={inviteHost.openInvite} />}
+      onForward={forwardHost.openForward}
+      panel={<WhatThisTakes plan={plan} variant="panel" onDraft={() => setComposing(true)} onInvite={inviteHost.openInvite} onForward={forwardHost.openForward} />}
     >
       {/* Header */}
       <DetailHeader
@@ -2919,6 +3142,8 @@ function MeetingDetail({ id }: { id: string }) {
             {/* Prepared calendar-invite card — a calendar-invite step opens it here (grounded, editable,
                 approve-to-send). */}
             {inviteHost.node}
+            {/* Prepared forward card (S5) — approve-before-commit, same gate as the invite. */}
+            {forwardHost.node}
 
             {/* Suggested next step — the one call-to-action, kept prominent up top (indigo accent). */}
             {/* Suggested next step — a highlighted indigo CALLOUT card (system accent), not a plain
@@ -3038,7 +3263,7 @@ function MeetingDetail({ id }: { id: string }) {
                 in the right TASKS PANEL). BELOW the context (action-first ordering). A system
                 draft-task opens the follow-up composer at the top. */}
             <div className="lg:hidden">
-              <WhatThisTakes plan={plan} onDraft={() => setComposing(true)} onInvite={inviteHost.openInvite} />
+              <WhatThisTakes plan={plan} onDraft={() => setComposing(true)} onInvite={inviteHost.openInvite} onForward={forwardHost.openForward} />
             </div>
           </>
         )}
@@ -3074,6 +3299,7 @@ function CommitmentDetail({ id }: { id: string }) {
   const plan = useItemPlan('commitment', id);         // ONE /api/items/plan POST, shared by both instances
   const hasBreakdown = plan.hasBreakdown;             // ≥2-task plan → open the two-column layout
   const inviteHost = useInviteHost('commitment', id, plan.markSystemDone);
+  const forwardHost = useForwardHost('commitment', id, plan.markSystemDone);
 
   useEffect(() => {
     let alive = true;
@@ -3105,7 +3331,8 @@ function CommitmentDetail({ id }: { id: string }) {
       plan={plan}
       onDraft={() => setComposing(true)}
       onInvite={inviteHost.openInvite}
-      panel={<WhatThisTakes plan={plan} variant="panel" onDraft={() => setComposing(true)} onInvite={inviteHost.openInvite} />}
+      onForward={forwardHost.openForward}
+      panel={<WhatThisTakes plan={plan} variant="panel" onDraft={() => setComposing(true)} onInvite={inviteHost.openInvite} onForward={forwardHost.openForward} />}
     >
       {/* Header */}
       <DetailHeader
@@ -3162,6 +3389,8 @@ function CommitmentDetail({ id }: { id: string }) {
 
             {/* Prepared calendar-invite card — a calendar-invite step opens it here. */}
             {inviteHost.node}
+            {/* Prepared forward card (S5). */}
+            {forwardHost.node}
 
             {src ? (
               <section>
@@ -3191,7 +3420,7 @@ function CommitmentDetail({ id }: { id: string }) {
                 in the right TASKS PANEL). BELOW the source context (action-first ordering). A system
                 draft-task opens the compose panel at the top. */}
             <div className="lg:hidden">
-              <WhatThisTakes plan={plan} onDraft={() => setComposing(true)} onInvite={inviteHost.openInvite} />
+              <WhatThisTakes plan={plan} onDraft={() => setComposing(true)} onInvite={inviteHost.openInvite} onForward={forwardHost.openForward} />
             </div>
           </>
         )}
@@ -3246,6 +3475,7 @@ function FollowUpDetail({ id }: { id: string }) {
   const plan = useItemPlan('followup', id);       // ONE /api/items/plan POST, shared by both instances
   const hasBreakdown = plan.hasBreakdown;         // ≥2-task plan → open the two-column layout
   const inviteHost = useInviteHost('followup', id, plan.markSystemDone);
+  const forwardHost = useForwardHost('followup', id, plan.markSystemDone);
   const atts = useReplyAttachments();             // shared inbox-style attach surface (base64 → nudge PATCH)
   const editorRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null); // the docked nudge composer — a draft-task scrolls here
@@ -3331,7 +3561,8 @@ function FollowUpDetail({ id }: { id: string }) {
       plan={plan}
       onDraft={scrollToComposer}
       onInvite={inviteHost.openInvite}
-      panel={<WhatThisTakes plan={plan} variant="panel" onDraft={scrollToComposer} onInvite={inviteHost.openInvite} />}
+      onForward={forwardHost.openForward}
+      panel={<WhatThisTakes plan={plan} variant="panel" onDraft={scrollToComposer} onInvite={inviteHost.openInvite} onForward={forwardHost.openForward} />}
     >
       {/* Header */}
       <DetailHeader
@@ -3364,11 +3595,14 @@ function FollowUpDetail({ id }: { id: string }) {
             plan={plan}
             onDraft={scrollToComposer}
             onInvite={inviteHost.openInvite}
+            onForward={forwardHost.openForward}
           />
         </div>
 
         {/* Prepared calendar-invite card — a calendar-invite step opens it here. */}
         {inviteHost.node && <div>{inviteHost.node}</div>}
+        {/* Prepared forward card (S5). */}
+        {forwardHost.node && <div>{forwardHost.node}</div>}
       </div>
 
       {/* Docked nudge composer */}
