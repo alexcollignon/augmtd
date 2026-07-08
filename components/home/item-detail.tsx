@@ -23,7 +23,7 @@ import {
 import { ThreadMessages, type ThreadMessage } from '@/components/inbox/thread-messages';
 import ReplyEditor from '@/components/inbox/reply-editor';
 import KbFilePicker from '@/components/inbox/kb-file-picker';
-import { proposeOwner, type ProposedOwner } from '@/lib/home/capability-map';
+import { proposeOwner, coarseCapabilityKind, type ProposedOwner } from '@/lib/home/capability-map';
 
 // ── Shared visual language across ALL deep-dive variants (coherence pass #3). One header, one
 // section-label token, one card token — so email / meeting / commitment / follow-up read identically.
@@ -999,8 +999,10 @@ function CoworkerPicker({ onPick, onClose, align = 'left', direction = 'up', tit
 // coworker (avatar + name), and "I'll do it", so any step's executor can be flipped system ↔ coworker
 // ↔ you in one tap. Anchored below its trigger (absolute, z-[60] so it clears the sticky panel header
 // — the layering bug we fix), closes on outside-click / Esc. Reuses the coworker roster + avatar. This
-// SUPERSEDES the coworker-only per-step picker: picking AUGMTD/you calls `onReassign`; picking a
-// coworker calls `onPickCoworker` (→ delegateStep). Shows the current owner with a check.
+// SUPERSEDES the coworker-only per-step picker. This menu is a pure ASSIGNMENT control — it only sets
+// WHO owns the step, it never runs it: picking AUGMTD/you calls `onReassign`; picking a coworker calls
+// `onPickCoworker` (→ proposeCoworker, which stamps the proposed owner WITHOUT delegating/running — Run
+// dispatches it later). Shows the current owner with a check.
 function OwnerMenu({
   currentOwner,
   onReassign,
@@ -1273,6 +1275,11 @@ type PlanTask = {
   status?: PlanTaskStatus;      // transient runtime state (working / awaiting_approval / done)
   done?: boolean;
   dismissed?: boolean;          // removed from the workflow (persisted)
+  // ── The PROPOSED coworker owner (assignment ONLY — nothing runs). Set when the user picks a coworker
+  // in the OwnerMenu: the step's owner chip then reads as that coworker, but the step does NOT execute.
+  // Execution happens on Run (runPlan reads this to dispatch the step to THIS coworker via delegateStep).
+  // Distinct from `handedTo` (which means "already ran / settled"). Persisted (schemaless jsonb).
+  proposedAgent?: { id: string; name: string; workerRole?: string | null };
   handedTo?: HandedTo;          // a coworker executed this step (stage 3b)
   result?: string;             // AUGMTD's returned output when it ran the step directly ("Hand to AUGMTD")
   deliverable?: {              // task-workflows S1: the per-item pool entry this step produced
@@ -1341,7 +1348,12 @@ type ItemPlan = {
   resolveFile: (taskId: string) => void;             // lazily resolve a file-needing step (search on engage)
   useResolvedFile: (taskId: string, knowledgeFileId: string) => Promise<boolean>; // confirm/pick a found KB file
   attachToStep: (taskId: string, file: File) => Promise<boolean>; // always-allow 📎: add a file to the pool WITHOUT resolving the step
-  reassignStep: (taskId: string, owner: 'system' | 'you') => void; // flip a step's owner (coworker→ handled elsewhere)
+  reassignStep: (taskId: string, owner: 'system' | 'you') => void; // flip a step's owner between AUGMTD and you (no run)
+  // ── PROPOSE a coworker as a step's owner — ASSIGNMENT ONLY, never runs. Stamps `proposedAgent` on the
+  // step (owner chip reads as that coworker) + persists via the plan PATCH `reassign` action. The step
+  // executes later, on Run (runPlan dispatches the proposed coworker via delegateStep). This is the fix
+  // for "picking a coworker instantly delegated": picking now assigns, Run dispatches.
+  proposeCoworker: (taskId: string, agent: { id: string; name: string; workerRole?: string | null }) => void;
   // ── RUN THE PLAN — the single hero action. Walks every live step to its CURRENT/PROPOSED owner:
   //   • AUGMTD reversible-atomic step (analyze/fetch) → runs it (runStep)
   //   • a step PROPOSED to (or already handed to) a coworker → dispatches it (delegateStep, using
@@ -1742,11 +1754,12 @@ function useItemPlan(
       return prev.map((t) => {
         if (t.id !== taskId) return t;
         if (owner === 'you') {
-          // Hand it back to yourself — clear any coworker attribution + system capability + working state.
-          return { ...t, actor: 'you', capability: null, handedTo: undefined, status: undefined, done: false };
+          // Hand it back to yourself — clear any coworker proposal/attribution + system capability + working state.
+          return { ...t, actor: 'you', capability: null, proposedAgent: undefined, handedTo: undefined, status: undefined, done: false };
         }
-        // Give it to AUGMTD — default to the always-runnable 'analyze' capability if it had none.
-        return { ...t, actor: 'system', capability: t.capability ?? 'analyze', handedTo: undefined, status: undefined, done: false };
+        // Give it to AUGMTD — default to the always-runnable 'analyze' capability if it had none. Clears
+        // any proposed coworker (AUGMTD now owns it).
+        return { ...t, actor: 'system', capability: t.capability ?? 'analyze', proposedAgent: undefined, handedTo: undefined, status: undefined, done: false };
       });
     });
     // Persist the owner flip (best-effort, non-fatal). The plan PATCH route accepts a reassign action.
@@ -1754,6 +1767,42 @@ function useItemPlan(
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ kind: planKind, entityId, taskId, action: 'reassign', owner }),
+    }).catch(() => { /* non-fatal — optimistic state already applied */ });
+  };
+
+  // ── PROPOSE a coworker as the step's owner — ASSIGNMENT ONLY (nothing runs). Optimistically stamp
+  // `proposedAgent` (the chip reads as that coworker) + keep the step a live [System] judgment step
+  // (actor 'system', a produce capability so proposeOwner keeps reading 'coworker'), clearing any prior
+  // proposal/attribution/working state. Persist via the plan PATCH `reassign` action with owner:'coworker'
+  // + the agent. The step DOES NOT execute here — Run (runPlan) dispatches it to this coworker later.
+  const proposeCoworker = (taskId: string, agent: { id: string; name: string; workerRole?: string | null }) => {
+    setTasks((prev) => {
+      if (!prev) return prev;
+      return prev.map((t) => {
+        if (t.id !== taskId) return t;
+        // Keep/ensure it's a system judgment step (draft) so proposeOwner() derives 'coworker' — the
+        // proposal reads as this coworker without running. Never touch `done`/`dismissed` semantics beyond
+        // resetting a stale done/working flag from a prior state.
+        return {
+          ...t,
+          actor: 'system',
+          capability: coarseCapabilityKind(t.capability) === 'judgment' ? t.capability : 'draft',
+          proposedAgent: { id: agent.id, name: agent.name, workerRole: agent.workerRole ?? null },
+          handedTo: undefined,
+          status: undefined,
+          done: false,
+        };
+      });
+    });
+    // Persist the coworker proposal (best-effort, non-fatal). Server extends `reassign` to accept a
+    // coworker owner WITHOUT running (it only records proposedAgent).
+    fetch('/api/items/plan', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        kind: planKind, entityId, taskId, action: 'reassign', owner: 'coworker',
+        agentId: agent.id, agentName: agent.name, workerRole: agent.workerRole ?? null,
+      }),
     }).catch(() => { /* non-fatal — optimistic state already applied */ });
   };
 
@@ -1774,6 +1823,10 @@ function useItemPlan(
     let approvalOpened = false;
     for (const t of ts) {
       if (t.dismissed || t.done || t.handedTo || t.status === 'working') continue;
+      // A step the user EXPLICITLY assigned to a coworker (via the OwnerMenu → proposeCoworker) dispatches
+      // to THAT coworker now — this is where the menu-pick's execution actually happens (assignment was
+      // instant, running waited for Run). Takes priority over any suggested/derived coworker.
+      if (t.proposedAgent) { void delegateStep(t.id, t.proposedAgent.id, t.proposedAgent.name); continue; }
       // The step's proposed owner (a judgment [System] step proposes a coworker; atomic → AUGMTD; you → you).
       const owner = proposeOwner(t.actor, t.capability);
       if (owner === 'you') continue; // [You] steps stay with the user (checkbox is the move)
@@ -1807,7 +1860,7 @@ function useItemPlan(
   // stays visible. (A user-added step counts toward it — it's in `tasks`.)
   const hasBreakdown = !loading && !failed && !!tasks && tasks.length >= 2;
 
-  return { tasks, loading, failed, hasBreakdown, pending, classifyingId, toggle, dismiss, addStep, editStep, markSystemDone, delegatingId, delegateStep, delegateItem, runningId, runStep, uploadingId, uploadForStep, resolution, resolveFile, useResolvedFile, attachToStep, reassignStep, runPlan, markComposerSent };
+  return { tasks, loading, failed, hasBreakdown, pending, classifyingId, toggle, dismiss, addStep, editStep, markSystemDone, delegatingId, delegateStep, delegateItem, runningId, runStep, uploadingId, uploadForStep, resolution, resolveFile, useResolvedFile, attachToStep, reassignStep, proposeCoworker, runPlan, markComposerSent };
 }
 
 // ── The per-step STATE CHIP — the single glanceable "where is this step" token. Every StepperRow
@@ -2367,7 +2420,7 @@ function WhatThisTakes({
   onForward?: (taskId: string) => void;
   variant?: 'inline' | 'panel';
 }) {
-  const { tasks, loading, failed, pending, classifyingId, toggle, dismiss, addStep, editStep, delegatingId, delegateStep, runningId, uploadingId, uploadForStep, resolution, resolveFile, useResolvedFile, attachToStep, reassignStep } = plan;
+  const { tasks, loading, failed, pending, classifyingId, toggle, dismiss, addStep, editStep, delegatingId, runningId, uploadingId, uploadForStep, resolution, resolveFile, useResolvedFile, attachToStep, reassignStep, proposeCoworker } = plan;
   const workers = useCoworkers();
 
   // In the two-column layout the parent renders the panel chrome + its own loading/failed handling
@@ -2442,10 +2495,14 @@ function WhatThisTakes({
         // shows just that step. A busy step (any pending write) suppresses its own delegate affordance.
         const itemDelegating = delegatingId === ITEM_DELEGATE_ID && !t.dismissed && !t.done && !t.handedTo;
         const delegating = delegatingId === t.id || itemDelegating;
-        // The step's PROPOSED owner + (for a coworker-owned step) the suggested best-fit coworker. This
-        // is what surfaces coworkers as owners: a judgment/draft [System] step proposes a coworker.
-        const proposedOwner = proposeOwner(t.actor, t.capability);
-        const suggestedCoworker = proposedOwner === 'coworker' ? suggestCoworkerFor(t, workers) : null;
+        // The step's PROPOSED owner + (for a coworker-owned step) the coworker shown in the chip. A step
+        // the user EXPLICITLY assigned to a coworker (proposedAgent, set by the OwnerMenu — assignment
+        // only, no run) shows THAT coworker; otherwise a judgment/draft [System] step surfaces the
+        // best-fit suggestion. Either way the chip just DISPLAYS the owner — nothing executes.
+        const proposedOwner: ProposedOwner = t.proposedAgent ? 'coworker' : proposeOwner(t.actor, t.capability);
+        const suggestedCoworker = t.proposedAgent
+          ? { name: t.proposedAgent.name, worker_role: t.proposedAgent.workerRole ?? null }
+          : proposedOwner === 'coworker' ? suggestCoworkerFor(t, workers) : null;
         return (
           <StepperRow
             key={t.id}
@@ -2460,7 +2517,9 @@ function WhatThisTakes({
             onToggle={() => toggle(t)}
             onDismiss={() => dismiss(t)}
             onEdit={(text) => editStep(t.id, text)}
-            onDelegate={(w) => delegateStep(t.id, w.id, w.name)}
+            // Picking a coworker in the OwnerMenu ASSIGNS only — it proposes the coworker (chip updates),
+            // it does NOT run/delegate. The step executes on Run (runPlan dispatches this proposed coworker).
+            onDelegate={(w) => proposeCoworker(t.id, { id: w.id, name: w.name, workerRole: w.worker_role ?? null })}
             onReassign={(owner) => reassignStep(t.id, owner)}
             onUpload={(file) => uploadForStep(t.id, file)}
             onAttach={(file) => attachToStep(t.id, file)}

@@ -130,9 +130,12 @@ export async function PATCH(request: NextRequest) {
 
     const body = (await request.json()) as {
       kind: Kind; entityId: string; taskId?: string; done?: boolean; dismissed?: boolean;
-      action?: 'add' | 'edit' | 'reassign'; text?: string; owner?: 'system' | 'you';
+      action?: 'add' | 'edit' | 'reassign'; text?: string; owner?: 'system' | 'you' | 'coworker';
+      // reassign owner:'coworker' — the PROPOSED coworker (assignment only; the server records it, it
+      // does NOT run/delegate the step — Run dispatches it later via /api/items/delegate).
+      agentId?: string; agentName?: string; workerRole?: string | null;
     };
-    const { kind, entityId, taskId, done, dismissed, action, text, owner } = body;
+    const { kind, entityId, taskId, done, dismissed, action, text, owner, agentId, agentName, workerRole } = body;
     if (!entityId || !VALID_KINDS.includes(kind)) {
       return NextResponse.json({ error: 'kind and entityId are required' }, { status: 400 });
     }
@@ -189,16 +192,35 @@ export async function PATCH(request: NextRequest) {
         tasks = current.map((t) => (t.id === taskId ? newTask! : t));
       }
     } else if (action === 'reassign') {
-      // Re-assign a step's OWNER between AUGMTD (system) and you — WITHOUT re-classifying its text (the
-      // user is only changing WHO does it). system→you drops the capability + any coworker attribution;
-      // you→system defaults to the always-runnable 'analyze'. Mirrors the client's optimistic reassign.
+      // Re-assign a step's OWNER — WITHOUT re-classifying its text (the user is only changing WHO does it).
+      //   • owner 'you'      → drops the capability + any coworker proposal/attribution.
+      //   • owner 'system'   → AUGMTD; defaults to the always-runnable 'analyze'; clears any coworker.
+      //   • owner 'coworker' → records the PROPOSED coworker (proposedAgent) on the step. ASSIGNMENT ONLY —
+      //     the server does NOT run/delegate here; Run dispatches it later (/api/items/delegate). Keeps the
+      //     step a system judgment step (capability 'draft' if it had none) so it reads as a coworker owner.
+      // Mirrors the client's optimistic reassign / proposeCoworker.
       if (!taskId) return NextResponse.json({ error: 'taskId is required' }, { status: 400 });
-      const nextOwner = owner === 'system' ? 'system' : 'you';
       const existing = current.find((t) => t.id === taskId);
       if (!existing) return NextResponse.json({ error: 'task not found' }, { status: 404 });
-      const reassigned: ItemPlanTask = nextOwner === 'you'
-        ? { ...existing, actor: 'you', capability: null, handedTo: undefined, status: undefined, done: false }
-        : { ...existing, actor: 'system', capability: existing.capability ?? 'analyze', handedTo: undefined, status: undefined, done: false };
+      let reassigned: ItemPlanTask;
+      if (owner === 'coworker') {
+        if (!agentId || !agentName) return NextResponse.json({ error: 'agentId and agentName are required for a coworker reassign' }, { status: 400 });
+        reassigned = {
+          ...existing,
+          actor: 'system',
+          capability: existing.capability && existing.capability !== 'analyze' && existing.capability !== 'fetch' && existing.capability !== 'send'
+            ? existing.capability
+            : 'draft',
+          proposedAgent: { id: agentId, name: agentName, workerRole: workerRole ?? null },
+          handedTo: undefined,
+          status: undefined,
+          done: false,
+        };
+      } else if (owner === 'system') {
+        reassigned = { ...existing, actor: 'system', capability: existing.capability ?? 'analyze', proposedAgent: undefined, handedTo: undefined, status: undefined, done: false };
+      } else {
+        reassigned = { ...existing, actor: 'you', capability: null, proposedAgent: undefined, handedTo: undefined, status: undefined, done: false };
+      }
       tasks = current.map((t) => (t.id === taskId ? reassigned : t));
     } else {
       // Toggle: `dismissed` applies to ANY step; `done` only to a [You] task's checkbox.

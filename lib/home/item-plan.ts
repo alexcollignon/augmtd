@@ -48,6 +48,11 @@ export type ItemPlanTask = {
   status?: PlanTaskStatus;   // transient runtime state (working / awaiting_approval / done); absent = ready
   done?: boolean;
   dismissed?: boolean;       // the user removed this step from the workflow (persisted)
+  // ── The PROPOSED coworker owner — set when the user picks a coworker in the deep-dive OwnerMenu.
+  // ASSIGNMENT ONLY: the step's owner reads as this coworker, but nothing runs until Run dispatches it
+  // (/api/items/delegate). Distinct from `handedTo` (which means the coworker already ran it). Persisted
+  // in the schemaless jsonb (no migration).
+  proposedAgent?: { id: string; name: string; workerRole?: string | null };
   handedTo?: HandedTo;       // a coworker executed this step (stage 3b delegation)
   result?: string;           // AUGMTD's own returned output when it ran the step directly ("Hand to AUGMTD")
   // ── task-workflows S1: what running this step PRODUCED into the per-item deliverable pool. Set when a
