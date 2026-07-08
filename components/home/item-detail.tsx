@@ -17,6 +17,7 @@ import {
   PencilIcon,
   PlusIcon,
   ClipboardDocumentListIcon,
+  SparklesIcon,
 } from '@heroicons/react/24/outline';
 import { ThreadMessages, type ThreadMessage } from '@/components/inbox/thread-messages';
 import ReplyEditor from '@/components/inbox/reply-editor';
@@ -1069,6 +1070,12 @@ type PlanTask = {
   dismissed?: boolean;          // removed from the workflow (persisted)
   handedTo?: HandedTo;          // a coworker executed this step (stage 3b)
   result?: string;             // AUGMTD's returned output when it ran the step directly ("Hand to AUGMTD")
+  deliverable?: {              // task-workflows S1: the per-item pool entry this step produced
+    id: string;
+    type: 'text' | 'document' | 'file' | 'sent_record' | 'draft';
+    title?: string;
+    gist?: string;
+  };
 };
 
 // A step's system capability is a REVERSIBLE, ATOMIC one AUGMTD can run directly ("Hand to AUGMTD").
@@ -1348,8 +1355,8 @@ function useItemPlan(
         body: JSON.stringify({ kind: planKind, entityId, taskId }),
       });
       if (!res.ok) throw new Error();
-      const d = (await res.json()) as { output?: string };
-      setTasks((prev) => (prev ? prev.map((t) => (t.id === taskId ? { ...t, done: true, status: 'done', result: d.output } : t)) : prev));
+      const d = (await res.json()) as { output?: string; deliverable?: PlanTask['deliverable'] };
+      setTasks((prev) => (prev ? prev.map((t) => (t.id === taskId ? { ...t, done: true, status: 'done', result: d.output, ...(d.deliverable ? { deliverable: d.deliverable } : {}) } : t)) : prev));
       return true;
     } catch {
       // Clear the working flag — the step reverts to ready.
@@ -1662,6 +1669,15 @@ function StepperRow({
               {handed.output}
             </div>
           </details>
+        )}
+
+        {/* task-workflows S1 — the produced DELIVERABLE line: when a system step ran a real tool and
+            landed a pool entry, name it ("Produced: {title}") above the collapsible body. */}
+        {!handed && task.deliverable && (task.deliverable.title || task.deliverable.gist) && (
+          <div className="mt-1.5 inline-flex items-center gap-1.5 text-[11px] font-medium text-indigo-700/90">
+            <SparklesIcon className="w-3 h-3 flex-shrink-0" />
+            <span className="truncate">Produced: {task.deliverable.title || task.deliverable.gist}</span>
+          </div>
         )}
 
         {/* AUGMTD's own result — what it produced when it ran the step directly ("Hand to AUGMTD"). */}

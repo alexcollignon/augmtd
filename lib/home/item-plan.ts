@@ -48,6 +48,16 @@ export type ItemPlanTask = {
   dismissed?: boolean;       // the user removed this step from the workflow (persisted)
   handedTo?: HandedTo;       // a coworker executed this step (stage 3b delegation)
   result?: string;           // AUGMTD's own returned output when it ran the step directly ("Hand to AUGMTD")
+  // ── task-workflows S1: what running this step PRODUCED into the per-item deliverable pool. Set when a
+  // system tool step runs through the assembler. Back-compatible (optional, schemaless jsonb). The
+  // heavy body lives in `item_deliverables` (id = `ref`); this is the light on-step summary the panel
+  // renders as "Produced: {title}".
+  deliverable?: {
+    id: string;              // item_deliverables.id (the pool entry this step produced)
+    type: 'text' | 'document' | 'file' | 'sent_record' | 'draft';
+    title?: string;          // short label ("Research brief", "Cost estimate")
+    gist?: string;           // one-line summary ("produced: cost estimate")
+  };
 };
 
 export type ItemPlan = { tasks: ItemPlanTask[] };

@@ -13,7 +13,7 @@ import { formatCalendarContextForChat } from '@/lib/calendar/format-calendar-con
 import { buildKBContext } from '@/lib/knowledge/build-kb-context';
 import { buildSkillsBlock, buildSkillsBlockByIds } from '@/lib/work/worker-skills-context';
 import { composeSlackMessage } from './slack-message';
-import { executeWebSearch, executeFetchUrl, executeRssFeed, executeLinkedInPost, executeBrowserFetch, executePtTenders, executeDeepResearch, executeWorkflowOutput, executeGetEmails, executeGetMeetingContext, executeSlackReadMessages, executeSlackPostMessage, executeSendCalendarInvite } from '@/lib/tools';
+import { executeWebSearch, executeFetchUrl, executeRssFeed, executeLinkedInPost, executeBrowserFetch, executePtTenders, executeDeepResearch, executeWorkflowOutput, executeGetEmails, executeGetMeetingContext, executeSlackReadMessages, executeSlackPostMessage, executeSendCalendarInvite, executeFindTeamWork } from '@/lib/tools';
 import type { SendCalendarInviteConfig } from '@/lib/tools';
 import type { WorkflowStep, StepOutput, ToolStep, AIStep, AgentStep } from './types';
 
@@ -91,6 +91,8 @@ async function executeToolStep(step: ToolStep, ctx: StepContext): Promise<string
     case 'get_meeting_context': return await executeGetMeetingContext(step.config, ctx.userId, ctx.supabase);
     case 'get_calendar':      return await toolGetCalendar(ctx);
     case 'read_kb_file':      return await toolReadKbFile(step.config, ctx);
+    case 'search_knowledge_base': return await toolSearchKnowledgeBase(step.config, ctx);
+    case 'find_team_work':    return await executeFindTeamWork(step.config, ctx.userId, ctx.supabase);
     case 'web_search':        return await executeWebSearch(step.config);
     case 'fetch_url':         return await executeFetchUrl(step.config);
     case 'rss_feed':          return await executeRssFeed(step.config, ctx.lastRunAt);
@@ -152,6 +154,23 @@ async function toolSlackSend(step: ToolStep, ctx: StepContext): Promise<string> 
   if (!text) return 'Nothing to send to Slack.';
 
   return await executeSlackPostMessage({ channel, text }, ctx.userId, ctx.workerAgentId, ctx.supabase);
+}
+
+// Semantic search across the user's indexed knowledge base (Drive + uploads + meetings). Returns the
+// matched content as context text. Mirrors the chat `search_knowledge_base` tool via buildKBContext.
+async function toolSearchKnowledgeBase(
+  config: Record<string, unknown>,
+  ctx: StepContext,
+): Promise<string> {
+  const query = typeof config.query === 'string' ? config.query.trim() : '';
+  if (!query) return 'No search query provided.';
+  const kb = await buildKBContext(ctx.userId, query, ctx.supabase, {
+    fileLimit: 5,
+    maxChunksPerFile: 3,
+    threshold: 0.2,
+    maxTotalChars: 8000,
+  });
+  return kb?.context || `No knowledge-base results for "${query}".`;
 }
 
 async function toolReadKbFile(

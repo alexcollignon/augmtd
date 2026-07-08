@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { runItemStep } from '@/lib/home/run-step';
+import { assembleSystemStep } from '@/lib/home/assemble-step-workflow';
 import { logActivity } from '@/lib/activity/log';
 import type { ItemPlanKind, ItemPlanTask } from '@/lib/home/item-plan';
 
@@ -51,19 +52,61 @@ export async function POST(request: NextRequest) {
     const step = tasks.find((t) => t.id === taskId);
     if (!step) return NextResponse.json({ error: 'Step not found' }, { status: 404 });
 
-    // ── RUN — reversible, no side effects. `runItemStep` guards the capability itself.
-    const result = await runItemStep(supabase, user.id, {
+    // ── RUN — task-workflows S1: assemble this system step into an ENGINE workflow and run it (a REAL
+    // tool-backed fetch + synthesis that reads the per-item deliverable pool and writes a deliverable),
+    // instead of the old single-LLM `runItemStep`. The assembler guards the capability itself (reversible
+    // only — a send returns ok:false so it routes to the approval path). Non-fatal: if the assembler
+    // couldn't run for an infra reason, fall back to the old item-only behaviour.
+    let output: string | undefined;
+    let deliverable: { id: string; type: string; title?: string | null; gist?: string | null } | undefined;
+    let toolUsed: string | undefined;
+
+    const assembled = await assembleSystemStep(supabase, user.id, {
       kind, entityId,
-      task: { text: step.text, detail: step.detail, capability: step.capability, actor: step.actor },
+      task: { id: step.id, text: step.text, detail: step.detail, capability: step.capability, actor: step.actor },
     });
-    if (!result.ok) {
-      return NextResponse.json({ ok: false, error: result.error || 'Could not run this step.' }, { status: 502 });
+
+    if (assembled.ok) {
+      output = assembled.outputText;
+      toolUsed = assembled.toolUsed;
+      if (assembled.deliverable) {
+        deliverable = {
+          id: assembled.deliverable.id,
+          type: assembled.deliverable.type,
+          title: assembled.deliverable.title,
+          gist: assembled.deliverable.gist,
+        };
+      }
+    } else {
+      // Assembler declined (a send / not-runnable capability) → surface its honest error. Only fall
+      // back to `runItemStep` for a genuine infra failure on a runnable capability, so we never silently
+      // downgrade a real tool run to the tool-less path when the assembler's refusal is intentional.
+      const fallback = await runItemStep(supabase, user.id, {
+        kind, entityId,
+        task: { text: step.text, detail: step.detail, capability: step.capability, actor: step.actor },
+      });
+      if (fallback.ok) {
+        output = fallback.output;
+      } else {
+        return NextResponse.json({ ok: false, error: assembled.error || fallback.error || 'Could not run this step.' }, { status: 502 });
+      }
     }
 
-    // ── Persist the step's resolution (best-effort). done:true + status:'done' + the returned result.
+    // ── Persist the step's resolution (best-effort). done:true + status:'done' + result + the pool
+    // deliverable summary (rendered as "Produced: {title}" on the step).
     try {
       const nextTasks = tasks.map((t) =>
-        t.id === taskId ? { ...t, done: true, status: 'done' as const, result: result.output } : t,
+        t.id === taskId
+          ? {
+              ...t,
+              done: true,
+              status: 'done' as const,
+              result: output,
+              ...(deliverable
+                ? { deliverable: { id: deliverable.id, type: deliverable.type as 'text' | 'document' | 'file' | 'sent_record' | 'draft', title: deliverable.title ?? undefined, gist: deliverable.gist ?? undefined } }
+                : {}),
+            }
+          : t,
       );
       await supabase
         .from('item_plans')
@@ -79,10 +122,10 @@ export async function POST(request: NextRequest) {
       title: `AUGMTD handled: ${step.text.slice(0, 100)}`,
       entityType: kind,
       entityId,
-      metadata: { taskId },
+      metadata: { taskId, ...(toolUsed ? { tool: toolUsed } : {}), ...(deliverable ? { deliverableId: deliverable.id } : {}) },
     });
 
-    return NextResponse.json({ ok: true, output: result.output });
+    return NextResponse.json({ ok: true, output, deliverable, toolUsed });
   } catch (error) {
     console.error('[items/run] error:', error);
     return NextResponse.json({ error: 'Could not run this step.' }, { status: 500 });
