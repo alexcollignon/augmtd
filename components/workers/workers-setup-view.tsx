@@ -15,6 +15,7 @@ import {
 } from '@heroicons/react/24/outline';
 import { Button } from '@/components/ui';
 import type { Worker } from '@/app/workers/workers-page-client';
+import { ROLE_AVATARS, ROLE_LABELS } from '@/lib/workers/roles';
 
 const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   user:               UserIcon,
@@ -37,19 +38,6 @@ const COLOR_MAP: Record<string, { bg: string; light: string; text: string }> = {
   neutral: { bg: 'bg-neutral-400', light: 'bg-neutral-50', text: 'text-neutral-600' },
 };
 
-const ROLE_AVATARS: Record<string, string> = {
-  personal_assistant: '/workers/clara.png',
-  content_manager:    '/workers/sofia.png',
-  linkedin_drafter:   '/workers/luca.png',
-  research_analyst:   '/workers/max.png',
-};
-
-const ROLE_LABELS: Record<string, string> = {
-  personal_assistant: 'Personal Assistant',
-  content_manager:    'Content Strategist',
-  linkedin_drafter:   'LinkedIn Wizard',
-  research_analyst:   'Research Analyst',
-};
 
 // Display copy per role — owned here so the setup view is never stale relative to DB values
 const ROLE_COPY: Record<string, { description: string; bullets: [string, string] }> = {

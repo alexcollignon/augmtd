@@ -33,10 +33,18 @@ const EMAIL_SECTIONS = [
   { id: 'todo', label: 'To-do capture' },
 ];
 
-export default function SettingsLeftPanel({ activeTab }: { activeTab: string }) {
+export default function SettingsLeftPanel({ activeTab, companyRole }: { activeTab: string; companyRole?: string | null }) {
   const searchParams = useSearchParams();
   const section = searchParams.get('section') || 'connections';
+  const companySection = searchParams.get('section') || 'members';
   const [emailHover, setEmailHover] = useState(false);
+  const [companyHover, setCompanyHover] = useState(false);
+
+  const isCompanyAdmin = companyRole === 'owner' || companyRole === 'admin';
+  const companySections = [
+    { id: 'members', label: 'Members' },
+    ...(isCompanyAdmin ? [{ id: 'ai-operations', label: 'AI Operations' }] : []),
+  ];
 
   const itemClass = (isActive: boolean) =>
     `flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] transition-colors ${
@@ -72,6 +80,40 @@ export default function SettingsLeftPanel({ activeTab }: { activeTab: string }) 
                             <Link
                               key={s.id}
                               href={`/settings?tab=email&section=${s.id}`}
+                              className={`block px-2.5 py-1.5 rounded-md text-[12.5px] transition-colors ${
+                                subActive ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-neutral-500 hover:bg-neutral-50 hover:text-neutral-800'
+                              }`}
+                            >
+                              {s.label}
+                            </Link>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            }
+
+            // Company: clicking defaults to Members; hovering (or being active) reveals sub-items.
+            // AI Operations only appears for owner/admin roles (isCompanyAdmin above).
+            if (item.id === 'company') {
+              const showSub = companyHover || isActive;
+              return (
+                <div key="company" onMouseEnter={() => setCompanyHover(true)} onMouseLeave={() => setCompanyHover(false)}>
+                  <Link href="/settings?tab=company&section=members" className={itemClass(isActive)}>
+                    <item.Icon className={`w-4 h-4 flex-shrink-0 ${isActive ? 'text-indigo-500' : 'text-neutral-400'}`} />
+                    {item.label}
+                  </Link>
+                  <div className={`grid transition-all duration-200 ease-out ${showSub ? 'grid-rows-[1fr] opacity-100 mt-0.5' : 'grid-rows-[0fr] opacity-0'}`}>
+                    <div className="overflow-hidden">
+                      <div className="ml-[26px] space-y-0.5 border-l border-neutral-100 pl-2">
+                        {companySections.map(s => {
+                          const subActive = isActive && companySection === s.id;
+                          return (
+                            <Link
+                              key={s.id}
+                              href={`/settings?tab=company&section=${s.id}`}
                               className={`block px-2.5 py-1.5 rounded-md text-[12.5px] transition-colors ${
                                 subActive ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-neutral-500 hover:bg-neutral-50 hover:text-neutral-800'
                               }`}
