@@ -7,6 +7,7 @@
 import { SupabaseClient } from '@supabase/supabase-js';
 import { randomUUID } from 'crypto';
 import { getAIClient } from '@/lib/ai/factory';
+import { logAIUsage } from '@/lib/ai/log-usage';
 import { buildUserContextBlock } from '@/lib/context/build-user-context';
 import { getOAuth2Client } from '@/lib/google/oauth';
 import { indexArtifact } from '@/lib/knowledge/indexer';
@@ -500,7 +501,7 @@ export async function extractMeetingInsights(
   liveNotes?: string,
 ): Promise<MeetingInsights> {
   try {
-    const { client: openai, model: defaultModel, endpoint } = await getAIClient(userId, 'generation', supabase);
+    const { client: openai, model: defaultModel, endpoint, tier } = await getAIClient(userId, 'generation', supabase);
 
     const userContext = await buildUserContextBlock(userId, supabase);
 
@@ -582,6 +583,11 @@ Rules for other fields:
       max_tokens: 8192,
       ...(supportsJsonMode ? { response_format: { type: 'json_object' } } : {}),
     });
+
+    logAIUsage(supabase, {
+      userId, source: 'meeting_insights', provider: endpoint.provider, model: defaultModel,
+      tier, taskType: 'generation', usage: completion.usage,
+    }).catch(() => {});
 
     const response = completion.choices[0]?.message?.content?.trim();
     if (!response) throw new Error('No response');
@@ -700,7 +706,7 @@ async function extractActionItemsWithAI(
   supabase: SupabaseClient
 ): Promise<ExtractedActionItem[]> {
   try {
-    const { client: openai, model: defaultModel } = await getAIClient(userId, 'summarization', supabase);
+    const { client: openai, model: defaultModel, endpoint, tier } = await getAIClient(userId, 'summarization', supabase);
 
     const { data: profiles } = await supabase
       .from('profiles')
@@ -762,6 +768,11 @@ Category: "todo" | "waiting_for" | "project". Maximum 10 items. Return ONLY the 
       temperature: 0.3,
       max_tokens: 2000,
     });
+
+    logAIUsage(supabase, {
+      userId, source: 'meeting_insights', provider: endpoint.provider, model: defaultModel,
+      tier, taskType: 'summarization', usage: completion.usage,
+    }).catch(() => {});
 
     const response = completion.choices[0]?.message?.content?.trim();
     if (!response) return [];

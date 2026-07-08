@@ -5,6 +5,7 @@
 
 import { SupabaseClient } from '@supabase/supabase-js';
 import { getAIClient, aiCreate, getSystemClient } from '@/lib/ai/factory';
+import { logAIUsage } from '@/lib/ai/log-usage';
 import { isAgentOSEnabled, runWorkerStepViaAgentOS } from '@/lib/work/agentos-bridge';
 import { buildChatSystemPrompt, detectModelFamily } from '@/lib/work/chat-system-prompt';
 import { buildUserContextBlock } from '@/lib/context/build-user-context';
@@ -199,8 +200,9 @@ async function toolReadKbFile(
 // ── AI step ───────────────────────────────────────────────────────────────────
 
 async function executeAIStep(step: AIStep, ctx: StepContext): Promise<string> {
-  const tier = step.model_tier === 'reasoning' ? 'conversation' : 'summarization';
-  const resolved = await getAIClient(ctx.userId, tier, ctx.supabase);
+  // Task type (NOT the company's billing tier — see resolved.tier below for that).
+  const task = step.model_tier === 'reasoning' ? 'conversation' : 'summarization';
+  const resolved = await getAIClient(ctx.userId, task, ctx.supabase);
 
   // Cap previous outputs when worker context will also be injected (token budget)
   const previousBlock = formatPreviousOutputs(
@@ -317,6 +319,18 @@ async function executeAIStep(step: AIStep, ctx: StepContext): Promise<string> {
     max_tokens: step.model_tier === 'reasoning' ? 12000 : 4000,
     ...(step.output_format === 'json' ? { response_format: { type: 'json_object' } } : {}),
   });
+
+  logAIUsage(ctx.supabase, {
+    userId: ctx.userId,
+    agentId: ctx.workerAgentId ?? null,
+    workflowId: ctx.workflowId ?? null,
+    source: 'workflow_step',
+    provider: resolved.endpoint.provider,
+    model: resolved.model,
+    tier: resolved.tier,
+    taskType: task,
+    usage: res.usage,
+  }).catch(() => {});
 
   return res.choices[0]?.message?.content?.trim() ?? '';
 }

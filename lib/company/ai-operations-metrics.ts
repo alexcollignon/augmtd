@@ -56,6 +56,9 @@ export interface AgentWorkRow {
   hoursSaved: number;
   topTasks: { name: string; count: number; hoursSaved: number; grounded: boolean }[];
   topTools: { name: string; count: number }[];
+  /** Real spend — see AIOperationsSummary.tokenCostEur doc comment for the partial-coverage caveat. */
+  tokenCostEur: number;
+  totalTokens: number;
   /** Per-user run counts, sorted high→low. `slot` is an anonymous rank (0, 1, 2…)
    *  assigned per real user_id, consistent ACROSS every coworker's row this
    *  period — so if the same real person is a heavy Clara user AND a heavy Max
@@ -79,6 +82,22 @@ export interface AIOperationsSummary {
   hoursSavedPrev: number;
   valueEstimateEur: number;
   hourlyRateEur: number;
+  /** Real (not estimated) AI spend from ai_usage_events — covers Studio workflow steps,
+   *  native-loop chat, AgentOS-routed worker chat/steps, email processing, meeting
+   *  insights, KB indexing, memory extraction, generate-config, brief/briefing
+   *  synthesis, and alignment synthesis. See lib/ai/log-usage.ts's AIUsageSource for
+   *  the definitive list — a handful of lower-volume system paths may still be
+   *  uninstrumented, so treat this as comprehensive-but-not-exhaustive. */
+  tokenCostEur: number;
+  tokenCostEurPrev: number;
+  totalTokens: number;
+  /** Spend broken down by AIUsageSource, sorted by cost descending — "where is the
+   *  AI spend actually concentrating." */
+  costBySource: { source: string; label: string; costEur: number; tokens: number }[];
+  /** valueEstimateEur / tokenCostEur — the business-value framing an admin actually
+   *  cares about ("is this worth it"), not just the raw cost. Null when there's no
+   *  cost data yet (nothing to divide by) or no value estimate yet. */
+  roiMultiple: number | null;
   agentWork: AgentWorkRow[];
   signals: {
     emails: number;
@@ -259,6 +278,77 @@ async function countEmailsSent(
   return byAgent;
 }
 
+/** Mirrors lib/ai/log-usage.ts's AIUsageSource — kept as a plain map (not an import)
+ *  so an unrecognized/future source still renders (falls back to the raw string)
+ *  instead of breaking the dashboard. */
+const SOURCE_LABELS: Record<string, string> = {
+  workflow_step: 'Scheduled tasks',
+  chat: 'Coworker chat',
+  agentos_step: 'Scheduled tasks (AgentOS)',
+  agentos_chat: 'Coworker chat (AgentOS)',
+  email_processing: 'Email processing',
+  meeting_insights: 'Meeting insights',
+  kb_indexing: 'Knowledge base indexing',
+  memory_extraction: 'Memory extraction',
+  profile_rendering: 'Profile rendering',
+  generate_config: 'Task generation',
+  brief_synthesis: 'Home brief',
+  worker_briefing: 'Coworker briefing',
+  team_briefing: 'Team briefing',
+  alignment_synthesis: 'Strategy alignment',
+};
+
+interface UsageStats {
+  totalTokens: number;
+  totalCostEur: number;
+  byAgentId: Map<string, { tokens: number; costEur: number }>;
+  bySource: Map<string, { tokens: number; costEur: number }>;
+}
+
+/** Real spend from ai_usage_events — PARTIAL coverage, see AIOperationsSummary.tokenCostEur doc comment.
+ *  Tolerant of the table not existing yet (20260708b_ai_usage_events.sql is apply-manually, per repo
+ *  convention) — falls back to zeros rather than breaking the whole dashboard. */
+async function countUsage(
+  admin: SupabaseClient,
+  memberIds: string[],
+  start: Date,
+  end: Date,
+): Promise<UsageStats> {
+  const result: UsageStats = { totalTokens: 0, totalCostEur: 0, byAgentId: new Map(), bySource: new Map() };
+  if (memberIds.length === 0) return result;
+
+  const { data, error } = await admin
+    .from('ai_usage_events')
+    .select('agent_id, source, prompt_tokens, completion_tokens, cost_eur')
+    .in('user_id', memberIds)
+    .gte('created_at', start.toISOString())
+    .lt('created_at', end.toISOString());
+
+  if (error) {
+    console.warn('[ai-operations] ai_usage_events unavailable (migration not applied yet?):', error.message);
+    return result;
+  }
+
+  for (const row of (data ?? []) as { agent_id: string | null; source: string | null; prompt_tokens: number; completion_tokens: number; cost_eur: number }[]) {
+    const tokens = (row.prompt_tokens ?? 0) + (row.completion_tokens ?? 0);
+    result.totalTokens += tokens;
+    result.totalCostEur += row.cost_eur ?? 0;
+    if (row.agent_id) {
+      const bucket = result.byAgentId.get(row.agent_id) ?? { tokens: 0, costEur: 0 };
+      bucket.tokens += tokens;
+      bucket.costEur += row.cost_eur ?? 0;
+      result.byAgentId.set(row.agent_id, bucket);
+    }
+    const source = row.source ?? 'unknown';
+    const sourceBucket = result.bySource.get(source) ?? { tokens: 0, costEur: 0 };
+    sourceBucket.tokens += tokens;
+    sourceBucket.costEur += row.cost_eur ?? 0;
+    result.bySource.set(source, sourceBucket);
+  }
+  result.totalCostEur = Math.round(result.totalCostEur * 10000) / 10000;
+  return result;
+}
+
 async function countSignal(
   admin: SupabaseClient,
   table: string,
@@ -290,11 +380,13 @@ export async function getAIOperationsSummary(
   const agentIds = workerAgents.map(a => a.id);
   const workflowMeta = await getAgentWorkflows(admin, agentIds);
 
-  const [current, previous, emailsByAgent, messageStats, signalEmails, signalMeetings, signalDocuments] = await Promise.all([
+  const [current, previous, emailsByAgent, messageStats, usage, usagePrev, signalEmails, signalMeetings, signalDocuments] = await Promise.all([
     countRuns(admin, workflowMeta, start, end),
     countRuns(admin, workflowMeta, prevStart, prevEnd),
     countEmailsSent(admin, agentIds, start, end),
     countMessagesAndTools(admin, agentIds, memberIds, start, end),
+    countUsage(admin, memberIds, start, end),
+    countUsage(admin, memberIds, prevStart, prevEnd),
     countSignal(admin, 'emails', 'received_at', memberIds, start, end),
     countSignal(admin, 'meeting_transcripts', 'created_at', memberIds, start, end),
     countSignal(admin, 'knowledge_files', 'indexed_at', memberIds, start, end),
@@ -349,7 +441,7 @@ export async function getAIOperationsSummary(
         row = {
           workerRole: agent.worker_role, name: agent.name, color: agent.color, icon: agent.icon,
           runs: 0, groundedRuns: 0, insightRuns: 0, distinctUsers: 0, emailsSent: 0, messages: 0, hoursSaved: 0,
-          topTasks: [], topTools: [], usageDistribution: [],
+          topTasks: [], topTools: [], usageDistribution: [], tokenCostEur: 0, totalTokens: 0,
         };
         rows.push(row);
       }
@@ -363,6 +455,11 @@ export async function getAIOperationsSummary(
       }
       row.emailsSent += emailsByAgent.get(agent.id) ?? 0;
       row.messages += messageStats.byAgentId.get(agent.id)?.messages ?? 0;
+      const usageBucket = usage.byAgentId.get(agent.id);
+      if (usageBucket) {
+        row.tokenCostEur = Math.round((row.tokenCostEur + usageBucket.costEur) * 10000) / 10000;
+        row.totalTokens += usageBucket.tokens;
+      }
       return rows;
     }, [] as AgentWorkRow[])
     .sort((a, b) => b.runs - a.runs);
@@ -433,6 +530,16 @@ export async function getAIOperationsSummary(
     hoursSavedPrev,
     valueEstimateEur: Math.round(hoursSaved * hourlyRateEur),
     hourlyRateEur,
+    tokenCostEur: usage.totalCostEur,
+    tokenCostEurPrev: usagePrev.totalCostEur,
+    totalTokens: usage.totalTokens,
+    costBySource: Array.from(usage.bySource, ([source, v]) => ({
+      source,
+      label: SOURCE_LABELS[source] ?? source,
+      costEur: Math.round(v.costEur * 10000) / 10000,
+      tokens: v.tokens,
+    })).sort((a, b) => b.costEur - a.costEur),
+    roiMultiple: usage.totalCostEur > 0 ? Math.round((Math.round(hoursSaved * hourlyRateEur) / usage.totalCostEur) * 10) / 10 : null,
     agentWork,
     signals: { emails: signalEmails, meetings: signalMeetings, documents: signalDocuments },
   };

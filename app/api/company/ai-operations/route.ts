@@ -5,6 +5,9 @@ import {
   getAIOperationsSummary, BLENDED_HOURLY_RATE_EUR, MIN_HOURLY_RATE_EUR, MAX_HOURLY_RATE_EUR, type Period,
 } from '@/lib/company/ai-operations-metrics';
 
+// Never cache — this reflects live usage data, not something to serve stale.
+export const dynamic = 'force-dynamic';
+
 function resolveHourlyRate(settings: Record<string, unknown> | null | undefined): number {
   const raw = settings?.blended_hourly_rate_eur;
   if (typeof raw === 'number' && Number.isFinite(raw) && raw >= MIN_HOURLY_RATE_EUR && raw <= MAX_HOURLY_RATE_EUR) {

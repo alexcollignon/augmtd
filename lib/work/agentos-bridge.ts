@@ -15,6 +15,36 @@ import { buildUserContextBlock } from '@/lib/context/build-user-context'
 import { extractAgentMemory } from '@/lib/agents/extract-memory'
 import { buildSkillsBlock } from '@/lib/work/worker-skills-context'
 import { buildConnectedIntegrationsBlock } from '@/lib/integrations/connection'
+import { logAIUsage } from '@/lib/ai/log-usage'
+
+// AgentOS is hardcoded to mirror the bedrock_optimised tier (infra/agentos/models.py) — every
+// AgentOS-routed call by construction uses that tier's models, so cost logging can log
+// tier:'bedrock_optimised' directly with no per-call lookup. This constant is only the
+// fallback when a response is missing its own `model` field.
+const AGENTOS_DEFAULT_MODEL = 'eu.anthropic.claude-sonnet-4-5-20250929-v1:0'
+
+interface AgnoMetrics {
+  input_tokens?: number
+  output_tokens?: number
+}
+
+function logAgentOSUsage(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  adminClient: any,
+  params: { userId: string; agentId: string; source: 'agentos_step' | 'agentos_chat'; model?: string; metrics: AgnoMetrics | null | undefined },
+) {
+  if (!params.metrics) return
+  logAIUsage(adminClient, {
+    userId: params.userId,
+    agentId: params.agentId,
+    source: params.source,
+    provider: 'bedrock',
+    model: params.model || AGENTOS_DEFAULT_MODEL,
+    tier: 'bedrock_optimised',
+    taskType: 'conversation',
+    usage: { prompt_tokens: params.metrics.input_tokens, completion_tokens: params.metrics.output_tokens },
+  }).catch(() => {})
+}
 
 const SSE = (data: object) => `data: ${JSON.stringify(data)}\n\n`
 
@@ -205,6 +235,15 @@ export async function runWorkerStepViaAgentOS(args: {
   const data = await resp.json()
   const content = (data?.content ?? '').toString().trim()
   if (!content) throw new Error('AgentOS step run returned empty content')
+
+  logAgentOSUsage(args.adminClient, {
+    userId: args.userId,
+    agentId: args.agentId,
+    source: 'agentos_step',
+    model: typeof data?.model === 'string' ? data.model : undefined,
+    metrics: data?.metrics as AgnoMetrics | undefined,
+  })
+
   return content
 }
 
@@ -305,6 +344,8 @@ export async function streamWorkerViaAgentOS({
   const artifactMeta: Record<string, { title: string; type: string }> = {}
   const emailDrafts: Record<string, unknown>[] = []
   const cardArtifacts: Record<string, unknown>[] = []
+  let runMetrics: AgnoMetrics | null = null
+  let runModel: string | undefined
 
   const readable = new ReadableStream({
     async start(controller) {
@@ -377,8 +418,13 @@ export async function streamWorkerViaAgentOS({
               }
             } else if (kind === 'RunError') {
               send({ type: 'error', message: (evt.content as string) || 'Worker error' })
+            } else if (kind === 'RunCompleted') {
+              // No user-facing text, but this is the one frame carrying token usage —
+              // captured for cost logging, not displayed.
+              runMetrics = (evt.metrics as AgnoMetrics) ?? null
+              if (typeof evt.model === 'string') runModel = evt.model
             }
-            // RunStarted / ModelRequest* / RunCompleted carry no user-facing text.
+            // RunStarted / ModelRequest* carry no user-facing text.
           }
         }
 
@@ -411,6 +457,7 @@ export async function streamWorkerViaAgentOS({
           // Memory extraction (Op-C) — call the shared lib directly (service
           // context, no cookie). Fire-and-forget so it doesn't delay the response.
           void extractAgentMemory(agentId, userId, threadId, adminClient).catch(() => {})
+          logAgentOSUsage(adminClient, { userId, agentId, source: 'agentos_chat', model: runModel, metrics: runMetrics })
         } catch (saveErr) {
           console.error('[AgentOS bridge] failed to save message:', saveErr)
         }

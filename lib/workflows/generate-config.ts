@@ -1,4 +1,5 @@
 import { getAIClient, aiCreate } from '@/lib/ai/factory';
+import { logAIUsage } from '@/lib/ai/log-usage';
 import { parseModelJSON } from '@/lib/ai/parse-json';
 import { makeStepId } from '@/lib/workflows/types';
 import { listConnectedProviders } from '@/lib/integrations/connection';
@@ -138,7 +139,7 @@ export async function generateWorkflowConfig(
 
   const userMessage = parts.join('\n\n');
 
-  const { client, model } = await getAIClient(userId, 'conversation', supabase);
+  const { client, model, endpoint, tier } = await getAIClient(userId, 'conversation', supabase);
   const completion = await aiCreate(client, {
     model,
     messages: [
@@ -148,6 +149,9 @@ export async function generateWorkflowConfig(
     max_tokens: 4000,
     temperature: 0.2,
   });
+  logAIUsage(supabase, {
+    userId, source: 'generate_config', provider: endpoint.provider, model, tier, taskType: 'conversation', usage: completion.usage,
+  }).catch(() => {});
 
   const raw = completion.choices[0]?.message?.content ?? '';
   const generated = parseModelJSON<Record<string, unknown> | null>(raw, null);

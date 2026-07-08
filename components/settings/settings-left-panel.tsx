@@ -43,7 +43,7 @@ export default function SettingsLeftPanel({ activeTab, companyRole }: { activeTa
   const isCompanyAdmin = companyRole === 'owner' || companyRole === 'admin';
   const companySections = [
     { id: 'members', label: 'Members' },
-    ...(isCompanyAdmin ? [{ id: 'ai-operations', label: 'AI Operations' }] : []),
+    ...(isCompanyAdmin ? [{ id: 'ai-operations', label: 'AI Operations' }, { id: 'strategy', label: 'Strategy' }] : []),
   ];
 
   const itemClass = (isActive: boolean) =>

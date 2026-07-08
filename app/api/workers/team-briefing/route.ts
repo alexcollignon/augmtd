@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createAdmin } from '@supabase/supabase-js';
 import { getSystemClient } from '@/lib/ai/factory';
+import { logAIUsage } from '@/lib/ai/log-usage';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
@@ -119,23 +120,30 @@ Write a short, conversational team update. Rules:
 - Do NOT invent tasks, outcomes, or reasoning beyond the context. No "I noticed", "it seems".
 ${nothing ? '- The team is new with no activity yet: in one or two sentences, warmly introduce the team and invite them to delegate their first piece of work.' : `- Address ${firstName ? `"${firstName}"` : 'them'} by name if natural.`}`;
 
-  const { client, model } = getSystemClient('conversation');
+  const { client, model, endpoint, tier } = getSystemClient('conversation');
 
   const stream = await client.chat.completions.create({
     model,
     messages: [{ role: 'user', content: prompt }],
     stream: true,
+    stream_options: { include_usage: true },
     max_tokens: 240,
     temperature: 0.6,
   });
 
   const encoder = new TextEncoder();
   let fullText = '';
+  let promptTokens = 0;
+  let completionTokens = 0;
   const generatedAt = new Date().toISOString();
   const readable = new ReadableStream({
     async start(controller) {
       try {
         for await (const chunk of stream) {
+          if (chunk.usage) {
+            promptTokens = chunk.usage.prompt_tokens ?? promptTokens;
+            completionTokens = chunk.usage.completion_tokens ?? completionTokens;
+          }
           const delta = chunk.choices[0]?.delta?.content;
           if (delta) { fullText += delta; controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'text_delta', text: delta })}\n\n`)); }
           if (chunk.choices[0]?.finish_reason) controller.enqueue(encoder.encode('data: {"type":"done"}\n\n'));
@@ -151,6 +159,10 @@ ${nothing ? '- The team is new with no activity yet: in one or two sentences, wa
             .update({ team_briefing: { text: fullText.trim(), generated_at: generatedAt } })
             .eq('id', user.id)
             .then(() => {}, () => {});
+          logAIUsage(admin, {
+            userId: user.id, source: 'team_briefing', provider: endpoint.provider, model, tier, taskType: 'conversation',
+            usage: { prompt_tokens: promptTokens, completion_tokens: completionTokens },
+          }).catch(() => {});
         }
       }
     },

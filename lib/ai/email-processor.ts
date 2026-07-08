@@ -1,4 +1,5 @@
 import { getAIClient } from '@/lib/ai/factory';
+import { logAIUsage } from '@/lib/ai/log-usage';
 import { parseModelJSON } from '@/lib/ai/parse-json';
 import { SupabaseClient } from '@supabase/supabase-js';
 import type { UserContextProfile } from '@/lib/types/user-context';
@@ -265,7 +266,7 @@ function formatCalendarContext(calendarContext: CalendarContext | undefined): st
  * Main processing function - detects signals and determines work state
  */
 export async function processEmail(email: EmailData, supabase: SupabaseClient): Promise<ProcessedEmail> {
-  const { client: openai, model: defaultModel, endpoint } = await getAIClient(email.user_id!, 'planning', supabase);
+  const { client: openai, model: defaultModel, endpoint, tier } = await getAIClient(email.user_id!, 'planning', supabase);
 
   // Format thread context if available
   const threadContextSection = formatThreadContext(email.thread_context);
@@ -751,6 +752,16 @@ Respond ONLY with valid JSON matching the structure above.`;
       max_tokens: 2048,
       temperature: 0.4,
     });
+
+    logAIUsage(supabase, {
+      userId: email.user_id!,
+      source: 'email_processing',
+      provider: endpoint.provider,
+      model: defaultModel,
+      tier,
+      taskType: 'planning',
+      usage: response.usage,
+    }).catch(() => {});
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const result: any = parseModelJSON(response.choices[0].message.content, {});

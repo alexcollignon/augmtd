@@ -229,14 +229,60 @@ A **skill** is a curated, reusable prompt block describing *how* to handle a kin
 
 ### Company Admin — AI Operations dashboard (v1, July 2026)
 
-`Settings → Company` now has two sub-tabs (`?tab=company&section=members|ai-operations`), mirroring the
-Email tab's sub-nav pattern (`COMPANY_SECTIONS` array + hover/active reveal in `settings-left-panel.tsx`).
-**AI Operations** is admin/owner-only (`company.role`), gated in the nav, the server page render, and the
-API route — three independent layers, not just a hidden nav item. Deliberately scoped to real,
-already-existing data: no Maestro-style autonomous orchestrator, no Strategy tab (goals/alignment/
-learning), no real token/cost tracking (would need new usage instrumentation in `lib/ai/factory.ts` —
-`aiCreate` already returns `.usage` per call, it's just never logged anywhere; scoping that is a separate
-future slice).
+`Settings → Company` has three sub-tabs (`?tab=company&section=members|ai-operations|strategy`), mirroring
+the Email tab's sub-nav pattern (hover/active reveal in `settings-left-panel.tsx`). **AI Operations** and
+**Strategy** are both admin/owner-only (`company.role`), gated in the nav, the server page render, and their
+API routes — three independent layers, not just a hidden nav item. v1 (this section) was deliberately
+scoped to real, already-existing data with no Maestro-style autonomous orchestrator; real token/cost
+tracking and the Strategy tab were both explicitly deferred at the time — **both were built in a Phase 2
+pass (July 8) and are documented below and in the Strategy section that follows.**
+
+#### Phase 2 — real AI cost tracking (July 8, all instrumented, not just Studio+chat)
+
+`lib/ai/log-usage.ts` `logAIUsage()` is the single non-fatal logger, writing to `ai_usage_events`
+(migrations `20260708b`/`20260708d`, apply manually). **`AIUsageSource`** (in that file) is the definitive,
+growing list of instrumented call sites: `workflow_step`, `chat`, `agentos_step`, `agentos_chat`,
+`email_processing`, `meeting_insights`, `kb_indexing`, `memory_extraction`, `profile_rendering`,
+`generate_config`, `brief_synthesis`, `worker_briefing`, `team_briefing`, `alignment_synthesis`. Each call
+site fires `logAIUsage(...).catch(() => {})` right after its own `aiCreate`/raw completion call — fire and
+forget, never blocks the AI call it's observing.
+
+- **Tier vs. task-type bug (fixed July 8):** `ai_usage_events.tier` used to store the AI **task type**
+  (`'conversation'`/`'summarization'`) because `ResolvedClient` (`lib/ai/types.ts`, returned by
+  `getAIClient`/`getSystemClient`) never exposed the company's actual resolved **billing tier**
+  (`'standard'`/`'bedrock_optimised'`/etc) back to the caller, even though `getTenantConfig` always
+  resolved it internally. `ResolvedClient` now includes `tier: TierType`; a separate `task_type` column
+  (migration `20260708d`) captures the AI task dimension distinctly. **Lesson: if a cost/usage column is
+  meant to slice by billing tier, verify the value flowing into it is actually `TierType`, not `TaskType`
+  — they're easy to conflate since both are plain strings on the same call.**
+- **AgentOS instrumentation needed NO Python change or redeploy.** Agno (the framework `infra/agentos/`
+  runs on) already computes token usage on every run — `RunOutput.metrics` on the non-streaming response,
+  a `metrics` field on the streamed `RunCompletedEvent` SSE frame — and both were already arriving at
+  `lib/work/agentos-bridge.ts` today; the bridge's SSE loop just silently dropped `RunCompleted`
+  ("carries no user-facing text") without reading `.metrics`, and the non-streaming path only read
+  `data.content`. Fixed entirely in `agentos-bridge.ts` (TypeScript-only): `logAgentOSUsage()` reads
+  `data.metrics`/`evt.metrics`, logs `source: 'agentos_step'`/`'agentos_chat'` with `tier: 'bedrock_optimised'`
+  hardcoded (AgentOS by construction only ever runs that tier's models — no per-call lookup needed).
+  **Lesson: before assuming a cross-service integration needs a redeploy to add telemetry, check whether
+  the data is already in the response payload and just unread.**
+- **`lib/ai/pricing.ts`** `MODEL_PRICING` + `estimateCostEur()` — static per-model-id price table (not
+  live), fallback pricing + `console.warn` for an unrecognized model. Known gap, left as-is: `private_client`/
+  `on_prem` tenants reusing a generic model id would have their own billing account, not AUGMTD's — pricing
+  keyed by model id alone can't distinguish "AUGMTD pays" from "client's own account pays." No such tenants
+  exist yet, so deferred.
+- **AI Operations UI additions**: an **ROI banner** ("€X in AI cost generated an estimated €Y in value — an
+  Nx return") headlines the page — pairs cost with the existing hours-saved value estimate, since "is this
+  worth it" is what an admin actually wants, not a raw cost-by-feature breakdown. A **"AI cost by source"**
+  bar-list breakdown (grouped by `AIUsageSource`, human labels via a local `SOURCE_LABELS` map in
+  `lib/company/ai-operations-metrics.ts`) is hidden by default — an eye-icon toggle on the AI cost stat
+  card (`StatCard`'s `toggle` prop) reveals it, avoiding cluttering the default view with a long list.
+  A small **EUR/USD segmented toggle** next to the period switcher converts every € figure client-side via
+  a fixed approximate rate (`EUR_TO_USD` constant, not live FX — display-only, `localStorage`-persisted;
+  the editable blended €/hr rate itself stays EUR-only, unconverted, since it's a config value not a
+  display figure). The page **live-polls**: refetch on tab focus/visibility + a 2-minute interval while
+  visible (`fetchSummary(period, background=true)` skips the loading skeleton) — safe to poll often since
+  the query is a cheap aggregation, not an LLM call (unlike Strategy's alignment, below, which needs a
+  real TTL).
 
 - **`lib/company/ai-operations-metrics.ts`** — `getAIOperationsSummary(admin, companyId, period, hourlyRateEur)` aggregates across every active `company_members` row (never a single user) via the existing "member ids → `.in()` with the service-role client" idiom. Computes: agent runs, active coworkers, adoption (distinct users), per-coworker breakdown (runs, chat messages, emails sent, top tasks, top tools, anonymized per-user usage distribution), and an **hours-saved estimate**.
 - **Hours-saved methodology (honest, not measured)**: `MINUTES_SAVED_PER_RUN` (15 min) × completed `workflow_runs`, but **only for "grounded" runs** — a task whose `workflows.steps` includes at least one `tool`/`agent` step (looked something up or took an action). A task built entirely of `ai`-only steps (pure generation — coaching, brainstorming) is excluded from the hours/€ estimate and labeled "insight only" instead, since there's no manual-labor baseline it replaced. **Known limitation** (surfaced July 8, confirmed against a real workflow): this still misclassifies a task that fetches real context (calendar/inbox/KB) purely to *personalize generated advice* — e.g. "Daily Tim Ferriss Coaching" fetches `get_meeting_context`/`get_emails`/`read_kb_file` before generating a coaching message, so it still counts as "grounded" even though the output is advice, not a replaced chore. Structurally identical to a legitimate briefing task (fetch → summarize) — no tool-based rule (even a refined action-vs-informational split) can separate them; the real signal is the final AI step's *prompt intent* (report facts vs. generate advice), which is semantic, not structural. Fixing this properly would need an automatic per-workflow classification (cheap one-time LLM call, cached + invalidated on step change — same pattern as `item_plans.version`), not manual tagging in the builder (explicitly rejected — should be inferred from the run, not tagged at creation). **Deferred, not fixed** — current heuristic is left as a documented approximation.
@@ -245,6 +291,51 @@ future slice).
 - **`lib/workers/roles.ts`** — centralized `ROLE_AVATARS`/`ROLE_LABELS` (worker_role → avatar path / display label like "Personal Assistant"), previously duplicated verbatim across `workers-roster.tsx`, `workers-setup-view.tsx`, `team-home-view.tsx`. All three now import from here.
 - **`lib/tools/tool-labels.ts`** — `humanizeToolName()`, a display-only tool-name humanizer for after-the-fact summaries (distinct from the "in-progress" chip phrasing in `chat/route.ts`/`agentos-bridge.ts`).
 - **Chat usage counts too**: a coworker's "messages" count and "top tools used" come from `work_threads`/`work_messages.metadata.tool_calls` — chat activity, not just scheduled `workflow_runs`. This surfaced real usage that was previously invisible (e.g. a coworker with 0 scheduled runs but several chat messages).
+
+### Company Admin — Strategy tab (goals + alignment drift detection, July 8)
+
+`Settings → Company → Strategy` (`components/settings/company-strategy-section.tsx`). Two sections: **Intent**
+(admin-set North Star + goals) and **Alignment** (AI-judged drift/reinforcement against real usage). The
+hard invariant, enforced by design not just convention: **goals never reach any employee-facing coworker
+context** — no `buildWorkerRunContext`, no `dependencies.user_context`, no Studio workflow step ever reads
+`company_goals`. Only admin-facing Strategy code touches this table. Employees keep full agency over their
+own AI coworkers; Strategy is a read-only admin lens on top, not a steering layer.
+
+- **`company_goals`** (migrations `20260708c` + `20260708e`, apply manually): `kind` (`'north_star'|'goal'`),
+  `title`, `description`, `status`, `sort_order`. RLS via the existing `is_company_admin(company_id)` helper.
+- **North Star is positional, not just a flag — dragging IS how you promote.** Every goal card (including
+  the North Star) is draggable; whichever id ends up at index 0 after a drop becomes `kind:'north_star'`,
+  everything else becomes `kind:'goal'`. `PATCH /api/company/goals/reorder` takes the FULL ordered list of
+  active goal ids and derives `kind`+`sort_order` from position server-side — the frontend never sets
+  `kind` directly. A pure reorder among non-first cards doesn't change `kind`, so it's cheap and doesn't
+  re-trigger alignment (see below).
+- **Alignment is cached, not live** — `lib/company/synthesize-alignment.ts` + `app/api/company/alignment/
+  route.ts`. 12h TTL keyed to a `sig` (period + each goal's `id:updated_at` + this period's activity counts)
+  stored in `companies.settings.alignment_cache`. It only re-runs the AI judgment when the Strategy tab is
+  **loaded** and the sig has changed — there's no background cron; it self-refreshes on next view, not
+  while you're staring at it. **The frontend also proactively re-fetches (with a visible loading state,
+  reusing the existing skeleton) right after any goal create/edit/archive, and after a drag that changes
+  who's North Star** — since any of those already bump the row's `updated_at` (invalidating the cache
+  regardless), showing the re-run immediately is more honest than a silent, invisible next-load regen. A
+  plain non-promoting reorder deliberately does NOT trigger this (no semantic content changed, would be a
+  wasted AI call). The prompt also includes a compact **spend-concentration line** (top 5 `costBySource`
+  entries from `AIOperationsSummary`, see above) — a dollar-weighted signal distinct from task/tool counts,
+  so "heavy spend on X with no goal mapping" can itself surface as drift.
+- **UI polish, reusing established patterns rather than inventing new ones**: cards use `h-full` so every
+  card in a grid row stretches to the same height regardless of content length (a card with no description
+  no longer looks shorter than its row-mate); the drag handle is `Bars2Icon` (matching the inbox's existing
+  category-reorder list in `manage-categories-modal.tsx`, not a custom icon) and centers against the
+  content block itself, not the full stretched card box (centering against the full box looks misaligned
+  once cards stretch to different content heights). Edit/Archive are `IconButton`s (`PencilSquareIcon`/
+  `TrashIcon`) with an inline two-step archive confirm — click swaps the trash icon for a small red
+  "Archive" button that must be clicked again, mouse-leave resets it — mirroring the exact delete-confirm
+  pattern already used in the Skills library (`skills-library-view.tsx`), not a new confirmation UI.
+  Archive is a **soft delete** (`status: 'archived'`, row stays in the DB) but there's no restore UI today,
+  so from the user's perspective it behaves like delete even though it's technically recoverable.
+- **`SegmentedControl` (`components/ui/segmented.tsx`) transition smoothed app-wide**: `transition-colors` →
+  `transition-all duration-150 ease-out` so the active-segment background/shadow swap isn't an abrupt snap
+  — since this is the shared canonical view-switcher, the fix applies everywhere it's used (workers/skills,
+  inbox, meetings, drive, settings), not just the Strategy/AI-Operations toggles that prompted it.
 
 ### Shared UI kit (`components/ui/`)
 

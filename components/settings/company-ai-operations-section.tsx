@@ -4,7 +4,8 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { toast } from 'sonner';
 import {
   ClockIcon, BoltIcon, UserGroupIcon, ChartBarIcon, InformationCircleIcon,
-  EnvelopeIcon, VideoCameraIcon, DocumentTextIcon, ChevronDownIcon,
+  EnvelopeIcon, VideoCameraIcon, DocumentTextIcon, ChevronDownIcon, BanknotesIcon,
+  EyeIcon, EyeSlashIcon, ArrowTrendingUpIcon,
 } from '@heroicons/react/24/outline';
 import { Card, SegmentedControl } from '@/components/ui';
 import { AgentIcon } from '@/components/agents/agent-icons';
@@ -27,12 +28,30 @@ const PERIOD_ITEMS: { value: Period; label: string }[] = [
   { value: 'quarter', label: 'Quarter' },
 ];
 
+// Display-only currency toggle — all figures are stored and computed in EUR (the
+// blended hourly rate, cost_eur column, etc.); this only affects what's rendered.
+// Fixed approximate rate, not live FX — fine for an at-a-glance toggle, not accounting.
+type Currency = 'EUR' | 'USD';
+const CURRENCY_ITEMS: { value: Currency; label: string }[] = [
+  { value: 'EUR', label: 'EUR' },
+  { value: 'USD', label: 'USD' },
+];
+const EUR_TO_USD = 1.08;
+const CURRENCY_STORAGE_KEY = 'augmtd_ai_ops_currency';
+
+function fmtMoney(eur: number, currency: Currency, decimals: 0 | 2 = 2): string {
+  const amount = currency === 'USD' ? eur * EUR_TO_USD : eur;
+  const symbol = currency === 'USD' ? '$' : '€';
+  return `${symbol}${amount.toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`;
+}
+
 // Literal class strings (not template-composed) so Tailwind's JIT scanner picks them up.
 const ICON_TONE: Record<string, string> = {
   indigo: 'bg-indigo-50 text-indigo-600',
   blue: 'bg-blue-50 text-blue-600',
   violet: 'bg-violet-50 text-violet-600',
   emerald: 'bg-emerald-50 text-emerald-600',
+  amber: 'bg-amber-50 text-amber-600',
 };
 
 function delta(current: number, previous: number): { label: string; tone: 'emerald' | 'red' | 'neutral' } | null {
@@ -51,6 +70,7 @@ function StatCard({
   value,
   sub,
   deltaInfo,
+  toggle,
 }: {
   icon: React.ComponentType<{ className?: string }>;
   tone?: keyof typeof ICON_TONE;
@@ -58,10 +78,25 @@ function StatCard({
   value: string;
   sub?: string;
   deltaInfo?: { label: string; tone: 'emerald' | 'red' | 'neutral' } | null;
+  /** Small eye-icon toggle in the corner — used by the AI cost card to reveal the
+   *  by-source breakdown without cluttering the card by default. */
+  toggle?: { active: boolean; onClick: () => void; title: string };
 }) {
   const deltaColor = deltaInfo?.tone === 'red' ? 'text-red-600' : deltaInfo?.tone === 'emerald' ? 'text-emerald-600' : 'text-neutral-400';
   return (
-    <Card className="p-4">
+    <Card className="p-4 relative">
+      {toggle && (
+        <button
+          type="button"
+          onClick={toggle.onClick}
+          title={toggle.title}
+          className={`absolute top-3 right-3 w-6 h-6 rounded-full flex items-center justify-center transition-colors ${
+            toggle.active ? 'bg-amber-100 text-amber-700' : 'text-neutral-300 hover:bg-neutral-50 hover:text-neutral-500'
+          }`}
+        >
+          {toggle.active ? <EyeIcon className="w-3.5 h-3.5" /> : <EyeSlashIcon className="w-3.5 h-3.5" />}
+        </button>
+      )}
       <div className="flex items-center gap-1.5 text-[12px] text-neutral-400 mb-2">
         <div className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 ${ICON_TONE[tone]}`}>
           <Icon className="w-3.5 h-3.5" />
@@ -196,7 +231,7 @@ function AgentAvatar({ workerRole, name, iconKey, className }: { workerRole: str
 /** Glanceable by default (avatar, role, top-line stats, hours saved); expands
  *  smoothly to the full breakdown — tasks with their own time-saved estimate,
  *  and tools used. Grid-rows animation avoids measuring pixel heights. */
-function AgentWorkCard({ row, isOpen, onToggle }: { row: AgentWorkRow; isOpen: boolean; onToggle: () => void }) {
+function AgentWorkCard({ row, isOpen, onToggle, currency }: { row: AgentWorkRow; isOpen: boolean; onToggle: () => void; currency: Currency }) {
   return (
     <div>
       <button
@@ -217,6 +252,9 @@ function AgentWorkCard({ row, isOpen, onToggle }: { row: AgentWorkRow; isOpen: b
 
       <div className={`grid transition-all duration-300 ease-out ${isOpen ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`}>
         <div className="overflow-hidden">
+          <div className="pl-16 pr-4 pt-1 pb-2 text-[11.5px] text-neutral-400">
+            AI cost: <span className="text-neutral-600 font-medium">{fmtMoney(row.tokenCostEur, currency)}</span> · {row.totalTokens.toLocaleString()} tokens
+          </div>
           <div className="pl-16 pr-4 pb-4 grid grid-cols-2 gap-6">
             <div>
               <div className="text-[10.5px] font-semibold text-neutral-400 uppercase tracking-wide mb-2">Tasks</div>
@@ -273,6 +311,17 @@ export default function CompanyAIOperationsSection() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [expandedRoles, setExpandedRoles] = useState<Set<string>>(new Set());
+  const [showCostBreakdown, setShowCostBreakdown] = useState(false);
+  const [currency, setCurrency] = useState<Currency>('EUR');
+
+  useEffect(() => {
+    const saved = localStorage.getItem(CURRENCY_STORAGE_KEY);
+    if (saved === 'EUR' || saved === 'USD') setCurrency(saved);
+  }, []);
+  const handleCurrencyChange = (c: Currency) => {
+    setCurrency(c);
+    localStorage.setItem(CURRENCY_STORAGE_KEY, c);
+  };
 
   const toggleRole = (role: string) => {
     setExpandedRoles(prev => {
@@ -300,8 +349,10 @@ export default function CompanyAIOperationsSection() {
     }
   };
 
-  const fetchSummary = useCallback(async (p: Period) => {
-    setLoading(true);
+  // background=true skips the loading skeleton — used by the focus/interval refetch so the
+  // numbers quietly update in place instead of flashing back to a loading state.
+  const fetchSummary = useCallback(async (p: Period, background = false) => {
+    if (!background) setLoading(true);
     setError(false);
     try {
       const res = await fetch(`/api/company/ai-operations?period=${p}`);
@@ -309,13 +360,28 @@ export default function CompanyAIOperationsSection() {
       const data = await res.json();
       setSummary(data.summary);
     } catch {
-      setError(true);
+      if (!background) setError(true);
     } finally {
-      setLoading(false);
+      if (!background) setLoading(false);
     }
   }, []);
 
   useEffect(() => { fetchSummary(period); }, [period, fetchSummary]);
+
+  // Keep this live while the tab is open: refetch on regaining focus/visibility, plus a gentle
+  // 2-minute poll — the underlying query is a cheap aggregation (no LLM call), so this is safe
+  // to run often. Mirrors the pattern already used on Home.
+  useEffect(() => {
+    const onVisible = () => { if (document.visibilityState === 'visible') fetchSummary(period, true); };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onVisible);
+    const id = window.setInterval(() => { if (document.visibilityState === 'visible') fetchSummary(period, true); }, 120_000);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onVisible);
+      window.clearInterval(id);
+    };
+  }, [period, fetchSummary]);
 
   return (
     <div className="flex-1 overflow-y-auto">
@@ -325,25 +391,54 @@ export default function CompanyAIOperationsSection() {
             <h3 className="text-[14px] font-semibold text-neutral-900">AI Operations</h3>
             <p className="text-[12px] text-neutral-400 mt-0.5">How your team uses AUGMTD and what it's worth.</p>
           </div>
-          <SegmentedControl items={PERIOD_ITEMS} value={period} onChange={setPeriod} className="flex-shrink-0" />
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <SegmentedControl items={CURRENCY_ITEMS} value={currency} onChange={handleCurrencyChange} />
+            <SegmentedControl items={PERIOD_ITEMS} value={period} onChange={setPeriod} />
+          </div>
         </div>
 
         {loading ? (
-          <div className="grid grid-cols-4 gap-3 mb-6">
-            {[1, 2, 3, 4].map(i => <div key={i} className="h-24 rounded-xl bg-neutral-100 animate-pulse" />)}
+          <div className="grid grid-cols-5 gap-3 mb-6">
+            {[1, 2, 3, 4, 5].map(i => <div key={i} className="h-24 rounded-xl bg-neutral-100 animate-pulse" />)}
           </div>
         ) : error || !summary ? (
           <p className="text-[13px] text-neutral-400">Couldn't load AI Operations data — please try again.</p>
         ) : (
           <>
-            <div className="grid grid-cols-4 gap-3 mb-3">
+            {summary.roiMultiple !== null && (
+              <div className="flex items-center gap-3 rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 mb-4">
+                <div className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center flex-shrink-0">
+                  <ArrowTrendingUpIcon className="w-4 h-4" />
+                </div>
+                <p className="text-[13px] text-emerald-900">
+                  <span className="font-semibold">{fmtMoney(summary.tokenCostEur, currency)}</span> in AI cost generated an
+                  estimated <span className="font-semibold">{fmtMoney(summary.valueEstimateEur, currency, 0)}</span> in value this
+                  period — a <span className="font-semibold">{summary.roiMultiple.toLocaleString()}x</span> return.
+                </p>
+              </div>
+            )}
+
+            <div className="grid grid-cols-5 gap-3 mb-3">
               <StatCard
                 icon={ClockIcon}
                 tone="indigo"
                 label="Hours saved (estimated)"
                 value={`${summary.hoursSaved}h`}
-                sub={`≈ €${summary.valueEstimateEur.toLocaleString()} value · ${summary.groundedRuns} grounded runs`}
+                sub={`≈ ${fmtMoney(summary.valueEstimateEur, currency, 0)} value · ${summary.groundedRuns} grounded runs`}
                 deltaInfo={delta(summary.hoursSaved, summary.hoursSavedPrev)}
+              />
+              <StatCard
+                icon={BanknotesIcon}
+                tone="amber"
+                label="AI cost"
+                value={fmtMoney(summary.tokenCostEur, currency)}
+                sub={`${summary.totalTokens.toLocaleString()} tokens`}
+                deltaInfo={delta(summary.tokenCostEur, summary.tokenCostEurPrev)}
+                toggle={summary.costBySource.length > 0 ? {
+                  active: showCostBreakdown,
+                  onClick: () => setShowCostBreakdown(v => !v),
+                  title: showCostBreakdown ? 'Hide cost breakdown by source' : 'Show cost breakdown by source',
+                } : undefined}
               />
               <StatCard
                 icon={BoltIcon}
@@ -377,8 +472,34 @@ export default function CompanyAIOperationsSection() {
                 Slack, documents) — {MINUTES_SAVED_PER_RUN} min per grounded run at a blended{' '}
                 <EditableRate value={summary.hourlyRateEur} onSave={handleRateSave} /> rate. Pure AI-generated
                 tasks (coaching, brainstorming) show as "insight only" below — real value, but no assumed time saved.
+                {' '}AI cost covers coworker chat (native and AgentOS), scheduled tasks, email processing, meeting
+                insights, knowledge base indexing, and more — see the breakdown below.
               </span>
             </div>
+
+            {summary.costBySource.length > 0 && (
+              <div className={`grid transition-all duration-300 ease-out ${showCostBreakdown ? 'grid-rows-[1fr] opacity-100 mb-6' : 'grid-rows-[0fr] opacity-0'}`}>
+                <div className="overflow-hidden">
+                  <h4 className="text-[13px] font-semibold text-neutral-900 mb-1">AI cost by source</h4>
+                  <p className="text-[12px] text-neutral-400 mb-3">Where the AI spend is concentrating this period.</p>
+                  <Card className="p-3 space-y-2">
+                    {summary.costBySource.map(s => {
+                      const share = summary.tokenCostEur > 0 ? (s.costEur / summary.tokenCostEur) * 100 : 0;
+                      return (
+                        <div key={s.source} className="flex items-center gap-3 text-[12.5px]">
+                          <span className="text-neutral-600 w-40 flex-shrink-0 truncate">{s.label}</span>
+                          <div className="flex-1 h-1.5 bg-neutral-100 rounded-full overflow-hidden">
+                            <div className="h-full bg-amber-400 rounded-full" style={{ width: `${Math.max(share, 2)}%` }} />
+                          </div>
+                          <span className="text-neutral-500 w-16 text-right flex-shrink-0">{fmtMoney(s.costEur, currency)}</span>
+                          <span className="text-neutral-300 w-20 text-right flex-shrink-0">{s.tokens.toLocaleString()} tok</span>
+                        </div>
+                      );
+                    })}
+                  </Card>
+                </div>
+              </div>
+            )}
 
             <div className="mb-6">
               <div className="grid grid-cols-3 gap-3">
@@ -402,6 +523,7 @@ export default function CompanyAIOperationsSection() {
                       row={row}
                       isOpen={expandedRoles.has(row.workerRole)}
                       onToggle={() => toggleRole(row.workerRole)}
+                      currency={currency}
                     />
                   ))}
                 </Card>

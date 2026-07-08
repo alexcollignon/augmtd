@@ -153,7 +153,7 @@ export async function getAIClient(
   const endpoint = resolveEndpoint(task, config)
   const client = buildClient(endpoint, config)
   console.log(`[AI] task=${task} tier=${config.tier} model=${endpoint.model} user=${userId.slice(0, 8)}`)
-  return { client, model: endpoint.model, endpoint }
+  return { client, model: endpoint.model, endpoint, tier: config.tier }
 }
 
 /**
@@ -172,7 +172,7 @@ export function getSystemClient(task: TaskType): ResolvedClient {
     modelVersionPinning: false,
   }
   const client = buildClient(endpoint, fakeConfig)
-  return { client, model: endpoint.model, endpoint }
+  return { client, model: endpoint.model, endpoint, tier: 'standard' }
 }
 
 /**

@@ -17,6 +17,7 @@
 // See docs/brief-and-labeling-plan.md — "DIRECTION (corrected July 2)".
 
 import { aiCreate } from '@/lib/ai/factory';
+import { logAIUsage } from '@/lib/ai/log-usage';
 import { parseModelJSON } from '@/lib/ai/parse-json';
 import type { BriefContext } from './brief-context';
 
@@ -174,6 +175,8 @@ export async function synthesizeBrief(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   aiClientAndModel: { client: any; model: string },
   input: SynthesisInput,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  logCtx?: { userId: string; supabase: any },
 ): Promise<SynthesisResult> {
   const { client, model } = aiClientAndModel;
   const { firstName, now } = input;
@@ -289,6 +292,11 @@ If a section has no items, return it with an empty items/groups array (or null f
       model, max_tokens: 5000, temperature: 0.4,
       messages: [{ role: 'user', content: prompt }],
     });
+    if (logCtx) {
+      logAIUsage(logCtx.supabase, {
+        userId: logCtx.userId, source: 'brief_synthesis', provider: 'openai', model, tier: 'standard', taskType: 'summarization', usage: res.usage,
+      }).catch(() => {});
+    }
     const parsed = parseModelJSON<{
       tldr?: { teaser?: string; bullets?: string[]; dontMiss?: string | null };
       mustRespond?: { teaser?: string; items?: { r?: number; who?: string; ask?: string; angle?: string }[] };

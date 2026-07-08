@@ -66,4 +66,7 @@ export interface ResolvedClient {
   client: OpenAI
   model: string
   endpoint: ModelEndpoint
+  /** The company's resolved billing tier (e.g. 'standard', 'bedrock_optimised') — distinct
+   *  from TaskType (e.g. 'conversation', 'summarization'). Used for cost attribution. */
+  tier: TierType
 }

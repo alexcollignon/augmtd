@@ -8,6 +8,7 @@ import SettingsPageClient from '@/app/settings/settings-page-client';
 import CompanyPageClient from '@/app/company/company-page-client';
 import CompanyPending from '@/app/company/company-pending';
 import CompanyAIOperationsSection from '@/components/settings/company-ai-operations-section';
+import CompanyStrategySection from '@/components/settings/company-strategy-section';
 import MemorySection from '@/components/settings/memory-section';
 import EmailSettings from '@/components/settings/email-settings';
 import IntegrationsSection from '@/components/settings/integrations-section';
@@ -156,6 +157,8 @@ export default async function SettingsPage({ searchParams }: Props) {
                   </div>
                 ) : section === 'ai-operations' ? (
                   isCompanyAdmin ? <CompanyAIOperationsSection /> : null
+                ) : section === 'strategy' ? (
+                  isCompanyAdmin ? <CompanyStrategySection /> : null
                 ) : (
                   <CompanyPageClient
                     company={company}

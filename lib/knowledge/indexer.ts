@@ -1,5 +1,6 @@
 import { createHash } from 'crypto';
 import { getAIClient, aiCreate } from '@/lib/ai/factory';
+import { logAIUsage } from '@/lib/ai/log-usage';
 import { parseModelJSON } from '@/lib/ai/parse-json';
 import Anthropic from '@anthropic-ai/sdk';
 import { SupabaseClient } from '@supabase/supabase-js';
@@ -50,24 +51,32 @@ export interface KnowledgeFile {
 const EMBED_MAX_CHARS = 800
 
 export async function embedText(text: string, userId: string, supabase: SupabaseClient): Promise<number[]> {
-  const { client, model, endpoint } = await getAIClient(userId, 'embeddings', supabase);
+  const { client, model, endpoint, tier } = await getAIClient(userId, 'embeddings', supabase);
   const res = await client.embeddings.create({
     model,
     input: text.slice(0, EMBED_MAX_CHARS),
     ...(endpoint.dimensions ? { dimensions: endpoint.dimensions } : {}),
   });
+  logAIUsage(supabase, {
+    userId, source: 'kb_indexing', provider: endpoint.provider, model, tier, taskType: 'embeddings',
+    usage: { prompt_tokens: res.usage?.prompt_tokens, completion_tokens: 0 },
+  }).catch(() => {});
   return res.data[0].embedding;
 }
 
 /** Embed multiple texts in a single API call. Much faster than sequential calls. */
 async function embedTexts(texts: string[], userId: string, supabase: SupabaseClient): Promise<number[][]> {
   if (texts.length === 0) return [];
-  const { client, model, endpoint } = await getAIClient(userId, 'embeddings', supabase);
+  const { client, model, endpoint, tier } = await getAIClient(userId, 'embeddings', supabase);
   const res = await client.embeddings.create({
     model,
     input: texts.map((t) => t.slice(0, EMBED_MAX_CHARS)),
     ...(endpoint.dimensions ? { dimensions: endpoint.dimensions } : {}),
   });
+  logAIUsage(supabase, {
+    userId, source: 'kb_indexing', provider: endpoint.provider, model, tier, taskType: 'embeddings',
+    usage: { prompt_tokens: res.usage?.prompt_tokens, completion_tokens: 0 },
+  }).catch(() => {});
   // OpenAI returns embeddings in the same order as inputs
   return res.data.sort((a, b) => a.index - b.index).map((d) => d.embedding);
 }
@@ -160,7 +169,7 @@ function buildContextHeader(filename: string, heading: string | null, chunkIndex
  */
 async function generateSummary(extractedText: string, filename: string, userId: string, supabase: SupabaseClient): Promise<string | null> {
   try {
-    const { client, model } = await getAIClient(userId, 'summarization', supabase);
+    const { client, model, endpoint, tier } = await getAIClient(userId, 'summarization', supabase);
     const res = await aiCreate(client, {
       model,
       messages: [{
@@ -169,6 +178,9 @@ async function generateSummary(extractedText: string, filename: string, userId: 
       }],
       max_tokens: 150,
     });
+    logAIUsage(supabase, {
+      userId, source: 'kb_indexing', provider: endpoint.provider, model, tier, taskType: 'summarization', usage: res.usage,
+    }).catch(() => {});
     return res.choices[0]?.message?.content?.trim() ?? null;
   } catch {
     return null;
@@ -203,7 +215,7 @@ async function summarizeChunks(
     const batchIndices = batch.map((_, i) => batchStart + i);
 
     try {
-      const { client, model } = await getAIClient(userId, 'summarization', supabase);
+      const { client, model, endpoint, tier } = await getAIClient(userId, 'summarization', supabase);
       const chunkList = batch
         .map((c, i) => `[${i + 1}]: ${c.content.slice(0, SUMMARIZE_CHUNK_PREVIEW)}`)
         .join('\n\n');
@@ -216,6 +228,9 @@ async function summarizeChunks(
         }],
         max_tokens: 400,
       });
+      logAIUsage(supabase, {
+        userId, source: 'kb_indexing', provider: endpoint.provider, model, tier, taskType: 'summarization', usage: res.usage,
+      }).catch(() => {});
 
       const raw = res.choices[0]?.message?.content ?? '';
       const parsed = parseModelJSON<string[]>(raw, []);
@@ -248,7 +263,7 @@ async function extractImageWithOCR(buffer: Buffer, mimeType: string, filename: s
     const resized = await resizeImageIfNeeded(buffer, mimeType);
     const base64 = resized.buffer.toString('base64');
     mimeType = resized.mimeType;
-    const { client, model } = await getAIClient(userId, 'ocr', supabase);
+    const { client, model, endpoint, tier } = await getAIClient(userId, 'ocr', supabase);
     const res = await client.chat.completions.create({
       model,
       max_tokens: 2000,
@@ -260,6 +275,9 @@ async function extractImageWithOCR(buffer: Buffer, mimeType: string, filename: s
         ],
       }],
     });
+    logAIUsage(supabase, {
+      userId, source: 'kb_indexing', provider: endpoint.provider, model, tier, taskType: 'ocr', usage: res.usage,
+    }).catch(() => {});
     const text = res.choices[0]?.message?.content ?? '';
     const isError = /\b(cannot|unable|can't|failed|unreadable|not able|sorry|apologize)\b/i.test(text.slice(0, 200));
     return !isError && text ? text : null;
@@ -283,7 +301,7 @@ async function extractPdfWithFallback(buffer: Buffer, filename: string, userId: 
   const isLikelyScanned = pdfText.length < 200 && buffer.length > 10000;
   if (!isLikelyScanned) return pdfText || null;
 
-  const { client: ocrClient, model: ocrModel, endpoint } = await getAIClient(userId, 'ocr', supabase);
+  const { client: ocrClient, model: ocrModel, endpoint, tier: ocrTier } = await getAIClient(userId, 'ocr', supabase);
 
   // Extract embedded JPEG images directly from the PDF binary — no canvas rendering needed.
   // Scanned PDFs (iPhone scanner, document scanners) are just JPEG(s) wrapped in a PDF
@@ -310,6 +328,9 @@ async function extractPdfWithFallback(buffer: Buffer, filename: string, userId: 
           ],
         }],
       });
+      logAIUsage(supabase, {
+        userId, source: 'kb_indexing', provider: endpoint.provider, model: ocrModel, tier: ocrTier, taskType: 'ocr', usage: res.usage,
+      }).catch(() => {});
       const text = res.choices[0]?.message?.content ?? '';
       const isError = /\b(cannot|unable|can't|failed|unreadable|not able|sorry)\b/i.test(text.slice(0, 200));
       if (text && !isError) parts.push(text);

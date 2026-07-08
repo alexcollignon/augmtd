@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import type OpenAI from 'openai';
 import { getAIClient, aiCreate } from '@/lib/ai/factory';
+import { logAIUsage } from '@/lib/ai/log-usage';
 import { buildChatSystemPrompt, detectModelFamily } from '@/lib/work/chat-system-prompt'
 // Intent classifier removed — replaced by lightweight heuristic router below.
 // import { classifyIntent } from '@/lib/work/intent-classifier';
@@ -322,7 +323,7 @@ export async function POST(
         : Promise.resolve({ data: null }),
     ]);
 
-    const { client: aiClient, model: chatModel, endpoint: chatEndpoint } = aiClientResult;
+    const { client: aiClient, model: chatModel, endpoint: chatEndpoint, tier: chatTier } = aiClientResult;
     const modelFamily = detectModelFamily(chatModel);
     const savedMsg = savedMsgResult.data;
     const history = historyResult.data ?? [];
@@ -744,6 +745,11 @@ export async function POST(
     const allArtifactMeta: Record<string, { title: string; type: string }> = {};
     const allEmailDrafts: EmailDraft[] = [];
     const allArtifacts: Record<string, unknown>[] = [];
+    // Accumulated across every streamed call this exchange makes (the tool loop can call the
+    // model multiple times) — logged once at the end. Native-loop chat only; AgentOS-routed
+    // worker chat reports no usage today (see lib/ai/log-usage.ts doc comment).
+    let usagePromptTokens = 0;
+    let usageCompletionTokens = 0;
 
     const readable = new ReadableStream({
       async start(controller) {
@@ -829,6 +835,7 @@ export async function POST(
                   } : {}),
                   messages,
                   stream: true,
+                  stream_options: { include_usage: true },
                 }) as AsyncIterable<OpenAI.Chat.ChatCompletionChunk>;
                 turnIndex++;
                 break;
@@ -846,6 +853,13 @@ export async function POST(
             let sawFinish = false;
 
             for await (const chunk of stream) {
+              // The include_usage:true final chunk carries usage with an empty choices array —
+              // check it before the `!choice` skip below drops it.
+              if (chunk.usage) {
+                usagePromptTokens += chunk.usage.prompt_tokens ?? 0;
+                usageCompletionTokens += chunk.usage.completion_tokens ?? 0;
+              }
+
               const choice = chunk.choices[0];
               if (!choice) continue;
 
@@ -1107,9 +1121,14 @@ export async function POST(
                 temperature: 0.5,
                 messages,
                 stream: true,
+                stream_options: { include_usage: true },
               }) as AsyncIterable<OpenAI.Chat.ChatCompletionChunk>;
               let retrySuppressed = false;
               for await (const chunk of retryStream) {
+                if (chunk.usage) {
+                  usagePromptTokens += chunk.usage.prompt_tokens ?? 0;
+                  usageCompletionTokens += chunk.usage.completion_tokens ?? 0;
+                }
                 const delta = chunk.choices[0]?.delta;
                 if (delta?.content) {
                   retryRaw += delta.content;
@@ -1186,6 +1205,16 @@ export async function POST(
           } catch (saveErr) {
             console.error('[Chat] Failed to save message:', saveErr);
           }
+          logAIUsage(adminClient, {
+            userId: user.id,
+            agentId: runContext.agentId ?? null,
+            source: 'chat',
+            provider: chatEndpoint.provider,
+            model: chatModel,
+            tier: chatTier,
+            taskType: 'conversation',
+            usage: { prompt_tokens: usagePromptTokens, completion_tokens: usageCompletionTokens },
+          }).catch(() => {});
           controller.close();
         }
       },

@@ -661,7 +661,7 @@ export async function GET() {
           waiting: commitmentCands.filter((c) => c.direction === 'awaiting').map((c) => ({ id: c.id, counterparty: c.counterparty || c.sourceLabel, description: c.description, ageDays: c.ageDays })),
           fyiGroups: fyiTop.map((g) => ({ label: g.label, count: g.count, kind: g.kind, subjects: g.subjects })),
           keepAnEyeOn: keepAnEyeOnRaw,
-        });
+        }, { userId: user.id, supabase });
         // Start from the basic brief we just persisted; upgrade each section the synthesis produced
         // (nulls only overwrite when we got something, same rule as before). This is the ENRICHED blob.
         let enrTldr = tldr, enrFollowups = followups, enrFyiDigest = fyiDigest;
