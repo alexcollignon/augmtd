@@ -1083,6 +1083,19 @@ type PlanTask = {
   };
 };
 
+// ── task-workflows S4 — the per-step FILE RESOLUTION state (lazy, on engage). Mirrors the resolver's
+// return shape (`lib/home/resolve-file-step.ts`): a status the row branches on, plus the KB candidates
+// it found. `loading` while the resolve-file call is in flight. Absent = not yet resolved (the row
+// triggers `resolveFile` the first time its file need surfaces).
+type FileCandidate = { knowledgeFileId: string; filename: string; snippet: string; score: number };
+type FileResolution = {
+  loading: boolean;
+  status?: 'have_it' | 'found_one' | 'found_many' | 'none';
+  candidates: FileCandidate[];
+  description?: string | null;
+  using?: string | null;   // knowledgeFileId currently being confirmed/landed via use-file (in-flight)
+};
+
 // A step's system capability is a REVERSIBLE, ATOMIC one AUGMTD can run directly ("Hand to AUGMTD").
 // 1:1 with `lib/home/capability-map.ts` `isDirectRunnableCapability` (analyze / fetch). A `draft` has
 // the composer surface; a `send` is the approval-gated invite path. Kept here so the row logic stays
@@ -1116,6 +1129,14 @@ type ItemPlan = {
   runStep: (taskId: string) => Promise<boolean>;         // AUGMTD runs one reversible atomic step directly
   uploadingId: string | null;    // id of the awaiting_input step whose upload is in flight (S3)
   uploadForStep: (taskId: string, file: File) => Promise<boolean>; // upload a requested file → pool file deliverable
+  // ── task-workflows S4 — file self-heal / smart resolution. Before asking the user to upload, a
+  // file-needing step FINDS the doc first (pool / KB search). `resolution[taskId]` holds the lazy
+  // resolve result; `resolveFile` triggers the search on engage (not eager on load — keeps load cheap);
+  // `useResolvedFile` confirms/picks a found KB file → lands it in the pool + resolves the step.
+  resolution: Record<string, FileResolution>;       // per-step lazy resolve state (keyed by task id)
+  resolveFile: (taskId: string) => void;             // lazily resolve a file-needing step (search on engage)
+  useResolvedFile: (taskId: string, knowledgeFileId: string) => Promise<boolean>; // confirm/pick a found KB file
+  attachToStep: (taskId: string, file: File) => Promise<boolean>; // always-allow 📎: add a file to the pool WITHOUT resolving the step
   reassignStep: (taskId: string, owner: 'system' | 'you') => void; // flip a step's owner (coworker→ handled elsewhere)
   // ── RUN THE PLAN — the single hero action. Walks every live step to its CURRENT/PROPOSED owner:
   //   • AUGMTD reversible-atomic step (analyze/fetch) → runs it (runStep)
@@ -1143,6 +1164,11 @@ function useItemPlan(
   const [delegatingId, setDelegatingId] = useState<string | null>(null);
   const [runningId, setRunningId] = useState<string | null>(null);
   const [uploadingId, setUploadingId] = useState<string | null>(null);
+  // task-workflows S4 — per-step file-resolution state (lazy). Keyed by task id.
+  const [resolution, setResolution] = useState<Record<string, FileResolution>>({});
+  // Guards the lazy resolve against a double-fire (the effect can run twice under StrictMode / re-renders
+  // before state settles) — a task id here means its resolve has been kicked off.
+  const resolveFiredRef = useRef<Set<string>>(new Set());
   // A live ref of the latest tasks — read inside async run handlers to guard concurrent dispatch
   // without a stale closure (the per-step "already working/done" check in runStep + runPlan).
   const tasksRef = useRef<PlanTask[] | null>(null);
@@ -1409,6 +1435,98 @@ function useItemPlan(
     }
   };
 
+  // ── task-workflows S4: lazily RESOLVE a file-needing step (search on engage, not eager on load).
+  // Called the first time a step's file need surfaces (its awaiting_input row opens). Runs the resolver
+  // once (pool → KB search) and stores the branchable status/candidates in `resolution[taskId]`. On
+  // `have_it` it silently lands the pool file on the step (mirrors an upload's completion) so the row
+  // reads "Produced: {filename}". Non-fatal: any failure → `none` (the S3 upload fallback). Idempotent:
+  // skips if already loading / already resolved (a settled status).
+  const resolveFile = (taskId: string) => {
+    // Idempotent guard via a ref (survives re-renders before state settles) — resolve each step once.
+    if (resolveFiredRef.current.has(taskId)) return;
+    resolveFiredRef.current.add(taskId);
+    setResolution((prev) => ({ ...prev, [taskId]: { loading: true, candidates: [] } }));
+    fetch('/api/items/resolve-file', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: planKind, entityId, taskId }),
+    })
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then((d: { status: FileResolution['status']; candidates?: FileCandidate[]; description?: string | null; deliverable?: PlanTask['deliverable'] }) => {
+        setResolution((prev) => ({
+          ...prev,
+          [taskId]: { loading: false, status: d.status, candidates: Array.isArray(d.candidates) ? d.candidates : [], description: d.description ?? null },
+        }));
+        // have_it → the file is already in the pool; reflect it on the step silently (no user prompt).
+        if (d.status === 'have_it' && d.deliverable) {
+          setTasks((prev) => (prev ? prev.map((t) => (t.id === taskId
+            ? { ...t, status: 'done', done: true, deliverable: d.deliverable, request: { ...(t.request ?? { prompt: 'Provide the file' }), fulfilledRef: d.deliverable?.id } }
+            : t)) : prev));
+        }
+      })
+      .catch(() => {
+        // Non-fatal — treat as `none` (fall back to the S3 upload ask).
+        setResolution((prev) => ({ ...prev, [taskId]: { loading: false, status: 'none', candidates: [] } }));
+      });
+  };
+
+  // ── task-workflows S4: the user CONFIRMED / PICKED a found KB file. Land it in the pool (use-file) +
+  // resolve the step to done, mirroring uploadForStep's optimistic completion. Marks the candidate
+  // in-flight (`resolution[taskId].using`) so the row shows a spinner on the chosen file.
+  const useResolvedFile = async (taskId: string, knowledgeFileId: string): Promise<boolean> => {
+    const cur = tasksRef.current?.find((t) => t.id === taskId);
+    if (!cur) return false;
+    setResolution((prev) => ({ ...prev, [taskId]: { ...(prev[taskId] ?? { loading: false, candidates: [] }), using: knowledgeFileId } }));
+    try {
+      const res = await fetch('/api/items/use-file', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: planKind, entityId, taskId, knowledgeFileId }),
+      });
+      if (!res.ok) throw new Error();
+      const d = (await res.json()) as { deliverable?: PlanTask['deliverable']; filename?: string };
+      setTasks((prev) => (prev ? prev.map((t) => (t.id === taskId
+        ? {
+            ...t,
+            status: 'done',
+            done: true,
+            ...(d.deliverable ? { deliverable: d.deliverable } : {}),
+            request: { ...(t.request ?? { prompt: `Provide ${d.filename ?? 'file'}` }), fulfilledRef: d.deliverable?.id },
+          }
+        : t)) : prev));
+      return true;
+    } catch {
+      // Clear the in-flight marker so the user can retry / pick another / upload.
+      setResolution((prev) => ({ ...prev, [taskId]: { ...(prev[taskId] ?? { loading: false, candidates: [] }), using: null } }));
+      return false;
+    }
+  };
+
+  // ── task-workflows S4: the ALWAYS-ALLOW 📎 attach. Add a file to the item's pool from ANY step
+  // WITHOUT resolving that step (resolveStep=false) — an override / a way to feed a downstream step a
+  // doc even when this step didn't ask for one. Reuses the same in-flight tracking (`uploadingId`) as
+  // the S3 upload, but leaves the step's state untouched (it just records a pool `file` deliverable).
+  const attachToStep = async (taskId: string, file: File): Promise<boolean> => {
+    if (uploadingId) return false;
+    setUploadingId(taskId);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      fd.append('kind', planKind);
+      fd.append('entityId', entityId);
+      fd.append('taskId', taskId);
+      fd.append('resolveStep', 'false');
+      const res = await fetch('/api/items/attach', { method: 'POST', body: fd });
+      if (!res.ok) throw new Error();
+      await res.json().catch(() => ({}));
+      return true;
+    } catch {
+      return false;
+    } finally {
+      setUploadingId((cur) => (cur === taskId ? null : cur));
+    }
+  };
+
   // ── Re-assign a step's OWNER between AUGMTD (system) and you (the coworker case is handled by
   // delegateStep, which stamps handedTo). Flipping owner re-grades the step's actor: system→you drops
   // the capability (a [You] step never carries one); you→system defaults to 'analyze' (the safe atomic
@@ -1484,7 +1602,7 @@ function useItemPlan(
   // stays visible. (A user-added step counts toward it — it's in `tasks`.)
   const hasBreakdown = !loading && !failed && !!tasks && tasks.length >= 2;
 
-  return { tasks, loading, failed, hasBreakdown, pending, classifyingId, toggle, dismiss, addStep, editStep, markSystemDone, delegatingId, delegateStep, delegateItem, runningId, runStep, uploadingId, uploadForStep, reassignStep, runPlan, markComposerSent };
+  return { tasks, loading, failed, hasBreakdown, pending, classifyingId, toggle, dismiss, addStep, editStep, markSystemDone, delegatingId, delegateStep, delegateItem, runningId, runStep, uploadingId, uploadForStep, resolution, resolveFile, useResolvedFile, attachToStep, reassignStep, runPlan, markComposerSent };
 }
 
 // ── The per-step STATE CHIP — the single glanceable "where is this step" token. Every StepperRow
@@ -1537,6 +1655,10 @@ function StepperRow({
   onDelegate,
   onReassign,
   onUpload,
+  onAttach,
+  resolution,
+  onResolveFile,
+  onUseResolvedFile,
   running,
   uploading,
   delegating,
@@ -1555,7 +1677,11 @@ function StepperRow({
   onEdit: (text: string) => void;   // re-classify this step with new text
   onDelegate?: (w: Coworker) => void; // hand THIS step to a coworker (from the owner chip)
   onReassign?: (owner: 'system' | 'you') => void; // flip THIS step's owner between AUGMTD and you
-  onUpload?: (file: File) => void;  // task-workflows S3: upload a requested file for an awaiting_input step
+  onUpload?: (file: File) => void;  // task-workflows S3: upload a requested file for an awaiting_input step (resolves it)
+  onAttach?: (file: File) => void;  // task-workflows S4: always-allow 📎 attach — add a file to the pool WITHOUT resolving
+  resolution?: FileResolution;      // task-workflows S4: this step's lazy file-resolution state
+  onResolveFile?: () => void;       // S4: trigger the lazy resolve when the file need surfaces
+  onUseResolvedFile?: (knowledgeFileId: string) => void; // S4: confirm/pick a found KB file
   running: boolean;                 // AUGMTD is running this step now — show working state
   uploading: boolean;               // S3: this awaiting_input step's upload is in flight
   delegating: boolean;              // this step is being delegated — show a spinner
@@ -1567,6 +1693,7 @@ function StepperRow({
   const [draftText, setDraftText] = useState(task.text);
   const inputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null); // S3: the hidden picker for an awaiting_input upload
+  const attachInputRef = useRef<HTMLInputElement>(null); // S4: the hidden picker for the always-allow 📎 attach
   const isSystem = task.actor === 'system';
   const hasDetail = !!task.detail?.trim();
   const crossed = !!task.dismissed; // "not needed" — visible but struck-through, action disabled
@@ -1580,6 +1707,14 @@ function StepperRow({
     if (editing) { setDraftText(task.text); inputRef.current?.focus(); inputRef.current?.select(); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editing]);
+
+  // task-workflows S4 — LAZY resolve on ENGAGE: the first time a file-needing step's ask surfaces,
+  // trigger the resolver (pool → KB search) once. Not eager on load (keeps the plan load cheap) — the
+  // search only runs when the step actually needs a file. The hook's `resolveFile` is idempotent.
+  useEffect(() => {
+    if (awaitingInput && onResolveFile && !resolution) onResolveFile();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [awaitingInput]);
 
   const handleDismiss = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -1802,23 +1937,98 @@ function StepperRow({
                   <StateChip state="ready" label="Ready" />
                 )
               ) : awaitingInput ? (
-                // task-workflows S3 — the step ASKED for a file. Show an amber "Needs a file" + an
-                // "Upload →" affordance opening the hidden picker; on pick it posts to /api/items/attach.
+                // task-workflows S4 — the step needs a file. FIND-first: the resolver (pool → KB search)
+                // ran on engage; branch on its status. found_one → confirm; found_many → pick-list; none
+                // (or still resolving) → the S3 "Upload →". Uploading a new file always overrides.
                 <>
-                  <StateChip state="awaiting" label="Needs a file" />
                   {uploading ? (
                     <span className="inline-flex items-center gap-1 text-[11.5px] font-medium text-indigo-500">
                       <span className="w-2.5 h-2.5 rounded-full border-[1.5px] border-indigo-300 border-t-indigo-600 animate-spin" />
                       Uploading…
                     </span>
+                  ) : resolution?.loading ? (
+                    <span className="inline-flex items-center gap-1 text-[11.5px] font-medium text-neutral-400">
+                      <span className="w-2.5 h-2.5 rounded-full border-[1.5px] border-neutral-300 border-t-neutral-500 animate-spin" />
+                      Looking for it…
+                    </span>
+                  ) : resolution?.status === 'found_one' && resolution.candidates[0] ? (
+                    // ONE confident match → confirm ("Found 'X' — use it?"). Never auto-used.
+                    <div className="flex flex-col gap-1.5 w-full">
+                      <StateChip state="awaiting" label="Found a file" />
+                      <div className="rounded-lg border border-indigo-200 bg-indigo-50/40 px-2.5 py-2 flex items-center gap-2">
+                        <PaperClipIcon className="w-3.5 h-3.5 text-indigo-500 flex-shrink-0" />
+                        <div className="min-w-0 flex-1">
+                          <p className="text-[12px] font-medium text-neutral-800 truncate">Found &ldquo;{resolution.candidates[0].filename}&rdquo;</p>
+                          {resolution.candidates[0].snippet && (
+                            <p className="text-[11px] text-neutral-500 truncate">{resolution.candidates[0].snippet}</p>
+                          )}
+                        </div>
+                        {resolution.using === resolution.candidates[0].knowledgeFileId ? (
+                          <span className="w-3 h-3 rounded-full border-[1.5px] border-indigo-300 border-t-indigo-600 animate-spin flex-shrink-0" />
+                        ) : (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); if (!busy && onUseResolvedFile) onUseResolvedFile(resolution.candidates[0].knowledgeFileId); }}
+                            disabled={busy || !!resolution.using}
+                            className="flex-shrink-0 text-[11.5px] font-medium text-indigo-600 hover:text-indigo-700 disabled:opacity-40"
+                          >
+                            Use it
+                          </button>
+                        )}
+                      </div>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); if (!busy) fileInputRef.current?.click(); }}
+                        disabled={busy || !!resolution.using}
+                        className="self-start text-[11px] font-medium text-neutral-400 hover:text-neutral-600 disabled:opacity-40"
+                      >
+                        Upload a different one →
+                      </button>
+                    </div>
+                  ) : resolution?.status === 'found_many' && resolution.candidates.length > 0 ? (
+                    // Several / weak matches → ask WHICH. A compact candidate list, each [Use].
+                    <div className="flex flex-col gap-1.5 w-full">
+                      <StateChip state="awaiting" label="Which file?" />
+                      <div className="rounded-lg border border-neutral-200 bg-white divide-y divide-neutral-100 overflow-hidden">
+                        {resolution.candidates.map((c) => (
+                          <div key={c.knowledgeFileId} className="flex items-center gap-2 px-2.5 py-1.5">
+                            <PaperClipIcon className="w-3.5 h-3.5 text-neutral-400 flex-shrink-0" />
+                            <div className="min-w-0 flex-1">
+                              <p className="text-[12px] font-medium text-neutral-800 truncate">{c.filename}</p>
+                              {c.snippet && <p className="text-[11px] text-neutral-500 truncate">{c.snippet}</p>}
+                            </div>
+                            {resolution.using === c.knowledgeFileId ? (
+                              <span className="w-3 h-3 rounded-full border-[1.5px] border-indigo-300 border-t-indigo-600 animate-spin flex-shrink-0" />
+                            ) : (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); if (!busy && onUseResolvedFile) onUseResolvedFile(c.knowledgeFileId); }}
+                                disabled={busy || !!resolution.using}
+                                className="flex-shrink-0 text-[11.5px] font-medium text-indigo-600 hover:text-indigo-700 disabled:opacity-40"
+                              >
+                                Use
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); if (!busy) fileInputRef.current?.click(); }}
+                        disabled={busy || !!resolution.using}
+                        className="self-start text-[11px] font-medium text-neutral-400 hover:text-neutral-600 disabled:opacity-40"
+                      >
+                        Upload instead →
+                      </button>
+                    </div>
                   ) : (
-                    <button
-                      onClick={(e) => { e.stopPropagation(); if (!busy) fileInputRef.current?.click(); }}
-                      disabled={busy}
-                      className="text-[11.5px] font-medium text-indigo-600 hover:text-indigo-700 disabled:opacity-40"
-                    >
-                      Upload →
-                    </button>
+                    // none (or not yet resolved) → the S3 explicit "Upload →" ask.
+                    <>
+                      <StateChip state="awaiting" label="Needs a file" />
+                      <button
+                        onClick={(e) => { e.stopPropagation(); if (!busy) fileInputRef.current?.click(); }}
+                        disabled={busy}
+                        className="text-[11.5px] font-medium text-indigo-600 hover:text-indigo-700 disabled:opacity-40"
+                      >
+                        Upload →
+                      </button>
+                    </>
                   )}
                   <input
                     ref={fileInputRef}
@@ -1839,6 +2049,41 @@ function StepperRow({
             </>
           )}
         </div>
+
+        {/* task-workflows S4 — ALWAYS-ALLOW ATTACH: any actionable step gets a quiet 📎 affordance to
+            attach a file into the item's pool, even if the step didn't request one (an override / a way
+            to feed a doc to a downstream step). Hidden while set-aside / handed / mid-flight, and hidden
+            for an awaiting_input step (its own find/upload flow already owns attachment). Hover-revealed. */}
+        {!crossed && !handed && !working && !delegating && !classifying && !awaitingInput && onAttach && (
+          <div className="mt-1">
+            {uploading ? (
+              <span className="inline-flex items-center gap-1 text-[11px] font-medium text-indigo-500">
+                <span className="w-2.5 h-2.5 rounded-full border-[1.5px] border-indigo-300 border-t-indigo-600 animate-spin" />
+                Attaching…
+              </span>
+            ) : (
+              <button
+                onClick={(e) => { e.stopPropagation(); if (!busy) attachInputRef.current?.click(); }}
+                disabled={busy}
+                title="Attach a file to this item"
+                className="inline-flex items-center gap-1 text-[11px] font-medium text-neutral-300 opacity-0 group-hover/step:opacity-100 focus:opacity-100 hover:text-indigo-600 transition-all disabled:opacity-40"
+              >
+                <PaperClipIcon className="w-3 h-3" />Attach a file
+              </button>
+            )}
+            <input
+              ref={attachInputRef}
+              type="file"
+              accept=".pdf,.docx,.txt,.png,.jpg,.jpeg,.webp,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,image/*"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                e.target.value = '';
+                if (f && onAttach) onAttach(f);
+              }}
+            />
+          </div>
+        )}
       </div>
     </li>
   );
@@ -1914,7 +2159,7 @@ function WhatThisTakes({
   onInvite?: (taskId: string) => void;
   variant?: 'inline' | 'panel';
 }) {
-  const { tasks, loading, failed, pending, classifyingId, toggle, dismiss, addStep, editStep, delegatingId, delegateStep, runningId, uploadingId, uploadForStep, reassignStep } = plan;
+  const { tasks, loading, failed, pending, classifyingId, toggle, dismiss, addStep, editStep, delegatingId, delegateStep, runningId, uploadingId, uploadForStep, resolution, resolveFile, useResolvedFile, attachToStep, reassignStep } = plan;
   const workers = useCoworkers();
 
   // In the two-column layout the parent renders the panel chrome + its own loading/failed handling
@@ -2004,6 +2249,10 @@ function WhatThisTakes({
             onDelegate={(w) => delegateStep(t.id, w.id, w.name)}
             onReassign={(owner) => reassignStep(t.id, owner)}
             onUpload={(file) => uploadForStep(t.id, file)}
+            onAttach={(file) => attachToStep(t.id, file)}
+            resolution={resolution[t.id]}
+            onResolveFile={() => resolveFile(t.id)}
+            onUseResolvedFile={(fileId) => useResolvedFile(t.id, fileId)}
             running={runningId === t.id}
             uploading={uploadingId === t.id}
             delegating={delegating}

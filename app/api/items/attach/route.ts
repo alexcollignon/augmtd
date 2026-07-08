@@ -70,6 +70,10 @@ export async function POST(request: NextRequest) {
     const kind = String(formData.get('kind') || '') as ItemPlanKind;
     const entityId = String(formData.get('entityId') || '');
     const taskId = String(formData.get('taskId') || '');
+    // task-workflows S4 — the always-allow 📎 attach (any step, override) passes resolveStep=false: the
+    // file lands in the pool but the step is NOT flipped to done (it wasn't a "provide a file" request).
+    // The S3 awaiting_input upload omits it (defaults true → the requesting step resolves on upload).
+    const resolveStep = String(formData.get('resolveStep') || 'true') !== 'false';
 
     if (!file) return NextResponse.json({ error: 'file is required' }, { status: 400 });
     if (!entityId || !VALID_KINDS.includes(kind)) {
@@ -157,8 +161,10 @@ export async function POST(request: NextRequest) {
     });
 
     // ── Resolve the requesting step: flip awaiting_input → done, attach the deliverable, mark the
-    // request fulfilled. Best-effort (a persist failure still returns the stored deliverable).
-    try {
+    // request fulfilled. Best-effort (a persist failure still returns the stored deliverable). Skipped
+    // for the always-allow attach (resolveStep=false) — the file lands in the pool but the step stays as
+    // it was (an active step the user just fed a doc to, not a fulfilled file request).
+    if (resolveStep) try {
       const { data: row } = await supabase
         .from('item_plans')
         .select('tasks')
