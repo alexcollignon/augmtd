@@ -289,6 +289,14 @@ export async function GET() {
   // context and returns the ids to drop — general for any phrasing, any person. Here we only apply
   // the deterministic "already replied" resolution + collect the candidates.
   const mustRespondRaw: MustRespondCandidate[] = [];
+  // "Worth acting on" — action-NOTICES: an actionable item that is NOT a reply-to-a-person (a payment
+  // failed, a security alert, an account expiring, storage full, "pay for your booking"). These are the
+  // items the unified understanding reasoned `relevance === 'action'`. They get their OWN Home section,
+  // distinct from replies (What needs you), so automated/notice actions don't clutter the reply lane.
+  // Grounded one-liner (the real subject), deep-dive on click, quiet dismiss — same affordances as FYA.
+  type ActionNotice = { itemId: string; who: string; summary: string };
+  const actionNoticesRaw: ActionNotice[] = [];
+  const actionNoticeIds = new Set<string>();
   const emailSeeds: EmailSeed[] = [];
   // itemId → whether the NEWEST message on the thread is the user's own (structural, direction+time).
   // `lastFromUser === false` means the newest message is INBOUND, i.e. a genuinely unanswered reply the
@@ -309,6 +317,39 @@ export async function GET() {
     const fromEmail = fromEmailOf(sd);
     const subj = it.work_title || (sd.subject as string) || null;
     const fromName = (sd.from_name as string) || null;
+    // The unified understanding's RELEVANCE is the primary router: `reply` = a person awaits your reply
+    // → "What needs you"; `action` = an actionable item that is NOT a reply (payment failed, security
+    // alert, expiring, "pay for your booking") → the NEW "Worth acting on" section; `awareness` = FYI.
+    // ONE relevance → ONE home (no overlap). Items lacking understanding fall back to today's behavior
+    // (the automated re-posture below). No keyword/sender heuristic drives the split — relevance encodes it.
+    const u = getUnderstanding(it);
+    if (u && u.relevance === 'action') {
+      // An action-notice: its own section, never a reply card, never a needs-you priority. We DON'T push
+      // it into `priorities` (so it can't count as needs-you) or `mustRespondRaw`; we still feed
+      // emailSeeds so per-person context stays complete, then skip the reply/priority wiring.
+      const who = fromName || (sd.from as string) || 'Notice';
+      const snippet = ((sd.body as string) || '').replace(/\s+/g, ' ').trim();
+      const summary = (subj || '').trim() || (snippet ? snippet.slice(0, 90) : 'Action needed');
+      actionNoticesRaw.push({ itemId: it.id, who, summary: summary.length > 120 ? summary.slice(0, 117) + '…' : summary });
+      actionNoticeIds.add(it.id);
+      const threadMsgsA = tid ? threadMsgsById.get(tid) : undefined;
+      const replyStateA = threadMsgsA && threadMsgsA.length
+        ? computeThreadReplyState(threadMsgsA, it.created_at ? new Date(it.created_at as string) : null)
+        : null;
+      emailSeeds.push({
+        itemId: it.id, fromAddress: fromEmail, fromName: (sd.from_name as string) || null,
+        subject: it.work_title || (sd.subject as string) || '(no subject)',
+        at: activityAt(it), posture: 'to_do',
+        snippet: ((sd.body as string) || '').replace(/\s+/g, ' ').trim().slice(0, 240),
+        userResponded: replyStateA?.userReplied ?? undefined,
+        lastFromUser: replyStateA?.lastMessageFromUser ?? undefined,
+      });
+      continue;
+    }
+    // A `reply`/`awareness` (or no-understanding) item continues down the reply/priority path below.
+    // When understanding says `awareness`, it's not a reply you owe → keep it out of must-respond (it
+    // still flows to FYA / keep-an-eye via classify-item). `reply` stays a real reply candidate.
+    const understoodAwareness = !!u && u.relevance === 'awareness';
     const automated = posture === 'needs_reply' && isAutomatedSender(fromEmail, fromName, subj);
     // Bug C — an AUTOMATED item classified needs_reply isn't a reply you owe (no human is waiting), but
     // it may still DEMAND action (payment failed / account suspended / security alert / expiring). If
@@ -349,6 +390,10 @@ export async function GET() {
       // re-postured to `to_do` above (so they surface as action cards), so anything still automated
       // here is informational → drop it from must-respond (it flows to the FYI/awareness digest).
       if (automated) continue;
+      // Backstop: an item the understanding reasoned `awareness` is not a reply you owe — never in
+      // must-respond (it flows to FYA / keep-an-eye). `classifyItem` already demotes such items to fyi
+      // (so they rarely reach here), but this keeps the must-respond pool = replies-only regardless.
+      if (understoodAwareness) continue;
       mustRespondRaw.push({
         itemId: it.id,
         from: (sd.from_name as string) || (sd.from as string) || 'Someone',
@@ -854,6 +899,14 @@ export async function GET() {
       return { itemId: it.id as string, who, summary: summary.length > 120 ? summary.slice(0, 117) + '…' : summary };
     });
 
+  // ── "Worth acting on" — the action-NOTICES set (understanding.relevance === 'action'). Collected in
+  // the candidate loop above; here we only keep the still-pending ones and cap the list. By construction
+  // these are mutually exclusive of must-respond (never pushed there), the needs-you priority cards
+  // (never pushed to `priorities`), keep-an-eye and for-your-awareness (both gated on relevance !=
+  // action). ONE relevance → ONE home; no overlap. Ordered freshest-first isn't tracked here (order of
+  // discovery follows the last_activity_at ordering of `items`), which is already recency-first.
+  const actionNotices = actionNoticesRaw.filter((a) => pendingItemIds.has(a.itemId)).slice(0, 12);
+
   // ── "Day cleared" progress ring — the LIVE half. `cleared` = things the user handled TODAY.
   // Computed fresh here (NOT baked into the cached AI blob) via a cheap batch of head-count queries,
   // so new activity moves the ring on the very next load. `needYou` is the current count of things
@@ -890,8 +943,10 @@ export async function GET() {
   // already counts meeting follow-ups: they're inbox_items (source='meeting') and inboxClearedRes has
   // no source filter — so clearing them moves the cleared half. The two halves stay consistent.
   const needYouCards = cappedPriorities.filter((p) => p.posture !== 'needs_reply').length;
-  const needYou = needYouReplies + needYouCards + commitments.length;
+  // Action-notices ("Worth acting on") are a needs-you lane too — count them so the ring baseline
+  // reflects everything the user still has to act on (the client re-derives this live as they dismiss).
+  const needYou = needYouReplies + needYouCards + commitments.length + actionNotices.length;
   const dayProgress = { cleared: clearedToday, needYou };
 
-  return NextResponse.json({ firstName, briefLine, tldr, followups, fyiDigest, forYourAwareness, mustRespond: mustRespondOut, keepAnEyeOn: keepAnEyeOnOut, status, priorities: cappedPriorities, commitments, waitingOn, schedule, handled, dayProgress });
+  return NextResponse.json({ firstName, briefLine, tldr, followups, fyiDigest, forYourAwareness, actionNotices, mustRespond: mustRespondOut, keepAnEyeOn: keepAnEyeOnOut, status, priorities: cappedPriorities, commitments, waitingOn, schedule, handled, dayProgress });
 }
