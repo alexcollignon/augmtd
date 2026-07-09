@@ -841,16 +841,17 @@ Respond ONLY with valid JSON matching the structure above.`;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const result: any = parseModelJSON(response.choices[0].message.content, {});
 
-    // Understanding is the PRIMARY relevance/role/language signal. Reasoning models (Kimi on
-    // bedrock_optimised) occasionally omit or garble this one field even when the rest parsed — a
-    // truncation/label-drift variance, not a prompt bug. When that happens, recover with ONE tiny,
-    // focused understanding-only call (a few hundred tokens on the classification tier, NOT another
-    // full planning pass) so the group-"Dear Team" case is reliably grounded. Non-fatal; on failure
-    // `understanding` stays null and the consumers fall back to today's behavior.
-    let understanding = coerceUnderstanding(result.understanding);
-    if (!understanding) {
-      understanding = await recoverUnderstanding(email, supabase).catch(() => null);
-    }
+    // Understanding is the PRIMARY relevance/role/language signal — and it must be RELIABLE. The main
+    // planning pass runs on the `planning` tier, which on bedrock_optimised is Kimi (a REASONING model)
+    // that flakily omits/garbles this one field (a backfill of 64 items lost understanding on 24 of
+    // them — the exact item-plan reasoning-budget trap). So we do NOT trust the planning pass for it:
+    // the understanding is computed on the NON-reasoning `classification` tier (Bedrock Haiku 4.5 /
+    // gpt-4o-mini) as the PRIMARY path — a small, cheap, closed-set call that emits {role,relevance,
+    // language} directly and reliably. The Kimi-produced understanding from the main pass is used only
+    // as a fallback if that call fails. Non-fatal; on total failure `understanding` stays null and the
+    // consumers fall back to today's behavior.
+    let understanding = await computeUnderstanding(email, supabase).catch(() => null);
+    if (!understanding) understanding = coerceUnderstanding(result.understanding);
 
     // Validate and return with defaults
     return {
@@ -885,9 +886,9 @@ Respond ONLY with valid JSON matching the structure above.`;
       confidence: Math.min(100, Math.max(0, result.confidence || 50)),
       priority: Math.min(100, Math.max(0, result.priority || 50)),
 
-      // Unified understanding — from the same planning pass, or the focused recovery above. null if
-      // both failed; the caller writes it to source_data.understanding and consumers fall back to
-      // today's behavior when it's null (non-fatal).
+      // Unified understanding — from the reliable classification-tier pass (primary), or the planning
+      // pass's own value (fallback). null only if both failed; the caller writes it to
+      // source_data.understanding and consumers fall back to today's behavior when it's null (non-fatal).
       understanding,
     };
   } catch (error) {
@@ -896,13 +897,14 @@ Respond ONLY with valid JSON matching the structure above.`;
   }
 }
 
-// Focused understanding-only recovery — used ONLY when the main planning pass omitted/garbled the
-// `understanding` field (a reasoning-model variance). Runs on the CLASSIFICATION tier (Haiku on
-// bedrock_optimised / gpt-4o-mini on standard — NON-reasoning, so no reasoning-channel starvation)
-// with a terse, closed-set prompt that reliably emits the constrained values. Cheap (a few hundred
-// tokens). This is a fallback, not the default path. AGNOSTIC — reasons over the addressing facts +
-// body, never a keyword/header rule.
-async function recoverUnderstanding(email: EmailData, supabase: SupabaseClient): Promise<ItemUnderstanding | null> {
+// PRIMARY understanding pass — the reliable producer of {role, relevance, language}. Runs on the
+// CLASSIFICATION tier (Haiku 4.5 on bedrock_optimised / gpt-4o-mini on standard — NON-reasoning, so
+// no reasoning-channel starvation like the `planning`-tier Kimi) with a terse, closed-set prompt that
+// reliably emits the constrained values. Cheap (a few hundred tokens) and fast (~2s). This is the
+// DEFAULT path (promoted from a recovery-only fallback): Kimi flakiness on the main planning pass can
+// never affect the understanding. AGNOSTIC — reasons over the addressing facts + body, never a
+// keyword/header rule.
+export async function computeUnderstanding(email: EmailData, supabase: SupabaseClient): Promise<ItemUnderstanding | null> {
   const mine = (email.user_addresses && email.user_addresses.length
     ? email.user_addresses
     : [email.recipient_email].filter(Boolean) as string[]);
