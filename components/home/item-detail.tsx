@@ -20,6 +20,7 @@ import {
   SparklesIcon,
   ArrowUturnRightIcon,
   ArrowUturnLeftIcon,
+  EllipsisHorizontalIcon,
 } from '@heroicons/react/24/outline';
 import { ThreadMessages, type ThreadMessage } from '@/components/inbox/thread-messages';
 import ReplyEditor from '@/components/inbox/reply-editor';
@@ -1981,9 +1982,9 @@ function StepPreview({ task, owner, coworkerName, previewData }: {
     const bits = [title || null, when || null, attendees.length ? `${attendees[0]}${attendees.length > 1 ? ` +${attendees.length - 1}` : ''}` : null].filter(Boolean);
     if (!bits.length) return null;
     return (
-      <div className="mt-1 flex items-center gap-1.5 text-[11.5px] text-neutral-500">
+      <div className="mt-1 flex items-center gap-1.5 text-[11.5px] text-neutral-500 min-w-0">
         <CalendarDaysIcon className="w-3 h-3 flex-shrink-0 text-violet-400" />
-        <span className="truncate">{bits.join(' · ')}</span>
+        <span className="min-w-0 truncate">{bits.join(' · ')}</span>
       </div>
     );
   }
@@ -1992,9 +1993,9 @@ function StepPreview({ task, owner, coworkerName, previewData }: {
   if (previewData?.kind === 'forward') {
     const to = previewData.to[0];
     return (
-      <div className="mt-1 flex items-center gap-1.5 text-[11.5px] text-neutral-500">
+      <div className="mt-1 flex items-center gap-1.5 text-[11.5px] text-neutral-500 min-w-0">
         <ArrowUturnRightIcon className="w-3 h-3 flex-shrink-0 text-violet-400" />
-        <span className="truncate">{to ? `Forward to ${to}${previewData.to.length > 1 ? ` +${previewData.to.length - 1}` : ''}` : 'Forward — add a recipient'}</span>
+        <span className="min-w-0 truncate">{to ? `Forward to ${to}${previewData.to.length > 1 ? ` +${previewData.to.length - 1}` : ''}` : 'Forward — add a recipient'}</span>
       </div>
     );
   }
@@ -2004,9 +2005,9 @@ function StepPreview({ task, owner, coworkerName, previewData }: {
     const gist = (task.detail || task.text || '').replace(/\s+/g, ' ').trim();
     const shortGist = gist.length > 90 ? gist.slice(0, 88).trimEnd() + '…' : gist;
     return (
-      <div className="mt-1 flex items-start gap-1.5 text-[11.5px] text-neutral-500">
-        <UserPlusIcon className="w-3 h-3 flex-shrink-0 mt-[1px] text-indigo-400" />
-        <span className="min-w-0">{coworkerName} will {shortGist ? `${shortGist} — ` : ''}hand back {deliverableNoun()}.</span>
+      <div className="mt-1 flex items-center gap-1.5 text-[11.5px] text-neutral-500 min-w-0">
+        <UserPlusIcon className="w-3 h-3 flex-shrink-0 text-indigo-400" />
+        <span className="min-w-0 truncate">{coworkerName} will {shortGist ? `${shortGist} — ` : ''}hand back {deliverableNoun()}.</span>
       </div>
     );
   }
@@ -2020,11 +2021,11 @@ function StepPreview({ task, owner, coworkerName, previewData }: {
     const shortGist = gist.length > 110 ? gist.slice(0, 108).trimEnd() + '…' : gist;
     const isDraft = task.capability === 'draft' || task.capability === 'send';
     return (
-      <div className="mt-1 flex items-start gap-1.5 text-[11.5px] text-neutral-500">
+      <div className="mt-1 flex items-center gap-1.5 text-[11.5px] text-neutral-500 min-w-0">
         {isDraft
-          ? <PencilIcon className="w-3 h-3 flex-shrink-0 mt-[1px] text-indigo-400" />
-          : <SparklesIcon className="w-3 h-3 flex-shrink-0 mt-[1px] text-indigo-400" />}
-        <span className="min-w-0">{shortGist}</span>
+          ? <PencilIcon className="w-3 h-3 flex-shrink-0 text-indigo-400" />
+          : <SparklesIcon className="w-3 h-3 flex-shrink-0 text-indigo-400" />}
+        <span className="min-w-0 truncate">{shortGist}</span>
       </div>
     );
   }
@@ -2032,13 +2033,75 @@ function StepPreview({ task, owner, coworkerName, previewData }: {
   return null;
 }
 
+// ── Step OVERFLOW menu (⋯) — the ONE quiet home for a row's PLAN-EDITING controls (edit the step's
+// text, set it aside / restore, attach a file). These are plan-editing moves, not live-run controls, so
+// they live behind a single hover/focus-revealed ⋯ rather than competing inline with the owner chip,
+// state chip, nutshell + primary CTA (which stay visible). Anchored below its trigger, closes on
+// outside-click / Esc. Each entry no-ops while the row is busy. `onAttach` is optional (only rows that
+// accept a manual file attach show that entry). A crossed-out step's entry reads "Restore".
+function StepOverflowMenu({
+  crossed,
+  busy,
+  onEdit,
+  onDismiss,
+  onAttach,
+  onClose,
+}: {
+  crossed: boolean;
+  busy: boolean;
+  onEdit: () => void;
+  onDismiss: () => void;
+  onAttach?: () => void;
+  onClose: () => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const onDoc = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) onClose(); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onDoc); document.removeEventListener('keydown', onKey); };
+  }, [onClose]);
+  const item = 'w-full flex items-center gap-2 px-3 py-1.5 text-left text-[12px] text-neutral-700 hover:bg-neutral-50 disabled:opacity-40 transition-colors';
+  return (
+    <div
+      ref={ref}
+      className="absolute z-[60] top-full right-0 mt-1 w-40 rounded-lg border border-neutral-200 bg-white shadow-lg overflow-hidden py-1"
+    >
+      <button
+        onClick={(e) => { e.stopPropagation(); onClose(); if (!busy && !crossed) onEdit(); }}
+        disabled={busy || crossed}
+        className={item}
+      >
+        <PencilIcon className="w-3.5 h-3.5 text-neutral-400 flex-shrink-0" />Edit step
+      </button>
+      {onAttach && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onClose(); if (!busy) onAttach(); }}
+          disabled={busy}
+          className={item}
+        >
+          <PaperClipIcon className="w-3.5 h-3.5 text-neutral-400 flex-shrink-0" />Attach a file
+        </button>
+      )}
+      <button
+        onClick={(e) => { e.stopPropagation(); onClose(); if (!busy) onDismiss(); }}
+        disabled={busy}
+        className={`${item} ${crossed ? 'text-amber-600' : 'text-rose-600 hover:!bg-rose-50'}`}
+      >
+        <XMarkIcon className="w-3.5 h-3.5 flex-shrink-0" />{crossed ? 'Restore' : 'Not needed'}
+      </button>
+    </div>
+  );
+}
+
 // ── One step in the "Identified tasks" workflow stepper. A vertical timeline row: a NODE (the AUGMTD
 // brand mark for a system step, a [You] checkbox for a your step) + a CONNECTOR line to the next node
-// + a SHORT title
-// that expands to the fuller `detail` on click + the row action (Draft → / done checkbox) + a ✕ that
-// toggles the step's "not needed" state. A dismissed step STAYS in the workflow — rendered struck-
-// through + greyed, its node dimmed, and its action disabled (set aside, not removed). The ✕ is a
-// reversible toggle: click to cross out, click again to restore. The strike + grey animates smoothly.
+// + a SHORT title. CLICKING the row/title toggles the fuller `detail` (no separate expand caret). The
+// row leads with what's live — owner chip · state · nutshell · primary CTA — and tucks the PLAN-EDITING
+// controls (edit / set-aside / attach) behind a single quiet ⋯ overflow menu (hover/focus-revealed).
+// A dismissed step STAYS in the workflow — struck-through + greyed, node dimmed, action disabled (set
+// aside, not removed); the ⋯ "Restore" un-crosses it. The strike + grey animates smoothly.
 function StepperRow({
   task,
   isLast,
@@ -2092,6 +2155,7 @@ function StepperRow({
 }) {
   const [expanded, setExpanded] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false); // the ⋯ plan-editing overflow menu (edit / attach / set-aside)
   const [draftText, setDraftText] = useState(task.text);
   const inputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null); // S3: the hidden picker for an awaiting_input upload
@@ -2127,12 +2191,6 @@ function StepperRow({
     if (awaitingInput && onResolveFile && !resolution) onResolveFile();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [awaitingInput]);
-
-  const handleDismiss = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (busy) return;
-    onDismiss(); // toggle "not needed" (persisted); the row stays mounted, just crosses/un-crosses
-  };
 
   const commitEdit = () => {
     const t = draftText.trim();
@@ -2200,51 +2258,45 @@ function StepperRow({
               className="min-w-0 flex-1 bg-white border border-indigo-300 rounded-md px-2 py-1 text-[13px] font-medium text-neutral-800 focus:outline-none"
             />
           ) : (
-            // Title (+ optional expand affordance). Click reveals `detail`; DOUBLE-click to edit. A tiny
-            // pencil affordance appears on hover for an active (not crossed) step.
+            // Title — CLICKING THE ROW TOGGLES the fuller `detail` (no separate expand caret competing with
+            // the owner chip). DOUBLE-click to edit. The whole title is the expand hit-target.
             <button
               onClick={() => hasDetail && setExpanded((v) => !v)}
               onDoubleClick={() => !crossed && !classifying && setEditing(true)}
+              aria-expanded={hasDetail ? expanded : undefined}
               className={`min-w-0 flex-1 text-left ${hasDetail ? 'cursor-pointer' : 'cursor-default'}`}
             >
-              <span className="flex items-center gap-1">
-                <span className={`text-[13px] font-medium leading-snug transition-colors duration-300 ${crossed ? 'text-neutral-400 line-through' : task.done ? 'text-neutral-400 line-through' : 'text-neutral-800'}`}>{task.text}</span>
-                {hasDetail && (
-                  <ChevronDownIcon className={`w-3 h-3 flex-shrink-0 text-neutral-300 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`} />
-                )}
-              </span>
+              <span className={`text-[13px] font-medium leading-snug transition-colors duration-300 ${crossed ? 'text-neutral-400 line-through' : task.done ? 'text-neutral-400 line-through' : 'text-neutral-800'}`}>{task.text}</span>
             </button>
           )}
 
-          {!editing && (
-            <>
-              {/* ✎ — edit the step's text (re-classified on save). Quiet, hover-revealed, active steps only. */}
-              {!crossed && !handed && (
-                <button
-                  onClick={(e) => { e.stopPropagation(); if (!busy && !classifying) setEditing(true); }}
-                  disabled={busy || classifying}
-                  title="Edit this step"
-                  aria-label="Edit step"
-                  className="flex-shrink-0 -mt-0.5 p-0.5 text-neutral-300 opacity-0 group-hover/step:opacity-100 focus:opacity-100 hover:text-indigo-600 transition-all disabled:opacity-40"
-                >
-                  <PencilIcon className="w-3.5 h-3.5" />
-                </button>
+          {/* ⋯ — the ONE quiet home for this row's PLAN-EDITING controls (edit / attach / set-aside).
+              Hover/focus-revealed; when the step is crossed out it stays visible (so Restore is reachable).
+              A done / handed / mid-flight step carries no editing menu — its plan slot is settled. */}
+          {!editing && !handed && !working && !delegating && !classifying && !task.done && (
+            <div className="relative flex-shrink-0 -mt-0.5">
+              <button
+                onClick={(e) => { e.stopPropagation(); if (!busy) setMenuOpen((v) => !v); }}
+                disabled={busy}
+                title="Edit this step"
+                aria-label="Step options"
+                aria-haspopup="menu"
+                aria-expanded={menuOpen}
+                className={`p-0.5 rounded transition-all disabled:opacity-40 ${crossed || menuOpen ? 'text-neutral-400 opacity-100' : 'text-neutral-300 opacity-0 group-hover/step:opacity-100 focus:opacity-100'} hover:text-neutral-600 hover:bg-neutral-100`}
+              >
+                <EllipsisHorizontalIcon className="w-4 h-4" />
+              </button>
+              {menuOpen && (
+                <StepOverflowMenu
+                  crossed={crossed}
+                  busy={busy || classifying}
+                  onEdit={() => setEditing(true)}
+                  onDismiss={onDismiss}
+                  onAttach={onAttach ? () => attachInputRef.current?.click() : undefined}
+                  onClose={() => setMenuOpen(false)}
+                />
               )}
-              {/* ✕ — toggles "not needed". Crossing out keeps the step visible but struck + disabled; click
-                  again to restore. Quiet on hover when active; when crossed it stays visible (amber). */}
-              {!handed && (
-                <button
-                  onClick={handleDismiss}
-                  disabled={busy}
-                  title={crossed ? 'Restore — mark needed again' : 'Not needed — set this step aside'}
-                  aria-label={crossed ? 'Restore step' : 'Set step aside'}
-                  aria-pressed={crossed}
-                  className={`flex-shrink-0 -mt-0.5 p-0.5 transition-all disabled:opacity-40 ${crossed ? 'text-amber-500 opacity-100 hover:text-amber-600' : 'text-neutral-300 opacity-0 group-hover/step:opacity-100 focus:opacity-100 hover:text-rose-500'}`}
-                >
-                  <XMarkIcon className="w-3.5 h-3.5" />
-                </button>
-              )}
-            </>
+            </div>
           )}
         </div>
 
@@ -2342,8 +2394,20 @@ function StepperRow({
               />
               {isSystem ? (
                 task.done ? (
-                  // Resolved — a reply → "Sent ✓", an invite → "Invite sent ✓", a run analyze/fetch → "Done ✓".
-                  <StateChip state="sent" label={sysKind === 'invite' ? 'Invite sent' : task.result ? 'Done' : 'Sent'} />
+                  // Resolved — the done wording is CAPABILITY-based, not a global "Sent". Only a real send
+                  // step (an invite → "Invite sent"; a draft/send reply → "Sent") reads as sent; every other
+                  // capability (analyze / fetch / an auto-folded internal check like "Check calendar…") reads
+                  // as "Done". Fixes a non-send folded step wrongly showing "✓ Sent".
+                  <StateChip
+                    state="sent"
+                    label={
+                      sysKind === 'invite'
+                        ? 'Invite sent'
+                        : task.capability === 'send' || task.capability === 'draft'
+                          ? 'Sent'
+                          : 'Done'
+                    }
+                  />
                 ) : sysKind && actionLabel && onAction ? (
                   // A prepared SEND step awaiting approval: the "Review & send →" action reveals its surface.
                   // An invite is an irreversible commit → the amber "Ready to send — approve" gate.
@@ -2469,26 +2533,20 @@ function StepperRow({
           )}
         </div>
 
-        {/* task-workflows S4 — ALWAYS-ALLOW ATTACH: any actionable step gets a quiet 📎 affordance to
-            attach a file into the item's pool, even if the step didn't request one (an override / a way
-            to feed a doc to a downstream step). Hidden while set-aside / handed / mid-flight, and hidden
-            for an awaiting_input step (its own find/upload flow already owns attachment). Hover-revealed. */}
+        {/* task-workflows S4 — ALWAYS-ALLOW ATTACH: the manual "Attach a file" affordance moved into the
+            row's ⋯ overflow menu (it's a plan-editing move, not a live-run control). Here we keep only the
+            in-flight feedback (a quiet "Attaching…" line) + the hidden file input the ⋯ entry triggers.
+            Suppressed while set-aside / handed / mid-flight, and for an awaiting_input step (which owns its
+            own find/upload flow). */}
         {!crossed && !handed && !working && !delegating && !classifying && !awaitingInput && onAttach && (
-          <div className="mt-1">
-            {uploading ? (
-              <span className="inline-flex items-center gap-1 text-[11px] font-medium text-indigo-500">
-                <span className="w-2.5 h-2.5 rounded-full border-[1.5px] border-indigo-300 border-t-indigo-600 animate-spin" />
-                Attaching…
-              </span>
-            ) : (
-              <button
-                onClick={(e) => { e.stopPropagation(); if (!busy) attachInputRef.current?.click(); }}
-                disabled={busy}
-                title="Attach a file to this item"
-                className="inline-flex items-center gap-1 text-[11px] font-medium text-neutral-300 opacity-0 group-hover/step:opacity-100 focus:opacity-100 hover:text-indigo-600 transition-all disabled:opacity-40"
-              >
-                <PaperClipIcon className="w-3 h-3" />Attach a file
-              </button>
+          <>
+            {uploading && (
+              <div className="mt-1">
+                <span className="inline-flex items-center gap-1 text-[11px] font-medium text-indigo-500">
+                  <span className="w-2.5 h-2.5 rounded-full border-[1.5px] border-indigo-300 border-t-indigo-600 animate-spin" />
+                  Attaching…
+                </span>
+              </div>
             )}
             <input
               ref={attachInputRef}
@@ -2501,7 +2559,7 @@ function StepperRow({
                 if (f && onAttach) onAttach(f);
               }}
             />
-          </div>
+          </>
         )}
       </div>
     </li>
