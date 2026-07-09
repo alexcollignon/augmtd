@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { generateItemPlan, classifyStep, detectAttachmentRequest, type ItemPlanKind, type ItemPlanTask } from '@/lib/home/item-plan';
 import { PLAN_VERSION } from '@/lib/home/capability-map';
 import { buildItemContext } from '@/lib/home/item-context';
+import { getUnderstanding, type ItemRelevance } from '@/lib/inbox/item-understanding';
 
 export const maxDuration = 30;
 
@@ -39,6 +40,28 @@ async function buildContext(
 ): Promise<string | null> {
   const ctx = await buildItemContext(supabase, userId, kind, entityId);
   return ctx ? ctx.text : null;
+}
+
+// The item's understood RELEVANCE (reply | action | awareness), from `inbox_items.source_data.
+// understanding` — the SINGLE signal that keeps the generated plan coherent with the deep-dive's
+// primary surface (awareness → no phantom reply step). Only the inbox-item kinds carry it; a
+// meeting/commitment plan reasons freely (no reply-gate). Non-fatal: missing → null (today's behavior).
+async function getItemRelevance(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+  kind: Kind,
+  entityId: string,
+): Promise<ItemRelevance | null> {
+  if (kind !== 'email' && kind !== 'awareness' && kind !== 'followup') return null;
+  try {
+    const { data: item } = await supabase
+      .from('inbox_items')
+      .select('source_data')
+      .eq('id', entityId).eq('user_id', userId).maybeSingle();
+    return getUnderstanding(item)?.relevance ?? null;
+  } catch {
+    return null;
+  }
 }
 
 // task-workflows S3 — flag a freshly-graded [You] step that is a "provide a document" ask as an
@@ -81,7 +104,8 @@ export async function POST(request: NextRequest) {
     }
 
     const context = (await buildContext(supabase, user.id, kind, entityId)) || '';
-    const plan = await generateItemPlan(supabase, user.id, { kind, entityId, context });
+    const relevance = await getItemRelevance(supabase, user.id, kind, entityId);
+    const plan = await generateItemPlan(supabase, user.id, { kind, entityId, context, relevance });
     // task-workflows S3: mark any "provide a document" [You] step as an attachment request up front.
     plan.tasks = plan.tasks.map(withAttachmentRequest);
 

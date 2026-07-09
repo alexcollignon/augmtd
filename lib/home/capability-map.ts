@@ -18,7 +18,9 @@ import type { FeatureKey } from '@/lib/workspace/types';
 // whose stored `version !== PLAN_VERSION` is treated as STALE by `POST /api/items/plan` and silently
 // regenerated + re-stamped on next open — so there's no manual cache-bust / row-delete anymore.
 // (Bumped for the stage-2 classification engine + editable-plan work.)
-export const PLAN_VERSION = 1;
+// (Bumped to 2 for the relevance-gated generation — awareness items must NOT keep a phantom reply step,
+// so stale pre-gate plans regenerate on next open.)
+export const PLAN_VERSION = 2;
 
 // 'atomic'   → deterministic, no judgment → the System runs it directly (a `tool`/`ai` workflow step).
 // 'judgment' → benefits from a coworker's voice/reasoning/skills → an `agent` step.

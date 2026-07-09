@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { loadUserRules } from '@/lib/inbox/rules/load';
 import { setInboxRules, classifyItem, type ItemType } from '@/lib/inbox/classify-item';
+import { getUnderstanding, type ItemRelevance } from '@/lib/inbox/item-understanding';
 
 export const maxDuration = 15;
 
@@ -34,6 +35,12 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     itemType = classifyItem(item as any);
   } catch { /* fall back to fyi */ }
+
+  // The item's understood RELEVANCE (reply | action | awareness) — the SINGLE signal that drives the
+  // deep-dive's primary surface (reply → composer open; awareness → composer collapsed + Dismiss lead;
+  // action → action lead) AND keeps it coherent with the generated plan (same signal both places).
+  // Non-fatal: missing understanding → null → the client falls back to today's composer-open behavior.
+  const relevance: ItemRelevance | null = getUnderstanding(item)?.relevance ?? null;
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const sd = (item.source_data ?? {}) as Record<string, any>;
@@ -98,6 +105,9 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     // The classified type — drives the deep-dive header badge so it reflects reality (needs_reply →
     // "Reply needed"; fyi → "For awareness"; etc.), instead of always claiming "Reply needed".
     type: itemType,
+    // The understood relevance — drives the deep-dive's PRIMARY surface (reply=composer / awareness=
+    // dismiss+collapsed / action=action) so the visible action + the plan can't disagree.
+    relevance,
     fromName: newest?.fromName ?? sd.from_name ?? null,
     fromAddress: newest?.from ?? sd.from ?? null,
     receivedAt: newest?.receivedAt ?? sd.received_at ?? item.created_at ?? null,

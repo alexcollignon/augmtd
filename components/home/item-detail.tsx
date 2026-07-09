@@ -19,6 +19,7 @@ import {
   ClipboardDocumentListIcon,
   SparklesIcon,
   ArrowUturnRightIcon,
+  ArrowUturnLeftIcon,
 } from '@heroicons/react/24/outline';
 import { ThreadMessages, type ThreadMessage } from '@/components/inbox/thread-messages';
 import ReplyEditor from '@/components/inbox/reply-editor';
@@ -685,10 +686,14 @@ function RecipientChips({ recipients, onChange }: { recipients: string[]; onChan
   );
 }
 
-function ForwardPreviewCard({ kind, entityId, taskId, onSent, onCancel }: {
+function ForwardPreviewCard({ kind, entityId, taskId, itemLevel, onSent, onCancel }: {
   kind: ItemKind;
   entityId: string;
   taskId?: string;
+  // itemLevel — the forward was opened from the item-level action palette (no plan step). We hint the
+  // prepare endpoint (`actionType:'forward'`) so it prepares a forward for the whole item even without
+  // a forward step in the plan.
+  itemLevel?: boolean;
   onSent?: () => void;
   onCancel?: () => void;
 }) {
@@ -708,7 +713,7 @@ function ForwardPreviewCard({ kind, entityId, taskId, onSent, onCancel }: {
     setLoading(true);
     fetch('/api/items/prepare', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ kind, entityId, taskId }),
+      body: JSON.stringify({ kind, entityId, taskId, ...(itemLevel ? { actionType: 'forward' } : {}) }),
     })
       .then((r) => (r.ok ? r.json() : Promise.reject()))
       .then((d: PreparedForward | { type: string }) => {
@@ -2813,6 +2818,10 @@ type ThreadData = {
   // The item's classified type — drives the header badge (so an FYI newsletter reads "For awareness",
   // not "Reply needed"). Optional for back-compat with any caller that doesn't send it.
   type?: 'needs_reply' | 'to_do' | 'waiting_on' | 'reminder' | 'fyi' | 'hidden';
+  // The understood relevance — drives the deep-dive's PRIMARY surface (reply → composer open;
+  // awareness → composer collapsed + Dismiss lead; action → action lead). Optional/back-compat; missing
+  // → the composer opens (today's behavior).
+  relevance?: 'reply' | 'action' | 'awareness' | null;
   fromName: string | null;
   fromAddress: string | null;
   receivedAt: string | null;
@@ -2831,6 +2840,83 @@ const EMAIL_BADGE: Record<NonNullable<ThreadData['type']>, { label: string }> = 
   fyi: { label: 'For awareness' },
   hidden: { label: 'For awareness' },
 };
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// ACTION PALETTE — the CONSISTENT, always-available action set on EVERY email deep-dive, regardless of
+// which Home section the item came from or its relevance. FREEDOM: the user is never boxed in by a
+// type-locked layout. Reply · Dismiss · Forward · Hand to a coworker — one click, never hidden.
+//   • Reply    — opens/reveals the composer (the reply task's surface, owner=you). On an awareness/
+//                action item the composer was merely collapsed; this is how the user replies anyway.
+//   • Dismiss  — acknowledges the item (the primary action for awareness). Reuses the inbox dismiss.
+//   • Forward  — opens the grounded prepared forward (approve-before-commit).
+//   • Coworker — hands the reply to AUGMTD/a coworker (the owner model): they own it, the composer stays
+//                the owner=you surface. Reuses the shared CoworkerPicker + the plan's delegateItem.
+// The LEAD (accented) action follows relevance: reply → Reply, awareness → Dismiss, action → the
+// natural action (we lead with Reply, since replying/handling is the move and Dismiss stays available).
+// Everything else is a quiet, equal-weight control — present but not shouting.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+function EmailActionPalette({
+  relevance,
+  composerOpen,
+  onReply,
+  onDismiss,
+  onForward,
+  onDelegate,
+  dismissing,
+}: {
+  relevance: 'reply' | 'action' | 'awareness' | null;
+  composerOpen: boolean;
+  onReply: () => void;
+  onDismiss: () => void;
+  onForward: () => void;
+  onDelegate: (w: Coworker) => void;
+  dismissing: boolean;
+}) {
+  const [pickerOpen, setPickerOpen] = useState(false);
+  // The lead action is accented (indigo). On awareness the lead is Dismiss; otherwise Reply. Reply is
+  // suppressed as the lead only when the composer is already open (nothing to reveal) — it stays present
+  // as a quiet control so the palette shape is constant.
+  const dismissIsLead = relevance === 'awareness';
+  const btn = (accent: boolean) =>
+    accent
+      ? 'inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 text-white px-3.5 py-1.5 text-[12.5px] font-medium hover:bg-indigo-700 transition-colors'
+      : 'inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-white text-neutral-600 px-3 py-1.5 text-[12.5px] font-medium hover:bg-neutral-50 hover:text-neutral-800 transition-colors';
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <button
+        onClick={onReply}
+        className={btn(!dismissIsLead && !composerOpen)}
+        title="Write a reply"
+      >
+        <ArrowUturnLeftIcon className="w-3.5 h-3.5" />Reply
+      </button>
+      <button
+        onClick={onDismiss}
+        disabled={dismissing}
+        className={btn(dismissIsLead)}
+        title="Acknowledge and clear this from your Home"
+      >
+        <CheckCircleIcon className="w-3.5 h-3.5" />{dismissing ? 'Dismissing…' : 'Dismiss'}
+      </button>
+      <button onClick={onForward} className={btn(false)} title="Forward this email">
+        <ArrowUturnRightIcon className="w-3.5 h-3.5" />Forward
+      </button>
+      <div className="relative">
+        <button onClick={() => setPickerOpen((v) => !v)} className={btn(false)} title="Hand the reply to a coworker">
+          <UserPlusIcon className="w-3.5 h-3.5" />Hand to a coworker
+        </button>
+        {pickerOpen && (
+          <CoworkerPicker
+            direction="down"
+            align="left"
+            onPick={(w) => { setPickerOpen(false); onDelegate(w); }}
+            onClose={() => setPickerOpen(false)}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
 
 function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
   const router = useRouter();
@@ -2852,6 +2938,24 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
   const editorRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null); // the docked reply composer — a draft-task scrolls here
 
+  // ── PRIMARY-SURFACE state, driven by the item's understood RELEVANCE (the composer IS the reply
+  // task's surface — owner=you — not a separate always-open box). Default:
+  //   • reply     → composer OPEN with the draft (as today).
+  //   • awareness → composer COLLAPSED; the thread + a prominent Dismiss lead (no auto-open empty box
+  //     on a CC'd FYI). "Reply" in the palette expands it if the user chooses to reply anyway.
+  //   • action    → composer COLLAPSED; the action leads. "Reply" expands it.
+  // Non-fatal: relevance null/unknown → composer OPEN (today's behavior). The user can override freely
+  // via the "Reply" action, so a mis-judged relevance never boxes them in.
+  const [composerOpen, setComposerOpen] = useState(true);
+  const [relevance, setRelevance] = useState<'reply' | 'action' | 'awareness' | null>(null);
+  // Once the user manually toggles the composer, stop auto-seeding from the (late-arriving) relevance.
+  const composerTouchedRef = useRef(false);
+
+  // ── Item-level actions from the palette (freedom — always available regardless of section).
+  const [itemDismissed, setItemDismissed] = useState(false);
+  const [dismissing, setDismissing] = useState(false);
+  const [forwarding, setForwarding] = useState(false); // the item-level forward card is open
+
   // Load the thread + the prepared draft in parallel — same endpoints the Home uses.
   useEffect(() => {
     let alive = true;
@@ -2860,6 +2964,15 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
       .then((d: ThreadData) => {
         if (!alive) return;
         setThread(d);
+        // Seed the primary surface from the understood relevance (only until the user touches the
+        // composer, so a late thread load never yanks the box shut after they opened it).
+        const rel = d.relevance ?? null;
+        setRelevance(rel);
+        if (!composerTouchedRef.current) {
+          // reply / unknown → open (today's behavior); awareness / action → collapsed (lead with
+          // Dismiss / the action). The user reopens it any time via the palette's "Reply".
+          setComposerOpen(rel === null || rel === 'reply');
+        }
       })
       .catch(() => { if (alive) setThreadErr(true); });
 
@@ -2944,7 +3057,39 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
 
   const hasThread = !threadErr && (thread?.messages?.length ?? 0) > 1;
 
-  const scrollToComposer = () => composerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  // ── The palette's "Reply" — the composer IS the reply task's surface (owner=you). On an awareness/
+  // action item the composer was just collapsed, not gone: open it + scroll to it. On a reply item it's
+  // already open, so this just scrolls. Marks the composer "touched" so a late relevance seed can't
+  // re-collapse it.
+  const openComposer = () => {
+    composerTouchedRef.current = true;
+    setComposerOpen(true);
+    setForwarding(false);
+    // scroll after the box has a chance to render.
+    requestAnimationFrame(() => composerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }));
+  };
+  // The reply STEP's action (from the plan stepper) reveals/focuses the composer — same surface.
+  const scrollToComposer = () => openComposer();
+
+  // ── Item-level Dismiss (acknowledge) — the primary action for an awareness item. Reuses the Home's
+  // inbox dismiss endpoint; on success we close back to the Home (its auto-refresh drops the item).
+  const dismissItem = async () => {
+    if (dismissing || itemDismissed) return;
+    setDismissing(true);
+    try {
+      const res = await fetch(`/api/inbox/${id}/dismiss`, { method: 'POST' });
+      if (res.ok) {
+        setItemDismissed(true);
+        setTimeout(() => router.back(), 700);
+      }
+    } finally {
+      setDismissing(false);
+    }
+  };
+
+  // ── Item-level Forward — opens the grounded ForwardPreviewCard for the whole item (approve-before-
+  // commit; nothing sends until "Review & forward"). Collapses the composer so there's one send surface.
+  const openForward = () => { setForwarding(true); setComposerOpen(false); };
 
   return (
     // Two-column deep-dive: MAIN (header / thread / docked composer) + TASKS PANEL (right) when the
@@ -2986,6 +3131,39 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
           )}
         </div>
 
+        {/* CONSISTENT ACTION PALETTE — always present (Reply · Dismiss · Forward · Hand to a coworker),
+            so the user is never boxed in by the item's relevance or which Home section it came from. The
+            lead action follows relevance (awareness → Dismiss; else Reply); everything is one click. */}
+        {!itemDismissed && (
+          <EmailActionPalette
+            relevance={relevance}
+            composerOpen={composerOpen}
+            onReply={openComposer}
+            onDismiss={dismissItem}
+            onForward={openForward}
+            onDelegate={(w) => { plan.delegateItem(w.id, w.name); }}
+            dismissing={dismissing}
+          />
+        )}
+        {itemDismissed && (
+          <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50/60 px-4 py-3">
+            <CheckCircleIcon className="w-4 h-4 text-emerald-600" />
+            <p className="text-[13px] font-medium text-emerald-700">Dismissed.</p>
+          </div>
+        )}
+
+        {/* Item-level prepared FORWARD card — opened from the palette's "Forward" (whole item, no plan
+            step). Grounded + approve-before-commit; on send it closes back to the Home. */}
+        {forwarding && (
+          <ForwardPreviewCard
+            kind="email"
+            entityId={id}
+            itemLevel
+            onSent={() => { setTimeout(() => router.back(), 700); }}
+            onCancel={() => setForwarding(false)}
+          />
+        )}
+
         {/* What this takes — INLINE (stacked) fallback, shown only below `lg`; on `lg`+ the same
             breakdown lives in the right TASKS PANEL. Renders only when the plan is genuinely
             multi-step (≥2 tasks). A system draft/send task scrolls to the docked reply composer. */}
@@ -3012,9 +3190,21 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
         )}
       </div>
 
-      {/* 3 — Docked reply composer: pinned to the bottom, always visible. Subtle top border +
-          elevated bg so it reads as a docked reply bar. On short viewports it caps its own height
-          and scrolls internally so Send never leaves the screen. */}
+      {/* 3 — Docked reply composer: the reply TASK's surface (owner=you). Its OPEN/COLLAPSED state is
+          driven by the item's relevance (reply → open; awareness/action → collapsed, leading with the
+          palette's Dismiss/action) so there is ONE reply surface, never a separate always-open box that
+          could disagree with the Identified-tasks panel. Collapsed → a slim "Reply" bar (the composer is
+          collapsed, not gone) so the user can always reply. */}
+      {!composerOpen && !sent ? (
+        <div className="flex-shrink-0 border-t border-neutral-200 bg-neutral-50/80 backdrop-blur px-7 py-3">
+          <button
+            onClick={openComposer}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-white text-neutral-600 px-3.5 py-1.5 text-[12.5px] font-medium hover:bg-neutral-50 hover:text-neutral-800 transition-colors"
+          >
+            <ArrowUturnLeftIcon className="w-3.5 h-3.5" />Reply
+          </button>
+        </div>
+      ) : (
       <div ref={composerRef} className="flex-shrink-0 border-t border-neutral-200 bg-neutral-50/80 backdrop-blur px-7 py-4 max-h-[45vh] overflow-y-auto">
         <h2 className={SECTION_LABEL}>Your reply</h2>
         {sent ? (
@@ -3065,6 +3255,7 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
           </div>
         )}
       </div>
+      )}
 
       {/* KB file picker modal (shared with the inbox) — "From knowledge base" attach path. */}
       {atts.kbPickerOpen && (

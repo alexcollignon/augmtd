@@ -28,8 +28,8 @@ export async function POST(request: NextRequest) {
     const { data: { user }, error: authError } = await supabase.auth.getUser();
     if (authError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const body = (await request.json()) as { kind: ItemPlanKind; entityId: string; taskId?: string; capability?: string };
-    const { kind, entityId, taskId } = body;
+    const body = (await request.json()) as { kind: ItemPlanKind; entityId: string; taskId?: string; capability?: string; actionType?: 'forward' };
+    const { kind, entityId, taskId, actionType } = body;
     if (!entityId || !VALID_KINDS.includes(kind)) {
       return NextResponse.json({ error: 'kind and entityId are required' }, { status: 400 });
     }
@@ -46,6 +46,13 @@ export async function POST(request: NextRequest) {
         const found = (row.tasks as ItemPlanTask[]).find((t) => t.id === taskId);
         if (found) task = { capability: found.capability, text: found.text, detail: found.detail };
       }
+    }
+    // ITEM-LEVEL action (no plan step) — the consistent action palette's "Forward" opens a prepared
+    // forward for the whole item, not a specific plan step. `actionType:'forward'` synthesizes a
+    // forward-shaped task so `routeStepToActionType` routes it to a prepared forward (grounded in the
+    // item's real email), instead of falling through to the email composer.
+    if (!task && actionType === 'forward') {
+      task = { capability: 'send', text: 'Forward this email', detail: undefined };
     }
     // If the client already sent a capability but the task row wasn't found (edge case), still route.
     if (!task) {
