@@ -17,14 +17,29 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'sender required' }, { status: 400 });
     }
 
-    // The FYI group label is from_name (falling back to from), so match either column.
+    // The FYI group label is from_name (falling back to from), so match either column. We fetch the
+    // matching items first, then update each so we can merge source_data.resolved_at (the REAL
+    // resolution timestamp the Day-cleared ring counts by) per row — a bulk .update() can't do a
+    // per-row jsonb merge. Dedup ids across both columns so a row matched twice is stamped once.
+    const nowIso = new Date().toISOString();
+    const seen = new Set<string>();
     for (const col of ['from_name', 'from'] as const) {
-      await supabase.from('inbox_items')
-        .update({ status: 'dismissed', updated_at: new Date().toISOString() })
+      const { data: rows } = await supabase.from('inbox_items')
+        .select('id, source_data')
         .eq('user_id', user.id)
         .eq('status', 'pending')
         .in('work_state', ['noted', 'noise'])
         .eq(`source_data->>${col}`, sender);
+      for (const row of (rows ?? []) as Array<{ id: string; source_data: Record<string, unknown> | null }>) {
+        if (seen.has(row.id)) continue;
+        seen.add(row.id);
+        const sd = (row.source_data ?? {}) as Record<string, unknown>;
+        await supabase.from('inbox_items')
+          .update({ status: 'dismissed', source_data: { ...sd, resolved_at: nowIso }, updated_at: nowIso })
+          .eq('id', row.id)
+          .eq('user_id', user.id)
+          .eq('status', 'pending');
+      }
     }
 
     // Activity timeline (non-fatal).

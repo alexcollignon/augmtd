@@ -133,8 +133,11 @@ export async function POST(
     }
 
     // Resolution-on-reply: the loop is closed — clear this item so it leaves "Needs reply"
-    // (inbox + Home). Replying ≠ reading; this fires only on an actual sent reply.
-    await supabase.from('inbox_items').update({ status: 'completed' }).eq('id', id).eq('user_id', user.id);
+    // (inbox + Home). Replying ≠ reading; this fires only on an actual sent reply. Stamp
+    // source_data.resolved_at — the REAL resolution timestamp the Day-cleared ring counts by.
+    await supabase.from('inbox_items')
+      .update({ status: 'completed', source_data: { ...sourceData, resolved_at: new Date().toISOString() } })
+      .eq('id', id).eq('user_id', user.id);
 
     // Swap the mailbox label to AUGMTD/Done (honors auto_label). Non-fatal, after() so it never
     // blocks the send response. We have the connection + thread id already, but reconcileItemLabel

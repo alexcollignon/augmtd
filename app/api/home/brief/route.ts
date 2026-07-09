@@ -786,11 +786,22 @@ export async function GET() {
   // replies + non-meeting/needs-you priority cards + on-your-plate commitments). The client re-derives
   // `needYou` from its own live state and increments `cleared` as the user acts, so the ring rises
   // instantly without a reload. This route value is the fresh baseline on each load.
+  // The "cleared" half counts things the user RESOLVED today — keyed on a real resolution timestamp,
+  // NOT updated_at. updated_at bumps on ANY write (sync, label reconcile, reclassification, backfill
+  // scripts), so a thread resolved weeks ago gets pulled into today's window by routine maintenance
+  // and the ring fills passively with zero user action. Instead:
+  //   • inbox_items → source_data.resolved_at (a jsonb ISO string, stamped on every resolve path,
+  //     cleared on every reopen). ISO strings sort lexicographically = chronologically, so `>=` works.
+  //     Legacy rows without it simply don't count — the correct, conservative behaviour (under-count,
+  //     never over-count).
+  //   • commitments → the resolved_at column (migration 20260705d), stamped on resolve.
   const [inboxClearedRes, commitClearedRes, repliesSentRes] = await Promise.all([
     supabase.from('inbox_items').select('id', { count: 'exact', head: true })
-      .eq('user_id', user.id).in('status', ['completed', 'dismissed']).gte('updated_at', startOfDay),
+      .eq('user_id', user.id).in('status', ['completed', 'dismissed']).gte('source_data->>resolved_at', startOfDay),
     supabase.from('commitments').select('id', { count: 'exact', head: true })
-      .eq('user_id', user.id).in('status', ['done', 'dismissed']).gte('updated_at', startOfDay),
+      .eq('user_id', user.id).in('status', ['done', 'dismissed']).gte('resolved_at', startOfDay),
+    // NOTE: repliesSentRes still counts sent emails today by received_at — a genuine user action, so
+    // it's not the passive-fill bug. Could be scoped to inbox-linked sends later if it over-counts.
     supabase.from('emails').select('id', { count: 'exact', head: true })
       .eq('user_id', user.id).eq('is_from_user', true).gte('received_at', startOfDay),
   ]);

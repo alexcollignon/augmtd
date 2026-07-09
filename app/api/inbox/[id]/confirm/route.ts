@@ -52,7 +52,12 @@ export async function POST(
       // If confirmed, move to "prepared" section; if rejected, dismiss like the dismiss button
       visual_section: action === 'confirm_as_mine' ? 'prepared' : item.visual_section,
       updated_at: now,
-      ...(action === 'not_my_task' && { status: 'dismissed' }),
+      // not_my_task dismisses the item — stamp source_data.resolved_at (the REAL resolution timestamp
+      // the Day-cleared ring counts by) alongside the status flip.
+      ...(action === 'not_my_task' && {
+        status: 'dismissed',
+        source_data: { ...((item.source_data ?? {}) as Record<string, any>), resolved_at: now },
+      }),
     };
 
     const { error: updateError } = await supabase

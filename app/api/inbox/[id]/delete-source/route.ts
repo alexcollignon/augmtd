@@ -54,7 +54,8 @@ export async function POST(
     const deletedAt = new Date().toISOString();
     await supabase
       .from('inbox_items')
-      .update({ status: 'dismissed', source_data: { ...sourceData, deleted_at: deletedAt }, updated_at: deletedAt })
+      // resolved_at = the REAL resolution timestamp the Day-cleared ring counts by (not updated_at).
+      .update({ status: 'dismissed', source_data: { ...sourceData, deleted_at: deletedAt, resolved_at: deletedAt }, updated_at: deletedAt })
       .eq('id', id)
       .eq('user_id', user.id);
 

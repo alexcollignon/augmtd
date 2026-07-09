@@ -45,12 +45,16 @@ export async function POST(
       );
     }
 
-    // Mark as completed
+    // Mark as completed. Stamp source_data.resolved_at — the REAL resolution timestamp the Day-cleared
+    // ring counts by (updated_at is a leaky proxy: it bumps on any sync/label/backfill write).
+    const nowIso = new Date().toISOString();
+    const completeSd = (item.source_data ?? {}) as Record<string, unknown>;
     const { error: updateError } = await supabase
       .from('inbox_items')
       .update({
         status: 'completed',
-        updated_at: new Date().toISOString(),
+        source_data: { ...completeSd, resolved_at: nowIso },
+        updated_at: nowIso,
       })
       .eq('id', id)
       .eq('user_id', user.id);
