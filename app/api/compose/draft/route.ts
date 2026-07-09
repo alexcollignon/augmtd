@@ -6,6 +6,7 @@ import { loadUserRules } from '@/lib/inbox/rules/load';
 import { setInboxRules, shouldDraftReply } from '@/lib/inbox/classify-item';
 import { detectLanguage } from '@/lib/inbox/detect-language';
 import { generateReplyDraft } from '@/lib/inbox/draft-reply';
+import { loadPlanStepSummaries, type ItemPlanKind } from '@/lib/home/item-plan';
 
 export const maxDuration = 30;
 
@@ -196,8 +197,11 @@ export async function POST(request: NextRequest) {
     // for FYI/`noted` inbox items (recipient/subject still returned; the user writes the body themselves).
     let body = '';
     if (!skipDraft && replyItemSD) try {
+      // Fix 3 — draft ↔ plan coherence: load this item's LIVE plan step summaries (deep-dives plan
+      // inbox items under kind 'email') so the reply narrates one story with the Identified tasks.
+      const planSteps = await loadPlanStepSummaries(supabase, user.id, 'email' as ItemPlanKind, entityId).catch(() => []);
       // Email/awareness reply → the shared reply drafter, which mirrors the incoming email's language.
-      body = await generateReplyDraft(user.id, replyItemSD, supabase, intent?.trim() || null);
+      body = await generateReplyDraft(user.id, replyItemSD, supabase, intent?.trim() || null, planSteps);
     } catch (e) {
       console.error('[compose/draft] reply drafting failed:', e);
     } else if (!skipDraft) try {

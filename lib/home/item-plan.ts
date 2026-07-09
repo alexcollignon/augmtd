@@ -138,6 +138,35 @@ export function detectAttachmentRequest(task: Pick<ItemPlanTask, 'actor' | 'text
 
 export type ItemPlan = { tasks: ItemPlanTask[] };
 
+// ── Fix 3 (draft ↔ plan coherence): load the item's LIVE plan-step summaries so the reply drafter can
+// narrate one story with the plan. Returns short "title — detail" lines for the active (non-dismissed,
+// non-done) steps of the stored `item_plans` row. Non-fatal: no plan / any error → []. Used by the
+// draft routes to pass `planSteps` into `generateReplyDraft`.
+export async function loadPlanStepSummaries(
+  client: SupabaseClient,
+  userId: string,
+  kind: ItemPlanKind,
+  entityId: string,
+): Promise<string[]> {
+  try {
+    const { data: row } = await client
+      .from('item_plans')
+      .select('tasks')
+      .eq('user_id', userId).eq('kind', kind).eq('entity_id', entityId)
+      .maybeSingle();
+    if (!row || !Array.isArray(row.tasks)) return [];
+    return (row.tasks as ItemPlanTask[])
+      .filter((t) => t && !t.dismissed && !t.done && t.text)
+      .slice(0, 6)
+      .map((t) => {
+        const detail = t.detail && t.detail.trim().toLowerCase() !== t.text.trim().toLowerCase() ? ` — ${t.detail.trim()}` : '';
+        return `${t.text.trim()}${detail}`.slice(0, 200);
+      });
+  } catch {
+    return [];
+  }
+}
+
 // The capability set the model grades against is DERIVED from the single source of truth
 // (`lib/home/capability-map.ts` → `renderCapabilitySet()`), NOT a hand-written blurb — adding a
 // `CAPABILITY_MAP` entry updates this prompt automatically. The old prose (which hard-coded
@@ -226,6 +255,45 @@ function isReplyStep(t: ItemPlanTask): boolean {
   if (CALENDAR_INVITE_PHRASE.test(hay)) return false; // an invite send is a distinct prepared action
   if (t.actor === 'system' && (t.capability === 'draft' || t.capability === 'send')) return true;
   return REPLY_PHRASE.test(hay);
+}
+
+// ── Fix 3 (draft ↔ plan coherence): FOLD a trivially-implied internal check. A purely-internal AUGMTD
+// analyze/fetch step whose whole job is to CHECK availability/calendar for a proposed time is trivially
+// satisfied the moment the reply/invite presumes that time — leaving it as an open "Ready" step
+// contradicts the draft ("Tomorrow 10am works"). So when the plan ALSO carries a reply or invite step
+// (which presumes the slot), we auto-resolve that internal check (mark it `done` — reversible, an AUGMTD
+// fetch/analyze) instead of showing it as pending noise.
+//
+// CONSERVATIVE by design — we only fold a step whose WHOLE job is to CHECK availability/the calendar for
+// a proposed time. That is a reversible internal look-up (AUGMTD can just do it), and the reply/invite
+// already presumes the answer — so it's trivially satisfied, not a distinct real-world action. We fold it
+// whether the generator graded it [system]/analyze/fetch OR [you] (some tiers grade an unmapped "check
+// your calendar" as [you] since there's no calendar-read capability — but it's still the trivially-implied
+// internal check, not real work the user must do). A genuinely distinct action (send the deck, locate a
+// FILE, place an order, sign, pay, a decision) is NEVER folded — "sending the deck IS a real task"; the
+// AVAILABILITY_OBJECT guard + the send-capability exclusion keep those safe.
+const INTERNAL_CHECK_PHRASE = /\b(check|confirm|verify|look at|review|see if|check for|ensure)\b/i;
+const AVAILABILITY_OBJECT = /\b(calendar|availability|available|schedule|free\/busy|free ?time|open slot|time\s?slot|(?:\d{1,2}\s?(?:am|pm))|availab)\b/i;
+
+function isTrivialInternalCheck(t: ItemPlanTask): boolean {
+  // Never fold a committing send step (a reply/invite is real) — only a pure look-up/check.
+  if (t.actor === 'system' && t.capability === 'send') return false;
+  const hay = `${t.text || ''} ${t.detail || ''}`;
+  // Must read as a CHECK of availability/the calendar — and NOT be a file/document action (locate/send
+  // the deck is a distinct task, never a trivial check even if it mentions a time).
+  if (!(INTERNAL_CHECK_PHRASE.test(hay) && AVAILABILITY_OBJECT.test(hay))) return false;
+  if (/\b(deck|file|document|attachment|pitch|slides?|report|proposal|contract)\b/i.test(hay)) return false;
+  return true;
+}
+
+function foldTrivialChecks(tasks: ItemPlanTask[]): ItemPlanTask[] {
+  // Only fold when a reply/invite step is present (something presumes the slot the check would confirm).
+  const hasReplyOrInvite = tasks.some((t) => {
+    const hay = `${t.text || ''} ${t.detail || ''}`;
+    return CALENDAR_INVITE_PHRASE.test(hay) || (t.actor === 'system' && (t.capability === 'draft' || t.capability === 'send')) || REPLY_PHRASE.test(hay);
+  });
+  if (!hasReplyOrInvite) return tasks;
+  return tasks.map((t) => (!t.done && isTrivialInternalCheck(t) ? { ...t, done: true, status: 'done' as const } : t));
 }
 
 function stripReplyStepsForAwareness(tasks: ItemPlanTask[]): ItemPlanTask[] {
@@ -446,6 +514,10 @@ export async function generateItemPlan(
     // emitted so a CC'd FYI never grows a phantom reply-workflow (the panel and the collapsed composer
     // stay in sync). Only fires for awareness; reply/action plans are untouched.
     if (input.relevance === 'awareness') tasks = stripReplyStepsForAwareness(tasks);
+    // Fix 3 — fold a trivially-implied internal availability/calendar check (auto-resolve it) so an
+    // open "Ready" step can't contradict a draft that already presumes the slot. Conservative: only a
+    // system analyze/fetch CHECK step, and only when a reply/invite sibling presumes the answer.
+    tasks = foldTrivialChecks(tasks);
     return { tasks };
   } catch (e) {
     console.error('[item-plan] generation failed:', e);

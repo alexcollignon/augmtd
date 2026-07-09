@@ -1327,6 +1327,8 @@ function isDirectRunnableCap(cap: PlanCap): boolean {
 // cache row is written). Owns tasks / loading / failed / pending + the [You]-checkbox PATCH handler +
 // the ≥2-task breakdown gate.
 type ItemPlan = {
+  kind: 'email' | 'meeting' | 'commitment' | 'awareness' | 'followup'; // the deep-dive's kind (for per-step preview fetches)
+  entityId: string;             // the deep-dive's entity id (for per-step preview fetches)
   tasks: PlanTask[] | null;     // ALL tasks (incl. dismissed) — the stepper renders crossed-out steps too
   loading: boolean;
   failed: boolean;
@@ -1865,7 +1867,7 @@ function useItemPlan(
   // stays visible. (A user-added step counts toward it — it's in `tasks`.)
   const hasBreakdown = !loading && !failed && !!tasks && tasks.length >= 2;
 
-  return { tasks, loading, failed, hasBreakdown, pending, classifyingId, toggle, dismiss, addStep, editStep, markSystemDone, delegatingId, delegateStep, delegateItem, runningId, runStep, uploadingId, uploadForStep, resolution, resolveFile, useResolvedFile, attachToStep, reassignStep, proposeCoworker, runPlan, markComposerSent };
+  return { kind: planKind, entityId, tasks, loading, failed, hasBreakdown, pending, classifyingId, toggle, dismiss, addStep, editStep, markSystemDone, delegatingId, delegateStep, delegateItem, runningId, runStep, uploadingId, uploadForStep, resolution, resolveFile, useResolvedFile, attachToStep, reassignStep, proposeCoworker, runPlan, markComposerSent };
 }
 
 // ── The per-step STATE CHIP — the single glanceable "where is this step" token. Every StepperRow
@@ -1897,6 +1899,139 @@ function StateChip({ state, label }: { state: StepState; label: string }) {
   );
 }
 
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// STEP NUTSHELL PREVIEW — the FLAGSHIP coherence pass. Every PREPARED/actionable step (system OR
+// coworker) surfaces a COMPACT PREVIEW of what it will do/produce, so the user understands at a glance
+// BEFORE approving/running — never an abstract label ("Review & send") with no visible content.
+//   • send_calendar_invite step → the prepared invite inline: title · when · attendees (from /api/items/
+//     prepare — the SAME grounded extractor the InvitePreviewCard uses; no new endpoint).
+//   • forward step               → "Forward to {recipient}" (the prepared To from /api/items/prepare).
+//   • draft / reply step         → a one-line gist of the drafted reply (the step's own `detail`, which
+//     the plan generator already writes as a concrete one-sentence gist).
+//   • document / generate (system) → the deliverable's gist ("Produced: …" once run; else the plan gist).
+//   • coworker step              → what the coworker will hand back ("Max will research … and hand back a brief").
+// Glanceable by design: one short line, expandable (invite/forward) to the full card via the row action.
+// Reuses the existing prepared-action data — no new fetch beyond the invite/forward prepare (already the
+// step's approve surface). Non-fatal: any fetch failure just hides the preview line (the row still works).
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+type StepPreviewData =
+  | { kind: 'invite'; title: string; when: string; attendees: string[] }
+  | { kind: 'forward'; to: string[] }
+  | null;
+
+// Lazy prepare-fetch for a send-type step (invite / forward) — pulls the grounded, concrete content so
+// the nutshell can render its specifics. Only fetches for invite/forward system steps; every other kind
+// derives its preview from data already on the task (no fetch). Idempotent per (planKind, entityId, taskId).
+function useStepPreview(
+  routeType: 'calendar_invite' | 'forward' | 'email',
+  planKind: 'email' | 'meeting' | 'commitment' | 'awareness' | 'followup',
+  entityId: string,
+  taskId: string,
+  enabled: boolean,
+): StepPreviewData {
+  const [data, setData] = useState<StepPreviewData>(null);
+  useEffect(() => {
+    if (!enabled || (routeType !== 'calendar_invite' && routeType !== 'forward')) return;
+    let alive = true;
+    fetch('/api/items/prepare', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: planKind, entityId, taskId }),
+    })
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then((d: PreparedInvite | PreparedForward | { type: string }) => {
+        if (!alive) return;
+        if (routeType === 'calendar_invite' && (d as PreparedInvite).type === 'calendar_invite') {
+          const inv = d as PreparedInvite;
+          setData({ kind: 'invite', title: inv.title || '', when: inv.startISO ? fmtInviteWhen(inv.startISO) : '', attendees: Array.isArray(inv.attendees) ? inv.attendees : [] });
+        } else if (routeType === 'forward' && (d as PreparedForward).type === 'forward') {
+          const f = d as PreparedForward;
+          setData({ kind: 'forward', to: Array.isArray(f.to) ? f.to : [] });
+        }
+      })
+      .catch(() => { /* non-fatal — no preview line */ });
+    return () => { alive = false; };
+  }, [routeType, planKind, entityId, taskId, enabled]);
+  return data;
+}
+
+// The rendered nutshell line for one active step. `previewData` is the fetched invite/forward specifics
+// (when available); everything else derives from the task + owner. Returns null when there's nothing
+// glanceable to add beyond the title (e.g. a bare [You] step with no detail).
+function StepPreview({ task, owner, coworkerName, previewData }: {
+  task: PlanTask;
+  owner: ProposedOwner;
+  coworkerName?: string | null;
+  previewData: StepPreviewData;
+}) {
+  // A concise noun for what a produce/coworker step hands back (best-effort from the step wording).
+  const deliverableNoun = (): string => {
+    const hay = `${task.text || ''} ${task.detail || ''}`.toLowerCase();
+    if (/\bpost\b|linkedin|social/.test(hay)) return 'a post';
+    if (/\bresearch|analy|market|competitor|background|look up|find out\b/.test(hay)) return 'a brief';
+    if (/\bdeck|slides?|presentation\b/.test(hay)) return 'a deck';
+    if (/\bdoc|document|report|write[- ]?up|article|summary|memo\b/.test(hay)) return 'a draft';
+    if (/\bdraft|reply|email|message\b/.test(hay)) return 'a draft';
+    return 'their work';
+  };
+
+  // INVITE — the concrete prepared invite (title · when · attendees). The flagship nutshell.
+  if (previewData?.kind === 'invite') {
+    const { title, when, attendees } = previewData;
+    const bits = [title || null, when || null, attendees.length ? `${attendees[0]}${attendees.length > 1 ? ` +${attendees.length - 1}` : ''}` : null].filter(Boolean);
+    if (!bits.length) return null;
+    return (
+      <div className="mt-1 flex items-center gap-1.5 text-[11.5px] text-neutral-500">
+        <CalendarDaysIcon className="w-3 h-3 flex-shrink-0 text-violet-400" />
+        <span className="truncate">{bits.join(' · ')}</span>
+      </div>
+    );
+  }
+
+  // FORWARD — "Forward to {recipient}" (the prepared To, or the step's named recipient).
+  if (previewData?.kind === 'forward') {
+    const to = previewData.to[0];
+    return (
+      <div className="mt-1 flex items-center gap-1.5 text-[11.5px] text-neutral-500">
+        <ArrowUturnRightIcon className="w-3 h-3 flex-shrink-0 text-violet-400" />
+        <span className="truncate">{to ? `Forward to ${to}${previewData.to.length > 1 ? ` +${previewData.to.length - 1}` : ''}` : 'Forward — add a recipient'}</span>
+      </div>
+    );
+  }
+
+  // COWORKER — what they'll hand back. "Max will {gist}, hand back {noun}".
+  if (owner === 'coworker' && coworkerName) {
+    const gist = (task.detail || task.text || '').replace(/\s+/g, ' ').trim();
+    const shortGist = gist.length > 90 ? gist.slice(0, 88).trimEnd() + '…' : gist;
+    return (
+      <div className="mt-1 flex items-start gap-1.5 text-[11.5px] text-neutral-500">
+        <UserPlusIcon className="w-3 h-3 flex-shrink-0 mt-[1px] text-indigo-400" />
+        <span className="min-w-0">{coworkerName} will {shortGist ? `${shortGist} — ` : ''}hand back {deliverableNoun()}.</span>
+      </div>
+    );
+  }
+
+  // SYSTEM draft / produce / analyze / fetch — a gist of what it produces. Prefer the produced
+  // deliverable's gist (once run); else the plan's concrete one-sentence `detail` (a real nutshell like
+  // "Confirms 10am, offers to send the deck"). Only shown when it adds beyond the terse title.
+  if (owner === 'system' && !task.deliverable) {
+    const gist = (task.detail || '').replace(/\s+/g, ' ').trim();
+    if (!gist || gist.toLowerCase() === (task.text || '').trim().toLowerCase()) return null;
+    const shortGist = gist.length > 110 ? gist.slice(0, 108).trimEnd() + '…' : gist;
+    const isDraft = task.capability === 'draft' || task.capability === 'send';
+    return (
+      <div className="mt-1 flex items-start gap-1.5 text-[11.5px] text-neutral-500">
+        {isDraft
+          ? <PencilIcon className="w-3 h-3 flex-shrink-0 mt-[1px] text-indigo-400" />
+          : <SparklesIcon className="w-3 h-3 flex-shrink-0 mt-[1px] text-indigo-400" />}
+        <span className="min-w-0">{shortGist}</span>
+      </div>
+    );
+  }
+
+  return null;
+}
+
 // ── One step in the "Identified tasks" workflow stepper. A vertical timeline row: a NODE (the AUGMTD
 // brand mark for a system step, a [You] checkbox for a your step) + a CONNECTOR line to the next node
 // + a SHORT title
@@ -1911,6 +2046,8 @@ function StepperRow({
   sysKind,
   proposedOwner,
   suggestedCoworker,
+  planKind,
+  entityId,
   onAction,
   onToggle,
   onDismiss,
@@ -1934,6 +2071,8 @@ function StepperRow({
   sysKind?: 'reply' | 'invite' | null; // a prepared system step: 'reply'→"Draft ready", 'invite'→"Ready to send"
   proposedOwner: ProposedOwner;     // the derived owner shown in the chip (system / coworker / you)
   suggestedCoworker?: Pick<Coworker, 'name' | 'worker_role'> | null; // the coworker the chip proposes/shows
+  planKind: 'email' | 'meeting' | 'commitment' | 'awareness' | 'followup'; // the deep-dive kind (nutshell preview fetches)
+  entityId: string;                 // the deep-dive entity id (nutshell preview fetches)
   onAction?: () => void;            // opens the prepared action (focuses the composer OR opens the invite card)
   onToggle: () => void;
   onDismiss: () => void;
@@ -1965,6 +2104,16 @@ function StepperRow({
   // task-workflows S3: a [You] step that asked for a file and hasn't been given one yet → render an
   // "Upload →" affordance instead of the plain "Needs you" checkbox chip.
   const awaitingInput = !crossed && !task.done && task.status === 'awaiting_input' && !task.request?.fulfilledRef;
+
+  // ── STEP NUTSHELL PREVIEW (Fix 2). An ACTIVE, not-yet-resolved system/coworker step surfaces a compact
+  // preview of what it will do/produce. Route the step (invite/forward/email) the same way the action
+  // resolver does, then fetch the invite/forward specifics lazily (email/analyze/etc. derive from the
+  // task with no fetch). Suppressed once the step is crossed out / done / handed off / mid-flight (the
+  // outcome — "Produced: …" / handed-back — takes over) and for a plain [You] step (nothing prepared).
+  const routeType = clientRouteActionType({ capability: task.capability, text: task.text, detail: task.detail });
+  const showPreview = !crossed && !handed && !task.done && !working && !delegating && !classifying && !awaitingInput
+    && (proposedOwner === 'coworker' || (isSystem && proposedOwner !== 'you'));
+  const previewData = useStepPreview(routeType, planKind, entityId, task.id, showPreview);
 
   useEffect(() => {
     if (editing) { setDraftText(task.text); inputRef.current?.focus(); inputRef.current?.select(); }
@@ -2104,6 +2253,13 @@ function StepperRow({
           <div className={`grid transition-all duration-300 ease-out ${expanded ? 'grid-rows-[1fr] opacity-100 mt-1' : 'grid-rows-[0fr] opacity-0'}`}>
             <p className={`overflow-hidden text-[12px] leading-relaxed transition-colors duration-300 ${crossed ? 'text-neutral-300 line-through' : 'text-neutral-500'}`}>{task.detail}</p>
           </div>
+        )}
+
+        {/* STEP NUTSHELL PREVIEW (Fix 2) — a compact line of what this step will DO/PRODUCE: the prepared
+            invite's title·when·attendees, "Forward to {recipient}", the drafted reply's gist, or what a
+            coworker will hand back. Glanceable; the row action opens the full card. */}
+        {showPreview && (
+          <StepPreview task={task} owner={proposedOwner} coworkerName={suggestedCoworker?.name ?? null} previewData={previewData} />
         )}
 
         {/* Handed-off result — the coworker's returned deliverable/summary, shown inline (collapsible). */}
@@ -2518,6 +2674,8 @@ function WhatThisTakes({
             sysKind={action?.sysKind ?? null}
             proposedOwner={proposedOwner}
             suggestedCoworker={suggestedCoworker}
+            planKind={plan.kind}
+            entityId={plan.entityId}
             onAction={action?.onAction}
             onToggle={() => toggle(t)}
             onDismiss={() => dismiss(t)}
@@ -3193,18 +3351,10 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
       {/* 3 — Docked reply composer: the reply TASK's surface (owner=you). Its OPEN/COLLAPSED state is
           driven by the item's relevance (reply → open; awareness/action → collapsed, leading with the
           palette's Dismiss/action) so there is ONE reply surface, never a separate always-open box that
-          could disagree with the Identified-tasks panel. Collapsed → a slim "Reply" bar (the composer is
-          collapsed, not gone) so the user can always reply. */}
-      {!composerOpen && !sent ? (
-        <div className="flex-shrink-0 border-t border-neutral-200 bg-neutral-50/80 backdrop-blur px-7 py-3">
-          <button
-            onClick={openComposer}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-white text-neutral-600 px-3.5 py-1.5 text-[12.5px] font-medium hover:bg-neutral-50 hover:text-neutral-800 transition-colors"
-          >
-            <ArrowUturnLeftIcon className="w-3.5 h-3.5" />Reply
-          </button>
-        </div>
-      ) : (
+          could disagree with the Identified-tasks panel. COLLAPSED → the composer is simply absent — the
+          action palette's "Reply" is the SINGLE reply control (no redundant slim "Reply" bar below it,
+          which duplicated the palette's Reply for the same thing). Reveal via the palette. */}
+      {!composerOpen ? null : (
       <div ref={composerRef} className="flex-shrink-0 border-t border-neutral-200 bg-neutral-50/80 backdrop-blur px-7 py-4 max-h-[45vh] overflow-y-auto">
         <h2 className={SECTION_LABEL}>Your reply</h2>
         {sent ? (
