@@ -1,4 +1,5 @@
 import { getAIClient, aiCreate } from '@/lib/ai/factory';
+import { logAIUsage } from '@/lib/ai/log-usage';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 const MAX_MEMORY_CHARS = 2000;
@@ -72,7 +73,7 @@ ${conversation.slice(0, 6000)}
 
 Respond with only new bullet points (or NO_UPDATE):`;
 
-  const { client: aiClient, model } = await getAIClient(userId, 'summarization', (aiSupabase ?? adminClient));
+  const { client: aiClient, model, endpoint, tier } = await getAIClient(userId, 'summarization', (aiSupabase ?? adminClient));
 
   const result = await aiCreate(aiClient, {
     model,
@@ -80,6 +81,9 @@ Respond with only new bullet points (or NO_UPDATE):`;
     max_tokens: 300,
     temperature: 0.2,
   });
+  logAIUsage(adminClient, {
+    userId, agentId, source: 'memory_extraction', provider: endpoint.provider, model, tier, taskType: 'summarization', usage: result.usage,
+  }).catch(() => {});
 
   const extracted = (result.choices?.[0]?.message?.content ?? '').trim();
   if (!extracted || extracted === 'NO_UPDATE') return { ok: true, updated: false };
@@ -96,6 +100,9 @@ ${newMemory}`;
       max_tokens: 400,
       temperature: 0.1,
     });
+    logAIUsage(adminClient, {
+      userId, agentId, source: 'memory_extraction', provider: endpoint.provider, model, tier, taskType: 'summarization', usage: compressed.usage,
+    }).catch(() => {});
     newMemory = (compressed.choices?.[0]?.message?.content ?? newMemory).trim();
   }
 

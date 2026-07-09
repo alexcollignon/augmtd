@@ -67,9 +67,11 @@ export async function POST(
       return NextResponse.json({ error: 'Unsupported provider' }, { status: 400 });
     }
 
+    const movedAt = new Date().toISOString();
     await supabase
       .from('inbox_items')
-      .update({ status: 'dismissed', updated_at: new Date().toISOString() })
+      // resolved_at = the REAL resolution timestamp the Day-cleared ring counts by (not updated_at).
+      .update({ status: 'dismissed', source_data: { ...sourceData, resolved_at: movedAt }, updated_at: movedAt })
       .eq('id', id)
       .eq('user_id', user.id);
 

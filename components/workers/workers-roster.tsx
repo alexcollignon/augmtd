@@ -15,6 +15,7 @@ import {
 } from '@heroicons/react/24/outline';
 import { SegmentedControl, IconButton } from '@/components/ui';
 import type { Worker } from '@/app/workers/workers-page-client';
+import { ROLE_AVATARS, ROLE_LABELS } from '@/lib/workers/roles';
 
 const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   user:              UserIcon,
@@ -25,20 +26,6 @@ const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   sparkles:          SparklesIcon,
   briefcase:         BriefcaseIcon,
   'chart-bar':       ChartBarIcon,
-};
-
-const ROLE_AVATARS: Record<string, string> = {
-  personal_assistant: '/workers/clara.png',
-  content_manager:    '/workers/sofia.png',
-  linkedin_drafter:   '/workers/luca.png',
-  research_analyst:   '/workers/max.png',
-};
-
-const ROLE_LABELS: Record<string, string> = {
-  personal_assistant: 'Personal Assistant',
-  content_manager:    'Content Strategist',
-  linkedin_drafter:   'LinkedIn Wizard',
-  research_analyst:   'Research Analyst',
 };
 
 const COLOR_MAP: Record<string, { bg: string; activeBg: string; text: string }> = {

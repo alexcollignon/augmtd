@@ -17,6 +17,7 @@
 // See docs/brief-and-labeling-plan.md — "DIRECTION (corrected July 2)".
 
 import { aiCreate } from '@/lib/ai/factory';
+import { logAIUsage } from '@/lib/ai/log-usage';
 import { parseModelJSON } from '@/lib/ai/parse-json';
 import type { BriefContext } from './brief-context';
 
@@ -174,6 +175,8 @@ export async function synthesizeBrief(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   aiClientAndModel: { client: any; model: string },
   input: SynthesisInput,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  logCtx?: { userId: string; supabase: any },
 ): Promise<SynthesisResult> {
   const { client, model } = aiClientAndModel;
   const { firstName, now } = input;
@@ -221,7 +224,8 @@ TIERS — every surfaced item falls into one of three, by how much ACTION it dem
 - "mustRespond" (ACT): a real person is waiting on ${me}'s reply, or ${me} owes something. ${me}'s move.
 - "keepAnEyeOn" (AWARE — NO action): a real thing happening AROUND ${me} that ${me} should SEE but does nothing about — a genuine person/relationship/thread with substance (an urgent meeting request ${me} was cc'd on, a project thread ${me} is on, a decision in ${me}'s orbit). Being cc'd rather than to'd does NOT make something noise — a serious message from a real person or a known relationship still belongs here even if ${me} is only cc'd.
 - "fyiDigest" (SKIM/IGNORE): mailing-list / notification / newsletter / receipt noise. No person really needs ${me}'s attention.
-JUDGE which awareness candidates [Kn] rise to keepAnEyeOn vs stay noise — use your judgment about substance and the sender being a real person/relationship, NOT any fixed sender/domain. If a candidate is a substantive message from a real person (a meeting request, a real project/relationship thread, a decision ${me} is in the loop on) — especially one ${me} was deliberately cc'd on — it SHOULD be surfaced here, even though ${me} takes no action on it. Only drop candidates that are actually bulk/transactional/marketing/receipt noise. Be SELECTIVE about VOLUME: keep AT MOST 2–4 (pick the most substantive; don't pad with marginal ones) — but do surface the genuinely important ones rather than returning an empty tier when real awareness items exist. Give each a one-line "why it matters".
+JUDGE which awareness candidates [Kn] rise to keepAnEyeOn vs stay noise — use your judgment about substance and the sender being a real person/relationship, NOT any fixed sender/domain. If a candidate is a substantive message from a real person (a meeting request, a real project/relationship thread, a decision ${me} is in the loop on) — especially one ${me} was deliberately cc'd on — it SHOULD be surfaced here, even though ${me} takes no action on it. Only drop candidates that are actually bulk/transactional/marketing/receipt noise. Be SELECTIVE about VOLUME: keep AT MOST 2–4 (pick the most substantive; don't pad with marginal ones) — but do surface the genuinely important ones rather than returning an empty tier when real awareness items exist.
+GROUNDING (STRICT): each "why it matters" MUST be derived from the candidate's OWN subject and snippet as shown in the [Kn] line below — describe what THAT specific message actually is. NEVER invent a reason, a topic, a meeting, or a number that isn't in that candidate's text. If you cannot state a real, grounded reason from its own subject/snippet, DROP the candidate (leave it out) rather than fabricate one. A one-line grounded "why it matters" each.
 
 COMMITMENT PLACEMENT — for EACH open commitment [Cn], judge where it belongs by WHO must act, from the description + the per-person context (the "system guessed" flag is only a HINT — it is often WRONG, so re-decide from the meaning):
 - "on_your_plate" — ${me} genuinely OWES an action here (a promise ${me} made, a task assigned to ${me}). ${me} must do it.
@@ -288,6 +292,11 @@ If a section has no items, return it with an empty items/groups array (or null f
       model, max_tokens: 5000, temperature: 0.4,
       messages: [{ role: 'user', content: prompt }],
     });
+    if (logCtx) {
+      logAIUsage(logCtx.supabase, {
+        userId: logCtx.userId, source: 'brief_synthesis', provider: 'openai', model, tier: 'standard', taskType: 'summarization', usage: res.usage,
+      }).catch(() => {});
+    }
     const parsed = parseModelJSON<{
       tldr?: { teaser?: string; bullets?: string[]; dontMiss?: string | null };
       mustRespond?: { teaser?: string; items?: { r?: number; who?: string; ask?: string; angle?: string }[] };

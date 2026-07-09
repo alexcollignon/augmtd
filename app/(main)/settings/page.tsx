@@ -7,6 +7,8 @@ import SettingsLeftPanel from '@/components/settings/settings-left-panel';
 import SettingsPageClient from '@/app/settings/settings-page-client';
 import CompanyPageClient from '@/app/company/company-page-client';
 import CompanyPending from '@/app/company/company-pending';
+import CompanyAIOperationsSection from '@/components/settings/company-ai-operations-section';
+import CompanyStrategySection from '@/components/settings/company-strategy-section';
 import MemorySection from '@/components/settings/memory-section';
 import EmailSettings from '@/components/settings/email-settings';
 import IntegrationsSection from '@/components/settings/integrations-section';
@@ -17,17 +19,19 @@ interface Props {
 }
 
 export default async function SettingsPage({ searchParams }: Props) {
-  const { tab = 'account', section = 'connections' } = await searchParams;
+  const { tab = 'account', section: rawSection } = await searchParams;
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/login');
 
   const company = await getMyCompany(user.id, supabase);
+  const isCompanyAdmin = company?.role === 'owner' || company?.role === 'admin';
+  const section = rawSection ?? (tab === 'company' ? 'members' : 'connections');
 
   let members: any[] = [];
   let invitations: any[] = [];
 
-  if (tab === 'company' && company) {
+  if (tab === 'company' && company && section === 'members') {
     const adminClient = (await import('@supabase/supabase-js')).createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY!
@@ -99,7 +103,7 @@ export default async function SettingsPage({ searchParams }: Props) {
   return (
     <SettingsPageClient>
       <>
-        <SettingsLeftPanel activeTab={tab} />
+        <SettingsLeftPanel activeTab={tab} companyRole={company?.role ?? null} />
 
         <div className="flex-1 overflow-hidden flex flex-col bg-neutral-50 p-2">
           <div className="flex-1 flex flex-col rounded-2xl bg-white shadow-sm overflow-hidden">
@@ -147,7 +151,15 @@ export default async function SettingsPage({ searchParams }: Props) {
 
             {tab === 'company' && (
               <div className="flex-1 overflow-y-auto">
-                {company ? (
+                {!company ? (
+                  <div className="flex justify-center pt-8">
+                    <CompanyPending />
+                  </div>
+                ) : section === 'ai-operations' ? (
+                  isCompanyAdmin ? <CompanyAIOperationsSection /> : null
+                ) : section === 'strategy' ? (
+                  isCompanyAdmin ? <CompanyStrategySection /> : null
+                ) : (
                   <CompanyPageClient
                     company={company}
                     members={members}
@@ -155,10 +167,6 @@ export default async function SettingsPage({ searchParams }: Props) {
                     currentUserId={user.id}
                     embedded
                   />
-                ) : (
-                  <div className="flex justify-center pt-8">
-                    <CompanyPending />
-                  </div>
                 )}
               </div>
             )}

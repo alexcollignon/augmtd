@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { generateItemPlan, classifyStep, type ItemPlanKind, type ItemPlanTask } from '@/lib/home/item-plan';
+import { generateItemPlan, classifyStep, detectAttachmentRequest, type ItemPlanKind, type ItemPlanTask } from '@/lib/home/item-plan';
 import { PLAN_VERSION } from '@/lib/home/capability-map';
 import { buildItemContext } from '@/lib/home/item-context';
 
@@ -41,6 +41,18 @@ async function buildContext(
   return ctx ? ctx.text : null;
 }
 
+// task-workflows S3 — flag a freshly-graded [You] step that is a "provide a document" ask as an
+// ATTACHMENT REQUEST (awaiting_input + a request prompt), so the panel renders an "Upload →" affordance
+// instead of a plain checkbox. Instance-honest + light: only fires when the step's own text names a
+// document to hand over (never a system step, never already-fulfilled). Idempotent — a step that already
+// carries a fulfilled request or a non-`awaiting_input` status is left untouched.
+function withAttachmentRequest(task: ItemPlanTask): ItemPlanTask {
+  if (task.request?.fulfilledRef || task.done || task.dismissed) return task;
+  const prompt = detectAttachmentRequest(task);
+  if (!prompt) return task;
+  return { ...task, status: 'awaiting_input', request: { prompt } };
+}
+
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createClient();
@@ -70,6 +82,8 @@ export async function POST(request: NextRequest) {
 
     const context = (await buildContext(supabase, user.id, kind, entityId)) || '';
     const plan = await generateItemPlan(supabase, user.id, { kind, entityId, context });
+    // task-workflows S3: mark any "provide a document" [You] step as an attachment request up front.
+    plan.tasks = plan.tasks.map(withAttachmentRequest);
 
     // Persist (best-effort — a failed insert still returns the freshly generated plan). Supabase
     // returns an { error } object rather than throwing, so check it explicitly — a silently-failed
@@ -116,9 +130,12 @@ export async function PATCH(request: NextRequest) {
 
     const body = (await request.json()) as {
       kind: Kind; entityId: string; taskId?: string; done?: boolean; dismissed?: boolean;
-      action?: 'add' | 'edit'; text?: string;
+      action?: 'add' | 'edit' | 'reassign'; text?: string; owner?: 'system' | 'you' | 'coworker';
+      // reassign owner:'coworker' — the PROPOSED coworker (assignment only; the server records it, it
+      // does NOT run/delegate the step — Run dispatches it later via /api/items/delegate).
+      agentId?: string; agentName?: string; workerRole?: string | null;
     };
-    const { kind, entityId, taskId, done, dismissed, action, text } = body;
+    const { kind, entityId, taskId, done, dismissed, action, text, owner, agentId, agentName, workerRole } = body;
     if (!entityId || !VALID_KINDS.includes(kind)) {
       return NextResponse.json({ error: 'kind and entityId are required' }, { status: 400 });
     }
@@ -151,13 +168,14 @@ export async function PATCH(request: NextRequest) {
       const graded = await classifyStep(supabase, user.id, { text: trimmed, itemContext, kind });
 
       if (action === 'add') {
-        newTask = { ...graded, id: nextTaskId(current), done: false };
+        // task-workflows S3: an added "provide a document" [You] step becomes an attachment request.
+        newTask = withAttachmentRequest({ ...graded, id: nextTaskId(current), done: false });
         tasks = [...current, newTask];
       } else {
         // edit — RE-INTERPRET the named task in place, keeping its id + any done/dismissed state.
         const existing = current.find((t) => t.id === taskId);
         if (!existing) return NextResponse.json({ error: 'task not found' }, { status: 404 });
-        newTask = {
+        const reinterpreted: ItemPlanTask = {
           ...existing,
           text: graded.text,
           actor: graded.actor,
@@ -166,9 +184,44 @@ export async function PATCH(request: NextRequest) {
           detail: graded.detail,
           // A step re-graded to [system] can't stay checked-done (done is a [You]-only checkbox).
           done: graded.actor === 'you' ? existing.done : false,
+          // Re-interpretation drops a stale (unfulfilled) attachment-request state; re-derive below.
+          ...(existing.request?.fulfilledRef ? {} : { status: undefined, request: undefined }),
         };
+        // Re-derive the attachment-request state from the new wording (unless already fulfilled).
+        newTask = withAttachmentRequest(reinterpreted);
         tasks = current.map((t) => (t.id === taskId ? newTask! : t));
       }
+    } else if (action === 'reassign') {
+      // Re-assign a step's OWNER — WITHOUT re-classifying its text (the user is only changing WHO does it).
+      //   • owner 'you'      → drops the capability + any coworker proposal/attribution.
+      //   • owner 'system'   → AUGMTD; defaults to the always-runnable 'analyze'; clears any coworker.
+      //   • owner 'coworker' → records the PROPOSED coworker (proposedAgent) on the step. ASSIGNMENT ONLY —
+      //     the server does NOT run/delegate here; Run dispatches it later (/api/items/delegate). Keeps the
+      //     step a system judgment step (capability 'draft' if it had none) so it reads as a coworker owner.
+      // Mirrors the client's optimistic reassign / proposeCoworker.
+      if (!taskId) return NextResponse.json({ error: 'taskId is required' }, { status: 400 });
+      const existing = current.find((t) => t.id === taskId);
+      if (!existing) return NextResponse.json({ error: 'task not found' }, { status: 404 });
+      let reassigned: ItemPlanTask;
+      if (owner === 'coworker') {
+        if (!agentId || !agentName) return NextResponse.json({ error: 'agentId and agentName are required for a coworker reassign' }, { status: 400 });
+        reassigned = {
+          ...existing,
+          actor: 'system',
+          capability: existing.capability && existing.capability !== 'analyze' && existing.capability !== 'fetch' && existing.capability !== 'send'
+            ? existing.capability
+            : 'draft',
+          proposedAgent: { id: agentId, name: agentName, workerRole: workerRole ?? null },
+          handedTo: undefined,
+          status: undefined,
+          done: false,
+        };
+      } else if (owner === 'system') {
+        reassigned = { ...existing, actor: 'system', capability: existing.capability ?? 'analyze', proposedAgent: undefined, handedTo: undefined, status: undefined, done: false };
+      } else {
+        reassigned = { ...existing, actor: 'you', capability: null, proposedAgent: undefined, handedTo: undefined, status: undefined, done: false };
+      }
+      tasks = current.map((t) => (t.id === taskId ? reassigned : t));
     } else {
       // Toggle: `dismissed` applies to ANY step; `done` only to a [You] task's checkbox.
       tasks = current.map((t) => {

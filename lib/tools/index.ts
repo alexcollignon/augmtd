@@ -21,6 +21,8 @@ export { getMeetingContextDefinition, executeGetMeetingContext } from './get-mee
 export type { GetMeetingContextConfig } from './get-meeting-context';
 export { sendCalendarInviteDefinition, executeSendCalendarInvite } from './send-calendar-invite';
 export type { SendCalendarInviteConfig } from './send-calendar-invite';
+export { forwardEmailDefinition, executeForwardEmail } from './forward-email';
+export type { ForwardEmailConfig } from './forward-email';
 export { deepResearchDefinition } from './deep-research';
 export {
   slackListChannelsDefinition, slackPostMessageDefinition, slackReadMessagesDefinition, slackListMembersDefinition,

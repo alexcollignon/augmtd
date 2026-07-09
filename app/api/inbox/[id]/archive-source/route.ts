@@ -77,7 +77,8 @@ export async function POST(
       .from('inbox_items')
       .update({
         status: 'dismissed',
-        source_data: { ...sourceData, archived_at: archivedAt },
+        // resolved_at = the REAL resolution timestamp the Day-cleared ring counts by (not updated_at).
+        source_data: { ...sourceData, archived_at: archivedAt, resolved_at: archivedAt },
         updated_at: archivedAt,
       })
       .eq('id', id)

@@ -1,4 +1,5 @@
 import { getSystemClient, aiCreate } from '@/lib/ai/factory'
+import { logAIUsage } from '@/lib/ai/log-usage'
 import { SupabaseClient } from '@supabase/supabase-js'
 
 type RenderableProfileType = 'identity' | 'email_communication' | 'domain_knowledge' | 'meeting_behavior' | 'work_patterns'
@@ -36,6 +37,7 @@ export async function renderProfile(
   profileType: RenderableProfileType,
   profileData: any,
   confidenceScore: number,
+  logCtx?: { userId: string; supabase: SupabaseClient },
 ): Promise<string | null> {
   if (!profileData || Object.keys(profileData).length === 0) return null
   // The "Communication style" card shows the durable, example-grounded voice when present
@@ -51,7 +53,7 @@ export async function renderProfile(
     if (!hasData) return null
   }
 
-  const { client, model } = getSystemClient('summarization')
+  const { client, model, endpoint, tier } = getSystemClient('summarization')
 
   const completion = await aiCreate(client, {
     model,
@@ -64,6 +66,11 @@ export async function renderProfile(
       { role: 'user', content: buildPrompt(profileType, profileData) },
     ],
   })
+  if (logCtx) {
+    logAIUsage(logCtx.supabase, {
+      userId: logCtx.userId, source: 'profile_rendering', provider: endpoint.provider, model, tier, taskType: 'summarization', usage: completion.usage,
+    }).catch(() => {})
+  }
 
   return completion.choices[0]?.message?.content?.trim() ?? null
 }
@@ -92,6 +99,7 @@ export async function renderAllProfiles(userId: string, supabase: SupabaseClient
           profile.profile_type as RenderableProfileType,
           profile.profile_data,
           profile.confidence_score,
+          { userId, supabase },
         )
 
         await supabase

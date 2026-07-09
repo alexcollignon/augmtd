@@ -32,10 +32,16 @@ export async function POST(request: NextRequest) {
     };
 
     if (entityType === 'inbox_item') {
-      // Flip the item back to pending so classifyItem surfaces it again on the Home.
+      // Flip the item back to pending so classifyItem surfaces it again on the Home. Also CLEAR
+      // source_data.resolved_at/resolved_reason — a reopened item is no longer "cleared today", so it
+      // must drop out of the Day-cleared ring's count (which keys on that timestamp, not updated_at).
+      const { data: pre } = await supabase.from('inbox_items').select('source_data').eq('id', entityId).eq('user_id', user.id).maybeSingle();
+      const preSd = { ...((pre?.source_data ?? {}) as Record<string, unknown>) };
+      delete preSd.resolved_at;
+      delete preSd.resolved_reason;
       const { error } = await supabase
         .from('inbox_items')
-        .update({ status: 'pending', updated_at: new Date().toISOString() })
+        .update({ status: 'pending', source_data: preSd, updated_at: new Date().toISOString() })
         .eq('id', entityId)
         .eq('user_id', user.id);
       if (error) return NextResponse.json({ error: error.message }, { status: 500 });
@@ -54,12 +60,22 @@ export async function POST(request: NextRequest) {
     }
 
     if (entityType === 'commitment') {
-      // Reopen the commitment so it re-enters the Home brief (which reads only status='open').
-      const { error } = await supabase
+      // Reopen the commitment so it re-enters the Home brief (which reads only status='open'). Also
+      // CLEAR resolved_at/resolved_reason so a reopened commitment drops out of the Day-cleared ring.
+      // resolved_at/resolved_reason may not exist on older schemas → retry status-only on error.
+      let error;
+      ({ error } = await supabase
         .from('commitments')
-        .update({ status: 'open', updated_at: new Date().toISOString() })
+        .update({ status: 'open', resolved_at: null, resolved_reason: null, updated_at: new Date().toISOString() })
         .eq('id', entityId)
-        .eq('user_id', user.id);
+        .eq('user_id', user.id));
+      if (error) {
+        ({ error } = await supabase
+          .from('commitments')
+          .update({ status: 'open', updated_at: new Date().toISOString() })
+          .eq('id', entityId)
+          .eq('user_id', user.id));
+      }
       if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
       // Name the specific commitment so the log reads "Restored: <description>".
@@ -79,13 +95,29 @@ export async function POST(request: NextRequest) {
       // to pending. Mirrors dismiss-sender's matching (from_name OR from). Only touches awareness tiers
       // so it can't accidentally resurface an unrelated needs_reply. entityId = the sender label.
       const sender = entityId;
+      const nowIso = new Date().toISOString();
+      const unmuted = new Set<string>();
       for (const col of ['from_name', 'from'] as const) {
-        await supabase.from('inbox_items')
-          .update({ status: 'pending', updated_at: new Date().toISOString() })
+        // Fetch-then-per-row so we can CLEAR each item's source_data.resolved_at (unmuting reopens it,
+        // so it must leave the Day-cleared ring). A bulk .update() can't do the per-row jsonb strip.
+        const { data: rows } = await supabase.from('inbox_items')
+          .select('id, source_data')
           .eq('user_id', user.id)
           .eq('status', 'dismissed')
           .in('work_state', ['noted', 'noise'])
           .eq(`source_data->>${col}`, sender);
+        for (const row of (rows ?? []) as Array<{ id: string; source_data: Record<string, unknown> | null }>) {
+          if (unmuted.has(row.id)) continue;
+          unmuted.add(row.id);
+          const sd = { ...((row.source_data ?? {}) as Record<string, unknown>) };
+          delete sd.resolved_at;
+          delete sd.resolved_reason;
+          await supabase.from('inbox_items')
+            .update({ status: 'pending', source_data: sd, updated_at: nowIso })
+            .eq('id', row.id)
+            .eq('user_id', user.id)
+            .eq('status', 'dismissed');
+        }
       }
 
       await logActivity(supabase, user.id, {

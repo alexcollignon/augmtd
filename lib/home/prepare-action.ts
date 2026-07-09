@@ -16,7 +16,7 @@ import type { ItemPlanKind, ItemPlanTask } from './item-plan';
 // builder + one line in `routeStepToActionType` — the endpoint/router don't change shape.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
-export type PreparedActionType = 'calendar_invite' | 'email';
+export type PreparedActionType = 'calendar_invite' | 'forward' | 'email';
 
 // A prepared calendar invite — the filled-in, editable params the InvitePreviewCard renders. Grounded
 // against the item (attendees from the sender/thread, time resolved against the item's date). Any field
@@ -32,6 +32,17 @@ export interface PreparedCalendarInvite {
   timezone: string;      // IANA; defaults to UTC
 }
 
+// A prepared FORWARD — the S5 send-type, mirroring the invite. The forwarded content is grounded in the
+// item's real email (subject + body); the recipient is INFERRED from the step text only when a REAL
+// address is evidenced (never invented — an unknown "to finance" leaves `to` empty for the user to fill).
+export interface PreparedForwardAction {
+  type: 'forward';
+  to: string[];           // real emails evidenced (never invented) — usually [] (the user fills it in)
+  subject: string;        // "Fwd: <original subject>"
+  forwardedBody: string;  // the original body (rendered read-only in the card)
+  note: string;           // an optional lead-in note the user can edit
+}
+
 // The email prepared-action is a POINTER: the UI reuses the existing ComposePanel / /api/compose/draft
 // path (we do NOT rebuild the drafter here). `composeKind` maps the plan kind onto ComposePanel's kind.
 export interface PreparedEmailAction {
@@ -39,7 +50,7 @@ export interface PreparedEmailAction {
   composeKind: 'meeting' | 'commitment' | 'awareness' | 'email';
 }
 
-export type PreparedAction = PreparedCalendarInvite | PreparedEmailAction;
+export type PreparedAction = PreparedCalendarInvite | PreparedForwardAction | PreparedEmailAction;
 
 // ── The agnostic router: given a step's capability + text, decide which prepared-action TYPE handles
 // it, by matching against the CAPABILITY_MAP (never a literal per-step branch). A `send` step whose
@@ -61,6 +72,16 @@ export function routeStepToActionType(task: Pick<ItemPlanTask, 'capability' | 't
     // Only treat it as an invite when the step is a COMMIT-flavoured action (a send/atomic step). A
     // pure "draft" step is still the email composer even if it mentions a meeting.
     if (inviteHit && (cap === 'send' || cap === null)) return 'calendar_invite';
+  }
+
+  // Match the forward capability from the MAP (its `built` flag is the ONLY gate — remove the map row
+  // and this seam goes dormant automatically). A "forward this to <someone>" step is a send-flavoured
+  // commit → the ForwardPreviewCard (approve-before-commit). Same shape as the invite: derived, not a
+  // hardcoded per-step branch.
+  const forward = CAPABILITY_MAP['forward_email'];
+  if (forward?.built) {
+    const forwardHit = /\bforward(?:ed|ing|s)?\b/.test(haystack) && /\b(email|mail|message|thread|deck|attachment|note|this|it)\b/.test(haystack);
+    if (forwardHit && (cap === 'send' || cap === null)) return 'forward';
   }
 
   // Everything else committable/producible → the existing compose (email) prepared surface.
@@ -194,6 +215,51 @@ export async function prepareCalendarInvite(
 }
 
 /**
+ * prepareForward — GROUNDED forward preview for a "forward this to <someone>" step. Mirrors the invite:
+ * the forwarded content is the item's REAL original email (subject + body loaded from `inbox_items`),
+ * and the recipient is inferred ONLY when the step text carries a literal email address — otherwise `to`
+ * is left EMPTY (never invents an address for "to finance"; the card asks the user to fill it in).
+ * Non-fatal: any failure returns a partial forward (empty to + best subject) — approve-before-commit is
+ * the safety net.
+ */
+export async function prepareForward(
+  supabase: SupabaseClient,
+  userId: string,
+  kind: ItemPlanKind,
+  entityId: string,
+  stepText: string,
+): Promise<PreparedForwardAction> {
+  const empty: PreparedForwardAction = { type: 'forward', to: [], subject: 'Fwd:', forwardedBody: '', note: '' };
+  try {
+    // Load the original email from the Home item (email/awareness/followup) — subject + body. For a
+    // meeting/commitment item there's no forwardable email; we still return a partial the user completes.
+    let subject = '';
+    let forwardedBody = '';
+    if (kind === 'email' || kind === 'awareness' || kind === 'followup') {
+      const { data: item } = await supabase
+        .from('inbox_items')
+        .select('work_title, source_data')
+        .eq('id', entityId).eq('user_id', userId).maybeSingle();
+      if (item) {
+        const sd = (item.source_data ?? {}) as Record<string, unknown>;
+        subject = String(sd.subject || item.work_title || '').replace(/^(Fwd:|Fw:)\s*/i, '');
+        forwardedBody = typeof sd.body === 'string' ? (sd.body as string) : '';
+        if (!forwardedBody && typeof sd.email_id === 'string') {
+          const { data: e } = await supabase.from('emails').select('body').eq('id', sd.email_id).eq('user_id', userId).maybeSingle();
+          if (e && typeof e.body === 'string') forwardedBody = e.body as string;
+        }
+      }
+    }
+    // Recipient inference: ONLY a literal email address in the step text is trusted (never a name/role).
+    const to = (stepText || '').match(new RegExp(EMAIL_RE.source, 'g'))?.map((s) => s.trim()).filter((e) => EMAIL_RE.test(e)) ?? [];
+    return { type: 'forward', to: [...new Set(to)].slice(0, 10), subject: `Fwd: ${subject}`.trim(), forwardedBody, note: '' };
+  } catch (e) {
+    console.error('[prepare-action] prepareForward failed:', e);
+    return empty;
+  }
+}
+
+/**
  * prepareAction — the entry point the `/api/items/prepare` route calls. Loads the item context, routes
  * the step to a prepared-action type, and builds it. Non-fatal: returns null only when the context
  * can't be built (the caller surfaces a soft error; the deep-dive still works via the compose path).
@@ -207,6 +273,11 @@ export async function prepareAction(
 
   if (type === 'email') {
     return { type: 'email', composeKind: composeKindFor(input.kind) };
+  }
+
+  if (type === 'forward') {
+    // Grounded in the item's real email — no ItemContext needed (we read subject/body directly).
+    return prepareForward(supabase, userId, input.kind, input.entityId, input.task.text || '');
   }
 
   // calendar_invite — needs the grounded item context (participants + item date).

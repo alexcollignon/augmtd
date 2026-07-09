@@ -116,11 +116,83 @@ export const CAPABILITY_MAP: Record<string, Capability> = {
     tool: 'send_calendar_invite', built: true, kind: 'atomic', irreversible: true, feature: 'meetings',
     blurb: 'SEND a calendar invite / put a meeting on the calendar (real Google/Outlook event, notifies attendees)',
   },
+  // ── S5 proof-of-agnosticism: one map row + a registered executor + a prepared-action surface makes
+  // "forward the deck to finance" flip from [You] to [System]. proposeOwner / the classifier / the
+  // assembler needed NO structural edits — they read this map. Real send → irreversible → approval gate.
+  forward_email: {
+    intent: 'forward an email we already have to a new recipient (e.g. forward the deck to finance)',
+    tool: 'forward_email', built: true, kind: 'atomic', irreversible: true, feature: 'email',
+    blurb: 'FORWARD an existing email to another recipient (real send as the user)',
+  },
 };
 
 // Only the capabilities that are actually wired today drive the classifier prompt.
 function builtCapabilities(): Capability[] {
   return Object.values(CAPABILITY_MAP).filter((c) => c.built);
+}
+
+// ── The orchestration-board runtime helpers. A plan task carries a coarse `capability`
+// (draft|analyze|fetch|send); these translate that coarse grade into the board's owner·state·action
+// model WITHOUT re-deriving per-task logic — they read the SAME CAPABILITY_MAP the classifier grades
+// against, so the panel and the classifier can't drift.
+//
+// A step's capability may match several map entries (e.g. `fetch` ↔ any of the read/fetch tools); we
+// answer at the coarse level the plan actually stores. The map's own entries drive the character:
+//   • 'draft'   → produce content, reversible (compose_email / generate_document / analyze).
+//   • 'analyze' → reason over what we already have, reversible + atomic → AUGMTD can RUN it directly.
+//   • 'fetch'   → read/look-up, reversible + atomic, but INSTANCE-honest (only when evidenced) — the
+//                 classifier already downgrades an unevidenced fetch to [You], so a fetch step that
+//                 survived as [System] is safe to run.
+//   • 'send'    → irreversible commit → approval gate (never auto-fires).
+
+// Is this coarse system capability an IRREVERSIBLE send (→ approval gate before it commits)?
+export function isIrreversibleCapability(cap: PlanCapability): boolean {
+  return cap === 'send';
+}
+
+// Can AUGMTD RUN this system step directly, right now, reversibly ("Hand to AUGMTD")? True for the
+// reversible atomic produce/read capabilities (analyze / fetch). A `draft` is handled by the prepared
+// composer surface (not this direct-run path); a `send` is gated. Grounded in the map's `irreversible`.
+export function isDirectRunnableCapability(cap: PlanCapability): boolean {
+  return cap === 'analyze' || cap === 'fetch';
+}
+
+// A convenience for the plan-capability type used by the helpers above (mirrors item-plan's).
+type PlanCapability = 'draft' | 'analyze' | 'fetch' | 'send' | null;
+
+// ── PROPOSED OWNER — the "Run the plan" model's core derivation. Given a step's actor + coarse
+// capability, propose WHO should own it BEFORE the user reassigns. This is what makes coworkers
+// actually SUGGESTED (they never were before — only AUGMTD/you).
+//
+//   • actor 'you'                    → 'you'   (no capability — the user's move)
+//   • actor 'system' + JUDGMENT cap  → 'coworker' (draft/produce — voice/reasoning/skill work a
+//                                       coworker is MEANT for; still AUGMTD-runnable if reassigned)
+//   • actor 'system' + ATOMIC cap    → 'system' (send/fetch/analyze — deterministic, AUGMTD runs it)
+//
+// The judgment↔atomic split is DERIVED from the CAPABILITY_MAP's `kind`, not hand-coded: `draft` maps
+// to the map's judgment producers (compose_email / generate_document), while `analyze`/`fetch`/`send`
+// map to atomic entries. So adding a capability changes the proposal by construction — no branch here
+// to keep in sync. `handedTo` (a step already delegated) is resolved by the caller (it's an explicit,
+// not proposed, owner) — this answers the PROPOSAL for a not-yet-handed step.
+export type ProposedOwner = 'system' | 'coworker' | 'you';
+
+// The coarse-capability → CapabilityKind bridge, read from the map so the two can't drift. A `draft`
+// step is judgment (the map's producers are judgment); the read/analyze/send coarse caps are atomic.
+export function coarseCapabilityKind(cap: PlanCapability): CapabilityKind | null {
+  if (cap === null) return null;
+  if (cap === 'draft') {
+    // Draft/produce → judgment: grounded in the map's producer entries (compose_email / generate_document).
+    const producers = [CAPABILITY_MAP.compose_email, CAPABILITY_MAP.generate_document].filter(Boolean);
+    return producers.some((c) => c.kind === 'judgment') ? 'judgment' : 'atomic';
+  }
+  // analyze / fetch / send → atomic (the map grades `analyze`, the read/fetch tools, and the sends atomic).
+  return 'atomic';
+}
+
+// The proposal for a step that has NOT been explicitly handed to a coworker yet.
+export function proposeOwner(actor: 'system' | 'you', cap: PlanCapability): ProposedOwner {
+  if (actor === 'you') return 'you';
+  return coarseCapabilityKind(cap) === 'judgment' ? 'coworker' : 'system';
 }
 
 /**

@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { loadUserRules } from '@/lib/inbox/rules/load';
+import { setInboxRules, classifyItem, type ItemType } from '@/lib/inbox/classify-item';
 
 export const maxDuration = 15;
 
@@ -16,11 +18,22 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
   const { data: item } = await supabase
     .from('inbox_items')
-    .select('id, work_title, source_data, created_at')
+    .select('id, work_title, source_data, created_at, work_state, rule_type, type_override, status, source')
     .eq('id', id)
     .eq('user_id', user.id)
     .single();
   if (!item) return NextResponse.json({ error: 'not found' }, { status: 404 });
+
+  // Resolve the item's REAL type so the deep-dive header badge matches the classification — an FYI/
+  // `noted` newsletter must never read "Reply needed". Load the user's rules so classifyItem uses their
+  // edited deterministic tier. Gate on the item's own classification, never sender/subject keywords.
+  let itemType: ItemType = 'fyi';
+  try {
+    const rules = await loadUserRules(user.id, supabase);
+    setInboxRules(rules);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    itemType = classifyItem(item as any);
+  } catch { /* fall back to fyi */ }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const sd = (item.source_data ?? {}) as Record<string, any>;
@@ -82,6 +95,9 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   return NextResponse.json({
     id: item.id,
     subject,
+    // The classified type — drives the deep-dive header badge so it reflects reality (needs_reply →
+    // "Reply needed"; fyi → "For awareness"; etc.), instead of always claiming "Reply needed".
+    type: itemType,
     fromName: newest?.fromName ?? sd.from_name ?? null,
     fromAddress: newest?.from ?? sd.from ?? null,
     receivedAt: newest?.receivedAt ?? sd.received_at ?? item.created_at ?? null,

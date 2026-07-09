@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { getAIClient, aiCreate } from '@/lib/ai/factory';
 import { buildVoiceBlock } from '@/lib/context/voice-context';
+import { loadUserRules } from '@/lib/inbox/rules/load';
+import { setInboxRules, shouldDraftReply } from '@/lib/inbox/classify-item';
+import { detectLanguage } from '@/lib/inbox/detect-language';
+import { generateReplyDraft } from '@/lib/inbox/draft-reply';
 
 export const maxDuration = 30;
 
@@ -70,6 +74,15 @@ export async function POST(request: NextRequest) {
     let context = '';
     // The best recipient email we can find for the voice block (per-recipient tone).
     let voiceRecipient: string | null = null;
+    // When true, we resolve the recipient/subject but do NOT auto-generate a reply body — an FYI/`noted`
+    // inbox item should never get a canned reply (the user can still write one). Set only in the
+    // awareness/email branch, from the item's own classification (never sender/subject keywords).
+    let skipDraft = false;
+    // For an email/awareness item that genuinely owes a reply, we draft via the shared reply drafter
+    // (`generateReplyDraft`) — it detects + mirrors the INCOMING email's language (the A2 fix), so the
+    // reply comes back in the thread's language, not the user's default. Set to the item's source_data.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let replyItemSD: Record<string, any> | null = null;
 
     if (kind === 'meeting') {
       // entityId = the meeting transcript id. Pull its calendar event's attendees (minus the user).
@@ -147,10 +160,20 @@ export async function POST(request: NextRequest) {
       // awareness | email — entityId = an inbox item id. Recipient = the sender. Draft a reply.
       const { data: item } = await supabase
         .from('inbox_items')
-        .select('id, work_title, source_data')
+        .select('id, work_title, source_data, work_state, rule_type, type_override, status, source')
         .eq('id', entityId).eq('user_id', user.id).maybeSingle();
       if (!item) return NextResponse.json({ error: 'not found' }, { status: 404 });
       const sd = (item.source_data ?? {}) as Record<string, unknown>;
+      // Gate the auto-draft on the item's own classification — an FYI/`noted` item never gets a canned
+      // reply (a newsletter must never be auto-drafted). Recipient/subject still resolve so the user can
+      // write manually; only the AI body is suppressed. Never sender/subject keywords.
+      try {
+        const rules = await loadUserRules(user.id, supabase);
+        setInboxRules(rules);
+      } catch { /* fall back to default rules */ }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      if (!shouldDraftReply(item as any)) skipDraft = true;
+      else replyItemSD = sd; // route through the language-mirroring reply drafter below
       const from = String(sd.from || sd.from_address || '');
       const email = extractEmail(from);
       recipientName = (sd.from_name as string) || extractName(from);
@@ -169,9 +192,15 @@ export async function POST(request: NextRequest) {
         : `Write a concise, appropriate reply to the message below in ${userName}'s voice.`;
     }
 
-    // Draft in the user's voice — same voice block the reply drafter uses (per-recipient tone).
+    // Draft in the user's voice — same voice block the reply drafter uses (per-recipient tone). Skipped
+    // for FYI/`noted` inbox items (recipient/subject still returned; the user writes the body themselves).
     let body = '';
-    try {
+    if (!skipDraft && replyItemSD) try {
+      // Email/awareness reply → the shared reply drafter, which mirrors the incoming email's language.
+      body = await generateReplyDraft(user.id, replyItemSD, supabase, intent?.trim() || null);
+    } catch (e) {
+      console.error('[compose/draft] reply drafting failed:', e);
+    } else if (!skipDraft) try {
       const voiceBlock = await buildVoiceBlock(user.id, voiceRecipient, supabase).catch(() => '');
       const { client: ai, model } = await getAIClient(user.id, 'conversation', supabase);
       const res = await aiCreate(ai, {
@@ -181,7 +210,15 @@ export async function POST(request: NextRequest) {
           `You are ${userName}. ${task}\n\n` +
           `Write the message in ${userName}'s voice and sign as ${userName} — NEVER sign as anyone else. ` +
           `Return ONLY the message body — no subject line, no preamble, no surrounding quotes. Keep it ready to send.\n\n` +
-          `--- CONTEXT ---\n${context}` }],
+          `--- CONTEXT ---\n${context}\n\n` +
+          // Language mirrors the correspondent, not the user's default. A concrete detected language wins
+          // over the voice examples (which may be in another language); fall back to "match the context".
+          (detectLanguage(context)
+            ? `IMPORTANT — LANGUAGE: The context above is in ${detectLanguage(context)}. Write the ENTIRE ` +
+              `message in ${detectLanguage(context)}, and ONLY in ${detectLanguage(context)}. The voice ` +
+              `examples are for STYLE only — ignore their language.`
+            : `IMPORTANT — LANGUAGE: Write in the SAME language as the context above — detect it and match ` +
+              `it; if there's no clear language, use English. The voice examples are for STYLE only.`) }],
       });
       body = res.choices?.[0]?.message?.content?.trim() || '';
     } catch (e) {

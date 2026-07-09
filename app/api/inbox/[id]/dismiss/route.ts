@@ -38,12 +38,16 @@ export async function POST(
       );
     }
 
-    // Mark as dismissed
+    // Mark as dismissed. Stamp source_data.resolved_at — the REAL resolution timestamp the Day-cleared
+    // ring counts by (updated_at bumps on any sync/label/backfill write, over-counting old items).
+    const nowIso = new Date().toISOString();
+    const dismissSd = (item.source_data ?? {}) as Record<string, unknown>;
     const { error: updateError } = await supabase
       .from('inbox_items')
       .update({
         status: 'dismissed',
-        updated_at: new Date().toISOString(),
+        source_data: { ...dismissSd, resolved_at: nowIso },
+        updated_at: nowIso,
       })
       .eq('id', id)
       .eq('user_id', user.id);

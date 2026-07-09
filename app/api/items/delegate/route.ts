@@ -102,6 +102,10 @@ export async function POST(request: NextRequest) {
         prompt,
         itemLabel,
         firstName,
+        // S2 — the coworker reads the item's deliverable pool (build on prior steps) AND writes its
+        // output back into it. `taskId` scopes the write (dedup on re-run) for a per-step hand-off; a
+        // whole-item hand-off (no taskId) still reads the pool and appends one coworker deliverable.
+        pool: { kind, entityId, taskId: taskId ?? null },
       });
     } catch (e) {
       console.error('[items/delegate] run failed:', e);
@@ -119,13 +123,25 @@ export async function POST(request: NextRequest) {
       output: result.output.slice(0, 4000),
       at: new Date().toISOString(),
     };
+    // S2 — the coworker's output is now a pool deliverable; surface it on the step the same way S1
+    // system steps do ("Produced: {title}"), so the panel is consistent regardless of executor.
+    const deliverableStamp = result.deliverable
+      ? {
+          id: result.deliverable.id,
+          type: result.deliverable.type as 'text' | 'document' | 'file' | 'sent_record' | 'draft',
+          title: result.deliverable.title ?? undefined,
+          gist: result.deliverable.gist ?? undefined,
+        }
+      : undefined;
     if (currentTasks.length) {
       try {
         const nextTasks = currentTasks.map((t) => {
           const shouldMark = taskId
             ? t.id === taskId
             : (!t.dismissed && !t.done && !t.handedTo);
-          return shouldMark ? { ...t, done: true, handedTo } : t;
+          return shouldMark
+            ? { ...t, done: true, handedTo, ...(deliverableStamp ? { deliverable: deliverableStamp } : {}) }
+            : t;
         });
         await supabase
           .from('item_plans')
@@ -144,7 +160,7 @@ export async function POST(request: NextRequest) {
         : `Handed to ${worker.name}: ${itemLabel}`,
       entityType: kind,
       entityId,
-      metadata: { agentId: worker.id, agentName: worker.name, taskId: taskId ?? null, threadId: result.threadId },
+      metadata: { agentId: worker.id, agentName: worker.name, taskId: taskId ?? null, threadId: result.threadId, ...(result.deliverable ? { deliverableId: result.deliverable.id } : {}) },
     });
 
     return NextResponse.json({
@@ -154,6 +170,7 @@ export async function POST(request: NextRequest) {
       threadId: result.threadId,
       reportText: result.reportText,
       handedTo,
+      ...(deliverableStamp ? { deliverable: deliverableStamp } : {}),
     });
   } catch (error) {
     console.error('[items/delegate] error:', error);

@@ -27,16 +27,113 @@ export type HandedTo = {
   at?: string;                // ISO timestamp
 };
 
+// ── The per-step RUNTIME STATE — the small, persisted status that makes the workflow read LIVE, not
+// static (the orchestration-board model: every step is owner · state · one action). ABSENT = the step
+// is ready/pending (nothing running). The values are the transient states between ready and resolved:
+//   • 'working'          — AUGMTD (or a coworker) is executing it right now (subtle spinner).
+//   • 'awaiting_approval'— AUGMTD prepared an irreversible send and is waiting for the user's one-tap OK.
+//   • 'awaiting_input'   — the step REQUESTED a file/document from the user (task-workflows S3). It renders
+//                          an "Upload →" affordance and resolves to `done` once the file lands in the pool.
+//   • 'done'             — resolved (mirrors `done:true`; kept for symmetry so a status read is total).
+// `done` / `handedTo` stay the durable resolution markers; `status` is the in-flight nuance layered on
+// top. Persisted in the `item_plans.tasks` jsonb (schemaless — no migration needed).
+export type PlanTaskStatus = 'working' | 'awaiting_approval' | 'awaiting_input' | 'done';
+
 export type ItemPlanTask = {
   id: string;
   text: string;              // a SHORT imperative title (≤ ~8–10 words) — the one line the stepper shows
   detail?: string;           // an optional one-sentence explanation — revealed when the step is expanded
   actor: 'system' | 'you';
   capability: PlanCapability;
+  status?: PlanTaskStatus;   // transient runtime state (working / awaiting_approval / done); absent = ready
   done?: boolean;
   dismissed?: boolean;       // the user removed this step from the workflow (persisted)
+  // ── The PROPOSED coworker owner — set when the user picks a coworker in the deep-dive OwnerMenu.
+  // ASSIGNMENT ONLY: the step's owner reads as this coworker, but nothing runs until Run dispatches it
+  // (/api/items/delegate). Distinct from `handedTo` (which means the coworker already ran it). Persisted
+  // in the schemaless jsonb (no migration).
+  proposedAgent?: { id: string; name: string; workerRole?: string | null };
   handedTo?: HandedTo;       // a coworker executed this step (stage 3b delegation)
+  result?: string;           // AUGMTD's own returned output when it ran the step directly ("Hand to AUGMTD")
+  // ── task-workflows S1: what running this step PRODUCED into the per-item deliverable pool. Set when a
+  // system tool step runs through the assembler. Back-compatible (optional, schemaless jsonb). The
+  // heavy body lives in `item_deliverables` (id = `ref`); this is the light on-step summary the panel
+  // renders as "Produced: {title}".
+  deliverable?: {
+    id: string;              // item_deliverables.id (the pool entry this step produced)
+    type: 'text' | 'document' | 'file' | 'sent_record' | 'draft';
+    title?: string;          // short label ("Research brief", "Cost estimate")
+    gist?: string;           // one-line summary ("produced: cost estimate")
+  };
+  // ── task-workflows S3: a [You] step that REQUESTS a file/document from the user. When set (with
+  // `status:'awaiting_input'`), the stepper renders the `prompt` + an "Upload →" affordance; on upload
+  // the file becomes a `file` deliverable in the pool and the step resolves to `done`. Back-compatible
+  // (optional, schemaless jsonb).
+  request?: {
+    prompt: string;          // what to upload, e.g. "Upload the pitch deck"
+    fulfilledRef?: string;   // item_deliverables.id once the user provides the file
+  };
+  // ── task-workflows S4: the CACHED file-resolution snapshot (lib/home/resolve-file-step.ts). Persisted
+  // on first-engage so a reload / re-render never re-runs the reasoned pick. Keyed by `key` (step text +
+  // pool signature) — a change in either invalidates it and forces a fresh resolve. Back-compatible
+  // (optional, schemaless jsonb). `have_it` is never stored here — the pool-first short-circuit re-derives
+  // it for free from the live pool every time.
+  resolvedFile?: {
+    key: string;
+    status: 'found_one' | 'found_many' | 'none';
+    candidates: Array<{ knowledgeFileId: string; filename: string; snippet: string; score: number }>;
+    description?: string;
+  };
 };
+
+// ── task-workflows S3: detect whether a [You] step is a "provide a document" request — i.e. its intent
+// is to hand over a file (attach/share/provide/upload/send the briefing / the one-pager / the signed X).
+// When it is, the step is rendered as an ATTACHMENT REQUEST (awaiting_input) instead of a plain checkbox,
+// so the user uploads the file straight into the item's deliverable pool. Instance-honest + light: only a
+// [You] step (never a system step), only when the verb+object read as a document to provide — NOT every
+// you-step (a "call the client" or "make a decision" step stays a plain checkbox).
+//
+// This is a HEURISTIC (the PRIMARY reasoning lives in resolve-file-step.ts's reasoned pick, step 2 of
+// S4 — that's what actually FINDS the file, robust to any phrasing). This detector only decides whether
+// to render the upload affordance in the first place, so it's broadened rather than made an AI call: a
+// wide provide-verb set + a wide (but non-exhaustive) doc-noun set OR a generic "provide/share the X"
+// shape (a provide-verb + a bare noun object, when the step isn't a communicate/decide/call action).
+// It intentionally over-recognizes slightly (a false attachment-request just shows an upload row the
+// user can ignore); the resolver's `none`/found logic is the honest backstop.
+const PROVIDE_VERBS = /\b(upload|attach|provide|share|send over|hand over|drop in|supply|locate and (?:send|attach|share)|locate|find and (?:send|attach|share)|forward|include|enclose|submit)\b/i;
+// A broad (not fixed-vocabulary-complete) doc-noun set — the common document words in any phrasing.
+const DOC_NOUNS = /\b(file|files|document|documents|doc|docs|deck|slides?|slide deck|pitch\s?deck|pdf|contract|agreement|nda|invoice|report|spreadsheet|attachment|attachments|proposal|statement|receipt|form|paperwork|materials?|deliverable|presentation|resume|cv|brief|briefing|one[-\s]?pager|summary|exec(?:utive)? summary|spec|specs|specification|memo|write[-\s]?up|overview|dossier|packet|letter|template|sheet|worksheet|manual|guide|policy|notes?|writeup|whitepaper|white paper|handout|attachment)\b/i;
+// Words that mark a step as a COMMUNICATE / DECIDE / CALL action (not a file hand-over) — used to keep
+// the generic "provide/share the X" shape from firing on "share your thoughts", "send a reply", etc.
+const NON_FILE_OBJECTS = /\b(reply|response|message|email|thought|thoughts|feedback|opinion|update|note to|call|meeting|decision|answer|question|comment|availability|time|date|introduction|intro)\b/i;
+
+export function detectAttachmentRequest(task: Pick<ItemPlanTask, 'actor' | 'text' | 'detail'>): string | null {
+  if (task.actor !== 'you') return null;
+  const hay = `${task.text || ''} ${task.detail || ''}`;
+  if (!PROVIDE_VERBS.test(hay)) return null;
+
+  // Path A — a recognized document noun is named. High confidence it's a file hand-over.
+  const nounMatch = hay.match(DOC_NOUNS);
+
+  // Path B — the GENERIC "provide/share the X" shape: a provide-verb naming a definite object ("the …",
+  // "your …") that isn't a communicate/decide/call action. Catches document words the fixed set misses
+  // ("provide the AHK briefing" is covered by DOC_NOUNS now, but "share the Zeiss deliverable v2" or a
+  // novel doc-ish noun still reads as a file). Instance-honest guard: skip if it looks like a message/
+  // decision/call. The resolver's `none` is the backstop if it turns out no file exists.
+  const genericShape =
+    !nounMatch &&
+    !NON_FILE_OBJECTS.test(hay) &&
+    /\b(?:upload|attach|provide|share|send over|hand over|supply|locate|forward|include|enclose|submit)\s+(?:the|your|our|a|an|that|this|his|her|their|its|signed|final|latest|updated|attached)\b/i.test(hay);
+
+  if (!nounMatch && !genericShape) return null;
+
+  // Build a short imperative prompt for the ask. Prefer the step's own title if it already reads as an
+  // upload ask; else synthesize "Upload …" from the object it names (or a generic "the file").
+  const t = (task.text || '').trim();
+  if (/^upload\b/i.test(t)) return t.slice(0, 120);
+  const noun = nounMatch ? nounMatch[0] : 'the file';
+  return `Upload ${/\bthe\b/i.test(hay) ? 'the ' : ''}${noun}`.replace(/\s+/g, ' ').slice(0, 120);
+}
 
 export type ItemPlan = { tasks: ItemPlanTask[] };
 

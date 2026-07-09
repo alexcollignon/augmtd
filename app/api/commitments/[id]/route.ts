@@ -98,11 +98,23 @@ export async function PATCH(
       .select('description')
       .eq('id', id).eq('user_id', user.id).maybeSingle();
 
-    const { error } = await supabase
+    // Stamp resolved_at (the REAL resolution timestamp the Day-cleared ring counts by — the
+    // commitments.resolved_at column from migration 20260705d). resolved_at/resolved_reason may not
+    // exist on older schemas, so retry status-only if the column-aware update fails.
+    const nowIso = new Date().toISOString();
+    let error;
+    ({ error } = await supabase
       .from('commitments')
-      .update({ status, updated_at: new Date().toISOString() })
+      .update({ status, resolved_at: nowIso, resolved_reason: status === 'done' ? 'user_marked' : 'user_dismissed', updated_at: nowIso })
       .eq('id', id)
-      .eq('user_id', user.id);
+      .eq('user_id', user.id));
+    if (error) {
+      ({ error } = await supabase
+        .from('commitments')
+        .update({ status, updated_at: nowIso })
+        .eq('id', id)
+        .eq('user_id', user.id));
+    }
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
     // Clean up any inbox item the aging sweep surfaced for this commitment — it's handled now.

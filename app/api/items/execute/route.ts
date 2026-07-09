@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { executeSendCalendarInvite } from '@/lib/tools/send-calendar-invite';
+import { executeForwardEmail } from '@/lib/tools/forward-email';
 import { logActivity } from '@/lib/activity/log';
 import type { ItemPlanKind, ItemPlanTask } from '@/lib/home/item-plan';
 
@@ -38,7 +39,15 @@ type CalendarInviteAction = {
   includeMeetLink?: boolean;
 };
 
-type ExecuteAction = CalendarInviteAction;
+// The S5 send-type — a forward, gated the same way as the invite (approve-before-commit).
+type ForwardAction = {
+  type: 'forward';
+  to: string[];
+  cc?: string[];
+  note?: string;
+};
+
+type ExecuteAction = CalendarInviteAction | ForwardAction;
 
 export async function POST(request: NextRequest) {
   try {
@@ -51,8 +60,52 @@ export async function POST(request: NextRequest) {
     if (!entityId || !VALID_KINDS.includes(kind)) {
       return NextResponse.json({ error: 'kind and entityId are required' }, { status: 400 });
     }
-    if (!action || action.type !== 'calendar_invite') {
+    if (!action || (action.type !== 'calendar_invite' && action.type !== 'forward')) {
       return NextResponse.json({ error: 'unsupported action type' }, { status: 400 });
+    }
+
+    // ── FORWARD (S5 send-type) — the same approve-before-commit gate as the invite, a different executor.
+    // Only ever reached from an explicit Approve click on the ForwardPreviewCard. Never auto-fired.
+    if (action.type === 'forward') {
+      const to = Array.isArray(action.to) ? action.to.map((a) => String(a).trim()).filter((a) => a.includes('@')) : [];
+      const cc = Array.isArray(action.cc) ? action.cc.map((a) => String(a).trim()).filter((a) => a.includes('@')) : [];
+      if (to.length === 0) return NextResponse.json({ error: 'Add at least one recipient before forwarding.' }, { status: 400 });
+
+      // COMMIT — the real forward (user already approved). Same executor a workflow tool step would use.
+      const result = await executeForwardEmail(
+        { threadId: entityId, to, cc, note: action.note || '' },
+        user.id,
+        supabase,
+      );
+      const failed = /^(Cannot|Failed)\b/.test(result);
+      if (failed) return NextResponse.json({ ok: false, error: result }, { status: 502 });
+
+      // Mark the step done (best-effort — a sent forward is never lost to a bookkeeping failure).
+      if (taskId) {
+        try {
+          const { data: row } = await supabase
+            .from('item_plans').select('tasks')
+            .eq('user_id', user.id).eq('kind', kind).eq('entity_id', entityId).maybeSingle();
+          if (row && Array.isArray(row.tasks)) {
+            const tasks = (row.tasks as ItemPlanTask[]).map((t) => (t.id === taskId ? { ...t, done: true } : t));
+            await supabase.from('item_plans')
+              .update({ tasks, updated_at: new Date().toISOString() })
+              .eq('user_id', user.id).eq('kind', kind).eq('entity_id', entityId);
+          }
+        } catch (e) {
+          console.error('[items/execute] forward mark-done failed (non-fatal):', e);
+        }
+      }
+
+      await logActivity(supabase, user.id, {
+        type: 'message_sent',
+        title: `Forwarded to ${to[0]}${to.length > 1 ? ` +${to.length - 1}` : ''}`,
+        entityType: kind,
+        entityId,
+        metadata: { forwarded: true, recipients: to.length + cc.length, result },
+      });
+
+      return NextResponse.json({ ok: true, result });
     }
 
     // Validate the committable params BEFORE firing (approve-before-commit strictness — a bad card

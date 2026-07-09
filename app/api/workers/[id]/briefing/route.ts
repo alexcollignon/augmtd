@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createAdmin } from '@supabase/supabase-js';
 import { getSystemClient } from '@/lib/ai/factory';
+import { logAIUsage } from '@/lib/ai/log-usage';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
@@ -218,24 +219,31 @@ Write a brief, natural check-in in first person. 2–4 sentences. Rules:
 - Sound like a colleague giving a quick update, not a system generating a report
 ${isFirstVisit ? '- This is a first meeting: introduce yourself and what you can help with' : `- Address ${firstName ? `"${firstName}"` : 'the user'} by name if it feels natural`}`;
 
-  const { client, model } = getSystemClient('conversation');
+  const { client, model, endpoint, tier } = getSystemClient('conversation');
 
   const stream = await client.chat.completions.create({
     model,
     messages: [{ role: 'user', content: systemPrompt }],
     stream: true,
+    stream_options: { include_usage: true },
     max_tokens: 220,
     temperature: 0.65,
   });
 
   const encoder = new TextEncoder();
   let fullText = '';
+  let promptTokens = 0;
+  let completionTokens = 0;
   const generatedAt = new Date().toISOString();
 
   const readable = new ReadableStream({
     async start(controller) {
       try {
         for await (const chunk of stream) {
+          if (chunk.usage) {
+            promptTokens = chunk.usage.prompt_tokens ?? promptTokens;
+            completionTokens = chunk.usage.completion_tokens ?? completionTokens;
+          }
           const delta = chunk.choices[0]?.delta?.content;
           if (delta) {
             fullText += delta;
@@ -259,6 +267,10 @@ ${isFirstVisit ? '- This is a first meeting: introduce yourself and what you can
             .update({ home_briefing: { text: fullText.trim(), generated_at: generatedAt } })
             .eq('id', workerId)
             .then(() => {}, () => {});
+          logAIUsage(admin, {
+            userId: user.id, agentId: workerId, source: 'worker_briefing', provider: endpoint.provider, model, tier, taskType: 'conversation',
+            usage: { prompt_tokens: promptTokens, completion_tokens: completionTokens },
+          }).catch(() => {});
         }
       }
     },

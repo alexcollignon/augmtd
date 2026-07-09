@@ -3,6 +3,7 @@
 
 import { getAIClient, aiCreate } from '@/lib/ai/factory';
 import { buildVoiceBlock, buildMeetingFollowupContext } from '@/lib/context/voice-context';
+import { detectLanguage } from '@/lib/inbox/detect-language';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type DBClient = any;
@@ -28,6 +29,20 @@ export async function generateReplyDraft(
     if (prof?.full_name) userName = String(prof.full_name);
   } catch { /* keep default */ }
 
+  // Detect the LANGUAGE of the message being replied to (subject + body). The voice examples above are
+  // frequently in another language (a PT-heavy user's sent mail) and, left unchecked, drag the reply
+  // into that language regardless of the incoming email — the A2 bug. A concrete detected language is
+  // FAR more decisive in the prompt than asking the model to "detect and override" the examples.
+  const detected = detectLanguage(`${subject}\n${body}`);
+  const langRule = detected
+    ? `IMPORTANT — LANGUAGE: The email you are replying to is written in ${detected}. Write your ENTIRE ` +
+      `reply in ${detected}, and ONLY in ${detected}. The example emails above are for STYLE only ` +
+      `(greeting shape, warmth, sign-off) — ignore their language; do NOT write in any language other ` +
+      `than ${detected}.`
+    : `IMPORTANT — LANGUAGE: Write the reply in the SAME language as the "EMAIL TO REPLY TO" above — ` +
+      `detect that email's language and reply ONLY in that language. The example emails above are for ` +
+      `STYLE only; do NOT copy their language if it differs from the email you are replying to.`;
+
   const { client: ai, model } = await getAIClient(userId, 'conversation', client);
   const res = await aiCreate(ai, {
     model, max_tokens: 600, temperature: 0.6,
@@ -37,9 +52,13 @@ export async function generateReplyDraft(
       // Anchor the perspective hard — the model otherwise mirrors the sender and signs with THEIR name.
       `You are ${userName}. Write ${userName}'s reply to the email below (which was sent TO ${userName} ` +
       `by ${from}), in ${userName}'s voice. Address the sender, and sign as ${userName} — NEVER sign as ` +
-      `the sender or adopt their name. Return ONLY the reply body — no subject line, no preamble, no ` +
+      `the sender or adopt their name. ` +
+      `Return ONLY the reply body — no subject line, no preamble, no ` +
       `surrounding quotes. Keep it appropriately concise and ready to send.\n\n` +
-      `From: ${from}\nSubject: ${subject}\n\n${body.slice(0, 3000)}` }],
+      `--- EMAIL TO REPLY TO ---\n` +
+      `From: ${from}\nSubject: ${subject}\n\n${body.slice(0, 3000)}\n\n` +
+      // LANGUAGE RULE — LAST, so it wins over the voice examples above (recency + explicit target).
+      langRule }],
   });
   return res.choices?.[0]?.message?.content?.trim() || '';
 }
@@ -72,7 +91,12 @@ export async function generateNudgeDraft(
       `You are ${userName}. Write a brief, friendly NUDGE from ${userName} to ${who}, following up on ` +
       `something ${userName} is waiting on them for: "${opts.description}".${aged} Keep it warm, low-pressure, ` +
       `and short — a gentle check-in, not a demand. Address ${who} and sign as ${userName} — NEVER sign as ` +
-      `the recipient. Return ONLY the message body — no subject line, no preamble, no surrounding quotes.` }],
+      `the recipient. ` +
+      // Match the correspondent's language, not the user's default: if the description/recipient makes
+      // the language they communicate in evident, write the nudge in THAT language; otherwise English.
+      `Write it in the language the recipient communicates in (infer from the recipient and the ` +
+      `description above); if unclear, use English. ` +
+      `Return ONLY the message body — no subject line, no preamble, no surrounding quotes.` }],
   });
   return res.choices?.[0]?.message?.content?.trim() || '';
 }

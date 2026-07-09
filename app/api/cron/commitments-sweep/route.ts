@@ -63,21 +63,31 @@ export async function GET(request: NextRequest) {
       }
     }
     let resolved = false;
+    // Capture the fulfilling email's received_at as the HONEST resolution moment. The Day-cleared
+    // ring counts by resolved_at, so stamping `now` here would passively fill the ring when the sweep
+    // processes a fulfillment that actually happened days ago. Use the email time; fall back to now.
+    let resolvedAt: string | null = null;
     if (c.thread_id) {
-      const { data } = await sb.from('emails').select('id')
+      const { data } = await sb.from('emails').select('id, received_at')
         .eq('user_id', c.user_id).eq('thread_id', c.thread_id).eq('is_from_user', youFulfil)
         .gt('received_at', c.created_at).limit(1);
-      if (data?.length) resolved = true;
+      if (data?.length) { resolved = true; resolvedAt = (data[0].received_at as string) ?? null; }
     }
     if (!resolved && cpEmail) {
-      const base = sb.from('emails').select('id').eq('user_id', c.user_id).eq('is_from_user', youFulfil).gt('received_at', c.created_at);
+      const base = sb.from('emails').select('id, received_at').eq('user_id', c.user_id).eq('is_from_user', youFulfil).gt('received_at', c.created_at);
       const { data } = youFulfil
         ? await base.contains('to_addresses', [cpEmail]).limit(1)   // you sent to them, any thread
         : await base.ilike('from_address', cpEmail).limit(1);        // they wrote back, any thread
-      if (data?.length) resolved = true;
+      if (data?.length) { resolved = true; resolvedAt = (data[0].received_at as string) ?? null; }
     }
     if (resolved) {
-      await sb.from('commitments').update({ status: 'done', updated_at: new Date().toISOString() }).eq('id', c.id);
+      const nowIso = new Date().toISOString();
+      const stampAt = resolvedAt || nowIso;
+      // Column-aware update (resolved_at/resolved_reason from 20260705d); retry status-only on older schemas.
+      let err;
+      ({ error: err } = await sb.from('commitments')
+        .update({ status: 'done', resolved_at: stampAt, resolved_reason: 'fulfilled', updated_at: nowIso }).eq('id', c.id));
+      if (err) await sb.from('commitments').update({ status: 'done', updated_at: nowIso }).eq('id', c.id);
       // Remove any inbox item we surfaced for it — it's handled now.
       await sb.from('inbox_items').delete().eq('user_id', c.user_id).eq('source', 'commitment').eq('source_id', c.id);
       closed++;

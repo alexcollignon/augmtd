@@ -34,7 +34,7 @@ export function SegmentedControl<T extends string>({ items, value, onChange, cla
             key={item.value}
             onClick={() => onChange(item.value)}
             className={cn(
-              'flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-md text-[12px] font-medium transition-colors',
+              'flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-md text-[12px] font-medium transition-all duration-150 ease-out',
               active ? 'bg-white text-indigo-700 shadow-sm' : 'text-neutral-500 hover:text-neutral-700',
             )}
           >

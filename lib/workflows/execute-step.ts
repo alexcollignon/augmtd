@@ -5,6 +5,7 @@
 
 import { SupabaseClient } from '@supabase/supabase-js';
 import { getAIClient, aiCreate, getSystemClient } from '@/lib/ai/factory';
+import { logAIUsage } from '@/lib/ai/log-usage';
 import { isAgentOSEnabled, runWorkerStepViaAgentOS } from '@/lib/work/agentos-bridge';
 import { buildChatSystemPrompt, detectModelFamily } from '@/lib/work/chat-system-prompt';
 import { buildUserContextBlock } from '@/lib/context/build-user-context';
@@ -13,8 +14,8 @@ import { formatCalendarContextForChat } from '@/lib/calendar/format-calendar-con
 import { buildKBContext } from '@/lib/knowledge/build-kb-context';
 import { buildSkillsBlock, buildSkillsBlockByIds } from '@/lib/work/worker-skills-context';
 import { composeSlackMessage } from './slack-message';
-import { executeWebSearch, executeFetchUrl, executeRssFeed, executeLinkedInPost, executeBrowserFetch, executePtTenders, executeDeepResearch, executeWorkflowOutput, executeGetEmails, executeGetMeetingContext, executeSlackReadMessages, executeSlackPostMessage, executeSendCalendarInvite } from '@/lib/tools';
-import type { SendCalendarInviteConfig } from '@/lib/tools';
+import { executeWebSearch, executeFetchUrl, executeRssFeed, executeLinkedInPost, executeBrowserFetch, executePtTenders, executeDeepResearch, executeWorkflowOutput, executeGetEmails, executeGetMeetingContext, executeSlackReadMessages, executeSlackPostMessage, executeSendCalendarInvite, executeForwardEmail, executeFindTeamWork } from '@/lib/tools';
+import type { SendCalendarInviteConfig, ForwardEmailConfig } from '@/lib/tools';
 import type { WorkflowStep, StepOutput, ToolStep, AIStep, AgentStep } from './types';
 
 export interface StepContext {
@@ -91,12 +92,15 @@ async function executeToolStep(step: ToolStep, ctx: StepContext): Promise<string
     case 'get_meeting_context': return await executeGetMeetingContext(step.config, ctx.userId, ctx.supabase);
     case 'get_calendar':      return await toolGetCalendar(ctx);
     case 'read_kb_file':      return await toolReadKbFile(step.config, ctx);
+    case 'search_knowledge_base': return await toolSearchKnowledgeBase(step.config, ctx);
+    case 'find_team_work':    return await executeFindTeamWork(step.config, ctx.userId, ctx.supabase);
     case 'web_search':        return await executeWebSearch(step.config);
     case 'fetch_url':         return await executeFetchUrl(step.config);
     case 'rss_feed':          return await executeRssFeed(step.config, ctx.lastRunAt);
     case 'slack_read_channel': return await executeSlackReadMessages(step.config, ctx.userId, ctx.supabase, ctx.workerAgentId);
     case 'slack_send':         return await toolSlackSend(step, ctx);
     case 'send_calendar_invite': return await executeSendCalendarInvite(step.config as unknown as SendCalendarInviteConfig, ctx.userId, ctx.supabase);
+    case 'forward_email':     return await executeForwardEmail(step.config as unknown as ForwardEmailConfig, ctx.userId, ctx.supabase);
     case 'linkedin_post':     return await executeLinkedInPost(step.config, {
       userId: ctx.userId,
       supabase: ctx.supabase,
@@ -154,6 +158,23 @@ async function toolSlackSend(step: ToolStep, ctx: StepContext): Promise<string> 
   return await executeSlackPostMessage({ channel, text }, ctx.userId, ctx.workerAgentId, ctx.supabase);
 }
 
+// Semantic search across the user's indexed knowledge base (Drive + uploads + meetings). Returns the
+// matched content as context text. Mirrors the chat `search_knowledge_base` tool via buildKBContext.
+async function toolSearchKnowledgeBase(
+  config: Record<string, unknown>,
+  ctx: StepContext,
+): Promise<string> {
+  const query = typeof config.query === 'string' ? config.query.trim() : '';
+  if (!query) return 'No search query provided.';
+  const kb = await buildKBContext(ctx.userId, query, ctx.supabase, {
+    fileLimit: 5,
+    maxChunksPerFile: 3,
+    threshold: 0.2,
+    maxTotalChars: 8000,
+  });
+  return kb?.context || `No knowledge-base results for "${query}".`;
+}
+
 async function toolReadKbFile(
   config: Record<string, unknown>,
   ctx: StepContext,
@@ -179,8 +200,9 @@ async function toolReadKbFile(
 // ── AI step ───────────────────────────────────────────────────────────────────
 
 async function executeAIStep(step: AIStep, ctx: StepContext): Promise<string> {
-  const tier = step.model_tier === 'reasoning' ? 'conversation' : 'summarization';
-  const resolved = await getAIClient(ctx.userId, tier, ctx.supabase);
+  // Task type (NOT the company's billing tier — see resolved.tier below for that).
+  const task = step.model_tier === 'reasoning' ? 'conversation' : 'summarization';
+  const resolved = await getAIClient(ctx.userId, task, ctx.supabase);
 
   // Cap previous outputs when worker context will also be injected (token budget)
   const previousBlock = formatPreviousOutputs(
@@ -297,6 +319,18 @@ async function executeAIStep(step: AIStep, ctx: StepContext): Promise<string> {
     max_tokens: step.model_tier === 'reasoning' ? 12000 : 4000,
     ...(step.output_format === 'json' ? { response_format: { type: 'json_object' } } : {}),
   });
+
+  logAIUsage(ctx.supabase, {
+    userId: ctx.userId,
+    agentId: ctx.workerAgentId ?? null,
+    workflowId: ctx.workflowId ?? null,
+    source: 'workflow_step',
+    provider: resolved.endpoint.provider,
+    model: resolved.model,
+    tier: resolved.tier,
+    taskType: task,
+    usage: res.usage,
+  }).catch(() => {});
 
   return res.choices[0]?.message?.content?.trim() ?? '';
 }
