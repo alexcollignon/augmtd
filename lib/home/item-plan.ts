@@ -257,6 +257,20 @@ function isReplyStep(t: ItemPlanTask): boolean {
   return REPLY_PHRASE.test(hay);
 }
 
+// ── Coherent re-slot (add-step dup suppression): does this step read as a REPLY surface? Exported so the
+// plan PATCH `add` path can detect a redundant reply — when the user adds "reply to X" but the plan (or
+// the deep-dive composer) already has the reply surface, we don't grow a second phantom reply step.
+// CONSERVATIVE: a step counts as a reply surface only when it's a system draft/send (the drafter/sender)
+// OR its wording plainly reads as reply/respond/get-back-to (REPLY_PHRASE) — NOT a distinct send like a
+// calendar invite or a forward. A forward is a distinct action, never a reply dup.
+const FORWARD_PHRASE = /\b(forward|fwd)\b/i;
+export function isReplyLikeStep(t: Pick<ItemPlanTask, 'text' | 'detail' | 'actor' | 'capability'>): boolean {
+  const hay = `${t.text || ''} ${t.detail || ''}`;
+  if (CALENDAR_INVITE_PHRASE.test(hay) || FORWARD_PHRASE.test(hay)) return false;
+  if (t.actor === 'system' && (t.capability === 'draft' || t.capability === 'send')) return true;
+  return REPLY_PHRASE.test(hay);
+}
+
 // ── Fix 3 (draft ↔ plan coherence): FOLD a trivially-implied internal check. A purely-internal AUGMTD
 // analyze/fetch step whose whole job is to CHECK availability/calendar for a proposed time is trivially
 // satisfied the moment the reply/invite presumes that time — leaving it as an open "Ready" step

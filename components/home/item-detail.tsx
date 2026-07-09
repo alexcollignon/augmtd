@@ -21,6 +21,7 @@ import {
   ArrowUturnRightIcon,
   ArrowUturnLeftIcon,
   EllipsisHorizontalIcon,
+  Bars2Icon,
 } from '@heroicons/react/24/outline';
 import { ThreadMessages, type ThreadMessage } from '@/components/inbox/thread-messages';
 import ReplyEditor from '@/components/inbox/reply-editor';
@@ -1338,8 +1339,12 @@ type ItemPlan = {
   classifyingId: string | null;  // id of the step currently being (re)classified — drives the "classifying…" hint
   toggle: (task: PlanTask) => void;
   dismiss: (task: PlanTask) => void;  // TOGGLE a step's "not needed" (crossed-out) state, persisted
-  addStep: (text: string) => Promise<void>;              // add a step → classify → append (optimistic)
+  // add a step → classify → append (optimistic). Resolves to { replyDuplicate:true } when the server
+  // suppressed it as a redundant reply (a reply surface already exists) — the caller then focuses the
+  // existing composer instead of showing a phantom second reply step.
+  addStep: (text: string) => Promise<{ replyDuplicate?: boolean }>;
   editStep: (taskId: string, text: string) => Promise<void>; // edit a step's text → re-classify in place
+  reorderSteps: (orderedIds: string[]) => void;          // drag-reorder → persist the new task order (optimistic)
   markSystemDone: (taskId: string) => void;              // optimistically flip a [System] step to done (after a commit)
   delegatingId: string | null;   // id of the step currently being delegated ('__item__' for a whole-item hand-off)
   delegateStep: (taskId: string, agentId: string, agentName: string) => Promise<boolean>;  // hand one step to a coworker
@@ -1458,9 +1463,9 @@ function useItemPlan(
   // ── Add a step. Optimistically insert a provisional [You] step (the user's text, "classifying…"),
   // POST action:'add' → the classifier grades it → swap in the real graded step (executor badge +
   // action may resolve). On failure, remove the provisional row (rollback).
-  const addStep = async (text: string) => {
+  const addStep = async (text: string): Promise<{ replyDuplicate?: boolean }> => {
     const trimmed = text.trim();
-    if (!trimmed) return;
+    if (!trimmed) return {};
     // A local, temporary id — replaced by the server's real id on success.
     const tempId = `tmp-${Date.now()}`;
     const provisional: PlanTask = { id: tempId, text: trimmed, actor: 'you', capability: null, done: false };
@@ -1473,13 +1478,21 @@ function useItemPlan(
         body: JSON.stringify({ kind: planKind, entityId, action: 'add', text: trimmed }),
       });
       if (!res.ok) throw new Error();
-      const d = (await res.json()) as { task?: PlanTask };
+      const d = (await res.json()) as { task?: PlanTask | null; replyDuplicate?: boolean };
+      // Coherent re-slot: the server suppressed a redundant reply. Drop the provisional row (no phantom
+      // second reply step) and tell the caller to focus the existing composer instead.
+      if (d.replyDuplicate) {
+        setTasks((prev) => (prev ? prev.filter((t) => t.id !== tempId) : prev));
+        return { replyDuplicate: true };
+      }
       if (!d.task) throw new Error();
       const graded = d.task;
       setTasks((prev) => (prev ? prev.map((t) => (t.id === tempId ? graded : t)) : prev));
+      return {};
     } catch {
       // Rollback — drop the provisional row.
       setTasks((prev) => (prev ? prev.filter((t) => t.id !== tempId) : prev));
+      return {};
     } finally {
       setClassifyingId(null);
     }
@@ -1514,6 +1527,33 @@ function useItemPlan(
     } finally {
       setClassifyingId(null);
     }
+  };
+
+  // ── Drag-reorder the steps. Optimistically re-sequence locally to the given id order, persist via the
+  // PATCH `reorder` action; roll back to the prior order on failure. `orderedIds` is the full set of the
+  // CURRENTLY-rendered task ids in their new order — the server re-sequences `item_plans.tasks` to match.
+  const reorderSteps = (orderedIds: string[]) => {
+    let prior: PlanTask[] | null = null;
+    setTasks((prev) => {
+      if (!prev) return prev;
+      prior = prev;
+      const byId = new Map(prev.map((t) => [t.id, t] as const));
+      const next: PlanTask[] = [];
+      const seen = new Set<string>();
+      for (const id of orderedIds) {
+        const t = byId.get(id);
+        if (t && !seen.has(id)) { next.push(t); seen.add(id); }
+      }
+      for (const t of prev) if (!seen.has(t.id)) next.push(t); // defensive: keep any unlisted ids
+      return next;
+    });
+    fetch('/api/items/plan', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: planKind, entityId, action: 'reorder', order: orderedIds }),
+    })
+      .then((r) => { if (!r.ok) throw new Error(); })
+      .catch(() => { if (prior) setTasks(prior); });
   };
 
   // Flip a [System] step to done locally after a successful commit (the server already persisted it in
@@ -1868,7 +1908,7 @@ function useItemPlan(
   // stays visible. (A user-added step counts toward it — it's in `tasks`.)
   const hasBreakdown = !loading && !failed && !!tasks && tasks.length >= 2;
 
-  return { kind: planKind, entityId, tasks, loading, failed, hasBreakdown, pending, classifyingId, toggle, dismiss, addStep, editStep, markSystemDone, delegatingId, delegateStep, delegateItem, runningId, runStep, uploadingId, uploadForStep, resolution, resolveFile, useResolvedFile, attachToStep, reassignStep, proposeCoworker, runPlan, markComposerSent };
+  return { kind: planKind, entityId, tasks, loading, failed, hasBreakdown, pending, classifyingId, toggle, dismiss, addStep, editStep, reorderSteps, markSystemDone, delegatingId, delegateStep, delegateItem, runningId, runStep, uploadingId, uploadForStep, resolution, resolveFile, useResolvedFile, attachToStep, reassignStep, proposeCoworker, runPlan, markComposerSent };
 }
 
 // ── The per-step STATE CHIP — the single glanceable "where is this step" token. Every StepperRow
@@ -1976,15 +2016,23 @@ function StepPreview({ task, owner, coworkerName, previewData }: {
     return 'their work';
   };
 
-  // INVITE — the concrete prepared invite (title · when · attendees). The flagship nutshell.
+  // INVITE — the concrete prepared invite. A COMPACT 2-LINE mini-preview (not a truncated one-liner):
+  // line 1 = the title (clamped), line 2 = the KEY facts — WHEN · to {attendee}{+N}. The when + who ARE
+  // the point of an invite, so they get their own line instead of being cut off by the title's truncate.
   if (previewData?.kind === 'invite') {
     const { title, when, attendees } = previewData;
-    const bits = [title || null, when || null, attendees.length ? `${attendees[0]}${attendees.length > 1 ? ` +${attendees.length - 1}` : ''}` : null].filter(Boolean);
-    if (!bits.length) return null;
+    const attendee = attendees.length
+      ? `to ${attendees[0]}${attendees.length > 1 ? ` +${attendees.length - 1}` : ''}`
+      : '';
+    const factsLine = [when || null, attendee || null].filter(Boolean).join(' · ');
+    if (!title && !factsLine) return null;
     return (
-      <div className="mt-1 flex items-center gap-1.5 text-[11.5px] text-neutral-500 min-w-0">
-        <CalendarDaysIcon className="w-3 h-3 flex-shrink-0 text-violet-400" />
-        <span className="min-w-0 truncate">{bits.join(' · ')}</span>
+      <div className="mt-1 flex items-start gap-1.5 text-[11.5px] text-neutral-500 min-w-0">
+        <CalendarDaysIcon className="w-3 h-3 flex-shrink-0 text-violet-400 mt-[1px]" />
+        <span className="min-w-0 flex flex-col leading-snug">
+          {title && <span className="line-clamp-1 text-neutral-600">{title}</span>}
+          {factsLine && <span className="line-clamp-1 text-neutral-500">{factsLine}</span>}
+        </span>
       </div>
     );
   }
@@ -2105,6 +2153,14 @@ function StepOverflowMenu({
 function StepperRow({
   task,
   isLast,
+  draggable = false,
+  dragging = false,
+  dragOver = false,
+  onDragStartStep,
+  onDragOverStep,
+  onDragLeaveStep,
+  onDropStep,
+  onDragEndStep,
   actionLabel,
   sysKind,
   proposedOwner,
@@ -2130,6 +2186,14 @@ function StepperRow({
 }: {
   task: PlanTask;
   isLast: boolean;
+  draggable?: boolean;              // this step can be drag-reordered (unsettled steps only)
+  dragging?: boolean;              // this step is the one currently being dragged (dim it)
+  dragOver?: boolean;              // a dragged step is hovering over this row (show the drop indicator)
+  onDragStartStep?: () => void;
+  onDragOverStep?: () => void;
+  onDragLeaveStep?: () => void;
+  onDropStep?: () => void;
+  onDragEndStep?: () => void;
   actionLabel: string | null;       // the row's contextual action button label (null → no per-row action)
   sysKind?: 'reply' | 'invite' | null; // a prepared system step: 'reply'→"Draft ready", 'invite'→"Ready to send"
   proposedOwner: ProposedOwner;     // the derived owner shown in the chip (system / coworker / you)
@@ -2199,9 +2263,33 @@ function StepperRow({
   };
 
   return (
-    <li className="relative pl-8">
+    <li
+      className={`group/row relative pl-8 transition-opacity ${dragging ? 'opacity-40' : ''}`}
+      // Drop target for drag-reorder: allow the drop + report hover so WhatThisTakes can re-slot.
+      onDragOver={draggable || dragOver ? (e) => { e.preventDefault(); onDragOverStep?.(); } : undefined}
+      onDragLeave={onDragLeaveStep}
+      onDrop={(e) => { e.preventDefault(); onDropStep?.(); }}
+    >
+      {/* Drop indicator — a bar above the row a dragged step would land in front of. */}
+      {dragOver && <span aria-hidden className="absolute left-6 right-0 -top-0.5 h-0.5 rounded-full bg-indigo-400" />}
       {/* Connector line — runs from just under this node to the next; hidden on the last step. */}
       {!isLast && <span aria-hidden className="absolute left-[11px] top-6 bottom-[-6px] w-px bg-neutral-200" />}
+
+      {/* Drag handle — grab to reorder. Only the handle is draggable (so title clicks / editing stay
+          intact). Hover-revealed on the far left; hidden for a settled step (not draggable). */}
+      {draggable && (
+        <button
+          type="button"
+          draggable
+          onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; onDragStartStep?.(); }}
+          onDragEnd={onDragEndStep}
+          title="Drag to reorder"
+          aria-label="Drag to reorder this step"
+          className="absolute -left-3 top-[5px] p-0.5 text-neutral-300 opacity-0 group-hover/row:opacity-100 focus:opacity-100 hover:text-neutral-500 cursor-grab active:cursor-grabbing transition-opacity"
+        >
+          <Bars2Icon className="w-3.5 h-3.5" />
+        </button>
+      )}
 
       {/* Node — a coworker avatar when the step was handed off; else ✦ for a system step / a checkbox
           for a [You] step. Dimmed when crossed out; pulses while classifying/delegating. */}
@@ -2569,36 +2657,63 @@ function StepperRow({
 // ── "+ Add a step" — an inline affordance at the bottom of the stepper. Collapsed to a quiet link;
 // on click it becomes a single-line input. On submit it posts action:'add' (the parent's `onAdd` →
 // hook `addStep`), which classifies the text and appends the graded step (with a brief "classifying…").
-function AddStepRow({ onAdd }: { onAdd: (text: string) => void }) {
+function AddStepRow({ onAdd, onReplyDuplicate }: {
+  onAdd: (text: string) => Promise<{ replyDuplicate?: boolean }>;
+  onReplyDuplicate?: () => void; // the added step was a redundant reply — focus the existing composer
+}) {
   const [open, setOpen] = useState(false);
   const [text, setText] = useState('');
+  const [submitting, setSubmitting] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { if (open) inputRef.current?.focus(); }, [open]);
 
-  const submit = () => {
+  const submit = async () => {
     const t = text.trim();
-    if (t) { onAdd(t); setText(''); }
-    // Keep the input open so several steps can be added in a row; a blank submit closes it.
-    else setOpen(false);
+    if (!t) { setOpen(false); return; } // a blank submit closes the input
+    setText('');
+    setSubmitting(true);
+    try {
+      const res = await onAdd(t);
+      // Coherent re-slot: a suppressed duplicate reply → focus/scroll the existing composer instead.
+      if (res?.replyDuplicate) onReplyDuplicate?.();
+    } finally {
+      setSubmitting(false);
+    }
+    // Keep the input open + refocus so several steps can be added in a row.
+    inputRef.current?.focus();
   };
 
   return (
     <li className="relative pl-8">
       {open ? (
         <div className="pb-1">
-          <input
-            ref={inputRef}
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') { e.preventDefault(); submit(); }
-              else if (e.key === 'Escape') { e.preventDefault(); setText(''); setOpen(false); }
-            }}
-            onBlur={() => { if (!text.trim()) setOpen(false); }}
-            placeholder="Add a step…"
-            className="w-full bg-white border border-indigo-300 rounded-md px-2 py-1.5 text-[13px] text-neutral-800 placeholder:text-neutral-300 focus:outline-none"
-          />
+          <div className="flex items-center gap-1.5">
+            <input
+              ref={inputRef}
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') { e.preventDefault(); submit(); }
+                else if (e.key === 'Escape') { e.preventDefault(); setText(''); setOpen(false); }
+              }}
+              // Don't close on blur when the click lands on the Add button (it commits instead).
+              onBlur={(e) => { if (!text.trim() && !e.relatedTarget?.closest?.('[data-add-step-submit]')) setOpen(false); }}
+              placeholder="Add a step…"
+              className="flex-1 min-w-0 bg-white border border-indigo-300 rounded-md px-2 py-1.5 text-[13px] text-neutral-800 placeholder:text-neutral-300 focus:outline-none"
+            />
+            <button
+              type="button"
+              data-add-step-submit
+              onMouseDown={(e) => e.preventDefault()} // keep focus so the blur handler doesn't pre-empt us
+              onClick={submit}
+              disabled={!text.trim() || submitting}
+              className="flex-shrink-0 inline-flex items-center gap-1 rounded-md bg-indigo-600 px-2.5 py-1.5 text-[12px] font-medium text-white transition-colors hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-default"
+            >
+              {submitting ? <span className="w-3 h-3 rounded-full border-2 border-white/40 border-t-white animate-spin" /> : <CheckIcon className="w-3.5 h-3.5" />}
+              Add
+            </button>
+          </div>
           <p className="mt-1 text-[10.5px] text-neutral-400">Enter to add · Esc to cancel — we'll work out who does it.</p>
         </div>
       ) : (
@@ -2639,8 +2754,29 @@ function WhatThisTakes({
   onForward?: (taskId: string) => void;
   variant?: 'inline' | 'panel';
 }) {
-  const { tasks, loading, failed, pending, classifyingId, toggle, dismiss, addStep, editStep, delegatingId, runningId, uploadingId, uploadForStep, resolution, resolveFile, useResolvedFile, attachToStep, reassignStep, proposeCoworker } = plan;
+  const { tasks, loading, failed, pending, classifyingId, toggle, dismiss, addStep, editStep, reorderSteps, delegatingId, runningId, uploadingId, uploadForStep, resolution, resolveFile, useResolvedFile, attachToStep, reassignStep, proposeCoworker } = plan;
   const workers = useCoworkers();
+
+  // ── Drag-to-reorder (native HTML5 DnD — no dep). `dragId` is the step being dragged; `overId` is the
+  // row it's hovering (drives the drop-indicator + the reorder target). On drop we splice the dragged id
+  // before the hovered one and persist the new order (reorderSteps, optimistic). Only unsettled steps are
+  // draggable (a done/handed/mid-flight step's slot is fixed).
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [overId, setOverId] = useState<string | null>(null);
+  const onDropReorder = (targetId: string) => {
+    const src = dragId;
+    setDragId(null); setOverId(null);
+    if (!src || !tasks || src === targetId) return;
+    const ids = tasks.map((t) => t.id);
+    const from = ids.indexOf(src);
+    const to = ids.indexOf(targetId);
+    if (from === -1 || to === -1) return;
+    ids.splice(from, 1);
+    // Re-find the target index after removal so the dragged row lands just before the hovered row.
+    const insertAt = ids.indexOf(targetId);
+    ids.splice(insertAt, 0, src);
+    reorderSteps(ids);
+  };
 
   // In the two-column layout the parent renders the panel chrome + its own loading/failed handling
   // (the aside only mounts once a breakdown is confirmed via the hook's `hasBreakdown`), so the
@@ -2722,12 +2858,22 @@ function WhatThisTakes({
         const suggestedCoworker = t.proposedAgent
           ? { name: t.proposedAgent.name, worker_role: t.proposedAgent.workerRole ?? null }
           : proposedOwner === 'coworker' ? suggestCoworkerFor(t, workers) : null;
+        // Drag is offered only for an unsettled step (a done/handed/mid-flight/crossed step's slot is fixed).
+        const draggable = !t.done && !t.handedTo && !t.dismissed && t.status !== 'working' && delegatingId !== t.id;
         return (
           <StepperRow
             key={t.id}
             task={t}
             // Never the last node — the "+ Add a step" row always follows, so the connector runs down to it.
             isLast={false}
+            draggable={draggable}
+            dragging={dragId === t.id}
+            dragOver={overId === t.id && dragId !== null && dragId !== t.id}
+            onDragStartStep={() => setDragId(t.id)}
+            onDragOverStep={() => { if (dragId && dragId !== t.id) setOverId(t.id); }}
+            onDragLeaveStep={() => setOverId((cur) => (cur === t.id ? null : cur))}
+            onDropStep={() => onDropReorder(t.id)}
+            onDragEndStep={() => { setDragId(null); setOverId(null); }}
             actionLabel={action?.label ?? null}
             sysKind={action?.sysKind ?? null}
             proposedOwner={proposedOwner}
@@ -2755,8 +2901,9 @@ function WhatThisTakes({
           />
         );
       })}
-      {/* Add-a-step affordance — always at the bottom of an active plan. */}
-      <AddStepRow onAdd={addStep} />
+      {/* Add-a-step affordance — always at the bottom of an active plan. A redundant reply focuses the
+          existing composer (onDraft) instead of adding a phantom second reply step. */}
+      <AddStepRow onAdd={addStep} onReplyDuplicate={onDraft} />
     </ol>
   );
 
