@@ -3117,19 +3117,9 @@ function EmailActionPalette({
       <button onClick={onForward} className={btn(false)} title="Forward this email">
         <ArrowUturnRightIcon className="w-3.5 h-3.5" />Forward
       </button>
-      <div className="relative">
-        <button onClick={() => setPickerOpen((v) => !v)} className={btn(false)} title="Hand the reply to a coworker">
-          <UserPlusIcon className="w-3.5 h-3.5" />Hand to a coworker
-        </button>
-        {pickerOpen && (
-          <CoworkerPicker
-            direction="down"
-            align="left"
-            onPick={(w) => { setPickerOpen(false); onDelegate(w); }}
-            onClose={() => setPickerOpen(false)}
-          />
-        )}
-      </div>
+      {/* Item-level "Hand to a coworker" removed — delegating a whole email with no task defined lacks
+          context; coworker hand-off lives PER-STEP in the plan (the owner menu), where the step says what
+          to do. */}
     </div>
   );
 }
