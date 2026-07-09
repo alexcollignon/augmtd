@@ -2021,10 +2021,11 @@ function StepPreview({ task, owner, coworkerName, previewData }: {
   // the point of an invite, so they get their own line instead of being cut off by the title's truncate.
   if (previewData?.kind === 'invite') {
     const { title, when, attendees } = previewData;
-    const attendee = attendees.length
-      ? `to ${attendees[0]}${attendees.length > 1 ? ` +${attendees.length - 1}` : ''}`
-      : '';
-    const factsLine = [when || null, attendee || null].filter(Boolean).join(' · ');
+    // Attendees as a COMPACT guest count, not the full email address (which overflowed the line).
+    // The title already names the counterpart ("Meeting with X"), so a single guest needs no repeat —
+    // only surface a count when there's more than one. Always fits the line.
+    const guests = attendees.length > 1 ? `${attendees.length} guests` : '';
+    const factsLine = [when || null, guests || null].filter(Boolean).join(' · ');
     if (!title && !factsLine) return null;
     return (
       <div className="mt-1 flex items-start gap-1.5 text-[11.5px] text-neutral-500 min-w-0">
