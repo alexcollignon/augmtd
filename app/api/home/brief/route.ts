@@ -4,6 +4,7 @@ import { getSystemClient } from '@/lib/ai/factory';
 import { buildAnsweredSet } from '@/lib/inbox/needs-reply';
 import { computeThreadReplyState } from '@/lib/inbox/thread-resolution';
 import { classifyItem } from '@/lib/inbox/classify-item';
+import { getUnderstanding } from '@/lib/inbox/item-understanding';
 import { lastMeetingRecall } from '@/lib/context/voice-context';
 import { buildBriefContext, type EmailSeed } from '@/lib/home/brief-context';
 import { synthesizeBrief, type MustRespondCandidate } from '@/lib/home/synthesize-brief';
@@ -250,9 +251,16 @@ export async function GET() {
     // newsletter. Gate on work_state, never sender/subject keywords.
     if (it.work_state === 'noted') continue;
     const sd = (it.source_data ?? {}) as Record<string, unknown>;
-    // Only worth promoting if there's a real sender AND the user was cc'd (i.e. it was demoted for
-    // being a bystander, not because it's inherently noise). Newsletters have no personal signal.
-    if (sd.is_cc_only === true && (sd.from_address || sd.from)) awarenessRaw.set(it.id, { it, ccOnly: true });
+    // Only worth promoting if there's a real sender AND the user was demoted for being a BYSTANDER on
+    // a real person-thread (not because it's inherently noise). The demotion signal is, in order:
+    //  (1) the unified `understanding` (role bystander/one_of_many, or awareness) — catches the group
+    //      "Dear Team" To case where is_cc_only is false but the user is one of many; else
+    //  (2) the legacy is_cc_only header input (no understanding on legacy items).
+    // Newsletters have no personal signal and are excluded above (work_state 'noted').
+    const u = getUnderstanding(it);
+    const demotedByUnderstanding = !!u && (u.role === 'bystander' || u.role === 'one_of_many' || u.relevance === 'awareness');
+    const bystander = demotedByUnderstanding || (!u && sd.is_cc_only === true);
+    if (bystander && (sd.from_address || sd.from)) awarenessRaw.set(it.id, { it, ccOnly: true });
   }
   // Drop reply threads you've already answered. Also pull the FULL thread messages (both directions)
   // so we can compute the STRUCTURAL reply-state (computeThreadReplyState — direction+time only, no

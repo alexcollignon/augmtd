@@ -3,6 +3,7 @@ import { logAIUsage } from '@/lib/ai/log-usage';
 import { parseModelJSON } from '@/lib/ai/parse-json';
 import { SupabaseClient } from '@supabase/supabase-js';
 import type { UserContextProfile } from '@/lib/types/user-context';
+import { coerceUnderstanding, type ItemUnderstanding } from '@/lib/inbox/item-understanding';
 
 /**
  * Calendar context for email processing
@@ -51,6 +52,13 @@ export interface EmailData {
   recipient_position?: 'to' | 'cc'; // The user's position on this email
   recipient_email?: string;          // The user's own email address
   user_context_block?: string;       // Pre-built identity+context block from buildUserContextBlock()
+  // Raw recipient inputs for the unified understanding — the ACTUAL To/CC lists on the email + ALL
+  // of the user's own addresses (login + every connected mailbox) + their name. The model reasons
+  // over these to judge role (addressed / one_of_many / bystander) instead of a To-vs-CC header math.
+  to_addresses?: string[];
+  cc_addresses?: string[];
+  user_addresses?: string[];
+  user_name?: string;
 }
 
 /**
@@ -122,6 +130,11 @@ export interface ProcessedEmail {
   // SCORING
   confidence: number; // 0-100
   priority: number; // 0-100
+
+  // UNIFIED UNDERSTANDING — one grounded judgment of the user's role + what the item asks + its
+  // language, reasoned in THIS same AI pass (no extra call). null when the model omitted it (the
+  // consumers then fall back to today's behavior). Stored on source_data.understanding by the caller.
+  understanding: ItemUnderstanding | null;
 }
 
 /**
@@ -289,6 +302,23 @@ export async function processEmail(email: EmailData, supabase: SupabaseClient): 
       `Otherwise classify as NOTED (awareness only) with canBePreparedViaEmail = false and no draft.\n`
     : '';
 
+  // Recipients block — the RAW addressing facts the unified understanding reasons over. We give the
+  // model the actual To/CC and ALL of the user's own addresses (login + connected) + their name, so
+  // it can judge "am I the one expected to respond, or one of many on a group thread, or a bystander
+  // kept in the loop?" by UNDERSTANDING the addressing, not by a To-vs-CC header rule. Handles
+  // To-only, group-To ("Dear Team"), CC-only, named-in-body, and forwards uniformly.
+  const _mineList = (email.user_addresses && email.user_addresses.length
+    ? email.user_addresses
+    : [email.recipient_email].filter(Boolean) as string[]);
+  const recipientsSection =
+    `\n=== ADDRESSING FACTS (reason over these for the understanding) ===\n` +
+    `The user's own email address(es): ${_mineList.length ? _mineList.join(', ') : '(unknown)'}\n` +
+    (email.user_name ? `The user's name: ${email.user_name}\n` : '') +
+    `This email's To: ${(email.to_addresses ?? []).join(', ') || '(none captured)'}\n` +
+    `This email's Cc: ${(email.cc_addresses ?? []).join(', ') || '(none)'}\n` +
+    `The user is on this email as: ${email.recipient_position ? email.recipient_position.toUpperCase() : '(unknown)'}\n` +
+    `=====================================================\n\n`;
+
   // Identity + context block — must be first in the prompt to prevent name adoption from thread
   const contextBlockSection = email.user_context_block
     ? `${email.user_context_block}\n\nCRITICAL: You are preparing work FOR the person described above.${email.recipient_email ? ` Their email is <${email.recipient_email}>.` : ''}\nWhen drafting replies, always write AS them and sign with their name.\nNEVER adopt any other name found in the email thread as the sender or signatory.\n\n`
@@ -296,7 +326,7 @@ export async function processEmail(email: EmailData, supabase: SupabaseClient): 
 
   const prompt = `You are a work preparation AI. Your job is to detect OBLIGATIONS and prepare WORK, not classify emails.
 
-${contextBlockSection}${calendarContextSection}${forwardedNote}${ccNote}${threadContextSection}CURRENT EMAIL (the one requiring your response):
+${contextBlockSection}${recipientsSection}${calendarContextSection}${forwardedNote}${ccNote}${threadContextSection}CURRENT EMAIL (the one requiring your response):
 From: ${email.from_name} <${email.from_address}>
 Subject: ${email.subject}
 Received: ${new Date(email.received_at).toLocaleString()}
@@ -569,11 +599,47 @@ Create user-facing text (OUTCOME-CENTRIC, NOT EMAIL-CENTRIC):
 
 ---
 
+STEP 5: UNDERSTAND THE ITEM FROM THE USER'S SEAT (unified judgment)
+
+Reason — do NOT enumerate keywords or apply a To-vs-CC rule. Using the ADDRESSING FACTS above (the
+user's own addresses, the real To/CC, how the body addresses people) + the thread, judge three fields.
+You MUST use ONLY the allowed values below — do NOT invent your own labels.
+
+- role: one of EXACTLY "addressed" | "one_of_many" | "bystander".
+  * "addressed": the user is a direct addressee and the message's ask lands on THEM specifically —
+    they're greeted/named, or they're the sole/primary To, or the body clearly turns to them.
+  * "one_of_many": a GROUP message — a broad To/CC or a collective greeting ("Dear Team", "Hi all",
+    "Everyone") where the user is NOT singled out. The ask (if any) is to the group, not to the user.
+    A group "Dear Team" To on which the user is just one of several recipients is "one_of_many", NOT
+    "addressed" — even though the user is technically in the To line.
+  * "bystander": the user is only kept in the loop for awareness — CC'd on someone else's thread, or
+    the conversation is plainly between other people and the user isn't expected to act.
+
+- relevance: one of EXACTLY "reply" | "action" | "awareness" (reason from role + content, not work_state):
+  * "reply": a real person expects a response FROM the user (a question/request that lands on them).
+  * "action": the user must DO something that isn't a reply (an external task, a form, an approval).
+  * "awareness": informational for the user — no move expected. A one_of_many or bystander message
+    with no ask directed at the user is "awareness", even if it contains a question aimed at someone
+    else on the thread.
+  RULE: if role is "bystander", relevance is "awareness" (they're only informed). If role is
+  "one_of_many" and no ask is directed at the user specifically, relevance is "awareness".
+
+- language: a lowercase ISO code — one of "en" | "pt" | "fr" | "es" | "de" | "it" (or another 2-letter
+  code). The language the user would REPLY in on this thread — the language of the CURRENT EMAIL / the
+  thread the user is corresponding in. Judge from the actual message text, not the user's usual
+  language. If genuinely ambiguous or too little text, return "en".
+
+The "understanding" field is REQUIRED and must contain exactly {role, relevance, language} using only
+the allowed values above.
+
+---
+
 OUTPUT FORMAT (JSON):
 
 {
   "workState": "work_prepared",
   "workTitle": "Schedule exhibition call for 4YFN26",
+  "understanding": { "role": "addressed", "relevance": "reply", "language": "en" },
 
   "signals": {
     "hasDirectQuestion": true,
@@ -609,6 +675,7 @@ EXAMPLE 2 - Mechanical Confirmation (ACTION_REQUIRED):
 {
   "workState": "action_required",
   "workTitle": "Confirm Your Signup",
+  "understanding": { "role": "addressed", "relevance": "action", "language": "en" },
 
   "signals": {
     "hasDirectQuestion": false,
@@ -644,6 +711,7 @@ EXAMPLE 3 - Payment Failure (ACTION_REQUIRED - Operational):
 {
   "workState": "action_required",
   "workTitle": "Update payment method",
+  "understanding": { "role": "bystander", "relevance": "awareness", "language": "en" },
 
   "signals": {
     "hasDirectQuestion": false,
@@ -749,7 +817,14 @@ Respond ONLY with valid JSON matching the structure above.`;
       // prompt instruction; Together AI / OpenAI-compatible APIs support it natively.
       // Without this, Together AI (Kimi K2.6) returns unstructured text → parse fails → fallback fires.
       response_format: { type: 'json_object' as const },
-      max_tokens: 2048,
+      // Budget headroom for reasoning models. On bedrock_optimised, `planning` is Kimi (a REASONING
+      // model): it can spend ~1700+ tokens in the hidden reasoning channel before emitting content.
+      // At 2048 the reasoning starved the JSON output → truncated/empty content → understanding null
+      // (the same Kimi-reasoning-budget trap the item-plan hit). 6144 leaves the content channel ample
+      // room AFTER reasoning (which can run ~1200–1800 tokens) so the full JSON — signals + the unified
+      // understanding — lands intact even on the largest emails. Non-reasoning tiers (standard =
+      // gpt-4o-mini) ignore the extra headroom and finish far short of it.
+      max_tokens: 6144,
       temperature: 0.4,
     });
 
@@ -765,6 +840,17 @@ Respond ONLY with valid JSON matching the structure above.`;
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const result: any = parseModelJSON(response.choices[0].message.content, {});
+
+    // Understanding is the PRIMARY relevance/role/language signal. Reasoning models (Kimi on
+    // bedrock_optimised) occasionally omit or garble this one field even when the rest parsed — a
+    // truncation/label-drift variance, not a prompt bug. When that happens, recover with ONE tiny,
+    // focused understanding-only call (a few hundred tokens on the classification tier, NOT another
+    // full planning pass) so the group-"Dear Team" case is reliably grounded. Non-fatal; on failure
+    // `understanding` stays null and the consumers fall back to today's behavior.
+    let understanding = coerceUnderstanding(result.understanding);
+    if (!understanding) {
+      understanding = await recoverUnderstanding(email, supabase).catch(() => null);
+    }
 
     // Validate and return with defaults
     return {
@@ -798,10 +884,41 @@ Respond ONLY with valid JSON matching the structure above.`;
 
       confidence: Math.min(100, Math.max(0, result.confidence || 50)),
       priority: Math.min(100, Math.max(0, result.priority || 50)),
+
+      // Unified understanding — from the same planning pass, or the focused recovery above. null if
+      // both failed; the caller writes it to source_data.understanding and consumers fall back to
+      // today's behavior when it's null (non-fatal).
+      understanding,
     };
   } catch (error) {
     console.error('Error processing email with AI:', error);
     throw error;
   }
+}
+
+// Focused understanding-only recovery — used ONLY when the main planning pass omitted/garbled the
+// `understanding` field (a reasoning-model variance). Runs on the CLASSIFICATION tier (Haiku on
+// bedrock_optimised / gpt-4o-mini on standard — NON-reasoning, so no reasoning-channel starvation)
+// with a terse, closed-set prompt that reliably emits the constrained values. Cheap (a few hundred
+// tokens). This is a fallback, not the default path. AGNOSTIC — reasons over the addressing facts +
+// body, never a keyword/header rule.
+async function recoverUnderstanding(email: EmailData, supabase: SupabaseClient): Promise<ItemUnderstanding | null> {
+  const mine = (email.user_addresses && email.user_addresses.length
+    ? email.user_addresses
+    : [email.recipient_email].filter(Boolean) as string[]);
+  const { getAIClient, aiCreate } = await import('@/lib/ai/factory');
+  const { client: ai, model } = await getAIClient(email.user_id!, 'classification', supabase);
+  const content =
+    `You judge an email from the seat of the user, whose own address(es) are: ${mine.join(', ') || '(unknown)'}${email.user_name ? ` (name: ${email.user_name})` : ''}.\n` +
+    `This email — To: ${(email.to_addresses ?? []).join(', ') || '(none)'} ; Cc: ${(email.cc_addresses ?? []).join(', ') || '(none)'}\n` +
+    `From: ${email.from_name} <${email.from_address}>\nSubject: ${email.subject}\nBody:\n${truncateText(email.body, 2000)}\n\n` +
+    `Reason (not keywords): is the user the one expected to respond, one of many on a group thread, or a bystander kept informed?\n` +
+    `Return ONLY JSON: {"role":"addressed|one_of_many|bystander","relevance":"reply|action|awareness","language":"<lowercase ISO code e.g. en, pt>"}. Use ONLY the allowed values. ` +
+    `A group "Dear Team" To where the user is one of several recipients is "one_of_many" (awareness), NOT "addressed".`;
+  const res = await aiCreate(ai, {
+    model, response_format: { type: 'json_object' as const }, max_tokens: 400, temperature: 0,
+    messages: [{ role: 'user', content }],
+  });
+  return coerceUnderstanding(parseModelJSON(res.choices?.[0]?.message?.content || '', {}));
 }
 

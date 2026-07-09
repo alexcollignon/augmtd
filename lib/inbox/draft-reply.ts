@@ -4,6 +4,7 @@
 import { getAIClient, aiCreate } from '@/lib/ai/factory';
 import { buildVoiceBlock, buildMeetingFollowupContext } from '@/lib/context/voice-context';
 import { detectLanguage } from '@/lib/inbox/detect-language';
+import { coerceUnderstanding, languageName } from '@/lib/inbox/item-understanding';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type DBClient = any;
@@ -29,11 +30,13 @@ export async function generateReplyDraft(
     if (prof?.full_name) userName = String(prof.full_name);
   } catch { /* keep default */ }
 
-  // Detect the LANGUAGE of the message being replied to (subject + body). The voice examples above are
-  // frequently in another language (a PT-heavy user's sent mail) and, left unchecked, drag the reply
-  // into that language regardless of the incoming email — the A2 bug. A concrete detected language is
-  // FAR more decisive in the prompt than asking the model to "detect and override" the examples.
-  const detected = detectLanguage(`${subject}\n${body}`);
+  // The LANGUAGE the reply should be written in. PRIMARY signal: the unified `understanding.language`
+  // — reasoned over the full thread in the classification pass, so it's decisive even on short text
+  // (where the stopword detector fell back to the user's PT-heavy voice → the A2 wrong-language bug).
+  // `detectLanguage` is now only the FALLBACK when there's no understanding (legacy items). The voice
+  // block governs TONE only — never the language.
+  const understanding = coerceUnderstanding((sourceData as Record<string, unknown>).understanding);
+  const detected = languageName(understanding?.language) || detectLanguage(`${subject}\n${body}`);
   const langRule = detected
     ? `IMPORTANT — LANGUAGE: The email you are replying to is written in ${detected}. Write your ENTIRE ` +
       `reply in ${detected}, and ONLY in ${detected}. The example emails above are for STYLE only ` +

@@ -4,6 +4,7 @@
 // with something you owe.
 
 import { isNeedsReply, isCcOnlyBystander, type SignalItem } from './needs-reply';
+import { getUnderstanding } from './item-understanding';
 import { DEFAULT_RULES } from './rules/defaults';
 import { evaluateDeterministic } from './rules/evaluate';
 import { LABEL_TO_TYPE, type RuleEmail, type InboxRule } from './rules/types';
@@ -73,6 +74,16 @@ export function classifyItem(item: Item): ItemType {
 
   // Your move — the ball is in your court.
   if (isNeedsReply(item)) return 'needs_reply';
+
+  // PRIMARY signal: the unified understanding. If it reasoned that the user is a bystander / one of
+  // many / this is awareness-only, the item is FOR AWARENESS — visible as FYI, never promoted to a
+  // to-do just because work_state is action/work_prepared (the group "Dear Team" case). This is the
+  // reasoned relevance winning over the brittle work_state→to_do mapping. Legacy items (no
+  // understanding) skip this and keep today's work_state-driven behavior.
+  const u = getUnderstanding(item);
+  if (u && (u.role === 'bystander' || u.role === 'one_of_many' || u.relevance === 'awareness')) {
+    return ws === 'noise' ? 'hidden' : 'fyi';
+  }
 
   // Their move — you're owed; the verb here is "follow up" (nudge).
   if (ws === 'waiting') return 'waiting_on';

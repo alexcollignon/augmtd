@@ -7,6 +7,8 @@
 // hasExplicitApprovalRequest / isAutomatedSender / isNotification. We were just collapsing all
 // of that into work_state and querying the wrong bucket. This helper reads the signals back out.
 
+import { getUnderstanding } from './item-understanding';
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type SignalItem = { work_state?: string | null; source?: string | null; source_data?: any };
 
@@ -20,10 +22,21 @@ function fromAddress(item: SignalItem): string {
   return String(sd.from || sd.from_address || sd.fromEmail || '').toLowerCase();
 }
 
-// You're only CC'd, and the CC-aware processor saw nothing personal (no reply-state). A generic
-// "asks" signal — or a rule — shouldn't make this your reply: the ask almost always targets the TO
-// recipient, not you. `is_cc_only` is stamped at sync from the email's to/cc vs your mailbox.
+// You're a bystander on this thread — not the one expected to answer. The PRIMARY signal is the
+// unified `understanding` (reasoned over the real recipients + your own addresses + how the body
+// addresses you): role `bystander`/`one_of_many` or relevance `awareness` means the ask (if any)
+// targets someone else — this catches the group "Dear Team" To case that the To-vs-CC header math
+// misses (you're technically in the To, but one of many, unaddressed). When there's no understanding
+// (legacy items), FALL BACK to the old `is_cc_only` header check — non-fatal, today's behavior.
 export function isCcOnlyBystander(item: SignalItem): boolean {
+  const u = getUnderstanding(item);
+  if (u) {
+    // Reasoned judgment wins. `addressed` + `reply` is genuinely yours; anything else is awareness.
+    if (u.role === 'bystander' || u.role === 'one_of_many') return true;
+    if (u.relevance === 'awareness') return true;
+    return false;
+  }
+  // Fallback (no understanding): the legacy header-math input.
   const sd = (item.source_data ?? {}) as Record<string, unknown>;
   if (sd.is_cc_only !== true) return false;
   const ws = (item as { work_state?: string | null }).work_state;
@@ -38,10 +51,20 @@ export function isNeedsReply(item: SignalItem): boolean {
   const local = from.includes('@') ? from.split('@')[0] : from;
   if (AUTOMATED_SENDER.test(local) || s.isAutomatedSender || s.isNotification || s.isMechanicalConfirmation) return false;
 
+  // PRIMARY signal: the unified understanding. When present it is the decider for whether the reply
+  // is yours — reasoned over the real recipients, so it correctly demotes a group "Dear Team" To (you
+  // in the To but one of many) to awareness, and correctly keeps a directly-addressed ask as a reply.
+  const u = getUnderstanding(item);
+  if (u) {
+    // A bystander / one_of_many / awareness item is not your reply (visible as FYI, never hidden).
+    if (u.role === 'bystander' || u.role === 'one_of_many' || u.relevance === 'awareness') return false;
+    // Addressed + expecting a reply (or an action that lands via email) → your move.
+    return u.relevance === 'reply' || u.relevance === 'action';
+  }
+
+  // Fallback (legacy items, no understanding): the old header + signal recombination.
   // CC-only and not personally in the loop → awareness, not your reply.
   if (isCcOnlyBystander(item)) return false;
-
-  // Then: the classifier's "respond via email" state, or the email plainly asks something.
   const replyState = item.work_state === 'work_prepared' || item.work_state === 'decision_required';
   const asks = !!(s.hasDirectQuestion || s.hasRequestForAction || s.hasExplicitApprovalRequest);
   return replyState || asks;

@@ -1526,6 +1526,11 @@ export async function syncEmailsForConnection(
               recipient_position: recipient.position === 'to' || recipient.position === 'cc' ? recipient.position : undefined,
               recipient_email: recipient.email,
               user_context_block: userContextBlock || undefined,
+              // Raw addressing inputs for the unified understanding (reasoned, not header-math).
+              to_addresses: _recipientRole.to,
+              cc_addresses: _recipientRole.cc,
+              user_addresses: Array.from(_userAddresses),
+              user_name: _ownerProfile?.full_name || undefined,
             }, adminSupabase);
 
             // Update existing inbox item with recipient context
@@ -1581,6 +1586,9 @@ export async function syncEmailsForConnection(
                   is_cc_only: _recipientRole.is_cc_only,
                   to: _recipientRole.to,
                   cc: _recipientRole.cc,
+                  // Unified understanding — reasoned role/relevance/language from the SAME AI pass.
+                  // The PRIMARY signal consumers read (is_cc_only is now just an input to it).
+                  understanding: processed.understanding || undefined,
                   calendar_event_id: calendarEventId || undefined,
                   isForwarded,
                   thread_history: threadEmails?.map(e => ({
@@ -1652,6 +1660,11 @@ export async function syncEmailsForConnection(
             recipient_position: recipient.position === 'to' || recipient.position === 'cc' ? recipient.position : undefined,
             recipient_email: recipient.email,
             user_context_block: userContextBlock || undefined,
+            // Raw addressing inputs for the unified understanding (reasoned, not header-math).
+            to_addresses: _recipientRole.to,
+            cc_addresses: _recipientRole.cc,
+            user_addresses: Array.from(_userAddresses),
+            user_name: _ownerProfile?.full_name || undefined,
           }, adminSupabase);
 
           // Create inbox item for this recipient
@@ -1708,6 +1721,9 @@ export async function syncEmailsForConnection(
                 is_cc_only: _recipientRole.is_cc_only,
                 to: _recipientRole.to,
                 cc: _recipientRole.cc,
+                // Unified understanding — reasoned role/relevance/language from the SAME AI pass.
+                // The PRIMARY signal consumers read (is_cc_only is now just an input to it).
+                understanding: processed.understanding || undefined,
                 calendar_event_id: calendarEventId || undefined,
                 isForwarded,
                 thread_history: threadEmailsForNew?.map(e => ({
