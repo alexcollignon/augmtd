@@ -70,6 +70,39 @@ export function coerceUnderstanding(raw: unknown): ItemUnderstanding | null {
   return out;
 }
 
+/**
+ * PRESERVE-ON-WRITE guard for every `inbox_items.source_data` write in the email sync.
+ *
+ * `source_data` is written by REPLACING the whole column (not a jsonb merge), so any rebuild path
+ * that forgets `understanding` silently DROPS the reasoned {role, relevance, language} judgment —
+ * and a re-synced item then mis-routes (e.g. an "awareness" email falls back to Newsletters). This
+ * helper is applied at EVERY write so understanding is never lost:
+ *   - `computed`  — a freshly-computed understanding from `processEmail` (full-classification paths).
+ *   - `existingRow` — the current inbox_items row (any shape with `source_data.understanding`), so a
+ *      rebuild/patch of an item that ALREADY had understanding keeps it (fast-path, safety-net,
+ *      label-stamp, reply-reactivation, etc.).
+ *   - falls back to whatever `newSourceData` may already carry.
+ * Precedence: computed (fresh) > existing (preserve) > already-in-newSourceData. Non-fatal: when
+ * none resolve to a valid understanding the key is simply omitted (a brand-new noted item is fine).
+ *
+ * Returns a NEW object (does not mutate its inputs).
+ */
+export function withPreservedUnderstanding(
+  newSourceData: Record<string, unknown>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  existingRow?: { source_data?: any } | null,
+  computed?: ItemUnderstanding | null | undefined,
+): Record<string, unknown> {
+  const resolved =
+    coerceUnderstanding(computed) ??
+    getUnderstanding(existingRow) ??
+    coerceUnderstanding((newSourceData as Record<string, unknown>)?.understanding);
+  const out = { ...newSourceData };
+  if (resolved) out.understanding = resolved;
+  else delete out.understanding; // don't write a garbage/partial understanding
+  return out;
+}
+
 /** True when the understanding says the item does NOT warrant a reply from the user. */
 export function isAwarenessRelevance(u: ItemUnderstanding | null): boolean {
   if (!u) return false;
