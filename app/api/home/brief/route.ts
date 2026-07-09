@@ -926,8 +926,13 @@ export async function GET() {
   const [inboxClearedRes, commitClearedRes, repliesSentRes] = await Promise.all([
     supabase.from('inbox_items').select('id', { count: 'exact', head: true })
       .eq('user_id', user.id).in('status', ['completed', 'dismissed']).gte('source_data->>resolved_at', startOfDay),
+    // Count only USER-driven resolutions — exclude auto-fulfillment (`resolved_reason='fulfilled'`, the
+    // commitments-sweep detecting a commitment was met, often a phantom created + closed the same minute).
+    // "Day cleared" reflects what YOU cleared, not what the system auto-closed. User done/dismiss (reason
+    // null) + reply-resolution ('replied') still count.
     supabase.from('commitments').select('id', { count: 'exact', head: true })
-      .eq('user_id', user.id).in('status', ['done', 'dismissed']).gte('resolved_at', startOfDay),
+      .eq('user_id', user.id).in('status', ['done', 'dismissed']).gte('resolved_at', startOfDay)
+      .or('resolved_reason.is.null,resolved_reason.neq.fulfilled'),
     // NOTE: repliesSentRes still counts sent emails today by received_at — a genuine user action, so
     // it's not the passive-fill bug. Could be scoped to inbox-linked sends later if it over-counts.
     supabase.from('emails').select('id', { count: 'exact', head: true })
