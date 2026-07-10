@@ -59,6 +59,8 @@ export interface AgentWorkRow {
   /** Real spend — see AIOperationsSummary.tokenCostEur doc comment for the partial-coverage caveat. */
   tokenCostEur: number;
   totalTokens: number;
+  promptTokens: number;
+  completionTokens: number;
   /** Per-user run counts, sorted high→low. `slot` is an anonymous rank (0, 1, 2…)
    *  assigned per real user_id, consistent ACROSS every coworker's row this
    *  period — so if the same real person is a heavy Clara user AND a heavy Max
@@ -91,9 +93,18 @@ export interface AIOperationsSummary {
   tokenCostEur: number;
   tokenCostEurPrev: number;
   totalTokens: number;
+  totalPromptTokens: number;
+  totalCompletionTokens: number;
   /** Spend broken down by AIUsageSource, sorted by cost descending — "where is the
    *  AI spend actually concentrating." */
-  costBySource: { source: string; label: string; costEur: number; tokens: number }[];
+  costBySource: { source: string; label: string; costEur: number; tokens: number; promptTokens: number; completionTokens: number }[];
+  /** Spend broken down by real user, sorted by cost descending — "which users are
+   *  actually driving the spend." `slot` mirrors AgentWorkRow.usageDistribution's
+   *  color scheme (same person, same color, across sections) — the admin viewing
+   *  this already sees these members' names in Settings → Company → Members, so
+   *  unlike usageDistribution this is real identity by default; the UI offers an
+   *  opt-in anonymize toggle for when sharing a screenshot outside the admin. */
+  costByUser: { slot: number; name: string; costEur: number; tokens: number; promptTokens: number; completionTokens: number }[];
   /** valueEstimateEur / tokenCostEur — the business-value framing an admin actually
    *  cares about ("is this worth it"), not just the raw cost. Null when there's no
    *  cost data yet (nothing to divide by) or no value estimate yet. */
@@ -298,11 +309,27 @@ const SOURCE_LABELS: Record<string, string> = {
   alignment_synthesis: 'Strategy alignment',
 };
 
+interface UsageBucket { tokens: number; promptTokens: number; completionTokens: number; costEur: number }
+
 interface UsageStats {
   totalTokens: number;
+  totalPromptTokens: number;
+  totalCompletionTokens: number;
   totalCostEur: number;
-  byAgentId: Map<string, { tokens: number; costEur: number }>;
-  bySource: Map<string, { tokens: number; costEur: number }>;
+  byAgentId: Map<string, UsageBucket>;
+  bySource: Map<string, UsageBucket>;
+  byUserId: Map<string, UsageBucket>;
+}
+
+function emptyBucket(): UsageBucket {
+  return { tokens: 0, promptTokens: 0, completionTokens: 0, costEur: 0 };
+}
+
+function addToBucket(bucket: UsageBucket, promptTokens: number, completionTokens: number, costEur: number) {
+  bucket.promptTokens += promptTokens;
+  bucket.completionTokens += completionTokens;
+  bucket.tokens += promptTokens + completionTokens;
+  bucket.costEur += costEur;
 }
 
 /** Real spend from ai_usage_events — PARTIAL coverage, see AIOperationsSummary.tokenCostEur doc comment.
@@ -314,12 +341,15 @@ async function countUsage(
   start: Date,
   end: Date,
 ): Promise<UsageStats> {
-  const result: UsageStats = { totalTokens: 0, totalCostEur: 0, byAgentId: new Map(), bySource: new Map() };
+  const result: UsageStats = {
+    totalTokens: 0, totalPromptTokens: 0, totalCompletionTokens: 0, totalCostEur: 0,
+    byAgentId: new Map(), bySource: new Map(), byUserId: new Map(),
+  };
   if (memberIds.length === 0) return result;
 
   const { data, error } = await admin
     .from('ai_usage_events')
-    .select('agent_id, source, prompt_tokens, completion_tokens, cost_eur')
+    .select('agent_id, source, user_id, prompt_tokens, completion_tokens, cost_eur')
     .in('user_id', memberIds)
     .gte('created_at', start.toISOString())
     .lt('created_at', end.toISOString());
@@ -329,24 +359,57 @@ async function countUsage(
     return result;
   }
 
-  for (const row of (data ?? []) as { agent_id: string | null; source: string | null; prompt_tokens: number; completion_tokens: number; cost_eur: number }[]) {
-    const tokens = (row.prompt_tokens ?? 0) + (row.completion_tokens ?? 0);
-    result.totalTokens += tokens;
-    result.totalCostEur += row.cost_eur ?? 0;
+  for (const row of (data ?? []) as { agent_id: string | null; source: string | null; user_id: string; prompt_tokens: number; completion_tokens: number; cost_eur: number }[]) {
+    const promptTokens = row.prompt_tokens ?? 0;
+    const completionTokens = row.completion_tokens ?? 0;
+    const costEur = row.cost_eur ?? 0;
+
+    result.totalTokens += promptTokens + completionTokens;
+    result.totalPromptTokens += promptTokens;
+    result.totalCompletionTokens += completionTokens;
+    result.totalCostEur += costEur;
+
     if (row.agent_id) {
-      const bucket = result.byAgentId.get(row.agent_id) ?? { tokens: 0, costEur: 0 };
-      bucket.tokens += tokens;
-      bucket.costEur += row.cost_eur ?? 0;
+      const bucket = result.byAgentId.get(row.agent_id) ?? emptyBucket();
+      addToBucket(bucket, promptTokens, completionTokens, costEur);
       result.byAgentId.set(row.agent_id, bucket);
     }
     const source = row.source ?? 'unknown';
-    const sourceBucket = result.bySource.get(source) ?? { tokens: 0, costEur: 0 };
-    sourceBucket.tokens += tokens;
-    sourceBucket.costEur += row.cost_eur ?? 0;
+    const sourceBucket = result.bySource.get(source) ?? emptyBucket();
+    addToBucket(sourceBucket, promptTokens, completionTokens, costEur);
     result.bySource.set(source, sourceBucket);
+
+    const userBucket = result.byUserId.get(row.user_id) ?? emptyBucket();
+    addToBucket(userBucket, promptTokens, completionTokens, costEur);
+    result.byUserId.set(row.user_id, userBucket);
   }
   result.totalCostEur = Math.round(result.totalCostEur * 10000) / 10000;
   return result;
+}
+
+/** Real name (full_name, falling back to email) for a set of user ids — same
+ *  two-query pattern already used for the Members tab (settings/page.tsx): profiles
+ *  join first, then auth.admin.listUsers() for email since there's no direct
+ *  id-filtered admin lookup. Only called for the (small) set of users who actually
+ *  show up in this period's usage, not every company member. */
+async function getUserNames(admin: SupabaseClient, userIds: string[]): Promise<Map<string, string>> {
+  const names = new Map<string, string>();
+  if (userIds.length === 0) return names;
+
+  const { data: profiles } = await admin.from('profiles').select('id, full_name').in('id', userIds);
+  for (const p of (profiles ?? []) as { id: string; full_name: string | null }[]) {
+    if (p.full_name) names.set(p.id, p.full_name);
+  }
+
+  const missing = userIds.filter(id => !names.has(id));
+  if (missing.length > 0) {
+    const { data: authUsers } = await admin.auth.admin.listUsers();
+    const emailById = new Map((authUsers?.users ?? []).map(u => [u.id, u.email ?? '']));
+    for (const id of missing) {
+      names.set(id, emailById.get(id) || 'Unknown member');
+    }
+  }
+  return names;
 }
 
 async function countSignal(
@@ -428,11 +491,14 @@ export async function getAIOperationsSummary(
       totalByUser.set(userId, (totalByUser.get(userId) ?? 0) + count);
     }
   }
-  const slotByUser = new Map(
-    Array.from(totalByUser.keys())
-      .sort((a, b) => totalByUser.get(b)! - totalByUser.get(a)!)
-      .map((userId, i) => [userId, i]),
-  );
+  // Slots cover every user who ran a workflow (ranked by run count, preserving the original
+  // order) PLUS any user who only incurred AI cost with zero runs (e.g. chat-only usage) —
+  // without this, every runs-less user would collide on slot 0 in costByUser below.
+  const usersWithRuns = Array.from(totalByUser.keys()).sort((a, b) => totalByUser.get(b)! - totalByUser.get(a)!);
+  const usersCostOnly = Array.from(usage.byUserId.keys())
+    .filter(id => !totalByUser.has(id))
+    .sort((a, b) => usage.byUserId.get(b)!.costEur - usage.byUserId.get(a)!.costEur);
+  const slotByUser = new Map([...usersWithRuns, ...usersCostOnly].map((userId, i) => [userId, i]));
 
   const agentWork: AgentWorkRow[] = workerAgents
     .reduce((rows, agent) => {
@@ -441,7 +507,7 @@ export async function getAIOperationsSummary(
         row = {
           workerRole: agent.worker_role, name: agent.name, color: agent.color, icon: agent.icon,
           runs: 0, groundedRuns: 0, insightRuns: 0, distinctUsers: 0, emailsSent: 0, messages: 0, hoursSaved: 0,
-          topTasks: [], topTools: [], usageDistribution: [], tokenCostEur: 0, totalTokens: 0,
+          topTasks: [], topTools: [], usageDistribution: [], tokenCostEur: 0, totalTokens: 0, promptTokens: 0, completionTokens: 0,
         };
         rows.push(row);
       }
@@ -459,6 +525,8 @@ export async function getAIOperationsSummary(
       if (usageBucket) {
         row.tokenCostEur = Math.round((row.tokenCostEur + usageBucket.costEur) * 10000) / 10000;
         row.totalTokens += usageBucket.tokens;
+        row.promptTokens += usageBucket.promptTokens;
+        row.completionTokens += usageBucket.completionTokens;
       }
       return rows;
     }, [] as AgentWorkRow[])
@@ -516,6 +584,8 @@ export async function getAIOperationsSummary(
   const hoursSaved = Math.round((totalGroundedRuns * MINUTES_SAVED_PER_RUN) / 60 * 10) / 10;
   const hoursSavedPrev = Math.round((totalGroundedRunsPrev * MINUTES_SAVED_PER_RUN) / 60 * 10) / 10;
 
+  const userNames = await getUserNames(admin, Array.from(usage.byUserId.keys()));
+
   return {
     memberCount: memberIds.length,
     agentRuns: current.totalRuns,
@@ -533,11 +603,23 @@ export async function getAIOperationsSummary(
     tokenCostEur: usage.totalCostEur,
     tokenCostEurPrev: usagePrev.totalCostEur,
     totalTokens: usage.totalTokens,
+    totalPromptTokens: usage.totalPromptTokens,
+    totalCompletionTokens: usage.totalCompletionTokens,
     costBySource: Array.from(usage.bySource, ([source, v]) => ({
       source,
       label: SOURCE_LABELS[source] ?? source,
       costEur: Math.round(v.costEur * 10000) / 10000,
       tokens: v.tokens,
+      promptTokens: v.promptTokens,
+      completionTokens: v.completionTokens,
+    })).sort((a, b) => b.costEur - a.costEur),
+    costByUser: Array.from(usage.byUserId, ([userId, v]) => ({
+      slot: slotByUser.get(userId) ?? 0,
+      name: userNames.get(userId) ?? 'Unknown member',
+      costEur: Math.round(v.costEur * 10000) / 10000,
+      tokens: v.tokens,
+      promptTokens: v.promptTokens,
+      completionTokens: v.completionTokens,
     })).sort((a, b) => b.costEur - a.costEur),
     roiMultiple: usage.totalCostEur > 0 ? Math.round((Math.round(hoursSaved * hourlyRateEur) / usage.totalCostEur) * 10) / 10 : null,
     agentWork,

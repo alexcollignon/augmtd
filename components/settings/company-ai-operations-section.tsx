@@ -45,6 +45,13 @@ function fmtMoney(eur: number, currency: Currency, decimals: 0 | 2 = 2): string 
   return `${symbol}${amount.toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`;
 }
 
+// Compact token counts (150900 -> "150.9k", 1_115_800 -> "1.1M") — full numbers don't
+// fit alongside an in/out split in the same fixed-width columns used on this page.
+function fmtTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : n.toLocaleString();
+}
+
 // Literal class strings (not template-composed) so Tailwind's JIT scanner picks them up.
 const ICON_TONE: Record<string, string> = {
   indigo: 'bg-indigo-50 text-indigo-600',
@@ -253,7 +260,7 @@ function AgentWorkCard({ row, isOpen, onToggle, currency }: { row: AgentWorkRow;
       <div className={`grid transition-all duration-300 ease-out ${isOpen ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`}>
         <div className="overflow-hidden">
           <div className="pl-16 pr-4 pt-1 pb-2 text-[11.5px] text-neutral-400">
-            AI cost: <span className="text-neutral-600 font-medium">{fmtMoney(row.tokenCostEur, currency)}</span> · {row.totalTokens.toLocaleString()} tokens
+            AI cost: <span className="text-neutral-600 font-medium">{fmtMoney(row.tokenCostEur, currency)}</span> · {fmtTokens(row.promptTokens)} in · {fmtTokens(row.completionTokens)} out
           </div>
           <div className="pl-16 pr-4 pb-4 grid grid-cols-2 gap-6">
             <div>
@@ -312,6 +319,7 @@ export default function CompanyAIOperationsSection() {
   const [error, setError] = useState(false);
   const [expandedRoles, setExpandedRoles] = useState<Set<string>>(new Set());
   const [showCostBreakdown, setShowCostBreakdown] = useState(false);
+  const [anonymizeUsers, setAnonymizeUsers] = useState(false);
   const [currency, setCurrency] = useState<Currency>('EUR');
 
   useEffect(() => {
@@ -432,9 +440,9 @@ export default function CompanyAIOperationsSection() {
                 tone="amber"
                 label="AI cost"
                 value={fmtMoney(summary.tokenCostEur, currency)}
-                sub={`${summary.totalTokens.toLocaleString()} tokens`}
+                sub={`${fmtTokens(summary.totalPromptTokens)} in · ${fmtTokens(summary.totalCompletionTokens)} out`}
                 deltaInfo={delta(summary.tokenCostEur, summary.tokenCostEurPrev)}
-                toggle={summary.costBySource.length > 0 ? {
+                toggle={(summary.costBySource.length > 0 || summary.costByUser.length > 0) ? {
                   active: showCostBreakdown,
                   onClick: () => setShowCostBreakdown(v => !v),
                   title: showCostBreakdown ? 'Hide cost breakdown by source' : 'Show cost breakdown by source',
@@ -477,26 +485,68 @@ export default function CompanyAIOperationsSection() {
               </span>
             </div>
 
-            {summary.costBySource.length > 0 && (
+            {(summary.costBySource.length > 0 || summary.costByUser.length > 0) && (
               <div className={`grid transition-all duration-300 ease-out ${showCostBreakdown ? 'grid-rows-[1fr] opacity-100 mb-6' : 'grid-rows-[0fr] opacity-0'}`}>
-                <div className="overflow-hidden">
-                  <h4 className="text-[13px] font-semibold text-neutral-900 mb-1">AI cost by source</h4>
-                  <p className="text-[12px] text-neutral-400 mb-3">Where the AI spend is concentrating this period.</p>
-                  <Card className="p-3 space-y-2">
-                    {summary.costBySource.map(s => {
-                      const share = summary.tokenCostEur > 0 ? (s.costEur / summary.tokenCostEur) * 100 : 0;
-                      return (
-                        <div key={s.source} className="flex items-center gap-3 text-[12.5px]">
-                          <span className="text-neutral-600 w-40 flex-shrink-0 truncate">{s.label}</span>
-                          <div className="flex-1 h-1.5 bg-neutral-100 rounded-full overflow-hidden">
-                            <div className="h-full bg-amber-400 rounded-full" style={{ width: `${Math.max(share, 2)}%` }} />
-                          </div>
-                          <span className="text-neutral-500 w-16 text-right flex-shrink-0">{fmtMoney(s.costEur, currency)}</span>
-                          <span className="text-neutral-300 w-20 text-right flex-shrink-0">{s.tokens.toLocaleString()} tok</span>
-                        </div>
-                      );
-                    })}
-                  </Card>
+                <div className="overflow-hidden space-y-5">
+                  {summary.costBySource.length > 0 && (
+                    <div>
+                      <h4 className="text-[13px] font-semibold text-neutral-900 mb-1">AI cost by source</h4>
+                      <p className="text-[12px] text-neutral-400 mb-3">Where the AI spend is concentrating this period — tokens shown as in (context sent) · out (response generated).</p>
+                      <Card className="p-3 space-y-2">
+                        {summary.costBySource.map(s => {
+                          const share = summary.tokenCostEur > 0 ? (s.costEur / summary.tokenCostEur) * 100 : 0;
+                          return (
+                            <div key={s.source} className="flex items-center gap-3 text-[12.5px]">
+                              <span className="text-neutral-600 w-40 flex-shrink-0 truncate">{s.label}</span>
+                              <div className="flex-1 h-1.5 bg-neutral-100 rounded-full overflow-hidden">
+                                <div className="h-full bg-amber-400 rounded-full" style={{ width: `${Math.max(share, 2)}%` }} />
+                              </div>
+                              <span className="text-neutral-500 w-16 text-right flex-shrink-0">{fmtMoney(s.costEur, currency)}</span>
+                              <span className="text-neutral-300 w-44 text-right flex-shrink-0 whitespace-nowrap">{fmtTokens(s.promptTokens)} in · {fmtTokens(s.completionTokens)} out</span>
+                            </div>
+                          );
+                        })}
+                      </Card>
+                    </div>
+                  )}
+
+                  {summary.costByUser.length > 0 && (
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <h4 className="text-[13px] font-semibold text-neutral-900">AI cost by user</h4>
+                        <button
+                          type="button"
+                          onClick={() => setAnonymizeUsers(v => !v)}
+                          className={`text-[11.5px] font-medium transition-colors ${anonymizeUsers ? 'text-indigo-600' : 'text-neutral-400 hover:text-neutral-600'}`}
+                        >
+                          {anonymizeUsers ? 'Anonymized' : 'Anonymize'}
+                        </button>
+                      </div>
+                      <p className="text-[12px] text-neutral-400 mb-3">
+                        {anonymizeUsers
+                          ? 'The same color elsewhere on this page (e.g. "Most-used agents" below) is the same person.'
+                          : 'Which team members are actually driving the spend.'}
+                      </p>
+                      <Card className="p-3 space-y-2">
+                        {summary.costByUser.map(u => {
+                          const share = summary.tokenCostEur > 0 ? (u.costEur / summary.tokenCostEur) * 100 : 0;
+                          return (
+                            <div key={u.slot} className="flex items-center gap-3 text-[12.5px]">
+                              <span className="w-40 flex-shrink-0 flex items-center gap-2 text-neutral-600 truncate">
+                                <span className={`w-2 h-2 rounded-full flex-shrink-0 ${slotColor(u.slot)}`} />
+                                <span className="truncate">{anonymizeUsers ? `Member ${u.slot + 1}` : u.name}</span>
+                              </span>
+                              <div className="flex-1 h-1.5 bg-neutral-100 rounded-full overflow-hidden">
+                                <div className={`h-full rounded-full ${slotColor(u.slot)}`} style={{ width: `${Math.max(share, 2)}%` }} />
+                              </div>
+                              <span className="text-neutral-500 w-16 text-right flex-shrink-0">{fmtMoney(u.costEur, currency)}</span>
+                              <span className="text-neutral-300 w-44 text-right flex-shrink-0 whitespace-nowrap">{fmtTokens(u.promptTokens)} in · {fmtTokens(u.completionTokens)} out</span>
+                            </div>
+                          );
+                        })}
+                      </Card>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
