@@ -640,13 +640,18 @@ You MUST use ONLY the allowed values below — do NOT invent your own labels.
   colleague's note, a client thread, a forwarded work email) — even if the user is only cc'd. Judge from
   the CONTENT, not the sender address.
 
+- initiative: the specific DEAL / CLIENT / PROJECT this email is about — a short proper-noun label
+  derived from THIS email's own content (the client/company name, or the named project it concerns), or
+  null for a one-off / automated mail. Two DIFFERENT clients or companies ALWAYS get DIFFERENT labels —
+  never merge them. The SAME ongoing deal gets a CONSISTENT label. Never invent a label.
+
 - language: a lowercase ISO code — one of "en" | "pt" | "fr" | "es" | "de" | "it" (or another 2-letter
   code). The language the user would REPLY in on this thread — the language of the CURRENT EMAIL / the
   thread the user is corresponding in. Judge from the actual message text, not the user's usual
   language. If genuinely ambiguous or too little text, return "en".
 
-The "understanding" field is REQUIRED and must contain exactly {role, relevance, bulk, language} using
-only the allowed values above.
+The "understanding" field is REQUIRED and must contain exactly {role, relevance, bulk, initiative,
+language} using only the allowed values above.
 
 ---
 
@@ -934,7 +939,8 @@ export async function computeUnderstanding(email: EmailData, supabase: SupabaseC
     `- role: "addressed" = the ask lands on the user specifically; "one_of_many" = a group/broad To or "Dear Team" where the user isn't singled out; "bystander" = only cc'd / kept informed.\n` +
     `- relevance: "reply" = a real person expects a response FROM the user. "action" = the user has a CONCRETE OBLIGATION with a real consequence if ignored — pay an invoice, sign/approve a document, verify or secure an account, fix a failed payment, submit a form, or act by a STATED deadline. The bar is HIGH: a specific thing the user must do AND a cost to not doing it. "awareness" = informational, no move expected. A mere NOTIFICATION the user could optionally glance at is NOT an obligation → "awareness": e.g. "someone posted on LinkedIn", "you have a new message / new connection", newsletters, digests, receipts / order-shipped, social or product notices, calendar invites/updates. When unsure between "action" and "awareness", choose "awareness". If role is "bystander" → "awareness"; if "one_of_many" with no ask directed at the user → "awareness".\n` +
     `- bulk: true if this is a MASS / marketing / newsletter / promotional / automated broadcast — sent to a list, not written to the user personally (sales & discounts, product digests, "X posted", social notices, newsletters, order/shipping/receipt notices, promotional campaigns), even when it greets the user by name ("Alex, claim your offer" is STILL bulk). false if a real person or business is corresponding with the user or their group (a colleague's note, a client thread, a forwarded work email, a personal or business message, a genuine 1:1 or team conversation) — even if the user is only cc'd. Judge from the CONTENT, not the sender address.\n` +
-    `Return ONLY JSON: {"role":"addressed|one_of_many|bystander","relevance":"reply|action|awareness","bulk":true|false,"language":"<lowercase ISO code, the language of THIS email, e.g. en, pt>"}. Use ONLY the allowed values.`;
+    `- initiative: the specific DEAL / CLIENT / PROJECT this email is about — a short proper-noun label drawn from THIS email's own content (the client/company name, or the named project/deal it concerns). Two DIFFERENT clients or companies ALWAYS get DIFFERENT labels — never merge them (two different companies are separate initiatives even from the same sender). The SAME ongoing deal gets a CONSISTENT label. Use null for a one-off with no larger initiative, or for automated/marketing mail. Do NOT invent a label — derive it only from what this email is actually about.\n` +
+    `Return ONLY JSON: {"role":"addressed|one_of_many|bystander","relevance":"reply|action|awareness","bulk":true|false,"initiative":"<short label or null>","language":"<lowercase ISO code, the language of THIS email, e.g. en, pt>"}. Use ONLY the allowed values for role/relevance.`;
   const res = await aiCreate(ai, {
     model, response_format: { type: 'json_object' as const }, max_tokens: 400, temperature: 0,
     messages: [{ role: 'user', content }],

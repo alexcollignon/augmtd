@@ -11,7 +11,14 @@ export type ExtractedCommitment = {
   description: string;
   due_date?: string | null;
   counterparty?: string | null;
+  initiative?: string | null; // deal/client/project this belongs to (for project grouping); null = one-off
 };
+
+// Clean an initiative label (drop the model's "null"/"none" filler; cap length).
+function cleanInitiative(v: unknown): string | null {
+  const s = typeof v === 'string' ? v.trim() : '';
+  return s && !/^(null|none|n\/a|na|unknown|one-off|one off)$/i.test(s) ? s.slice(0, 60) : null;
+}
 
 // Only worth an AI call if the text plausibly contains a promise/deadline.
 const COMMITMENT_HINT = /\b(i'?ll|i will|we'?ll|we will|let me|i'?ll get|send you|get you|send over|follow up|circle back|will send|will get|will have|will share|by (mon|tue|wed|thu|fri|sat|sun|monday|tuesday|wednesday|thursday|friday|tomorrow|eod|cob|end of|next week|this week|end of day|end of week)|deadline|by the end|due |get back to you|revert|by then)\b/i;
@@ -142,6 +149,7 @@ export async function writeCommitments(
     description: c.description.trim().slice(0, 500),
     counterparty: (c.counterparty || meta.counterparty || null)?.toString().slice(0, 200) ?? null,
     due_date: validDate(c.due_date),
+    initiative: cleanInitiative(c.initiative),
     source: meta.source,
     source_id: meta.sourceId,
     thread_id: meta.threadId ?? null,
@@ -245,6 +253,8 @@ ${perspective}
 due_date: set it ONLY when THIS email explicitly states a deadline — an absolute date, or an unambiguous relative one ("by Friday", "by EOD", "next Tuesday", "in 3 days"). Today is ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}, so resolve such a stated relative deadline to an absolute YYYY-MM-DD. If no deadline is stated in the email, due_date MUST be null. NEVER guess, infer, or invent a plausible date — a missing deadline is null, not a made-up one.
 
 counterparty: the specific real person this obligation is with (who owes it, or is owed it), drawn from this email's actual participants — the sender or a named recipient. Use null only when genuinely unidentifiable; never invent a name.
+
+initiative: the specific deal/client/project this commitment belongs to — a short proper-noun label derived from THIS email's own content (the client/company name or the named project it concerns), or null for a one-off. Two DIFFERENT clients/companies ALWAYS get DIFFERENT labels; the SAME ongoing deal gets a CONSISTENT label. Never invent a label.
 ${instructions?.trim() ? `\nThe user added this guidance — follow it: ${instructions.trim()}\n` : ''}
 Subject: ${subject || '(none)'}
 Body:
@@ -253,7 +263,7 @@ ${text.slice(0, 2500)}
 """
 
 Return ONLY JSON. Empty array if there are no real commitments:
-{"commitments":[{"direction":"you_owe|awaiting","description":"short imperative, e.g. 'Send the Q3 proposal'","due_date":"YYYY-MM-DD or null","counterparty":"name/email or null"}]}`;
+{"commitments":[{"direction":"you_owe|awaiting","description":"short imperative, e.g. 'Send the Q3 proposal'","due_date":"YYYY-MM-DD or null","counterparty":"name/email or null","initiative":"short label or null"}]}`;
 
   try {
     const { client: ai, model } = await getAIClient(userId, 'summarization', client);

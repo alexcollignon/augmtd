@@ -10,6 +10,10 @@ import {
   ChevronRightIcon, ArrowRightIcon, BoltIcon, SparklesIcon, EyeIcon, BellAlertIcon,
 } from '@heroicons/react/24/outline';
 import ActivityPanel from '@/components/activity/activity-panel';
+import { ROLE_AVATARS, ROLE_LABELS } from '@/lib/workers/roles';
+import ViewSwitcher, { type HomeView as HomeViewLens } from '@/components/home/view-switcher';
+import TimelineView from '@/components/timeline/timeline-view';
+import ProjectsView from '@/components/projects/projects-view';
 
 type Priority = {
   id: string; source: 'email' | 'meeting'; posture: 'needs_reply' | 'to_do' | 'waiting_on';
@@ -48,8 +52,8 @@ type Brief = {
   schedule: { id: string; time: string; title: string; attendees: number; prep: { lastEmail?: { subject: string }; openCommitments: string[]; lastMeeting?: { title: string; date: string; recall: string; person: string } } | null }[];
   handled?: { triaged: number; filtered: number; summarised: number; tracked: number; resolved: number };
 };
-type TeamMsg = { workerId?: string; workerName?: string; text?: string };
-type TeamReview = { artifactId?: string; threadId?: string; title?: string; workerName?: string; workerId?: string };
+type TeamMsg = { workerId?: string; workerName?: string; workerRole?: string | null; text?: string };
+type TeamReview = { artifactId?: string; threadId?: string; title?: string; workerName?: string; workerId?: string; workerRole?: string | null };
 
 // The chip cues the SOURCE; the verb + button tone come from the POSTURE (what it needs).
 const SOURCE = {
@@ -103,6 +107,66 @@ function SenderAvatar({ name, size = 'md' }: { name: string; size?: 'sm' | 'md' 
     <span className={`flex-shrink-0 ${cls} rounded-full inline-flex items-center justify-center font-semibold ${tintFor(name)}`} aria-hidden="true">
       {initials(name)}
     </span>
+  );
+}
+
+// Coworker avatar — the real worker headshot (role → /workers/*.png), falling back to an initial chip.
+// This is the ONE place the AI team gets a FACE on the Home, so they read as teammates, not gray rows.
+function CoworkerAvatar({ role, name, size = 'md' }: { role?: string | null; name?: string | null; size?: 'sm' | 'md' }) {
+  const [broken, setBroken] = useState(false);
+  const src = role ? ROLE_AVATARS[role] : undefined;
+  const dim = size === 'sm' ? 'w-6 h-6' : 'w-8 h-8';
+  if (src && !broken) {
+    // eslint-disable-next-line @next/next/no-img-element
+    return <img src={src} alt="" className={`flex-shrink-0 ${dim} rounded-full object-cover ring-1 ring-indigo-100`} onError={() => setBroken(true)} aria-hidden="true" />;
+  }
+  return <SenderAvatar name={name || 'AI'} size={size} />;
+}
+
+// ── "From your team" — the AI coworkers' feed. DELIBERATELY differentiated from every other rail
+// section: coworkers are the only ACTIVE entities on the board (they did work, they report back in the
+// first person, you can hand more to them), so they get FACES, the indigo/agent accent, and a DM feel —
+// never a gray row twinned with newsletters. Kept simple + scannable: a few recent notes + what's ready.
+function TeamFeed({ messages, reviews }: { messages: TeamMsg[]; reviews: TeamReview[] }) {
+  const msgs = messages.slice(0, 3);
+  const revs = reviews.slice(0, 2);
+  const extra = (messages.length - msgs.length) + (reviews.length - revs.length);
+  const rowCls = 'group flex items-start gap-2.5 rounded-xl bg-white/80 border border-indigo-100/70 px-3 py-2.5 transition-all duration-200 hover:border-indigo-200 hover:bg-white hover:shadow-[0_2px_12px_-6px_rgba(79,70,229,0.28)]';
+  return (
+    <section className="rounded-2xl border border-indigo-100 bg-gradient-to-br from-indigo-50/60 to-white p-3.5">
+      <div className="flex items-center gap-1.5 mb-3">
+        <UsersIcon className="w-3.5 h-3.5 text-indigo-500" />
+        <h2 className="text-[11px] font-semibold uppercase tracking-[0.07em] text-indigo-600/80">From your team</h2>
+      </div>
+      <div className="space-y-2">
+        {msgs.map((m, i) => (
+          <Link key={`m${i}`} href={m.workerId ? `/workers?worker=${m.workerId}` : '/workers'} className={rowCls}>
+            <CoworkerAvatar role={m.workerRole} name={m.workerName} />
+            <div className="min-w-0 flex-1">
+              <div className="flex items-baseline gap-1.5">
+                <span className="text-[12.5px] font-semibold text-neutral-800 truncate">{m.workerName ?? 'A coworker'}</span>
+                {m.workerRole && ROLE_LABELS[m.workerRole] && <span className="text-[10.5px] text-indigo-400 truncate flex-shrink-0">{ROLE_LABELS[m.workerRole]}</span>}
+              </div>
+              {m.text && <p className="text-[12px] text-neutral-500 mt-0.5 line-clamp-2 leading-snug">{m.text}</p>}
+            </div>
+          </Link>
+        ))}
+        {revs.map((r, i) => (
+          <Link key={r.artifactId ?? r.threadId ?? `r${i}`} href={r.workerId ? `/workers?worker=${r.workerId}` : '/workers'} className={rowCls}>
+            <CoworkerAvatar role={r.workerRole} name={r.workerName} size="sm" />
+            <div className="min-w-0 flex-1">
+              <span className="text-[12.5px] text-neutral-800 truncate block">{r.title || 'Ready for you'}</span>
+              <p className="text-[11px] text-neutral-400">Ready for you{r.workerName ? ` · ${r.workerName}` : ''}</p>
+            </div>
+            <span className="flex-shrink-0 self-center text-[10px] font-semibold uppercase tracking-wide text-indigo-600 bg-indigo-50 rounded-full px-2 py-0.5">Ready</span>
+          </Link>
+        ))}
+      </div>
+      <Link href="/workers" className="mt-2.5 inline-flex items-center gap-1 text-[11.5px] font-medium text-indigo-600 hover:text-indigo-700 transition-colors">
+        {extra > 0 ? `View all · ${extra} more` : 'Open your team'}
+        <ChevronRightIcon className="w-3.5 h-3.5" />
+      </Link>
+    </section>
   );
 }
 
@@ -952,6 +1016,19 @@ export function HomeView() {
   const [clearedIds, setClearedIds] = useState<Set<string>>(new Set());
   const [sessionCleared, setSessionCleared] = useState(0); // this session's Done/Dismiss/Send → ring `cleared`
   const [activityOpen, setActivityOpen] = useState(false); // right-side Activity slide-over
+  const [view, setViewState] = useState<HomeViewLens>('dashboard'); // Home lens: dashboard · timeline · projects
+  // Reflect the lens in the URL (?view=…) WITHOUT a reload (replaceState, not a soft nav) — deep-linkable,
+  // survives refresh, and the switch feels instant (never "navigating to another screen").
+  useEffect(() => {
+    const v = new URLSearchParams(window.location.search).get('view');
+    if (v === 'timeline' || v === 'projects') setViewState(v);
+  }, []);
+  const setView = useCallback((v: HomeViewLens) => {
+    setViewState(v);
+    const url = new URL(window.location.href);
+    if (v === 'dashboard') url.searchParams.delete('view'); else url.searchParams.set('view', v);
+    window.history.replaceState({}, '', url);
+  }, []);
   // Sync-status indicator state (3 bits): `syncing` = a background load(true) is in flight; `lastUpdatedAt`
   // = when the last load succeeded (drives "Updated Nm ago"); `realtimeConnected` = the postgres_changes
   // channel is SUBSCRIBED (emerald live dot) vs. poll-only fallback (muted dot).
@@ -1324,6 +1401,10 @@ export function HomeView() {
     </section>
   ));
 
+  // "From your team" — ELEVATED near the top of the rail (right after today's schedule) and visually
+  // distinct (faces + indigo accent, a DM feel) because coworkers are active teammates, not ambient noise.
+  if (hasTeam) rail('team', <TeamFeed messages={team!.messages} reviews={team!.needsReview} />);
+
   if (hasEye) rail('eye', (
     <section>
       <Label count={eyeLive} icon={EyeIcon}>Keep an eye on</Label>
@@ -1337,18 +1418,6 @@ export function HomeView() {
 
   // "For your awareness" — REAL correspondence you're only informed on (understanding=awareness), a
   // human-readable list of bystander threads. A SEPARATE home from "Newsletters & promotions" below.
-  if (hasAwareness) rail('awareness', (
-    <section>
-      <Label count={awarenessLive} icon={EnvelopeIcon}>For your awareness</Label>
-      <p className="text-[12px] text-neutral-400 -mt-1.5 mb-2.5 leading-snug">Real threads you&apos;re only looped in on — no reply needed.</p>
-      {awarenessLive === 0 ? (
-        <SectionCleared line="All noted — nothing else for your awareness." />
-      ) : (
-        <ForYourAwarenessCard items={b!.forYourAwareness!} onDismiss={onCleared} onUndoInbox={toastInbox} />
-      )}
-    </section>
-  ));
-
   if (hasFollowups) rail('followups', (
     <section>
       <Label count={followupsLive} icon={ClockIcon}>Ball in your court</Label>
@@ -1394,23 +1463,21 @@ export function HomeView() {
     </section>
   ));
 
-  if (hasTeam) rail('team', (
-    <Collapsible title="From your team" count={team!.messages.length + team!.needsReview.length} icon={UsersIcon}>
-      <div className="space-y-2">
-        {team!.messages.slice(0, 3).map((m, i) => (
-          <SideRow key={`m${i}`} href={m.workerId ? `/workers?worker=${m.workerId}` : '/workers'}>
-            <span className="text-[12px] font-semibold text-neutral-700">{m.workerName ?? 'A coworker'}</span>
-            {m.text && <p className="text-[12px] text-neutral-500 mt-0.5 line-clamp-2">{m.text}</p>}
-          </SideRow>
-        ))}
-        {team!.needsReview.slice(0, 3).map((r, i) => (
-          <SideRow key={r.artifactId ?? r.threadId ?? `r${i}`} href={r.workerId ? `/workers?worker=${r.workerId}` : '/workers'} icon={UsersIcon}>
-            <span className="text-[12.5px] text-neutral-800 truncate block">{r.title || 'Ready for you'}</span>
-            <p className="text-[11px] text-neutral-400">Ready{r.workerName ? ` · ${r.workerName}` : ''}</p>
-          </SideRow>
-        ))}
-      </div>
-    </Collapsible>
+  // "For your awareness" — REAL correspondence you're only looped in on. The LEAST-actionable tier, so it
+  // sits low and is COLLAPSED by default (a thin digest button that expands) — it no longer dominates the
+  // rail with a tall avatar list. A cleared section still shows its calm empty state expanded.
+  if (hasAwareness) rail('awareness', (
+    awarenessLive === 0 ? (
+      <section>
+        <Label count={0} icon={EnvelopeIcon}>For your awareness</Label>
+        <SectionCleared line="All noted — nothing else for your awareness." />
+      </section>
+    ) : (
+      <Collapsible title="For your awareness" count={awarenessLive} icon={EnvelopeIcon}>
+        <p className="text-[12px] text-neutral-400 mb-2 leading-snug px-0.5">Real threads you&apos;re only looped in on — no reply needed.</p>
+        <ForYourAwarenessCard items={b!.forYourAwareness!} onDismiss={onCleared} onUndoInbox={toastInbox} />
+      </Collapsible>
+    )
   ));
 
   // "Newsletters & promotions" — the `noted` bulk pool (Morning Brew, LinkedIn digests, Myprotein).
@@ -1541,6 +1608,13 @@ export function HomeView() {
           </div>
         </RiseIn>
 
+        {/* TIMELINE lens — the unified work-item spine laid out by when (the floating switcher toggles). */}
+        {view === 'timeline' && <TimelineView />}
+
+        {/* PROJECTS lens — initiatives grouping your work (goals + rules your coworkers respect). */}
+        {view === 'projects' && <ProjectsView />}
+
+        {view === 'dashboard' && (<>
         {nothing && (
           <RiseIn delay={80}>
             <div className="mt-10 rounded-2xl border border-dashed border-neutral-200 px-6 py-16 text-center">
@@ -1681,8 +1755,13 @@ export function HomeView() {
                 scope for this single-living-TODAY-brief slice (see docs/living-brief-plan.md #3 #4). */}
           </div>
         )}
+        </>)}
       </div>
       </div>{/* ── end MAIN scrolling column ── */}
+
+      {/* Floating view-switcher island — swaps the Home lens (Dashboard ↔ Timeline) without crowding.
+          Hidden while the Activity panel is open so they never overlap. */}
+      <ViewSwitcher value={view} onChange={setView} hidden={activityOpen} />
 
       {/* Activity panel — a width-animated SIBLING column (NOT a fixed overlay): w-0 closed →
           w-[360px] open, `transition-[width]` so opening reflows the main column left. Self-contained

@@ -40,6 +40,13 @@ export type ItemUnderstanding = {
    * header backstop. Optional: legacy items lack it → consumers fall back to the header signals alone.
    */
   bulk?: boolean;
+  /**
+   * The specific deal / client / project / initiative this item is about — a short proper-noun label
+   * (a client/company or a named project/deal), or null for a one-off / automated mail. Used to
+   * group items into PROJECTS deterministically (same label → same project) so distinct clients never
+   * merge. Append-only: the Home never reads this — it's for the projects lens.
+   */
+  initiative?: string | null;
   // --- reserved for the NEXT slice (declared so the shape is stable; not populated yet) ---
   handler?: unknown;
   effort?: unknown;
@@ -79,9 +86,29 @@ export function coerceUnderstanding(raw: unknown): ItemUnderstanding | null {
   // → left undefined so consumers fall back to the header/sender bulk backstop (legacy items).
   if (typeof r.bulk === 'boolean') out.bulk = r.bulk;
   else if (r.bulk === 'true' || r.bulk === 'false') out.bulk = r.bulk === 'true';
+  // initiative: a proper-noun deal/client label, or null for a one-off. Guard against the model
+  // stringifying "null"/"none"/generic filler. Only set when there's a real label.
+  const initRaw = typeof r.initiative === 'string' ? r.initiative.trim() : '';
+  if (initRaw && !/^(null|none|n\/a|na|one-off|one off|unknown)$/i.test(initRaw)) out.initiative = initRaw.slice(0, 60);
   if (r.handler !== undefined) out.handler = r.handler;
   if (r.effort !== undefined) out.effort = r.effort;
   return out;
+}
+
+/**
+ * Canonical grouping key for an initiative label — lowercase, drop generic project words + punctuation,
+ * so independently-labeled emails about the SAME deal collapse (e.g. "<Client> access" / "<Client> deal"
+ * → "<client>"; a different client → a different key (distinct → never merges). Returns null when nothing meaningful
+ * remains (a too-generic label shouldn't group).
+ */
+export function normalizeInitiative(label: string | null | undefined): string | null {
+  if (!label) return null;
+  const key = label
+    .toLowerCase()
+    .replace(/\b(deal|project|projeto|pilot|piloto|assessment|avaliação|access|acesso|onboarding|migration|migração|initiative|iniciativa|program|programme|programa|process|processo|proposal|proposta|setup|integration|integração|rollout|kickoff|kick-off|the|for|with|and|e|de|da|do)\b/g, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+  return key.length >= 2 ? key : null;
 }
 
 /**
