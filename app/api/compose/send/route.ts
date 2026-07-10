@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { createHash } from 'crypto';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createAdminClient } from '@supabase/supabase-js';
 import { sendGmailEmail } from '@/lib/google/gmail';
@@ -42,6 +43,14 @@ export async function POST(request: NextRequest) {
     if (to.length === 0) return NextResponse.json({ error: 'A recipient is required.' }, { status: 400 });
     if (!subject) return NextResponse.json({ error: 'A subject is required.' }, { status: 400 });
     if (!plain) return NextResponse.json({ error: 'The message body is empty.' }, { status: 400 });
+
+    // Content-scoped idempotency: the identical message (same recipients + subject + body) can't be sent
+    // twice inside 2 min — kills a transient double-fire/loop while a genuinely different message still
+    // goes through. (Complements the coarse per-user rate limit above; mirrors the send-reply dedup.)
+    const dedupHash = createHash('sha1').update(`${to.join(',')}|${cc.join(',')}|${subject}|${plain}`.toLowerCase()).digest('hex').slice(0, 16);
+    if (!checkRateLimit(`compose-send-dedup:${user.id}:${dedupHash}`, 1, 120_000).allowed) {
+      return NextResponse.json({ success: true, deduped: true });
+    }
 
     // Prefer sending AS the user via a connected mailbox.
     const { data: connection } = await supabase

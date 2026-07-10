@@ -1,13 +1,16 @@
 import { NextRequest, NextResponse, after } from 'next/server';
+import { createHash } from 'crypto';
 import { createClient } from '@/lib/supabase/server';
 import { sendGmailReply, EmailAttachment } from '@/lib/google/gmail';
 import { sendOutlookReply } from '@/lib/microsoft/outlook';
 import { ContextService } from '@/lib/context/context-service';
 import { logActivity } from '@/lib/activity/log';
 import { resolveConnectionForItem } from '@/lib/inbox/resolve-connection';
+import { checkRateLimit } from '@/lib/utils/rate-limit';
 
 // Plain-text, whitespace-normalised view of a draft for comparing AI vs sent.
 const norm = (s: string) => s.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
+const DEDUP_WINDOW_MS = 120_000; // a reply is meant once per (item, body); a burst inside 2 min is a loop
 
 export async function POST(
   request: NextRequest,
@@ -45,6 +48,22 @@ export async function POST(
     }
 
     const sourceData = item.source_data;
+
+    // ── Idempotency guard against duplicate / looping sends. We observed a transient client loop fire the
+    // SAME reply ~19× at 2–3s intervals to one thread (which then inflated the day-cleared ring and, worse,
+    // actually delivered ~50 duplicate emails). A reply is only ever meant ONCE per (item, body): dedup on
+    // a content hash so a burst can't send twice, while a genuinely DIFFERENT follow-up — or the same text
+    // sent much later — still goes through. Two layers: an in-memory guard (catches a burst hitting the
+    // same warm serverless instance) + a DB-stamped backstop on source_data (survives cold starts / spans
+    // instances). Either match within the 2-min window → an idempotent no-op (no send, no re-resolve).
+    const bodyHash = createHash('sha1').update(norm(customMessage || '')).digest('hex').slice(0, 16);
+    const lastAt = sourceData?.last_reply_at ? Date.parse(sourceData.last_reply_at) : 0;
+    const dbDuplicate = !!lastAt && Date.now() - lastAt < DEDUP_WINDOW_MS && sourceData?.last_reply_hash === bodyHash;
+    const memGuard = checkRateLimit(`send-reply:${user.id}:${id}:${bodyHash}`, 1, DEDUP_WINDOW_MS);
+    if (dbDuplicate || !memGuard.allowed) {
+      console.warn('[SendReply] deduped a duplicate/looping send for item', id);
+      return NextResponse.json({ success: true, deduped: true });
+    }
 
     // Get user's email connection — prefer connection_id FK, else recipient-aware provider resolution
     // (so a user with two accounts of the same provider replies from the mailbox the mail arrived on).
@@ -136,7 +155,7 @@ export async function POST(
     // (inbox + Home). Replying ≠ reading; this fires only on an actual sent reply. Stamp
     // source_data.resolved_at — the REAL resolution timestamp the Day-cleared ring counts by.
     await supabase.from('inbox_items')
-      .update({ status: 'completed', source_data: { ...sourceData, resolved_at: new Date().toISOString() } })
+      .update({ status: 'completed', source_data: { ...sourceData, resolved_at: new Date().toISOString(), last_reply_hash: bodyHash, last_reply_at: new Date().toISOString() } })
       .eq('id', id).eq('user_id', user.id);
 
     // Swap the mailbox label to AUGMTD/Done (honors auto_label). Non-fatal, after() so it never

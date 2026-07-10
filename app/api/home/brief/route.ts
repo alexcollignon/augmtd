@@ -949,7 +949,13 @@ export async function GET() {
   //     Legacy rows without it simply don't count — the correct, conservative behaviour (under-count,
   //     never over-count).
   //   • commitments → the resolved_at column (migration 20260705d), stamped on resolve.
-  const [inboxClearedRes, commitClearedRes, repliesSentRes] = await Promise.all([
+  // We DELIBERATELY no longer count raw sent emails: a reply that actually clears an item already stamps
+  // the inbox_item's `source_data.resolved_at` (send-reply + resolve-on-reply paths) and is counted in
+  // `inboxClearedRes`. Counting `emails.is_from_user` over-counted massively — it swept in duplicate
+  // sent-rows (observed: one "Re: …" thread stored ~110× → a 96% ring with 2 real actions) and external
+  // replies to threads that were never an inbox item. The ring must reflect ITEMS the user resolved here,
+  // which the Activity log mirrors — not the mailbox's raw outbound volume.
+  const [inboxClearedRes, commitClearedRes] = await Promise.all([
     supabase.from('inbox_items').select('id', { count: 'exact', head: true })
       .eq('user_id', user.id).in('status', ['completed', 'dismissed']).gte('source_data->>resolved_at', startOfDay),
     // Count only USER-driven resolutions — exclude auto-fulfillment (`resolved_reason='fulfilled'`, the
@@ -959,12 +965,8 @@ export async function GET() {
     supabase.from('commitments').select('id', { count: 'exact', head: true })
       .eq('user_id', user.id).in('status', ['done', 'dismissed']).gte('resolved_at', startOfDay)
       .or('resolved_reason.is.null,resolved_reason.neq.fulfilled'),
-    // NOTE: repliesSentRes still counts sent emails today by received_at — a genuine user action, so
-    // it's not the passive-fill bug. Could be scoped to inbox-linked sends later if it over-counts.
-    supabase.from('emails').select('id', { count: 'exact', head: true })
-      .eq('user_id', user.id).eq('is_from_user', true).gte('received_at', startOfDay),
   ]);
-  const clearedToday = (inboxClearedRes.count ?? 0) + (commitClearedRes.count ?? 0) + (repliesSentRes.count ?? 0);
+  const clearedToday = (inboxClearedRes.count ?? 0) + (commitClearedRes.count ?? 0);
   // needYou baseline = live counts already computed above: replies you owe (mustRespondOut) +
   // non-meeting/needs-you priority cards + on-your-plate commitments still pending.
   const needYouReplies = (mustRespondOut?.items ?? []).length;
