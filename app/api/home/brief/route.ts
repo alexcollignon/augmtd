@@ -470,22 +470,36 @@ export async function GET() {
   // ── FYI-by-topic: group the awareness emails by sender; the AI digests each group below. ──
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const fyiRows = (fyiRes.data ?? []) as Array<{ id: string; work_title: string | null; source_data: any; created_at: string }>;
-  // A `noted` row is REAL correspondence (→ "For your awareness"), NOT a newsletter, when it satisfies
-  // the SAME two conditions the `forYourAwareness` collection below applies (kept in lockstep): its
-  // unified understanding reasoned `relevance='awareness'` AND a content rule fired on it
-  // (`rule_type ∈ {needs_reply,to_do,waiting_on}`) — a real human ask, the user only cc'd/one-of-many.
-  // A pure newsletter/promotion has `rule_type=null` → it can never match → it STAYS a newsletter here.
-  // No sender-name heuristic: understanding + the rules engine's own `rule_type` only.
-  const CONTENT_RULE_NL = new Set(['needs_reply', 'to_do', 'waiting_on']);
-  const isFyaEligible = (r: { rule_type?: string | null; source_data?: Record<string, unknown> }): boolean => {
-    if (!CONTENT_RULE_NL.has(String(r.rule_type || ''))) return false;
-    const u = coerceUnderstanding((r.source_data ?? {}).understanding);
-    return !!u && u.relevance === 'awareness';
+  // Split the `noted` pool into REAL human correspondence (→ "For your awareness") vs BULK list mail
+  // (→ "Newsletters & promotions"). The deciding signal is BULK-ness, NOT whether a content rule fired.
+  // The old AND-gate required `rule_type ∈ {needs_reply,to_do,waiting_on}` on top of awareness, which
+  // stranded real 1:1s that no rule happened to fire on (a colleague's fee note, `rule_type=null`) down
+  // in Newsletters. A newsletter/notification always carries a MACHINE signal — a List-Unsubscribe
+  // header or an automated sender; a real person's email does not. So among awareness items: bulk →
+  // newsletters, non-bulk → real correspondence. No sender-name/localpart heuristic — a machine signal
+  // only. Shared with the actionable-pool FYA collection below via the same `isBulk` helper.
+  const isBulk = (sd: Record<string, unknown>): boolean => {
+    // PRIMARY: the understanding's reasoned bulk judgment (the model read the body and knows a
+    // "Zumub 25% cashback" blast from a colleague's forwarded note — header signals miss both, since
+    // real marketing senders often carry no automated localpart and no captured List-Unsubscribe).
+    const u = coerceUnderstanding(sd.understanding);
+    if (u?.bulk === true) return true;
+    // BACKSTOP: header/sender signals for legacy items that predate the `bulk` field (belt-and-suspenders).
+    return !!sd.has_unsubscribe ||
+      isAutomatedSender(fromEmailOf(sd), (sd.from_name as string) || null, (sd.subject as string) || (sd.work_title as string) || null);
   };
+  // Real-correspondence rows lifted OUT of the noted/newsletter pool into "For your awareness" below.
+  const fyaFromNoted: Array<{ id: string; source_data: Record<string, unknown>; work_title: string | null }> = [];
   const fyiBySender = new Map<string, { subjects: string[]; address: string; unsub: boolean }>();
   for (const r of fyiRows) {
     const sd = (r.source_data ?? {}) as Record<string, unknown>;
-    if (isFyaEligible(r)) continue; // real correspondence → For your awareness, not a newsletter
+    const u = coerceUnderstanding(sd.understanding);
+    // Understanding says awareness (no move expected) AND it isn't bulk → a real person kept you in the
+    // loop → For your awareness, not a newsletter.
+    if (u && u.relevance === 'awareness' && !isBulk(sd)) {
+      fyaFromNoted.push({ id: r.id, source_data: sd, work_title: r.work_title });
+      continue;
+    }
     const label = (sd.from_name as string) || (sd.from as string);
     if (!label) continue;
     const g = fyiBySender.get(label) ?? { subjects: [], address: ((sd.from as string) || '').toLowerCase(), unsub: false };
@@ -869,34 +883,46 @@ export async function GET() {
   // model's free text, never fabricated). Missing understanding → not eligible → non-fatal fallback.
   const eyeItemIds = new Set((keepAnEyeOnOut?.items ?? []).map((k) => k.itemId).filter(Boolean));
   const priorityItemIds = new Set(cappedPriorities.map((p) => p.itemId).filter(Boolean) as string[]);
-  const CONTENT_RULE = new Set(['needs_reply', 'to_do', 'waiting_on']);
   const fyaSeen = new Set<string>();
-  const forYourAwareness = items
+  // Candidates come from BOTH pools, merged into one section:
+  //   • the ACTIONABLE pool — understanding demoted the item to awareness (a content rule or an action
+  //     work_state landed it here, but no move is expected of the user). The old CONTENT_RULE AND-gate is
+  //     GONE: an actionable-pool item that reads as awareness IS real correspondence, and `isBulk` (not a
+  //     fired rule) keeps machine/list mail out. Real-correspondence noted rows arrive via `fyaFromNoted`.
+  //   • the NOTED pool — `fyaFromNoted`, the non-bulk awareness rows lifted out of Newsletters above.
+  // A user's EXPLICIT manual re-type (`type_override` to an actionable type) is authoritative and never
+  // demoted to awareness here — the understanding only refines what the user hasn't pinned.
+  const USER_ACTIONABLE = new Set(['needs_reply', 'to_do', 'waiting_on']);
+  type FyaCand = { id: string; source_data: Record<string, unknown>; work_title: string | null };
+  const fyaFromItems: FyaCand[] = items
     .filter((it) => it.source !== 'meeting' && it.source !== 'commitment')
-    // (1) understanding reasoned this is awareness-only correspondence.
+    .filter((it) => !USER_ACTIONABLE.has(String(it.type_override || ''))) // user's explicit type wins
     .filter((it) => { const u = getUnderstanding(it); return !!u && u.relevance === 'awareness'; })
-    // (2) a content rule fired → a real ask was there (real correspondence, not bulk). This is the
-    //     signal that keeps a group-blast newsletter (rule_type null) OUT of this section.
-    .filter((it) => CONTENT_RULE.has(String(it.rule_type || '')))
+    .filter((it) => !isBulk((it.source_data ?? {}) as Record<string, unknown>)) // real correspondence only
+    .map((it) => ({ id: it.id as string, source_data: (it.source_data ?? {}) as Record<string, unknown>, work_title: (it.work_title as string) || null }));
+  const forYourAwareness = ([...fyaFromItems, ...fyaFromNoted] as FyaCand[])
     // No overlap: excluded if already surfaced as a reply/action (needs-you) or in keep-an-eye.
-    .filter((it) => !mustItemIds.has(it.id) && !eyeItemIds.has(it.id) && !priorityItemIds.has(it.id))
-    // Still pending (dedup by id).
-    .filter((it) => { if (fyaSeen.has(it.id)) return false; fyaSeen.add(it.id); return true; })
+    .filter((c) => !mustItemIds.has(c.id) && !eyeItemIds.has(c.id) && !priorityItemIds.has(c.id))
+    // dedup by id (an item can't be in both pools, but guard anyway).
+    .filter((c) => { if (fyaSeen.has(c.id)) return false; fyaSeen.add(c.id); return true; })
     // Deliberately-cc'd / bystander threads first (strongest awareness signal), then freshest.
     .sort((a, b) => {
-      const ra = (getUnderstanding(a)?.role === 'bystander' || a.source_data?.is_cc_only === true) ? 0 : 1;
-      const rb = (getUnderstanding(b)?.role === 'bystander' || b.source_data?.is_cc_only === true) ? 0 : 1;
-      return ra === rb ? activityAt(b).localeCompare(activityAt(a)) : ra - rb;
+      const ua = coerceUnderstanding(a.source_data.understanding);
+      const ub = coerceUnderstanding(b.source_data.understanding);
+      const ra = (ua?.role === 'bystander' || a.source_data.is_cc_only === true) ? 0 : 1;
+      const rb = (ub?.role === 'bystander' || b.source_data.is_cc_only === true) ? 0 : 1;
+      const at = String(a.source_data.received_at || ''); const bt = String(b.source_data.received_at || '');
+      return ra === rb ? bt.localeCompare(at) : ra - rb;
     })
     .slice(0, 12)
-    .map((it) => {
-      const sd = (it.source_data ?? {}) as Record<string, unknown>;
+    .map((c) => {
+      const sd = c.source_data;
       const who = (sd.from_name as string) || (sd.from as string) || 'Someone';
-      const subject = (it.work_title as string) || (sd.subject as string) || '';
+      const subject = (c.work_title as string) || (sd.subject as string) || '';
       // A grounded one-liner: the real subject (trimmed), else a short body snippet. No AI, no invention.
       const snippet = ((sd.body as string) || '').replace(/\s+/g, ' ').trim();
       const summary = subject.trim() || (snippet ? snippet.slice(0, 90) : 'Kept in the loop');
-      return { itemId: it.id as string, who, summary: summary.length > 120 ? summary.slice(0, 117) + '…' : summary };
+      return { itemId: c.id, who, summary: summary.length > 120 ? summary.slice(0, 117) + '…' : summary };
     });
 
   // ── "Worth acting on" — the action-NOTICES set (understanding.relevance === 'action'). Collected in

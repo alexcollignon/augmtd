@@ -30,6 +30,16 @@ export type ItemUnderstanding = {
   relevance: ItemRelevance;
   /** ISO-ish language code of the thread the user would reply in (e.g. 'en', 'pt', 'fr'). Lowercased. */
   language: string | null;
+  /**
+   * REASONED bulk judgment: true when this is a mass/marketing/newsletter/promotional/automated
+   * broadcast (→ "Newsletters & promotions"), false when it's real correspondence a person or business
+   * directed at the user or their group (→ "For your awareness"). This is a SEMANTIC call the model
+   * makes from the body — header signals (List-Unsubscribe, sender localpart) are unreliable/missing on
+   * many real marketing senders (a brand like "Zumub"/"ASOS" with no automated localpart and no
+   * captured unsubscribe header), so the AI's read is the primary signal; consumers OR it with the
+   * header backstop. Optional: legacy items lack it → consumers fall back to the header signals alone.
+   */
+  bulk?: boolean;
   // --- reserved for the NEXT slice (declared so the shape is stable; not populated yet) ---
   handler?: unknown;
   effort?: unknown;
@@ -65,6 +75,10 @@ export function coerceUnderstanding(raw: unknown): ItemUnderstanding | null {
   // drafter always gets a clean, decisive value. Empty/unknown → null (drafter falls back).
   const language = normalizeLanguage(r.language);
   const out: ItemUnderstanding = { role, relevance, language, _v: UNDERSTANDING_VERSION };
+  // bulk: accept a real boolean or the string forms "true"/"false" (models sometimes stringify). Absent
+  // → left undefined so consumers fall back to the header/sender bulk backstop (legacy items).
+  if (typeof r.bulk === 'boolean') out.bulk = r.bulk;
+  else if (r.bulk === 'true' || r.bulk === 'false') out.bulk = r.bulk === 'true';
   if (r.handler !== undefined) out.handler = r.handler;
   if (r.effort !== undefined) out.effort = r.effort;
   return out;
