@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getAIClient, aiCreate } from '@/lib/ai/factory';
 import { renderCapabilitySet } from './capability-map';
+import type { ItemRelevance } from '@/lib/inbox/item-understanding';
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // ITEM PLAN — "actions follow intent", stage 2. Decompose a Home item into 2–5 concrete sub-tasks and
@@ -137,6 +138,35 @@ export function detectAttachmentRequest(task: Pick<ItemPlanTask, 'actor' | 'text
 
 export type ItemPlan = { tasks: ItemPlanTask[] };
 
+// ── Fix 3 (draft ↔ plan coherence): load the item's LIVE plan-step summaries so the reply drafter can
+// narrate one story with the plan. Returns short "title — detail" lines for the active (non-dismissed,
+// non-done) steps of the stored `item_plans` row. Non-fatal: no plan / any error → []. Used by the
+// draft routes to pass `planSteps` into `generateReplyDraft`.
+export async function loadPlanStepSummaries(
+  client: SupabaseClient,
+  userId: string,
+  kind: ItemPlanKind,
+  entityId: string,
+): Promise<string[]> {
+  try {
+    const { data: row } = await client
+      .from('item_plans')
+      .select('tasks')
+      .eq('user_id', userId).eq('kind', kind).eq('entity_id', entityId)
+      .maybeSingle();
+    if (!row || !Array.isArray(row.tasks)) return [];
+    return (row.tasks as ItemPlanTask[])
+      .filter((t) => t && !t.dismissed && !t.done && t.text)
+      .slice(0, 6)
+      .map((t) => {
+        const detail = t.detail && t.detail.trim().toLowerCase() !== t.text.trim().toLowerCase() ? ` — ${t.detail.trim()}` : '';
+        return `${t.text.trim()}${detail}`.slice(0, 200);
+      });
+  } catch {
+    return [];
+  }
+}
+
 // The capability set the model grades against is DERIVED from the single source of truth
 // (`lib/home/capability-map.ts` → `renderCapabilitySet()`), NOT a hand-written blurb — adding a
 // `CAPABILITY_MAP` entry updates this prompt automatically. The old prose (which hard-coded
@@ -144,7 +174,14 @@ export type ItemPlan = { tasks: ItemPlanTask[] };
 // the model grades it [System] straight from the map. No per-capability logic lives here.
 const CAPABILITY_SET = renderCapabilitySet();
 
-type PlanInput = { kind: ItemPlanKind; entityId: string; context: string };
+// `relevance` — the item's understood ask FROM THE USER'S SEAT (`getUnderstanding(item).relevance`),
+// the SINGLE signal that keeps the plan coherent with the deep-dive's primary surface (no keyword
+// heuristic). It gates the reply flow deterministically: `awareness` → the plan must NOT invent a
+// reply/draft-send step (a CC'd FYI you don't owe a response to shouldn't grow a phantom reply-
+// workflow); `reply` → the normal reply flow; `action` → action steps, not a reply. Absent → today's
+// behavior (the model reasons freely). Reserved for a later gate on other kinds; only email/awareness/
+// followup carry it today.
+type PlanInput = { kind: ItemPlanKind; entityId: string; context: string; relevance?: ItemRelevance | null };
 
 // Best-effort JSON extraction from a model reply that may wrap the object in prose or a code fence.
 function parseTasks(raw: string): ItemPlanTask[] | null {
@@ -196,6 +233,90 @@ function parseTasks(raw: string): ItemPlanTask[] | null {
 // The single-task honest fallback used whenever generation fails — never a dead-end, never over-claims.
 function fallbackPlan(): ItemPlan {
   return { tasks: [{ id: 't1', text: 'Handle this', actor: 'you', capability: null, done: false }] };
+}
+
+// ── The AWARENESS coherence backstop (DETERMINISTIC — never trust the model's judgment here). The
+// relevance directive ASKS the model not to emit a reply step on an awareness item, but a strong
+// scheduling/confirmation context can still push it to produce a "[system/send] send confirmation to
+// <name>" step (the exact phantom-reply bug: on a CC'd FYI where the user doesn't owe a response, the
+// deep-dive's composer is collapsed but the panel would still show a phantom reply-workflow). So when
+// relevance is `awareness` we STRUCTURALLY strip any reply/draft-send step post-generation — the plan
+// and the composer-collapsed primary surface can never disagree. A reply step is one that either:
+//   • is a system draft/send step (the drafter/sender — a reply surface), OR
+//   • reads as a reply/respond/confirm-to action (structural phrasing, language-agnostic-ish).
+// A calendar-invite send step is NOT a reply (it's a distinct prepared action) — those are preserved.
+// If stripping leaves nothing, fall back to a single honest "Note this for awareness" [You] step so the
+// panel is never empty. `id`s are renumbered so the stepper stays stable.
+const REPLY_PHRASE = /\b(reply|respond|response|write back|draft (?:and |& )?send|send (?:a|an|the|your|out) (?:reply|response|message|email|confirmation|note)|confirm(?:ation)? (?:to|with|back)|get back to|acknowledge to)\b/i;
+const CALENDAR_INVITE_PHRASE = /\b(calendar invite|calendar event|send (?:an? )?invite|book (?:a|the) (?:meeting|call|slot)|put .* on the calendar|schedule (?:a|the|this) (?:meeting|call|invite))\b/i;
+
+function isReplyStep(t: ItemPlanTask): boolean {
+  const hay = `${t.text || ''} ${t.detail || ''}`;
+  if (CALENDAR_INVITE_PHRASE.test(hay)) return false; // an invite send is a distinct prepared action
+  if (t.actor === 'system' && (t.capability === 'draft' || t.capability === 'send')) return true;
+  return REPLY_PHRASE.test(hay);
+}
+
+// ── Coherent re-slot (add-step dup suppression): does this step read as a REPLY surface? Exported so the
+// plan PATCH `add` path can detect a redundant reply — when the user adds "reply to X" but the plan (or
+// the deep-dive composer) already has the reply surface, we don't grow a second phantom reply step.
+// CONSERVATIVE: a step counts as a reply surface only when it's a system draft/send (the drafter/sender)
+// OR its wording plainly reads as reply/respond/get-back-to (REPLY_PHRASE) — NOT a distinct send like a
+// calendar invite or a forward. A forward is a distinct action, never a reply dup.
+const FORWARD_PHRASE = /\b(forward|fwd)\b/i;
+export function isReplyLikeStep(t: Pick<ItemPlanTask, 'text' | 'detail' | 'actor' | 'capability'>): boolean {
+  const hay = `${t.text || ''} ${t.detail || ''}`;
+  if (CALENDAR_INVITE_PHRASE.test(hay) || FORWARD_PHRASE.test(hay)) return false;
+  if (t.actor === 'system' && (t.capability === 'draft' || t.capability === 'send')) return true;
+  return REPLY_PHRASE.test(hay);
+}
+
+// ── Fix 3 (draft ↔ plan coherence): FOLD a trivially-implied internal check. A purely-internal AUGMTD
+// analyze/fetch step whose whole job is to CHECK availability/calendar for a proposed time is trivially
+// satisfied the moment the reply/invite presumes that time — leaving it as an open "Ready" step
+// contradicts the draft ("Tomorrow 10am works"). So when the plan ALSO carries a reply or invite step
+// (which presumes the slot), we auto-resolve that internal check (mark it `done` — reversible, an AUGMTD
+// fetch/analyze) instead of showing it as pending noise.
+//
+// CONSERVATIVE by design — we only fold a step whose WHOLE job is to CHECK availability/the calendar for
+// a proposed time. That is a reversible internal look-up (AUGMTD can just do it), and the reply/invite
+// already presumes the answer — so it's trivially satisfied, not a distinct real-world action. We fold it
+// whether the generator graded it [system]/analyze/fetch OR [you] (some tiers grade an unmapped "check
+// your calendar" as [you] since there's no calendar-read capability — but it's still the trivially-implied
+// internal check, not real work the user must do). A genuinely distinct action (send the deck, locate a
+// FILE, place an order, sign, pay, a decision) is NEVER folded — "sending the deck IS a real task"; the
+// AVAILABILITY_OBJECT guard + the send-capability exclusion keep those safe.
+const INTERNAL_CHECK_PHRASE = /\b(check|confirm|verify|look at|review|see if|check for|ensure)\b/i;
+const AVAILABILITY_OBJECT = /\b(calendar|availability|available|schedule|free\/busy|free ?time|open slot|time\s?slot|(?:\d{1,2}\s?(?:am|pm))|availab)\b/i;
+
+function isTrivialInternalCheck(t: ItemPlanTask): boolean {
+  // Never fold a committing send step (a reply/invite is real) — only a pure look-up/check.
+  if (t.actor === 'system' && t.capability === 'send') return false;
+  const hay = `${t.text || ''} ${t.detail || ''}`;
+  // Must read as a CHECK of availability/the calendar — and NOT be a file/document action (locate/send
+  // the deck is a distinct task, never a trivial check even if it mentions a time).
+  if (!(INTERNAL_CHECK_PHRASE.test(hay) && AVAILABILITY_OBJECT.test(hay))) return false;
+  if (/\b(deck|file|document|attachment|pitch|slides?|report|proposal|contract)\b/i.test(hay)) return false;
+  return true;
+}
+
+function foldTrivialChecks(tasks: ItemPlanTask[]): ItemPlanTask[] {
+  // Only fold when a reply/invite step is present (something presumes the slot the check would confirm).
+  const hasReplyOrInvite = tasks.some((t) => {
+    const hay = `${t.text || ''} ${t.detail || ''}`;
+    return CALENDAR_INVITE_PHRASE.test(hay) || (t.actor === 'system' && (t.capability === 'draft' || t.capability === 'send')) || REPLY_PHRASE.test(hay);
+  });
+  if (!hasReplyOrInvite) return tasks;
+  return tasks.map((t) => (!t.done && isTrivialInternalCheck(t) ? { ...t, done: true, status: 'done' as const } : t));
+}
+
+function stripReplyStepsForAwareness(tasks: ItemPlanTask[]): ItemPlanTask[] {
+  const kept = tasks.filter((t) => !isReplyStep(t));
+  const base = kept.length
+    ? kept
+    : [{ id: 't1', text: 'Note this for awareness', actor: 'you' as const, capability: null, done: false }];
+  // Renumber ids so they stay stable/contiguous after removal.
+  return base.map((t, i) => ({ ...t, id: `t${i + 1}` }));
 }
 
 // ── The shared grading rules — the ONE place the [System]/[You] boundary + instance-honesty are
@@ -329,11 +450,34 @@ export async function generateItemPlan(
 ): Promise<ItemPlan> {
   const context = (input.context || '').slice(0, 4000).trim();
 
+  // ── RELEVANCE GATE (deterministic, from the item's understanding — NOT a keyword heuristic). This is
+  // the ONE rule that keeps the plan coherent with the deep-dive's primary surface:
+  //   • awareness → the user does NOT owe a response. The plan must NOT contain a "draft/send reply"
+  //     step (no phantom reply-workflow on a CC'd FYI). Steps, if any, are awareness ones (read, note,
+  //     forward for someone's attention) — but a bystander item usually just needs acknowledging.
+  //   • action → the user must DO something (not reply). Lead with the action step(s); no reply step
+  //     unless the action itself IS to reply.
+  //   • reply → the normal reply flow (a "draft and send the reply" step is expected).
+  const relevanceDirective =
+    input.relevance === 'awareness'
+      ? `\n- RELEVANCE = AWARENESS (CRITICAL): the user is only kept informed here — they do NOT owe a reply. ` +
+        `You MUST NOT emit any "draft a reply", "send a reply", "respond to", or "reply to <name>" step. There is no ` +
+        `reply to write. If nothing is actually required of the user, a SINGLE "you" step like "Note this for awareness" ` +
+        `is honest — do not manufacture work. Only surface a step if the item genuinely asks the user to DO something.\n`
+      : input.relevance === 'action'
+        ? `\n- RELEVANCE = ACTION: the user must DO something here, not necessarily reply. Lead with the concrete ` +
+          `action step(s). Do NOT add a "draft/send a reply" step UNLESS replying is itself the required action.\n`
+        : input.relevance === 'reply'
+          ? `\n- RELEVANCE = REPLY: a real person expects a response from the user. The reply IS the primary step ` +
+            `(emit a single "draft and send the reply to <name>" step, capability "send"), plus any real extra action the item needs.\n`
+          : '';
+
   const prompt =
     `You are the planning brain of AUGMTD, a proactive assistant. Decompose ONE item from the user's ` +
     `Home into the concrete sub-tasks it takes to RESOLVE it, and grade each task by who does it.\n\n` +
     `${CAPABILITY_SET}\n\n` +
     `INSTRUCTIONS:\n` +
+    relevanceDirective +
     `- Break the item into 1–5 CONCRETE, specific sub-tasks. Order them the way you'd actually do the work.\n` +
     `- Be specific to THIS item: name the real recipient, say what to fetch/draft, reference the actual next step.\n` +
     `- EACH task has TWO fields:\n` +
@@ -378,8 +522,17 @@ export async function generateItemPlan(
     // Prefer content; fall back to the reasoning channel (parseTasks extracts the JSON object wherever
     // it sits) in case a provider streamed the answer there.
     const raw = (msg?.content?.trim() || msg?.reasoning?.trim() || '');
-    const tasks = parseTasks(raw);
-    return tasks ? { tasks } : fallbackPlan();
+    let tasks = parseTasks(raw);
+    if (!tasks) return fallbackPlan();
+    // AWARENESS coherence backstop (deterministic) — strip any reply/draft-send step the model still
+    // emitted so a CC'd FYI never grows a phantom reply-workflow (the panel and the collapsed composer
+    // stay in sync). Only fires for awareness; reply/action plans are untouched.
+    if (input.relevance === 'awareness') tasks = stripReplyStepsForAwareness(tasks);
+    // Fix 3 — fold a trivially-implied internal availability/calendar check (auto-resolve it) so an
+    // open "Ready" step can't contradict a draft that already presumes the slot. Conservative: only a
+    // system analyze/fetch CHECK step, and only when a reply/invite sibling presumes the answer.
+    tasks = foldTrivialChecks(tasks);
+    return { tasks };
   } catch (e) {
     console.error('[item-plan] generation failed:', e);
     return fallbackPlan();

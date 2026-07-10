@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { generateReplyDraft } from '@/lib/inbox/draft-reply';
 import { loadUserRules } from '@/lib/inbox/rules/load';
 import { setInboxRules, shouldDraftReply } from '@/lib/inbox/classify-item';
+import { loadPlanStepSummaries } from '@/lib/home/item-plan';
 
 export const maxDuration = 30;
 
@@ -44,7 +45,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (!fresh && sd.draft?.body) return NextResponse.json({ draft: sd.draft.body as string });
 
   try {
-    const draft = await generateReplyDraft(user.id, sd, supabase);
+    // Fix 3 — draft ↔ plan coherence: pass the item's LIVE Identified-tasks step summaries so the reply
+    // narrates one story with the plan (references an invite the plan sends; a "I'll send X" promise is
+    // the same commitment as its task, not a duplicate). The inbox-item deep-dive plans under kind 'email'.
+    const planSteps = await loadPlanStepSummaries(supabase, user.id, 'email', id).catch(() => []);
+    const draft = await generateReplyDraft(user.id, sd, supabase, null, planSteps);
     await supabase.from('inbox_items')
       .update({ source_data: { ...sd, draft: { body: draft, generated_at: new Date().toISOString() } } })
       .eq('id', id).eq('user_id', user.id);

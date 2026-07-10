@@ -74,6 +74,7 @@ import { getCalendarContext } from '@/lib/calendar/calendar-context';
 import { buildUserContextBlock } from '@/lib/context/build-user-context';
 import type { UserContextProfile } from '@/lib/types/user-context';
 import { computeRecipientRole } from '@/lib/inbox/recipient-role';
+import { withPreservedUnderstanding } from '@/lib/inbox/item-understanding';
 
 /**
  * Detect whether an email was forwarded based on subject and body patterns
@@ -1084,9 +1085,10 @@ export async function syncEmailsForConnection(
             const _existingReceived = (_snExisting as any).source_data?.received_at;
             if (!_existingReceived || new Date(storedEmail.received_at) > new Date(_existingReceived)) {
               // Bump freshness to the new message's time so the brief re-surfaces the thread.
+              // Preserve any existing `understanding` — this rebuild path must never drop it.
               await adminSupabase
                 .from('inbox_items')
-                .update(stripNulls({ source_data: _snSourceData, source_id: storedEmail.id, last_activity_at: storedEmail.received_at || new Date().toISOString() }) as Record<string, unknown>)
+                .update(stripNulls({ source_data: withPreservedUnderstanding(_snSourceData as Record<string, unknown>, _snExisting), source_id: storedEmail.id, last_activity_at: storedEmail.received_at || new Date().toISOString() }) as Record<string, unknown>)
                 .eq('id', _snExisting.id);
             }
           } else if (_snExisting.status === 'completed' || _snExisting.status === 'dismissed') {
@@ -1187,7 +1189,9 @@ export async function syncEmailsForConnection(
                     // classifies as 'process' upstream and lands on the process-path instead.
                     work_state: emailClass === 'noise' ? 'noise' : 'noted',
                     item_type: emailClass === 'noise' ? 'notification' : 'fyi',
-                    source_data: fastSourceData,
+                    // Preserve any existing `understanding` — the fyi/noise fast-path never recomputes
+                    // it (cost), but must never erase one an earlier full-classification pass wrote.
+                    source_data: withPreservedUnderstanding(fastSourceData as Record<string, unknown>, fastExisting),
                     source_id: storedEmail.id,
                     // Bump freshness to the new message's time so the brief re-surfaces the thread.
                     last_activity_at: storedEmail.received_at || new Date().toISOString(),
@@ -1256,7 +1260,7 @@ export async function syncEmailsForConnection(
               });
               // Record success so the label-sweep skips it; a failure stays unmarked → sweep retries.
               if (ok) await adminSupabase.from('inbox_items')
-                .update({ source_data: { ...(fastSourceData as Record<string, unknown>), labeled: true } })
+                .update({ source_data: withPreservedUnderstanding({ ...(fastSourceData as Record<string, unknown>), labeled: true }, fastExisting) })
                 .eq('source_id', storedEmail.id).eq('user_id', connection.user_id);
             }).catch(() => {});
           }
@@ -1427,10 +1431,12 @@ export async function syncEmailsForConnection(
 
           console.log(`   ✓ Creating item for ${recipient.email} (${recipient.detectedRole}, ${suggestionLabel})`);
 
-          // Check if inbox item already exists for this thread + user (any status)
+          // Check if inbox item already exists for this thread + user (any status).
+          // Fetch source_data too so the update path can PRESERVE an existing `understanding`
+          // if this run's processEmail happened to return a null understanding (AI hiccup).
           const { data: existingInboxItem } = await adminSupabase
             .from('inbox_items')
-            .select('id, status')
+            .select('id, status, source_data')
             .eq('user_id', recipient.userId)
             .eq('source', 'email')
             .eq('source_data->>thread_id', storedEmail.thread_id || storedEmail.message_id)
@@ -1526,6 +1532,11 @@ export async function syncEmailsForConnection(
               recipient_position: recipient.position === 'to' || recipient.position === 'cc' ? recipient.position : undefined,
               recipient_email: recipient.email,
               user_context_block: userContextBlock || undefined,
+              // Raw addressing inputs for the unified understanding (reasoned, not header-math).
+              to_addresses: _recipientRole.to,
+              cc_addresses: _recipientRole.cc,
+              user_addresses: Array.from(_userAddresses),
+              user_name: _ownerProfile?.full_name || undefined,
             }, adminSupabase);
 
             // Update existing inbox item with recipient context
@@ -1581,6 +1592,11 @@ export async function syncEmailsForConnection(
                   is_cc_only: _recipientRole.is_cc_only,
                   to: _recipientRole.to,
                   cc: _recipientRole.cc,
+                  // Unified understanding — reasoned role/relevance/language from the SAME AI pass.
+                  // The PRIMARY signal consumers read (is_cc_only is now just an input to it).
+                  // Prefer this run's freshly-computed value; if it's null (AI hiccup), PRESERVE the
+                  // existing item's understanding so a full re-classification never erases one.
+                  understanding: withPreservedUnderstanding({}, existingInboxItem, processed.understanding).understanding,
                   calendar_event_id: calendarEventId || undefined,
                   isForwarded,
                   thread_history: threadEmails?.map(e => ({
@@ -1652,6 +1668,11 @@ export async function syncEmailsForConnection(
             recipient_position: recipient.position === 'to' || recipient.position === 'cc' ? recipient.position : undefined,
             recipient_email: recipient.email,
             user_context_block: userContextBlock || undefined,
+            // Raw addressing inputs for the unified understanding (reasoned, not header-math).
+            to_addresses: _recipientRole.to,
+            cc_addresses: _recipientRole.cc,
+            user_addresses: Array.from(_userAddresses),
+            user_name: _ownerProfile?.full_name || undefined,
           }, adminSupabase);
 
           // Create inbox item for this recipient
@@ -1708,6 +1729,9 @@ export async function syncEmailsForConnection(
                 is_cc_only: _recipientRole.is_cc_only,
                 to: _recipientRole.to,
                 cc: _recipientRole.cc,
+                // Unified understanding — reasoned role/relevance/language from the SAME AI pass.
+                // The PRIMARY signal consumers read (is_cc_only is now just an input to it).
+                understanding: processed.understanding || undefined,
                 calendar_event_id: calendarEventId || undefined,
                 isForwarded,
                 thread_history: threadEmailsForNew?.map(e => ({

@@ -7,7 +7,7 @@ import { showUndoToast } from '@/lib/activity/undo-toast';
 import { createClient } from '@/lib/supabase/client';
 import {
   EnvelopeIcon, CalendarDaysIcon, CheckCircleIcon, ClockIcon, UsersIcon,
-  ChevronRightIcon, ArrowRightIcon, BoltIcon, SparklesIcon, EyeIcon,
+  ChevronRightIcon, ArrowRightIcon, BoltIcon, SparklesIcon, EyeIcon, BellAlertIcon,
 } from '@heroicons/react/24/outline';
 import ActivityPanel from '@/components/activity/activity-panel';
 
@@ -21,12 +21,23 @@ type Followups = { teaser: string; items: { id?: string; who: string; status: st
 type FyiDigest = { groups: { label: string; summary: string; kind: 'person' | 'newsletter' }[]; tailGroups: number; tailItems: number };
 type MustRespond = { teaser: string; items: { who: string; ask: string; angle: string; itemId: string; draft?: string | null; subject?: string; snippet?: string; receivedAt?: string }[] };
 type KeepAnEyeOn = { items: { who: string; why: string; itemId: string }[] };
+// "For your awareness" — REAL correspondence you're only informed on (understanding=awareness):
+// real people, real work, no move expected. Distinct from the `noted` newsletter/promotion bulk,
+// which lives in its OWN collapsed "Newsletters & promotions" section (fyiDigest).
+type ForYourAwareness = { itemId: string; who: string; summary: string }[];
+// "Worth acting on" — action-NOTICES (understanding.relevance='action'): an actionable item that is
+// NOT a reply-to-a-person (payment failed, security alert, account expiring, storage full, "pay for
+// your booking"). Its OWN home, separate from replies ("What needs you") so notices don't clutter the
+// reply lane. Same row shape as For-your-awareness (sender + grounded one-liner + deep-dive + dismiss).
+type ActionNotices = { itemId: string; who: string; summary: string }[];
 type Brief = {
   firstName: string | null;
   briefLine: string | null;
   tldr?: Tldr | null;
   followups?: Followups | null;
   fyiDigest?: FyiDigest | null;
+  forYourAwareness?: ForYourAwareness | null;
+  actionNotices?: ActionNotices | null;
   mustRespond?: MustRespond | null;
   keepAnEyeOn?: KeepAnEyeOn | null;
   status: { needsReply: number; meetingsToday: number; waitingOn: number; handledToday: number };
@@ -743,6 +754,104 @@ function KeepAnEyeOnRow({ k, onDismiss, onUndoInbox }: { k: { who: string; why: 
   );
 }
 
+// ── "For your awareness" — REAL correspondence you're only informed on (understanding=awareness):
+// bystander threads with real people + real work, no move expected of you (an Amira "Dear Team", an
+// Omantel CC). A human-readable list — sender + a grounded one-line "what it is" (the real subject),
+// no fabrication. Distinct from the `noted` newsletter/promotion bulk (its own collapsed section).
+// Lighter visual weight than "Keep an eye on" (that tier is watch-worthy; this is pure awareness),
+// still with the row-open deep-dive + a quiet ✕ dismiss (same /dismiss + fade + live-count + undo).
+function ForYourAwarenessCard({ items, onDismiss, onUndoInbox }: { items: ForYourAwareness; onDismiss?: (id: string) => void; onUndoInbox?: (message: string, entityId: string, sessionKeys: string[]) => void }) {
+  return (
+    <div className="rounded-2xl border border-neutral-200/80 bg-white divide-y divide-neutral-100 overflow-hidden">
+      {items.map((a, i) => (
+        <ForYourAwarenessRow key={a.itemId || i} a={a} onDismiss={onDismiss} onUndoInbox={onUndoInbox} />
+      ))}
+    </div>
+  );
+}
+
+function ForYourAwarenessRow({ a, onDismiss, onUndoInbox }: { a: { itemId: string; who: string; summary: string }; onDismiss?: (id: string) => void; onUndoInbox?: (message: string, entityId: string, sessionKeys: string[]) => void }) {
+  const { removed, exiting, startExit } = useExit();
+  const [acting, setActing] = useState(false);
+  const dismiss = (e: React.MouseEvent) => {
+    e.preventDefault(); e.stopPropagation();
+    if (acting || !a.itemId) return;
+    setActing(true); startExit(); onDismiss?.(a.itemId);
+    onUndoInbox?.('Dismissed', a.itemId, [a.itemId]);
+    fetch(`/api/inbox/${a.itemId}/dismiss`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason: 'home' }) })
+      .catch(() => {}).finally(() => setActing(false));
+  };
+  if (removed) return null;
+  return (
+    <div className={exitCls(exiting)}>
+      <Link href={a.itemId ? `/item/${a.itemId}?kind=email` : '/inbox'} className="group flex items-start gap-2.5 px-4 py-2.5 transition-colors hover:bg-neutral-50">
+        <SenderAvatar name={a.who} size="sm" />
+        <div className="min-w-0 flex-1">
+          <p className="text-[12.5px] font-semibold text-neutral-700 leading-snug truncate">{a.who}</p>
+          {a.summary && <p className="text-[12px] text-neutral-500 mt-0.5 leading-snug line-clamp-1">{a.summary}</p>}
+        </div>
+        <span className="flex-shrink-0 flex items-center gap-2 mt-0.5">
+          {a.itemId && (
+            <button onClick={dismiss} disabled={acting} title="Dismiss — won't show again"
+              className="text-neutral-300 hover:text-rose-600 transition-colors disabled:opacity-50 text-[13px] leading-none">✕</button>
+          )}
+          <ChevronRightIcon className="w-3.5 h-3.5 text-neutral-300 group-hover:text-neutral-400 transition-colors mt-0.5" />
+        </span>
+      </Link>
+    </div>
+  );
+}
+
+// ── "Worth acting on" — action-NOTICES (understanding.relevance='action'): actionable but NOT a
+// reply-to-a-person (payment failed, security alert, account expiring, storage full, "pay for your
+// booking"). A human-readable list: sender + a grounded one-line "what the action is" (the real
+// subject), no fabrication. Row opens the email deep-dive; a quiet ✕ dismiss (same /dismiss + fade +
+// live-count + undo as the awareness rows). More weight than For-your-awareness (this needs a move),
+// less than a reply — an amber accent marks "an action to take, no one is waiting on your words".
+function ActionNoticesCard({ items, onDismiss, onUndoInbox }: { items: ActionNotices; onDismiss?: (id: string) => void; onUndoInbox?: (message: string, entityId: string, sessionKeys: string[]) => void }) {
+  return (
+    <div className="rounded-2xl border border-neutral-200/80 bg-white divide-y divide-neutral-100 overflow-hidden">
+      {items.map((a, i) => (
+        <ActionNoticeRow key={a.itemId || i} a={a} onDismiss={onDismiss} onUndoInbox={onUndoInbox} />
+      ))}
+    </div>
+  );
+}
+
+function ActionNoticeRow({ a, onDismiss, onUndoInbox }: { a: { itemId: string; who: string; summary: string }; onDismiss?: (id: string) => void; onUndoInbox?: (message: string, entityId: string, sessionKeys: string[]) => void }) {
+  const { removed, exiting, startExit } = useExit();
+  const [acting, setActing] = useState(false);
+  const dismiss = (e: React.MouseEvent) => {
+    e.preventDefault(); e.stopPropagation();
+    if (acting || !a.itemId) return;
+    setActing(true); startExit(); onDismiss?.(a.itemId);
+    onUndoInbox?.('Dismissed', a.itemId, [a.itemId]);
+    fetch(`/api/inbox/${a.itemId}/dismiss`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason: 'home' }) })
+      .catch(() => {}).finally(() => setActing(false));
+  };
+  if (removed) return null;
+  return (
+    <div className={exitCls(exiting)}>
+      <Link href={a.itemId ? `/item/${a.itemId}?kind=email` : '/inbox'} className="group flex items-start gap-2.5 px-4 py-2.5 transition-colors hover:bg-neutral-50">
+        <span className="flex-shrink-0 mt-0.5 inline-flex items-center justify-center w-7 h-7 rounded-full bg-amber-50 text-amber-600">
+          <BellAlertIcon className="w-4 h-4" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-[12.5px] font-semibold text-neutral-800 leading-snug line-clamp-1">{a.summary}</p>
+          {a.who && <p className="text-[12px] text-neutral-400 mt-0.5 leading-snug truncate">{a.who}</p>}
+        </div>
+        <span className="flex-shrink-0 flex items-center gap-2 mt-0.5">
+          {a.itemId && (
+            <button onClick={dismiss} disabled={acting} title="Dismiss — won't show again"
+              className="text-neutral-300 hover:text-rose-600 transition-colors disabled:opacity-50 text-[13px] leading-none">✕</button>
+          )}
+          <ChevronRightIcon className="w-3.5 h-3.5 text-neutral-300 group-hover:text-neutral-400 transition-colors mt-0.5" />
+        </span>
+      </Link>
+    </div>
+  );
+}
+
 // Collapsible feed section — the lower-priority briefs collapse so the Home stays scannable. A real
 // header treatment (not a bare `>` label): a small leading icon, the label, a count pill, and a
 // chevron that rotates on open. The whole header is a hover target with a subtle indigo-tinted
@@ -1137,7 +1246,7 @@ export function HomeView() {
   const bodyLiveCount = digestReplies.length + liveBodyCards.length;
   const hasBody = hadBody; // keep the section mounted after clearing so the empty state can show
 
-  const nothing = b && !b.priorities.length && !b.commitments.length && !b.waitingOn.length && !b.schedule.length && !(b.keepAnEyeOn?.items.length) && !(team?.messages.length || team?.needsReview.length) && !startHere;
+  const nothing = b && !b.priorities.length && !b.commitments.length && !b.waitingOn.length && !b.schedule.length && !(b.keepAnEyeOn?.items.length) && !(b.actionNotices?.length) && !(team?.messages.length || team?.needsReview.length) && !startHere;
 
   // ── Day-cleared ring inputs — DERIVED LIVE from the same section data the dashboard renders, so the
   // number is never stale. needYou = replies you still owe (dismissed removed) + non-meeting/needs-you
@@ -1146,7 +1255,10 @@ export function HomeView() {
   // needYou drops and cleared climbs → the ring fill rises without a reload.
   const liveNeedYouCards = cards.filter((p) => p.source !== 'meeting' && !clearedIds.has(p.id)).length;
   const liveNeedYouCommitments = (b?.commitments ?? []).filter((c) => !clearedIds.has(c.id)).length;
-  const ringNeedYou = digestReplies.length + liveNeedYouCards + liveNeedYouCommitments;
+  // Action-notices ("Worth acting on") are a genuine needs-you lane, so they count toward the ring's
+  // needYou half and drop off as the user dismisses them (clearedIds).
+  const liveNeedYouNotices = (b?.actionNotices ?? []).filter((a) => !clearedIds.has(a.itemId)).length;
+  const ringNeedYou = digestReplies.length + liveNeedYouCards + liveNeedYouCommitments + liveNeedYouNotices;
 
   // ── Per-section LIVE counts — same clearedIds/dismissed derivation as the ring, applied per lane so
   // each section header shows what's actually left after this session's clears (not the stale server
@@ -1155,6 +1267,12 @@ export function HomeView() {
   const followupsLive = (b?.followups?.items ?? []).filter((f) => !(f.id && clearedIds.has(f.id))).length;
   const waitingLive = (b?.waitingOn ?? []).filter((c) => !clearedIds.has(c.id)).length;
   const eyeLive = (b?.keepAnEyeOn?.items ?? []).filter((k) => !clearedIds.has(k.itemId)).length;
+  // "For your awareness" clears via the same session set (dismiss → clearedIds), so its live count
+  // decrements as the user dismisses a bystander thread.
+  const awarenessLive = (b?.forYourAwareness ?? []).filter((a) => !clearedIds.has(a.itemId)).length;
+  // "Worth acting on" (action-notices) — same session-clear derivation. A MAIN-column action lane.
+  const actionNoticesLive = (b?.actionNotices ?? []).filter((a) => !clearedIds.has(a.itemId)).length;
+  const hadActionNotices = (b?.actionNotices ?? []).length > 0;
   const ringCleared = (b?.dayProgress?.cleared ?? 0) + sessionCleared;
   const showRing = !!b?.dayProgress; // non-fatal: hide gracefully if counts are missing
 
@@ -1167,6 +1285,9 @@ export function HomeView() {
   const hasFollowups = !!(b?.followups && b.followups.items.length > 0);
   const hasWaiting = !hasFollowups && !!(b && b.waitingOn.length > 0);
   const hasTeam = !!(team && (team.messages.length > 0 || team.needsReview.length > 0));
+  // Two SEPARATE homes: real bystander correspondence ("For your awareness") and the `noted` bulk
+  // ("Newsletters & promotions", fyiDigest) — never mixed.
+  const hasAwareness = !!(b?.forYourAwareness && b.forYourAwareness.length > 0);
   const hasFyi = !!(b?.fyiDigest && b.fyiDigest.groups.length > 0);
   const hasHandled = !!(b?.handled && (b.handled.triaged > 0 || b.handled.summarised > 0 || b.handled.tracked > 0));
 
@@ -1210,6 +1331,20 @@ export function HomeView() {
         <SectionCleared line="All noted — nothing to keep an eye on." />
       ) : (
         <KeepAnEyeOnCard items={b!.keepAnEyeOn!.items} onDismiss={onCleared} onUndoInbox={toastInbox} />
+      )}
+    </section>
+  ));
+
+  // "For your awareness" — REAL correspondence you're only informed on (understanding=awareness), a
+  // human-readable list of bystander threads. A SEPARATE home from "Newsletters & promotions" below.
+  if (hasAwareness) rail('awareness', (
+    <section>
+      <Label count={awarenessLive} icon={EnvelopeIcon}>For your awareness</Label>
+      <p className="text-[12px] text-neutral-400 -mt-1.5 mb-2.5 leading-snug">Real threads you&apos;re only looped in on — no reply needed.</p>
+      {awarenessLive === 0 ? (
+        <SectionCleared line="All noted — nothing else for your awareness." />
+      ) : (
+        <ForYourAwarenessCard items={b!.forYourAwareness!} onDismiss={onCleared} onUndoInbox={toastInbox} />
       )}
     </section>
   ));
@@ -1278,18 +1413,14 @@ export function HomeView() {
     </Collapsible>
   ));
 
+  // "Newsletters & promotions" — the `noted` bulk pool (Morning Brew, LinkedIn digests, Myprotein).
+  // Its OWN clearly-labeled, collapsed section — NEVER mixed into "For your awareness" (which is real
+  // correspondence). Every group here is `noted`/newsletter by construction (the route no longer
+  // splits person vs newsletter — the person-awareness case moved to `forYourAwareness`).
   if (hasFyi) rail('fyi', (
-    <Collapsible title="For your awareness" count={b!.fyiDigest!.groups.length} icon={EnvelopeIcon}>
+    <Collapsible title="Newsletters & promotions" count={b!.fyiDigest!.groups.length} icon={EnvelopeIcon}>
       <div className="rounded-xl border border-neutral-200/80 bg-white divide-y divide-neutral-100 overflow-hidden">
-        {b!.fyiDigest!.groups.filter(g => g.kind === 'person').map((g, i) => (
-          <FyiGroupRow key={`p${i}`} g={g} variant="person" onMuted={toastSenderMuted} />
-        ))}
-        {b!.fyiDigest!.groups.some(g => g.kind === 'newsletter') && (
-          <div className="px-3.5 pt-2.5 pb-1 bg-neutral-50/60">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">Newsletters &amp; services</p>
-          </div>
-        )}
-        {b!.fyiDigest!.groups.filter(g => g.kind === 'newsletter').map((g, i) => (
+        {b!.fyiDigest!.groups.map((g, i) => (
           <FyiGroupRow key={`n${i}`} g={g} variant="newsletter" onMuted={toastSenderMuted} />
         ))}
         {b!.fyiDigest!.tailItems > 0 && (
@@ -1467,6 +1598,25 @@ export function HomeView() {
                         </RiseIn>
                       ))}
                     </div>
+                  )}
+                </section>
+              </RiseIn>
+            )}
+
+            {/* 2b · WORTH ACTING ON — action-NOTICES (understanding.relevance='action'): actionable
+                but NOT a reply-to-a-person (payment failed, security alert, account expiring, "pay for
+                your booking"). Its OWN main-column lane, distinct from "What needs you" (replies only),
+                so notices never clutter the reply lane. Live count + the shared "you cleared this"
+                empty state, same dismiss/undo affordances as the awareness rows. */}
+            {hadActionNotices && (
+              <RiseIn delay={75}>
+                <section>
+                  <Label count={actionNoticesLive} icon={BellAlertIcon}>Worth acting on</Label>
+                  <p className="text-[12px] text-neutral-400 -mt-1.5 mb-2.5 leading-snug">Actions to take — no one&apos;s waiting on your reply.</p>
+                  {actionNoticesLive === 0 ? (
+                    <SectionCleared line="All handled — nothing else to act on." />
+                  ) : (
+                    <ActionNoticesCard items={b!.actionNotices!} onDismiss={onCleared} onUndoInbox={toastInbox} />
                   )}
                 </section>
               </RiseIn>

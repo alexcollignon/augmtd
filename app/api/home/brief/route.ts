@@ -4,6 +4,7 @@ import { getSystemClient } from '@/lib/ai/factory';
 import { buildAnsweredSet } from '@/lib/inbox/needs-reply';
 import { computeThreadReplyState } from '@/lib/inbox/thread-resolution';
 import { classifyItem } from '@/lib/inbox/classify-item';
+import { getUnderstanding, coerceUnderstanding } from '@/lib/inbox/item-understanding';
 import { lastMeetingRecall } from '@/lib/context/voice-context';
 import { buildBriefContext, type EmailSeed } from '@/lib/home/brief-context';
 import { synthesizeBrief, type MustRespondCandidate } from '@/lib/home/synthesize-brief';
@@ -250,9 +251,16 @@ export async function GET() {
     // newsletter. Gate on work_state, never sender/subject keywords.
     if (it.work_state === 'noted') continue;
     const sd = (it.source_data ?? {}) as Record<string, unknown>;
-    // Only worth promoting if there's a real sender AND the user was cc'd (i.e. it was demoted for
-    // being a bystander, not because it's inherently noise). Newsletters have no personal signal.
-    if (sd.is_cc_only === true && (sd.from_address || sd.from)) awarenessRaw.set(it.id, { it, ccOnly: true });
+    // Only worth promoting if there's a real sender AND the user was demoted for being a BYSTANDER on
+    // a real person-thread (not because it's inherently noise). The demotion signal is, in order:
+    //  (1) the unified `understanding` (role bystander/one_of_many, or awareness) — catches the group
+    //      "Dear Team" To case where is_cc_only is false but the user is one of many; else
+    //  (2) the legacy is_cc_only header input (no understanding on legacy items).
+    // Newsletters have no personal signal and are excluded above (work_state 'noted').
+    const u = getUnderstanding(it);
+    const demotedByUnderstanding = !!u && (u.role === 'bystander' || u.role === 'one_of_many' || u.relevance === 'awareness');
+    const bystander = demotedByUnderstanding || (!u && sd.is_cc_only === true);
+    if (bystander && (sd.from_address || sd.from)) awarenessRaw.set(it.id, { it, ccOnly: true });
   }
   // Drop reply threads you've already answered. Also pull the FULL thread messages (both directions)
   // so we can compute the STRUCTURAL reply-state (computeThreadReplyState — direction+time only, no
@@ -281,6 +289,14 @@ export async function GET() {
   // context and returns the ids to drop — general for any phrasing, any person. Here we only apply
   // the deterministic "already replied" resolution + collect the candidates.
   const mustRespondRaw: MustRespondCandidate[] = [];
+  // "Worth acting on" — action-NOTICES: an actionable item that is NOT a reply-to-a-person (a payment
+  // failed, a security alert, an account expiring, storage full, "pay for your booking"). These are the
+  // items the unified understanding reasoned `relevance === 'action'`. They get their OWN Home section,
+  // distinct from replies (What needs you), so automated/notice actions don't clutter the reply lane.
+  // Grounded one-liner (the real subject), deep-dive on click, quiet dismiss — same affordances as FYA.
+  type ActionNotice = { itemId: string; who: string; summary: string };
+  const actionNoticesRaw: ActionNotice[] = [];
+  const actionNoticeIds = new Set<string>();
   const emailSeeds: EmailSeed[] = [];
   // itemId → whether the NEWEST message on the thread is the user's own (structural, direction+time).
   // `lastFromUser === false` means the newest message is INBOUND, i.e. a genuinely unanswered reply the
@@ -301,6 +317,39 @@ export async function GET() {
     const fromEmail = fromEmailOf(sd);
     const subj = it.work_title || (sd.subject as string) || null;
     const fromName = (sd.from_name as string) || null;
+    // The unified understanding's RELEVANCE is the primary router: `reply` = a person awaits your reply
+    // → "What needs you"; `action` = an actionable item that is NOT a reply (payment failed, security
+    // alert, expiring, "pay for your booking") → the NEW "Worth acting on" section; `awareness` = FYI.
+    // ONE relevance → ONE home (no overlap). Items lacking understanding fall back to today's behavior
+    // (the automated re-posture below). No keyword/sender heuristic drives the split — relevance encodes it.
+    const u = getUnderstanding(it);
+    if (u && u.relevance === 'action') {
+      // An action-notice: its own section, never a reply card, never a needs-you priority. We DON'T push
+      // it into `priorities` (so it can't count as needs-you) or `mustRespondRaw`; we still feed
+      // emailSeeds so per-person context stays complete, then skip the reply/priority wiring.
+      const who = fromName || (sd.from as string) || 'Notice';
+      const snippet = ((sd.body as string) || '').replace(/\s+/g, ' ').trim();
+      const summary = (subj || '').trim() || (snippet ? snippet.slice(0, 90) : 'Action needed');
+      actionNoticesRaw.push({ itemId: it.id, who, summary: summary.length > 120 ? summary.slice(0, 117) + '…' : summary });
+      actionNoticeIds.add(it.id);
+      const threadMsgsA = tid ? threadMsgsById.get(tid) : undefined;
+      const replyStateA = threadMsgsA && threadMsgsA.length
+        ? computeThreadReplyState(threadMsgsA, it.created_at ? new Date(it.created_at as string) : null)
+        : null;
+      emailSeeds.push({
+        itemId: it.id, fromAddress: fromEmail, fromName: (sd.from_name as string) || null,
+        subject: it.work_title || (sd.subject as string) || '(no subject)',
+        at: activityAt(it), posture: 'to_do',
+        snippet: ((sd.body as string) || '').replace(/\s+/g, ' ').trim().slice(0, 240),
+        userResponded: replyStateA?.userReplied ?? undefined,
+        lastFromUser: replyStateA?.lastMessageFromUser ?? undefined,
+      });
+      continue;
+    }
+    // A `reply`/`awareness` (or no-understanding) item continues down the reply/priority path below.
+    // When understanding says `awareness`, it's not a reply you owe → keep it out of must-respond (it
+    // still flows to FYA / keep-an-eye via classify-item). `reply` stays a real reply candidate.
+    const understoodAwareness = !!u && u.relevance === 'awareness';
     const automated = posture === 'needs_reply' && isAutomatedSender(fromEmail, fromName, subj);
     // Bug C — an AUTOMATED item classified needs_reply isn't a reply you owe (no human is waiting), but
     // it may still DEMAND action (payment failed / account suspended / security alert / expiring). If
@@ -341,6 +390,10 @@ export async function GET() {
       // re-postured to `to_do` above (so they surface as action cards), so anything still automated
       // here is informational → drop it from must-respond (it flows to the FYI/awareness digest).
       if (automated) continue;
+      // Backstop: an item the understanding reasoned `awareness` is not a reply you owe — never in
+      // must-respond (it flows to FYA / keep-an-eye). `classifyItem` already demotes such items to fyi
+      // (so they rarely reach here), but this keeps the must-respond pool = replies-only regardless.
+      if (understoodAwareness) continue;
       mustRespondRaw.push({
         itemId: it.id,
         from: (sd.from_name as string) || (sd.from as string) || 'Someone',
@@ -417,9 +470,36 @@ export async function GET() {
   // ── FYI-by-topic: group the awareness emails by sender; the AI digests each group below. ──
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const fyiRows = (fyiRes.data ?? []) as Array<{ id: string; work_title: string | null; source_data: any; created_at: string }>;
+  // Split the `noted` pool into REAL human correspondence (→ "For your awareness") vs BULK list mail
+  // (→ "Newsletters & promotions"). The deciding signal is BULK-ness, NOT whether a content rule fired.
+  // The old AND-gate required `rule_type ∈ {needs_reply,to_do,waiting_on}` on top of awareness, which
+  // stranded real 1:1s that no rule happened to fire on (a colleague's fee note, `rule_type=null`) down
+  // in Newsletters. A newsletter/notification always carries a MACHINE signal — a List-Unsubscribe
+  // header or an automated sender; a real person's email does not. So among awareness items: bulk →
+  // newsletters, non-bulk → real correspondence. No sender-name/localpart heuristic — a machine signal
+  // only. Shared with the actionable-pool FYA collection below via the same `isBulk` helper.
+  const isBulk = (sd: Record<string, unknown>): boolean => {
+    // PRIMARY: the understanding's reasoned bulk judgment (the model read the body and knows a
+    // "Zumub 25% cashback" blast from a colleague's forwarded note — header signals miss both, since
+    // real marketing senders often carry no automated localpart and no captured List-Unsubscribe).
+    const u = coerceUnderstanding(sd.understanding);
+    if (u?.bulk === true) return true;
+    // BACKSTOP: header/sender signals for legacy items that predate the `bulk` field (belt-and-suspenders).
+    return !!sd.has_unsubscribe ||
+      isAutomatedSender(fromEmailOf(sd), (sd.from_name as string) || null, (sd.subject as string) || (sd.work_title as string) || null);
+  };
+  // Real-correspondence rows lifted OUT of the noted/newsletter pool into "For your awareness" below.
+  const fyaFromNoted: Array<{ id: string; source_data: Record<string, unknown>; work_title: string | null }> = [];
   const fyiBySender = new Map<string, { subjects: string[]; address: string; unsub: boolean }>();
   for (const r of fyiRows) {
     const sd = (r.source_data ?? {}) as Record<string, unknown>;
+    const u = coerceUnderstanding(sd.understanding);
+    // Understanding says awareness (no move expected) AND it isn't bulk → a real person kept you in the
+    // loop → For your awareness, not a newsletter.
+    if (u && u.relevance === 'awareness' && !isBulk(sd)) {
+      fyaFromNoted.push({ id: r.id, source_data: sd, work_title: r.work_title });
+      continue;
+    }
     const label = (sd.from_name as string) || (sd.from as string);
     if (!label) continue;
     const g = fyiBySender.get(label) ?? { subjects: [], address: ((sd.from as string) || '').toLowerCase(), unsub: false };
@@ -427,16 +507,18 @@ export async function GET() {
     if (sd.has_unsubscribe) g.unsub = true;
     fyiBySender.set(label, g);
   }
-  // People vs newsletters/services. PRIMARY signal: List-Unsubscribe (captured in sync — definitive
-  // for bulk mail). The sender local-part regex is only a FALLBACK for items synced before that.
-  const NEWSLETTER = /(^|[.\-_])(no-?reply|do-?not-?reply|donotreply|newsletter|news|notifications?|notify|updates?|mailer|marketing|digest|hello|team|info|support|alerts?|members?|email|mail)([.\-_+@0-9]|$)/i;
-  const isNewsletter = (addr: string) => NEWSLETTER.test((addr.split('@')[0] || ''));
+  // ── "Newsletters & promotions" — the `noted` bulk pool. This ENTIRE pool is `work_state='noted'`
+  // (the fyiRes query filters on it), which IS the definitive newsletter/promotion/notification signal
+  // (the per-item classifier's FYI verdict, driven by the default `noted` rule + List-Unsubscribe). So
+  // every group here is a `newsletter` — the OLD person-vs-newsletter split (a sender-name-looks-human
+  // heuristic) MIS-bucketed brand digests with human-looking display names (Morning Brew, Bay Area
+  // Times) as "person awareness". REAL correspondence you're only informed on (Amira "Dear Team",
+  // Omantel CC) is NOT here — it's the separate `forYourAwareness` set below (understanding-driven).
+  // No name/localpart heuristic: bucket membership is the `noted` rule, full stop.
   const fyiGroupsAll = [...fyiBySender.entries()]
-    .map(([label, g]) => ({ label, subjects: g.subjects, count: g.subjects.length, kind: (g.unsub || isNewsletter(g.address) ? 'newsletter' : 'person') as 'newsletter' | 'person' }))
+    .map(([label, g]) => ({ label, subjects: g.subjects, count: g.subjects.length, kind: 'newsletter' as const }))
     .sort((a, b) => b.count - a.count);
-  const peopleGroups = fyiGroupsAll.filter((g) => g.kind === 'person').slice(0, 5);
-  const newsletterGroups = fyiGroupsAll.filter((g) => g.kind === 'newsletter').slice(0, 5);
-  const fyiTop = [...peopleGroups, ...newsletterGroups];
+  const fyiTop = fyiGroupsAll.slice(0, 8);
   const fyiTailItems = fyiGroupsAll.reduce((n, g) => n + g.count, 0) - fyiTop.reduce((n, g) => n + g.count, 0);
   const fyiTailGroups = Math.max(0, fyiGroupsAll.length - fyiTop.length);
 
@@ -779,6 +861,78 @@ export async function GET() {
     ? { items: keepAnEyeOn.items.filter((k) => (!k.itemId || pendingItemIds.has(k.itemId) || awarenessRaw.has(k.itemId)) && !mustItemIds.has(k.itemId)) }
     : keepAnEyeOn;
 
+  // ── "For your awareness" — REAL correspondence you're only informed on (understanding-driven). ──
+  // Two conditions decide it, both from EXISTING signals (no new keyword/name heuristic):
+  //   (1) the ONE unified understanding reasoned `relevance === 'awareness'` — no move expected of you
+  //       (Amira's "RE: Assessment Bootcamp", the Omantel CC — real people, real work, kept-in-the-loop),
+  //       AND
+  //   (2) the item carries a REAL-CORRESPONDENCE signal: a content RULE fired on it
+  //       (`rule_type ∈ {needs_reply,to_do,waiting_on}`) — a human actually wrote asking/owing something.
+  //       The user is only one_of_many / cc'd, so the understanding DEMOTED it from a reply to awareness;
+  //       but a real ask was there, which is precisely what separates it from bulk.
+  // A pure newsletter/promotion is `work_state='noted'` with `rule_type=null` (no content rule fired —
+  // it's bulk, not correspondence), so it can NEVER satisfy (2) — even when the per-email classifier
+  // happened to tag its understanding `one_of_many/awareness` (a group blast reads as "one of many").
+  // That's why understanding ALONE is insufficient here and the content-rule signal is the deciding
+  // second condition. The `items` query already pre-filters to actionable rule_type/work_state, so this
+  // pool is exactly the real-correspondence candidates; the `noted` bulk lives only in `fyiRows`.
+  //
+  // Precedence (ONE home per item, no overlap): needs-you (must-respond / a needs-you priority card) →
+  // keep-an-eye (watch) → for-your-awareness → newsletters. An item placed earlier is excluded here.
+  // Identity is DETERMINISTIC (sender + a grounded one-liner from the real subject/snippet — never a
+  // model's free text, never fabricated). Missing understanding → not eligible → non-fatal fallback.
+  const eyeItemIds = new Set((keepAnEyeOnOut?.items ?? []).map((k) => k.itemId).filter(Boolean));
+  const priorityItemIds = new Set(cappedPriorities.map((p) => p.itemId).filter(Boolean) as string[]);
+  const fyaSeen = new Set<string>();
+  // Candidates come from BOTH pools, merged into one section:
+  //   • the ACTIONABLE pool — understanding demoted the item to awareness (a content rule or an action
+  //     work_state landed it here, but no move is expected of the user). The old CONTENT_RULE AND-gate is
+  //     GONE: an actionable-pool item that reads as awareness IS real correspondence, and `isBulk` (not a
+  //     fired rule) keeps machine/list mail out. Real-correspondence noted rows arrive via `fyaFromNoted`.
+  //   • the NOTED pool — `fyaFromNoted`, the non-bulk awareness rows lifted out of Newsletters above.
+  // A user's EXPLICIT manual re-type (`type_override` to an actionable type) is authoritative and never
+  // demoted to awareness here — the understanding only refines what the user hasn't pinned.
+  const USER_ACTIONABLE = new Set(['needs_reply', 'to_do', 'waiting_on']);
+  type FyaCand = { id: string; source_data: Record<string, unknown>; work_title: string | null };
+  const fyaFromItems: FyaCand[] = items
+    .filter((it) => it.source !== 'meeting' && it.source !== 'commitment')
+    .filter((it) => !USER_ACTIONABLE.has(String(it.type_override || ''))) // user's explicit type wins
+    .filter((it) => { const u = getUnderstanding(it); return !!u && u.relevance === 'awareness'; })
+    .filter((it) => !isBulk((it.source_data ?? {}) as Record<string, unknown>)) // real correspondence only
+    .map((it) => ({ id: it.id as string, source_data: (it.source_data ?? {}) as Record<string, unknown>, work_title: (it.work_title as string) || null }));
+  const forYourAwareness = ([...fyaFromItems, ...fyaFromNoted] as FyaCand[])
+    // No overlap: excluded if already surfaced as a reply/action (needs-you) or in keep-an-eye.
+    .filter((c) => !mustItemIds.has(c.id) && !eyeItemIds.has(c.id) && !priorityItemIds.has(c.id))
+    // dedup by id (an item can't be in both pools, but guard anyway).
+    .filter((c) => { if (fyaSeen.has(c.id)) return false; fyaSeen.add(c.id); return true; })
+    // Deliberately-cc'd / bystander threads first (strongest awareness signal), then freshest.
+    .sort((a, b) => {
+      const ua = coerceUnderstanding(a.source_data.understanding);
+      const ub = coerceUnderstanding(b.source_data.understanding);
+      const ra = (ua?.role === 'bystander' || a.source_data.is_cc_only === true) ? 0 : 1;
+      const rb = (ub?.role === 'bystander' || b.source_data.is_cc_only === true) ? 0 : 1;
+      const at = String(a.source_data.received_at || ''); const bt = String(b.source_data.received_at || '');
+      return ra === rb ? bt.localeCompare(at) : ra - rb;
+    })
+    .slice(0, 12)
+    .map((c) => {
+      const sd = c.source_data;
+      const who = (sd.from_name as string) || (sd.from as string) || 'Someone';
+      const subject = (c.work_title as string) || (sd.subject as string) || '';
+      // A grounded one-liner: the real subject (trimmed), else a short body snippet. No AI, no invention.
+      const snippet = ((sd.body as string) || '').replace(/\s+/g, ' ').trim();
+      const summary = subject.trim() || (snippet ? snippet.slice(0, 90) : 'Kept in the loop');
+      return { itemId: c.id, who, summary: summary.length > 120 ? summary.slice(0, 117) + '…' : summary };
+    });
+
+  // ── "Worth acting on" — the action-NOTICES set (understanding.relevance === 'action'). Collected in
+  // the candidate loop above; here we only keep the still-pending ones and cap the list. By construction
+  // these are mutually exclusive of must-respond (never pushed there), the needs-you priority cards
+  // (never pushed to `priorities`), keep-an-eye and for-your-awareness (both gated on relevance !=
+  // action). ONE relevance → ONE home; no overlap. Ordered freshest-first isn't tracked here (order of
+  // discovery follows the last_activity_at ordering of `items`), which is already recency-first.
+  const actionNotices = actionNoticesRaw.filter((a) => pendingItemIds.has(a.itemId)).slice(0, 12);
+
   // ── "Day cleared" progress ring — the LIVE half. `cleared` = things the user handled TODAY.
   // Computed fresh here (NOT baked into the cached AI blob) via a cheap batch of head-count queries,
   // so new activity moves the ring on the very next load. `needYou` is the current count of things
@@ -798,8 +952,13 @@ export async function GET() {
   const [inboxClearedRes, commitClearedRes, repliesSentRes] = await Promise.all([
     supabase.from('inbox_items').select('id', { count: 'exact', head: true })
       .eq('user_id', user.id).in('status', ['completed', 'dismissed']).gte('source_data->>resolved_at', startOfDay),
+    // Count only USER-driven resolutions — exclude auto-fulfillment (`resolved_reason='fulfilled'`, the
+    // commitments-sweep detecting a commitment was met, often a phantom created + closed the same minute).
+    // "Day cleared" reflects what YOU cleared, not what the system auto-closed. User done/dismiss (reason
+    // null) + reply-resolution ('replied') still count.
     supabase.from('commitments').select('id', { count: 'exact', head: true })
-      .eq('user_id', user.id).in('status', ['done', 'dismissed']).gte('resolved_at', startOfDay),
+      .eq('user_id', user.id).in('status', ['done', 'dismissed']).gte('resolved_at', startOfDay)
+      .or('resolved_reason.is.null,resolved_reason.neq.fulfilled'),
     // NOTE: repliesSentRes still counts sent emails today by received_at — a genuine user action, so
     // it's not the passive-fill bug. Could be scoped to inbox-linked sends later if it over-counts.
     supabase.from('emails').select('id', { count: 'exact', head: true })
@@ -815,8 +974,10 @@ export async function GET() {
   // already counts meeting follow-ups: they're inbox_items (source='meeting') and inboxClearedRes has
   // no source filter — so clearing them moves the cleared half. The two halves stay consistent.
   const needYouCards = cappedPriorities.filter((p) => p.posture !== 'needs_reply').length;
-  const needYou = needYouReplies + needYouCards + commitments.length;
+  // Action-notices ("Worth acting on") are a needs-you lane too — count them so the ring baseline
+  // reflects everything the user still has to act on (the client re-derives this live as they dismiss).
+  const needYou = needYouReplies + needYouCards + commitments.length + actionNotices.length;
   const dayProgress = { cleared: clearedToday, needYou };
 
-  return NextResponse.json({ firstName, briefLine, tldr, followups, fyiDigest, mustRespond: mustRespondOut, keepAnEyeOn: keepAnEyeOnOut, status, priorities: cappedPriorities, commitments, waitingOn, schedule, handled, dayProgress });
+  return NextResponse.json({ firstName, briefLine, tldr, followups, fyiDigest, forYourAwareness, actionNotices, mustRespond: mustRespondOut, keepAnEyeOn: keepAnEyeOnOut, status, priorities: cappedPriorities, commitments, waitingOn, schedule, handled, dayProgress });
 }

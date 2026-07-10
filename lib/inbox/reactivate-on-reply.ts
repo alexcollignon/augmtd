@@ -17,6 +17,8 @@
 //      never reopened). Without (2), a resolved thread with a new reply whose email row already
 //      exists is `continue`-skipped forever and can never resurface. That was the Outlook regression.
 
+import { withPreservedUnderstanding } from '@/lib/inbox/item-understanding';
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type DBClient = any;
 
@@ -119,7 +121,9 @@ export async function reactivateResolvedThreadOnReply(params: ReactivateParams):
       .update({
         status: 'pending',
         work_state: restoreWs,
-        source_data: { ...existingSd, ...newSourceData },
+        // Spread existingSd first (carries `understanding`), then the fresh envelope; the helper
+        // makes preservation explicit + validates the understanding so a rebuild can never drop it.
+        source_data: withPreservedUnderstanding({ ...existingSd, ...newSourceData }, item),
         source_id: storedEmail.id,
         last_activity_at: storedEmail.received_at || reopenedAt,
         updated_at: reopenedAt,

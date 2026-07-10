@@ -4,6 +4,7 @@
 import { getAIClient, aiCreate } from '@/lib/ai/factory';
 import { buildVoiceBlock, buildMeetingFollowupContext } from '@/lib/context/voice-context';
 import { detectLanguage } from '@/lib/inbox/detect-language';
+import { coerceUnderstanding, languageName } from '@/lib/inbox/item-understanding';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type DBClient = any;
@@ -14,6 +15,11 @@ export async function generateReplyDraft(
   sourceData: Record<string, any>,
   client: DBClient,
   instructions?: string | null,
+  // ── PLAN COHERENCE (Fix 3): the item's Identified-tasks step summaries. When present, the draft is
+  // generated AWARE of the plan so the reply and the tasks narrate ONE story — the draft can reference a
+  // calendar invite the plan sends, and a promise the draft makes ("I'll send the deck") is the SAME
+  // commitment as the corresponding task, not a duplicated orphan. Non-fatal: absent → today's behavior.
+  planSteps?: string[] | null,
 ): Promise<string> {
   const from = String(sourceData.from || sourceData.from_address || '');
   const subject = String(sourceData.subject || '');
@@ -29,11 +35,13 @@ export async function generateReplyDraft(
     if (prof?.full_name) userName = String(prof.full_name);
   } catch { /* keep default */ }
 
-  // Detect the LANGUAGE of the message being replied to (subject + body). The voice examples above are
-  // frequently in another language (a PT-heavy user's sent mail) and, left unchecked, drag the reply
-  // into that language regardless of the incoming email — the A2 bug. A concrete detected language is
-  // FAR more decisive in the prompt than asking the model to "detect and override" the examples.
-  const detected = detectLanguage(`${subject}\n${body}`);
+  // The LANGUAGE the reply should be written in. PRIMARY signal: the unified `understanding.language`
+  // — reasoned over the full thread in the classification pass, so it's decisive even on short text
+  // (where the stopword detector fell back to the user's PT-heavy voice → the A2 wrong-language bug).
+  // `detectLanguage` is now only the FALLBACK when there's no understanding (legacy items). The voice
+  // block governs TONE only — never the language.
+  const understanding = coerceUnderstanding((sourceData as Record<string, unknown>).understanding);
+  const detected = languageName(understanding?.language) || detectLanguage(`${subject}\n${body}`);
   const langRule = detected
     ? `IMPORTANT — LANGUAGE: The email you are replying to is written in ${detected}. Write your ENTIRE ` +
       `reply in ${detected}, and ONLY in ${detected}. The example emails above are for STYLE only ` +
@@ -43,11 +51,23 @@ export async function generateReplyDraft(
       `detect that email's language and reply ONLY in that language. The example emails above are for ` +
       `STYLE only; do NOT copy their language if it differs from the email you are replying to.`;
 
+  // The plan block — the concrete steps AUGMTD identified for handling this item. The reply should be
+  // COHERENT with them (one story): reference an invite the plan sends; treat a "I'll send X" promise as
+  // the SAME commitment as its task (don't duplicate it); don't presume answers to steps the plan marks
+  // as still open. Only included when a real, non-trivial step list is passed.
+  const planBlock = (planSteps && planSteps.length)
+    ? `PLAN — AUGMTD has identified these steps for handling this (the reply must be COHERENT with them, ` +
+      `telling ONE story with the plan — do not contradict a still-open step, and do not duplicate a ` +
+      `promise that is already its own task; you MAY reference what the plan will do, e.g. an invite it sends):\n` +
+      planSteps.map((s) => `- ${s}`).join('\n') + '\n\n'
+    : '';
+
   const { client: ai, model } = await getAIClient(userId, 'conversation', client);
   const res = await aiCreate(ai, {
     model, max_tokens: 600, temperature: 0.6,
     messages: [{ role: 'user', content:
       `${voiceBlock ? voiceBlock + '\n\n' : ''}${meetingFollowup ? meetingFollowup + '\n\n' : ''}` +
+      `${planBlock}` +
       `${instructions?.trim() ? `Follow this guidance for the reply: ${instructions.trim()}\n\n` : ''}` +
       // Anchor the perspective hard — the model otherwise mirrors the sender and signs with THEIR name.
       `You are ${userName}. Write ${userName}'s reply to the email below (which was sent TO ${userName} ` +

@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { generateItemPlan, classifyStep, detectAttachmentRequest, type ItemPlanKind, type ItemPlanTask } from '@/lib/home/item-plan';
+import { generateItemPlan, classifyStep, detectAttachmentRequest, isReplyLikeStep, type ItemPlanKind, type ItemPlanTask } from '@/lib/home/item-plan';
 import { PLAN_VERSION } from '@/lib/home/capability-map';
 import { buildItemContext } from '@/lib/home/item-context';
+import { getUnderstanding, type ItemRelevance } from '@/lib/inbox/item-understanding';
 
 export const maxDuration = 30;
 
@@ -39,6 +40,28 @@ async function buildContext(
 ): Promise<string | null> {
   const ctx = await buildItemContext(supabase, userId, kind, entityId);
   return ctx ? ctx.text : null;
+}
+
+// The item's understood RELEVANCE (reply | action | awareness), from `inbox_items.source_data.
+// understanding` — the SINGLE signal that keeps the generated plan coherent with the deep-dive's
+// primary surface (awareness → no phantom reply step). Only the inbox-item kinds carry it; a
+// meeting/commitment plan reasons freely (no reply-gate). Non-fatal: missing → null (today's behavior).
+async function getItemRelevance(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+  kind: Kind,
+  entityId: string,
+): Promise<ItemRelevance | null> {
+  if (kind !== 'email' && kind !== 'awareness' && kind !== 'followup') return null;
+  try {
+    const { data: item } = await supabase
+      .from('inbox_items')
+      .select('source_data')
+      .eq('id', entityId).eq('user_id', userId).maybeSingle();
+    return getUnderstanding(item)?.relevance ?? null;
+  } catch {
+    return null;
+  }
 }
 
 // task-workflows S3 — flag a freshly-graded [You] step that is a "provide a document" ask as an
@@ -81,7 +104,8 @@ export async function POST(request: NextRequest) {
     }
 
     const context = (await buildContext(supabase, user.id, kind, entityId)) || '';
-    const plan = await generateItemPlan(supabase, user.id, { kind, entityId, context });
+    const relevance = await getItemRelevance(supabase, user.id, kind, entityId);
+    const plan = await generateItemPlan(supabase, user.id, { kind, entityId, context, relevance });
     // task-workflows S3: mark any "provide a document" [You] step as an attachment request up front.
     plan.tasks = plan.tasks.map(withAttachmentRequest);
 
@@ -130,16 +154,18 @@ export async function PATCH(request: NextRequest) {
 
     const body = (await request.json()) as {
       kind: Kind; entityId: string; taskId?: string; done?: boolean; dismissed?: boolean;
-      action?: 'add' | 'edit' | 'reassign'; text?: string; owner?: 'system' | 'you' | 'coworker';
+      action?: 'add' | 'edit' | 'reassign' | 'reorder'; text?: string; owner?: 'system' | 'you' | 'coworker';
       // reassign owner:'coworker' — the PROPOSED coworker (assignment only; the server records it, it
       // does NOT run/delegate the step — Run dispatches it later via /api/items/delegate).
       agentId?: string; agentName?: string; workerRole?: string | null;
+      // reorder — the new task order (an array of task ids); the stored tasks are re-sequenced to match.
+      order?: string[];
     };
-    const { kind, entityId, taskId, done, dismissed, action, text, owner, agentId, agentName, workerRole } = body;
+    const { kind, entityId, taskId, done, dismissed, action, text, owner, agentId, agentName, workerRole, order } = body;
     if (!entityId || !VALID_KINDS.includes(kind)) {
       return NextResponse.json({ error: 'kind and entityId are required' }, { status: 400 });
     }
-    // Toggle actions (done/dismissed) require a taskId; add/edit have their own validation below.
+    // Toggle actions (done/dismissed) require a taskId; add/edit/reorder have their own validation below.
     if (!action && !taskId) {
       return NextResponse.json({ error: 'taskId is required' }, { status: 400 });
     }
@@ -157,7 +183,23 @@ export async function PATCH(request: NextRequest) {
     let tasks: ItemPlanTask[];
     let newTask: ItemPlanTask | null = null;
 
-    if (action === 'add' || action === 'edit') {
+    if (action === 'reorder') {
+      // Re-sequence the stored tasks to match the given id order. Ids present in `order` come first in
+      // that order; any id NOT in `order` (defensive — a concurrent add) keeps its relative position at
+      // the end. Unknown ids in `order` are ignored. Idempotent-safe; touches only ordering, no content.
+      if (!Array.isArray(order) || !order.length) {
+        return NextResponse.json({ error: 'order (task ids) is required' }, { status: 400 });
+      }
+      const byId = new Map(current.map((t) => [t.id, t] as const));
+      const ordered: ItemPlanTask[] = [];
+      const seen = new Set<string>();
+      for (const id of order) {
+        const t = byId.get(id);
+        if (t && !seen.has(id)) { ordered.push(t); seen.add(id); }
+      }
+      for (const t of current) if (!seen.has(t.id)) ordered.push(t);
+      tasks = ordered;
+    } else if (action === 'add' || action === 'edit') {
       // Re-interpret the user's wording through the ONE classification engine (WHAT/WHO/HOW) — respects
       // the user's meaning, unmappable → [You]. Grounded on the same item context the generator uses.
       const trimmed = (text || '').trim();
@@ -168,6 +210,15 @@ export async function PATCH(request: NextRequest) {
       const graded = await classifyStep(supabase, user.id, { text: trimmed, itemContext, kind });
 
       if (action === 'add') {
+        // ── Coherent re-slot: don't create a REDUNDANT reply. If the just-classified step reads as a
+        // reply surface (system draft/send OR reply-ish wording) AND the plan ALREADY has an active
+        // (non-dismissed, non-done) reply surface, suppress it — the deep-dive's composer / existing
+        // reply step already IS the move. Conservative (isReplyLikeStep excludes invites/forwards), so
+        // only a TRUE duplicate reply is dropped; a distinct action always gets added.
+        if (isReplyLikeStep(graded) && current.some((t) => !t.dismissed && !t.done && isReplyLikeStep(t))) {
+          // Nothing added — return the unchanged plan + a flag so the client focuses the composer.
+          return NextResponse.json({ tasks: current, task: null, replyDuplicate: true });
+        }
         // task-workflows S3: an added "provide a document" [You] step becomes an attachment request.
         newTask = withAttachmentRequest({ ...graded, id: nextTaskId(current), done: false });
         tasks = [...current, newTask];

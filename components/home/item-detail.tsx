@@ -19,6 +19,9 @@ import {
   ClipboardDocumentListIcon,
   SparklesIcon,
   ArrowUturnRightIcon,
+  ArrowUturnLeftIcon,
+  EllipsisHorizontalIcon,
+  Bars2Icon,
 } from '@heroicons/react/24/outline';
 import { ThreadMessages, type ThreadMessage } from '@/components/inbox/thread-messages';
 import ReplyEditor from '@/components/inbox/reply-editor';
@@ -685,10 +688,14 @@ function RecipientChips({ recipients, onChange }: { recipients: string[]; onChan
   );
 }
 
-function ForwardPreviewCard({ kind, entityId, taskId, onSent, onCancel }: {
+function ForwardPreviewCard({ kind, entityId, taskId, itemLevel, onSent, onCancel }: {
   kind: ItemKind;
   entityId: string;
   taskId?: string;
+  // itemLevel — the forward was opened from the item-level action palette (no plan step). We hint the
+  // prepare endpoint (`actionType:'forward'`) so it prepares a forward for the whole item even without
+  // a forward step in the plan.
+  itemLevel?: boolean;
   onSent?: () => void;
   onCancel?: () => void;
 }) {
@@ -708,7 +715,7 @@ function ForwardPreviewCard({ kind, entityId, taskId, onSent, onCancel }: {
     setLoading(true);
     fetch('/api/items/prepare', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ kind, entityId, taskId }),
+      body: JSON.stringify({ kind, entityId, taskId, ...(itemLevel ? { actionType: 'forward' } : {}) }),
     })
       .then((r) => (r.ok ? r.json() : Promise.reject()))
       .then((d: PreparedForward | { type: string }) => {
@@ -1322,6 +1329,8 @@ function isDirectRunnableCap(cap: PlanCap): boolean {
 // cache row is written). Owns tasks / loading / failed / pending + the [You]-checkbox PATCH handler +
 // the ≥2-task breakdown gate.
 type ItemPlan = {
+  kind: 'email' | 'meeting' | 'commitment' | 'awareness' | 'followup'; // the deep-dive's kind (for per-step preview fetches)
+  entityId: string;             // the deep-dive's entity id (for per-step preview fetches)
   tasks: PlanTask[] | null;     // ALL tasks (incl. dismissed) — the stepper renders crossed-out steps too
   loading: boolean;
   failed: boolean;
@@ -1330,8 +1339,12 @@ type ItemPlan = {
   classifyingId: string | null;  // id of the step currently being (re)classified — drives the "classifying…" hint
   toggle: (task: PlanTask) => void;
   dismiss: (task: PlanTask) => void;  // TOGGLE a step's "not needed" (crossed-out) state, persisted
-  addStep: (text: string) => Promise<void>;              // add a step → classify → append (optimistic)
+  // add a step → classify → append (optimistic). Resolves to { replyDuplicate:true } when the server
+  // suppressed it as a redundant reply (a reply surface already exists) — the caller then focuses the
+  // existing composer instead of showing a phantom second reply step.
+  addStep: (text: string) => Promise<{ replyDuplicate?: boolean }>;
   editStep: (taskId: string, text: string) => Promise<void>; // edit a step's text → re-classify in place
+  reorderSteps: (orderedIds: string[]) => void;          // drag-reorder → persist the new task order (optimistic)
   markSystemDone: (taskId: string) => void;              // optimistically flip a [System] step to done (after a commit)
   delegatingId: string | null;   // id of the step currently being delegated ('__item__' for a whole-item hand-off)
   delegateStep: (taskId: string, agentId: string, agentName: string) => Promise<boolean>;  // hand one step to a coworker
@@ -1450,9 +1463,9 @@ function useItemPlan(
   // ── Add a step. Optimistically insert a provisional [You] step (the user's text, "classifying…"),
   // POST action:'add' → the classifier grades it → swap in the real graded step (executor badge +
   // action may resolve). On failure, remove the provisional row (rollback).
-  const addStep = async (text: string) => {
+  const addStep = async (text: string): Promise<{ replyDuplicate?: boolean }> => {
     const trimmed = text.trim();
-    if (!trimmed) return;
+    if (!trimmed) return {};
     // A local, temporary id — replaced by the server's real id on success.
     const tempId = `tmp-${Date.now()}`;
     const provisional: PlanTask = { id: tempId, text: trimmed, actor: 'you', capability: null, done: false };
@@ -1465,13 +1478,21 @@ function useItemPlan(
         body: JSON.stringify({ kind: planKind, entityId, action: 'add', text: trimmed }),
       });
       if (!res.ok) throw new Error();
-      const d = (await res.json()) as { task?: PlanTask };
+      const d = (await res.json()) as { task?: PlanTask | null; replyDuplicate?: boolean };
+      // Coherent re-slot: the server suppressed a redundant reply. Drop the provisional row (no phantom
+      // second reply step) and tell the caller to focus the existing composer instead.
+      if (d.replyDuplicate) {
+        setTasks((prev) => (prev ? prev.filter((t) => t.id !== tempId) : prev));
+        return { replyDuplicate: true };
+      }
       if (!d.task) throw new Error();
       const graded = d.task;
       setTasks((prev) => (prev ? prev.map((t) => (t.id === tempId ? graded : t)) : prev));
+      return {};
     } catch {
       // Rollback — drop the provisional row.
       setTasks((prev) => (prev ? prev.filter((t) => t.id !== tempId) : prev));
+      return {};
     } finally {
       setClassifyingId(null);
     }
@@ -1506,6 +1527,33 @@ function useItemPlan(
     } finally {
       setClassifyingId(null);
     }
+  };
+
+  // ── Drag-reorder the steps. Optimistically re-sequence locally to the given id order, persist via the
+  // PATCH `reorder` action; roll back to the prior order on failure. `orderedIds` is the full set of the
+  // CURRENTLY-rendered task ids in their new order — the server re-sequences `item_plans.tasks` to match.
+  const reorderSteps = (orderedIds: string[]) => {
+    let prior: PlanTask[] | null = null;
+    setTasks((prev) => {
+      if (!prev) return prev;
+      prior = prev;
+      const byId = new Map(prev.map((t) => [t.id, t] as const));
+      const next: PlanTask[] = [];
+      const seen = new Set<string>();
+      for (const id of orderedIds) {
+        const t = byId.get(id);
+        if (t && !seen.has(id)) { next.push(t); seen.add(id); }
+      }
+      for (const t of prev) if (!seen.has(t.id)) next.push(t); // defensive: keep any unlisted ids
+      return next;
+    });
+    fetch('/api/items/plan', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: planKind, entityId, action: 'reorder', order: orderedIds }),
+    })
+      .then((r) => { if (!r.ok) throw new Error(); })
+      .catch(() => { if (prior) setTasks(prior); });
   };
 
   // Flip a [System] step to done locally after a successful commit (the server already persisted it in
@@ -1860,7 +1908,7 @@ function useItemPlan(
   // stays visible. (A user-added step counts toward it — it's in `tasks`.)
   const hasBreakdown = !loading && !failed && !!tasks && tasks.length >= 2;
 
-  return { tasks, loading, failed, hasBreakdown, pending, classifyingId, toggle, dismiss, addStep, editStep, markSystemDone, delegatingId, delegateStep, delegateItem, runningId, runStep, uploadingId, uploadForStep, resolution, resolveFile, useResolvedFile, attachToStep, reassignStep, proposeCoworker, runPlan, markComposerSent };
+  return { kind: planKind, entityId, tasks, loading, failed, hasBreakdown, pending, classifyingId, toggle, dismiss, addStep, editStep, reorderSteps, markSystemDone, delegatingId, delegateStep, delegateItem, runningId, runStep, uploadingId, uploadForStep, resolution, resolveFile, useResolvedFile, attachToStep, reassignStep, proposeCoworker, runPlan, markComposerSent };
 }
 
 // ── The per-step STATE CHIP — the single glanceable "where is this step" token. Every StepperRow
@@ -1892,20 +1940,234 @@ function StateChip({ state, label }: { state: StepState; label: string }) {
   );
 }
 
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// STEP NUTSHELL PREVIEW — the FLAGSHIP coherence pass. Every PREPARED/actionable step (system OR
+// coworker) surfaces a COMPACT PREVIEW of what it will do/produce, so the user understands at a glance
+// BEFORE approving/running — never an abstract label ("Review & send") with no visible content.
+//   • send_calendar_invite step → the prepared invite inline: title · when · attendees (from /api/items/
+//     prepare — the SAME grounded extractor the InvitePreviewCard uses; no new endpoint).
+//   • forward step               → "Forward to {recipient}" (the prepared To from /api/items/prepare).
+//   • draft / reply step         → a one-line gist of the drafted reply (the step's own `detail`, which
+//     the plan generator already writes as a concrete one-sentence gist).
+//   • document / generate (system) → the deliverable's gist ("Produced: …" once run; else the plan gist).
+//   • coworker step              → what the coworker will hand back ("Max will research … and hand back a brief").
+// Glanceable by design: one short line, expandable (invite/forward) to the full card via the row action.
+// Reuses the existing prepared-action data — no new fetch beyond the invite/forward prepare (already the
+// step's approve surface). Non-fatal: any fetch failure just hides the preview line (the row still works).
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+type StepPreviewData =
+  | { kind: 'invite'; title: string; when: string; attendees: string[] }
+  | { kind: 'forward'; to: string[] }
+  | null;
+
+// Lazy prepare-fetch for a send-type step (invite / forward) — pulls the grounded, concrete content so
+// the nutshell can render its specifics. Only fetches for invite/forward system steps; every other kind
+// derives its preview from data already on the task (no fetch). Idempotent per (planKind, entityId, taskId).
+function useStepPreview(
+  routeType: 'calendar_invite' | 'forward' | 'email',
+  planKind: 'email' | 'meeting' | 'commitment' | 'awareness' | 'followup',
+  entityId: string,
+  taskId: string,
+  enabled: boolean,
+): StepPreviewData {
+  const [data, setData] = useState<StepPreviewData>(null);
+  useEffect(() => {
+    if (!enabled || (routeType !== 'calendar_invite' && routeType !== 'forward')) return;
+    let alive = true;
+    fetch('/api/items/prepare', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: planKind, entityId, taskId }),
+    })
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then((d: PreparedInvite | PreparedForward | { type: string }) => {
+        if (!alive) return;
+        if (routeType === 'calendar_invite' && (d as PreparedInvite).type === 'calendar_invite') {
+          const inv = d as PreparedInvite;
+          setData({ kind: 'invite', title: inv.title || '', when: inv.startISO ? fmtInviteWhen(inv.startISO) : '', attendees: Array.isArray(inv.attendees) ? inv.attendees : [] });
+        } else if (routeType === 'forward' && (d as PreparedForward).type === 'forward') {
+          const f = d as PreparedForward;
+          setData({ kind: 'forward', to: Array.isArray(f.to) ? f.to : [] });
+        }
+      })
+      .catch(() => { /* non-fatal — no preview line */ });
+    return () => { alive = false; };
+  }, [routeType, planKind, entityId, taskId, enabled]);
+  return data;
+}
+
+// The rendered nutshell line for one active step. `previewData` is the fetched invite/forward specifics
+// (when available); everything else derives from the task + owner. Returns null when there's nothing
+// glanceable to add beyond the title (e.g. a bare [You] step with no detail).
+function StepPreview({ task, owner, coworkerName, previewData }: {
+  task: PlanTask;
+  owner: ProposedOwner;
+  coworkerName?: string | null;
+  previewData: StepPreviewData;
+}) {
+  // A concise noun for what a produce/coworker step hands back (best-effort from the step wording).
+  const deliverableNoun = (): string => {
+    const hay = `${task.text || ''} ${task.detail || ''}`.toLowerCase();
+    if (/\bpost\b|linkedin|social/.test(hay)) return 'a post';
+    if (/\bresearch|analy|market|competitor|background|look up|find out\b/.test(hay)) return 'a brief';
+    if (/\bdeck|slides?|presentation\b/.test(hay)) return 'a deck';
+    if (/\bdoc|document|report|write[- ]?up|article|summary|memo\b/.test(hay)) return 'a draft';
+    if (/\bdraft|reply|email|message\b/.test(hay)) return 'a draft';
+    return 'their work';
+  };
+
+  // INVITE — the concrete prepared invite. A COMPACT 2-LINE mini-preview (not a truncated one-liner):
+  // line 1 = the title (clamped), line 2 = the KEY facts — WHEN · to {attendee}{+N}. The when + who ARE
+  // the point of an invite, so they get their own line instead of being cut off by the title's truncate.
+  if (previewData?.kind === 'invite') {
+    const { title, when, attendees } = previewData;
+    // Attendees as a COMPACT guest count, not the full email address (which overflowed the line).
+    // The title already names the counterpart ("Meeting with X"), so a single guest needs no repeat —
+    // only surface a count when there's more than one. Always fits the line.
+    const guests = attendees.length > 1 ? `${attendees.length} guests` : '';
+    const factsLine = [when || null, guests || null].filter(Boolean).join(' · ');
+    if (!title && !factsLine) return null;
+    return (
+      <div className="mt-1 flex items-start gap-1.5 text-[11.5px] text-neutral-500 min-w-0">
+        <CalendarDaysIcon className="w-3 h-3 flex-shrink-0 text-violet-400 mt-[1px]" />
+        <span className="min-w-0 flex flex-col leading-snug">
+          {title && <span className="line-clamp-1 text-neutral-600">{title}</span>}
+          {factsLine && <span className="line-clamp-1 text-neutral-500">{factsLine}</span>}
+        </span>
+      </div>
+    );
+  }
+
+  // FORWARD — "Forward to {recipient}" (the prepared To, or the step's named recipient).
+  if (previewData?.kind === 'forward') {
+    const to = previewData.to[0];
+    return (
+      <div className="mt-1 flex items-center gap-1.5 text-[11.5px] text-neutral-500 min-w-0">
+        <ArrowUturnRightIcon className="w-3 h-3 flex-shrink-0 text-violet-400" />
+        <span className="min-w-0 truncate">{to ? `Forward to ${to}${previewData.to.length > 1 ? ` +${previewData.to.length - 1}` : ''}` : 'Forward — add a recipient'}</span>
+      </div>
+    );
+  }
+
+  // COWORKER — what they'll hand back. "Max will {gist}, hand back {noun}".
+  if (owner === 'coworker' && coworkerName) {
+    const gist = (task.detail || task.text || '').replace(/\s+/g, ' ').trim();
+    const shortGist = gist.length > 90 ? gist.slice(0, 88).trimEnd() + '…' : gist;
+    return (
+      <div className="mt-1 flex items-center gap-1.5 text-[11.5px] text-neutral-500 min-w-0">
+        <UserPlusIcon className="w-3 h-3 flex-shrink-0 text-indigo-400" />
+        <span className="min-w-0 truncate">{coworkerName} will {shortGist ? `${shortGist} — ` : ''}hand back {deliverableNoun()}.</span>
+      </div>
+    );
+  }
+
+  // SYSTEM draft / produce / analyze / fetch — a gist of what it produces. Prefer the produced
+  // deliverable's gist (once run); else the plan's concrete one-sentence `detail` (a real nutshell like
+  // "Confirms 10am, offers to send the deck"). Only shown when it adds beyond the terse title.
+  if (owner === 'system' && !task.deliverable) {
+    const gist = (task.detail || '').replace(/\s+/g, ' ').trim();
+    if (!gist || gist.toLowerCase() === (task.text || '').trim().toLowerCase()) return null;
+    const shortGist = gist.length > 110 ? gist.slice(0, 108).trimEnd() + '…' : gist;
+    const isDraft = task.capability === 'draft' || task.capability === 'send';
+    return (
+      <div className="mt-1 flex items-center gap-1.5 text-[11.5px] text-neutral-500 min-w-0">
+        {isDraft
+          ? <PencilIcon className="w-3 h-3 flex-shrink-0 text-indigo-400" />
+          : <SparklesIcon className="w-3 h-3 flex-shrink-0 text-indigo-400" />}
+        <span className="min-w-0 truncate">{shortGist}</span>
+      </div>
+    );
+  }
+
+  return null;
+}
+
+// ── Step OVERFLOW menu (⋯) — the ONE quiet home for a row's PLAN-EDITING controls (edit the step's
+// text, set it aside / restore, attach a file). These are plan-editing moves, not live-run controls, so
+// they live behind a single hover/focus-revealed ⋯ rather than competing inline with the owner chip,
+// state chip, nutshell + primary CTA (which stay visible). Anchored below its trigger, closes on
+// outside-click / Esc. Each entry no-ops while the row is busy. `onAttach` is optional (only rows that
+// accept a manual file attach show that entry). A crossed-out step's entry reads "Restore".
+function StepOverflowMenu({
+  crossed,
+  busy,
+  onEdit,
+  onDismiss,
+  onAttach,
+  onClose,
+}: {
+  crossed: boolean;
+  busy: boolean;
+  onEdit: () => void;
+  onDismiss: () => void;
+  onAttach?: () => void;
+  onClose: () => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const onDoc = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) onClose(); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onDoc); document.removeEventListener('keydown', onKey); };
+  }, [onClose]);
+  const item = 'w-full flex items-center gap-2 px-3 py-1.5 text-left text-[12px] text-neutral-700 hover:bg-neutral-50 disabled:opacity-40 transition-colors';
+  return (
+    <div
+      ref={ref}
+      className="absolute z-[60] top-full right-0 mt-1 w-40 rounded-lg border border-neutral-200 bg-white shadow-lg overflow-hidden py-1"
+    >
+      <button
+        onClick={(e) => { e.stopPropagation(); onClose(); if (!busy && !crossed) onEdit(); }}
+        disabled={busy || crossed}
+        className={item}
+      >
+        <PencilIcon className="w-3.5 h-3.5 text-neutral-400 flex-shrink-0" />Edit step
+      </button>
+      {onAttach && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onClose(); if (!busy) onAttach(); }}
+          disabled={busy}
+          className={item}
+        >
+          <PaperClipIcon className="w-3.5 h-3.5 text-neutral-400 flex-shrink-0" />Attach a file
+        </button>
+      )}
+      <button
+        onClick={(e) => { e.stopPropagation(); onClose(); if (!busy) onDismiss(); }}
+        disabled={busy}
+        className={`${item} ${crossed ? 'text-amber-600' : 'text-rose-600 hover:!bg-rose-50'}`}
+      >
+        <XMarkIcon className="w-3.5 h-3.5 flex-shrink-0" />{crossed ? 'Restore' : 'Not needed'}
+      </button>
+    </div>
+  );
+}
+
 // ── One step in the "Identified tasks" workflow stepper. A vertical timeline row: a NODE (the AUGMTD
 // brand mark for a system step, a [You] checkbox for a your step) + a CONNECTOR line to the next node
-// + a SHORT title
-// that expands to the fuller `detail` on click + the row action (Draft → / done checkbox) + a ✕ that
-// toggles the step's "not needed" state. A dismissed step STAYS in the workflow — rendered struck-
-// through + greyed, its node dimmed, and its action disabled (set aside, not removed). The ✕ is a
-// reversible toggle: click to cross out, click again to restore. The strike + grey animates smoothly.
+// + a SHORT title. CLICKING the row/title toggles the fuller `detail` (no separate expand caret). The
+// row leads with what's live — owner chip · state · nutshell · primary CTA — and tucks the PLAN-EDITING
+// controls (edit / set-aside / attach) behind a single quiet ⋯ overflow menu (hover/focus-revealed).
+// A dismissed step STAYS in the workflow — struck-through + greyed, node dimmed, action disabled (set
+// aside, not removed); the ⋯ "Restore" un-crosses it. The strike + grey animates smoothly.
 function StepperRow({
   task,
   isLast,
+  draggable = false,
+  dragging = false,
+  dragOver = false,
+  onDragStartStep,
+  onDragOverStep,
+  onDragLeaveStep,
+  onDropStep,
+  onDragEndStep,
   actionLabel,
   sysKind,
   proposedOwner,
   suggestedCoworker,
+  planKind,
+  entityId,
   onAction,
   onToggle,
   onDismiss,
@@ -1925,10 +2187,20 @@ function StepperRow({
 }: {
   task: PlanTask;
   isLast: boolean;
+  draggable?: boolean;              // this step can be drag-reordered (unsettled steps only)
+  dragging?: boolean;              // this step is the one currently being dragged (dim it)
+  dragOver?: boolean;              // a dragged step is hovering over this row (show the drop indicator)
+  onDragStartStep?: () => void;
+  onDragOverStep?: () => void;
+  onDragLeaveStep?: () => void;
+  onDropStep?: () => void;
+  onDragEndStep?: () => void;
   actionLabel: string | null;       // the row's contextual action button label (null → no per-row action)
   sysKind?: 'reply' | 'invite' | null; // a prepared system step: 'reply'→"Draft ready", 'invite'→"Ready to send"
   proposedOwner: ProposedOwner;     // the derived owner shown in the chip (system / coworker / you)
   suggestedCoworker?: Pick<Coworker, 'name' | 'worker_role'> | null; // the coworker the chip proposes/shows
+  planKind: 'email' | 'meeting' | 'commitment' | 'awareness' | 'followup'; // the deep-dive kind (nutshell preview fetches)
+  entityId: string;                 // the deep-dive entity id (nutshell preview fetches)
   onAction?: () => void;            // opens the prepared action (focuses the composer OR opens the invite card)
   onToggle: () => void;
   onDismiss: () => void;
@@ -1948,6 +2220,7 @@ function StepperRow({
 }) {
   const [expanded, setExpanded] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false); // the ⋯ plan-editing overflow menu (edit / attach / set-aside)
   const [draftText, setDraftText] = useState(task.text);
   const inputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null); // S3: the hidden picker for an awaiting_input upload
@@ -1960,6 +2233,16 @@ function StepperRow({
   // task-workflows S3: a [You] step that asked for a file and hasn't been given one yet → render an
   // "Upload →" affordance instead of the plain "Needs you" checkbox chip.
   const awaitingInput = !crossed && !task.done && task.status === 'awaiting_input' && !task.request?.fulfilledRef;
+
+  // ── STEP NUTSHELL PREVIEW (Fix 2). An ACTIVE, not-yet-resolved system/coworker step surfaces a compact
+  // preview of what it will do/produce. Route the step (invite/forward/email) the same way the action
+  // resolver does, then fetch the invite/forward specifics lazily (email/analyze/etc. derive from the
+  // task with no fetch). Suppressed once the step is crossed out / done / handed off / mid-flight (the
+  // outcome — "Produced: …" / handed-back — takes over) and for a plain [You] step (nothing prepared).
+  const routeType = clientRouteActionType({ capability: task.capability, text: task.text, detail: task.detail });
+  const showPreview = !crossed && !handed && !task.done && !working && !delegating && !classifying && !awaitingInput
+    && (proposedOwner === 'coworker' || (isSystem && proposedOwner !== 'you'));
+  const previewData = useStepPreview(routeType, planKind, entityId, task.id, showPreview);
 
   useEffect(() => {
     if (editing) { setDraftText(task.text); inputRef.current?.focus(); inputRef.current?.select(); }
@@ -1974,12 +2257,6 @@ function StepperRow({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [awaitingInput]);
 
-  const handleDismiss = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (busy) return;
-    onDismiss(); // toggle "not needed" (persisted); the row stays mounted, just crosses/un-crosses
-  };
-
   const commitEdit = () => {
     const t = draftText.trim();
     setEditing(false);
@@ -1987,9 +2264,33 @@ function StepperRow({
   };
 
   return (
-    <li className="relative pl-8">
+    <li
+      className={`group/row relative pl-8 transition-opacity ${dragging ? 'opacity-40' : ''}`}
+      // Drop target for drag-reorder: allow the drop + report hover so WhatThisTakes can re-slot.
+      onDragOver={draggable || dragOver ? (e) => { e.preventDefault(); onDragOverStep?.(); } : undefined}
+      onDragLeave={onDragLeaveStep}
+      onDrop={(e) => { e.preventDefault(); onDropStep?.(); }}
+    >
+      {/* Drop indicator — a bar above the row a dragged step would land in front of. */}
+      {dragOver && <span aria-hidden className="absolute left-6 right-0 -top-0.5 h-0.5 rounded-full bg-indigo-400" />}
       {/* Connector line — runs from just under this node to the next; hidden on the last step. */}
       {!isLast && <span aria-hidden className="absolute left-[11px] top-6 bottom-[-6px] w-px bg-neutral-200" />}
+
+      {/* Drag handle — grab to reorder. Only the handle is draggable (so title clicks / editing stay
+          intact). Hover-revealed on the far left; hidden for a settled step (not draggable). */}
+      {draggable && (
+        <button
+          type="button"
+          draggable
+          onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; onDragStartStep?.(); }}
+          onDragEnd={onDragEndStep}
+          title="Drag to reorder"
+          aria-label="Drag to reorder this step"
+          className="absolute -left-3 top-[5px] p-0.5 text-neutral-300 opacity-0 group-hover/row:opacity-100 focus:opacity-100 hover:text-neutral-500 cursor-grab active:cursor-grabbing transition-opacity"
+        >
+          <Bars2Icon className="w-3.5 h-3.5" />
+        </button>
+      )}
 
       {/* Node — a coworker avatar when the step was handed off; else ✦ for a system step / a checkbox
           for a [You] step. Dimmed when crossed out; pulses while classifying/delegating. */}
@@ -2046,51 +2347,45 @@ function StepperRow({
               className="min-w-0 flex-1 bg-white border border-indigo-300 rounded-md px-2 py-1 text-[13px] font-medium text-neutral-800 focus:outline-none"
             />
           ) : (
-            // Title (+ optional expand affordance). Click reveals `detail`; DOUBLE-click to edit. A tiny
-            // pencil affordance appears on hover for an active (not crossed) step.
+            // Title — CLICKING THE ROW TOGGLES the fuller `detail` (no separate expand caret competing with
+            // the owner chip). DOUBLE-click to edit. The whole title is the expand hit-target.
             <button
               onClick={() => hasDetail && setExpanded((v) => !v)}
               onDoubleClick={() => !crossed && !classifying && setEditing(true)}
+              aria-expanded={hasDetail ? expanded : undefined}
               className={`min-w-0 flex-1 text-left ${hasDetail ? 'cursor-pointer' : 'cursor-default'}`}
             >
-              <span className="flex items-center gap-1">
-                <span className={`text-[13px] font-medium leading-snug transition-colors duration-300 ${crossed ? 'text-neutral-400 line-through' : task.done ? 'text-neutral-400 line-through' : 'text-neutral-800'}`}>{task.text}</span>
-                {hasDetail && (
-                  <ChevronDownIcon className={`w-3 h-3 flex-shrink-0 text-neutral-300 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`} />
-                )}
-              </span>
+              <span className={`text-[13px] font-medium leading-snug transition-colors duration-300 ${crossed ? 'text-neutral-400 line-through' : task.done ? 'text-neutral-400 line-through' : 'text-neutral-800'}`}>{task.text}</span>
             </button>
           )}
 
-          {!editing && (
-            <>
-              {/* ✎ — edit the step's text (re-classified on save). Quiet, hover-revealed, active steps only. */}
-              {!crossed && !handed && (
-                <button
-                  onClick={(e) => { e.stopPropagation(); if (!busy && !classifying) setEditing(true); }}
-                  disabled={busy || classifying}
-                  title="Edit this step"
-                  aria-label="Edit step"
-                  className="flex-shrink-0 -mt-0.5 p-0.5 text-neutral-300 opacity-0 group-hover/step:opacity-100 focus:opacity-100 hover:text-indigo-600 transition-all disabled:opacity-40"
-                >
-                  <PencilIcon className="w-3.5 h-3.5" />
-                </button>
+          {/* ⋯ — the ONE quiet home for this row's PLAN-EDITING controls (edit / attach / set-aside).
+              Hover/focus-revealed; when the step is crossed out it stays visible (so Restore is reachable).
+              A done / handed / mid-flight step carries no editing menu — its plan slot is settled. */}
+          {!editing && !handed && !working && !delegating && !classifying && !task.done && (
+            <div className="relative flex-shrink-0 -mt-0.5">
+              <button
+                onClick={(e) => { e.stopPropagation(); if (!busy) setMenuOpen((v) => !v); }}
+                disabled={busy}
+                title="Edit this step"
+                aria-label="Step options"
+                aria-haspopup="menu"
+                aria-expanded={menuOpen}
+                className={`p-0.5 rounded transition-all disabled:opacity-40 ${crossed || menuOpen ? 'text-neutral-400 opacity-100' : 'text-neutral-300 opacity-0 group-hover/step:opacity-100 focus:opacity-100'} hover:text-neutral-600 hover:bg-neutral-100`}
+              >
+                <EllipsisHorizontalIcon className="w-4 h-4" />
+              </button>
+              {menuOpen && (
+                <StepOverflowMenu
+                  crossed={crossed}
+                  busy={busy || classifying}
+                  onEdit={() => setEditing(true)}
+                  onDismiss={onDismiss}
+                  onAttach={onAttach ? () => attachInputRef.current?.click() : undefined}
+                  onClose={() => setMenuOpen(false)}
+                />
               )}
-              {/* ✕ — toggles "not needed". Crossing out keeps the step visible but struck + disabled; click
-                  again to restore. Quiet on hover when active; when crossed it stays visible (amber). */}
-              {!handed && (
-                <button
-                  onClick={handleDismiss}
-                  disabled={busy}
-                  title={crossed ? 'Restore — mark needed again' : 'Not needed — set this step aside'}
-                  aria-label={crossed ? 'Restore step' : 'Set step aside'}
-                  aria-pressed={crossed}
-                  className={`flex-shrink-0 -mt-0.5 p-0.5 transition-all disabled:opacity-40 ${crossed ? 'text-amber-500 opacity-100 hover:text-amber-600' : 'text-neutral-300 opacity-0 group-hover/step:opacity-100 focus:opacity-100 hover:text-rose-500'}`}
-                >
-                  <XMarkIcon className="w-3.5 h-3.5" />
-                </button>
-              )}
-            </>
+            </div>
           )}
         </div>
 
@@ -2099,6 +2394,13 @@ function StepperRow({
           <div className={`grid transition-all duration-300 ease-out ${expanded ? 'grid-rows-[1fr] opacity-100 mt-1' : 'grid-rows-[0fr] opacity-0'}`}>
             <p className={`overflow-hidden text-[12px] leading-relaxed transition-colors duration-300 ${crossed ? 'text-neutral-300 line-through' : 'text-neutral-500'}`}>{task.detail}</p>
           </div>
+        )}
+
+        {/* STEP NUTSHELL PREVIEW (Fix 2) — a compact line of what this step will DO/PRODUCE: the prepared
+            invite's title·when·attendees, "Forward to {recipient}", the drafted reply's gist, or what a
+            coworker will hand back. Glanceable; the row action opens the full card. */}
+        {showPreview && (
+          <StepPreview task={task} owner={proposedOwner} coworkerName={suggestedCoworker?.name ?? null} previewData={previewData} />
         )}
 
         {/* Handed-off result — the coworker's returned deliverable/summary, shown inline (collapsible). */}
@@ -2181,8 +2483,20 @@ function StepperRow({
               />
               {isSystem ? (
                 task.done ? (
-                  // Resolved — a reply → "Sent ✓", an invite → "Invite sent ✓", a run analyze/fetch → "Done ✓".
-                  <StateChip state="sent" label={sysKind === 'invite' ? 'Invite sent' : task.result ? 'Done' : 'Sent'} />
+                  // Resolved — the done wording is CAPABILITY-based, not a global "Sent". Only a real send
+                  // step (an invite → "Invite sent"; a draft/send reply → "Sent") reads as sent; every other
+                  // capability (analyze / fetch / an auto-folded internal check like "Check calendar…") reads
+                  // as "Done". Fixes a non-send folded step wrongly showing "✓ Sent".
+                  <StateChip
+                    state="sent"
+                    label={
+                      sysKind === 'invite'
+                        ? 'Invite sent'
+                        : task.capability === 'send' || task.capability === 'draft'
+                          ? 'Sent'
+                          : 'Done'
+                    }
+                  />
                 ) : sysKind && actionLabel && onAction ? (
                   // A prepared SEND step awaiting approval: the "Review & send →" action reveals its surface.
                   // An invite is an irreversible commit → the amber "Ready to send — approve" gate.
@@ -2308,26 +2622,20 @@ function StepperRow({
           )}
         </div>
 
-        {/* task-workflows S4 — ALWAYS-ALLOW ATTACH: any actionable step gets a quiet 📎 affordance to
-            attach a file into the item's pool, even if the step didn't request one (an override / a way
-            to feed a doc to a downstream step). Hidden while set-aside / handed / mid-flight, and hidden
-            for an awaiting_input step (its own find/upload flow already owns attachment). Hover-revealed. */}
+        {/* task-workflows S4 — ALWAYS-ALLOW ATTACH: the manual "Attach a file" affordance moved into the
+            row's ⋯ overflow menu (it's a plan-editing move, not a live-run control). Here we keep only the
+            in-flight feedback (a quiet "Attaching…" line) + the hidden file input the ⋯ entry triggers.
+            Suppressed while set-aside / handed / mid-flight, and for an awaiting_input step (which owns its
+            own find/upload flow). */}
         {!crossed && !handed && !working && !delegating && !classifying && !awaitingInput && onAttach && (
-          <div className="mt-1">
-            {uploading ? (
-              <span className="inline-flex items-center gap-1 text-[11px] font-medium text-indigo-500">
-                <span className="w-2.5 h-2.5 rounded-full border-[1.5px] border-indigo-300 border-t-indigo-600 animate-spin" />
-                Attaching…
-              </span>
-            ) : (
-              <button
-                onClick={(e) => { e.stopPropagation(); if (!busy) attachInputRef.current?.click(); }}
-                disabled={busy}
-                title="Attach a file to this item"
-                className="inline-flex items-center gap-1 text-[11px] font-medium text-neutral-300 opacity-0 group-hover/step:opacity-100 focus:opacity-100 hover:text-indigo-600 transition-all disabled:opacity-40"
-              >
-                <PaperClipIcon className="w-3 h-3" />Attach a file
-              </button>
+          <>
+            {uploading && (
+              <div className="mt-1">
+                <span className="inline-flex items-center gap-1 text-[11px] font-medium text-indigo-500">
+                  <span className="w-2.5 h-2.5 rounded-full border-[1.5px] border-indigo-300 border-t-indigo-600 animate-spin" />
+                  Attaching…
+                </span>
+              </div>
             )}
             <input
               ref={attachInputRef}
@@ -2340,7 +2648,7 @@ function StepperRow({
                 if (f && onAttach) onAttach(f);
               }}
             />
-          </div>
+          </>
         )}
       </div>
     </li>
@@ -2350,36 +2658,63 @@ function StepperRow({
 // ── "+ Add a step" — an inline affordance at the bottom of the stepper. Collapsed to a quiet link;
 // on click it becomes a single-line input. On submit it posts action:'add' (the parent's `onAdd` →
 // hook `addStep`), which classifies the text and appends the graded step (with a brief "classifying…").
-function AddStepRow({ onAdd }: { onAdd: (text: string) => void }) {
+function AddStepRow({ onAdd, onReplyDuplicate }: {
+  onAdd: (text: string) => Promise<{ replyDuplicate?: boolean }>;
+  onReplyDuplicate?: () => void; // the added step was a redundant reply — focus the existing composer
+}) {
   const [open, setOpen] = useState(false);
   const [text, setText] = useState('');
+  const [submitting, setSubmitting] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { if (open) inputRef.current?.focus(); }, [open]);
 
-  const submit = () => {
+  const submit = async () => {
     const t = text.trim();
-    if (t) { onAdd(t); setText(''); }
-    // Keep the input open so several steps can be added in a row; a blank submit closes it.
-    else setOpen(false);
+    if (!t) { setOpen(false); return; } // a blank submit closes the input
+    setText('');
+    setSubmitting(true);
+    try {
+      const res = await onAdd(t);
+      // Coherent re-slot: a suppressed duplicate reply → focus/scroll the existing composer instead.
+      if (res?.replyDuplicate) onReplyDuplicate?.();
+    } finally {
+      setSubmitting(false);
+    }
+    // Keep the input open + refocus so several steps can be added in a row.
+    inputRef.current?.focus();
   };
 
   return (
     <li className="relative pl-8">
       {open ? (
         <div className="pb-1">
-          <input
-            ref={inputRef}
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') { e.preventDefault(); submit(); }
-              else if (e.key === 'Escape') { e.preventDefault(); setText(''); setOpen(false); }
-            }}
-            onBlur={() => { if (!text.trim()) setOpen(false); }}
-            placeholder="Add a step…"
-            className="w-full bg-white border border-indigo-300 rounded-md px-2 py-1.5 text-[13px] text-neutral-800 placeholder:text-neutral-300 focus:outline-none"
-          />
+          <div className="flex items-center gap-1.5">
+            <input
+              ref={inputRef}
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') { e.preventDefault(); submit(); }
+                else if (e.key === 'Escape') { e.preventDefault(); setText(''); setOpen(false); }
+              }}
+              // Don't close on blur when the click lands on the Add button (it commits instead).
+              onBlur={(e) => { if (!text.trim() && !e.relatedTarget?.closest?.('[data-add-step-submit]')) setOpen(false); }}
+              placeholder="Add a step…"
+              className="flex-1 min-w-0 bg-white border border-indigo-300 rounded-md px-2 py-1.5 text-[13px] text-neutral-800 placeholder:text-neutral-300 focus:outline-none"
+            />
+            <button
+              type="button"
+              data-add-step-submit
+              onMouseDown={(e) => e.preventDefault()} // keep focus so the blur handler doesn't pre-empt us
+              onClick={submit}
+              disabled={!text.trim() || submitting}
+              className="flex-shrink-0 inline-flex items-center gap-1 rounded-md bg-indigo-600 px-2.5 py-1.5 text-[12px] font-medium text-white transition-colors hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-default"
+            >
+              {submitting ? <span className="w-3 h-3 rounded-full border-2 border-white/40 border-t-white animate-spin" /> : <CheckIcon className="w-3.5 h-3.5" />}
+              Add
+            </button>
+          </div>
           <p className="mt-1 text-[10.5px] text-neutral-400">Enter to add · Esc to cancel — we'll work out who does it.</p>
         </div>
       ) : (
@@ -2420,8 +2755,29 @@ function WhatThisTakes({
   onForward?: (taskId: string) => void;
   variant?: 'inline' | 'panel';
 }) {
-  const { tasks, loading, failed, pending, classifyingId, toggle, dismiss, addStep, editStep, delegatingId, runningId, uploadingId, uploadForStep, resolution, resolveFile, useResolvedFile, attachToStep, reassignStep, proposeCoworker } = plan;
+  const { tasks, loading, failed, pending, classifyingId, toggle, dismiss, addStep, editStep, reorderSteps, delegatingId, runningId, uploadingId, uploadForStep, resolution, resolveFile, useResolvedFile, attachToStep, reassignStep, proposeCoworker } = plan;
   const workers = useCoworkers();
+
+  // ── Drag-to-reorder (native HTML5 DnD — no dep). `dragId` is the step being dragged; `overId` is the
+  // row it's hovering (drives the drop-indicator + the reorder target). On drop we splice the dragged id
+  // before the hovered one and persist the new order (reorderSteps, optimistic). Only unsettled steps are
+  // draggable (a done/handed/mid-flight step's slot is fixed).
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [overId, setOverId] = useState<string | null>(null);
+  const onDropReorder = (targetId: string) => {
+    const src = dragId;
+    setDragId(null); setOverId(null);
+    if (!src || !tasks || src === targetId) return;
+    const ids = tasks.map((t) => t.id);
+    const from = ids.indexOf(src);
+    const to = ids.indexOf(targetId);
+    if (from === -1 || to === -1) return;
+    ids.splice(from, 1);
+    // Re-find the target index after removal so the dragged row lands just before the hovered row.
+    const insertAt = ids.indexOf(targetId);
+    ids.splice(insertAt, 0, src);
+    reorderSteps(ids);
+  };
 
   // In the two-column layout the parent renders the panel chrome + its own loading/failed handling
   // (the aside only mounts once a breakdown is confirmed via the hook's `hasBreakdown`), so the
@@ -2503,16 +2859,28 @@ function WhatThisTakes({
         const suggestedCoworker = t.proposedAgent
           ? { name: t.proposedAgent.name, worker_role: t.proposedAgent.workerRole ?? null }
           : proposedOwner === 'coworker' ? suggestCoworkerFor(t, workers) : null;
+        // Drag is offered only for an unsettled step (a done/handed/mid-flight/crossed step's slot is fixed).
+        const draggable = !t.done && !t.handedTo && !t.dismissed && t.status !== 'working' && delegatingId !== t.id;
         return (
           <StepperRow
             key={t.id}
             task={t}
             // Never the last node — the "+ Add a step" row always follows, so the connector runs down to it.
             isLast={false}
+            draggable={draggable}
+            dragging={dragId === t.id}
+            dragOver={overId === t.id && dragId !== null && dragId !== t.id}
+            onDragStartStep={() => setDragId(t.id)}
+            onDragOverStep={() => { if (dragId && dragId !== t.id) setOverId(t.id); }}
+            onDragLeaveStep={() => setOverId((cur) => (cur === t.id ? null : cur))}
+            onDropStep={() => onDropReorder(t.id)}
+            onDragEndStep={() => { setDragId(null); setOverId(null); }}
             actionLabel={action?.label ?? null}
             sysKind={action?.sysKind ?? null}
             proposedOwner={proposedOwner}
             suggestedCoworker={suggestedCoworker}
+            planKind={plan.kind}
+            entityId={plan.entityId}
             onAction={action?.onAction}
             onToggle={() => toggle(t)}
             onDismiss={() => dismiss(t)}
@@ -2534,8 +2902,9 @@ function WhatThisTakes({
           />
         );
       })}
-      {/* Add-a-step affordance — always at the bottom of an active plan. */}
-      <AddStepRow onAdd={addStep} />
+      {/* Add-a-step affordance — always at the bottom of an active plan. A redundant reply focuses the
+          existing composer (onDraft) instead of adding a phantom second reply step. */}
+      <AddStepRow onAdd={addStep} onReplyDuplicate={onDraft} />
     </ol>
   );
 
@@ -2813,6 +3182,10 @@ type ThreadData = {
   // The item's classified type — drives the header badge (so an FYI newsletter reads "For awareness",
   // not "Reply needed"). Optional for back-compat with any caller that doesn't send it.
   type?: 'needs_reply' | 'to_do' | 'waiting_on' | 'reminder' | 'fyi' | 'hidden';
+  // The understood relevance — drives the deep-dive's PRIMARY surface (reply → composer open;
+  // awareness → composer collapsed + Dismiss lead; action → action lead). Optional/back-compat; missing
+  // → the composer opens (today's behavior).
+  relevance?: 'reply' | 'action' | 'awareness' | null;
   fromName: string | null;
   fromAddress: string | null;
   receivedAt: string | null;
@@ -2831,6 +3204,73 @@ const EMAIL_BADGE: Record<NonNullable<ThreadData['type']>, { label: string }> = 
   fyi: { label: 'For awareness' },
   hidden: { label: 'For awareness' },
 };
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// ACTION PALETTE — the CONSISTENT, always-available action set on EVERY email deep-dive, regardless of
+// which Home section the item came from or its relevance. FREEDOM: the user is never boxed in by a
+// type-locked layout. Reply · Dismiss · Forward · Hand to a coworker — one click, never hidden.
+//   • Reply    — opens/reveals the composer (the reply task's surface, owner=you). On an awareness/
+//                action item the composer was merely collapsed; this is how the user replies anyway.
+//   • Dismiss  — acknowledges the item (the primary action for awareness). Reuses the inbox dismiss.
+//   • Forward  — opens the grounded prepared forward (approve-before-commit).
+//   • Coworker — hands the reply to AUGMTD/a coworker (the owner model): they own it, the composer stays
+//                the owner=you surface. Reuses the shared CoworkerPicker + the plan's delegateItem.
+// The LEAD (accented) action follows relevance: reply → Reply, awareness → Dismiss, action → the
+// natural action (we lead with Reply, since replying/handling is the move and Dismiss stays available).
+// Everything else is a quiet, equal-weight control — present but not shouting.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+function EmailActionPalette({
+  relevance,
+  composerOpen,
+  onReply,
+  onDismiss,
+  onForward,
+  onDelegate,
+  dismissing,
+}: {
+  relevance: 'reply' | 'action' | 'awareness' | null;
+  composerOpen: boolean;
+  onReply: () => void;
+  onDismiss: () => void;
+  onForward: () => void;
+  onDelegate: (w: Coworker) => void;
+  dismissing: boolean;
+}) {
+  const [pickerOpen, setPickerOpen] = useState(false);
+  // The lead action is accented (indigo). On awareness the lead is Dismiss; otherwise Reply. Reply is
+  // suppressed as the lead only when the composer is already open (nothing to reveal) — it stays present
+  // as a quiet control so the palette shape is constant.
+  const dismissIsLead = relevance === 'awareness';
+  const btn = (accent: boolean) =>
+    accent
+      ? 'inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 text-white px-3.5 py-1.5 text-[12.5px] font-medium hover:bg-indigo-700 transition-colors'
+      : 'inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-white text-neutral-600 px-3 py-1.5 text-[12.5px] font-medium hover:bg-neutral-50 hover:text-neutral-800 transition-colors';
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <button
+        onClick={onReply}
+        className={btn(!dismissIsLead && !composerOpen)}
+        title="Write a reply"
+      >
+        <ArrowUturnLeftIcon className="w-3.5 h-3.5" />Reply
+      </button>
+      <button
+        onClick={onDismiss}
+        disabled={dismissing}
+        className={btn(dismissIsLead)}
+        title="Acknowledge and clear this from your Home"
+      >
+        <CheckCircleIcon className="w-3.5 h-3.5" />{dismissing ? 'Dismissing…' : 'Dismiss'}
+      </button>
+      <button onClick={onForward} className={btn(false)} title="Forward this email">
+        <ArrowUturnRightIcon className="w-3.5 h-3.5" />Forward
+      </button>
+      {/* Item-level "Hand to a coworker" removed — delegating a whole email with no task defined lacks
+          context; coworker hand-off lives PER-STEP in the plan (the owner menu), where the step says what
+          to do. */}
+    </div>
+  );
+}
 
 function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
   const router = useRouter();
@@ -2852,6 +3292,24 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
   const editorRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null); // the docked reply composer — a draft-task scrolls here
 
+  // ── PRIMARY-SURFACE state, driven by the item's understood RELEVANCE (the composer IS the reply
+  // task's surface — owner=you — not a separate always-open box). Default:
+  //   • reply     → composer OPEN with the draft (as today).
+  //   • awareness → composer COLLAPSED; the thread + a prominent Dismiss lead (no auto-open empty box
+  //     on a CC'd FYI). "Reply" in the palette expands it if the user chooses to reply anyway.
+  //   • action    → composer COLLAPSED; the action leads. "Reply" expands it.
+  // Non-fatal: relevance null/unknown → composer OPEN (today's behavior). The user can override freely
+  // via the "Reply" action, so a mis-judged relevance never boxes them in.
+  const [composerOpen, setComposerOpen] = useState(true);
+  const [relevance, setRelevance] = useState<'reply' | 'action' | 'awareness' | null>(null);
+  // Once the user manually toggles the composer, stop auto-seeding from the (late-arriving) relevance.
+  const composerTouchedRef = useRef(false);
+
+  // ── Item-level actions from the palette (freedom — always available regardless of section).
+  const [itemDismissed, setItemDismissed] = useState(false);
+  const [dismissing, setDismissing] = useState(false);
+  const [forwarding, setForwarding] = useState(false); // the item-level forward card is open
+
   // Load the thread + the prepared draft in parallel — same endpoints the Home uses.
   useEffect(() => {
     let alive = true;
@@ -2860,6 +3318,15 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
       .then((d: ThreadData) => {
         if (!alive) return;
         setThread(d);
+        // Seed the primary surface from the understood relevance (only until the user touches the
+        // composer, so a late thread load never yanks the box shut after they opened it).
+        const rel = d.relevance ?? null;
+        setRelevance(rel);
+        if (!composerTouchedRef.current) {
+          // reply / unknown → open (today's behavior); awareness / action → collapsed (lead with
+          // Dismiss / the action). The user reopens it any time via the palette's "Reply".
+          setComposerOpen(rel === null || rel === 'reply');
+        }
       })
       .catch(() => { if (alive) setThreadErr(true); });
 
@@ -2944,7 +3411,39 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
 
   const hasThread = !threadErr && (thread?.messages?.length ?? 0) > 1;
 
-  const scrollToComposer = () => composerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  // ── The palette's "Reply" — the composer IS the reply task's surface (owner=you). On an awareness/
+  // action item the composer was just collapsed, not gone: open it + scroll to it. On a reply item it's
+  // already open, so this just scrolls. Marks the composer "touched" so a late relevance seed can't
+  // re-collapse it.
+  const openComposer = () => {
+    composerTouchedRef.current = true;
+    setComposerOpen(true);
+    setForwarding(false);
+    // scroll after the box has a chance to render.
+    requestAnimationFrame(() => composerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }));
+  };
+  // The reply STEP's action (from the plan stepper) reveals/focuses the composer — same surface.
+  const scrollToComposer = () => openComposer();
+
+  // ── Item-level Dismiss (acknowledge) — the primary action for an awareness item. Reuses the Home's
+  // inbox dismiss endpoint; on success we close back to the Home (its auto-refresh drops the item).
+  const dismissItem = async () => {
+    if (dismissing || itemDismissed) return;
+    setDismissing(true);
+    try {
+      const res = await fetch(`/api/inbox/${id}/dismiss`, { method: 'POST' });
+      if (res.ok) {
+        setItemDismissed(true);
+        setTimeout(() => router.back(), 700);
+      }
+    } finally {
+      setDismissing(false);
+    }
+  };
+
+  // ── Item-level Forward — opens the grounded ForwardPreviewCard for the whole item (approve-before-
+  // commit; nothing sends until "Review & forward"). Collapses the composer so there's one send surface.
+  const openForward = () => { setForwarding(true); setComposerOpen(false); };
 
   return (
     // Two-column deep-dive: MAIN (header / thread / docked composer) + TASKS PANEL (right) when the
@@ -2986,6 +3485,39 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
           )}
         </div>
 
+        {/* CONSISTENT ACTION PALETTE — always present (Reply · Dismiss · Forward · Hand to a coworker),
+            so the user is never boxed in by the item's relevance or which Home section it came from. The
+            lead action follows relevance (awareness → Dismiss; else Reply); everything is one click. */}
+        {!itemDismissed && (
+          <EmailActionPalette
+            relevance={relevance}
+            composerOpen={composerOpen}
+            onReply={openComposer}
+            onDismiss={dismissItem}
+            onForward={openForward}
+            onDelegate={(w) => { plan.delegateItem(w.id, w.name); }}
+            dismissing={dismissing}
+          />
+        )}
+        {itemDismissed && (
+          <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50/60 px-4 py-3">
+            <CheckCircleIcon className="w-4 h-4 text-emerald-600" />
+            <p className="text-[13px] font-medium text-emerald-700">Dismissed.</p>
+          </div>
+        )}
+
+        {/* Item-level prepared FORWARD card — opened from the palette's "Forward" (whole item, no plan
+            step). Grounded + approve-before-commit; on send it closes back to the Home. */}
+        {forwarding && (
+          <ForwardPreviewCard
+            kind="email"
+            entityId={id}
+            itemLevel
+            onSent={() => { setTimeout(() => router.back(), 700); }}
+            onCancel={() => setForwarding(false)}
+          />
+        )}
+
         {/* What this takes — INLINE (stacked) fallback, shown only below `lg`; on `lg`+ the same
             breakdown lives in the right TASKS PANEL. Renders only when the plan is genuinely
             multi-step (≥2 tasks). A system draft/send task scrolls to the docked reply composer. */}
@@ -3012,9 +3544,13 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
         )}
       </div>
 
-      {/* 3 — Docked reply composer: pinned to the bottom, always visible. Subtle top border +
-          elevated bg so it reads as a docked reply bar. On short viewports it caps its own height
-          and scrolls internally so Send never leaves the screen. */}
+      {/* 3 — Docked reply composer: the reply TASK's surface (owner=you). Its OPEN/COLLAPSED state is
+          driven by the item's relevance (reply → open; awareness/action → collapsed, leading with the
+          palette's Dismiss/action) so there is ONE reply surface, never a separate always-open box that
+          could disagree with the Identified-tasks panel. COLLAPSED → the composer is simply absent — the
+          action palette's "Reply" is the SINGLE reply control (no redundant slim "Reply" bar below it,
+          which duplicated the palette's Reply for the same thing). Reveal via the palette. */}
+      {!composerOpen ? null : (
       <div ref={composerRef} className="flex-shrink-0 border-t border-neutral-200 bg-neutral-50/80 backdrop-blur px-7 py-4 max-h-[45vh] overflow-y-auto">
         <h2 className={SECTION_LABEL}>Your reply</h2>
         {sent ? (
@@ -3065,6 +3601,7 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
           </div>
         )}
       </div>
+      )}
 
       {/* KB file picker modal (shared with the inbox) — "From knowledge base" attach path. */}
       {atts.kbPickerOpen && (
