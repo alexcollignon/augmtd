@@ -284,6 +284,19 @@ forget, never blocks the AI call it's observing.
   visible (`fetchSummary(period, background=true)` skips the loading skeleton) — safe to poll often since
   the query is a cheap aggregation, not an LLM call (unlike Strategy's alignment, below, which needs a
   real TTL).
+- **Input/output token split + cost-by-user (July 10)**: every token figure on the page (the AI cost stat
+  card, `costBySource`, `costByUser`, each coworker's expanded row) now shows prompt vs. completion tokens
+  separately (`fmtTokens()` abbreviates — `k`/`M` — since a raw number doesn't fit alongside an in/out
+  split in the page's fixed-width columns). **`costByUser`** shows REAL member names by default (resolved
+  server-side, `getUserNames()` — profiles `full_name` then `auth.admin.listUsers()` email fallback, the
+  same two-query pattern already used for the Members tab), not the anonymous-slot treatment
+  `usageDistribution` uses elsewhere on this page — the admin viewing this can already see these members'
+  names in Settings → Members, so hiding them by default added friction without adding privacy. An
+  "Anonymize" toggle (off by default) swaps to `Member {slot+1}` for screenshot-sharing; the slot/color
+  scheme still matches `usageDistribution`'s so a masked user's color is consistent with the rest of the
+  page. **Slot assignment now covers users with zero workflow runs but real chat/other cost too** (a
+  chat-only user used to fall through to slot 0 and collide with everyone else in that bucket — fixed by
+  unioning the run-ranked user list with cost-only users, ranked by cost, appended after).
 
 - **`lib/company/ai-operations-metrics.ts`** — `getAIOperationsSummary(admin, companyId, period, hourlyRateEur)` aggregates across every active `company_members` row (never a single user) via the existing "member ids → `.in()` with the service-role client" idiom. Computes: agent runs, active coworkers, adoption (distinct users), per-coworker breakdown (runs, chat messages, emails sent, top tasks, top tools, anonymized per-user usage distribution), and an **hours-saved estimate**.
 - **Hours-saved methodology (honest, not measured)**: `MINUTES_SAVED_PER_RUN` (15 min) × completed `workflow_runs`, but **only for "grounded" runs** — a task whose `workflows.steps` includes at least one `tool`/`agent` step (looked something up or took an action). A task built entirely of `ai`-only steps (pure generation — coaching, brainstorming) is excluded from the hours/€ estimate and labeled "insight only" instead, since there's no manual-labor baseline it replaced. **Known limitation** (surfaced July 8, confirmed against a real workflow): this still misclassifies a task that fetches real context (calendar/inbox/KB) purely to *personalize generated advice* — e.g. "Daily Tim Ferriss Coaching" fetches `get_meeting_context`/`get_emails`/`read_kb_file` before generating a coaching message, so it still counts as "grounded" even though the output is advice, not a replaced chore. Structurally identical to a legitimate briefing task (fetch → summarize) — no tool-based rule (even a refined action-vs-informational split) can separate them; the real signal is the final AI step's *prompt intent* (report facts vs. generate advice), which is semantic, not structural. Fixing this properly would need an automatic per-workflow classification (cheap one-time LLM call, cached + invalidated on step change — same pattern as `item_plans.version`), not manual tagging in the builder (explicitly rejected — should be inferred from the run, not tagged at creation). **Deferred, not fixed** — current heuristic is left as a documented approximation.
@@ -322,6 +335,14 @@ own AI coworkers; Strategy is a read-only admin lens on top, not a steering laye
   wasted AI call). The prompt also includes a compact **spend-concentration line** (top 5 `costBySource`
   entries from `AIOperationsSummary`, see above) — a dollar-weighted signal distinct from task/tool counts,
   so "heavy spend on X with no goal mapping" can itself surface as drift.
+- **Client-side cache on top of the server cache (July 10)**: `company-strategy-section.tsx` keeps a
+  module-level `goalsCache`/`alignmentCache` (plain variables outside the component, so they survive an
+  unmount/remount within the same page session but reset on a real reload) — switching to another Settings
+  tab and back no longer re-fetches or flashes the loading skeleton. Only real mutations write through:
+  every `setGoals` call also updates `goalsCache`; a goal create/edit/archive/promotion calls
+  `invalidateAlignmentCache()` (clears every cached period, since the goals the AI judges against changed
+  globally, not just the current period) then force-refetches the current period. A plain non-promoting
+  reorder or a period switch with no mutation reads straight from cache — zero network call.
 - **UI polish, reusing established patterns rather than inventing new ones**: cards use `h-full` so every
   card in a grid row stretches to the same height regardless of content length (a card with no description
   no longer looks shorter than its row-mate); the drag handle is `Bars2Icon` (matching the inbox's existing

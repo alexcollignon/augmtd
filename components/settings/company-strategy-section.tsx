@@ -65,6 +65,14 @@ interface Observation {
   text: string;
 }
 
+// Module-level cache — survives a Strategy tab unmount/remount (e.g. switching to AI
+// Operations and back) within the same page session, but resets on a real page reload.
+// Goals and alignment only need to change when a mutation happens (create/edit/archive/
+// a drag that changes the North Star); those already update this cache directly, so a
+// plain tab revisit reads from here instead of a fresh network round-trip + loading flash.
+let goalsCache: Goal[] | null = null;
+const alignmentCache: Partial<Record<Period, Observation[]>> = {};
+
 interface DragProps {
   draggable: boolean;
   isDragging: boolean;
@@ -188,16 +196,26 @@ function GoalCard({ goal, onEdited, onArchived, drag }: { goal: Goal; onEdited: 
 
 export default function CompanyStrategySection() {
   const [period, setPeriod] = useState<Period>('month');
-  const [goals, setGoals] = useState<Goal[]>([]);
-  const [observations, setObservations] = useState<Observation[]>([]);
-  const [loadingGoals, setLoadingGoals] = useState(true);
-  const [loadingAlignment, setLoadingAlignment] = useState(true);
+  const [goals, setGoalsState] = useState<Goal[]>(() => goalsCache ?? []);
+  const [observations, setObservations] = useState<Observation[]>(() => alignmentCache.month ?? []);
+  const [loadingGoals, setLoadingGoals] = useState(() => goalsCache === null);
+  const [loadingAlignment, setLoadingAlignment] = useState(() => !('month' in alignmentCache));
   const [showAddGoal, setShowAddGoal] = useState(false);
   const [newTitle, setNewTitle] = useState('');
   const [newDescription, setNewDescription] = useState('');
   const [creating, setCreating] = useState(false);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
+
+  // Every local goals update also writes through to the module cache, so the next
+  // remount (without a real reload) picks up the current state instantly.
+  const setGoals = useCallback((updater: Goal[] | ((prev: Goal[]) => Goal[])) => {
+    setGoalsState(prev => {
+      const next = typeof updater === 'function' ? (updater as (p: Goal[]) => Goal[])(prev) : updater;
+      goalsCache = next;
+      return next;
+    });
+  }, []);
 
   const fetchGoals = useCallback(async () => {
     setLoadingGoals(true);
@@ -207,20 +225,39 @@ export default function CompanyStrategySection() {
     } finally {
       setLoadingGoals(false);
     }
-  }, []);
+  }, [setGoals]);
 
-  const fetchAlignment = useCallback(async (p: Period) => {
+  // force=true bypasses the client cache — used after a real goal mutation, since the
+  // server's own alignment cache is invalidated too (any goal update bumps updated_at),
+  // so this is a genuine re-check, not a wasted call. A plain tab revisit with no
+  // mutation reads the cache and never hits the network.
+  const fetchAlignment = useCallback(async (p: Period, force = false) => {
+    if (!force && p in alignmentCache) {
+      setObservations(alignmentCache[p] ?? []);
+      setLoadingAlignment(false);
+      return;
+    }
     setLoadingAlignment(true);
     try {
       const res = await fetch(`/api/company/alignment?period=${p}`);
-      if (res.ok) setObservations((await res.json()).observations ?? []);
+      if (res.ok) {
+        const obs = (await res.json()).observations ?? [];
+        alignmentCache[p] = obs;
+        setObservations(obs);
+      }
     } finally {
       setLoadingAlignment(false);
     }
   }, []);
 
-  useEffect(() => { fetchGoals(); }, [fetchGoals]);
+  useEffect(() => { if (goalsCache === null) fetchGoals(); }, [fetchGoals]);
   useEffect(() => { fetchAlignment(period); }, [period, fetchAlignment]);
+
+  // A goal mutation invalidates alignment for EVERY period (not just the current one) —
+  // the content the AI judges against changed, so all cached periods are now stale.
+  const invalidateAlignmentCache = () => {
+    for (const key of Object.keys(alignmentCache)) delete alignmentCache[key as Period];
+  };
 
   const createGoal = async () => {
     if (!newTitle.trim()) return;
@@ -238,7 +275,8 @@ export default function CompanyStrategySection() {
       setNewTitle('');
       setNewDescription('');
       toast.success('Goal added');
-      void fetchAlignment(period);
+      invalidateAlignmentCache();
+      void fetchAlignment(period, true);
     } catch {
       toast.error('Failed to add goal');
     } finally {
@@ -247,7 +285,11 @@ export default function CompanyStrategySection() {
   };
 
   const dismissObservation = async (index: number) => {
-    setObservations(prev => prev.filter((_, i) => i !== index));
+    setObservations(prev => {
+      const next = prev.filter((_, i) => i !== index);
+      alignmentCache[period] = next;
+      return next;
+    });
     try {
       await fetch('/api/company/alignment', {
         method: 'PATCH',
@@ -296,7 +338,7 @@ export default function CompanyStrategySection() {
 
     setGoals(withKind);
     void persistReorder(withKind.map(g => g.id));
-    if (kindChanged) void fetchAlignment(period);
+    if (kindChanged) { invalidateAlignmentCache(); void fetchAlignment(period, true); }
   };
 
   return (
@@ -323,8 +365,8 @@ export default function CompanyStrategySection() {
                 <GoalCard
                   key={g.id}
                   goal={g}
-                  onEdited={updated => { setGoals(prev => prev.map(x => x.id === updated.id ? updated : x)); void fetchAlignment(period); }}
-                  onArchived={id => { setGoals(prev => prev.filter(x => x.id !== id)); void fetchAlignment(period); }}
+                  onEdited={updated => { setGoals(prev => prev.map(x => x.id === updated.id ? updated : x)); invalidateAlignmentCache(); void fetchAlignment(period, true); }}
+                  onArchived={id => { setGoals(prev => prev.filter(x => x.id !== id)); invalidateAlignmentCache(); void fetchAlignment(period, true); }}
                   drag={{
                     draggable: true,
                     isDragging: draggingId === g.id,
