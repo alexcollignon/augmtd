@@ -57,6 +57,11 @@ export async function POST(request: NextRequest) {
       signal_data: { action: 'initiative_tracked', initiative_key: initiativeKey, label: name, project_id: project.id },
     }).then(() => {}, () => {});
 
+    // Bust the cached Home brief so In-motion recomputes activeInitiatives WITH the new project_id on the
+    // atoms — otherwise the tracked tile keeps showing untracked (a cache-hit serves the stale set). Same
+    // as the mute route. Non-fatal.
+    try { await supabase.from('profiles').update({ home_brief: null }).eq('id', user.id); } catch { /* non-fatal */ }
+
     return NextResponse.json({ project: { ...project, itemCount: assigned } });
   } catch (e) {
     console.error('[projects/accept-suggestion] error:', e);

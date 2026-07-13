@@ -439,10 +439,15 @@ export async function GET() {
       // re-postured to `to_do` above (so they surface as action cards), so anything still automated
       // here is informational → drop it from must-respond (it flows to the FYI/awareness digest).
       if (automated) continue;
-      // Backstop: an item the understanding reasoned `awareness` is not a reply you owe — never in
-      // must-respond (it flows to FYA / keep-an-eye). `classifyItem` already demotes such items to fyi
-      // (so they rarely reach here), but this keeps the must-respond pool = replies-only regardless.
-      if (understoodAwareness) continue;
+      // The understanding's `awareness` verdict may DEMOTE a needs_reply — but ONLY when the user is
+      // CC-ONLY (a genuine bystander cc'd on a thread). For a DIRECT recipient (To), the `needs_reply`
+      // rule is AUTHORITATIVE: the AI can mis-judge a real client ask to a small team ("confirm the
+      // dates", "you have the green light") as `one_of_many`/`awareness`, and silently dropping that
+      // breaks trust far worse than an extra card costs. So a directly-addressed reply ALWAYS surfaces;
+      // only a cc-only awareness item is demoted. (is_cc_only is stamped at sync; absent → treat as
+      // direct → surface — err toward showing the reply.)
+      const ccOnlyBystander = (sd.is_cc_only === true);
+      if (understoodAwareness && ccOnlyBystander) continue;
       mustRespondRaw.push({
         itemId: it.id,
         from: (sd.from_name as string) || (sd.from as string) || 'Someone',
