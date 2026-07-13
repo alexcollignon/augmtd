@@ -20,7 +20,9 @@ import type { FeatureKey } from '@/lib/workspace/types';
 // (Bumped for the stage-2 classification engine + editable-plan work.)
 // (Bumped to 2 for the relevance-gated generation — awareness items must NOT keep a phantom reply step,
 // so stale pre-gate plans regenerate on next open.)
-export const PLAN_VERSION = 2;
+// (Bumped to 3 for dependency ORDERING — a reply/send step must come AFTER the review/gather/prepare steps
+// it depends on; stale plans that lead with the reply regenerate in the correct order on next open.)
+export const PLAN_VERSION = 3;
 
 // 'atomic'   → deterministic, no judgment → the System runs it directly (a `tool`/`ai` workflow step).
 // 'judgment' → benefits from a coworker's voice/reasoning/skills → an `agent` step.

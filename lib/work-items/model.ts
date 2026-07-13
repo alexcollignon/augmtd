@@ -13,6 +13,7 @@ import { initiativeKeyMatch } from '@/lib/projects/associate';
 import { normalizeInitiative } from '@/lib/inbox/item-understanding';
 import { computeEventUnderstanding } from '@/lib/calendar/event-understanding';
 import { resolveOutboundAwaiting } from '@/lib/outbound/resolve';
+import { reconcileRepliedItems } from '@/lib/inbox/reconcile-replied';
 import { inferBucket, type TimeBucket } from './timeframe';
 
 // 'event' = a scheduled calendar meeting — a dated CONTEXT point, never an action (no done/dismiss). It
@@ -34,6 +35,8 @@ export type WorkItem = {
   source: WorkItemSource;
   href: string;               // where a click opens (deep-dive / worker chat)
   at: string;                 // reference timestamp for ordering (explicit date || activity || created)
+  startAt: string;            // ARRIVAL/creation timestamp — the Gantt bar START (the span is startAt →
+                              // ganttDateOf(item): open-since-arrival until due/resolved/now)
   projectId: string | null;   // null until Phase 3 (auto-clustering)
   automated: boolean;         // an automated/no-reply/transactional item (security alert, billing notice,
                               // marketing) — a real task, but NOT project/initiative material.
@@ -57,7 +60,13 @@ export type BuildOpts = {
   includeDoneWithinDays?: number; // history window for the timeline's left side (default 7)
   includeCalendar?: boolean;     // add scheduled calendar meetings as dated CONTEXT items (Timeline only)
   includeOutbound?: boolean;     // add cold outreach you're awaiting a reply to as 'followup' items (Timeline)
+  skipReconcile?: boolean;       // skip the read-time reply reconcile (a purely-visual read path — e.g. the
+                                 // Gantt — where the Home/board already heals; trims 2 queries + any writes)
 };
+
+// ganttDateOf lives in ./gantt-date (pure, client-safe) so the client Gantts can import it without
+// dragging this server-only module's graph into the browser bundle. Re-exported here for server callers.
+export { ganttDateOf } from './gantt-date';
 
 /**
  * Build the unified WorkItem[] for a user from the live tables. Pending items get a future bucket;
@@ -72,6 +81,12 @@ export async function buildWorkItems(
   const todayMs = Date.parse(`${todayStr}T00:00:00Z`);
   const doneSince = new Date(todayMs - (opts.includeDoneWithinDays ?? 7) * 86_400_000).toISOString();
   const items: WorkItem[] = [];
+
+  // SELF-HEAL before we read: re-derive reply state from the actual threads and resolve any "reply
+  // needed" item the user has already answered. Runs first so the queries below see the corrected status
+  // (a just-resolved item lands in DONE, never lingers in TO DO). Non-fatal; a no-op when nothing changed.
+  // Skipped on purely-visual read paths (the Gantt) where the Home/board already heals — keeps them fast.
+  if (!opts.skipReconcile) await reconcileRepliedItems(supabase, userId);
 
   // ── Commitments (you_owe → todo · awaiting → waiting) ─────────────────────────────────────────────
   const [{ data: commits }, { data: inbox }, { data: threads }] = await Promise.all([
@@ -111,7 +126,7 @@ export async function buildWorkItems(
       who: (c.counterparty as string) || null,
       actor: 'you', state,
       when: { explicit, bucket: inferBucket({ explicit, waiting, ageDays: ageDaysOf((c.created_at as string) || null, todayMs), todayStr }) },
-      source: 'commitment', href: '/', at, projectId: (c.project_id as string) || null, automated: false, initiative: (c.initiative as string) || null, effort: null,
+      source: 'commitment', href: '/', at, startAt: ((c.created_at as string) || at).slice(0, 10), projectId: (c.project_id as string) || null, automated: false, initiative: (c.initiative as string) || null, effort: null,
     });
   }
 
@@ -144,6 +159,7 @@ export async function buildWorkItems(
       source: isMeeting ? 'meeting' : 'email',
       href: isMeeting ? `/item/${it.id}?kind=meeting` : `/item/${it.id}`,
       at: (status === 'completed' && (sd.resolved_at as string)) ? (sd.resolved_at as string) : activity,
+      startAt: String((sd.received_at as string) || (it.created_at as string) || activity).slice(0, 10),
       projectId: (it.project_id as string) || null, automated, initiative: (u?.initiative as string) || null,
       effort: (u?.effort as 'quick' | 'medium' | 'deep') || null,
     });
@@ -163,7 +179,7 @@ export async function buildWorkItems(
         actor: 'team', state: 'done',
         when: { explicit: null, bucket: inferBucket({ explicit: null, waiting: false, ageDays: ageDaysOf(at, todayMs), todayStr }) },
         source: 'deliverable', href: t.agent_id ? `/workers?worker=${t.agent_id}` : '/workers',
-        at, projectId: (t.project_id as string) || null, automated: false, initiative: null, effort: null,
+        at, startAt: String(at).slice(0, 10), projectId: (t.project_id as string) || null, automated: false, initiative: null, effort: null,
       });
     }
   }
@@ -211,6 +227,7 @@ export async function buildWorkItems(
         when: { explicit: startDate, bucket: inferBucket({ explicit: startDate, waiting: false, ageDays: 0, todayStr }) },
         source: 'meeting', href: '/meetings',
         at: startIso || todayStr,
+        startAt: startDate,
         projectId: null, automated: false, initiative: u.initiative, effort: null,
       });
     }
@@ -240,7 +257,7 @@ export async function buildWorkItems(
           title: o.subject || `Reached out to ${o.who || 'someone'}`,
           who: o.who, actor: 'you', state: 'waiting',
           when: { explicit: null, bucket: inferBucket({ explicit: null, waiting: true, ageDays: o.ageDays, todayStr }) },
-          source: 'email', href: '/inbox', at: o.lastSentAt,
+          source: 'email', href: '/inbox', at: o.lastSentAt, startAt: String(o.lastSentAt).slice(0, 10),
           projectId: match?.id ?? null, automated: false, initiative: o.initiative, effort: null,
         });
       }

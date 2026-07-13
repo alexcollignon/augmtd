@@ -181,7 +181,10 @@ const CAPABILITY_SET = renderCapabilitySet();
 // workflow); `reply` → the normal reply flow; `action` → action steps, not a reply. Absent → today's
 // behavior (the model reasons freely). Reserved for a later gate on other kinds; only email/awareness/
 // followup carry it today.
-type PlanInput = { kind: ItemPlanKind; entityId: string; context: string; relevance?: ItemRelevance | null };
+type PlanInput = { kind: ItemPlanKind; entityId: string; context: string; relevance?: ItemRelevance | null;
+  // The user has ALREADY sent their reply on this thread (it's the latest message) — the plan must not
+  // lead with a "draft/send a reply" step; that work is done. Computed from the structural thread state.
+  alreadyReplied?: boolean };
 
 // Best-effort JSON extraction from a model reply that may wrap the object in prose or a code fence.
 function parseTasks(raw: string): ItemPlanTask[] | null {
@@ -257,6 +260,27 @@ function isReplyStep(t: ItemPlanTask): boolean {
   return REPLY_PHRASE.test(hay);
 }
 
+// A COMMUNICATION / COMMIT step (reply, send, calendar invite, forward) DELIVERS a result — it depends on
+// the review/gather/prepare/draft steps and belongs at the END. The model tends to LEAD with "draft and
+// send the reply" (the primary intent) even when the item first needs review or evaluation, producing a
+// plan that reads backwards. This stable partition sinks every such step to the end (preserving relative
+// order among them AND among the prep steps), so prerequisites always come first. Ordering only — it never
+// adds or removes a step, and it no-ops when the sends are already after all prep.
+function isCommunicationStep(t: ItemPlanTask): boolean {
+  if (t.capability === 'send') return true; // any committing send (reply / invite / forward)
+  const hay = `${t.text || ''} ${t.detail || ''}`;
+  return REPLY_PHRASE.test(hay) || CALENDAR_INVITE_PHRASE.test(hay) || /\bforward(?:s|ed|ing)?\b/i.test(hay);
+}
+function orderCommunicationLast(tasks: ItemPlanTask[]): ItemPlanTask[] {
+  const prep = tasks.filter((t) => !isCommunicationStep(t));
+  const comms = tasks.filter((t) => isCommunicationStep(t));
+  if (!prep.length || !comms.length) return tasks; // nothing to move (all-prep or all-comm)
+  const firstComm = tasks.findIndex(isCommunicationStep);
+  const lastPrep = tasks.reduce((m, t, i) => (isCommunicationStep(t) ? m : i), -1);
+  if (firstComm > lastPrep) return tasks; // sends already come after every prep step → leave as-is
+  return [...prep, ...comms].map((t, i) => ({ ...t, id: `t${i + 1}` }));
+}
+
 // ── Coherent re-slot (add-step dup suppression): does this step read as a REPLY surface? Exported so the
 // plan PATCH `add` path can detect a redundant reply — when the user adds "reply to X" but the plan (or
 // the deep-dive composer) already has the reply surface, we don't grow a second phantom reply step.
@@ -310,13 +334,27 @@ function foldTrivialChecks(tasks: ItemPlanTask[]): ItemPlanTask[] {
   return tasks.map((t) => (!t.done && isTrivialInternalCheck(t) ? { ...t, done: true, status: 'done' as const } : t));
 }
 
-function stripReplyStepsForAwareness(tasks: ItemPlanTask[]): ItemPlanTask[] {
+// Strip every reply/draft-send step, keeping any real non-reply action. If nothing real remains, fall
+// back to a single honest "you" step (`emptyText`). Shared by the awareness gate and the already-replied
+// gate — the ONE place a reply step is removed, so both callers behave identically.
+function stripReplySteps(tasks: ItemPlanTask[], emptyText: string): ItemPlanTask[] {
   const kept = tasks.filter((t) => !isReplyStep(t));
   const base = kept.length
     ? kept
-    : [{ id: 't1', text: 'Note this for awareness', actor: 'you' as const, capability: null, done: false }];
+    : [{ id: 't1', text: emptyText, actor: 'you' as const, capability: null, done: false }];
   // Renumber ids so they stay stable/contiguous after removal.
   return base.map((t, i) => ({ ...t, id: `t${i + 1}` }));
+}
+
+function stripReplyStepsForAwareness(tasks: ItemPlanTask[]): ItemPlanTask[] {
+  return stripReplySteps(tasks, 'Note this for awareness');
+}
+
+// The plan-route uses this on a CACHED plan when the user has since replied — so a stale "draft the reply"
+// step can't survive the moment the reply is sent (the plan and reality stay in sync without a regen).
+export function stripReplyStepsIfReplied(tasks: ItemPlanTask[]): ItemPlanTask[] {
+  if (!tasks.some((t) => isReplyStep(t))) return tasks; // nothing to strip → return as-is (no id churn)
+  return stripReplySteps(tasks, 'Waiting on their reply');
 }
 
 // ── The shared grading rules — the ONE place the [System]/[You] boundary + instance-honesty are
@@ -472,13 +510,27 @@ export async function generateItemPlan(
             `(emit a single "draft and send the reply to <name>" step, capability "send"), plus any real extra action the item needs.\n`
           : '';
 
+  // Orthogonal to relevance: if the user has ALREADY replied on this thread, the reply is DONE — never
+  // lead with (or emit) a draft/send-reply step. Only real remaining actions survive.
+  const repliedDirective = input.alreadyReplied
+    ? `\n- ALREADY REPLIED (CRITICAL): the user has ALREADY sent their reply on this thread (it is the latest ` +
+      `message). Do NOT emit any "draft a reply", "send a reply", "respond to", or "reply to <name>" step — that ` +
+      `work is finished. Surface ONLY the real remaining actions (a promised attachment, a scheduled invite, a ` +
+      `follow-up they still owe). If nothing genuine remains, a SINGLE "you" step "Waiting on their reply" is honest.\n`
+    : '';
+
   const prompt =
     `You are the planning brain of AUGMTD, a proactive assistant. Decompose ONE item from the user's ` +
     `Home into the concrete sub-tasks it takes to RESOLVE it, and grade each task by who does it.\n\n` +
     `${CAPABILITY_SET}\n\n` +
     `INSTRUCTIONS:\n` +
     relevanceDirective +
+    repliedDirective +
     `- Break the item into 1–5 CONCRETE, specific sub-tasks. Order them the way you'd actually do the work.\n` +
+    `- ORDER BY DEPENDENCY: a reply / send / confirm / invite step delivers a RESULT — it must come AFTER ` +
+    `every step that produces what it communicates (review, watch, evaluate, gather, locate, prepare, draft ` +
+    `the content). The communication step is almost ALWAYS LAST. NEVER lead with "draft and send the reply" ` +
+    `when the item first needs a review, a watch, an evaluation, or a file gathered — do those first, reply last.\n` +
     `- Be specific to THIS item: name the real recipient, say what to fetch/draft, reference the actual next step.\n` +
     `- EACH task has TWO fields:\n` +
     `  • "text" — a SHORT imperative TITLE, ≤ 8 words, no trailing period (e.g. "Reply to Sarah", "Attach the Q3 deck", "Book the room"). This is the one line the user scans. Keep it terse — a title, not a sentence.\n` +
@@ -528,10 +580,17 @@ export async function generateItemPlan(
     // emitted so a CC'd FYI never grows a phantom reply-workflow (the panel and the collapsed composer
     // stay in sync). Only fires for awareness; reply/action plans are untouched.
     if (input.relevance === 'awareness') tasks = stripReplyStepsForAwareness(tasks);
+    // Already-replied backstop (deterministic) — strip any reply/draft-send step the model still emitted
+    // so the plan can never say "draft the reply" once the user has answered. Reply/action plans only.
+    if (input.alreadyReplied) tasks = stripReplyStepsIfReplied(tasks);
     // Fix 3 — fold a trivially-implied internal availability/calendar check (auto-resolve it) so an
     // open "Ready" step can't contradict a draft that already presumes the slot. Conservative: only a
     // system analyze/fetch CHECK step, and only when a reply/invite sibling presumes the answer.
     tasks = foldTrivialChecks(tasks);
+    // ORDER BY DEPENDENCY (deterministic) — sink every communication/commit step (reply / send / invite /
+    // forward) to the end, so the review/gather/prepare steps it depends on always come first. The model
+    // tends to LEAD with "draft and send the reply" even when the item needs review or evaluation first.
+    tasks = orderCommunicationLast(tasks);
     return { tasks };
   } catch (e) {
     console.error('[item-plan] generation failed:', e);

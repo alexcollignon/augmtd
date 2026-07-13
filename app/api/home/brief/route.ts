@@ -13,6 +13,7 @@ import { buildInitiativeClusters, type ClusterMap } from '@/lib/projects/initiat
 import { normalizeInitiative } from '@/lib/inbox/item-understanding';
 import { resolveOutboundAwaiting } from '@/lib/outbound/resolve';
 import { getActiveInitiatives, type ActiveInitiative } from '@/lib/projects/active-initiatives';
+import { reconcileRepliedItems } from '@/lib/inbox/reconcile-replied';
 
 export const maxDuration = 30;
 
@@ -153,6 +154,15 @@ export async function GET() {
   const startOfDay = `${todayStr}T00:00:00Z`;
   const self = user.email?.toLowerCase();
 
+  // SELF-HEAL FIRST (trust): re-derive reply state from the actual threads and resolve any "reply needed"
+  // item the user has ALREADY answered (from Gmail/Outlook directly) — so the Home never keeps nagging
+  // about a reply you've sent. Runs before the item fetch below so the corrected status is reflected in
+  // THIS response. When it actually resolves something it busts the brief cache (forcing a re-synthesis
+  // that drops the item); when nothing changed it's a cheap ~2-query no-op that leaves the cache intact.
+  await reconcileRepliedItems(supabase, user.id, {
+    bustBriefCache: async () => { await supabase.from('profiles').update({ home_brief: null }).eq('id', user.id).then(() => {}, () => {}); },
+  });
+
   // Initiative CLUSTERS (Phase 5) — an actionable item belongs to a real initiative (a deal/client/program)
   // when its initiative has ≥2 TOTAL items (correspondence + commitments), so a deal with 1 current action
   // still shows its context. Cheap email+commit build (no calendar map) since this is the hot, polled path;
@@ -260,7 +270,19 @@ export async function GET() {
     .filter((it) => it.source !== 'meeting' && it.source !== 'commitment')
     .map((it) => ({ it, posture: classifyItem(it as never, userRules) }));
   const emailCandidates = classifiedEmails
-    .filter((x) => x.posture === 'needs_reply' || x.posture === 'to_do');
+    .filter((x) => {
+      if (x.posture === 'needs_reply' || x.posture === 'to_do') return true;
+      // RE-PROMOTE an item classifyItem demoted (usually to 'fyi' for being cc-only) when the UNDERSTANDING
+      // says it's genuinely addressed to the user with an action they OWE — role='addressed' / ownership=
+      // 'you_owe' / relevance='action' — AND the rules classified it actionable (needs_reply/to_do). The
+      // CONTENT signal (you are addressed, you owe) beats the header-based cc-only demotion, so a direct ask
+      // ("Alex, what access can they use?") is NEVER dropped. It flows to "Worth acting on" / "What needs
+      // you" in the loop below. (Same trust rule as the mustRespond gate: a false extra card ≪ a missed ask.)
+      const rt = String(x.it.rule_type || '');
+      if (rt !== 'needs_reply' && rt !== 'to_do') return false;
+      const u = getUnderstanding(x.it);
+      return !!u && (u.role === 'addressed' || u.ownership === 'you_owe' || u.relevance === 'action');
+    });
   // Awareness candidates for the "keep an eye on" tier. Two sources:
   //  (a) cc'd-important items the SHARED classifier demoted to 'fyi' purely because the user is only
   //      cc'd (isCcOnlyBystander). We do NOT change classify-item.ts (the inbox depends on that blunt
@@ -322,7 +344,7 @@ export async function GET() {
   // items the unified understanding reasoned `relevance === 'action'`. They get their OWN Home section,
   // distinct from replies (What needs you), so automated/notice actions don't clutter the reply lane.
   // Grounded one-liner (the real subject), deep-dive on click, quiet dismiss — same affordances as FYA.
-  type ActionNotice = { itemId: string; who: string; summary: string };
+  type ActionNotice = { itemId: string; who: string; summary: string; dueDate: string | null };
   const actionNoticesRaw: ActionNotice[] = [];
   const actionNoticeIds = new Set<string>();
   const emailSeeds: EmailSeed[] = [];
@@ -375,7 +397,7 @@ export async function GET() {
       const who = fromName || (sd.from as string) || 'Notice';
       const snippet = ((sd.body as string) || '').replace(/\s+/g, ' ').trim();
       const summary = (subj || '').trim() || (snippet ? snippet.slice(0, 90) : 'Action needed');
-      actionNoticesRaw.push({ itemId: it.id, who, summary: summary.length > 120 ? summary.slice(0, 117) + '…' : summary });
+      actionNoticesRaw.push({ itemId: it.id, who, summary: summary.length > 120 ? summary.slice(0, 117) + '…' : summary, dueDate: (u.deadline as string) ?? null });
       actionNoticeIds.add(it.id);
       const threadMsgsA = tid ? threadMsgsById.get(tid) : undefined;
       const replyStateA = threadMsgsA && threadMsgsA.length
@@ -1017,7 +1039,7 @@ export async function GET() {
   // (never pushed to `priorities`), keep-an-eye and for-your-awareness (both gated on relevance !=
   // action). ONE relevance → ONE home; no overlap. Ordered freshest-first isn't tracked here (order of
   // discovery follows the last_activity_at ordering of `items`), which is already recency-first.
-  const actionNotices = actionNoticesRaw.filter((a) => pendingItemIds.has(a.itemId)).slice(0, 12);
+  const actionNotices = actionNoticesRaw.filter((a) => pendingItemIds.has(a.itemId)).slice(0, 30); // high bound, not a functional gate — a real obligation must never be silently dropped
 
   // ── "Day cleared" progress ring — the LIVE half. `cleared` = things the user handled TODAY.
   // Computed fresh here (NOT baked into the cached AI blob) via a cheap batch of head-count queries,

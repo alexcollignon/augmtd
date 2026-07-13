@@ -6,8 +6,7 @@
 // clustering AI calls; automated/no-reply items and one-offs are already excluded upstream.
 
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { getAIClient, aiCreate } from '@/lib/ai/factory';
-import { getActiveInitiatives, type InitiativeState } from './active-initiatives';
+import { getActiveInitiatives, type InitiativeState, type ActiveInitiative } from './active-initiatives';
 
 export type SuggestionItemRef = { table: 'inbox_items' | 'commitments' | 'calendar_events'; id: string; title: string; who: string | null };
 // `outreach` = cold outbound recipients you're awaiting a reply from (no DB row to attach — the project,
@@ -16,19 +15,29 @@ export type SuggestionItemRef = { table: 'inbox_items' | 'commitments' | 'calend
 // `key`/`state` ride along from the spine so Projects can show the same state + deep-link by key as In-motion.
 export type ProjectSuggestion = { key: string; name: string; purpose: string; state: InitiativeState; stateLabel: string; stakeholders: string[]; items: SuggestionItemRef[]; outreach: string[] };
 
-export async function suggestProjects(supabase: SupabaseClient, userId: string): Promise<ProjectSuggestion[]> {
-  // ONE SOURCE — derive from getActiveInitiatives (email + commitments + calendar + outbound, all reasoned),
-  // so Projects and the Home "In motion" can never diverge. Suggestions = EVERY active initiative NOT yet a
-  // project (projectId null), biggest first — so Projects (accepted cards + these suggestions) reconciles
-  // 1:1 with In-motion, no hard cap dropping initiatives. A high safety bound only guards pathological cases.
+export async function suggestProjects(supabase: SupabaseClient, userId: string, opts?: { fresh?: boolean }): Promise<ProjectSuggestion[]> {
+  // ONE SOURCE — the active-initiatives spine (email + commitments + calendar + outbound, all reasoned), so
+  // Projects and the Home "In motion" can never diverge. Suggestions = EVERY active initiative NOT yet a
+  // project (projectId null), in the spine's action-first order.
+  //
+  // INSTANT by default: reuse the spine the Home ALREADY computed + cached in profiles.home_brief.
+  // activeInitiatives (the perf-fold). That makes the Projects page load immediately instead of recomputing
+  // the ~1–2.5s (cold: much more) getActiveInitiatives on every visit. `opts.fresh` (a manual refresh) forces
+  // a live recompute. No purpose AI call — it was a cosmetic one-line description shown only on row-expand and
+  // added real latency; dropped so the page is instant.
   const todayStr = new Date().toISOString().slice(0, 10);
-  const inits = await getActiveInitiatives(supabase, userId, todayStr);
-  // Keep the spine's action-first order (needs_attention → active → waiting → awareness, then size) — do NOT
-  // re-sort by size, so the compact Projects list leads with what needs attention, mirroring In-motion.
-  const chosen = inits.filter((i) => !i.projectId).slice(0, 40);
-  if (!chosen.length) return [];
+  let inits: ActiveInitiative[] | null = null;
+  if (!opts?.fresh) {
+    try {
+      const { data: prof } = await supabase.from('profiles').select('home_brief').eq('id', userId).maybeSingle();
+      const cached = (prof?.home_brief as { activeInitiatives?: ActiveInitiative[] } | null)?.activeInitiatives;
+      if (Array.isArray(cached) && cached.length) inits = cached;
+    } catch { /* fall through to a fresh compute */ }
+  }
+  if (!inits) inits = await getActiveInitiatives(supabase, userId, todayStr);
 
-  const suggestions: ProjectSuggestion[] = chosen.map((i) => ({
+  const chosen = inits.filter((i) => !i.projectId).slice(0, 40);
+  return chosen.map((i) => ({
     key: i.key,
     name: i.label.slice(0, 80),
     purpose: '',
@@ -38,25 +47,4 @@ export async function suggestProjects(supabase: SupabaseClient, userId: string):
     items: i.members.map((m) => ({ table: m.table, id: m.id, title: m.title, who: m.who })),
     outreach: i.outreach,
   }));
-
-  // ONE small batch call to write a one-line purpose per final group. Optional — on failure the cards still
-  // read fine (name + items). NOT a clustering call; grouping is already done. Token budget scales with the
-  // (now uncapped) group count so many initiatives don't truncate the JSON.
-  try {
-    const { client, model } = await getAIClient(userId, 'classification', supabase);
-    const listing = suggestions.map((s, i) => {
-      const items = s.items.slice(0, 4).map((it) => it.title.slice(0, 50)).join('; ');
-      const reach = s.outreach.length ? ` [+${s.outreach.length} outreach emails awaiting a reply]` : '';
-      return `${i + 1}. "${s.name}" — ${items || '(outreach campaign)'}${reach}`;
-    }).join('\n');
-    const res = await aiCreate(client, {
-      model, response_format: { type: 'json_object' as const }, max_tokens: Math.min(3000, suggestions.length * 60 + 300), temperature: 0,
-      messages: [{ role: 'user', content: `For each initiative below (a real deal/client/project and a few of its items), write ONE clear sentence describing what it is and its objective. Keep them distinct. Return ONLY JSON {"purposes":["...", "..."]} in the SAME order and count.\n\n${listing}` }],
-    });
-    const parsed = JSON.parse((res.choices?.[0]?.message?.content || '{}').replace(/```json/gi, '').replace(/```/g, '').trim());
-    const purposes: string[] = Array.isArray(parsed.purposes) ? parsed.purposes : [];
-    purposes.forEach((p, i) => { if (suggestions[i] && typeof p === 'string') suggestions[i].purpose = p.slice(0, 200); });
-  } catch (e) { console.error('[cluster] purpose pass failed (non-fatal):', (e as Error).message); }
-
-  return suggestions;
 }

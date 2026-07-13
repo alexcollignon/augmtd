@@ -36,6 +36,9 @@ export async function resolveThreadOnReply(opts: {
   client: DBClient;
   /** best-effort cache bust (profiles.home_brief=null) so the Home drops it next load. */
   bustBriefCache?: () => Promise<void>;
+  /** skip the mailbox label swap (AUGMTD/Done) — set on hot READ paths (the read-time reconcile), where
+   * the label-sweep cron reconciles labels eventually and we don't want to block on a mailbox API call. */
+  skipLabelReconcile?: boolean;
 }): Promise<{ resolvedItems: number; resolvedCommitments: number }> {
   const { userId, threadId, client } = opts;
   const out = { resolvedItems: 0, resolvedCommitments: 0 };
@@ -53,16 +56,20 @@ export async function resolveThreadOnReply(opts: {
 
     // ── inbox item: resolve the OPEN needs-reply item on this thread if the user replied after it
     // was created. We fetch first (need created_at as the `since` window + the subject for the log). ──
+    // Eligibility is a UNION: the reply work_states OR a rule that classified it needs_reply — so an item
+    // the board shows as a reply-you-owe (rule_type='needs_reply') resolves even if its work_state isn't
+    // one of the two. A waiting_on/fyi override is excluded (a user reply doesn't fulfil what OTHERS owe).
     const { data: openItems } = await client
       .from('inbox_items')
-      .select('id, created_at, work_title, source_data, connection_id')
+      .select('id, created_at, work_title, source_data, connection_id, type_override')
       .eq('user_id', userId)
       .eq('source', 'email')
       .eq('status', 'pending')
-      .in('work_state', REPLY_STATES)
+      .or(`work_state.in.(${REPLY_STATES.join(',')}),rule_type.eq.needs_reply`)
       .eq('source_data->>thread_id', threadId);
 
-    for (const it of (openItems ?? []) as Array<{ id: string; created_at: string; work_title?: string; source_data?: { subject?: string }; connection_id?: string | null }>) {
+    for (const it of (openItems ?? []) as Array<{ id: string; created_at: string; work_title?: string; source_data?: { subject?: string }; connection_id?: string | null; type_override?: string }>) {
+      if (it.type_override === 'waiting_on' || it.type_override === 'fyi') continue;
       const state = computeThreadReplyState(messages, it.created_at ? new Date(it.created_at) : null);
       if (!state.userReplied) continue; // conservative: no clear structural reply → leave it
 
@@ -83,10 +90,13 @@ export async function resolveThreadOnReply(opts: {
 
       // Swap the mailbox label to AUGMTD/Done — the user replied from Gmail/Outlook directly, so the
       // thread is resolved and should not linger under "Needs reply". Honors auto_label, non-fatal.
-      await import('@/lib/inbox/reconcile-item-label')
-        .then(({ reconcileItemLabel }) =>
-          reconcileItemLabel({ userId, itemId: it.id, item: it, targetLabel: 'done', client }))
-        .catch(() => {});
+      // Skipped on hot read paths (the label-sweep cron reconciles labels; we don't block on a mailbox call).
+      if (!opts.skipLabelReconcile) {
+        await import('@/lib/inbox/reconcile-item-label')
+          .then(({ reconcileItemLabel }) =>
+            reconcileItemLabel({ userId, itemId: it.id, item: it, targetLabel: 'done', client }))
+          .catch(() => {});
+      }
 
       out.resolvedItems++;
       const subject = it.work_title || (it.source_data?.subject as string) || 'a thread';

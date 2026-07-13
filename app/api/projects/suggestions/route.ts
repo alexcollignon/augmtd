@@ -20,7 +20,7 @@ export async function GET(req: NextRequest) {
     const hit = cache.get(user.id);
     if (!refresh && hit && Date.now() - hit.at < TTL) return NextResponse.json({ suggestions: hit.data, cached: true });
 
-    const suggestions = await suggestProjects(supabase, user.id);
+    const suggestions = await suggestProjects(supabase, user.id, { fresh: refresh });
     cache.set(user.id, { at: Date.now(), data: suggestions });
     return NextResponse.json({ suggestions, cached: false });
   } catch (e) {

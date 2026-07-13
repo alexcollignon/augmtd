@@ -95,6 +95,15 @@ export default function SidebarNav({
               <Link
                 href={item.href}
                 title={item.name}
+                onClick={() => {
+                  // Clicking "Home" while already on the Home route must return to the Dashboard lens even
+                  // when the user is currently viewing Timeline/Projects. The lens is tracked in HomeView
+                  // via replaceState (?view=…), which desyncs Next's router — so a same-route <Link> won't
+                  // reliably re-render it. A custom event decouples the reset (HomeView listens for it).
+                  if (item.href === '/home' && pathname === '/home') {
+                    window.dispatchEvent(new CustomEvent('augmtd:home-reset'));
+                  }
+                }}
                 className={`
                   relative flex items-center justify-center w-full py-2.5 mb-px transition-colors rounded-lg
                   ${isActive
