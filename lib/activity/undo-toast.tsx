@@ -12,7 +12,7 @@ import { restoreEntity } from './restore';
 // SENDS never call this — a sent email is not reversible.
 export function showUndoToast(opts: {
   message: string;                                    // e.g. "Dismissed", "Marked done"
-  entityType: 'inbox_item' | 'commitment' | 'sender';
+  entityType: 'inbox_item' | 'commitment' | 'sender' | 'initiative';
   entityId: string;
   onUndo: () => void;                                 // clear session state so the item re-renders
 }) {

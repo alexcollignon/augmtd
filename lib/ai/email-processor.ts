@@ -640,10 +640,12 @@ You MUST use ONLY the allowed values below — do NOT invent your own labels.
   colleague's note, a client thread, a forwarded work email) — even if the user is only cc'd. Judge from
   the CONTENT, not the sender address.
 
-- initiative: the specific DEAL / CLIENT / PROJECT this email is about — a short proper-noun label
-  derived from THIS email's own content (the client/company name, or the named project it concerns), or
-  null for a one-off / automated mail. Two DIFFERENT clients or companies ALWAYS get DIFFERENT labels —
-  never merge them. The SAME ongoing deal gets a CONSISTENT label. Never invent a label.
+- initiative: the specific DEAL / CLIENT / PROJECT / INTERNAL INITIATIVE / GOAL this email is about —
+  a short proper-noun label derived from THIS email's own content. This may be external (a client,
+  deal, or partnership) or internal (hiring a designer, launching a feature, migrating infrastructure,
+  or another bounded effort with an outcome). Use null for a one-off, a recurring category, or an
+  automated/marketing mail. Two DIFFERENT clients, companies, or initiatives ALWAYS get DIFFERENT
+  labels — never merge them. The SAME ongoing initiative gets a CONSISTENT label. Never invent a label.
 
 - language: a lowercase ISO code — one of "en" | "pt" | "fr" | "es" | "de" | "it" (or another 2-letter
   code). The language the user would REPLY in on this thread — the language of the CURRENT EMAIL / the
@@ -931,6 +933,10 @@ export async function computeUnderstanding(email: EmailData, supabase: SupabaseC
     : [email.recipient_email].filter(Boolean) as string[]);
   const { getAIClient, aiCreate } = await import('@/lib/ai/factory');
   const { client: ai, model } = await getAIClient(email.user_id!, 'classification', supabase);
+  // Reference date for resolving RELATIVE deadlines ("by Friday", "tomorrow") — the day THIS email was
+  // sent, so "Friday" resolves correctly regardless of when we process it.
+  const refISO = email.received_at && !Number.isNaN(Date.parse(email.received_at)) ? email.received_at : new Date().toISOString();
+  const refStr = new Date(refISO).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
   const content =
     `You judge an email from the seat of the user, whose own address(es) are: ${mine.join(', ') || '(unknown)'}${email.user_name ? ` (name: ${email.user_name})` : ''}.\n` +
     `This email — To: ${(email.to_addresses ?? []).join(', ') || '(none)'} ; Cc: ${(email.cc_addresses ?? []).join(', ') || '(none)'}\n` +
@@ -939,12 +945,15 @@ export async function computeUnderstanding(email: EmailData, supabase: SupabaseC
     `- role: "addressed" = the ask lands on the user specifically; "one_of_many" = a group/broad To or "Dear Team" where the user isn't singled out; "bystander" = only cc'd / kept informed.\n` +
     `- relevance: "reply" = a real person expects a response FROM the user. "action" = the user has a CONCRETE OBLIGATION with a real consequence if ignored — pay an invoice, sign/approve a document, verify or secure an account, fix a failed payment, submit a form, or act by a STATED deadline. The bar is HIGH: a specific thing the user must do AND a cost to not doing it. "awareness" = informational, no move expected. A mere NOTIFICATION the user could optionally glance at is NOT an obligation → "awareness": e.g. "someone posted on LinkedIn", "you have a new message / new connection", newsletters, digests, receipts / order-shipped, social or product notices, calendar invites/updates. When unsure between "action" and "awareness", choose "awareness". If role is "bystander" → "awareness"; if "one_of_many" with no ask directed at the user → "awareness".\n` +
     `- bulk: true if this is a MASS / marketing / newsletter / promotional / automated broadcast — sent to a list, not written to the user personally (sales & discounts, product digests, "X posted", social notices, newsletters, order/shipping/receipt notices, promotional campaigns), even when it greets the user by name ("Alex, claim your offer" is STILL bulk). false if a real person or business is corresponding with the user or their group (a colleague's note, a client thread, a forwarded work email, a personal or business message, a genuine 1:1 or team conversation) — even if the user is only cc'd. Judge from the CONTENT, not the sender address.\n` +
-    `- initiative: the specific DEAL / CLIENT / PROJECT this email is about — a short proper-noun label drawn from THIS email's own content (the client/company name, or the named project/deal it concerns). Two DIFFERENT clients or companies ALWAYS get DIFFERENT labels — never merge them (two different companies are separate initiatives even from the same sender). The SAME ongoing deal gets a CONSISTENT label. Use null for a one-off with no larger initiative, or for automated/marketing mail. Do NOT invent a label — derive it only from what this email is actually about.\n` +
-    `Return ONLY JSON: {"role":"addressed|one_of_many|bystander","relevance":"reply|action|awareness","bulk":true|false,"initiative":"<short label or null>","language":"<lowercase ISO code, the language of THIS email, e.g. en, pt>"}. Use ONLY the allowed values for role/relevance.`;
+    `- initiative: the specific DEAL / CLIENT / PROJECT / INTERNAL INITIATIVE / GOAL this email is about — a short proper-noun label drawn from THIS email's own content. It may be external (a client, deal, or partnership) or internal (hiring, a launch, a migration, or another bounded effort with an outcome). Use null for a one-off, a recurring category, or automated/marketing mail. Two DIFFERENT clients, companies, or initiatives ALWAYS get DIFFERENT labels — never merge them. The SAME ongoing initiative gets a CONSISTENT label. Do NOT invent a label — derive it only from what this email is actually about.\n` +
+    `- deadline: an explicit date THIS email states for a REAL obligation or event — a due date the user is asked to meet ("by Friday", "by EOD", "next Tuesday", "in 3 days"), a scheduled meeting/call date, or an event date — resolved to an ABSOLUTE YYYY-MM-DD. This email was sent on ${refStr}, so resolve any relative date against THAT day. IGNORE marketing/promotional expiry ("offer ends tonight", "sale ends Friday", "last chance") — that is NOT a deadline. For bulk/marketing/automated mail, deadline is null. null if no real date is stated. NEVER invent a date.\n` +
+    `- ownership: from the user's seat — "you_owe" if the user must reply or take an action; "awaiting" if the user is waiting on someone ELSE (a reply/deliverable owed to them); "none" if it's purely informational with no move by anyone.\n` +
+    `- effort: rough effort for the USER to handle this — "quick" (a one-line reply / a single click, ~2 min), "medium" (a considered reply or a small task, ~15 min), "deep" (real work, 30+ min). null if genuinely unclear.\n` +
+    `- confidence: 0–100, how confident you are in the role + relevance judgment.\n` +
+    `Return ONLY JSON: {"role":"addressed|one_of_many|bystander","relevance":"reply|action|awareness","bulk":true|false,"initiative":"<short label or null>","deadline":"<YYYY-MM-DD or null>","ownership":"you_owe|awaiting|none","effort":"quick|medium|deep|null","confidence":0-100,"language":"<lowercase ISO code, the language of THIS email, e.g. en, pt>"}. Use ONLY the allowed values.`;
   const res = await aiCreate(ai, {
-    model, response_format: { type: 'json_object' as const }, max_tokens: 400, temperature: 0,
+    model, response_format: { type: 'json_object' as const }, max_tokens: 500, temperature: 0,
     messages: [{ role: 'user', content }],
   });
   return coerceUnderstanding(parseModelJSON(res.choices?.[0]?.message?.content || '', {}));
 }
-

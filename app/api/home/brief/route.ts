@@ -8,6 +8,11 @@ import { getUnderstanding, coerceUnderstanding } from '@/lib/inbox/item-understa
 import { lastMeetingRecall } from '@/lib/context/voice-context';
 import { buildBriefContext, type EmailSeed } from '@/lib/home/brief-context';
 import { synthesizeBrief, type MustRespondCandidate } from '@/lib/home/synthesize-brief';
+import { loadUserRules } from '@/lib/inbox/rules/load';
+import { buildInitiativeClusters, type ClusterMap } from '@/lib/projects/initiative-clusters';
+import { normalizeInitiative } from '@/lib/inbox/item-understanding';
+import { resolveOutboundAwaiting } from '@/lib/outbound/resolve';
+import { getActiveInitiatives, type ActiveInitiative } from '@/lib/projects/active-initiatives';
 
 export const maxDuration = 30;
 
@@ -148,6 +153,29 @@ export async function GET() {
   const startOfDay = `${todayStr}T00:00:00Z`;
   const self = user.email?.toLowerCase();
 
+  // Initiative CLUSTERS (Phase 5) — an actionable item belongs to a real initiative (a deal/client/program)
+  // when its initiative has ≥2 TOTAL items (correspondence + commitments), so a deal with 1 current action
+  // still shows its context. Cheap email+commit build (no calendar map) since this is the hot, polled path;
+  // calendar-fold stays in the Projects lens. `clusterTag` resolves an item's initiative → {label, total}.
+  // Cold outreach you're awaiting a reply to (resolved once, reused for clusters + the waiting lane). Its
+  // initiatives fold into the cluster totals so a pure-outreach effort (e.g. a hiring round) surfaces on
+  // the Home like any other active initiative.
+  const outboundAwaiting = await resolveOutboundAwaiting(supabase, user.id, todayStr).catch(() => []);
+  let clusters: ClusterMap = new Map();
+  try { clusters = await buildInitiativeClusters(supabase, user.id, { includeCalendar: false, outbound: outboundAwaiting }); } catch { /* non-fatal */ }
+  // "In motion" (activeInitiatives) is expensive (~1–2.5s) — it's now FOLDED INTO the brief cache below
+  // (served last-good instantly, recomputed in the background on staleness), not computed on every load.
+  const clusterTag = (init: string | null | undefined): { initiative: string; initiativeTotal: number } | null => {
+    const k = init ? (normalizeInitiative(init)?.replace(/\s+/g, '') || null) : null;
+    const c = k ? clusters.get(k) : null;
+    return c ? { initiative: c.label, initiativeTotal: c.total } : null;
+  };
+
+  // Home must use the same persisted deterministic rules as Inbox. Passing them explicitly avoids
+  // relying on classify-item's process-global render cache, which is not a safe source of per-user
+  // configuration in a server route.
+  const userRules = await loadUserRules(user.id, supabase);
+
   const since24 = new Date(now.getTime() - DAY).toISOString();
   const [itemsRes, commitsRes, meetingsRes, handledRes, profileRes, triagedRes, summarisedRes, trackedRes, filteredRes, fyiRes] = await Promise.all([
     supabase.from('inbox_items')
@@ -204,7 +232,7 @@ export async function GET() {
   // A source card: grouped by where it's from (email thread / meeting), carrying the unified
   // posture (what it needs) — the digest shape from docs/unified-classifier-digest-plan.md.
   type Posture = 'needs_reply' | 'to_do' | 'waiting_on';
-  type Priority = { id: string; source: 'email' | 'meeting'; posture: Posture; title: string; context: string | null; href: string; itemId?: string; items?: { id: string; text: string }[]; overdue?: boolean };
+  type Priority = { id: string; source: 'email' | 'meeting'; posture: Posture; title: string; context: string | null; href: string; itemId?: string; items?: { id: string; text: string }[]; overdue?: boolean; effort?: 'quick' | 'medium' | 'deep' | null; dueDate?: string | null; initiative?: string | null; initiativeTotal?: number | null };
   const priorities: Priority[] = [];
 
   // ── Meetings: group action items under their meeting (LAYERED — one card, items nested) ──
@@ -230,7 +258,7 @@ export async function GET() {
   // so the Home is as complete as the inbox, not just replies.
   const classifiedEmails = items
     .filter((it) => it.source !== 'meeting' && it.source !== 'commitment')
-    .map((it) => ({ it, posture: classifyItem(it as never) }));
+    .map((it) => ({ it, posture: classifyItem(it as never, userRules) }));
   const emailCandidates = classifiedEmails
     .filter((x) => x.posture === 'needs_reply' || x.posture === 'to_do');
   // Awareness candidates for the "keep an eye on" tier. Two sources:
@@ -307,6 +335,21 @@ export async function GET() {
     const raw = String((sd.from_address as string) || (sd.from as string) || '').toLowerCase();
     return raw.match(/[^\s<>"]+@[^\s<>"]+/)?.[0] || (raw.includes('@') ? raw : null);
   };
+  const contextSignalsOf = (sd: Record<string, unknown>) => {
+    const raw = sd.signals && typeof sd.signals === 'object' ? sd.signals as Record<string, unknown> : {};
+    const urgency = raw.impliedUrgency;
+    return {
+      explicitDeadline: typeof raw.explicitDeadline === 'string' ? raw.explicitDeadline : null,
+      impliedUrgency: urgency === 'immediate' || urgency === 'soon' || urgency === 'flexible' ? urgency : null,
+      isTimebound: raw.isTimebound === true,
+      hasPreviousCommitment: raw.hasPreviousCommitment === true,
+      isFollowUp: raw.isFollowUp === true,
+    } as const;
+  };
+  const contextInitiativeOf = (sd: Record<string, unknown>): string | null => {
+    const u = getUnderstanding({ source_data: sd });
+    return u?.initiative ?? (typeof sd.initiative === 'string' ? sd.initiative : null);
+  };
   for (const { it, posture } of emailCandidates) {
     const sd = (it.source_data ?? {}) as Record<string, unknown>;
     const tid = sd.thread_id as string | undefined;
@@ -317,6 +360,8 @@ export async function GET() {
     const fromEmail = fromEmailOf(sd);
     const subj = it.work_title || (sd.subject as string) || null;
     const fromName = (sd.from_name as string) || null;
+    const contextSignals = contextSignalsOf(sd);
+    const initiative = contextInitiativeOf(sd);
     // The unified understanding's RELEVANCE is the primary router: `reply` = a person awaits your reply
     // → "What needs you"; `action` = an actionable item that is NOT a reply (payment failed, security
     // alert, expiring, "pay for your booking") → the NEW "Worth acting on" section; `awareness` = FYI.
@@ -343,6 +388,7 @@ export async function GET() {
         snippet: ((sd.body as string) || '').replace(/\s+/g, ' ').trim().slice(0, 240),
         userResponded: replyStateA?.userReplied ?? undefined,
         lastFromUser: replyStateA?.lastMessageFromUser ?? undefined,
+        ...contextSignals, initiative,
       });
       continue;
     }
@@ -363,6 +409,8 @@ export async function GET() {
       title: subj || 'Email',
       context: fromName || (sd.from as string) || null,
       href: '/inbox', itemId: it.id,
+      effort: u?.effort ?? null, dueDate: u?.deadline ?? null, // Track A signals — "feels doable" + real date
+      initiative: clusterTag(initiative)?.initiative ?? null, initiativeTotal: clusterTag(initiative)?.initiativeTotal ?? null,
     });
     // Structural reply-state for this thread (direction+time only — no keyword/text matching). The
     // synthesis reasons "the user already responded → drop/deprioritize" over the REAL thread, not a
@@ -379,6 +427,7 @@ export async function GET() {
       snippet: ((sd.body as string) || '').replace(/\s+/g, ' ').trim().slice(0, 240),
       userResponded: replyState?.userReplied ?? undefined,
       lastFromUser: replyState?.lastMessageFromUser ?? undefined,
+      ...contextSignals, initiative,
     });
     if (replyState && typeof replyState.lastMessageFromUser === 'boolean') {
       lastFromUserByItem.set(it.id, replyState.lastMessageFromUser);
@@ -401,6 +450,8 @@ export async function GET() {
         subject: it.work_title || (sd.subject as string) || '(no subject)',
         snippet: ((sd.body as string) || '').replace(/\s+/g, ' ').trim().slice(0, 400),
         receivedAt: activityAt(it),
+        effort: u?.effort ?? null, dueDate: u?.deadline ?? null,
+        initiative: clusterTag(initiative)?.initiative ?? null, initiativeTotal: clusterTag(initiative)?.initiativeTotal ?? null,
       });
     }
   }
@@ -456,6 +507,7 @@ export async function GET() {
       overdue: !!(c.due_date && c.due_date < todayStr),
       dueToday: !!(c.due_date && c.due_date === todayStr),
       ageDays: Math.floor((now.getTime() - new Date(c.created_at).getTime()) / DAY),
+      initiative: (c.initiative as string | null) ?? null,
     }));
   // Default placement from the ingest direction — used as the fallback when the synthesis has no
   // verdict for a commitment (failure / not enumerated), so behavior degrades to the old routing.
@@ -512,8 +564,8 @@ export async function GET() {
   // (the per-item classifier's FYI verdict, driven by the default `noted` rule + List-Unsubscribe). So
   // every group here is a `newsletter` — the OLD person-vs-newsletter split (a sender-name-looks-human
   // heuristic) MIS-bucketed brand digests with human-looking display names (Morning Brew, Bay Area
-  // Times) as "person awareness". REAL correspondence you're only informed on (Amira "Dear Team",
-  // Omantel CC) is NOT here — it's the separate `forYourAwareness` set below (understanding-driven).
+  // Times) as "person awareness". REAL correspondence you're only informed on (a "Dear Team" broadcast,
+  // a group CC) is NOT here — it's the separate `forYourAwareness` set below (understanding-driven).
   // No name/localpart heuristic: bucket membership is the `noted` rule, full stop.
   const fyiGroupsAll = [...fyiBySender.entries()]
     .map(([label, g]) => ({ label, subjects: g.subjects, count: g.subjects.length, kind: 'newsletter' as const }))
@@ -654,11 +706,11 @@ export async function GET() {
   type FollowUp = { id?: string; who: string; status: string; nextMove: string };
   type Followups = { teaser: string; items: FollowUp[]; closing: string | null };
   type FyiDigest = { groups: { label: string; summary: string; kind: 'person' | 'newsletter' }[]; tailGroups: number; tailItems: number };
-  type Reply = { who: string; ask: string; angle: string; itemId: string; subject?: string; snippet?: string; receivedAt?: string };
+  type Reply = { who: string; ask: string; angle: string; itemId: string; subject?: string; snippet?: string; receivedAt?: string; effort?: 'quick' | 'medium' | 'deep' | null; dueDate?: string | null; initiative?: string | null; initiativeTotal?: number | null };
   type MustRespond = { teaser: string; items: Reply[] };
   type KeepAnEyeOn = { items: { who: string; why: string; itemId: string }[] };
   type CommitmentPlacement = 'on_your_plate' | 'ball_in_court' | 'informational';
-  const cached = (profileRes.data as { home_brief?: { text?: string; tldr?: Tldr; followups?: Followups | null; fyiDigest?: FyiDigest | null; mustRespond?: MustRespond | null; keepAnEyeOn?: KeepAnEyeOn | null; droppedItemIds?: string[]; commitmentPlacements?: Record<string, CommitmentPlacement>; generated_at: string; sig?: string } } | null)?.home_brief ?? null;
+  const cached = (profileRes.data as { home_brief?: { text?: string; tldr?: Tldr; followups?: Followups | null; fyiDigest?: FyiDigest | null; mustRespond?: MustRespond | null; keepAnEyeOn?: KeepAnEyeOn | null; droppedItemIds?: string[]; commitmentPlacements?: Record<string, CommitmentPlacement>; activeInitiatives?: ActiveInitiative[]; generated_at: string; sig?: string } } | null)?.home_brief ?? null;
   let tldr: Tldr | null = cached?.tldr ?? null;
   let followups: Followups | null = cached?.followups ?? null;
   let fyiDigest: FyiDigest | null = cached?.fyiDigest ?? null;
@@ -675,7 +727,23 @@ export async function GET() {
   // a one-time regen for such legacy caches when there are open commitments to (re-)place, so the
   // synthesis verdict actually takes without a manual cache wipe. General — no hardcoded item.
   const legacyPlacements = cached != null && cached.commitmentPlacements === undefined && commitmentCands.length > 0;
-  const stale = !cached || cached.sig !== sig || legacyPlacements || (now.getTime() - new Date(cached.generated_at).getTime()) > BRIEF_TTL;
+  // A pre-fold cache blob has no activeInitiatives field at all — force ONE background regen to fill it
+  // (mirrors legacyPlacements), so "In motion" isn't stuck empty on a cache-HIT of an old blob until TTL.
+  const legacyInitiatives = cached != null && cached.activeInitiatives === undefined;
+  const stale = !cached || cached.sig !== sig || legacyPlacements || legacyInitiatives || (now.getTime() - new Date(cached.generated_at).getTime()) > BRIEF_TTL;
+  // "In motion" — serve the last-good cached set immediately (fast on EVERY request, hit or stale); on
+  // staleness it's recomputed in the background alongside the enriched brief (persisted under the same
+  // sig). In-motion shifts slowly, so being one refetch behind is invisible — same model as the prose.
+  let activeInitiatives: ActiveInitiative[] = cached?.activeInitiatives ?? [];
+  // If the cache has no NON-EMPTY set (brand-new, pre-fold, OR a stale/empty blob whose background fill
+  // never landed), compute it SYNCHRONOUSLY so the FIRST response already renders "In motion" instead of an
+  // empty-then-fill flash. The fast cache-hit path still applies to everyone WITH initiatives (the common
+  // case); only a genuinely-zero user recomputes each load (they see nothing regardless; sub-caches keep it
+  // cheap). Can't distinguish "authoritatively empty" from "never filled" — so treat empty as needs-compute.
+  const initiativesJustComputed = !cached?.activeInitiatives?.length;
+  if (initiativesJustComputed) {
+    activeInitiatives = await getActiveInitiatives(supabase, user.id, todayStr).catch(() => []);
+  }
   if (stale) {
     // ── OPTIMISTIC SURFACING ─────────────────────────────────────────────────────────────────────
     // The AI synthesis (~10–30s) is what enriches the brief (ask/angle/ordering/supersession drops).
@@ -694,7 +762,7 @@ export async function GET() {
       .slice(0, 100)
       .map((c) => {
         const prev = cachedAsk.get(c.itemId);
-        return { who: c.from, ask: prev?.ask || '', angle: prev?.angle || '', itemId: c.itemId, subject: c.subject, snippet: c.snippet, receivedAt: c.receivedAt };
+        return { who: c.from, ask: prev?.ask || '', angle: prev?.angle || '', itemId: c.itemId, subject: c.subject, snippet: c.snippet, receivedAt: c.receivedAt, effort: c.effort ?? null, dueDate: c.dueDate ?? null, initiative: c.initiative ?? null, initiativeTotal: c.initiativeTotal ?? null };
       });
     const basicMustRespond: MustRespond | null = basicMustItems.length ? { teaser: '', items: basicMustItems } : null;
 
@@ -712,7 +780,7 @@ export async function GET() {
     // 3. Persist the basic brief IMMEDIATELY with the NEW sig. This is the anti-regen-storm guard:
     //    the very next request (poll / realtime refetch) is a cache-HIT on this basic brief and does
     //    NOT trigger a second synthesis while the background one is still running.
-    await supabase.from('profiles').update({ home_brief: { text: briefLine, tldr, followups, fyiDigest, mustRespond, keepAnEyeOn, droppedItemIds, commitmentPlacements, generated_at: now.toISOString(), sig } }).eq('id', user.id).then(() => {}, () => {});
+    await supabase.from('profiles').update({ home_brief: { text: briefLine, tldr, followups, fyiDigest, mustRespond, keepAnEyeOn, droppedItemIds, commitmentPlacements, activeInitiatives, generated_at: now.toISOString(), sig } }).eq('id', user.id).then(() => {}, () => {});
 
     // 4. Enrich in the BACKGROUND — same inputs as before — and persist the ENRICHED brief with the
     //    SAME sig (upgrades the cache in place: real ask/angle, ordering, supersession drops,
@@ -728,22 +796,32 @@ export async function GET() {
     );
     after(async () => {
       try {
-        const synth = await synthesizeBrief(getSystemClient('summarization'), {
-          firstName, now, ctx: briefCtx, schedule,
-          commitments: owedFacts,
-          commitmentCandidates: commitmentCands,
-          waitingOnCount: status.waitingOn, triaged: handled.triaged, filtered: handled.filtered,
-          emailReplyCount: emailP,
-          topPriorities: cappedPriorities.map((p) => ({ title: p.title, posture: p.posture, source: p.source, overdue: !!p.overdue })),
-          mustRespond: mustRespondRaw,
-          protectedItemIds,
-          // Waiting candidates = the ingest-awaiting commitments — the synthesis writes the follow-up
-          // prose (status + nextMove) over these. Final lane routing is by the placement verdict below;
-          // a commitment re-placed to ball_in_court that wasn't here still appears via the raw fallback.
-          waiting: commitmentCands.filter((c) => c.direction === 'awaiting').map((c) => ({ id: c.id, counterparty: c.counterparty || c.sourceLabel, description: c.description, ageDays: c.ageDays })),
-          fyiGroups: fyiTop.map((g) => ({ label: g.label, count: g.count, kind: g.kind, subjects: g.subjects })),
-          keepAnEyeOn: keepAnEyeOnRaw,
-        }, { userId: user.id, supabase });
+        // Recompute "In motion" (the ~1–2.5s — cold, more — that used to run on EVERY request) CONCURRENTLY
+        // with the synthesis, so its wall-time OVERLAPS the AI pass instead of adding to it (keeps the whole
+        // background job inside maxDuration even for a cold user). Both persist below under the same sig;
+        // getActiveInitiatives falls back to the last-good set on error. NB: even if this callback is cut
+        // short, getActiveInitiatives has already warmed the calendar/outbound sub-caches, so the next stale
+        // cycle fills In-motion fast.
+        const [freshInitiatives, synth] = await Promise.all([
+          // Reuse the value we just computed synchronously (first-fill); otherwise refresh in the background.
+          initiativesJustComputed ? Promise.resolve(activeInitiatives) : getActiveInitiatives(supabase, user.id, todayStr).catch(() => activeInitiatives),
+          synthesizeBrief(getSystemClient('summarization'), {
+            firstName, now, ctx: briefCtx, schedule,
+            commitments: owedFacts,
+            commitmentCandidates: commitmentCands,
+            waitingOnCount: status.waitingOn, triaged: handled.triaged, filtered: handled.filtered,
+            emailReplyCount: emailP,
+            topPriorities: cappedPriorities.map((p) => ({ title: p.title, posture: p.posture, source: p.source, overdue: !!p.overdue })),
+            mustRespond: mustRespondRaw,
+            protectedItemIds,
+            // Waiting candidates = the ingest-awaiting commitments — the synthesis writes the follow-up
+            // prose (status + nextMove) over these. Final lane routing is by the placement verdict below;
+            // a commitment re-placed to ball_in_court that wasn't here still appears via the raw fallback.
+            waiting: commitmentCands.filter((c) => c.direction === 'awaiting').map((c) => ({ id: c.id, counterparty: c.counterparty || c.sourceLabel, description: c.description, ageDays: c.ageDays })),
+            fyiGroups: fyiTop.map((g) => ({ label: g.label, count: g.count, kind: g.kind, subjects: g.subjects })),
+            keepAnEyeOn: keepAnEyeOnRaw,
+          }, { userId: user.id, supabase }),
+        ]);
         // Start from the basic brief we just persisted; upgrade each section the synthesis produced
         // (nulls only overwrite when we got something, same rule as before). This is the ENRICHED blob.
         let enrTldr = tldr, enrFollowups = followups, enrFyiDigest = fyiDigest;
@@ -765,7 +843,7 @@ export async function GET() {
         if (Object.keys(synth.commitmentPlacements).length) enrPlacements = synth.commitmentPlacements;
         // Persist the enriched brief under the SAME sig — upgrades the cache in place so the next
         // refetch is a cache-hit on the fully-synthesized version.
-        await supabase.from('profiles').update({ home_brief: { text: enrBriefLine, tldr: enrTldr, followups: enrFollowups, fyiDigest: enrFyiDigest, mustRespond: enrMustRespond, keepAnEyeOn: enrKeepAnEyeOn, droppedItemIds: enrDropped, commitmentPlacements: enrPlacements, generated_at: now.toISOString(), sig } }).eq('id', user.id).then(() => {}, () => {});
+        await supabase.from('profiles').update({ home_brief: { text: enrBriefLine, tldr: enrTldr, followups: enrFollowups, fyiDigest: enrFyiDigest, mustRespond: enrMustRespond, keepAnEyeOn: enrKeepAnEyeOn, droppedItemIds: enrDropped, commitmentPlacements: enrPlacements, activeInitiatives: freshInitiatives, generated_at: now.toISOString(), sig } }).eq('id', user.id).then(() => {}, () => {});
       } catch { /* non-fatal — basic brief stays cached */ }
     });
   }
@@ -785,17 +863,20 @@ export async function GET() {
   const commitments = dedupByDescription(
     commitmentCands
       .filter((c) => placementOf(c) === 'on_your_plate')
-      .map((c) => ({ id: c.id, description: c.description, counterparty: c.counterparty || c.sourceLabel, dueDate: c.dueDate, overdue: c.overdue, dueToday: c.dueToday })),
+      .map((c) => ({ id: c.id, description: c.description, counterparty: c.counterparty || c.sourceLabel, dueDate: c.dueDate, overdue: c.overdue, dueToday: c.dueToday, initiative: clusterTag(c.initiative)?.initiative ?? null, initiativeTotal: clusterTag(c.initiative)?.initiativeTotal ?? null })),
   )
     .sort((a, b) => {
       const rk = (x: typeof a) => (x.overdue ? 0 : x.dueToday ? 1 : x.dueDate ? 2 : 3);
       return rk(a) !== rk(b) ? rk(a) - rk(b) : (a.dueDate || '9999').localeCompare(b.dueDate || '9999');
     });
-  const waitingOn = dedupByDescription(
-    commitmentCands
+  // "Waiting on" (ball in their court) = awaiting-commitments + the cold outreach resolved above. Both
+  // carry their initiative tag so they can group into "In motion" project cards on the Home.
+  const waitingOn = dedupByDescription([
+    ...commitmentCands
       .filter((c) => placementOf(c) === 'ball_in_court')
-      .map((c) => ({ id: c.id, description: c.description, counterparty: c.counterparty || c.sourceLabel, ageDays: c.ageDays })),
-  )
+      .map((c) => ({ id: c.id, description: c.description, counterparty: c.counterparty || c.sourceLabel, ageDays: c.ageDays, initiative: clusterTag(c.initiative)?.initiative ?? null, initiativeTotal: clusterTag(c.initiative)?.initiativeTotal ?? null })),
+    ...outboundAwaiting.map((o) => ({ id: `outbound:${o.recipient}`, description: o.subject || `Reached out to ${o.who || 'someone'}`, counterparty: o.who, ageDays: o.ageDays, initiative: clusterTag(o.initiative)?.initiative ?? null, initiativeTotal: clusterTag(o.initiative)?.initiativeTotal ?? null })),
+  ])
     .sort((a, b) => b.ageDays - a.ageDays);
   // Keep the status chip honest with the routed set.
   status.waitingOn = waitingOn.length;
@@ -864,7 +945,7 @@ export async function GET() {
   // ── "For your awareness" — REAL correspondence you're only informed on (understanding-driven). ──
   // Two conditions decide it, both from EXISTING signals (no new keyword/name heuristic):
   //   (1) the ONE unified understanding reasoned `relevance === 'awareness'` — no move expected of you
-  //       (Amira's "RE: Assessment Bootcamp", the Omantel CC — real people, real work, kept-in-the-loop),
+  //       (a "RE: <project>" you're cc'd on, a group CC — real people, real work, kept-in-the-loop),
   //       AND
   //   (2) the item carries a REAL-CORRESPONDENCE signal: a content RULE fired on it
   //       (`rule_type ∈ {needs_reply,to_do,waiting_on}`) — a human actually wrote asking/owing something.
@@ -981,5 +1062,5 @@ export async function GET() {
   const needYou = needYouReplies + needYouCards + commitments.length + actionNotices.length;
   const dayProgress = { cleared: clearedToday, needYou };
 
-  return NextResponse.json({ firstName, briefLine, tldr, followups, fyiDigest, forYourAwareness, actionNotices, mustRespond: mustRespondOut, keepAnEyeOn: keepAnEyeOnOut, status, priorities: cappedPriorities, commitments, waitingOn, schedule, handled, dayProgress });
+  return NextResponse.json({ firstName, briefLine, tldr, followups, fyiDigest, forYourAwareness, actionNotices, mustRespond: mustRespondOut, keepAnEyeOn: keepAnEyeOnOut, status, priorities: cappedPriorities, commitments, waitingOn, schedule, handled, dayProgress, activeInitiatives });
 }

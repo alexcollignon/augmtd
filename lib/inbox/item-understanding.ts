@@ -47,9 +47,29 @@ export type ItemUnderstanding = {
    * merge. Append-only: the Home never reads this — it's for the projects lens.
    */
   initiative?: string | null;
-  // --- reserved for the NEXT slice (declared so the shape is stable; not populated yet) ---
-  handler?: unknown;
-  effort?: unknown;
+  /**
+   * Provenance of `initiative`: 'direct' when the model labeled it from THIS item's own content,
+   * 'bridge' when it was inherited deterministically from a shared person (the resolver, Phase 3) because
+   * the item had no label of its own. Lets a bridge be re-evaluated without disturbing direct labels.
+   * Absent → treat as 'direct' (legacy/model-labeled).
+   */
+  initiative_via?: 'direct' | 'bridge';
+  /**
+   * An explicit deadline / date THIS item states, resolved to absolute YYYY-MM-DD (from "by Friday",
+   * "tomorrow", a meeting time, a stated due date). null when none is stated. Enables real dates on the
+   * Home/Timeline + "overdue / event already passed" detection. NEVER invented — only a stated date.
+   */
+  deadline?: string | null;
+  /**
+   * Who owes the next move, from THIS item's content: 'you_owe' (the user must reply/act), 'awaiting'
+   * (someone else owes the user and the user is waiting), 'none' (informational / no move). Stable.
+   */
+  ownership?: 'you_owe' | 'awaiting' | 'none';
+  /** Rough effort to handle: 'quick' (~2 min), 'medium' (~15 min), 'deep' (30+ min). Powers a "feels
+   *  doable" effort cue on the Home. Absent when genuinely unclear. */
+  effort?: 'quick' | 'medium' | 'deep';
+  /** Classification confidence 0–100 (how sure the model is about role/relevance). Absent = unknown. */
+  confidence?: number;
   /** Schema version, so a later change can be detected/backfilled. */
   _v?: number;
 };
@@ -90,8 +110,19 @@ export function coerceUnderstanding(raw: unknown): ItemUnderstanding | null {
   // stringifying "null"/"none"/generic filler. Only set when there's a real label.
   const initRaw = typeof r.initiative === 'string' ? r.initiative.trim() : '';
   if (initRaw && !/^(null|none|n\/a|na|one-off|one off|unknown)$/i.test(initRaw)) out.initiative = initRaw.slice(0, 60);
-  if (r.handler !== undefined) out.handler = r.handler;
-  if (r.effort !== undefined) out.effort = r.effort;
+  // initiative provenance (direct label vs person-bridge). Only meaningful when initiative is set.
+  if (out.initiative && (r.initiative_via === 'direct' || r.initiative_via === 'bridge')) out.initiative_via = r.initiative_via;
+  // deadline: an ABSOLUTE YYYY-MM-DD only (a relative/invalid value collapses to none — never a guess).
+  if (typeof r.deadline === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(r.deadline.trim())) out.deadline = r.deadline.trim();
+  // ownership: closed set.
+  const own = String(r.ownership || '').toLowerCase();
+  if (own === 'you_owe' || own === 'awaiting' || own === 'none') out.ownership = own;
+  // effort: closed set (quick/medium/deep).
+  const eff = String(r.effort || '').toLowerCase();
+  if (eff === 'quick' || eff === 'medium' || eff === 'deep') out.effort = eff;
+  // confidence: 0–100 (accept number or numeric string).
+  const confN = typeof r.confidence === 'number' ? r.confidence : (typeof r.confidence === 'string' && /^\d+$/.test(r.confidence) ? Number(r.confidence) : NaN);
+  if (!Number.isNaN(confN) && confN >= 0 && confN <= 100) out.confidence = Math.round(confN);
   return out;
 }
 

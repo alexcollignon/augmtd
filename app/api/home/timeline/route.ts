@@ -14,7 +14,7 @@ export async function GET() {
     if (error || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const todayStr = new Date().toISOString().slice(0, 10);
-    const items = await buildWorkItems(supabase, user.id, { todayStr });
+    const items = await buildWorkItems(supabase, user.id, { todayStr, includeCalendar: true, includeOutbound: true });
     const { history, upcoming } = partitionByTime(items);
 
     // Project name/color map so items can show a subtle "part of <initiative>" tag (loose items get none).

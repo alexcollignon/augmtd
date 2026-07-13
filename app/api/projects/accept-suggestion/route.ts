@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { logActivity } from '@/lib/activity/log';
+import { normalizeInitiative } from '@/lib/inbox/item-understanding';
 
 // POST /api/projects/accept-suggestion — turn an AI suggestion into a real project. Creates the project
 // (auto=true) and sets project_id on the referenced atoms (inbox_items / commitments). Idempotent-ish:
@@ -7,7 +9,7 @@ import { createClient } from '@/lib/supabase/server';
 //
 // Body: { name, items: [{ table:'inbox_items'|'commitments', id }], why?, goals?[], rules?[] }
 
-const VALID_TABLES = new Set(['inbox_items', 'commitments']);
+const VALID_TABLES = new Set(['inbox_items', 'commitments', 'calendar_events']);
 
 export async function POST(request: NextRequest) {
   try {
@@ -39,6 +41,21 @@ export async function POST(request: NextRequest) {
       if (!uErr) assigned += count ?? ids.length;
       else console.error(`[accept-suggestion] assign ${table} failed:`, uErr.message);
     }
+
+    // Log the "tracked as project" curation (the other half of the initiative decision) + feed the brain's
+    // learning layer. entityId = the initiative key so it lines up with mute/unmute. Both non-fatal.
+    const initiativeKey = normalizeInitiative(name)?.replace(/\s+/g, '') || name.toLowerCase().replace(/\s+/g, '');
+    await logActivity(supabase, user.id, {
+      type: 'initiative_tracked',
+      title: `Tracking "${name}" as a project`,
+      entityType: 'initiative',
+      entityId: initiativeKey,
+      metadata: { projectId: project.id, label: name },
+    });
+    await supabase.from('learning_signals').insert({
+      user_id: user.id, inbox_item_id: null, signal_type: 'action_taken',
+      signal_data: { action: 'initiative_tracked', initiative_key: initiativeKey, label: name, project_id: project.id },
+    }).then(() => {}, () => {});
 
     return NextResponse.json({ project: { ...project, itemCount: assigned } });
   } catch (e) {

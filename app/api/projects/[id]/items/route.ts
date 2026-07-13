@@ -14,7 +14,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     const { id } = await params;
 
     const todayStr = new Date().toISOString().slice(0, 10);
-    const all = await buildWorkItems(supabase, user.id, { todayStr, includeDoneWithinDays: 30 });
+    const all = await buildWorkItems(supabase, user.id, { todayStr, includeDoneWithinDays: 30, includeOutbound: true });
     const items = all.filter((w) => w.projectId === id);
     return NextResponse.json({ items });
   } catch (e) {

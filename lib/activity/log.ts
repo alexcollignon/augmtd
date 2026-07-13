@@ -17,6 +17,10 @@ export type ActivityType =
   | 'invite_sent'
   | 'delegated_to_coworker'
   | 'file_attached'
+  | 'initiative_muted'
+  | 'initiative_tracked'
+  | 'project_status'
+  | 'project_ungrouped'
   | 'restored';
 
 export interface LogActivityInput {

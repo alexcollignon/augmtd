@@ -1,6 +1,6 @@
 // AI FALLBACK for the project magnet — used ONLY when deterministic name↔initiative matching found
 // NOTHING on an explicit create. Handles the mismatch edge (a project named differently from how items
-// were labeled, e.g. "the refinery client" vs items labeled "Galp"). One cheap classification-tier call
+// were labeled, e.g. "the refinery client" vs items labeled "Acme"). One cheap classification-tier call
 // over the DISTINCT unmatched initiative labels; attaches items whose label the model says refers to the
 // same deal. Reasoning where deterministic fails — not on every match.
 

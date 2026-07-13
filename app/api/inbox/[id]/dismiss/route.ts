@@ -21,7 +21,9 @@ export async function POST(
     }
 
     const { id } = await params;
-    const { reason } = await request.json().catch(() => ({} as { reason?: string }));
+    const { reason, resolution_reason } = await request.json().catch(() => ({} as { reason?: string; resolution_reason?: string }));
+    const allowedResolutionReasons = new Set(['dismissed', 'no_longer_relevant', 'already_handled', 'incorrect_suggestion']);
+    const resolvedReason = allowedResolutionReasons.has(String(resolution_reason)) ? String(resolution_reason) : 'dismissed';
 
     // Get current inbox item
     const { data: item, error: fetchError } = await supabase
@@ -46,7 +48,7 @@ export async function POST(
       .from('inbox_items')
       .update({
         status: 'dismissed',
-        source_data: { ...dismissSd, resolved_at: nowIso },
+        source_data: { ...dismissSd, resolved_at: nowIso, resolution_reason: resolvedReason },
         updated_at: nowIso,
       })
       .eq('id', id)
@@ -92,7 +94,7 @@ export async function POST(
       title: `Dismissed: ${inboxItemTitle(item)}`,
       entityType: 'inbox_item',
       entityId: id,
-      metadata: reason ? { reason } : {},
+      metadata: { ...(reason ? { reason } : {}), resolution_reason: resolvedReason },
     });
 
     return NextResponse.json({

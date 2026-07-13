@@ -1,20 +1,26 @@
 // The project "magnet" — associate unclustered items to a project by matching the project's NAME against
 // the `initiative` label already on each item (understanding for emails, the column for commitments). A
-// project named "Galp" pulls in its Galp email even if it's the ONLY one (you declared the initiative —
+// a named project pulls in its matching email even if it's the ONLY one (you declared the initiative —
 // no ≥2 threshold needed), and NEW items whose initiative matches flow in automatically (a live magnet).
 // Deterministic + cheap: no AI — pure normalized-label matching. ON DELETE SET NULL keeps this reversible.
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { normalizeInitiative, coerceUnderstanding } from '@/lib/inbox/item-understanding';
+import { buildInitiativeMap } from './initiative-resolver';
+import { computeEventUnderstanding } from '@/lib/calendar/event-understanding';
 
 // A project key matches an item key. `strict` (the PASSIVE auto-attach, which moves items silently) only
-// matches EXACT or when the item is a MORE-SPECIFIC extension ("Galp" → "Galp pilot"), never a looser
+// matches EXACT or when the item is a MORE-SPECIFIC extension (a name → that name + a qualifier), never a looser
 // reverse/mid-string overlap — so a silent move needs a confident match. `generous` (used only on
 // EXPLICIT create, where you declared intent) also allows whole-token containment either direction.
 // Guards against too-generic names (need ≥3 chars of signal).
 export function initiativeKeyMatch(projKey: string | null, itemKey: string | null, strict = false): boolean {
   if (!projKey || !itemKey || projKey.length < 3) return false;
   if (projKey === itemKey) return true;
+  // Despaced equality — identical token CONTENT modulo spacing (a spaced vs unspaced spelling of one name). This is a
+  // strict, non-widening add (same content, just formatted differently), so a future variant attaches to
+  // its project without ever merging distinct initiatives. Mirrors cluster.ts's despaced grouping key.
+  if (projKey.replace(/\s+/g, '') === itemKey.replace(/\s+/g, '')) return true;
   if (strict) return itemKey.startsWith(`${projKey} `); // item is a more-specific instance of the project
   return ` ${itemKey} `.includes(` ${projKey} `) || ` ${projKey} `.includes(` ${itemKey} `);
 }
@@ -41,8 +47,8 @@ export async function reconcileProjectMembership(
       .eq('user_id', userId).in('status', ['open', 'pending']).is('project_id', null).not('initiative', 'is', null).limit(500),
   ]);
 
-  const attach = new Map<string, { inbox: string[]; commit: string[] }>();
-  const bucket = (pid: string) => attach.get(pid) ?? attach.set(pid, { inbox: [], commit: [] }).get(pid)!;
+  const attach = new Map<string, { inbox: string[]; commit: string[]; cal: string[] }>();
+  const bucket = (pid: string) => attach.get(pid) ?? attach.set(pid, { inbox: [], commit: [], cal: [] }).get(pid)!;
 
   for (const it of (inbox ?? []) as Array<{ id: string; source_data: Record<string, unknown> }>) {
     const init = coerceUnderstanding((it.source_data ?? {}).understanding)?.initiative;
@@ -57,12 +63,43 @@ export async function reconcileProjectMembership(
     if (m) bucket(m.id).commit.push(c.id);
   }
 
+  // Calendar events (Phase 4) — a named project also adopts its MEETINGS. Resolved read-time (confident
+  // topic-join / person-bridge only). Guarded so it's a no-op pre-migration (no project_id column).
+  try {
+    const initMap = await buildInitiativeMap(supabase, userId);
+    const addrSet = new Set<string>();
+    const [{ data: prof }, { data: conns }] = await Promise.all([
+      supabase.from('profiles').select('email').eq('id', userId).maybeSingle(),
+      supabase.from('connections').select('metadata, provider_account_id').eq('user_id', userId),
+    ]);
+    if (prof?.email) addrSet.add(String(prof.email).toLowerCase());
+    for (const c of (conns ?? []) as Array<Record<string, unknown>>) {
+      const e = String(((c.metadata as { email?: string } | null)?.email) || (c.provider_account_id as string) || '').toLowerCase();
+      if (e) addrSet.add(e);
+    }
+    const userAddresses = [...addrSet];
+    const { data: events, error: evErr } = await supabase.from('calendar_events')
+      .select('id, title, attendees, status, is_all_day, recurring_event_id, start_time')
+      .eq('user_id', userId).is('project_id', null).limit(400);
+    if (evErr) throw evErr;
+    for (const e of (events ?? []) as Array<Record<string, unknown>>) {
+      const u = computeEventUnderstanding(e, userAddresses, initMap);
+      if (!u.isWork || !u.initiative || (u.via !== 'topic-join' && u.via !== 'person')) continue;
+      const ik = normalizeInitiative(u.initiative);
+      const m = keyed.find((p) => initiativeKeyMatch(p.key, ik, strict));
+      if (m) bucket(m.id).cal.push(String(e.id));
+    }
+  } catch (e) {
+    console.warn('[associate] calendar adoption skipped (pre-migration or error):', (e as Error).message);
+  }
+
   const counts: Record<string, number> = {};
   for (const [pid, ids] of attach) {
     try {
       if (ids.inbox.length) await supabase.from('inbox_items').update({ project_id: pid }).in('id', ids.inbox).eq('user_id', userId);
       if (ids.commit.length) await supabase.from('commitments').update({ project_id: pid }).in('id', ids.commit).eq('user_id', userId);
-      counts[pid] = ids.inbox.length + ids.commit.length;
+      if (ids.cal.length) await supabase.from('calendar_events').update({ project_id: pid }).in('id', ids.cal).eq('user_id', userId);
+      counts[pid] = ids.inbox.length + ids.commit.length + ids.cal.length;
     } catch (e) { console.error('[associate] attach failed for', pid, (e as Error).message); }
   }
   return counts;

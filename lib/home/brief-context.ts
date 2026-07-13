@@ -32,6 +32,13 @@ export interface PersonEmail {
   userResponded?: boolean;
   /** the most recent message on the thread is from the user (ball is in the other court). */
   lastFromUser?: boolean;
+  /** Stored obligation/timing evidence from processing; never inferred at render time. */
+  explicitDeadline?: string | null;
+  impliedUrgency?: 'immediate' | 'soon' | 'flexible' | null;
+  isTimebound?: boolean;
+  hasPreviousCommitment?: boolean;
+  isFollowUp?: boolean;
+  initiative?: string | null;
 }
 
 export interface PersonContext {
@@ -74,6 +81,12 @@ export interface EmailSeed {
       the same sent-message data it already loads. Carried through to PersonEmail for the synthesis. */
   userResponded?: boolean;
   lastFromUser?: boolean;
+  explicitDeadline?: string | null;
+  impliedUrgency?: 'immediate' | 'soon' | 'flexible' | null;
+  isTimebound?: boolean;
+  hasPreviousCommitment?: boolean;
+  isFollowUp?: boolean;
+  initiative?: string | null;
 }
 
 export async function buildBriefContext(
@@ -179,6 +192,9 @@ export async function buildBriefContext(
     p.emails.push({
       itemId: seed.itemId, subject: seed.subject, at: seed.at, posture: seed.posture, snippet: seed.snippet,
       userResponded: seed.userResponded, lastFromUser: seed.lastFromUser,
+      explicitDeadline: seed.explicitDeadline, impliedUrgency: seed.impliedUrgency,
+      isTimebound: seed.isTimebound, hasPreviousCommitment: seed.hasPreviousCommitment,
+      isFollowUp: seed.isFollowUp, initiative: seed.initiative,
     });
   }
 

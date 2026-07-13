@@ -3,15 +3,16 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { toast } from 'sonner';
-import { ChevronLeftIcon, PencilSquareIcon, FlagIcon, ShieldCheckIcon, SparklesIcon, UsersIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import { ChevronLeftIcon, PencilSquareIcon, FlagIcon, ShieldCheckIcon, SparklesIcon, UsersIcon, XMarkIcon, ArrowRightIcon, CheckCircleIcon, ArchiveBoxIcon, ArrowUturnLeftIcon, TrashIcon } from '@heroicons/react/24/outline';
 import type { WorkItem, WorkItemState } from '@/lib/work-items/model';
 import { TimelineStations } from '@/components/timeline/timeline-view';
 import { Button } from '@/components/ui';
 import HealthChip from '@/components/projects/health-chip';
 import type { ProjectHealth } from '@/lib/projects/health';
+import { computeProjectStatus, STATUS_TONE } from '@/lib/projects/status';
 
 type Project = {
-  id: string; name: string; description: string | null; status: 'active' | 'archived';
+  id: string; name: string; description: string | null; status: 'active' | 'done' | 'archived';
   goals: string[]; rules: string[]; color: string | null; auto: boolean; itemCount?: number; health?: ProjectHealth;
 };
 
@@ -79,9 +80,10 @@ function WorkCard({ w, onRemove }: { w: WorkItem; onRemove?: () => void }) {
     : <div className={cls}>{inner}</div>;
 }
 
-export default function ProjectDetail({ project, onBack, onEdit }: { project: Project; onBack: () => void; onEdit: () => void }) {
+export default function ProjectDetail({ project, onBack, onEdit, onStatus, onUngroup }: { project: Project; onBack: () => void; onEdit: () => void; onStatus: (s: 'active' | 'done' | 'archived') => void; onUngroup: () => void }) {
   const [items, setItems] = useState<WorkItem[] | null>(null);
-  const [tab, setTab] = useState<'overview' | 'work'>('overview');
+  const [tab, setTab] = useState<'overview' | 'timeline' | 'work'>('overview');
+  const [ungroupConfirm, setUngroupConfirm] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -91,6 +93,8 @@ export default function ProjectDetail({ project, onBack, onEdit }: { project: Pr
 
   const list = items ?? [];
   const count = (s: WorkItemState) => list.filter((w) => w.state === s).length;
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const status = computeProjectStatus(project.health, list, todayStr);
   // Un-assign an item from the project (the undo for the auto-attach magnet). Optimistic + non-fatal.
   const removeItem = async (w: WorkItem) => {
     setItems((prev) => (prev ?? []).filter((x) => x.id !== w.id));
@@ -113,17 +117,36 @@ export default function ProjectDetail({ project, onBack, onEdit }: { project: Pr
         <div className="min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <h2 className="text-[20px] font-semibold tracking-tight text-neutral-900 truncate">{project.name}</h2>
-            {project.health && <HealthChip status={project.health.status} />}
+            {project.status === 'done' && <span className="flex-shrink-0 inline-flex items-center gap-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-600 bg-emerald-50 rounded-full px-1.5 py-0.5">Done</span>}
+            {project.status === 'archived' && <span className="flex-shrink-0 inline-flex items-center gap-0.5 text-[10px] font-semibold uppercase tracking-wide text-neutral-400 bg-neutral-100 rounded-full px-1.5 py-0.5">Archived</span>}
+            {project.status === 'active' && project.health && <HealthChip status={project.health.status} />}
             {project.auto && <span className="flex-shrink-0 inline-flex items-center gap-0.5 text-[9.5px] font-semibold uppercase tracking-wide text-indigo-500 bg-indigo-50 rounded-full px-1.5 py-0.5"><SparklesIcon className="w-2.5 h-2.5" />Auto</span>}
           </div>
           {project.description && <p className="text-[13px] text-neutral-400 mt-0.5 max-w-[640px]">{project.description}</p>}
         </div>
-        <Button variant="secondary" size="sm" onClick={onEdit}><PencilSquareIcon className="w-4 h-4" />Edit</Button>
+        {/* Lifecycle actions — Mark done / Archive on an active project; Reopen on a terminal one. Un-group
+            (return items to loose, never destroys work) + Edit always available. */}
+        <div className="flex items-center gap-1.5 flex-shrink-0">
+          {project.status === 'active' ? (
+            <>
+              <Button variant="secondary" size="sm" onClick={() => onStatus('done')}><CheckCircleIcon className="w-4 h-4" />Done</Button>
+              <Button variant="ghost" size="sm" onClick={() => onStatus('archived')} title="Archive"><ArchiveBoxIcon className="w-4 h-4" /></Button>
+            </>
+          ) : (
+            <Button variant="secondary" size="sm" onClick={() => onStatus('active')}><ArrowUturnLeftIcon className="w-4 h-4" />Reopen</Button>
+          )}
+          <Button variant="ghost" size="sm" onClick={onEdit} title="Edit"><PencilSquareIcon className="w-4 h-4" /></Button>
+          {ungroupConfirm ? (
+            <button onClick={onUngroup} onMouseLeave={() => setUngroupConfirm(false)} className="text-[12px] font-semibold text-rose-600 bg-rose-50 rounded-lg px-2.5 py-1.5 hover:bg-rose-100 transition-colors" title="Removes the project; items return to loose initiatives (nothing is deleted)">Un-group</button>
+          ) : (
+            <Button variant="ghost" size="sm" onClick={() => setUngroupConfirm(true)} title="Un-group (return items to loose)"><TrashIcon className="w-4 h-4" /></Button>
+          )}
+        </div>
       </div>
 
       {/* Tabs */}
       <div className="flex items-center gap-1 mt-5 border-b border-neutral-100">
-        {(['overview', 'work'] as const).map((t) => (
+        {(['overview', 'timeline', 'work'] as const).map((t) => (
           <button key={t} onClick={() => setTab(t)}
             className={`px-3 py-2 text-[13px] font-medium capitalize transition-colors border-b-2 -mb-px ${tab === t ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-neutral-400 hover:text-neutral-600'}`}>
             {t}
@@ -135,7 +158,29 @@ export default function ProjectDetail({ project, onBack, onEdit }: { project: Pr
         <div className="mt-6 grid grid-cols-3 gap-3">{[0, 1, 2].map((i) => <div key={i} className="h-[68px] rounded-xl bg-gradient-to-br from-neutral-100 to-neutral-50 animate-pulse" />)}</div>
       ) : tab === 'overview' ? (
         <div className="mt-5 space-y-6">
-          {/* Pulse — the health rollup + a one-line summary + people. A brief, not a board. */}
+          {/* STATE — the human "current state + next move" line. What's happening (Active / Waiting / On
+              hold / Needs attention / Clear) and the single next action, one glance. The zoom-out the Home
+              deliberately doesn't carry (the Home is actions; the project owns state). */}
+          {(() => {
+            const t = STATUS_TONE[status.tone];
+            return (
+              <div className={`rounded-xl border ${t.border} ${t.bg} px-4 py-3`}>
+                <div className="flex items-center gap-2">
+                  <span className={`w-2 h-2 rounded-full ${t.dot} flex-shrink-0`} />
+                  <span className={`text-[13px] font-semibold ${t.text}`}>{status.label}</span>
+                  <span className="text-[12.5px] text-neutral-500">· {status.detail}</span>
+                </div>
+                {status.nextAction && (
+                  <Link href={status.nextAction.href} className="group mt-2 inline-flex items-center gap-1.5 text-[12.5px] text-neutral-700 hover:text-indigo-600 transition-colors">
+                    <span className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400">Next</span>
+                    <span className="font-medium truncate max-w-[420px]">{status.nextAction.title}</span>
+                    <ArrowRightIcon className="w-3.5 h-3.5 text-neutral-300 group-hover:text-indigo-500" />
+                  </Link>
+                )}
+              </div>
+            );
+          })()}
+          {/* Pulse — the raw counts beneath the state line. A brief, not a board. */}
           <div className="flex items-center gap-3 flex-wrap text-[12.5px] text-neutral-500">
             <span>{count('todo')} need you</span>
             <span className="text-neutral-300">·</span>
@@ -161,10 +206,14 @@ export default function ProjectDetail({ project, onBack, onEdit }: { project: Pr
             <IntentCard icon={FlagIcon} title="Goals" hint="What this project is trying to achieve. Add goals via Edit." items={project.goals} />
             <IntentCard icon={ShieldCheckIcon} title="Rules" hint="How your coworkers should work on it — and what to avoid. Add rules via Edit." items={project.rules} />
           </div>
-          <div>
-            <h3 className="text-[11px] font-semibold uppercase tracking-[0.07em] text-neutral-400 mb-3">Timeline</h3>
-            <TimelineStations items={list} emptyLine="This project's work will line up here by when it's due." />
+        </div>
+      ) : tab === 'timeline' ? (
+        <div className="mt-5">
+          <div className="mb-4">
+            <h3 className="text-[16px] font-semibold tracking-tight text-neutral-900">Project timeline</h3>
+            <p className="text-[12.5px] text-neutral-400 mt-0.5">The same work, scoped to this initiative and arranged by when it matters.</p>
           </div>
+          <TimelineStations items={list} emptyLine="This project's work will line up here by when it's due." />
         </div>
       ) : (
         <div className="mt-5 grid grid-cols-1 sm:grid-cols-3 gap-4">

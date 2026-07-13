@@ -1,83 +1,56 @@
-// Project suggestion — DETERMINISTIC grouping by the `initiative` label the understanding already
-// extracted per email (see lib/inbox/item-understanding.ts + email-processor computeUnderstanding). We
-// do NOT re-cluster with AI: the categorization was done ONCE, at ingest, in a layer that already runs —
-// here we just group by the normalized initiative key. Same label → same project; different clients
-// (two different clients) → different keys → NEVER merge, by construction. Stable, explainable, and cheap
-// (zero clustering AI calls; one small batch call only to write nice purpose sentences for the final
-// groups). Automated/no-reply items and one-offs (no initiative) are excluded — not project material.
+// Project suggestion — derived from the ONE active-initiatives source (getActiveInitiatives), so Projects
+// and the Home "In motion" can never diverge. Grouping is already done there (deterministic clustering by
+// the normalized initiative label reasoned once at ingest; same label → same project, distinct clients →
+// distinct keys → NEVER merge, by construction). Here we just pick the active initiatives that aren't yet a
+// project, biggest first, and add ONE small batch call to write a nice purpose sentence per group. Zero
+// clustering AI calls; automated/no-reply items and one-offs are already excluded upstream.
 
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { normalizeInitiative, coerceUnderstanding } from '@/lib/inbox/item-understanding';
-import { isAutomatedSender } from '@/lib/inbox/automated';
 import { getAIClient, aiCreate } from '@/lib/ai/factory';
+import { getActiveInitiatives, type InitiativeState } from './active-initiatives';
 
-export type SuggestionItemRef = { table: 'inbox_items' | 'commitments'; id: string; title: string; who: string | null };
-export type ProjectSuggestion = { name: string; purpose: string; stakeholders: string[]; items: SuggestionItemRef[] };
-type Candidate = SuggestionItemRef & { initiative: string };
-
-// Extract a clean person name from a raw `who` ("Jane Doe <j@example.com>" / "Jane (Acme)" → the name).
-export function personName(who: string): string {
-  return who.replace(/<[^>]*>/g, '').replace(/\([^)]*\)/g, '').replace(/["']/g, '').trim() || who.trim();
-}
+export type SuggestionItemRef = { table: 'inbox_items' | 'commitments' | 'calendar_events'; id: string; title: string; who: string | null };
+// `outreach` = cold outbound recipients you're awaiting a reply from (no DB row to attach — the project,
+// once created with this name, adopts them live via the spine's initiative match). Counts toward the
+// ≥2 threshold so a pure-outreach campaign (e.g. a hiring round) surfaces as a suggestion on its own.
+// `key`/`state` ride along from the spine so Projects can show the same state + deep-link by key as In-motion.
+export type ProjectSuggestion = { key: string; name: string; purpose: string; state: InitiativeState; stateLabel: string; stakeholders: string[]; items: SuggestionItemRef[]; outreach: string[] };
 
 export async function suggestProjects(supabase: SupabaseClient, userId: string): Promise<ProjectSuggestion[]> {
-  // Query candidates DIRECTLY (not via the actionable spine) — a project spans ALL of a deal's
-  // correspondence, including `noted`/awareness threads you're only cc'd on. Any UNCLUSTERED pending
-  // email carrying an initiative (from the understanding) + not automated is a candidate.
-  const [{ data: inbox }, { data: commits }] = await Promise.all([
-    supabase.from('inbox_items').select('id, work_title, source_data')
-      .eq('user_id', userId).eq('source', 'email').eq('status', 'pending').is('project_id', null).limit(2000),
-    supabase.from('commitments').select('id, description, counterparty, initiative')
-      .eq('user_id', userId).in('status', ['open', 'pending']).is('project_id', null).not('initiative', 'is', null).limit(500),
-  ]);
-
-  const candidates: Candidate[] = [];
-  for (const it of (inbox ?? []) as Array<{ id: string; work_title: string | null; source_data: Record<string, unknown> }>) {
-    const sd = (it.source_data ?? {}) as Record<string, unknown>;
-    const u = coerceUnderstanding(sd.understanding);
-    if (!u?.initiative) continue;
-    const fromEmail = String((sd.from_address as string) || (sd.from as string) || '').toLowerCase().match(/[^\s<>"]+@[^\s<>"]+/)?.[0] || null;
-    if (u.bulk === true || isAutomatedSender(fromEmail, (sd.from_name as string) || null, String(it.work_title || sd.subject || ''))) continue; // automated → not project material
-    candidates.push({ table: 'inbox_items', id: it.id, title: String(it.work_title || sd.subject || 'Email'), who: (sd.from_name as string) || (sd.from as string) || null, initiative: u.initiative });
-  }
-  // Commitments carry their own initiative (Slice B) — a commitment-heavy deal groups its commitments too.
-  for (const c of (commits ?? []) as Array<{ id: string; description: string | null; counterparty: string | null; initiative: string | null }>) {
-    if (!c.initiative) continue;
-    candidates.push({ table: 'commitments', id: c.id, title: String(c.description || 'Commitment'), who: c.counterparty, initiative: c.initiative });
-  }
-
-  // Group by the normalized initiative key. Track the most descriptive original label for display.
-  const groups = new Map<string, { label: string; items: Candidate[]; seen: Set<string> }>();
-  for (const w of candidates) {
-    const key = normalizeInitiative(w.initiative);
-    if (!key) continue;
-    const g = groups.get(key) ?? { label: w.initiative, items: [], seen: new Set<string>() };
-    // De-dupe near-identical items within an initiative (same sender + subject).
-    const dk = `${(w.who || '').toLowerCase()}|${w.title.toLowerCase().slice(0, 60)}`;
-    if (g.seen.has(dk)) continue;
-    g.seen.add(dk);
-    if (w.initiative.length > g.label.length) g.label = w.initiative; // prefer the fuller label
-    g.items.push(w);
-    groups.set(key, g);
-  }
-
-  // A project needs ≥2 items sharing an initiative. Biggest first; cap.
-  const chosen = [...groups.values()].filter((g) => g.items.length >= 2).sort((a, b) => b.items.length - a.items.length).slice(0, 6);
+  // ONE SOURCE — derive from getActiveInitiatives (email + commitments + calendar + outbound, all reasoned),
+  // so Projects and the Home "In motion" can never diverge. Suggestions = EVERY active initiative NOT yet a
+  // project (projectId null), biggest first — so Projects (accepted cards + these suggestions) reconciles
+  // 1:1 with In-motion, no hard cap dropping initiatives. A high safety bound only guards pathological cases.
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const inits = await getActiveInitiatives(supabase, userId, todayStr);
+  // Keep the spine's action-first order (needs_attention → active → waiting → awareness, then size) — do NOT
+  // re-sort by size, so the compact Projects list leads with what needs attention, mirroring In-motion.
+  const chosen = inits.filter((i) => !i.projectId).slice(0, 40);
   if (!chosen.length) return [];
 
-  const suggestions: ProjectSuggestion[] = chosen.map((g) => {
-    const stake = new Set<string>();
-    for (const w of g.items) if (w.who) stake.add(personName(w.who));
-    return { name: g.label.slice(0, 80), purpose: '', stakeholders: [...stake].slice(0, 6), items: g.items.map(({ table, id, title, who }) => ({ table, id, title, who })) };
-  });
+  const suggestions: ProjectSuggestion[] = chosen.map((i) => ({
+    key: i.key,
+    name: i.label.slice(0, 80),
+    purpose: '',
+    state: i.state,
+    stateLabel: i.stateLabel,
+    stakeholders: i.stakeholders,
+    items: i.members.map((m) => ({ table: m.table, id: m.id, title: m.title, who: m.who })),
+    outreach: i.outreach,
+  }));
 
-  // ONE small batch call to write a one-line purpose per final group (≤6). Optional — on failure the
-  // cards still read fine (name + items). NOT a clustering call; grouping is already done.
+  // ONE small batch call to write a one-line purpose per final group. Optional — on failure the cards still
+  // read fine (name + items). NOT a clustering call; grouping is already done. Token budget scales with the
+  // (now uncapped) group count so many initiatives don't truncate the JSON.
   try {
     const { client, model } = await getAIClient(userId, 'classification', supabase);
-    const listing = suggestions.map((s, i) => `${i + 1}. "${s.name}" — ${s.items.slice(0, 4).map((it) => it.title.slice(0, 50)).join('; ')}`).join('\n');
+    const listing = suggestions.map((s, i) => {
+      const items = s.items.slice(0, 4).map((it) => it.title.slice(0, 50)).join('; ');
+      const reach = s.outreach.length ? ` [+${s.outreach.length} outreach emails awaiting a reply]` : '';
+      return `${i + 1}. "${s.name}" — ${items || '(outreach campaign)'}${reach}`;
+    }).join('\n');
     const res = await aiCreate(client, {
-      model, response_format: { type: 'json_object' as const }, max_tokens: 700, temperature: 0,
+      model, response_format: { type: 'json_object' as const }, max_tokens: Math.min(3000, suggestions.length * 60 + 300), temperature: 0,
       messages: [{ role: 'user', content: `For each initiative below (a real deal/client/project and a few of its items), write ONE clear sentence describing what it is and its objective. Keep them distinct. Return ONLY JSON {"purposes":["...", "..."]} in the SAME order and count.\n\n${listing}` }],
     });
     const parsed = JSON.parse((res.choices?.[0]?.message?.content || '{}').replace(/```json/gi, '').replace(/```/g, '').trim());

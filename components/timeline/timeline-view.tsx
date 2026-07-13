@@ -21,11 +21,12 @@ const KIND_META: Record<WorkItemKind, { icon: React.ElementType; tint: string; l
   commitment:  { icon: FlagIcon,           tint: 'text-indigo-500',  label: 'Commitment' },
   followup:    { icon: ClockIcon,          tint: 'text-amber-500',   label: 'Follow up' },
   meeting:     { icon: CalendarDaysIcon,   tint: 'text-violet-500',  label: 'Meeting' },
+  event:       { icon: CalendarDaysIcon,   tint: 'text-violet-400',  label: 'Scheduled' },
   deliverable: { icon: SparklesIcon,       tint: 'text-indigo-500',  label: 'From your team' },
 };
 
 // Station accents — the leftmost past is muted, "today" is the indigo focal point, urgency reads warm.
-const STATION_DOT: Record<TimeBucket | 'history', string> = {
+const STATION_DOT: Record<TimeBucket | 'history' | 'unscheduled', string> = {
   history:   'bg-neutral-300',
   overdue:   'bg-rose-500',
   today:     'bg-indigo-600',
@@ -33,6 +34,7 @@ const STATION_DOT: Record<TimeBucket | 'history', string> = {
   soon:      'bg-neutral-400',
   later:     'bg-neutral-300',
   someday:   'bg-neutral-300',
+  unscheduled: 'bg-neutral-300',
 };
 
 type ProjectMap = Record<string, { name: string; color: string | null }>;
@@ -63,6 +65,11 @@ function TimelineCard({ w, index, projectMap }: { w: WorkItem; index: number; pr
                 {new Date(w.when.explicit).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
               </span>
             )}
+            {w.effort && (
+              <span className="text-[10px] font-medium text-neutral-400 flex-shrink-0" title="Estimated effort">
+                {w.effort === 'quick' ? '~2 min' : w.effort === 'medium' ? '~15 min' : '30+ min'}
+              </span>
+            )}
           </div>
           {proj && (
             <span className="mt-1.5 inline-flex items-center gap-1 max-w-full text-[10px] font-medium text-neutral-500 bg-neutral-100 rounded-full px-1.5 py-0.5">
@@ -75,20 +82,35 @@ function TimelineCard({ w, index, projectMap }: { w: WorkItem; index: number; pr
   );
 }
 
-function Station({ bucket, label, items, muted, index, projectMap }: { bucket: TimeBucket | 'history'; label: string; items: WorkItem[]; muted?: boolean; index: number; projectMap?: ProjectMap }) {
+function Station({ bucket, label, items, muted, index, projectMap }: { bucket: TimeBucket | 'history' | 'unscheduled'; label: string; items: WorkItem[]; muted?: boolean; index: number; projectMap?: ProjectMap }) {
+  const [expanded, setExpanded] = useState(bucket === 'overdue' || bucket === 'today');
+  const PREVIEW_LIMIT = bucket === 'history' ? 3 : bucket === 'unscheduled' ? 4 : 6;
+  const visibleItems = expanded ? items : items.slice(0, PREVIEW_LIMIT);
+  const hiddenCount = Math.max(0, items.length - PREVIEW_LIMIT);
   return (
-    <div className="relative flex-shrink-0 w-[248px]" style={{ transitionDelay: `${index * 40}ms` }}>
-      {/* Station header — a dot on the axis + the time label + count. */}
-      <div className="flex items-center gap-2 mb-3 h-[26px]">
-        <span className={`w-2.5 h-2.5 rounded-full ring-4 ring-neutral-50 flex-shrink-0 ${STATION_DOT[bucket]}`} />
-        <h3 className={`text-[11px] font-semibold uppercase tracking-[0.07em] ${muted ? 'text-neutral-400' : bucket === 'today' ? 'text-indigo-600' : bucket === 'overdue' ? 'text-rose-600' : 'text-neutral-500'}`}>{label}</h3>
-        <span className="text-[11px] font-medium text-neutral-300">{items.length}</span>
+    <div className={`relative flex gap-5 ${bucket === 'today' ? 'rounded-2xl bg-indigo-50/25 -ml-3 pl-3 py-2' : ''}`} style={{ transitionDelay: `${index * 40}ms` }}>
+      {/* Station header — a quiet anchor on the left; the work remains the visual focus. */}
+      <div className="w-[116px] flex-shrink-0 flex items-start gap-2 pt-2">
+        <span className={`w-2.5 h-2.5 rounded-full ring-4 ring-neutral-50 flex-shrink-0 mt-0.5 ${STATION_DOT[bucket]}`} />
+        <div>
+          <h3 className={`text-[11px] font-semibold uppercase tracking-[0.07em] ${muted ? 'text-neutral-400' : bucket === 'today' ? 'text-indigo-600' : bucket === 'overdue' ? 'text-rose-600' : 'text-neutral-500'}`}>{label}</h3>
+          <span className="text-[11px] font-medium text-neutral-300">{items.length} {items.length === 1 ? 'item' : 'items'}</span>
+        </div>
       </div>
-      <div className="space-y-2">
+      <div className={`min-w-0 flex-1 grid grid-cols-1 ${bucket === 'today' ? 'xl:grid-cols-2' : 'xl:grid-cols-3'} gap-2`}>
         {items.length === 0 ? (
           <p className="text-[11.5px] text-neutral-300 px-1 py-2">Nothing here.</p>
         ) : (
-          items.map((w, i) => <TimelineCard key={w.id} w={w} index={i} projectMap={projectMap} />)
+          visibleItems.map((w, i) => <TimelineCard key={w.id} w={w} index={i} projectMap={projectMap} />)
+        )}
+        {hiddenCount > 0 && (
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            className="xl:col-span-full w-full text-left px-1 py-1 text-[11.5px] font-medium text-indigo-500 hover:text-indigo-700 transition-colors"
+          >
+            {expanded ? 'Show less' : `Show ${hiddenCount} more`}
+          </button>
         )}
       </div>
     </div>
@@ -98,6 +120,7 @@ function Station({ bucket, label, items, muted, index, projectMap }: { bucket: T
 export default function TimelineView() {
   const [items, setItems] = useState<WorkItem[] | null>(null);
   const [projectMap, setProjectMap] = useState<ProjectMap>({});
+  const [scope, setScope] = useState<'all' | 'mine' | 'team'>('all');
   const [err, setErr] = useState(false);
 
   useEffect(() => {
@@ -123,13 +146,24 @@ export default function TimelineView() {
     );
   }
 
+  const visibleItems = scope === 'all' ? items : items.filter((w) => scope === 'team' ? w.actor === 'team' : w.actor !== 'team');
+
   return (
     <div className="mt-7">
-      <div className="mb-5">
-        <h2 className="text-[18px] font-semibold tracking-tight text-neutral-900">Timeline</h2>
-        <p className="text-[13px] text-neutral-400 mt-0.5">Everything on your plate, laid out by when — even what has no fixed date.</p>
+      <div className="mb-6 flex items-end justify-between gap-4">
+        <div>
+          <h2 className="text-[18px] font-semibold tracking-tight text-neutral-900">Timeline</h2>
+          <p className="text-[13px] text-neutral-400 mt-0.5">A calm view of what is happening next, with unscheduled work kept within reach.</p>
+        </div>
+        <div className="flex items-center gap-1 rounded-full border border-neutral-200/80 bg-white/80 p-1" role="tablist" aria-label="Timeline scope">
+          {(['all', 'mine', 'team'] as const).map((key) => (
+            <button key={key} role="tab" aria-selected={scope === key} onClick={() => setScope(key)} className={`rounded-full px-3 py-1.5 text-[11.5px] font-medium transition-all duration-200 ${scope === key ? 'bg-indigo-600 text-white shadow-sm' : 'text-neutral-500 hover:bg-neutral-100'}`}>
+              {key === 'all' ? 'Everything' : key === 'mine' ? 'My work' : 'Team'}
+            </button>
+          ))}
+        </div>
       </div>
-      <TimelineStations items={items} projectMap={projectMap} />
+      <TimelineStations items={visibleItems} projectMap={projectMap} />
     </div>
   );
 }
@@ -141,10 +175,17 @@ export function TimelineStations({ items, emptyLine, projectMap }: { items: Work
   const history = items.filter((w) => w.state === 'done' || w.state === 'dismissed').sort((a, b) => b.at.localeCompare(a.at)).slice(0, 12);
   const byBucket = (b: TimeBucket) => upcoming.filter((w) => w.when.bucket === b).sort((a, b2) => (a.when.explicit || '9999').localeCompare(b2.when.explicit || '9999') || b2.at.localeCompare(a.at));
 
-  const stations: Array<{ bucket: TimeBucket | 'history'; label: string; items: WorkItem[]; muted?: boolean }> = [];
+  const stations: Array<{ bucket: TimeBucket | 'history' | 'unscheduled'; label: string; items: WorkItem[]; muted?: boolean }> = [];
   if (history.length) stations.push({ bucket: 'history', label: 'Recently done', items: history, muted: true });
   for (const b of BUCKET_ORDER) {
     const inB = byBucket(b);
+    if (b === 'someday') {
+      const undated = inB.filter((w) => !w.when.explicit);
+      const dated = inB.filter((w) => !!w.when.explicit);
+      if (undated.length) stations.push({ bucket: 'unscheduled', label: 'Unscheduled', items: undated });
+      if (dated.length) stations.push({ bucket: b, label: BUCKET_LABELS[b], items: dated });
+      continue;
+    }
     if (inB.length) stations.push({ bucket: b, label: BUCKET_LABELS[b], items: inB });
   }
 
@@ -162,8 +203,14 @@ export function TimelineStations({ items, emptyLine, projectMap }: { items: Work
 
   return (
     <div className="relative">
-      <div className="absolute top-[13px] left-1 right-1 h-px bg-gradient-to-r from-neutral-200 via-neutral-200 to-transparent" aria-hidden="true" />
-      <div className="flex gap-5 overflow-x-auto pb-4 -mx-1 px-1">
+      <div className="absolute top-2 bottom-2 left-[5px] w-px bg-gradient-to-b from-neutral-200 via-neutral-200 to-transparent" aria-hidden="true" />
+      <div className="mb-4 flex items-center gap-2 pl-[136px] text-[11px] text-neutral-400">
+        <span className="inline-flex h-1.5 w-1.5 rounded-full bg-indigo-500" />
+        <span>Your work, ordered by when it can move</span>
+        <span className="text-neutral-300">·</span>
+        <span>{upcoming.length} open</span>
+      </div>
+      <div className="space-y-5 pb-4 pl-1">
         {stations.map((s, i) => (
           <Station key={s.bucket} bucket={s.bucket} label={s.label} items={s.items} muted={s.muted} index={i} projectMap={projectMap} />
         ))}

@@ -34,39 +34,9 @@ const BULK_HINT = /unsubscribe|view (this )?(e?-?mail )?in (your )?browser|manag
 // structural rule is: no first-person promise marker on a from-user email ⇒ treat as awaiting.
 const FIRST_PERSON_PROMISE = /\b(i'?ll|i will|i'?m going to|i am going to|i shall|let me|we'?ll|we will|we'?re going to|we are going to|on my end|i'?ve|i have|i can|i'?d|i would)\b/i;
 
-const norm = (s: string) => s.toLowerCase().replace(/\s+/g, ' ').trim();
-
-// ── Attendee alias helpers — collapse an email + a display name (or name variants) of the SAME
-// person, so a 1:1's counterpart resolves even when the meeting feeds mixed aliases. Fully agnostic:
-// no hardcoded identities; when it can't confidently reduce to one person the counterpart stays null.
-const emailLocalpart = (s: string): string | null => {
-  const m = s.match(/^([^@\s]+)@/);
-  return m ? m[1].toLowerCase().replace(/[^a-z0-9]/g, '') : null;
-};
-const nameTokens = (s: string): string[] => norm(s).split(/[^a-z0-9]+/).filter(Boolean);
-// Does an email localpart plausibly denote this name? john.smith@ / jsmith@ / johnsmith@ ~ "John Smith".
-const emailDenotesName = (local: string, name: string): boolean => {
-  const t = nameTokens(name);
-  if (!t.length || !local) return false;
-  const joined = t.join('');
-  const initials = t.map((w) => w[0]).join('');
-  const firstLast = (t[0]?.[0] || '') + (t[t.length - 1] || '');
-  return local === joined || local === initials || local === firstLast || t.some((w) => w.length > 2 && local.includes(w));
-};
-// Two attendee strings refer to the same person? exact, name-subset variant ("Jane" ⊆ "Jane Doe"),
-// same email localpart, or email↔name.
-const sameAttendee = (a: string, b: string): boolean => {
-  if (norm(a) === norm(b)) return true;
-  const la = emailLocalpart(a), lb = emailLocalpart(b);
-  if (la && lb) return la === lb;
-  if (!la && !lb) {
-    const ta = nameTokens(a), tb = nameTokens(b);
-    if (!ta.length || !tb.length) return false;
-    const setA = new Set(ta), setB = new Set(tb);
-    return ta.every((w) => setB.has(w)) || tb.every((w) => setA.has(w));
-  }
-  return la ? emailDenotesName(la, b) : emailDenotesName(lb!, a);
-};
+// Attendee alias helpers now live in the shared identity module (single source across the initiative
+// machine — commitments + calendar bridging). Same agnostic logic, one definition.
+import { norm, emailLocalpart, nameTokens, emailDenotesName, sameAttendee } from '@/lib/projects/identity';
 
 function validDate(d: unknown): string | null {
   if (typeof d !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(d)) return null;
@@ -254,7 +224,7 @@ due_date: set it ONLY when THIS email explicitly states a deadline — an absolu
 
 counterparty: the specific real person this obligation is with (who owes it, or is owed it), drawn from this email's actual participants — the sender or a named recipient. Use null only when genuinely unidentifiable; never invent a name.
 
-initiative: the specific deal/client/project this commitment belongs to — a short proper-noun label derived from THIS email's own content (the client/company name or the named project it concerns), or null for a one-off. Two DIFFERENT clients/companies ALWAYS get DIFFERENT labels; the SAME ongoing deal gets a CONSISTENT label. Never invent a label.
+initiative: the specific deal, client, project, internal initiative, or goal this commitment belongs to — including a hiring effort, product launch, migration, or other bounded internal effort. Use a short proper-noun label derived from THIS email's own content, or null for a one-off or an ongoing category such as invoices, receipts, or newsletters. Two DIFFERENT clients/companies/initiatives ALWAYS get DIFFERENT labels; the SAME ongoing effort gets a CONSISTENT label. Never invent a label.
 ${instructions?.trim() ? `\nThe user added this guidance — follow it: ${instructions.trim()}\n` : ''}
 Subject: ${subject || '(none)'}
 Body:

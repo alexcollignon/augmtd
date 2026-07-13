@@ -28,7 +28,8 @@ export async function POST(
     }
 
     const { id } = await params;
-    const { action, notes } = await request.json();
+    const { action, notes, resolution_reason } = await request.json();
+    const resolvedReason = resolution_reason === 'already_handled' ? 'already_handled' : 'completed';
 
     // Get current inbox item
     const { data: item, error: fetchError } = await supabase
@@ -53,7 +54,7 @@ export async function POST(
       .from('inbox_items')
       .update({
         status: 'completed',
-        source_data: { ...completeSd, resolved_at: nowIso },
+        source_data: { ...completeSd, resolved_at: nowIso, resolution_reason: resolvedReason },
         updated_at: nowIso,
       })
       .eq('id', id)
@@ -101,7 +102,7 @@ export async function POST(
       title: `Marked done: ${inboxItemTitle(item)}`,
       entityType: 'inbox_item',
       entityId: id,
-      metadata: { action: action || 'marked_complete' },
+      metadata: { action: action || 'marked_complete', resolution_reason: resolvedReason },
     });
 
     return NextResponse.json({

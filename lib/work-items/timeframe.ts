@@ -4,6 +4,10 @@
 //
 // HONESTY RULES (locked):
 //   • An undated item can NEVER be "overdue" — you can't miss a deadline that was never stated.
+//   • An AUTOMATED notice can never be "overdue" either — a no-reply billing/promo/expiry date is not a
+//     personal commitment you let slip; a past one is a stale notice, not a failure. It drops to the quiet
+//     background instead of shouting red. (Future automated dates keep their normal bucket — a real
+//     "billing changes next week" is useful to see coming.)
 //   • We never fabricate a precise date; an inferred item stays a labeled bucket, not a fake day.
 // Phase 1 is fully DETERMINISTIC (cheap, predictable, no AI). A later slice may refine undated buckets
 // with a cached classification-tier reasoning pass — the shape here already supports it (swap inferBucket).
@@ -40,16 +44,19 @@ export type BucketInput = {
   ageDays: number;
   /** todayStr = YYYY-MM-DD, passed in so the caller controls "now" (testable, no ambient Date in hot paths). */
   todayStr: string;
+  /** An automated/no-reply notice (billing/promo/expiry). A PAST date on one is a stale notice, never "overdue". */
+  automated?: boolean;
 };
 
 /**
  * The single bucket resolver. Explicit date → precise bucket (incl. the only legitimate "overdue").
  * Undated → a reasoned soft bucket from waiting/age (never "overdue", never a fabricated date).
  */
-export function inferBucket({ explicit, waiting, ageDays, todayStr }: BucketInput): TimeBucket {
+export function inferBucket({ explicit, waiting, ageDays, todayStr, automated }: BucketInput): TimeBucket {
   if (explicit) {
     const d = dayDiff(todayStr, explicit);
-    if (d < 0) return 'overdue';
+    // A past date on an automated notice is a stale notice, not a missed personal obligation → background it.
+    if (d < 0) return automated ? 'someday' : 'overdue';
     if (d === 0) return 'today';
     if (d <= 7) return 'this_week';
     if (d <= 30) return 'later';

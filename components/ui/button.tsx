@@ -29,7 +29,7 @@ const SIZE: Record<Size, string> = {
 };
 
 const BASE =
-  'inline-flex items-center justify-center rounded-lg font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed';
+  'aug-focus inline-flex items-center justify-center rounded-lg font-medium transition-[color,background-color,border-color,transform,box-shadow] duration-200 ease-out active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed';
 
 export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: Variant;

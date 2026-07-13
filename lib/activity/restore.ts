@@ -5,12 +5,13 @@
 // NOT reversible — the email is already out — so reply_sent / nudge_sent get no undo anywhere.
 
 // Activity-event types that can be undone → the entity type the restore endpoint expects.
-export const REVERSIBLE_TYPE_ENTITY: Record<string, 'inbox_item' | 'commitment' | 'sender'> = {
+export const REVERSIBLE_TYPE_ENTITY: Record<string, 'inbox_item' | 'commitment' | 'sender' | 'initiative'> = {
   dismissed: 'inbox_item',
   marked_done: 'inbox_item',
   commitment_done: 'commitment',
   commitment_dismissed: 'commitment',
   sender_muted: 'sender',
+  initiative_muted: 'initiative', // un-mute → the initiative reappears in In-motion + Projects
 };
 
 export function isReversibleType(type: string): boolean {
@@ -20,7 +21,7 @@ export function isReversibleType(type: string): boolean {
 // Call the shared restore endpoint. Returns true on success. Non-fatal: swallows/returns false so a
 // failed undo can show a small error without breaking anything.
 export async function restoreEntity(
-  entityType: 'inbox_item' | 'commitment' | 'sender',
+  entityType: 'inbox_item' | 'commitment' | 'sender' | 'initiative',
   entityId: string,
 ): Promise<boolean> {
   try {

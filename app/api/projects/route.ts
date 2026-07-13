@@ -27,20 +27,31 @@ export async function GET() {
       .order('created_at', { ascending: false });
 
     // MAGNET: before computing health, pull any unclustered items whose initiative matches an active
-    // project's name (so a new email about "Galp" flows into the Galp project automatically). Idempotent.
+    // project's name (so a new email about "Acme" flows into the Acme project automatically). Idempotent.
     const active = (projects ?? []).filter((p) => p.status === 'active').map((p) => ({ id: p.id as string, name: p.name as string }));
     if (active.length) await reconcileProjectMembership(supabase, user.id, active).catch(() => ({}));
 
     // Health + counts: one spine build, grouped by project_id (the SAME tasks the timeline shows).
     const todayStr = new Date().toISOString().slice(0, 10);
-    const spine = await buildWorkItems(supabase, user.id, { todayStr, includeDoneWithinDays: 30 });
+    const spine = await buildWorkItems(supabase, user.id, { todayStr, includeDoneWithinDays: 30, includeOutbound: true });
     const byProject = new Map<string, typeof spine>();
     for (const w of spine) if (w.projectId) (byProject.get(w.projectId) ?? byProject.set(w.projectId, []).get(w.projectId)!).push(w);
 
     const enriched = (projects ?? []).map((p) => {
       const items = byProject.get(p.id) ?? [];
       const health = computeProjectHealth(items, todayStr);
-      return { ...p, itemCount: health.open, health };
+      const next = items
+        .filter((w) => w.state !== 'done' && w.state !== 'dismissed')
+        .sort((a, b) => {
+          const rank = (bucket: string) => ({ overdue: 0, today: 1, this_week: 2, soon: 3, later: 4, someday: 5 }[bucket] ?? 6);
+          return rank(a.when.bucket) - rank(b.when.bucket) || b.at.localeCompare(a.at);
+        })[0];
+      return {
+        ...p,
+        itemCount: health.open,
+        health,
+        nextItem: next ? { title: next.title, href: next.href, who: next.who, bucket: next.when.bucket, explicit: next.when.explicit } : null,
+      };
     });
 
     return NextResponse.json({ projects: enriched });

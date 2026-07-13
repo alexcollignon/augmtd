@@ -72,7 +72,7 @@ export async function buildItemContext(
     if (kind === 'commitment') {
       const { data: c } = await supabase
         .from('commitments')
-        .select('id, description, counterparty, direction, source, source_id, due_date')
+        .select('id, description, counterparty, direction, source, source_id, due_date, initiative, thread_id')
         .eq('id', entityId).eq('user_id', userId).maybeSingle();
       if (!c) return null;
       let sourceSubject: string | null = null;
@@ -103,6 +103,7 @@ export async function buildItemContext(
         `Commitment: ${c.description ?? ''}`,
         c.direction === 'awaiting' ? `You are WAITING ON ${c.counterparty || 'someone'} for this.` : `This is on YOUR plate${c.counterparty ? ` — owed to ${c.counterparty}` : ''}.`,
         (c.due_date as string) ? `Due: ${c.due_date}` : '',
+        (c.initiative as string) ? `Initiative: ${c.initiative}` : '',
         sourceSubject ? `From: ${sourceSubject}` : '',
         sourceBody ? `Original context:\n${sourceBody}` : '',
       ].filter(Boolean).join('\n\n');
@@ -121,12 +122,25 @@ export async function buildItemContext(
     const fromRaw = String(sd.from || sd.from_address || '');
     const fromEmail = extractEmail(fromRaw);
     const receivedAt = typeof sd.received_at === 'string' ? (sd.received_at as string) : null;
+    const signals = sd.signals && typeof sd.signals === 'object' ? sd.signals as Record<string, unknown> : {};
+    const understanding = sd.understanding && typeof sd.understanding === 'object' ? sd.understanding as Record<string, unknown> : {};
+    const contextFacts = [
+      receivedAt ? `Received: ${receivedAt}` : '',
+      typeof signals.explicitDeadline === 'string' ? `Explicit deadline: ${signals.explicitDeadline}` : '',
+      signals.isTimebound === true ? 'Time-bound: yes' : '',
+      signals.isFollowUp === true ? 'Follow-up/reminder: yes' : '',
+      signals.hasPreviousCommitment === true ? 'References a previous commitment: yes' : '',
+      signals.impliedUrgency === 'immediate' || signals.impliedUrgency === 'soon' ? `Urgency: ${signals.impliedUrgency}` : '',
+      typeof understanding.initiative === 'string' ? `Initiative: ${understanding.initiative}` : '',
+      typeof sd.thread_id === 'string' ? `Thread: ${sd.thread_id}` : '',
+    ].filter(Boolean);
     const participants: ItemParticipant[] = [];
     if (fromEmail) participants.push({ email: fromEmail, name: fromName || null });
     const text = [
       subj ? `Subject: ${subj}` : '',
       (fromName || fromRaw) ? `From: ${fromName || fromRaw}` : '',
       typeof sd.body === 'string' ? `Message:\n${(sd.body as string).slice(0, 2500)}` : '',
+      contextFacts.length ? `Grounded context:\n- ${contextFacts.join('\n- ')}` : '',
     ].filter(Boolean).join('\n\n');
     return { text, participants, itemDateISO: receivedAt };
   } catch (e) {

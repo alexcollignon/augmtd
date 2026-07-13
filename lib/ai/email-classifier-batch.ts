@@ -72,7 +72,7 @@ EXAMPLES:
 - From: partner@firm.com, Subject: "Contract revision needed" → process
 - From: failed-payments@stripe.com, Subject: "Payment to Synthesia unsuccessful" → process
 - From: client@company.com, Subject: "Quick update", body_preview: "...wanted to ask if you can confirm the budget before Thursday." → process (body reveals a question despite neutral subject)
-- From: madalena@partner.com, Subject: "Re: Follow up | Project" → process (active thread with a real person, even without an explicit question)
+- From: sam@partner.com, Subject: "Re: Follow up | Project" → process (active thread with a real person, even without an explicit question)
 - From: colleague@company.com, Subject: "Re: Thanks!", body_preview: "Thanks so much, that's perfect." → fyi_only (pure acknowledgement, nothing to do)
 
 Respond ONLY with valid JSON: { "results": [ { "id": "...", "class": "process"|"fyi_only"|"noise" } ] }

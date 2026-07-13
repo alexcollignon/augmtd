@@ -8,9 +8,16 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getUnderstanding } from '@/lib/inbox/item-understanding';
 import { isAutomatedSender } from '@/lib/inbox/automated';
+import { buildInitiativeMap } from '@/lib/projects/initiative-resolver';
+import { initiativeKeyMatch } from '@/lib/projects/associate';
+import { normalizeInitiative } from '@/lib/inbox/item-understanding';
+import { computeEventUnderstanding } from '@/lib/calendar/event-understanding';
+import { resolveOutboundAwaiting } from '@/lib/outbound/resolve';
 import { inferBucket, type TimeBucket } from './timeframe';
 
-export type WorkItemKind = 'commitment' | 'reply' | 'action' | 'followup' | 'meeting' | 'deliverable';
+// 'event' = a scheduled calendar meeting — a dated CONTEXT point, never an action (no done/dismiss). It
+// rides the same spine so the Timeline shows real meetings, and (Phase 4) projects see them as activity.
+export type WorkItemKind = 'commitment' | 'reply' | 'action' | 'followup' | 'meeting' | 'deliverable' | 'event';
 export type WorkItemState = 'todo' | 'waiting' | 'in_progress' | 'done' | 'dismissed';
 export type WorkItemActor = 'you' | 'team' | 'system';
 export type WorkItemSource = 'email' | 'meeting' | 'commitment' | 'deliverable';
@@ -32,6 +39,8 @@ export type WorkItem = {
                               // marketing) — a real task, but NOT project/initiative material.
   initiative: string | null;  // the deal/client/initiative this is about (from the understanding) —
                               // groups items into projects deterministically. null = one-off.
+  effort: 'quick' | 'medium' | 'deep' | null; // rough effort to handle (from the understanding) — powers
+                              // a "feels doable" cue on the Home. null = unknown.
 };
 
 const CONTENT_RULE = new Set(['needs_reply', 'to_do', 'waiting_on']);
@@ -46,6 +55,8 @@ function ageDaysOf(iso: string | null, todayMs: number): number {
 export type BuildOpts = {
   todayStr: string;              // YYYY-MM-DD — caller controls "now"
   includeDoneWithinDays?: number; // history window for the timeline's left side (default 7)
+  includeCalendar?: boolean;     // add scheduled calendar meetings as dated CONTEXT items (Timeline only)
+  includeOutbound?: boolean;     // add cold outreach you're awaiting a reply to as 'followup' items (Timeline)
 };
 
 /**
@@ -100,7 +111,7 @@ export async function buildWorkItems(
       who: (c.counterparty as string) || null,
       actor: 'you', state,
       when: { explicit, bucket: inferBucket({ explicit, waiting, ageDays: ageDaysOf((c.created_at as string) || null, todayMs), todayStr }) },
-      source: 'commitment', href: '/', at, projectId: (c.project_id as string) || null, automated: false, initiative: (c.initiative as string) || null,
+      source: 'commitment', href: '/', at, projectId: (c.project_id as string) || null, automated: false, initiative: (c.initiative as string) || null, effort: null,
     });
   }
 
@@ -118,7 +129,9 @@ export async function buildWorkItems(
     const kind: WorkItemKind = isMeeting ? 'meeting' : isWaiting ? 'followup' : isReply ? 'reply' : 'action';
     const state: WorkItemState = status === 'completed' ? 'done' : status === 'dismissed' ? 'dismissed' : isWaiting ? 'waiting' : 'todo';
     const activity = (it.last_activity_at as string) || (sd.received_at as string) || (it.created_at as string) || todayStr;
-    const explicit = null; // inbox items rarely carry an explicit deadline; the reply/action is inferred
+    // A REAL stated deadline (from the understanding) becomes the explicit date — so a "pay by Fri" item
+    // gets a proper timeline placement + overdue detection, instead of being treated as undated.
+    const explicit = (u?.deadline as string) || null;
     const subj = String(it.work_title || sd.subject || '');
     const fromEmail = String((sd.from_address as string) || (sd.from as string) || '').toLowerCase().match(/[^\s<>"]+@[^\s<>"]+/)?.[0] || null;
     const automated = isMeeting ? false : (isAutomatedSender(fromEmail, (sd.from_name as string) || null, subj) || u?.bulk === true);
@@ -127,11 +140,12 @@ export async function buildWorkItems(
       title: String(it.work_title || sd.subject || 'Email'),
       who: (sd.from_name as string) || (sd.from as string) || null,
       actor: 'you', state,
-      when: { explicit, bucket: inferBucket({ explicit, waiting: isWaiting, ageDays: ageDaysOf(activity, todayMs), todayStr }) },
+      when: { explicit, bucket: inferBucket({ explicit, waiting: isWaiting, ageDays: ageDaysOf(activity, todayMs), todayStr, automated }) },
       source: isMeeting ? 'meeting' : 'email',
       href: isMeeting ? `/item/${it.id}?kind=meeting` : `/item/${it.id}`,
       at: (status === 'completed' && (sd.resolved_at as string)) ? (sd.resolved_at as string) : activity,
       projectId: (it.project_id as string) || null, automated, initiative: (u?.initiative as string) || null,
+      effort: (u?.effort as 'quick' | 'medium' | 'deep') || null,
     });
   }
 
@@ -149,8 +163,89 @@ export async function buildWorkItems(
         actor: 'team', state: 'done',
         when: { explicit: null, bucket: inferBucket({ explicit: null, waiting: false, ageDays: ageDaysOf(at, todayMs), todayStr }) },
         source: 'deliverable', href: t.agent_id ? `/workers?worker=${t.agent_id}` : '/workers',
-        at, projectId: (t.project_id as string) || null, automated: false, initiative: null,
+        at, projectId: (t.project_id as string) || null, automated: false, initiative: null, effort: null,
       });
+    }
+  }
+
+  // ── Calendar events → dated CONTEXT items (opt-in; Timeline only) ──────────────────────────────────
+  // A scheduled meeting is context, NOT an action: kind 'event', no done/dismiss. Past events are marked
+  // 'done' so they land in history (never falsely "overdue"); today/future keep their real time bucket.
+  // The initiative is resolved deterministically (event-understanding) so a meeting carries its project
+  // signal; project_id stays null until the magnet attaches it (Phase 3/4). Recurring instances are kept
+  // as distinct dated occurrences (each is a real point on the timeline; clustering-dedupe is Phase 4).
+  if (opts.includeCalendar) {
+    const [{ data: prof }, { data: conns }, initMap] = await Promise.all([
+      supabase.from('profiles').select('email').eq('id', userId).maybeSingle(),
+      supabase.from('connections').select('metadata, provider_account_id').eq('user_id', userId),
+      buildInitiativeMap(supabase, userId),
+    ]);
+    const addrSet = new Set<string>();
+    if (prof?.email) addrSet.add(String(prof.email).toLowerCase());
+    for (const c of (conns ?? []) as Array<Record<string, unknown>>) {
+      const e = String(((c.metadata as { email?: string } | null)?.email) || (c.provider_account_id as string) || '').toLowerCase();
+      if (e) addrSet.add(e);
+    }
+    const userAddresses = [...addrSet];
+
+    const { data: events } = await supabase.from('calendar_events')
+      .select('id, title, attendees, status, is_all_day, recurring_event_id, start_time, end_time')
+      .eq('user_id', userId)
+      .gte('start_time', new Date(todayMs - (opts.includeDoneWithinDays ?? 7) * 86_400_000).toISOString())
+      .order('start_time', { ascending: true })
+      .limit(200);
+
+    for (const e of (events ?? []) as Array<Record<string, unknown>>) {
+      const u = computeEventUnderstanding(e, userAddresses, initMap);
+      if (!u.isWork) continue;
+      const startIso = String(e.start_time || '');
+      const startDate = startIso.slice(0, 10) || todayStr;
+      const endMs = Date.parse(String(e.end_time || e.start_time || ''));
+      const past = !Number.isNaN(endMs) && endMs < todayMs;
+      items.push({
+        id: `event:${e.id}`, entityId: String(e.id), kind: 'event',
+        title: String(e.title || 'Meeting'),
+        who: u.people[0] || null,
+        actor: 'you',
+        state: past ? 'done' : 'todo',
+        when: { explicit: startDate, bucket: inferBucket({ explicit: startDate, waiting: false, ageDays: 0, todayStr }) },
+        source: 'meeting', href: '/meetings',
+        at: startIso || todayStr,
+        projectId: null, automated: false, initiative: u.initiative, effort: null,
+      });
+    }
+  }
+
+  // ── Outbound-awaiting → 'followup' items ("waiting on them"; opt-in; Timeline) ────────────────────
+  // Cold outreach you sent that got no reply — invisible today (no inbox_item). Reasoned {awaiting,
+  // initiative} (cached). Undated → a waiting bucket by age; carries its initiative so it clusters. No
+  // deep-dive target (the thread lives in your mailbox), so it links to the inbox.
+  if (opts.includeOutbound) {
+    try {
+      // Resolve outbound + the user's projects together, so an outreach item whose initiative matches a
+      // named project attaches to it (projectId) — that's how a rowless outbound item shows in a project's
+      // timeline/state without a DB row or the accept-suggestion machinery.
+      const [outbound, { data: projects }] = await Promise.all([
+        resolveOutboundAwaiting(supabase, userId, todayStr),
+        supabase.from('projects').select('id, name').eq('user_id', userId).eq('status', 'active'),
+      ]);
+      const keyed = ((projects ?? []) as Array<{ id: string; name: string }>)
+        .map((p) => ({ id: p.id, key: normalizeInitiative(p.name) }))
+        .filter((p) => p.key && p.key.length >= 3);
+      for (const o of outbound) {
+        const ik = o.initiative ? normalizeInitiative(o.initiative) : null;
+        const match = ik ? keyed.find((p) => initiativeKeyMatch(p.key, ik, false)) : null;
+        items.push({
+          id: `outbound:${o.recipient}`, entityId: o.recipient, kind: 'followup',
+          title: o.subject || `Reached out to ${o.who || 'someone'}`,
+          who: o.who, actor: 'you', state: 'waiting',
+          when: { explicit: null, bucket: inferBucket({ explicit: null, waiting: true, ageDays: o.ageDays, todayStr }) },
+          source: 'email', href: '/inbox', at: o.lastSentAt,
+          projectId: match?.id ?? null, automated: false, initiative: o.initiative, effort: null,
+        });
+      }
+    } catch (e) {
+      console.warn('[spine] outbound skipped:', (e as Error).message);
     }
   }
 
